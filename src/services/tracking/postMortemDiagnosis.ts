@@ -66,6 +66,7 @@ import {
     refusalDiagnosis,
     renderDiagnosisPostMortem,
 } from './diagnosisPacket';
+import { learnFromDiagnosis } from './diagnosisSkillLearning';
 
 export const DIAGNOSIS_PROMPT_ID = 'learning.post_mortem_diagnosis';
 
@@ -473,6 +474,15 @@ export const runDiagnosisPass = async (
             };
             const linkedWrite = await saveTrackedPosition(username, linked);
             if (linkedWrite.ok) positions.set(position.id, linked);
+
+            // Learn BEFORE the journal bridge: the legacy notebook sync runs
+            // its own draft gates, and a tentative skill that already covers
+            // this setup is what keeps those gates from minting a duplicate.
+            try {
+                await learnFromDiagnosis(username, diagnosis, linked);
+            } catch (e) {
+                console.warn('[Diagnosis] skill learning failed:', e instanceof Error ? e.message : e);
+            }
 
             if (position.source === 'journal' && hasJournalOutcomeBridge()) {
                 const applied = await applyJournalDiagnosis(

@@ -44,6 +44,7 @@ import { findRelevantTrades } from './PatternMemorySynthesisService';
 import {
     isSkillFile,
     isApprovedSkill,
+    isInjectableSkill,
     parseSkillMarkdown,
     skillBody,
     skillMatchesSetup,
@@ -52,6 +53,7 @@ import {
 } from './SkillMemoryService';
 import { type MemoryRetrievalQuery } from './MemoryGraph';
 import { charsForTokens, windowBudgetTokens } from '../../utils/tokenEstimate';
+import { TENTATIVE_SKILL_INJECTION_MAX } from '../../constants/skillInjection';
 
 export type { MemoryRetrievalQuery };
 
@@ -217,13 +219,11 @@ const rankedMatchedSkills = (
         if (!file.enabled || !isSkillFile(file)) continue;
         const meta = parseSkillMarkdown(file.content);
         if (!meta) continue;
-        // THE ACTIVATION GATE (see `isApprovedSkill`): nothing model-generated
-        // reaches a seat's prompt without a human yes — status, evidence and
-        // `enabled` are not consent. The starter library's shelf toggle is the one
-        // explicit exception, evaluated inside the predicate, not here.
-        // Enforcement reads the same predicate, so a row cannot be silenced
-        // here and still veto a trade there.
-        if (!isApprovedSkill(meta)) continue;
+        // THE INJECTION GATE (see `isInjectableSkill`): an approved skill, or a
+        // tentative one earned from independent outcomes while the trader's
+        // tentative channel is on. Enforcement still reads `isApprovedSkill`,
+        // so a tentative rule can be shown as context but never vetoes.
+        if (!isInjectableSkill(meta)) continue;
         // Point-in-time: a skill created (or retired) after the cutoff is
         // invisible — an older run must not learn from a lesson the future
         // wrote. Without asOf this is exactly the old retired-check.
@@ -305,7 +305,13 @@ const rankedMatchedSkills = (
         candidates.push({ file, meta, score, status });
     }
     candidates.sort((a, b) => b.score - a.score || (b.meta.wins + b.meta.losses) - (a.meta.wins + a.meta.losses));
-    return candidates;
+    // A tentative rule is context, not a rulebook. The cap applies to the
+    // CANDIDATE POOL, so neither the primary block nor the verdict's extra
+    // index lines can exceed it.
+    const tentative = candidates.filter(c => c.meta.approvedBy === 'tentative');
+    if (tentative.length <= TENTATIVE_SKILL_INJECTION_MAX) return candidates;
+    const keep = new Set(tentative.slice(0, TENTATIVE_SKILL_INJECTION_MAX).map(c => c.file.name));
+    return candidates.filter(c => c.meta.approvedBy !== 'tentative' || keep.has(c.file.name));
 };
 
 /** Count shared setup dimensions between a skill and the current query. */
@@ -520,7 +526,8 @@ const skillIndexLine = (name: string, meta: SkillMeta, status?: SkillMeta['statu
     const evidence = (meta.wins + meta.losses) === 0 && unprovenLabel
         ? unprovenLabel
         : evidenceFreshness(meta);
-    return `${meta.kind === 'avoid' ? 'AVOID' : 'REPEAT'} [${status ?? meta.status} · ${Math.round(meta.wins)}W/${Math.round(meta.losses)}L · ${evidence}${meta.originBotName ? ` · from @${meta.originBotName}` : ''}] ${rule}`;
+    const tentative = meta.approvedBy === 'tentative' ? ' · TENTATIVE — context only, not enforced' : '';
+    return `${meta.kind === 'avoid' ? 'AVOID' : 'REPEAT'} [${status ?? meta.status} · ${Math.round(meta.wins)}W/${Math.round(meta.losses)}L · ${evidence}${tentative}${meta.originBotName ? ` · from @${meta.originBotName}` : ''}] ${rule}`;
 };
 
 /**
@@ -535,7 +542,10 @@ const matchedSkillBlock = (
 ): { text: string; meta: SkillMeta | null; name: string } => {
     const match = bestMatchedSkill(query, audience, asOfMs);
     if (!match) return { text: '', meta: null, name: '' };
-    const header = `[skills/${match.file.name} · ${match.status} · ${Math.round(match.meta.wins)}W/${Math.round(match.meta.losses)}L${match.meta.originBotName ? ` · from @${match.meta.originBotName}` : ''}]`;
+    const tentativeTag = match.meta.approvedBy === 'tentative'
+        ? ' · TENTATIVE — context only, not enforced'
+        : '';
+    const header = `[skills/${match.file.name} · ${match.status} · ${Math.round(match.meta.wins)}W/${Math.round(match.meta.losses)}L${tentativeTag}${match.meta.originBotName ? ` · from @${match.meta.originBotName}` : ''}]`;
     if (stage !== 'verdict') {
         return { text: `${header}\n${skillIndexLine(match.file.name, match.meta)}`, meta: match.meta, name: match.file.name };
     }

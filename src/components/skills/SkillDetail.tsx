@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { setSkillStatus, skillExpectancyR, skillEnabledFlag, isApprovedSkill, EXPECTANCY_MIN_R_SAMPLE } from '../../services/learning/SkillMemoryService';
+import { setSkillStatus, skillExpectancyR, skillEnabledFlag, isApprovedSkill, isInjectableSkill, EXPECTANCY_MIN_R_SAMPLE } from '../../services/learning/SkillMemoryService';
 import { getMemoryFiles, withNotebookWriteLock, deleteMemoryFileUnlocked } from '../../services/learning/MemoryFilesService';
 import type { SkillMeta } from '../../services/learning/SkillMemoryService';
 import type { SkillProofResult } from '../../services/learning/skillProof';
@@ -156,22 +156,30 @@ const SkillDetail: React.FC<{
      *  skills index both refuse an unapproved rule, so a card calling it "Active"
      *  would be a check on a skill that reaches no seat. Guarded on `meta`
      *  being present, because a pane with no file open has no approval to read. */
-    const reaching = live && !!meta && !meta.supersededBy && isApprovedSkill(meta);
+    const tentative = meta?.approvedBy === 'tentative';
+    const reaching = live && !!meta && !meta.supersededBy && isInjectableSkill(meta);
     const liveReason = retired
         ? undefined
-        : reaching
-            ? undefined
-            : meta?.suspendedAt
-                ? 'Suspended — no evidence for 90 days. Still matched, so it can revive on its own.'
-                : meta?.disabledByUser
-                    ? 'You switched this off in the notebook.'
-                    : meta?.supersededBy
-                        ? `Absorbed into ${meta.supersededBy}. Its evidence is kept as the control group.`
-                        : meta && !isApprovedSkill(meta)
-                            ? meta.approvedBy === 'supervisor'
-                                ? 'Accepted by the LLM supervisor, not by you — and nothing model-approved reaches a seat.'
-                                : 'Nothing has approved this rule, so no seat is given it. A skill reaches a seat only on a human approval; the starter library has its own switch in Settings.'
-                            : 'Not reaching the desk.';
+        : tentative
+            ? meta?.demotion
+                ?? (reaching
+                    ? 'Tentative — learned from tracked outcomes, injected as CONTEXT ONLY. It never vetoes or caps confidence; switch it off here to stop it.'
+                    : 'Tentative skills are switched off in Settings, or this one is suspended/disabled — no seat is given it.')
+            : reaching
+                ? undefined
+                : meta?.demotion
+                    ? meta.demotion
+                    : meta?.suspendedAt
+                        ? 'Suspended — no evidence for 90 days. Still matched, so it can revive on its own.'
+                        : meta?.disabledByUser
+                            ? 'You switched this off in the notebook.'
+                            : meta?.supersededBy
+                                ? `Absorbed into ${meta.supersededBy}. Its evidence is kept as the control group.`
+                                : meta && !isApprovedSkill(meta)
+                                    ? meta.approvedBy === 'supervisor'
+                                        ? 'Accepted by the LLM supervisor, not by you — and nothing model-approved reaches a seat.'
+                                        : 'Nothing has approved this rule, so no seat is given it. A skill reaches a seat only on a human approval; the starter library has its own switch in Settings.'
+                                    : 'Not reaching the desk.';
     const wins = Math.round(meta?.wins ?? 0);
     const losses = Math.round(meta?.losses ?? 0);
     const refined = Boolean(meta?.previousVersion && meta?.refinedAt);
@@ -281,9 +289,25 @@ const SkillDetail: React.FC<{
                 <div className="flex shrink-0 items-center gap-3 pt-1">
                     <span className="text-ui-xs font-medium uppercase tracking-widest text-zinc-500"
                         title={liveReason ?? undefined}>
-                        {retired ? 'Retired' : reaching ? 'Active' : (meta?.suspendedAt ? 'Suspended' : 'Inactive')}
+                        {retired
+                            ? 'Retired'
+                            : tentative && reaching
+                                ? 'Tentative'
+                                : reaching
+                                    ? 'Active'
+                                    : meta?.demotion
+                                        ? 'Auto-demoted'
+                                        : meta?.suspendedAt ? 'Suspended' : 'Inactive'}
                     </span>
                     <ToggleSwitch checked={!retired} onChange={onToggleRetire} label={`Toggle ${skill.name} active`} />
+                    {tentative && !retired && (
+                        <span
+                            data-testid="skill-tentative"
+                            title={liveReason ?? 'Tentative — context only, not enforced.'}
+                            className="shrink-0 rounded-full border border-cyan-500/30 bg-cyan-500/10 px-1.5 py-0.5 text-ui-2xs font-bold uppercase tracking-widest text-cyan-400">
+                            tentative · context only
+                        </span>
+                    )}
                     {/* WS-5.2's "auto-approved by the supervisor — undo", on the
                         skill itself rather than only in a session log that does
                         not survive a reload. Retiring is the durable undo:

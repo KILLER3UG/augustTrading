@@ -32,9 +32,9 @@ If the answer is "it shows the trader their P&L", it is not the current product.
 - **P&L, settlement, win/loss dashboards and the session risk guard as the main line.** They stay
   built where they already exist, and they remain useful for the trader's own records, but they are
   not what the next feature should be.
-- **Journal-settled trade evidence as the primary learning loop.** Skills and outcome review remain
-  infrastructure; the loop that improves accuracy now is **signal → price outcome**, which needs no
-  execution and no trader click.
+- **Journal-settled trade evidence as the primary learning loop.** The tracker follows both desk
+  signals and accepted journal plans, and the loop that improves accuracy is **signal → price
+  outcome → diagnosis → tentative skill**, which needs no execution and no trader click.
 - **Execution, broker keys and order placement.** Not now, and never without an owner ruling.
 - **Breadth for its own sake** — multi-market equities, fundamentals, options chains, alpha zoos.
   August trades the tape it can see; depth on that tape beats a second market.
@@ -60,5 +60,11 @@ and feed the measurement back into the next signal.
 cross-check, stop-first on an unknowable bar, costs in R), two shadow checks (the programmatic gate
 and an evidence check — neither blocks), and Journal → Signals. **Phase 2 shipped 2026-10-30:** every
 resolution carries the same-levels base rate, the feed shows hit rate vs base with a thin-sample floor,
-and the next `emit_signal` receipt carries the coin's scorecard. **Still open:** the skill evidence
-fold (b3) — resolved signals do not yet confirm or deny playbooks.
+and the next `emit_signal` receipt carries the coin's scorecard.
+
+**Closed 2026-11-02 (b3):** resolved signals and accepted journal plans are followed by the tracked
+position loop; on close, `runDiagnosisPass` (`services/tracking/postMortemDiagnosis.ts`) writes the
+structured diagnosis, and `learnFromDiagnosis` (`services/tracking/diagnosisSkillLearning.ts`) mints
+or reinforces a **tentative** skill after three independent outcomes. It injects as labelled
+context only — never a veto or a confidence cap — and auto-demotes under its floor. See
+[the learning loop](../architecture/learning-loop.md).

@@ -10,6 +10,7 @@
 import { phtFullStamp, phtStamp } from '../../utils/timezone';
 import { clipNote, dataUnavailable } from '../../utils/harnessMarks';
 import { charsForTokens, windowBudgetTokens } from '../../utils/tokenEstimate';
+import { TENTATIVE_SKILL_INJECTION_MAX } from '../../constants/skillInjection';
 
 export interface TradeChatContextInput {
     symbol: string;
@@ -238,6 +239,10 @@ export interface SkillIndexRow {
     approved?: boolean;
     /** ISO timestamp of the last counted trade — the tie-break. */
     lastEvidenceAt?: string;
+    /** Earned from tracked outcomes but not yet confirmed by a human or the
+     *  evidence ladder. It may be injected as labelled CONTEXT; it never
+     *  vetoes or caps confidence. */
+    tentative?: boolean;
 }
 
 /**
@@ -274,7 +279,9 @@ export const isIndexableSkill = (row: SkillIndexRow, audience: SkillIndexAudienc
     if (row.suspended === true) return false;
     if (row.disabled === true) return false;
     if (row.manualOnly === true) return false;
-    if (row.approved === false) return false;
+    // A tentative row has no human approval yet; it is allowed into the index
+    // as labelled context. An unapproved row that is NOT tentative stays out.
+    if (row.approved === false && row.tentative !== true) return false;
     const scope = (row.audience || 'all').toLowerCase();
     if (scope !== 'all' && scope !== audience) return false;
     return true;
@@ -362,7 +369,8 @@ export const buildSkillsIndexForPrompt = (
     // (a count) instead of a slot. Only the evidence fold promotes a skill to
     // confirmed; until then the model must not be told to apply it.
     const confirmed = eligible.filter(r => r.status === 'confirmed');
-    const candidates = eligible.filter(r => r.status !== 'confirmed');
+    const tentative = eligible.filter(r => r.tentative === true && r.status !== 'confirmed');
+    const candidates = eligible.filter(r => r.tentative !== true && r.status !== 'confirmed');
     const shown = confirmed.slice(0, max);
     const lines = shown.map(r => {
         const rule = r.when ? `When ${r.when}` : '';
@@ -371,6 +379,13 @@ export const buildSkillsIndexForPrompt = (
         return `- ${r.slug} — ${kindTag}${desc || rule || '(see recall)'}${desc && rule ? ` · ${rule}` : ''}`;
     });
     const candidateCount = candidates.length;
+    const tentativeShown = tentative.slice(0, TENTATIVE_SKILL_INJECTION_MAX);
+    const tentativeLines = tentativeShown.map(r => {
+        const rule = r.when ? `When ${r.when}` : '';
+        const desc = (r.description || '').trim();
+        const kindTag = r.kind ? `${r.kind === 'avoid' ? 'avoid' : 'repeat'} · ` : '';
+        return `- ${r.slug} — TENTATIVE · ${kindTag}${desc || rule || '(see recall)'}${desc && rule ? ` · ${rule}` : ''}`;
+    });
     const header = confirmed.length > 0
         ? `## Skills library — ${confirmed.length} confirmed skill${confirmed.length === 1 ? '' : 's'}. Each line is WHEN to use it; the body is the procedure. APPLY any that match ${where} before answering; cite the slug you used, and open the full body with skill_view before acting on it.`
         : `## Skills library — no confirmed skills.${candidateCount > 0 ? ` ${candidateCount} candidate hypothes${candidateCount === 1 ? 'is exists' : 'es exist'} (unproven; NOT rules and NOT applied).` : ''}`;
@@ -383,6 +398,15 @@ export const buildSkillsIndexForPrompt = (
         confirmed.length > max ? `…and ${confirmed.length - max} more confirmed — skill_view reads any one of them by slug.` : '',
         confirmed.length > 0 && candidateCount > 0
             ? `- ${candidateCount} candidate hypothes${candidateCount === 1 ? 'is' : 'es'} (unproven; not rules, not applied — inspect with get_notebook_map or recall only if the question needs one).`
+            : '',
+        tentative.length > 0
+            ? [
+                `## Tentative skills — ${tentative.length} learned from tracked outcomes. CONTEXT ONLY: use them to inform the read; never as a rule, a veto or a confidence cap. The trader can edit or disable any.`,
+                ...tentativeLines,
+                tentative.length > tentativeShown.length
+                    ? `…and ${tentative.length - tentativeShown.length} more tentative — not listed here.`
+                    : '',
+            ].filter(Boolean).join('\n')
             : '',
     ].filter(Boolean).join('\n');
 };

@@ -56,6 +56,12 @@ export interface HarnessSettings {
      *  could HALT a verdict with no way to say no. Default ON. Injection is governed
      *  by the approval gate, not by this. */
     skillEnforcementEnabled: boolean;
+    /** THE TENTATIVE CHANNEL — whether post-mortem-earned, not-yet-confirmed
+     *  skills may be injected as labelled context. Default ON (owner ruling,
+     *  2026-11-02). It never enables enforcement: tentative skills still fail
+     *  `isApprovedSkill`, so they cannot veto or cap confidence. Off hides them
+     *  from both the prompt and the skills index. */
+    tentativeSkillInjectionEnabled: boolean;
     /** What happens when the autopilot detects an outcome: record it after a
      *  15s Undo window, only notify, or the shadow month (show, never record).
      *  Per-coin approval rules still win over this. */
@@ -142,6 +148,7 @@ export const getHarnessSettings = (): HarnessSettings => {
         starterLibraryEnabled: stored.starterLibraryEnabled !== false,
         sensitiveMemoryEnabled: stored.sensitiveMemoryEnabled === true,
         skillEnforcementEnabled: stored.skillEnforcementEnabled !== false,
+        tentativeSkillInjectionEnabled: stored.tentativeSkillInjectionEnabled !== false,
         // Shadow first (E-18): resolve and SHOW every detected outcome, record
         // nothing. The trader flips to 'automatic' after the disagreement rate
         // between the detector and their own confirmation is known. Choosing

@@ -443,8 +443,14 @@ The accuracy fold rides the resolution: `signalAccuracy.baseRateFor` re-enters t
 every bar of the same tape through the same resolver, so the stored `base` is what those levels did at
 a random time. The feed shows hit rate vs base with the lift and a THIN flag under
 `MIN_ACCURACY_FILLS`, and the next `emit_signal` receipt carries this coin's `signalScorecard` — the
-measurement goes back into the call, not only into a dashboard. The skill evidence fold (b3) does not
-read resolutions yet.
+measurement goes back into the call, not only into a dashboard. **The skill evidence fold (b3) is
+closed (2026-11-02):** the tracked-position loop (`services/tracking/trackerService.ts`) follows
+open signals and accepted journal plans to the tape, `runDiagnosisPass`
+(`services/tracking/postMortemDiagnosis.ts`) writes the structured diagnosis, and
+`learnFromDiagnosis` (`services/tracking/diagnosisSkillLearning.ts`) mints or reinforces a
+tentative skill after three independent outcomes. A tentative skill is injected through
+`isInjectableSkill` as labelled context (never `isApprovedSkill`, so it cannot veto or cap
+confidence), capped at `TENTATIVE_SKILL_INJECTION_MAX` per prompt.
 
 ---
 

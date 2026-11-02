@@ -7,7 +7,7 @@
  * matching skills — they do not get every skill dumped into the prompt.
  */
 
-import { LoggedTrade, MemoryFile, TradeOutcome } from '../../types';
+import { DiagnosisSkillEvidence, LoggedTrade, MemoryFile, TradeOutcome } from '../../types';
 import {
     appendDiaryEntry,
     createMemoryFileUnlocked,
@@ -58,6 +58,8 @@ import {
     clearWorthGateAttempt,
 } from '../../utils/skillDrafts';
 import { tradeAdmitsTechnicalStrategyRule } from '../../utils/rootCause';
+import { tentativeDemotion } from '../tracking/diagnosisSkillCluster';
+import { draftTriggerKey, isDraftTombstoned } from '../../utils/skillDrafts';
 import { familiesRelate } from '../../utils/patternMatch';
 import { recordMemoryInjection, skillAdherenceForRun } from './MemoryInjectionService';
 import { sanitizePredicate } from '../analysis/skillPredicate';
@@ -389,7 +391,10 @@ export interface SkillMeta {
      *  - `'starter-library'`  — not stored. A `prior: 'book'` row is approved while
      *    the explicit Settings toggle is on; it is vetted literature, not model
      *    output, and the toggle is the single thing that says so. */
-    approvedBy?: 'supervisor' | 'human' | 'grandfathered';
+    approvedBy?: 'supervisor' | 'human' | 'grandfathered' | 'tentative';
+    /** Why a tentative skill stopped injecting (auto-demotion). One line,
+     *  written beside `suspendedAt`; the skill stays readable and editable. */
+    demotion?: string;
     /** ISO stamp beside `approvedBy` — "approved on", so a reviewer can see how old
      *  the yes is. Set by the same writers; cleared with it. */
     approvedAt?: string;
@@ -716,7 +721,8 @@ export function parseSkillMarkdown(content: string): SkillMeta | null {
                 ...(typeof parsed.predicate === 'string' ? { predicate: parsed.predicate } : {}),
                 ...(typeof parsed.description === 'string' ? { description: parsed.description } : {}),
                 body: typeof parsed.body === 'string' ? parsed.body : undefined,
-                approvedBy: parsed.approvedBy === 'human' || parsed.approvedBy === 'grandfathered' || parsed.approvedBy === 'supervisor'
+                approvedBy: parsed.approvedBy === 'human' || parsed.approvedBy === 'grandfathered'
+                    || parsed.approvedBy === 'supervisor' || parsed.approvedBy === 'tentative'
                     ? parsed.approvedBy : undefined,
                 approvedAt: typeof parsed.approvedAt === 'string' ? parsed.approvedAt : undefined,
             };
@@ -792,8 +798,10 @@ export function parseSkillMarkdown(content: string): SkillMeta | null {
         reason: pick('reason')?.slice(0, 600),
         approvedBy: pick('approvedBy') === 'supervisor'
             ? 'supervisor' : pick('approvedBy') === 'human'
-                ? 'human' : pick('approvedBy') === 'grandfathered' ? 'grandfathered' : undefined,
+                ? 'human' : pick('approvedBy') === 'grandfathered'
+                    ? 'grandfathered' : pick('approvedBy') === 'tentative' ? 'tentative' : undefined,
         approvedAt: pick('approvedAt') || undefined,
+        demotion: pick('demotion')?.slice(0, 400),
         originBotId: pick('originBotId')?.slice(0, 40),
         originBotName: pick('originBotName')?.slice(0, 40),
         direction: pick('direction'),
@@ -1071,6 +1079,22 @@ export const isApprovedSkill = (meta: Pick<SkillMeta, 'approvedBy' | 'prior'>): 
 };
 
 /**
+ * THE INJECTION GATE — approval OR a live tentative skill.
+ *
+ * A tentative skill is a rule the post-mortem loop earned from independent
+ * outcomes before a human confirmed it. The owner's ruling (2026-11-02) is
+ * that it may be injected as LABELLED CONTEXT without a click, and the trader
+ * can edit or disable it. It is deliberately NOT `isApprovedSkill`: the
+ * enforcement paths (confidence caps, the hard avoid veto) keep reading the
+ * approval gate, so a tentative rule can inform a read but can never veto a
+ * trade. The global switch turns the whole tentative channel off.
+ */
+export const isInjectableSkill = (meta: Pick<SkillMeta, 'approvedBy' | 'prior'>): boolean =>
+    isApprovedSkill(meta)
+    || (meta.approvedBy === 'tentative'
+        && getHarnessSettings().tentativeSkillInjectionEnabled !== false);
+
+/**
  * Activate the skill the library already holds under this trigger.
  *
  * A duplicate is not an approval. The ingest path refuses a second skill with the
@@ -1125,6 +1149,7 @@ export const skillIndexRow = (file: { name: string }, meta: SkillMeta): SkillInd
     suspended: Boolean(meta.suspendedAt),
     disabled: Boolean(meta.disabledByUser),
     approved: isApprovedSkill(meta),
+    tentative: meta.approvedBy === 'tentative',
     lastEvidenceAt: meta.lastEvidenceAt,
 });
 
@@ -1135,6 +1160,11 @@ export const skillIndexRow = (file: { name: string }, meta: SkillMeta): SkillInd
 export const skillIndexRows = (): SkillIndexRow[] =>
     listSkills()
         .filter(({ meta }) => skillRunsHere(meta.compatibility, currentSkillRuntime(), DESK_TOOL_NAMES))
+        // The global tentative channel switch: off means a tentative row is
+        // not even NAMED to a seat, so the index cannot promise a rule the
+        // injector would refuse.
+        .filter(({ meta }) => meta.approvedBy !== 'tentative'
+            || getHarnessSettings().tentativeSkillInjectionEnabled !== false)
         .map(({ file, meta }) => skillIndexRow(file, meta));
 
 /** The runtime the skill library is being read from — the same three-way
@@ -1342,6 +1372,9 @@ export const setSkillStatus = async (fileId: string, status: SkillStatus, userna
     // Same reasoning for the user's own off-switch: a manual status change is
     // the trader saying "use this one", so it must also lift their veto.
     if (status !== 'retired') meta.disabledByUser = undefined;
+    // And the auto-demotion reason travels with the suspension; a manual
+    // reactivation is the trader overriding it.
+    if (status !== 'retired') meta.demotion = undefined;
     stampStatusTransition(meta, status, status === 'retired' ? 'user-veto' : 'manual');
     meta.status = status;
     await updateMemoryFileUnlocked(fileId, {
@@ -1495,6 +1528,7 @@ export const serializeSkill = (meta: SkillMeta, title: string): string => {
             ]
             : []),
         ...(meta.suspendedAt ? [`suspendedAt: ${yamlString(meta.suspendedAt)}`] : []),
+        ...(meta.demotion ? [`demotion: ${yamlString(meta.demotion)}`] : []),
         ...(meta.disabledByUser ? ['disabledByUser: true'] : []),
         ...(meta.manualOnly ? ['manualOnly: true'] : []),
         `modified: ${yamlString(meta.modifiedAt ?? new Date().toISOString())}`,
@@ -3329,6 +3363,141 @@ export const ingestCraftedSkillFromDraft = (
     approvedBy?: 'supervisor' | 'human',
 ): Promise<SkillIngestResult> =>
     withNotebookWriteLock(() => ingestCraftedSkillFromDraftUnlocked(crafted, coin, username, whyAccepted, approvedBy));
+
+/**
+ * Mint or reinforce a TENTATIVE skill from independent diagnosis outcomes.
+ *
+ * No human approval is required (owner ruling, 2026-11-02). The skill is
+ * written with `approvedBy: 'tentative'`, which `isInjectableSkill` accepts for
+ * labelled CONTEXT injection but `isApprovedSkill` refuses, so it cannot veto
+ * or cap confidence. An existing exact-trigger/covering skill is REINFORCED
+ * instead of duplicated; a tentative skill that falls under the auto-demotion
+ * floor is suspended in the same write.
+ */
+const ingestTentativeSkillFromEvidenceUnlocked = async (
+    crafted: CraftedSkill,
+    evidence: readonly DiagnosisSkillEvidence[],
+    username: string,
+): Promise<SkillIngestResult> => {
+    if (evidence.length === 0) return { created: false, reason: 'duplicate', slug: '' };
+    await ensureHarnessFoldersUnlocked(username);
+    const folder = getMemoryFiles().folders.find(f => f.name === 'skills');
+    if (!folder) return { created: false, reason: 'no-skills-folder' };
+    const gate = craftedBodyGate(crafted, `tentative "${crafted.name || crafted.kind}"`);
+    if (gate.overHard) return { created: false, reason: 'over-hard-cap', detail: gate.message ?? 'body over the hard cap' };
+
+    const setup = evidence[0].setup;
+    // A trigger the trader already rejected stays rejected through the same
+    // cooldown the draft path honours. Three outcomes are evidence, not
+    // permission to override a human "no".
+    if (isDraftTombstoned(draftTriggerKey(setup.coin, crafted), username)) {
+        return { created: false, reason: 'duplicate', slug: '' };
+    }
+    const all = getMemoryFiles().files
+        .filter(isSkillFile)
+        .map(file => ({ file, meta: parseSkillMarkdown(file.content) }))
+        .filter((entry): entry is { file: MemoryFile; meta: SkillMeta } => Boolean(entry.meta));
+    const match = all.find(({ meta }) => meta.when?.toLowerCase() === crafted.when.toLowerCase())
+        ?? all.find(({ meta }) => meta.status !== 'retired' && skillStrictlyMatchesSetup(meta, setup));
+
+    const now = new Date().toISOString();
+    if (match) {
+        if (match.meta.status === 'retired') {
+            return { created: false, reason: 'duplicate', slug: match.file.name };
+        }
+        const meta = match.meta;
+        const seen = new Set(meta.tradeIds);
+        for (const item of evidence) {
+            if (seen.has(item.tradeId)) continue;
+            countTradeOutcome(meta, item.outcome === 'win', item.grossR, {
+                netR: item.netR,
+                stopDistancePct: item.stopDistancePct,
+            });
+            seen.add(item.tradeId);
+            meta.tradeIds.push(item.tradeId);
+            if (!meta.lastEvidenceAt || item.at > meta.lastEvidenceAt) meta.lastEvidenceAt = item.at;
+        }
+        const demotion = tentativeDemotion(meta);
+        if (demotion) {
+            // Suspension, NOT withdrawal: the trader's one-click reactivation
+            // clears `suspendedAt` and the tentative channel resumes.
+            meta.demotion = demotion;
+            meta.suspendedAt = now;
+        }
+        meta.modifiedAt = now;
+        meta.status = deriveStatus(meta);
+        await updateMemoryFileUnlocked(match.file.id, {
+            content: serializeSkill(meta, titleFromMeta(meta)),
+            enabled: skillEnabledFlag(meta),
+        }, username);
+        return { created: false, reason: 'duplicate', slug: match.file.name };
+    }
+
+    const description = (crafted.description || defaultDescription(crafted) || '').trim().slice(0, 1024) || undefined;
+    const meta: SkillMeta = {
+        status: 'candidate',
+        kind: crafted.kind,
+        ...(setup.coin ? { coin: setup.coin } : {}),
+        ...(setup.direction ? { direction: setup.direction } : {}),
+        ...(setup.family ? { family: setup.family } : {}),
+        ...(setup.regime ? { regime: setup.regime } : {}),
+        ...(description ? { description } : {}),
+        wins: 0,
+        losses: 0,
+        consecutiveLosses: 0,
+        tradeIds: [],
+        approvedBy: 'tentative',
+        approvedAt: now,
+        ...(crafted.reason?.trim() ? { reason: crafted.reason.trim().slice(0, 600) } : {}),
+        ...(crafted.timeframe ? { timeframe: crafted.timeframe } : {}),
+        ...(crafted.source ? { source: crafted.source } : {}),
+        when: crafted.when,
+        predicate: sanitizePredicate(crafted.predicate),
+        prediction: crafted.prediction ?? defaultPrediction({
+            coin: setup.coin,
+            family: setup.family,
+            ...(setup.regime ? { regime: setup.regime } : {}),
+        }),
+        body: gate.body,
+    };
+    for (const item of evidence) {
+        if (meta.tradeIds.includes(item.tradeId)) continue;
+        countTradeOutcome(meta, item.outcome === 'win', item.grossR, {
+            netR: item.netR,
+            stopDistancePct: item.stopDistancePct,
+        });
+        meta.tradeIds.push(item.tradeId);
+        if (!meta.lastEvidenceAt || item.at > meta.lastEvidenceAt) meta.lastEvidenceAt = item.at;
+    }
+    const demotion = tentativeDemotion(meta);
+    if (demotion) {
+        meta.demotion = demotion;
+        meta.suspendedAt = now;
+    }
+    meta.modifiedAt = now;
+    meta.status = deriveStatus(meta);
+
+    const slug = slugifyName(crafted.name) || slugifyName([setup.coin, crafted.kind].filter(Boolean).join(' ')) || 'post-mortem-skill';
+    const taken = new Set(getMemoryFiles().files.filter(f => f.folderId === folder.id).map(f => f.name.toLowerCase()));
+    let fileName = `${slug}.md`;
+    for (let n = 2; taken.has(fileName.toLowerCase()); n += 1) fileName = `${slug}-${n}.md`;
+    await createMemoryFileUnlocked(
+        folder.id,
+        fileName,
+        serializeSkill(meta, crafted.name || titleFromMeta(meta)),
+        username,
+        true,
+    );
+    return { created: true, slug: fileName };
+};
+
+/** Serialized public API — the post-mortem learner is its one caller. */
+export const ingestTentativeSkillFromEvidence = (
+    crafted: CraftedSkill,
+    evidence: readonly DiagnosisSkillEvidence[],
+    username: string,
+): Promise<SkillIngestResult> =>
+    withNotebookWriteLock(() => ingestTentativeSkillFromEvidenceUnlocked(crafted, evidence, username));
 
 /** Record which agent bot a skill came from (WS-3.3). Callers must invoke this
  *  only for files a bot's own write-back newly created — a chart-AI skill that

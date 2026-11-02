@@ -846,16 +846,20 @@ export const areIndependentOutcomes = (
 /** A greedy independent set, oldest first. It is a threshold, not an
  *  optimisation: the first outcome wins and a later overlapping one is
  *  skipped. */
-export const countIndependentOutcomes = (
+export const independentOutcomes = (
     windows: readonly TrackedOutcomeWindow[],
-): number => {
+): TrackedOutcomeWindow[] => {
     const sorted = [...windows].sort((a, b) => a.openedAt - b.openedAt);
     const kept: TrackedOutcomeWindow[] = [];
     for (const window of sorted) {
         if (kept.every(other => areIndependentOutcomes(other, window))) kept.push(window);
     }
-    return kept.length;
+    return kept;
 };
+
+export const countIndependentOutcomes = (
+    windows: readonly TrackedOutcomeWindow[],
+): number => independentOutcomes(windows).length;
 
 // ─── Diagnosis queue ───────────────────────────────────────────────────────
 

@@ -62,6 +62,9 @@
  *  29. post-mortem diagnosis — the tape/journal outcome is authoritative, the
  *      packet prints its facts and absences, a refusal is a stored audit row,
  *      and the rendered note is still readable by the existing lesson parser
+ *  30. tentative skills — three independent outcomes are required, the
+ *      auto-demotion floor is real, and the skills index labels + caps the
+ *      tentative channel without letting it enforce
  *
  * Plain node, no vitest, no jsdom, no network: each module is bundled from
  * TypeScript with esbuild (already a vite dependency) into a temp file and
@@ -2412,6 +2415,135 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
         JSON.stringify(clauses));
 })();
 
+// ─── 34. tentative skills — independence, demotion, labelled index ─────────
+(() => {
+    const cluster = loadModule('src/services/tracking/diagnosisSkillCluster.ts');
+    const tracker = loadModule('src/services/tracking/positionTracker.ts');
+    const chat = loadModule('src/services/trade/tradeChatContext.ts');
+    const T = (day) => Date.UTC(2026, 0, day, 0, 0);
+    const position = (id, day, over = {}) => ({
+        id, source: 'signal', sourceId: id, symbol: 'BTCUSDT', direction: 'long',
+        entry: 100, stop: 95, targets: [110], status: 'closed',
+        openedAt: T(day), entryBarTime: T(day), closedAt: T(day) + 3600_000,
+        entryContext: { thesis: 'breakout above the shelf', evidenceRefs: [], family: 'breakout' },
+        exit: {
+            reason: 'target', price: 110, at: T(day) + 3600_000, sameCandle: 'single-level',
+            ambiguous: false, gapAtOpen: false, barsRead: 10,
+            realizedR: 2, costR: 0.02, netR: 1.98, slippageModeled: true,
+        },
+        mfeR: 2.2, maeR: -0.5, mfePrice: 111, maePrice: 97.5, mfeAt: T(day), maeAt: T(day),
+        timeline: [], gaps: [], tapeCoversWindow: true,
+        timelineDownsampled: false, timelinePointsDropped: 0,
+        context: [], contextDownsampled: false, version: 1,
+        ...over,
+    });
+    const diagnosis = (tradeId, outcome, over = {}) => ({
+        id: `diag-${tradeId}`, tradeId, source: 'signal', outcome,
+        whatHappened: 'Price swept the shelf and ran to the target.',
+        rootCause: 'The entry caught the reclaim, not the first break.',
+        whatShouldHaveBeenDone: 'Wait for the reclaim.',
+        primaryChange: 'entry',
+        lesson: 'Wait for the reclaim before entering a shelf break.',
+        when: 'price breaks a shelf and reclaims it on the close',
+        action: 'enter on the reclaim, not the break',
+        confidence: 70, evidenceRefs: [], evidenceCount: 1,
+        createdAt: new Date(T(1) + 3600_000).toISOString(),
+        tentative: false,
+        ...over,
+    });
+    const positions = [position('p1', 1), position('p2', 2), position('p3', 3)];
+    const diagnoses = [
+        diagnosis('p1', 'win'),
+        diagnosis('p2', 'loss'),
+        diagnosis('p3', 'loss'),
+    ];
+    const current = diagnoses[2];
+    const currentPosition = positions[2];
+    const result = cluster.collectClusterEvidence(diagnoses, positions, current, currentPosition);
+    ok('tentative: three independent outcomes on one setup are ready',
+        result.ready && result.independentCount === 3 && result.evidence.length === 3,
+        JSON.stringify({ ready: result.ready, n: result.independentCount }));
+
+    const sameDay = position('p4', 1, { openedAt: T(1) + 2 * 3600_000, entryBarTime: T(1) + 2 * 3600_000, closedAt: T(1) + 3 * 3600_000 });
+    const sameDayDiag = diagnosis('p4', 'win', { createdAt: new Date(T(1) + 3 * 3600_000).toISOString() });
+    const sameDayResult = cluster.collectClusterEvidence(
+        [...diagnoses, sameDayDiag],
+        [...positions, sameDay],
+        sameDayDiag,
+        sameDay,
+    );
+    ok('tentative: the same setup on the same day is not independent',
+        sameDayResult.independentCount === 3 && sameDayResult.ready,
+        JSON.stringify({ n: sameDayResult.independentCount }));
+
+    const tentative = cluster.collectClusterEvidence(
+        [...diagnoses, diagnosis('p5', 'win', { tentative: true, tradeId: 'p5' })],
+        [...positions, position('p5', 4)],
+        current,
+        currentPosition,
+    );
+    ok('tentative: a noisy diagnosis never counts toward a skill',
+        tentative.independentCount === 3);
+
+    const refused = cluster.collectClusterEvidence(
+        [...diagnoses, diagnosis('p6', 'win', { tradeId: 'p6', refusal: 'thin-tape' })],
+        [...positions, position('p6', 5)],
+        current,
+        currentPosition,
+    );
+    ok('tentative: a refused diagnosis never counts toward a skill',
+        refused.independentCount === 3);
+
+    const craft = cluster.buildTentativeCraft(current, result.evidence, currentPosition);
+    ok('tentative: a loss cluster mints an AVOID skill from the latest lesson',
+        craft?.kind === 'avoid'
+        && craft.when.includes('reclaims it on the close')
+        && craft.lesson === undefined
+        && craft.description.includes('Tentative')
+        && craft.source === 'post-mortem'
+        && craft.prediction !== undefined,
+        JSON.stringify(craft && { kind: craft.kind, name: craft.name }));
+
+    ok('tentative: auto-demotion needs a sample and a real underperformance',
+        cluster.tentativeDemotion({ approvedBy: 'tentative', wins: 1, losses: 3 }) === null
+        && cluster.tentativeDemotion({ approvedBy: 'tentative', wins: 1, losses: 4 }) !== null
+        && cluster.tentativeDemotion({ approvedBy: 'tentative', wins: 2, losses: 3 }) === null // exactly the 40% floor
+        && cluster.tentativeDemotion({ approvedBy: 'tentative', wins: 2, losses: 2 }) === null
+        && cluster.tentativeDemotion({ approvedBy: 'tentative', wins: 1, losses: 5 }) !== null
+        && cluster.tentativeDemotion({ approvedBy: 'human', wins: 0, losses: 9 }) === null,
+        JSON.stringify({ oneOfFive: cluster.tentativeDemotion({ approvedBy: 'tentative', wins: 1, losses: 4 }) }));
+
+    const row = (slug, over = {}) => ({
+        slug, status: 'candidate', kind: 'avoid',
+        description: `Use when ${slug}`, when: `when ${slug}`,
+        approved: false, tentative: true,
+        ...over,
+    });
+    ok('tentative: the index admits a tentative row but not an unapproved plain row',
+        chat.isIndexableSkill(row('tent-1')) === true
+        && chat.isIndexableSkill(row('plain', { tentative: false })) === false);
+    const index = chat.buildSkillsIndexForPrompt([
+        row('tent-1'), row('tent-2'), row('tent-3'), row('tent-4'),
+        row('confirmed', { status: 'confirmed', approved: true, tentative: false }),
+    ]);
+    ok('tentative: the index labels the channel and caps its lines',
+        index.includes('Tentative skills')
+        && index.includes('CONTEXT ONLY')
+        && index.includes('tent-1') && index.includes('tent-2')
+        && !index.includes('tent-3')
+        && index.includes('2 more tentative'),
+        index.slice(-300));
+
+    const windows = [
+        { id: 'a', setupKey: 'breakout', openedAt: T(1), closedAt: T(1) + 3600_000 },
+        { id: 'b', setupKey: 'breakout', openedAt: T(2), closedAt: T(2) + 3600_000 },
+        { id: 'c', setupKey: 'breakout', openedAt: T(3), closedAt: T(3) + 3600_000 },
+    ];
+    ok('tentative: the independence helper returns the set it counted',
+        tracker.independentOutcomes(windows).length === 3
+        && tracker.countIndependentOutcomes(windows) === 3);
+})();
+
 // ─── report ────────────────────────────────────────────────────────────────
 console.log(`contracts: ${passed} passed, ${failures.length} failed`);
 for (const f of failures) console.log(`  FAIL ${f}`);
@@ -2419,4 +2551,4 @@ if (failures.length) {
     console.error('CONTRACT CHECK FAIL — a pinned contract broke; fix the module, not this file.');
     process.exit(1);
 }
-console.log('CONTRACT CHECK OK — risk/reward math, retry classification, harness marks, notebook pressure, tool-pair compaction, AI-boundary coercion, the skill/memory authoring screens, the shared index budget, both policy tables (self-modification, goal tool narrowing), the desk tool budget, the skill outcome correction, the startup call gates, the insight store pin, the signal loop (resolver order, costs, ledger, venue data), the chart tape study, the signal accuracy fold, the skill format, the journal-rules store, the post-mortem clause, the memory page export, the tracked position (signal adoption, ledger-wins resolution, exit order, gaps, excursions, capped path, independence, diagnosis queue), journal tracking (pending registration, settlement payload, plan-preserving merge, orphan handling) and the post-mortem diagnosis (authoritative outcome, packet facts/absences, refusal audit, journal-note parse) all hold.');
+console.log('CONTRACT CHECK OK — risk/reward math, retry classification, harness marks, notebook pressure, tool-pair compaction, AI-boundary coercion, the skill/memory authoring screens, the shared index budget, both policy tables (self-modification, goal tool narrowing), the desk tool budget, the skill outcome correction, the startup call gates, the insight store pin, the signal loop (resolver order, costs, ledger, venue data), the chart tape study, the signal accuracy fold, the skill format, the journal-rules store, the post-mortem clause, the memory page export, the tracked position (signal adoption, ledger-wins resolution, exit order, gaps, excursions, capped path, independence, diagnosis queue), journal tracking (pending registration, settlement payload, plan-preserving merge, orphan handling), the post-mortem diagnosis (authoritative outcome, packet facts/absences, refusal audit, journal-note parse) and the tentative skill path (three independent outcomes, the auto-demotion floor, the labelled + capped index) all hold.');

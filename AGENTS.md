@@ -118,7 +118,13 @@ docs/                             the reading path and the plan (see docs/README
 7. **An AI row is claimed by identity (`Message.botId`), never by provider+model.**
 8. **Cite docs by symbol:** `` `src/App.tsx` › `App` ``, never a line number.
 9. **The desktop shell is not type-checked.** Run `node --check` after editing `electron/*.cjs`.
-10. **Writing a ref during render is deliberate here.** See
+10. **A tentative skill is context, not enforcement.** The post-mortem loop may mint one from three
+    independent outcomes (`learnFromDiagnosis`, `services/tracking/diagnosisSkillLearning.ts`). It
+    reaches a prompt through `isInjectableSkill`, **never** `isApprovedSkill`; it is labelled
+    `TENTATIVE`, capped at `TENTATIVE_SKILL_INJECTION_MAX` (2) per prompt, switched by
+    `tentativeSkillInjectionEnabled`, and auto-demoted under 40% after 5 tracked outcomes. Do not
+    add a second injection gate, and do not let it veto or cap confidence.
+11. **Writing a ref during render is deliberate here.** See
     [conventions](docs/engineering/conventions.md#two-idioms-that-look-like-mistakes) before
     "fixing" one.
 

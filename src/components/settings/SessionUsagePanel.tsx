@@ -241,6 +241,27 @@ export const HarnessControls: React.FC = () => {
                 </span>
             </label>
             <label className="block text-ui-dense text-zinc-400">
+                Tentative skills
+                <span className="mt-0.5 block text-ui-2xs leading-4 text-zinc-500">
+                    Skills the post-mortem loop earned from independent outcomes but
+                    nothing has confirmed yet. On: injected as labelled context only —
+                    they never veto or cap confidence. Off: hidden from prompts and the
+                    skills index. Any one can still be edited or retired in Learning.
+                </span>
+                <span className="mt-1 flex items-center gap-2">
+                    <input
+                        type="checkbox"
+                        checked={settings.tentativeSkillInjectionEnabled !== false}
+                        onChange={e => persist({ tentativeSkillInjectionEnabled: e.target.checked })}
+                        data-testid="harness-tentative-skills"
+                        className="h-3.5 w-3.5 accent-cyan-400"
+                    />
+                    <span className="text-ui-dense text-zinc-300">
+                        {settings.tentativeSkillInjectionEnabled !== false ? 'Injected as context' : 'Withdrawn'}
+                    </span>
+                </span>
+            </label>
+            <label className="block text-ui-dense text-zinc-400">
                 Sensitive memories
                 <span className="mt-0.5 block text-ui-2xs leading-4 text-zinc-500">
                     Whether facts about health, finances or identity may be stored at all.

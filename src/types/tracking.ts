@@ -274,6 +274,24 @@ export interface TrackedOutcomeWindow {
     closedAt: number;
 }
 
+/** One independent outcome counted toward a tentative skill. The counts are
+ *  already converted to the skill ledger's units; the skill writer must not
+ *  recompute them from a different price. */
+export interface DiagnosisSkillEvidence {
+    tradeId: string;
+    outcome: 'win' | 'loss';
+    grossR?: number;
+    netR?: number;
+    stopDistancePct?: number;
+    at: string;
+    setup: {
+        coin?: string;
+        direction?: 'Long' | 'Short';
+        family?: string;
+        regime?: string;
+    };
+}
+
 /** Hard per-position cap on the stored path. Decisive bars are retained
  *  first; the rest is an even sample. */
 export const TRACKED_TIMELINE_MAX_POINTS = 240;

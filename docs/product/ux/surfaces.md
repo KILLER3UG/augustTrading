@@ -66,9 +66,12 @@ Three regions: a conversation rail, a main pane, and one pill composer.
 Tabs in the loop's own order:
 
 1. **Approvals** — everything waiting on a human: action permissions, skill drafts, proposals,
-   memory amendments. The default tab.
+   memory amendments. The default tab. A **tentative** post-mortem skill does not wait here — it
+   injects as labelled context and can be edited or retired in Skills.
 2. **Skills** — the library the desk learns from; moved here from Settings so the library and the
-   notebook sit together.
+   notebook sit together. Skills earned from three independent tracked outcomes carry a
+   **tentative · context only** mark: they inform a read, never veto or cap confidence, and
+   auto-demote under 40% after five outcomes. The global switch is Settings → tentative skills.
 3. **Memory** — the notebook browser, including per-topic detail docks.
 4. **Health** — whether the notebook is sound: memory health, pressure, versions, diagnostics.
 

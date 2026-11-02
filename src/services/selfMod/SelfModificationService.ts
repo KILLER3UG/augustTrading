@@ -145,6 +145,7 @@ const BLOCKED_KNOB_REASONS: Record<string, string> = {
     guardPostLossCooldownMin: 'the post-loss cooldown is a risk gate',
     outcomeSettlement: 'how outcomes are recorded is the trader\'s',
     skillEnforcementEnabled: 'the veto off-switch is the trader\'s',
+    tentativeSkillInjectionEnabled: 'the tentative-injection switch is the trader\'s',
     starterLibraryEnabled: 'the starter shelf approval is the trader\'s',
     autoDraftingEnabled: 'whether the loop drafts on its own is the trader\'s',
     sensitiveMemoryEnabled: 'the sensitive-memory privacy switch is the trader\'s',

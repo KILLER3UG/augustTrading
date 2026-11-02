@@ -46,19 +46,47 @@ Seven sources mint skill drafts. `gateEvidenceBackedDraft` and `deterministicDra
 
 Any gate failure falls back to the deterministic tier. The human inbox remains the backstop.
 
-### 4. A human approves
+### 3b. A tentative skill is earned from independent post-mortems
+
+The tracked-position loop does not wait for the draft inbox. `learnFromDiagnosis`
+(`services/tracking/diagnosisSkillLearning.ts`) reads the diagnosis store and asks the pure
+`collectClusterEvidence` (`services/tracking/diagnosisSkillCluster.ts`) whether **three
+independent outcomes** agree on the same setup and the same correction kind (`primaryChange`).
+Independence is `areIndependentOutcomes` (`services/tracking/positionTracker.ts`): different
+trades, non-overlapping holding windows, and not the same setup on the same PHT day. A diagnosis
+that is itself tentative (thin tape, a gap, an ambiguous same-candle exit) or a breakeven never
+counts.
+
+At three, `ingestTentativeSkillFromEvidence` (`services/learning/SkillMemoryService.ts`) writes a
+skill with `approvedBy: 'tentative'` (or reinforces the live skill that already covers the setup).
+It is injected as **labelled context** through `isInjectableSkill` — **never** enforcement:
+`isApprovedSkill` still refuses it, so a tentative rule can inform a read but cannot veto or cap
+confidence. The ceiling is `TENTATIVE_SKILL_INJECTION_MAX` (2 per prompt), the global switch is
+`tentativeSkillInjectionEnabled` (Settings), and a tentative skill below 40% over at least five
+tracked outcomes is auto-demoted (`tentativeDemotion`, same module) with its reason in `demotion`.
+The trader can edit or retire any tentative skill.
+
+### 4. A human approves the drafts that are not evidence-backed
 
 `approveSkillDraft` (`services/learning/skillApproval.ts`) is the **only** place a pending draft
 becomes a live skill. It reads the library back after the write and lets that answer decide what the
 UI says — a name collision or a refused ingest leaves the draft in the inbox and tells the trader
 why. It never deletes the draft before the write is proven.
 
+The post-mortem channel above is the deliberate exception (owner ruling, 2026-11-02): a rule the
+tracker earned from independent outcomes is injected as a tentative context skill without a click,
+and the human keeps edit/disable/retire control. Drafts from sources with no scored outcomes still
+wait here.
+
 ### 5. Retrieval and injection
 
 `assemblePipelineMemoryContext` (`hooks/analysisPipeline/memoryContext.ts`) asks
 `getMemoryFilesContext` (`services/learning/MemoryRetrievalService.ts`) for what THIS setup should
 see: matched skills and doctrine under per-stage budgets, bot memory under its own cap, similar
-setups, regime weighting, loss-priming rows.
+setups, regime weighting, loss-priming rows. The retrieval admits a skill through
+`isInjectableSkill` — approval **or** a live tentative skill — while enforcement keeps reading
+`isApprovedSkill`. A tentative block is labelled `TENTATIVE — context only, not enforced`, and
+`rankedMatchedSkills` caps the tentative candidate pool at `TENTATIVE_SKILL_INJECTION_MAX`.
 
 `recordMemoryInjection` (`services/learning/MemoryInjectionService.ts`) logs what actually made it
 into the prompt. A skill that merely matched but was budgeted out is not credited — "skills appear
@@ -116,7 +144,9 @@ sweep — a pass runs when something changes or when the panel says "Run now".
 | retrieval → injection ledger | closed |
 | attribution | wired; runs only on settled trades |
 | eval + hygiene | wired; idle by data |
-| **the outcome corpus** | **the bottleneck** — settlement is human-confirmed, so there are few settled rows to learn from |
+| **tracked position → diagnosis** | **closed 2026-11-02** — signals and tracked journal trades are followed to the tape, diagnosed with one structured call, and their outcomes are stored with MFE/MAE and a path |
+| **diagnosis → tentative skill** | **closed 2026-11-02** — three independent outcomes mint or reinforce a tentative skill; it is injected as labelled context and auto-demoted under the floor |
+| **the outcome corpus** | **still the bottleneck for human-gated drafts** — settlement is human-confirmed, so there are few settled rows there; the tracked loop does not wait for it |
 | **insight consolidation** | **not wired** — `insightKnowledgeBase` has no producer; a scheduled prune would walk a list nobody grows (`memoryHygiene.ts` says so in its own header) |
 | **cheap-to-expensive retrieval** | open — the retrieved context is still large by default; see the plan register |
 
