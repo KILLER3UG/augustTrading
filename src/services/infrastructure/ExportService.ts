@@ -475,7 +475,7 @@ const EXPORT_KEY_CAPS: ReadonlyArray<{ prefix: string; bytes: number }> = [
     // position and 100 closed positions; 8 MiB carries a full store without
     // truncating, while still bounding a runaway backup.
     { prefix: 'tracked_positions_v1', bytes: 8 * 1024 * 1024 },
-    { prefix: 'tracked_diagnoses_v1', bytes: 2 * 1024 * 1024 },
+    { prefix: 'tracked_diagnoses_v1', bytes: 8 * 1024 * 1024 },
     { prefix: 'tracked_diagnosis_queue_v1', bytes: 256 * 1024 },
 ];
 

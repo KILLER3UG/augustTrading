@@ -71,8 +71,9 @@ export const MAX_GAP_MARKERS = 20;
 
 export interface AdvanceInput {
     position: TrackedPosition;
-    /** Closed 5m bars, ascending. MUST start at or before the entry window;
-     *  `tapeCoversWindow` is the check. */
+    /** Closed 5m bars, ascending, covering the WHOLE tracked window (entry
+     *  through the current closed bar). The path and excursions are rebuilt
+     *  from them; a partial window would shrink the path. */
     bars: readonly Kline[];
     /** 1m bars inside the deciding bar, only when the coarse bar touched both
      *  levels. A complete series is required to order them. */
@@ -764,7 +765,9 @@ export const closePositionManually = (
     price: number,
     at: number = Date.now(),
 ): TrackedPosition => {
-    if (isTerminal(position) || !finite(price) || price <= 0) return position;
+    // A pending entry has no position to close; closing it at a price would
+    // invent a fill the tape never gave. The caller cancels it instead.
+    if (position.status !== 'open' || !finite(price) || price <= 0) return position;
     const grossR = realizedRFromPrices(position.entry, position.stop, price, isLong(position));
     const signalCost = position.source === 'signal' ? roundTripCostR(position) : null;
     const journalCost = grossR !== null && position.source === 'journal'

@@ -248,11 +248,8 @@ export const TRACKED_TIMELINE_MAX_POINTS = 240;
 /** Hard per-position cap on higher-timeframe context readings. */
 export const TRACKED_CONTEXT_MAX_POINTS = 60;
 
-/** Closed positions kept on disk; open positions are never pruned. */
+/** Closed positions kept on disk; open positions are never pruned. The
+ *  diagnoses are the audit trail and are NOT count-pruned. */
 export const TRACKED_MAX_CLOSED_POSITIONS = 100;
-
-/** Diagnoses kept on disk. The queue is bounded separately and never drops a
- *  pending item. */
-export const TRACKED_MAX_DIAGNOSES = 500;
 
 export const TRACKED_STORE_VERSION = 1 as const;

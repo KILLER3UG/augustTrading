@@ -29,10 +29,7 @@ import type {
     TrackedDiagnosis,
     TrackedPosition,
 } from '../../types/tracking';
-import {
-    TRACKED_MAX_CLOSED_POSITIONS,
-    TRACKED_MAX_DIAGNOSES,
-} from '../../types/tracking';
+import { TRACKED_MAX_CLOSED_POSITIONS } from '../../types/tracking';
 import { parseTrackedDiagnosis, parseTrackedPosition } from '../../schemas/tracking';
 import { readStore, writeStore, removeStore } from '../infrastructure/storeBackend';
 import { isNativePlatform } from '../infrastructure/SqliteService';
@@ -194,14 +191,6 @@ export const prunePositions = (positions: readonly TrackedPosition[]): TrackedPo
     return all.filter(p => !isTerminal(p) || keep.has(p.id));
 };
 
-const pruneDiagnoses = (diagnoses: readonly TrackedDiagnosis[]): TrackedDiagnosis[] => {
-    const byId = new Map<string, TrackedDiagnosis>();
-    for (const d of diagnoses) byId.set(d.id, d);
-    return [...byId.values()]
-        .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))
-        .slice(0, TRACKED_MAX_DIAGNOSES);
-};
-
 export const readTrackedPositions = async (
     username: string,
 ): Promise<TrackingRead<TrackedPosition[]>> =>
@@ -266,7 +255,9 @@ export const saveDiagnosis = async (
         if (!read.ok) return { ok: false as const, error: read.error };
         const next = read.value.filter(d => d.id !== diagnosis.id);
         next.push(diagnosis);
-        return writeRaw('diagnoses', username, JSON.stringify(pruneDiagnoses(next)));
+        // The diagnosis is the audit record; it is never count-pruned. It is
+        // small (prose, not a price path), and the skill provenance points here.
+        return writeRaw('diagnoses', username, JSON.stringify(next));
     });
 };
 

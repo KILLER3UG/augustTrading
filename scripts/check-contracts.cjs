@@ -1839,6 +1839,8 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
         && near(manual.exit?.realizedR, 1)
         && manual.exit?.netR < 1,
         JSON.stringify(manual.exit));
+    ok('tracker: a pending entry cannot be closed at a price it never filled',
+        pt.closePositionManually(base(), 105).status === 'pending_entry');
 
     // Resume/idempotency: a terminal position is not re-resolved.
     const again = run(win.position, winBars, T0 + 3 * STEP);
