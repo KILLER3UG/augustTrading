@@ -1746,6 +1746,62 @@ async function main() {
             await navTo('Analyze');
             await sleep(700);
 
+            // The rail is an adjustable column and carries its own collapse
+            // control. Both are drags/clicks no static assertion can see: a
+            // handle with no pointer listener and a button wired to nothing
+            // both pass a "the control exists" check.
+            const railBox = () => page.evaluate(() => {
+                const el = document.querySelector('[data-testid="shell-rail"]');
+                return el ? Math.round(el.getBoundingClientRect().width) : -1;
+            });
+            const railBefore = await railBox();
+            const railHandle = await page.locator('[data-testid="shell-rail-resize"]').boundingBox();
+            if (railHandle) {
+                const y = railHandle.y + Math.min(120, railHandle.height / 2);
+                await page.mouse.move(railHandle.x + railHandle.width / 2, y);
+                await page.mouse.down();
+                await page.mouse.move(railHandle.x + railHandle.width / 2 + 48, y, { steps: 4 });
+                await page.mouse.up();
+            }
+            await sleep(250);
+            const railWide = await railBox();
+            check('the rail drags wider from its right edge',
+                railWide >= railBefore + 40, `${railBefore} -> ${railWide}`);
+            const railResetHandle = await page.locator('[data-testid="shell-rail-resize"]').boundingBox();
+            if (railResetHandle) {
+                await page.mouse.dblclick(
+                    railResetHandle.x + railResetHandle.width / 2,
+                    railResetHandle.y + Math.min(120, railResetHandle.height / 2));
+            }
+            await sleep(300);
+            const railReset = await railBox();
+            check('double-click restores the rail width',
+                railReset === railBefore, `${railWide} -> ${railReset} (want ${railBefore})`);
+            const railCollapsed = await page.evaluate(() => {
+                const b = document.querySelector('[data-testid="shell-rail-collapse"]');
+                if (!b) return 'no control';
+                b.click();
+                return 'clicked';
+            });
+            await sleep(450);
+            const railGone = await page.evaluate(() => ({
+                rail: !!document.querySelector('[data-testid="shell-rail"]'),
+                expand: !!document.querySelector('[data-testid="nav-rail-toggle-header"]'),
+            }));
+            check('the rail collapse control puts the column away and leaves a way back',
+                railCollapsed === 'clicked' && !railGone.rail && railGone.expand,
+                `${railCollapsed} rail=${railGone.rail} expand=${railGone.expand}`);
+            const railRevived = await page.evaluate(() => {
+                const t = document.querySelector('[data-testid="nav-rail-toggle-header"]');
+                if (!t) return false;
+                t.click();
+                return true;
+            });
+            await sleep(600);
+            const railBack = await railBox();
+            check('the content bar brings the rail back at its stored width',
+                railRevived && railBack === railBefore, `${railBack}px (want ${railBefore})`);
+
             // Ctrl/Cmd+B belongs to the one column that still collapses: the
             // Chat sidebar. The rail is gone, so press it where a column exists —
             // and check the pairing that matters, that the header offers the
@@ -1753,6 +1809,37 @@ async function main() {
             // is the trap this catches.
             await navTo('Agents');
             await sleep(900);
+            // The Agents rail is the SAME column at the same x, so it shares
+            // the dragged width. Its edge must move it, and the reset must
+            // return to the designed width before the collapse check below
+            // expects 240.
+            const agentsRailBox = () => page.evaluate(() => {
+                const el = document.querySelector('[data-testid="agents-rail"]');
+                return el ? Math.round(el.getBoundingClientRect().width) : -1;
+            });
+            const agentsRailBefore = await agentsRailBox();
+            const agentsRailHandle = await page.locator('[data-testid="agents-rail-resize"]').boundingBox();
+            if (agentsRailHandle) {
+                const y = agentsRailHandle.y + Math.min(120, agentsRailHandle.height / 2);
+                await page.mouse.move(agentsRailHandle.x + agentsRailHandle.width / 2, y);
+                await page.mouse.down();
+                await page.mouse.move(agentsRailHandle.x + agentsRailHandle.width / 2 + 40, y, { steps: 4 });
+                await page.mouse.up();
+            }
+            await sleep(300);
+            const agentsRailWide = await agentsRailBox();
+            check('the Agents rail resizes from the same column handle',
+                agentsRailWide >= agentsRailBefore + 32, `${agentsRailBefore} -> ${agentsRailWide}`);
+            const agentsRailResetHandle = await page.locator('[data-testid="agents-rail-resize"]').boundingBox();
+            if (agentsRailResetHandle) {
+                await page.mouse.dblclick(
+                    agentsRailResetHandle.x + agentsRailResetHandle.width / 2,
+                    agentsRailResetHandle.y + Math.min(120, agentsRailResetHandle.height / 2));
+            }
+            await sleep(350);
+            const agentsRailReset = await agentsRailBox();
+            check('double-click restores the shared rail width',
+                agentsRailReset === agentsRailBefore, `${agentsRailWide} -> ${agentsRailReset} (want ${agentsRailBefore})`);
             const away = async () => page.evaluate(() => {
                 const el = document.querySelector('[data-testid="agents-rail"]');
                 return {
@@ -2006,6 +2093,112 @@ async function main() {
         });
         check('the order book sits to the RIGHT of the chart', bookIsRightOfChart === 'right',
             `${bookIsRightOfChart}`);
+
+        // The book is a real column, not a fixed slab: its left edge drags to
+        // size it, double-click resets it, and the instrument row's toggle
+        // collapses it. A handle with no listener passes every static check,
+        // so each gesture is measured.
+        const bookBox = () => page.evaluate(() => {
+            const el = document.querySelector('[data-testid="trade-sidebar"]');
+            return el ? Math.round(el.getBoundingClientRect().width) : -1;
+        });
+        const bookBefore = await bookBox();
+        const bookHandle = await page.locator('[data-testid="trade-book-resize"]').boundingBox();
+        if (bookHandle) {
+            const y = bookHandle.y + Math.min(120, bookHandle.height / 2);
+            await page.mouse.move(bookHandle.x + bookHandle.width / 2, y);
+            await page.mouse.down();
+            await page.mouse.move(bookHandle.x + bookHandle.width / 2 - 48, y, { steps: 4 });
+            await page.mouse.up();
+        }
+        await sleep(250);
+        const bookWide = await bookBox();
+        check('the order book drags wider from its left edge',
+            bookWide >= bookBefore + 40, `${bookBefore} -> ${bookWide}`);
+        const bookResetHandle = await page.locator('[data-testid="trade-book-resize"]').boundingBox();
+        if (bookResetHandle) {
+            await page.mouse.dblclick(
+                bookResetHandle.x + bookResetHandle.width / 2,
+                bookResetHandle.y + Math.min(120, bookResetHandle.height / 2));
+        }
+        await sleep(300);
+        const bookReset = await bookBox();
+        check('double-click restores the order book width',
+            bookReset === bookBefore, `${bookWide} -> ${bookReset} (want ${bookBefore})`);
+        const bookToggledOff = await page.evaluate(() => {
+            const b = document.querySelector('[data-testid="trade-book-toggle"]');
+            if (!b) return 'no toggle';
+            b.click();
+            return 'clicked';
+        });
+        await sleep(400);
+        const bookHidden = await page.locator('[data-testid="trade-sidebar"]').count() === 0;
+        check('the instrument-row toggle collapses the ladder',
+            bookToggledOff === 'clicked' && bookHidden,
+            `${bookToggledOff} book=${bookHidden ? 'gone' : 'still mounted'}`);
+        await page.evaluate(() => document.querySelector('[data-testid="trade-book-toggle"]')?.click());
+        await sleep(500);
+        const bookRestored = await bookBox();
+        check('the book comes back at its stored width',
+            bookRestored === bookBefore, `${bookRestored}px (want ${bookBefore})`);
+
+        // The Chart AI dock: its separator drags to size it and its header X
+        // collapses it to the rail — while the panel stays mounted, so a draft
+        // or an in-flight turn survives. Both are the contract the shared
+        // right-panel hook promises; this is the browser seeing it happen.
+        const dockWidth = () => page.evaluate(() => {
+            const el = document.querySelector('[data-testid="trade-dock"]');
+            return el ? Math.round(el.getBoundingClientRect().width) : -1;
+        });
+        const dockBefore = await dockWidth();
+        const dockHandle = await page.locator('[aria-label="Resize Chart AI"]').boundingBox();
+        if (dockHandle) {
+            const y = dockHandle.y + Math.min(120, dockHandle.height / 2);
+            await page.mouse.move(dockHandle.x + dockHandle.width / 2, y);
+            await page.mouse.down();
+            await page.mouse.move(dockHandle.x + dockHandle.width / 2 - 48, y, { steps: 4 });
+            await page.mouse.up();
+        }
+        await sleep(300);
+        const dockWide = await dockWidth();
+        check('the Chart AI dock drags wider from its separator',
+            dockWide >= dockBefore + 40, `${dockBefore} -> ${dockWide}`);
+        const dockResetHandle = await page.locator('[aria-label="Resize Chart AI"]').boundingBox();
+        if (dockResetHandle) {
+            await page.mouse.dblclick(
+                dockResetHandle.x + dockResetHandle.width / 2,
+                dockResetHandle.y + Math.min(120, dockResetHandle.height / 2));
+        }
+        await sleep(300);
+        const dockReset = await dockWidth();
+        check('double-click restores the dock width',
+            dockReset === dockBefore, `${dockWide} -> ${dockReset} (want ${dockBefore})`);
+        const dockCollapsed = await page.evaluate(() => {
+            const b = [...document.querySelectorAll('[aria-label="Collapse Chart AI"]')][0];
+            if (!b) return 'no control';
+            b.click();
+            return 'clicked';
+        });
+        await sleep(450);
+        const dockAway = await page.evaluate(() => ({
+            hidden: document.querySelector('[data-testid="trade-dock"]')?.getAttribute('data-hidden'),
+            rail: !!document.querySelector('[data-testid="trade-chat-rail"]'),
+            panel: !!document.querySelector('[data-testid="trade-chat-panel"]'),
+        }));
+        check('the dock collapses to its rail without unmounting the thread',
+            dockCollapsed === 'clicked' && dockAway.hidden === 'true' && dockAway.rail && dockAway.panel,
+            `${dockCollapsed} hidden=${dockAway.hidden} rail=${dockAway.rail} panel=${dockAway.panel}`);
+        const dockRevived = await page.evaluate(() => {
+            const b = [...document.querySelectorAll('[aria-label="Expand Chart AI"]')][0];
+            if (!b) return false;
+            b.click();
+            return true;
+        });
+        await sleep(500);
+        const dockBack = await page.evaluate(() =>
+            document.querySelector('[data-testid="trade-dock"]')?.getAttribute('data-hidden'));
+        check('the dock expands again from its rail', dockRevived && dockBack === 'false',
+            `revived=${dockRevived} hidden=${dockBack}`);
 
         // NOTE: the gate's per-criterion `validationScores` (risk/reward,
         // confluence, regime…) are computed and stored on the analysis but
@@ -2428,8 +2621,17 @@ async function main() {
             ) ? 1 : null);
             check('the Memory page mounts', memoryTab === 1, `${memoryTab}`);
             if (memoryTab === 1) {
-                const groups = await page.evaluate(() => ['trading', 'preferences', 'profile', 'topics', 'areas']
+                // Poll for the grouped page rather than sampling it once: the
+                // Memory tab mounts its rows in a second pass after the page
+                // root, and a single read raced that pass (the rows check below
+                // passed while this one saw no groups). The property is the
+                // grouping and its order, not the latency.
+                const readGroups = () => page.evaluate(() => ['trading', 'preferences', 'profile', 'topics', 'areas']
                     .filter(g => document.querySelector(`[data-testid="memory-group-${g}"]`)));
+                const groups = await pollFor(async () => {
+                    const seen = await readGroups();
+                    return seen.length === 5 ? seen : null;
+                }) ?? await readGroups();
                 check('memories are grouped by category, custom categories first',
                     groups.join(',') === 'trading,preferences,profile,topics,areas', groups.join(','));
                 const rows = await page.evaluate(() => ['risk-style', 'trader-profile', 'session-timing', 'august-signal-first-harness-architecture-notes', 'area-work']
@@ -3294,6 +3496,41 @@ async function main() {
         }
         check('no surface scrolls the page sideways at phone width',
             wideAtPhone.length === 0, wideAtPhone.join(' | '));
+
+        // At phone width the rail is a DRAWER over the surface, not a column
+        // that squeezes it. Opening and backdrop-closing is the whole contract;
+        // a static rail here is the 240px wall this replaced.
+        const phoneRailOpen = await page.evaluate(() => {
+            const t = document.querySelector('[data-testid="nav-rail-toggle-header"]');
+            if (!t) return 'no toggle';
+            t.click();
+            return 'clicked';
+        });
+        await sleep(500);
+        const phoneRail = await page.evaluate(() => {
+            const rail = document.querySelector('[data-testid="shell-rail"]');
+            return {
+                rail: !!rail,
+                backdrop: !!document.querySelector('[data-testid="shell-rail-backdrop"]'),
+                position: rail ? window.getComputedStyle(rail).position : 'none',
+            };
+        });
+        check('the phone rail opens as a drawer over the surface',
+            phoneRailOpen === 'clicked' && phoneRail.rail && phoneRail.backdrop
+                && phoneRail.position === 'fixed',
+            `${phoneRailOpen} rail=${phoneRail.rail} backdrop=${phoneRail.backdrop} position=${phoneRail.position}`);
+        const phoneRailClosed = await page.evaluate(() => {
+            const b = document.querySelector('[data-testid="shell-rail-backdrop"]');
+            if (!b) return 'no backdrop';
+            b.click();
+            return 'clicked';
+        });
+        await sleep(400);
+        const phoneRailGone = await page.evaluate(() =>
+            !document.querySelector('[data-testid="shell-rail"]'));
+        check('the drawer backdrop puts the rail away',
+            phoneRailClosed === 'clicked' && phoneRailGone,
+            `${phoneRailClosed} gone=${phoneRailGone}`);
 
 
         check('zero pageerrors across the whole run', pageErrors.length === 0,

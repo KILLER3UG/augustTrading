@@ -46,6 +46,7 @@ import OrderBookPanel from './OrderBookPanel';
 import TradeChatPanel, { ChartAiDockRail } from './TradeChatPanel';
 import RightPanel from '../shell/RightPanel';
 import { useRightPanel } from '../../hooks/useRightPanel';
+import { useColumnResize } from '../../hooks/useColumnResize';
 import type { PanelTurnContext } from './TradeChatPanel';
 import type { SoloTurnRow } from '../../services/trade/chatTurnMirror';
 import type { ReasoningEffort } from '../../types/provider';
@@ -186,6 +187,13 @@ const DOCK_MAX = 820;
 const DOCK_DEFAULT = 384;
 /** Registry id of the Chart AI dock inside the shared right-panel contract. */
 const DOCK_ID = 'chart-ai';
+
+/** Order-book column geometry. Same rule as the dock, mirrored: the book sits
+ *  at the chart's RIGHT, so dragging its LEFT edge further left grows it. */
+const BOOK_WIDTH_KEY = 'trade_book_width_v1';
+const BOOK_MIN = 220;
+const BOOK_MAX = 420;
+const BOOK_DEFAULT = 300;
 
 /** The v2 instrument tape's reading: a 9px uppercase label over an 11px mono
  *  figure, hairline-divided from its neighbours. The design's tape cell —
@@ -375,6 +383,17 @@ const TradeView: React.FC<TradeViewProps> = ({
         legacyWidthKey: DOCK_WIDTH_KEY,
     });
     const { width: dockWidth } = rightPanel;
+    // The book is the other adjustable column on this surface. It uses the
+    // shared column contract for geometry only; its open/closed state stays
+    // App's (`sidebarOpen`), because the book column and the phone Book mode
+    // are two views of the same preference.
+    const bookResize = useColumnResize({
+        storageKey: BOOK_WIDTH_KEY,
+        defaultWidth: BOOK_DEFAULT,
+        minWidth: BOOK_MIN,
+        maxWidth: BOOK_MAX,
+        edge: 'left',
+    });
     const [dockCollapsed, setDockCollapsed] = useState(false);
     const [dockExpanded, setDockExpanded] = useState(false);
     const [screenerOpen, setScreenerOpen] = useState(false);
@@ -1095,10 +1114,27 @@ const TradeView: React.FC<TradeViewProps> = ({
                 {((sidebarOpen && !dockExpanded) || isBelowLg) && (
                     <div
                         data-testid="trade-sidebar"
+                        style={isBelowLg ? undefined : { width: bookResize.width }}
                         className={isBelowLg
                             ? (mode === 'book' ? 'min-h-0 w-full flex-1' : 'hidden')
-                            : 'hidden w-[300px] shrink-0 md:block'}
+                            : `relative hidden shrink-0 md:block ${bookResize.isResizing ? '' : 'transition-[width] duration-[150ms] ease-[var(--ease-snappy)]'}`}
                     >
+                        {!isBelowLg && (
+                            <div
+                                role="separator"
+                                aria-orientation="vertical"
+                                aria-label="Resize order book"
+                                data-testid="trade-book-resize"
+                                onPointerDown={bookResize.startResize}
+                                onDoubleClick={bookResize.resetWidth}
+                                title="Drag to resize · double-click to reset"
+                                className={`absolute inset-y-0 left-0 z-20 flex w-1.5 cursor-col-resize touch-none items-center justify-center transition-colors ${
+                                    bookResize.isResizing ? 'text-zinc-300' : 'text-zinc-600 hover:text-zinc-300'
+                                }`}
+                            >
+                                <span aria-hidden="true" className="block h-8 w-px bg-white/15 opacity-60" />
+                            </div>
+                        )}
                         <OrderBookPanel symbol={symbol} live={feed.depthLive} liveDepth={feed.depth} />
                     </div>
                 )}

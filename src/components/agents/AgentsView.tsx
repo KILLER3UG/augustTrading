@@ -200,6 +200,12 @@ interface AgentsViewProps {
      *  between its chat and code modes. */
     railExpanded?: boolean;
     onToggleRailExpanded?: () => void;
+    /** The dragged rail width, owned by App so the shell rail and this column
+     *  agree across the Analyze ⇄ Agents hop. */
+    railWidth?: number;
+    railIsResizing?: boolean;
+    onRailResizeStart?: (event: React.PointerEvent) => void;
+    onRailResizeReset?: () => void;
     /* ── Revert and versions (2026-10-27) ──
        All optional, and all owned by App's conversation store rather than by
        this surface: one conversation has two readers, so the rule that decides
@@ -496,6 +502,8 @@ const AgentsView: React.FC<AgentsViewProps> = ({
     lastOpenedMap = {}, modelPicker, modelFallback = null, destinationMenu, accountRow,
     railExpanded = true, onToggleRailExpanded, statusCluster, surfaceSwitch,
     modeSwitch, shellUtilities, shellStatusBar,
+    railWidth = NAV_RAIL_EXPANDED_PX, railIsResizing = false,
+    onRailResizeStart, onRailResizeReset,
     searchRequestNonce = 0, onSearchRequestConsumed,
     onRevertTo, onEditPromptMessage, onStepVersion, parkedCount = 0, onRestoreParked,
     attentionMap, onDeleteBot, onDeleteGroup, onEditGroup,
@@ -995,10 +1003,10 @@ const AgentsView: React.FC<AgentsViewProps> = ({
                    drawer, and md+ takes the shell's own constant through a
                    custom property, because an inline style would otherwise win
                    at every breakpoint and flatten the drawer too. */
-                style={{ '--rail-w': `${NAV_RAIL_EXPANDED_PX}px` } as React.CSSProperties}
+                style={{ '--rail-w': `${railWidth}px` } as React.CSSProperties}
                 className={`fixed inset-y-0 left-0 z-40 flex w-72 shrink-0 transform flex-col bg-zinc-950 transition-transform duration-[150ms] ease-[var(--ease-snappy)] ${
                     railOpen ? 'translate-x-0' : 'invisible -translate-x-full md:visible'
-                } md:static md:z-auto md:h-full md:min-h-0 md:w-[var(--rail-w)] md:translate-x-0 ${
+                } md:relative md:z-auto md:h-full md:min-h-0 md:w-[var(--rail-w)] md:translate-x-0 ${
                     railExpanded ? '' : 'md:hidden'
                 }`}
                 data-testid="agents-rail">
@@ -1331,6 +1339,22 @@ const AgentsView: React.FC<AgentsViewProps> = ({
                     made two account rows share one screen — so it arrives as a
                     node from App, which knows whether the rail is mounted. */}
                 {accountRow}
+                {onRailResizeStart && (
+                    <div
+                        role="separator"
+                        aria-orientation="vertical"
+                        aria-label="Resize conversations"
+                        data-testid="agents-rail-resize"
+                        onPointerDown={onRailResizeStart}
+                        onDoubleClick={onRailResizeReset}
+                        title="Drag to resize · double-click to reset"
+                        className={`absolute inset-y-0 right-0 z-20 hidden w-1.5 cursor-col-resize touch-none items-center justify-center transition-colors md:flex ${
+                            railIsResizing ? 'text-zinc-300' : 'text-zinc-600 hover:text-zinc-300'
+                        }`}
+                    >
+                        <span aria-hidden="true" className="block h-8 w-px bg-white/15 opacity-60" />
+                    </div>
+                )}
             </aside>
 
             {/* ── Main pane ── */}

@@ -105,6 +105,7 @@ import { isProviderOnCooldown, providerCooldownRemainingMs } from './services/in
 import { stopAutoBackup, createBackup, getBackups, type BackupMetadata } from './services/infrastructure/BackupService';
 import { useWatchSideEffects } from './hooks/useWatchSideEffects';
 import { useSurfaceRouter } from './hooks/useSurfaceRouter';
+import { useColumnResize } from './hooks/useColumnResize';
 import type { AppSurface } from './hooks/useSurface';
 import type { TradeMode } from './components/trade/TradeView';
 import type { SoloTurnRow } from './services/trade/chatTurnMirror';
@@ -116,7 +117,7 @@ import { type NavBadge } from './components/shell/SurfaceMenuList';
 // This note stays where the old import sat: the account row and the collapse
 // threshold are the live pieces of that shell module, and the deletion is not
 // a rename that a future reader should undo.
-import { AccountRow, NAV_RAIL_AUTO_COLLAPSE_PX } from './components/shell/shellChrome';
+import { AccountRow, NAV_RAIL_AUTO_COLLAPSE_PX, NAV_RAIL_EXPANDED_PX } from './components/shell/shellChrome';
 import StatusCluster from './components/shell/StatusCluster';
 import SurfaceSwitch from './components/shell/SurfaceSwitch';
 import ShellRail, {
@@ -158,10 +159,17 @@ const SurfaceSkeleton: React.FC = () => (
     </div>
 );
 
-/** Persisted nav-rail width preference. Deliberately NOT per-profile: the rail
+/** Persisted nav-rail collapse state. Deliberately NOT per-profile: the rail
  *  is a property of the window, not of who is signed into it, and two profiles
- *  on one machine should see the same rail they left behind. */
+ *  on one machine should see the same rail they left behind. The key predates
+ *  the separate width key and is kept so an existing collapsed rail survives. */
 const NAV_RAIL_KEY = 'nav_rail_width_v1';
+/** The dragged width — numeric and separate from the collapse token, so
+ *  dragging the rail never expands a collapsed one and collapsing never
+ *  forgets the width. */
+const NAV_RAIL_WIDTH_KEY = 'nav_rail_expanded_px_v1';
+const NAV_RAIL_MIN_PX = 200;
+const NAV_RAIL_MAX_PX = 360;
 
 // ─── Backup freshness watchdog ───────────────────────────────────────────────
 // `createBackup` catches its own error and returns NULL (BackupService.ts:223-226),
@@ -702,6 +710,16 @@ const App: React.FC = () => {
     // Closing the drawer leaves the stored choice alone, so widening the window
     // puts the rail back where the user left it.
     const closeNavOverlay = useCallback(() => setIsNavOverlayOpen(false), []);
+    // The rail's dragged width is shared by both modes — the shell rail and
+    // AgentsView's richer column are the same column at the same x — so the
+    // mode hop does not restack the content behind a different-width sidebar.
+    const railResize = useColumnResize({
+        storageKey: NAV_RAIL_WIDTH_KEY,
+        defaultWidth: NAV_RAIL_EXPANDED_PX,
+        minWidth: NAV_RAIL_MIN_PX,
+        maxWidth: NAV_RAIL_MAX_PX,
+        edge: 'right',
+    });
 
     // Chart AI dock routing (the Agents surface is gone — roster clicks open
     // sessions inside the trade surface instead). Nonce-keyed so re-clicking
@@ -2496,6 +2514,13 @@ const App: React.FC = () => {
                         onOpenCustomize={openCustomize}
                         activeUsername={activeUsername}
                         onOpenSettings={() => setIsSettingsMenuVisible(true)}
+                        width={railResize.width}
+                        isResizing={railResize.isResizing}
+                        onResizeStart={railResize.startResize}
+                        onResizeReset={railResize.resetWidth}
+                        onCollapse={toggleNavRail}
+                        overlay={isNavOverlay}
+                        onCloseOverlay={closeNavOverlay}
                     />
                 )}
                 {/* Surfaces: pages, not modals. */}
@@ -2701,6 +2726,10 @@ const App: React.FC = () => {
                                     modelFallback={chatModelFallback.notice}
                                     railExpanded={isNavRailOpen}
                                     onToggleRailExpanded={toggleNavRail}
+                                    railWidth={railResize.width}
+                                    railIsResizing={railResize.isResizing}
+                                    onRailResizeStart={railResize.startResize}
+                                    onRailResizeReset={railResize.resetWidth}
                                     onRevertTo={revertToMessage}
                                     onEditPromptMessage={editMessageText}
                                     onStepVersion={stepMessageGeneration}

@@ -15,7 +15,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
     ActivityIcon, BookOpen, ChevronDownIcon, FolderIcon, GraduationCap,
-    Inbox, LayersIcon, MessageSquareIcon, Plus, Search,
+    Inbox, LayersIcon, MessageSquareIcon, PanelLeftClose, Plus, Search,
 } from '../shared/Icons';
 import { AccountRow } from './shellChrome';
 import type { NavBadge } from './SurfaceMenuList';
@@ -183,6 +183,17 @@ interface ShellRailProps {
     onOpenCustomize: () => void;
     activeUsername: string | null;
     onOpenSettings: () => void;
+    /** The dragged width, shared with the Agents mode's column. */
+    width: number;
+    isResizing: boolean;
+    onResizeStart: (event: React.PointerEvent) => void;
+    onResizeReset: () => void;
+    /** Put the column away; the content bar's expand button brings it back. */
+    onCollapse: () => void;
+    /** Below the auto-collapse width the rail is a drawer over the content,
+     *  not a column that squeezes it. */
+    overlay?: boolean;
+    onCloseOverlay?: () => void;
 }
 
 const conversationTitle = (conversation: Conversation): string =>
@@ -193,6 +204,8 @@ const ShellRail: React.FC<ShellRailProps> = ({
     onOpenSearch, conversations, activeConversationId, onOpenConversation,
     onDeleteConversation, onClearConversation, onOpenCustomize,
     activeUsername, onOpenSettings,
+    width, isResizing, onResizeStart, onResizeReset, onCollapse,
+    overlay = false, onCloseOverlay,
 }) => {
     const [menuFor, setMenuFor] = useState<string | null>(null);
     const [workspaceOpen, setWorkspaceOpen] = useState(true);
@@ -214,16 +227,44 @@ const ShellRail: React.FC<ShellRailProps> = ({
     );
 
     return (
-        <aside
-            ref={railRef}
-            data-testid="shell-rail"
-            data-expanded="true"
-            aria-label="August navigation"
-            className="flex h-full w-60 shrink-0 flex-col border-r border-white/[0.06] bg-zinc-950 px-2 pb-1 pt-2"
-        >
-            <div className="shrink-0">
-                <ShellModeSwitch surface={surface} onSelect={onSelectSurface} />
-            </div>
+        <>
+            {overlay && (
+                <button
+                    type="button"
+                    aria-label="Close navigation"
+                    data-testid="shell-rail-backdrop"
+                    onClick={onCloseOverlay}
+                    className="fixed inset-0 z-30 bg-black/60"
+                />
+            )}
+            <aside
+                ref={railRef}
+                data-testid="shell-rail"
+                data-expanded="true"
+                aria-label="August navigation"
+                style={{
+                    width,
+                    ...(overlay ? { maxWidth: 'calc(100vw - 48px)' } : null),
+                }}
+                className={`flex h-full flex-col border-r border-white/[0.06] bg-zinc-950 px-2 pb-1 pt-2 ${
+                    overlay
+                        ? 'fixed inset-y-0 left-0 z-40 shadow-2xl'
+                        : 'relative shrink-0'
+                } ${isResizing ? '' : 'transition-[width] duration-150 ease-[var(--ease-snappy)]'}`}
+            >
+                <div className="flex shrink-0 items-center justify-between gap-2">
+                    <ShellModeSwitch surface={surface} onSelect={onSelectSurface} />
+                    <button
+                        type="button"
+                        onClick={onCollapse}
+                        data-testid="shell-rail-collapse"
+                        aria-label={overlay ? 'Close navigation' : 'Collapse navigation'}
+                        title={overlay ? 'Close navigation' : 'Collapse navigation'}
+                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-control text-zinc-500 transition-colors hover:bg-white/[0.06] hover:text-zinc-200"
+                    >
+                        <PanelLeftClose className="h-3.5 w-3.5" aria-hidden="true" />
+                    </button>
+                </div>
 
             <div className="mt-3 flex shrink-0 flex-col gap-0.5">
                 <button
@@ -366,7 +407,20 @@ const ShellRail: React.FC<ShellRailProps> = ({
                 activeUsername={activeUsername}
                 onOpenSettings={onOpenSettings}
             />
+            <div
+                role="separator"
+                aria-orientation="vertical"
+                aria-label="Resize navigation"
+                data-testid="shell-rail-resize"
+                onPointerDown={onResizeStart}
+                onDoubleClick={onResizeReset}
+                title="Drag to resize · double-click to reset"
+                className="absolute inset-y-0 right-0 z-20 hidden w-1.5 cursor-col-resize touch-none items-center justify-center text-zinc-600 transition-colors hover:text-zinc-300 md:flex"
+            >
+                <span aria-hidden="true" className="block h-8 w-px bg-white/15 opacity-60" />
+            </div>
         </aside>
+        </>
     );
 };
 

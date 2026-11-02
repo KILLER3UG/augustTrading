@@ -331,6 +331,12 @@ const RAW_LOCAL_STORAGE_PREFIXES: readonly string[] = [
     // a restored backup that silently resets every panel to its default is the
     // same lost-layout annoyance. Plain numeric strings; they round-trip.
     'right_panel_width_v1',
+    // The other two dragged columns (hooks/useColumnResize): the shell rail
+    // and the order book. Same reasoning — a restored backup that silently
+    // resets them is lost layout, not lost data, but it is still the owner's
+    // choice disappearing.
+    'nav_rail_expanded_px_v1',
+    'trade_book_width_v1',
     // Pending skill proposals (`utils/skillDrafts.ts`) call `localStorage.setItem`
     // themselves, so on NATIVE their bytes live in the WebView origin and NOT in
     // Preferences. `skill_drafts_v1` was already on the RESTORE allow-list, which

@@ -25,10 +25,12 @@ Anatomy, top to bottom:
 - **Chart** — full height, with TradingView-style drawing tools. A Chart AI levels card can push
   key levels onto the canvas; those are transient, stamped with the coin they were drawn on, and
   blanked on instrument switch.
-- **Order book** — the ladder.
-- **Chart AI dock** — drag-resizable, collapsible to a rail, expandable over the chart; its width
-  persists. Below the `lg` breakpoint the three panes flatten into an explicit **Chart | AI | Book**
-  switcher, one full-height pane at a time, persisted per user.
+- **Order book** — the ladder, collapsible from the instrument row. Its left edge drags to size
+  the column (220–420px; the width persists and double-click restores 300).
+- **Chart AI dock** — drag-resizable at its separator (300–820px, persisted; double-click
+  resets), collapsible to a rail that keeps the panel mounted, expandable over the chart. Below
+  the `lg` breakpoint the three panes flatten into an explicit **Chart | AI | Book** switcher,
+  one full-height pane at a time, persisted per user.
 
 Live state: one websocket bundle per symbol drives strip + book + candles; REST polling takes over
 the moment the socket drops, and the chart's own stall watchdog re-syncs a quiet stream. Prices are
@@ -105,11 +107,11 @@ the trader's journal in bulk; treat it accordingly.
   stacks above it.
 - A **status strip** under the content column names the workspace, `Local`, the instrument, the
   PHT clock and `No order placement`. Every item is a provable fact; there is no "Ready" state.
-- The rail is 240px expanded. Collapsed it leaves the layout, and its expand affordance is the
-  content bar. Below 1024px it is hidden whatever the user last chose — applied at render time,
-  not written back, so widening the window restores the choice. At those widths the
-  four-destination fallback switch rides the content bar, so navigation never disappears with
-  the column.
+- The rail is 240px by default and drags from its right edge (200–360px; the width persists and
+  double-click restores 240). Its top-right control puts it away; collapsed it leaves the layout,
+  and its expand affordance is the content bar. Below 1024px it is a drawer over the content
+  instead of a column — opening it never squeezes the chart to a sliver — and the
+  four-destination fallback switch rides the content bar whenever the rail is away.
 - Electron's floor is 800px wide. A layout that only breaks below 1024 is a bug.
 - Heavy surfaces are `React.lazy` with `SurfaceSkeleton`, never `fallback={null}`.
 - Overlays mount **outside** `<main>`. A probe that measures `<main>` after opening one re-reports

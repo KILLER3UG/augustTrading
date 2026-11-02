@@ -144,7 +144,10 @@ async function main() {
         await page.waitForFunction(() => !document.querySelector('#splash'), null, { timeout: 25000 });
         // The rail is gone; the title-bar switch is what proves the shell mounted.
         await page.waitForSelector('[data-testid^="surface-switch-"]', { timeout: 25000 });
-        await sleep(2000);
+        // The exchange feed fills the chart and the ladder after the shell
+        // mounts; a 2s settle sometimes photographed skeletons. Four seconds
+        // is still a capture preference, not a gate.
+        await sleep(4000);
 
         // The destination rows are gone — the title-bar switch is the navigation
         // now — so press the switch by surface id. The label→id map is written
