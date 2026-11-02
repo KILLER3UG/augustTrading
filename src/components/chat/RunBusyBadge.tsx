@@ -22,7 +22,7 @@ import { runStatusPresentation } from '../../utils/runStatus';
  *
  * The badge is DECORATIVE: it is `aria-hidden`, because the state must also
  * be in the host's accessible name (a dot a screen reader cannot read is not
- * an announcement). The host appends the sentence — see `SurfaceMenuList`.
+ * an announcement). The host appends the sentence — see `ShellUtility`/`ShellModeSwitch`.
  */
 
 export interface RunBusyBadgeProps {

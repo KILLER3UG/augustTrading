@@ -153,13 +153,47 @@ async function main() {
         // now — so press the switch by surface id. The label→id map is written
         // out because a switch that no longer exists returns 'not found' and
         // would otherwise re-shoot whatever surface happened to be open.
+        // Navigation lives in the rail; when it is put away the content bar's
+        // expand button (or the Agents drawer's opener) is the way in. There is
+        // no four-tab fallback to click.
         const SWITCH_ID = { Analyze: 'trade', Journal: 'journal', Agents: 'agents', Learning: 'learn' };
-        const navTo = async (name) => page.evaluate((id) => {
-            const hit = document.querySelector(`[data-testid="surface-switch-${id}"]`);
-            if (!hit) return 'not found';
-            hit.click();
-            return 'clicked';
-        }, SWITCH_ID[name] || name);
+        const navTo = async (name) => {
+            const id = SWITCH_ID[name] || name;
+            const clickSwitch = () => page.evaluate((surfaceId) => {
+                const el = document.querySelector(`[data-testid="surface-switch-${surfaceId}"]`);
+                if (!el) return 'missing';
+                el.click();
+                return 'clicked';
+            }, id);
+            let how = await clickSwitch();
+            if (how === 'clicked') return 'clicked';
+            const revealed = await page.evaluate(() => {
+                const visible = (el) => {
+                    if (!el) return false;
+                    const cs = window.getComputedStyle(el);
+                    return cs.visibility !== 'hidden' && cs.display !== 'none'
+                        && el.getClientRects().length > 0;
+                };
+                const toggle = [...document.querySelectorAll(
+                    '[data-testid="nav-rail-toggle-header"], [data-testid="rail-open"]')]
+                    .find(visible);
+                if (!toggle) return 'not found';
+                toggle.click();
+                return 'clicked';
+            });
+            if (revealed !== 'clicked') return 'not found';
+            await sleep(300);
+            how = await clickSwitch();
+            if (how === 'clicked') {
+                await page.evaluate(() => {
+                    if (window.innerWidth < 1024) {
+                        document.querySelector('[data-testid="shell-rail-backdrop"]')?.click();
+                    }
+                });
+                return 'clicked';
+            }
+            return 'not found';
+        };
 
         // 'Skills' is gone from the rail — it is a tab of the Learning surface,
         // shot below through the Customize row that reaches it. The surface row
@@ -290,7 +324,7 @@ async function main() {
         // The states that exist only after an interaction, and that no numeric
         // gate can vouch for: the revealed search field, the compact timeframe
         // menu, the collapsed column, and the phone layout.
-        await navTo('Chat');
+        await navTo('Agents');
         await sleep(1400);
         how = await press('[data-testid="rail-search-toggle"]', 700);
         await shoot('ui-search-open', how);
@@ -304,11 +338,11 @@ async function main() {
 
         await page.setViewportSize({ width: 430, height: 860 });
         await sleep(1200);
-        await navTo('Chat');
+        await navTo('Agents');
         await sleep(1600);
         await page.screenshot({ path: path.join(SHOTS, 'ui-phone-chat.png') });
         console.log('  ui-phone-chat (430px) -> ui-phone-chat.png');
-        await navTo('Trade');
+        await navTo('Analyze');
         await sleep(2000);
         await page.screenshot({ path: path.join(SHOTS, 'ui-phone-trade.png') });
         console.log('  ui-phone-trade (430px) -> ui-phone-trade.png');

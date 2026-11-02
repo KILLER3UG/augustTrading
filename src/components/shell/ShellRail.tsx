@@ -18,11 +18,19 @@ import {
     Inbox, LayersIcon, MessageSquareIcon, PanelLeftClose, Plus, Search,
 } from '../shared/Icons';
 import { AccountRow } from './shellChrome';
-import type { NavBadge } from './SurfaceMenuList';
 import type { AppSurface } from '../../hooks/useSurface';
 import type { Conversation } from '../../types';
 import { display } from '../../utils/symbol';
 import * as chatStore from '../../services/trade/chatStore';
+
+/** Live activity on a route: `active` is a working pulse, `count` a waiting
+ *  number. Announced through the row's accessible name, never a bare dot. */
+export interface NavBadge {
+    active?: boolean;
+    count?: number;
+    /** Sentence completing "Learning — …" for screen readers and the tooltip. */
+    detail: string;
+}
 
 /** The two modes of the one desk. Analyze keeps the chart beside the desk;
  *  Agents is the same thread with the chart put away. */

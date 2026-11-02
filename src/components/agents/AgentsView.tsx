@@ -160,11 +160,6 @@ interface AgentsViewProps {
      *  carry the same amber warning — hidden while a bot is selected, because a
      *  bot answers from its own config and the pick is irrelevant to it. */
     modelFallback?: { issue: string; provider: ProviderConfig } | null;
-    /** The destinations the rail would otherwise render. Handed in as a node
-     *  rather than re-implemented: on this surface the rail is not mounted, so
-     *  this column IS the sidebar — and it is the same `SurfaceMenuList`, not a
-     *  second copy that can drift from the first. */
-    destinationMenu?: React.ReactNode;
     /** The account + Settings row, for the same reason. */
     accountRow?: React.ReactNode;
     /** The shell's status cluster (save state, offline, Activity). Handed in for
@@ -173,13 +168,10 @@ interface AgentsViewProps {
      *  that used to live in it need a home in the one title bar this surface
      *  has. Same component the other surfaces' band uses — not a copy. */
     statusCluster?: React.ReactNode;
-    /** The screen switch, same reasoning as `statusCluster`: this surface
-     *  renders no global band, so the navigation the sidebar rows used to be has
-     *  to live in the one title bar this surface has. */
-    surfaceSwitch?: React.ReactNode;
     /** The desk's mode switch (Analyze | Agents). It owns the top of the rail,
      *  at the same x/y the rail-less surfaces put it, so a mode hop does not
-     *  move the control that caused it. */
+     *  move the control that caused it. The old four-tab bar is gone at every
+     *  width; the rail itself is the only navigation. */
     modeSwitch?: React.ReactNode;
     /** Journal / Learning / Customize: the records half of the workspace,
      *  above the account exactly as the reference orders its utility group. */
@@ -466,26 +458,6 @@ const Row: React.FC<{
 
 // ─── The view ───────────────────────────────────────────────────────────────
 
-/** Live (<md) viewport flag. Below the column's breakpoint the conversation
- *  list is an off-canvas drawer rather than a column, so the mode switch cannot
- *  live in its header — and a copy in each header would be two controls both
- *  claiming to be the navigation. Same shape as TradeView's `useIsBelowLg`;
- *  guarded for jsdom (no matchMedia → assume wide). */
-const useIsBelowMd = (): boolean => {
-    const [below, setBelow] = useState<boolean>(() => {
-        try { return !window.matchMedia('(min-width: 768px)').matches; } catch { return false; }
-    });
-    useEffect(() => {
-        let mql: MediaQueryList;
-        try { mql = window.matchMedia('(min-width: 768px)'); } catch { return; }
-        const onChange = (): void => setBelow(!mql.matches);
-        onChange();
-        mql.addEventListener('change', onChange);
-        return () => { mql.removeEventListener('change', onChange); };
-    }, []);
-    return below;
-};
-
 interface BotRow {
     bot: AgentBot;
     preview: string;
@@ -496,8 +468,8 @@ interface BotRow {
 const AgentsView: React.FC<AgentsViewProps> = ({
     username, bots, groups, messages, selection, onSelect, onNewBot, onNewGroup,
     onSendBotTurn, onAnalyze, onLogProposedTrade, onAnalysisError, onStopRun, analysisRunning = false, renderGroup, coachCount, workingBotId, mailboxBusyBotIds,
-    lastOpenedMap = {}, modelPicker, modelFallback = null, destinationMenu, accountRow,
-    railExpanded = true, onToggleRailExpanded, statusCluster, surfaceSwitch,
+    lastOpenedMap = {}, modelPicker, modelFallback = null, accountRow,
+    railExpanded = true, onToggleRailExpanded, statusCluster,
     modeSwitch, shellUtilities,
     railWidth = NAV_RAIL_EXPANDED_PX, railIsResizing = false,
     onRailResizeStart, onRailResizeReset,
@@ -968,10 +940,8 @@ const AgentsView: React.FC<AgentsViewProps> = ({
     const [railTab, setRailTab] = useState<'chats' | 'bots' | 'goals'>('chats');
 
 
-    // One switch, one home. The open column's header is its reference position —
-    // the same x the rail-less surfaces use — so the hop does not move it.
-    const belowMd = useIsBelowMd();
-    const switchInRail = railExpanded && !belowMd;
+    // The mode switch lives in the column's header at every width, the drawer
+    // included; there is no second copy in the content bar.
 
     const selectThread = useCallback((t: ThreadSelection): void => {
         onSelect(t);
@@ -1016,13 +986,14 @@ const AgentsView: React.FC<AgentsViewProps> = ({
                     whether one is open. A wordmark above this row was tried and
                     removed: it pushed the switch down ~67px and the hop check
                     (which pins the switch across the hop) went red. */}
-                {(switchInRail || onToggleRailExpanded) && (
+                {(modeSwitch || onToggleRailExpanded) && (
                     <div className="flex shrink-0 items-center justify-between gap-2 px-2 pb-1 pt-2">
                         {/* pt-2, not pt-2.5: the shell rail's effective top
                             padding is 8px, and the hop check pins this switch's
                             y to the shell rail's across the Analyze ⇄ Agents
-                            hop. */}
-                        {switchInRail ? (modeSwitch ?? surfaceSwitch) : <span aria-hidden />}
+                            hop. The switch renders in the narrow drawer too, so
+                            a phone can leave this surface without the old tabs. */}
+                        {modeSwitch ?? <span aria-hidden />}
                         {onToggleRailExpanded && (
                             <button type="button" onClick={onToggleRailExpanded} data-testid="rail-collapse"
                                 aria-label="Collapse conversations" title="Collapse the conversation rail"
@@ -1075,16 +1046,6 @@ const AgentsView: React.FC<AgentsViewProps> = ({
                         </button>
                     )}
                 </div>
-
-                {/* Customize, last in the nav group exactly as the reference
-                    orders New / Projects / Artifacts / Customize — and the only
-                    row left here now that the destinations live in the title
-                    bar. Above `New` it read as an orphan against the top edge. */}
-                {destinationMenu && (
-                    <div className="shrink-0 pb-1.5" data-testid="sidebar-destinations">
-                        {destinationMenu}
-                    </div>
-                )}
 
                 {/* The column's two lists, split the way the reference splits
                     SESSIONS and BOTS. The search handle rides on this row rather
@@ -1389,12 +1350,7 @@ const AgentsView: React.FC<AgentsViewProps> = ({
                                     <NavExpandButton onExpand={onToggleRailExpanded} />
                                 </span>
                             )}
-                            {/* One switch, one home: the open column hosts it at
-                                its left edge; when the column is put away (or is
-                                an off-canvas drawer on a phone) it moves here so
-                                it is never missing, never doubled. */}
-                            {!switchInRail && surfaceSwitch}
-                                                        <div className="flex min-w-0 flex-1 items-center gap-2">
+                            <div className="flex min-w-0 flex-1 items-center gap-2">
                                 <button type="button" onClick={() => setRailOpen(true)}
                                     aria-label="Open conversations" data-testid="rail-open"
                                     className="shrink-0 rounded-control border border-zinc-800 p-1 text-zinc-500 transition-colors hover:text-zinc-200 md:hidden">

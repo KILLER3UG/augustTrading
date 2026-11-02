@@ -5,15 +5,11 @@ import NavExpandButton from '../shell/NavExpandButton';
 import StatusCluster from '../shell/StatusCluster';
 import { getSessionContext, getAllSessionsStatus, SessionContext, SessionStatus } from '../../services/infrastructure/SessionService';
 import { baseOf } from '../../utils/symbol';
-import { surfaceLabel } from '../shell/SurfaceMenuList';
-import type { AppSurface } from '../../hooks/useSurface';
 
 interface HeaderProps {
     saveStatus: 'SAVED' | 'SAVING' | 'ERROR';
     isAnalysisInProgress: boolean;
     currentVisionData: string[];
-    /** The current surface — the tab strip marks it. */
-    surface: AppSurface;
     // Network status
     isOnline?: boolean;
     pendingQueueCount?: number;
@@ -40,11 +36,6 @@ interface HeaderProps {
      *  the hidden sidebar's expand button also carries the update-status dot,
      *  so the one quiet status carrier stays visible in the resting view. */
     onExpandNavRail?: () => void;
-    /** The collapsed-rail fallback: the four-destination switch, rendered only
-     *  when the shell rail is not on screen (narrow viewport or put away). The
-     *  rail owns navigation whenever it is visible, so this is never a second
-     *  copy of it. */
-    surfaceSwitch?: React.ReactNode;
     /** What the content column is about: the conversation's name on Analyze, or
      *  the record surface's name. The rail carries the workspace, so the bar
      *  carries the thing being worked on. */
@@ -61,7 +52,6 @@ interface HeaderProps {
 // with stable props it only renders when something it actually shows changes.
 export const Header: React.FC<HeaderProps> = memo(({
     saveStatus,
-    surface,
     isOnline = true,
     liveMarketConditions,
     liveMarketSymbol,
@@ -70,7 +60,6 @@ export const Header: React.FC<HeaderProps> = memo(({
     onOpenVisionData,
     hasVisionData = false,
     onExpandNavRail,
-    surfaceSwitch,
     title,
     context,
     status,
@@ -183,28 +172,26 @@ export const Header: React.FC<HeaderProps> = memo(({
                             <rect x="9.1" y="15.7" width="5.8" height="1.5" rx=".75" fill="var(--color-zinc-950)" />
                         </svg>
                     </div>
-                    {/* The content title. When the rail is away this slot
-                        becomes the four-destination switch instead — navigation
-                        must never disappear with the column. */}
-                    {surfaceSwitch ?? (
-                        <div className="flex min-w-0 items-center gap-2">
-                            <span
-                                data-testid="header-surface-label"
-                                className="min-w-0 truncate text-ui-sm font-medium text-zinc-200"
-                                title={typeof title === 'string' ? title : undefined}
-                            >
-                                {title ?? surfaceLabel(surface)}
-                            </span>
-                            {context && (
-                                <>
-                                    <span aria-hidden="true" className="h-3.5 w-px shrink-0 bg-white/10" />
-                                    <span className="hidden min-w-0 truncate text-ui-xs text-zinc-500 sm:inline">
-                                        {context}
-                                    </span>
-                                </>
-                            )}
-                        </div>
-                    )}
+                    {/* The content title. Navigation is not here at any width:
+                        the rail carries it, and when the rail is away the
+                        expand button beside this title is the only way back. */}
+                    <div className="flex min-w-0 items-center gap-2">
+                        <span
+                            data-testid="header-surface-label"
+                            className="min-w-0 truncate text-ui-sm font-medium text-zinc-200"
+                            title={typeof title === 'string' ? title : undefined}
+                        >
+                            {title}
+                        </span>
+                        {context && (
+                            <>
+                                <span aria-hidden="true" className="h-3.5 w-px shrink-0 bg-white/10" />
+                                <span className="hidden min-w-0 truncate text-ui-xs text-zinc-500 sm:inline">
+                                    {context}
+                                </span>
+                            </>
+                        )}
+                    </div>
                 </div>
                 {/* Right side: the live session state and the shell's status
                     cluster only. The gear and the account disc moved off this

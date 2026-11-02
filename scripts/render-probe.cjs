@@ -1477,38 +1477,65 @@ async function main() {
             });
             await sleep(250);
         };
-        /** Navigate by clicking in the page rather than through Playwright: these
-         *  entries exist at two rail widths, and a locator click would time out
-         *  on visibility whenever the rail is collapsed. A DOM click hits
-         *  whichever width the app is actually showing. */
+        /** Navigate through the rail, at any width.
+         *
+         *  The four-tab fallback is DELETED: when the rail is away there is no
+         *  switch on screen, and the only route back is the expand button (or
+         *  the Agents drawer's opener on a phone). This opens that affordance,
+         *  then presses the destination inside the rail — the path a person
+         *  actually takes. Clicking an off-canvas switch directly would pass
+         *  while the visible UI had no route at all. */
+        const closeRailOverlayAtPhone = async () => {
+            const phone = await page.evaluate(() => window.innerWidth < 1024);
+            if (!phone) return;
+            await page.evaluate(() =>
+                document.querySelector('[data-testid="shell-rail-backdrop"]')?.click());
+            await sleep(120);
+        };
         const navTo = async (label) => {
-            return page.evaluate((name) => {
-                // The destination rows are gone — the title-bar switch is the
-                // navigation — so press the switch by surface id first. The
-                // label→id map is spelled out rather than guessed from the
-                // label: the labels are Analyze/Journal/Agents/Learning while
-                // the ids are still trade/journal/agents/learn, and a switch
-                // that is missing must return 'not found' instead of clicking
-                // some other button whose text happens to match.
-                const IDS = { Analyze: 'trade', Journal: 'journal', Agents: 'agents', Learning: 'learn' };
-                const id = IDS[name];
-                if (id) {
-                    const sw = document.querySelector(`[data-testid="surface-switch-${id}"]`);
-                    if (sw) { sw.click(); return 'clicked'; }
+            const IDS = { Analyze: 'trade', Journal: 'journal', Agents: 'agents', Learning: 'learn' };
+            const id = IDS[label];
+            if (!id) return 'not found';
+            const clickSwitch = () => page.evaluate((surfaceId) => {
+                const el = document.querySelector(`[data-testid="surface-switch-${surfaceId}"]`);
+                if (!el) return 'missing';
+                const cs = window.getComputedStyle(el);
+                if (cs.visibility === 'hidden' || cs.display === 'none' || el.getClientRects().length === 0) {
+                    return 'hidden';
                 }
-                const re = new RegExp(`^${name}`, 'i');
-                const matches = (b) => re.test((b.getAttribute('aria-label') || '').trim())
-                    || re.test((b.textContent || '').trim());
-                // Scoped to a nav list first, exactly as before: SymbolPicker's
-                // trigger is still labelled "Trade symbol", so a page-wide search
-                // can hit the coin picker instead of a destination.
-                const inMenu = [...document.querySelectorAll('[data-testid="surface-menu"] button')]
-                    .find(matches);
-                const hit = inMenu ?? null;
-                if (!hit) return 'not found';
-                hit.click();
+                el.click();
                 return 'clicked';
-            }, label);
+            }, id);
+            const first = await clickSwitch();
+            if (first === 'clicked') { await closeRailOverlayAtPhone(); return 'clicked'; }
+            // The rail is put away. Open it from whichever affordance this
+            // surface has: the content bar's expand button, or the Agents
+            // drawer's opener below md.
+            const revealed = await page.evaluate(() => {
+                const visible = (el) => {
+                    if (!el) return false;
+                    const cs = window.getComputedStyle(el);
+                    return cs.visibility !== 'hidden' && cs.display !== 'none'
+                        && el.getClientRects().length > 0;
+                };
+                const toggle = [...document.querySelectorAll(
+                    '[data-testid="nav-rail-toggle-header"], [data-testid="rail-open"]')]
+                    .find(visible);
+                if (!toggle) return 'no reveal control';
+                toggle.click();
+                return 'clicked';
+            });
+            if (revealed !== 'clicked') return 'not found';
+            await page.waitForFunction((surfaceId) => {
+                const el = document.querySelector(`[data-testid="surface-switch-${surfaceId}"]`);
+                if (!el) return false;
+                const cs = window.getComputedStyle(el);
+                return cs.visibility !== 'hidden' && cs.display !== 'none' && el.getClientRects().length > 0;
+            }, id, { timeout: 5000 }).catch(() => {});
+            const second = await clickSwitch();
+            if (second !== 'clicked') return 'not found';
+            await closeRailOverlayAtPhone();
+            return 'clicked';
         };
         /** The rail is always on screen, so there is no menu to open — this now
          *  only asserts the rail exists and, if the window is narrow enough to
@@ -1784,13 +1811,33 @@ async function main() {
                 return 'clicked';
             });
             await sleep(450);
-            const railGone = await page.evaluate(() => ({
-                rail: !!document.querySelector('[data-testid="shell-rail"]'),
-                expand: !!document.querySelector('[data-testid="nav-rail-toggle-header"]'),
-            }));
+            const railGone = await page.evaluate(() => {
+                const visible = (el) => {
+                    const cs = window.getComputedStyle(el);
+                    return cs.visibility !== 'hidden' && cs.display !== 'none' && el.getClientRects().length > 0;
+                };
+                return {
+                    rail: !!document.querySelector('[data-testid="shell-rail"]'),
+                    expand: !!document.querySelector('[data-testid="nav-rail-toggle-header"]'),
+                    switches: [...document.querySelectorAll('[data-testid^="surface-switch-"]')].filter(visible).length,
+                    oldMenu: !!document.querySelector('[data-testid="surface-menu"]'),
+                };
+            });
             check('the rail collapse control puts the column away and leaves a way back',
-                railCollapsed === 'clicked' && !railGone.rail && railGone.expand,
-                `${railCollapsed} rail=${railGone.rail} expand=${railGone.expand}`);
+                railCollapsed === 'clicked' && !railGone.rail && railGone.expand
+                    && railGone.switches === 0 && !railGone.oldMenu,
+                `${railCollapsed} rail=${railGone.rail} expand=${railGone.expand} `
+                + `visibleTabs=${railGone.switches} oldMenu=${railGone.oldMenu}`);
+            // The owner asked for the old tabs to be gone permanently, not
+            // hidden behind a breakpoint. Pin the SOURCE too: a later "restore
+            // the fallback" change has to delete this check to land.
+            const oldSwitchFile = require('fs').existsSync(
+                path.join(ROOT, 'src', 'components', 'shell', 'SurfaceSwitch.tsx'));
+            const oldMenuFile = require('fs').existsSync(
+                path.join(ROOT, 'src', 'components', 'shell', 'SurfaceMenuList.tsx'));
+            check('the old four-tab bar and its menu are deleted from source',
+                !oldSwitchFile && !oldMenuFile,
+                `SurfaceSwitch=${oldSwitchFile ? 'exists' : 'gone'} SurfaceMenuList=${oldMenuFile ? 'exists' : 'gone'}`);
             const railRevived = await page.evaluate(() => {
                 const t = document.querySelector('[data-testid="nav-rail-toggle-header"]');
                 if (!t) return false;
@@ -1842,16 +1889,24 @@ async function main() {
                 agentsRailReset === agentsRailBefore, `${agentsRailWide} -> ${agentsRailReset} (want ${agentsRailBefore})`);
             const away = async () => page.evaluate(() => {
                 const el = document.querySelector('[data-testid="agents-rail"]');
+                const visible = (node) => {
+                    const cs = window.getComputedStyle(node);
+                    return cs.visibility !== 'hidden' && cs.display !== 'none'
+                        && node.getClientRects().length > 0;
+                };
                 return {
                     hidden: el ? el.className.split(/\s+/).includes('md:hidden') : null,
                     headerToggle: !!document.querySelector('[data-testid="nav-rail-toggle-header"]'),
+                    switches: [...document.querySelectorAll('[data-testid^="surface-switch-"]')]
+                        .filter(visible).length,
                 };
             });
             await page.keyboard.press('Control+b');
             await sleep(600);
             const collapsed = await away();
-            check('Ctrl+B puts the conversation column away',
-                collapsed.hidden === true, `md:hidden=${collapsed.hidden}`);
+            check('Ctrl+B puts the conversation column away and brings no tabs back',
+                collapsed.hidden === true && collapsed.switches === 0,
+                `md:hidden=${collapsed.hidden} visibleTabs=${collapsed.switches}`);
             check('the title bar carries the expand button exactly while the column is away',
                 collapsed.headerToggle, 'nav-rail-toggle-header');
             const revived = await page.evaluate(() => {
@@ -3546,6 +3601,20 @@ async function main() {
         check('no surface scrolls the page sideways at phone width',
             wideAtPhone.length === 0, wideAtPhone.join(' | '));
 
+        // The old four-tab fallback used to reappear exactly here. With the
+        // rail away there must be no destination switch on screen at all.
+        const phoneTabsBefore = await page.evaluate(() => {
+            const visible = (el) => {
+                const cs = window.getComputedStyle(el);
+                return cs.visibility !== 'hidden' && cs.display !== 'none'
+                    && el.getClientRects().length > 0;
+            };
+            return [...document.querySelectorAll('[data-testid^="surface-switch-"]')]
+                .filter(visible).length;
+        });
+        check('no old surface tabs return at phone width',
+            phoneTabsBefore === 0, `${phoneTabsBefore} visible tab(s)`);
+
         // At phone width the rail is a DRAWER over the surface, not a column
         // that squeezes it. Opening and backdrop-closing is the whole contract;
         // a static rail here is the 240px wall this replaced.
@@ -3558,16 +3627,24 @@ async function main() {
         await sleep(500);
         const phoneRail = await page.evaluate(() => {
             const rail = document.querySelector('[data-testid="shell-rail"]');
+            const visible = (el) => {
+                const cs = window.getComputedStyle(el);
+                return cs.visibility !== 'hidden' && cs.display !== 'none'
+                    && el.getClientRects().length > 0;
+            };
             return {
                 rail: !!rail,
                 backdrop: !!document.querySelector('[data-testid="shell-rail-backdrop"]'),
                 position: rail ? window.getComputedStyle(rail).position : 'none',
+                switches: [...document.querySelectorAll('[data-testid^="surface-switch-"]')]
+                    .filter(visible).length,
             };
         });
-        check('the phone rail opens as a drawer over the surface',
+        check('the phone rail opens as a drawer and carries every route',
             phoneRailOpen === 'clicked' && phoneRail.rail && phoneRail.backdrop
-                && phoneRail.position === 'fixed',
-            `${phoneRailOpen} rail=${phoneRail.rail} backdrop=${phoneRail.backdrop} position=${phoneRail.position}`);
+                && phoneRail.position === 'fixed' && phoneRail.switches === 4,
+            `${phoneRailOpen} rail=${phoneRail.rail} backdrop=${phoneRail.backdrop} `
+            + `position=${phoneRail.position} tabs=${phoneRail.switches}`);
         const phoneRailClosed = await page.evaluate(() => {
             const b = document.querySelector('[data-testid="shell-rail-backdrop"]');
             if (!b) return 'no backdrop';

@@ -25,16 +25,16 @@ flowchart TD
     APP --> US["useSurface src/hooks/useSurface.ts key, valid set"]
     US --> UR["useSurfaceRouter src/hooks/useSurfaceRouter.ts openJournal, hash read, serialize"]
     UR --> HASH["src/utils/appHash.ts — hash and state stay equal"]
-    APP --> HD["Header band src/App.tsx — guard surface !== 'agents' "]
-    HD --> SW["SurfaceSwitch src/App.tsx — 4 destinations, list in src/components/shell/SurfaceMenuList.tsx"]
-    APP --> AV["AgentsView gets the same nodes as props src/App.tsx"]
-    SW --> T["Analyze · trade-view · src/App.tsx"]
-    SW --> J["Journal · journal-view · src/App.tsx"]
-    SW --> C["Agents · agents-view · src/App.tsx"]
-    SW --> K["Learning · learn-view · src/App.tsx"]
+    APP --> HD["Header content bar src/App.tsx — guard surface !== 'agents' "]
+    APP --> SR["ShellRail src/components/shell/ShellRail.tsx — Analyze/Agents modes, Journal/Learning, account"]
+    APP --> AV["AgentsView gets the same mode switch and utility nodes as props src/App.tsx"]
+    SR --> T["Analyze · trade-view · src/App.tsx"]
+    SR --> J["Journal · journal-view · src/App.tsx"]
+    SR --> C["Agents · agents-view · src/App.tsx"]
+    SR --> K["Learning · learn-view · src/App.tsx"]
     K -.-> AP["Approvals is a TAB of Learning — src/components/learn/LearnView.tsx"]
     NR["NavRail — DELETED (only the shell-chrome consts src/App.tsx remain), NEVER rendered (see correction 5); its AccountRow export IS, src/App.tsx; NAV_RAIL_AUTO_COLLAPSE_PX and NAV_RAIL_EXPANDED_PX are live too"]:::dead
-    SM["SurfaceMenuList src/components/shell/SurfaceMenuList.tsx destination rows — only mount passes hideSurfaces (src/App.tsx)"]:::dead
+    SM["SurfaceMenuList — DELETED 2026-11-03 with the old four-tab bar"]:::dead
     classDef dead stroke-dasharray: 5 5,opacity:.5
 ```
 
@@ -1254,10 +1254,10 @@ it to `NO_TOOLS_ALLOWED` rather than grant anything.
 | 3 | App → useSurfaceRouter | surface + journalTab + journalOpenNonce, `useSurfaceRouter src/hooks/useSurfaceRouter.ts › useSurfaceRouter` |
 | 4 | useSurfaceRouter → useSurface | persisted value, key `august_surface_v1 src/hooks/useSurface.ts › KEY`, valid set `src/hooks/useSurface.ts › VALID` |
 | 5 | useSurfaceRouter → appHash | `#/journal\|market\|settings\|watch` ⇄ state `parseAppHash src/hooks/useSurfaceRouter.ts › useSurfaceRouter`, serialize `serializeAppHash src/hooks/useSurfaceRouter.ts › useSurfaceRouter` |
-| 6 | App → Header | band `src/App.tsx › App`, guard `surface src/App.tsx › App` (the header's own switch) |
+| 6 | App → Header | content bar; guard `surface src/App.tsx › App` (the Agents surface keeps its own bar) |
 | 7 | App → 4 lazy surfaces | each wrapped in `SurfaceSkeleton` — `SurfaceSkeleton src/App.tsx › SurfaceSkeleton` TradeView, `SurfaceSkeleton src/App.tsx › SurfaceSkeleton` Journal, `SurfaceSkeleton src/App.tsx › SurfaceSkeleton` LearnView, `SurfaceSkeleton src/App.tsx › SurfaceSkeleton` StrategyStudio |
-| 8 | Header → SurfaceSwitch | the destination set `src/App.tsx › App`, list `SURFACE_ITEMS src/components/shell/SurfaceMenuList.tsx › SURFACE_ITEMS` |
-| 9 | App → AgentsView props | same switch + StatusCluster + AccountRow + SurfaceMenuList(hideSurfaces) on `AgentsView src/App.tsx › App`, props `src/App.tsx › App` |
+| 8 | App → ShellRail | mode switch + utility rows, `ShellRail src/components/shell/ShellRail.tsx › ShellRail`, `NavBadge src/components/shell/ShellRail.tsx › NavBadge` |
+| 9 | App → AgentsView props | same mode switch + utilities + StatusCluster + AccountRow on `AgentsView src/App.tsx › App`, props `src/App.tsx › App` |
 | 10 | TradeView → TradeChatPanel | the dock, inside Trade `TradeChatPanel src/components/trade/TradeView.tsx › TradeView` |
 | 11 | AgentsView.send → bot branch | the selected bot answered at `onSendBotTurn src/components/agents/AgentsView.tsx › AgentsView` |
 | 12 | bot branch → useBotMailbox | `runUserBotTurn src/hooks/useBotMailbox.ts › useBotMailbox` → `runBotTurn src/hooks/useBotMailbox.ts › useBotMailbox` |

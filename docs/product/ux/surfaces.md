@@ -107,9 +107,10 @@ the trader's journal in bulk; treat it accordingly.
   stacks above it.
 - The rail is 240px by default and drags from its right edge (200–360px; the width persists and
   double-click restores 240). Its top-right control puts it away; collapsed it leaves the layout,
-  and its expand affordance is the content bar. Below 1024px it is a drawer over the content
-  instead of a column — opening it never squeezes the chart to a sliver — and the
-  four-destination fallback switch rides the content bar whenever the rail is away.
+  and the content bar's expand button is the ONLY way back — navigation never rides the content
+  bar. Below 1024px it is a drawer over the content instead of a column — opening it never
+  squeezes the chart to a sliver — and the drawer's own mode switch and utility rows carry every
+  route. The old four-tab bar is deleted, not hidden.
 - Electron's floor is 800px wide. A layout that only breaks below 1024 is a bug.
 - Heavy surfaces are `React.lazy` with `SurfaceSkeleton`, never `fallback={null}`.
 - Overlays mount **outside** `<main>`. A probe that measures `<main>` after opening one re-reports

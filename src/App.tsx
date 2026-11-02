@@ -109,7 +109,6 @@ import { useColumnResize } from './hooks/useColumnResize';
 import type { AppSurface } from './hooks/useSurface';
 import type { TradeMode } from './components/trade/TradeView';
 import type { SoloTurnRow } from './services/trade/chatTurnMirror';
-import { type NavBadge } from './components/shell/SurfaceMenuList';
 // The rail is DELETED (2026-10-28). Its live row and collapse threshold moved
 // to shellChrome; the update control moved to the header. Nothing imports the
 // old module, and the dead test reference went with it.
@@ -119,9 +118,8 @@ import { type NavBadge } from './components/shell/SurfaceMenuList';
 // a rename that a future reader should undo.
 import { AccountRow, NAV_RAIL_AUTO_COLLAPSE_PX, NAV_RAIL_EXPANDED_PX } from './components/shell/shellChrome';
 import StatusCluster from './components/shell/StatusCluster';
-import SurfaceSwitch from './components/shell/SurfaceSwitch';
 import ShellRail, {
-    DeskInstrument, ShellModeSwitch, ShellUtility,
+    DeskInstrument, ShellModeSwitch, ShellUtility, type NavBadge,
 } from './components/shell/ShellRail';
 // The Journal pulls recharts + react-virtuoso into its chunk — statically
 // importing it put both on the startup path for a surface most users open
@@ -1956,7 +1954,7 @@ const App: React.FC = () => {
         return countPendingEverything(activeUsername || 'default') + permissions;
     }, [approvalItems, activeUsername, skillDraftNonce, learningQueueNonce, memoryNonce]);
     // Surface-menu badges. Memoized because App re-renders on every price tick
-    // and both Header and SurfaceMenuList are React.memo'd — a fresh object
+    // and both Header and the shell rail are React.memo'd — a fresh object
     // literal would invalidate the memo once a second for nothing.
     const navBadges = useMemo<Partial<Record<AppSurface, NavBadge>>>(() => {
         const next: Partial<Record<AppSurface, NavBadge>> = {};
@@ -2268,25 +2266,6 @@ const App: React.FC = () => {
     // `NavExpandButton` from the callbacks it already holds, because an
     // interactive-root element parked in a local variable gets attributed to
     // whichever component holds it, and `App` is not a button wrapper.
-    const shellNavSwitch = useMemo(
-        () => (
-            <SurfaceSwitch
-                surface={surface}
-                onSelect={(next) => {
-                    // Chat → Trade is not a plain route: it must carry THIS
-                    // conversation into the Chart AI dock, which is what the
-                    // ChatModePill used to do before the switch absorbed it.
-                    // Drop this and the dock silently opens on its own last
-                    // session — render-probe's "the dock draws the same decision
-                    // cards as the thread" check is what catches it.
-                    if (next === 'trade' && surface === 'agents') { openChartAi(); return; }
-                    handleSurfaceSelect(next);
-                }}
-                badges={navBadges}
-            />
-        ),
-        [surface, handleSurfaceSelect, openChartAi, navBadges],
-    );
     /** The rail's mode switch: Analyze and Agents are the same desk, so the
      *  chat → chart hop keeps its carry-over rule here too. */
     const shellModeSwitch = useMemo(
@@ -2534,7 +2513,6 @@ const App: React.FC = () => {
                             saveStatus={saveStatus}
                             isAnalysisInProgress={isAnalysisInProgress}
                             currentVisionData={currentVisionData}
-                            surface={surface}
                             isOnline={isOnline}
                             pendingQueueCount={pendingQueueCount}
                             liveMarketConditions={liveMarketConditions}
@@ -2546,7 +2524,6 @@ const App: React.FC = () => {
                             status={shellStatus}
                             title={shellTitle}
                             context={shellContext}
-                            surfaceSwitch={isNavRailOpen ? undefined : shellNavSwitch}
                             onExpandNavRail={isNavRailOpen ? undefined : toggleNavRail}
                         />
                     )}
@@ -2743,7 +2720,6 @@ const App: React.FC = () => {
                                        has to carry it), and Journal/Learning/
                                        Customize sit above the account. */
                                     modeSwitch={shellModeSwitch}
-                                    surfaceSwitch={shellNavSwitch}
                                     shellUtilities={<ShellUtility
                                         surface={surface}
                                         onSelect={handleSurfaceSelect}
