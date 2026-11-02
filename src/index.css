@@ -679,53 +679,61 @@ body {
   from { opacity: 0.35; }
   to { opacity: 1; }
 }
+/* The answer writes into a soft edge: the container grows as text arrives and
+   only the newest line fades, so older text stays fully readable and a block
+   that mounts mid-stream never "flicks". The full text is always in the DOM;
+   this is a visual edge, not a reveal that withholds content. */
 .stream-fade {
   animation: stream-fade 160ms ease-out;
+  --stream-edge: 2.25rem;
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    #000 calc(100% - var(--stream-edge)),
+    rgba(0, 0, 0, 0.55) calc(100% - 0.85rem),
+    transparent
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    #000 calc(100% - var(--stream-edge)),
+    rgba(0, 0, 0, 0.55) calc(100% - 0.85rem),
+    transparent
+  );
 }
-
-/* Blocks that ARRIVE during a stream fade in; text appended inside an
-   existing paragraph updates in place, so the effect never restarts on every
-   token. This is the smooth-arrival half of the streaming read — the markdown
-   is never re-mounted just to earn an animation. */
-@keyframes stream-block-in {
-  from { opacity: 0; transform: translateY(2px); }
-  to { opacity: 1; transform: translateY(0); }
+/* A caret at the writing edge — the one mark that says "still coming" without
+   re-rendering or re-animating any of the text that already landed. */
+@keyframes stream-caret-blink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
 }
-.stream-fade .prose > p,
-.stream-fade .prose > ul,
-.stream-fade .prose > ol,
-.stream-fade .prose > h1,
-.stream-fade .prose > h2,
-.stream-fade .prose > h3,
-.stream-fade .prose > h4,
-.stream-fade .prose > blockquote,
-.stream-fade .prose > pre,
-.stream-fade .prose > table {
-  animation: stream-block-in 200ms ease-out both;
+.stream-fade .prose > *:last-child::after {
+  content: '';
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: -0.15em;
+  border-radius: 1px;
+  background: var(--color-zinc-400);
+  animation: stream-caret-blink 0.9s steps(2, start) infinite;
 }
 @media (prefers-reduced-motion: reduce) {
-  .stream-fade .prose > p,
-  .stream-fade .prose > ul,
-  .stream-fade .prose > ol,
-  .stream-fade .prose > h1,
-  .stream-fade .prose > h2,
-  .stream-fade .prose > h3,
-  .stream-fade .prose > h4,
-  .stream-fade .prose > blockquote,
-  .stream-fade .prose > pre,
-  .stream-fade .prose > table {
+  .stream-fade {
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+  .stream-fade .prose > *:last-child::after {
     animation: none;
   }
 }
 
 /* Chart AI transcript rows fade in as they land (the reference's rendering
-   feel). One-shot on mount — streaming text already fades via .stream-fade. */
+   feel). Opacity only — a row that slides is the "flick" this replaced. */
 @keyframes chat-fade-in {
-  from { opacity: 0; transform: translateY(3px); }
-  to { opacity: 1; transform: translateY(0); }
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 .chat-fade-in {
-  animation: chat-fade-in 220ms ease-out;
+  animation: chat-fade-in 160ms ease-out;
 }
 @media (prefers-reduced-motion: reduce) {
   .chat-fade-in { animation: none; }
@@ -920,6 +928,33 @@ body {
 .thinking-row.is-open .reasoning-row-body,
 .analyzed-row.is-open > .reasoning-row-body {
   animation: chat-fade-in 180ms ease-out;
+}
+/* A live trace writes into the same soft edge as the answer, with a caret at
+   the end. The mask is scoped to the RUNNING trace: a settled trace is read,
+   not watched. */
+.thinking-row[data-state="running"] .reasoning-row-body {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 1.5rem), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 1.5rem), transparent);
+}
+.thinking-row[data-state="running"] .reasoning-row-body > div::after {
+  content: '';
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: -0.15em;
+  border-radius: 1px;
+  background: var(--color-zinc-500);
+  animation: stream-caret-blink 0.9s steps(2, start) infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .thinking-row[data-state="running"] .reasoning-row-body {
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+  .thinking-row[data-state="running"] .reasoning-row-body > div::after {
+    animation: none;
+  }
 }
 /* The work wrapper nests the whole timeline and must not become its own scroll
    box; the direct body grows, while each thinking body inside keeps its cap. */
