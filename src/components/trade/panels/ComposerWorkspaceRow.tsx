@@ -31,7 +31,7 @@ export interface ComposerWorkspaceRowProps {
 const ComposerWorkspaceRow: React.FC<ComposerWorkspaceRowProps> = ({
     symbol, interval, isPanel, panelCount, pickerOpen, onTogglePicker, botName, contextAt,
 }) => (
-    <div className="flex shrink-0 items-center gap-2.5 px-1 pb-2.5 pt-1.5">
+    <div className="flex shrink-0 items-center gap-2.5 px-1 pb-2 pt-1">
         <span className="truncate text-ui-sm font-semibold text-zinc-200" title={symbolDisplay(symbol)}>{symbolDisplay(symbol)}</span>
         {isPanel && (
             <button type="button" onClick={onTogglePicker}

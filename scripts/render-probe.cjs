@@ -3416,6 +3416,46 @@ async function main() {
             tabbedState.focused && tabbedState.nav === 'keyboard' && tabbedState.outline === true,
             JSON.stringify(tabbedState));
 
+        // ── The composer's height follows the draft, not a fixed slab ──────
+        // The old field reserved two lines at rest (56px) and could not grow
+        // past 128px, so a one-line question sat in a tall empty card and a
+        // long one scrolled inside it. Measure the resting height, the growth,
+        // and the return.
+        const composerSizes = () => page.evaluate(() => {
+            const ta = document.querySelector('[data-testid="composer-input"]');
+            const card = ta ? ta.closest('.rounded-composer') : null;
+            return {
+                ta: ta ? Math.round(ta.getBoundingClientRect().height) : -1,
+                card: card ? Math.round(card.getBoundingClientRect().height) : -1,
+                value: ta ? ta.value : null,
+            };
+        });
+        const setComposerDraft = (text) => page.evaluate((next) => {
+            const ta = document.querySelector('[data-testid="composer-input"]');
+            if (!ta) return;
+            Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')
+                .set.call(ta, next);
+            ta.dispatchEvent(new Event('input', { bubbles: true }));
+        }, text);
+        await setComposerDraft('');
+        await sleep(150);
+        const emptyComposer = await composerSizes();
+        check('the resting composer is one line tall, not a panel',
+            emptyComposer.value === '' && emptyComposer.ta <= 44,
+            `${emptyComposer.ta}px field (card ${emptyComposer.card}px)`);
+        await setComposerDraft('line one\nline two\nline three\nline four');
+        await sleep(150);
+        const grownComposer = await composerSizes();
+        check('the composer grows with the draft instead of scrolling in a fixed box',
+            grownComposer.ta > emptyComposer.ta + 30 && grownComposer.ta <= 164
+                && grownComposer.card > emptyComposer.card,
+            `${emptyComposer.ta}px -> ${grownComposer.ta}px field, card ${emptyComposer.card} -> ${grownComposer.card}`);
+        await setComposerDraft('');
+        await sleep(150);
+        const clearedComposer = await composerSizes();
+        check('clearing the draft returns the composer to one line',
+            clearedComposer.ta <= 44, `${clearedComposer.ta}px`);
+
         // ── Hit targets: a control you have to click cannot be a 16px strip ──
         // Measured at desktop width on purpose: below `lg` the 44px touch bump in
         // index.css already lifts every control, which is why the same rows that

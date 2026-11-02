@@ -11,7 +11,7 @@
  * Stop while a run is live.
  */
 
-import React from 'react';
+import React, { useLayoutEffect } from 'react';
 import {Camera, FileText, Plus, TriangleAlert, SendIcon, StopIcon} from '../../shared/Icons';
 import type { ProviderConfig } from '../../../types/provider';
 import type { Attachment } from '../../../hooks/useChatAttachments';
@@ -112,6 +112,18 @@ const ChatComposer: React.FC<ChatComposerProps> = ({
     attachFiles, showAttachMenu, setShowAttachMenu, captureChart, onCaptureChart, composerRef,
     panelCount, pickerOpen, onTogglePicker, botName, contextAt,
 }) => {
+    // The field is one line at rest and grows with the draft, up to a ceiling;
+    // a fixed `min-h-[56px]` gave a one-line "what about now?" two lines of
+    // empty card, which is most of what made the composer read as a panel.
+    // `rows={1}` stays the SSR/first-paint height; this only replaces it after
+    // a real measurement. The inline height is inert while the dock is hidden.
+    useLayoutEffect(() => {
+        const el = composerRef.current;
+        if (!el) return;
+        el.style.height = 'auto';
+        el.style.height = `${Math.min(Math.max(el.scrollHeight, 40), 160)}px`;
+    }, [draft, composerRef]);
+
     // One shared ModelChip (components/shared/ModelChip.tsx), which is now also
     // the effort dial: the tier rides the trigger's label and is edited on the
     // slider in the same panel, so the Agents surface and this dock cannot end up
@@ -122,7 +134,7 @@ const ChatComposer: React.FC<ChatComposerProps> = ({
     // now sit on the dock's own panel, and the card's frame is the only boundary
     // in the area — which is the point of the card existing at all.
     return (
-    <div className="shrink-0 px-5 pb-5 pt-3">
+    <div className="shrink-0 px-5 pb-3 pt-2">
         <ModelFallbackBanner modelIssue={modelIssue} provider={provider} />
         <ComposerWorkspaceRow
             symbol={symbol}
@@ -144,7 +156,7 @@ const ChatComposer: React.FC<ChatComposerProps> = ({
             (attachments), and the controls that send it. Market context — the
             coin and the timeframe — does not live in here; on the Agents surface
             they sit on their own row outside the card (see AgentsView). */}
-        <div className="rounded-composer bg-surface-raised px-5 py-4 ring-1 ring-transparent transition-[background-color,box-shadow] duration-150 ease-[var(--ease-snappy)] focus-within:bg-zinc-800/80 focus-within:ring-zinc-700">
+        <div className="rounded-composer bg-surface-raised px-4 py-3 ring-1 ring-transparent transition-[background-color,box-shadow] duration-150 ease-[var(--ease-snappy)] focus-within:bg-zinc-800/80 focus-within:ring-zinc-700">
             <textarea
                 ref={composerRef}
                 data-testid="composer-input"
@@ -156,9 +168,9 @@ const ChatComposer: React.FC<ChatComposerProps> = ({
                     if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); void send(draft); }
                 }}
                 placeholder={ready ? 'Ask about the chart or a plan…' : isPanel ? 'Add at least 2 panel models above' : 'Configure a provider in Settings first'}
-                className="max-h-32 min-h-[56px] w-full resize-none bg-transparent py-1 text-ui-base leading-7 text-zinc-100 placeholder:text-zinc-600 disabled:opacity-50"
+                className="max-h-40 min-h-[40px] w-full resize-none overflow-y-auto bg-transparent py-0.5 text-ui-base leading-7 text-zinc-100 placeholder:text-zinc-600 disabled:opacity-50"
             />
-            <div className="mt-3 flex flex-wrap items-center gap-2">
+            <div className="mt-2 flex flex-wrap items-center gap-2">
                 {/* `flex-wrap` + nowrap chips: the toolbar was ALWAYS over-
                     tight at the dock's 384px default — before, that showed up
                     as a chip breaking across two lines ("Scan —/skills"), and
@@ -245,7 +257,7 @@ const ChatComposer: React.FC<ChatComposerProps> = ({
         </div>
         {/* The footer row that used to hold the two chips is deleted with them;
             the disclaimer keeps its own line under the card. */}
-        <p className="mt-2 px-2 text-ui-xs leading-relaxed text-zinc-600">
+        <p className="mt-1.5 px-2 text-ui-xs leading-relaxed text-zinc-600">
             {DISCLAIMER_SHORT}
         </p>
     </div>
