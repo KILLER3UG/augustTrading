@@ -57,7 +57,7 @@ const BiasChips: React.FC<{ symbol: string; interval: ChartInterval }> = ({ symb
         /* One quiet line, not three bordered pills. Truncating (not wrapping)
            matters at the dock's 300px floor: a wrapped meta row re-introduces
            the furniture it just shed. */
-        <div className="flex shrink-0 items-center gap-1.5 overflow-hidden whitespace-nowrap px-4 pb-1 pt-2 text-ui-dense text-zinc-500" data-testid="bias-chips">
+        <div className="flex shrink-0 items-center gap-2 overflow-hidden whitespace-nowrap px-5 pb-2 pt-3 text-ui-dense text-zinc-500" data-testid="bias-chips">
             {chips.map((c, i) => (
                 <span key={c.text} className="inline-flex min-w-0 items-center gap-1.5">
                     {i > 0 && <span aria-hidden className="text-zinc-700">·</span>}

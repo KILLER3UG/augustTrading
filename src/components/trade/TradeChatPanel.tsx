@@ -998,13 +998,13 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
                 + / history / ⋯ / × right, nothing else. Conversations are
                 reached through the Past Conversations palette, not a tab
                 strip. */}
-            <div className="@container flex shrink-0 items-center gap-2 border-b border-white/[0.06] bg-zinc-900/30 px-4 py-3">
+            <div className="@container flex shrink-0 items-center gap-2.5 border-b border-white/[0.06] bg-zinc-900/30 px-5 py-4">
                 <span className={`h-2 w-2 shrink-0 rounded-full ${busy ? 'animate-pulse bg-cyan-400' : live ? 'bg-emerald-500' : 'bg-zinc-500'}`} aria-label={live ? 'live market feed connected' : 'market feed polling'} />
                 {/* The dock is narrow and user-dragged, so the brand never
                     yields: at 370px a squeezed "Chart AI" wrapped into two
                     lines while the controls kept their width. The session
                     title is the flexible element — it truncates. */}
-                <h2 className="shrink-0 whitespace-nowrap text-ui-caption text-zinc-200">Chart AI</h2>
+                <h2 className="shrink-0 whitespace-nowrap text-ui-base font-medium tracking-[-0.01em] text-zinc-100">Chart AI</h2>
                 <span className="min-w-0 flex-1 truncate text-ui-dense text-zinc-500" title={activeSession.title}>{activeSession.title}</span>
                 {(() => {
                     // The prototype's "Analyzed 2m ago" meta, told honestly:
@@ -1234,7 +1234,7 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
             {/* The transcript's own box, so the jump control floats over the
                 transcript's bottom-right corner and not over the composer. */}
             <div className="relative min-h-0 flex-1">
-            <div ref={scrollRef} onScroll={onChatScroll} className="h-full space-y-4 overflow-y-auto overscroll-contain custom-scrollbar px-4 py-4"
+            <div ref={scrollRef} onScroll={onChatScroll} className="h-full space-y-6 overflow-y-auto overscroll-contain custom-scrollbar px-5 py-6"
                 // The dock's transcript root is the one element a screen reader
                 // needs to name for an answer to be heard at all: rows append and
                 // old ones scroll away, which is exactly `role="log"`. Held busy
@@ -1244,15 +1244,15 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
                 role="log" aria-live="polite" aria-busy={entries.some(e => e.streaming)}
                 aria-label="Chart AI conversation">
                 {entries.length === 0 && !panelPickerFor && (
-                    <div className="flex h-full flex-col items-center justify-center gap-3 px-2 text-center">
-                        <p className="text-ui-dense leading-5 text-zinc-500">
+                    <div className="flex h-full flex-col items-center justify-center gap-5 px-4 text-center">
+                        <p className="max-w-[16rem] text-ui-caption leading-6 text-zinc-500">
                             It can see this chart, the book and your drawings.
                         </p>
-                        <div className="flex flex-wrap justify-center gap-1.5">
+                        <div className="flex w-full max-w-[17rem] flex-col gap-1.5" data-testid="dock-quick-prompts">
                             {QUICK_PROMPTS.map(({ text, Icon }) => (
                                 <button key={text} type="button" disabled={!ready} onClick={() => void send(text)}
-                                    className="group inline-flex items-center gap-1.5 rounded-full border border-white/[0.07] bg-zinc-800 px-2.5 py-1 text-ui-dense text-zinc-300 transition-colors hover:border-white/15 hover:text-zinc-100 disabled:opacity-40">
-                                    <Icon className="h-3 w-3 shrink-0 text-zinc-500 transition-colors group-hover:text-cyan-400" aria-hidden="true" />
+                                    className="group inline-flex w-full items-center gap-2.5 rounded-control px-3 py-2 text-left text-ui-dense text-zinc-400 transition-colors hover:bg-white/[0.04] hover:text-zinc-100 disabled:opacity-40">
+                                    <Icon className="h-3.5 w-3.5 shrink-0 text-zinc-600 transition-colors group-hover:text-cyan-400" aria-hidden="true" />
                                     {text}
                                 </button>
                             ))}

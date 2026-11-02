@@ -37,7 +37,7 @@ export const useToast = () => {
     return context;
 };
 
-/** Max toasts stacked in the top-right column before the "+N more" cap kicks in. */
+/** Max toasts stacked in the column before the "+N more" cap kicks in. */
 const MAX_VISIBLE_TOASTS = 4;
 
 // Convenience methods
@@ -96,18 +96,20 @@ const ToastContainer: React.FC = () => {
     const hiddenCount = toasts.length - visibleToasts.length;
 
     return (
-        /* Centered below the app header, not top-right: the Chart AI dock owns
-           the top-right corner (its New chat / history cluster), and a toast
-           there physically covered those controls (ui-1440.png, redesign plan
-           §2.1). A toast may never overlap a panel's own header controls.
-           top clears the measured header AND the device safe-area (notched
-           phones put ~44px of chrome on top of a bare top-16). */
-        <div className="pointer-events-none fixed left-1/2 top-[calc(env(safe-area-inset-top,0px)+3.25rem)] z-confirm flex w-full max-w-sm -translate-x-1/2 flex-col gap-2 px-4">
+        /* BOTTOM-LEFT, compact, and out of the reading columns.
+           The chart owns the middle of the Analyze surface and the Chart AI
+           dock owns the right edge, header to composer. A centered stack
+           covered the price action; a top-right one covered the dock's own
+           controls. The bottom-left corner is the one place a transient
+           message covers neither the figure a trader is reading nor a panel's
+           header/composer. Toasts join the bottom of the stack, so the newest
+           message is the one nearest the corner. */
+        <div className="pointer-events-none fixed bottom-[calc(env(safe-area-inset-bottom,0px)+1rem)] left-4 z-confirm flex w-[min(24rem,calc(100vw-2rem))] flex-col gap-3">
             {hiddenCount > 0 && !expanded && (
                 <button
                     type="button"
                     onClick={() => setExpanded(true)}
-                    className="pointer-events-auto ml-auto rounded-full border border-white/10 bg-zinc-900/90 px-2.5 py-1 text-ui-xs font-semibold text-zinc-400 shadow-lg transition-colors hover:text-zinc-200"
+                    className="pointer-events-auto self-start rounded-full border border-white/10 bg-zinc-900/90 px-2.5 py-1 text-ui-xs font-semibold text-zinc-400 shadow-lg transition-colors hover:text-zinc-200"
                 >
                     +{hiddenCount} more
                 </button>
@@ -133,30 +135,34 @@ const ToastItem: React.FC<{ toast: Toast; onDismiss: () => void }> = ({ toast, o
         }
     }, [duration, paused, onDismiss]);
 
+    // The surface stays neutral; the TYPE lives on the icon and a 2px edge.
+    // A whole emerald panel for "outcome detected" read as a trading result
+    // instead of a notice, and four of them drowned the screen it floated over.
     const typeStyles = {
-        success: 'bg-emerald-900 border-emerald-500/50 text-emerald-100',
-        error: 'bg-rose-900 border-rose-500/50 text-rose-100',
-        warning: 'bg-amber-900 border-amber-500/50 text-amber-100',
-        info: 'bg-cyan-900 border-cyan-500/50 text-cyan-100',
+        success: { bar: 'bg-emerald-400/70', icon: 'text-emerald-400' },
+        error: { bar: 'bg-rose-400/70', icon: 'text-rose-400' },
+        warning: { bar: 'bg-amber-400/70', icon: 'text-amber-400' },
+        info: { bar: 'bg-cyan-400/70', icon: 'text-cyan-400' },
     };
 
     const renderIcon = (type: ToastType) => {
+        const tone = typeStyles[type].icon;
         switch (type) {
             case 'success':
-                return <CheckCircle className="h-5 w-5 text-emerald-300 shrink-0 mt-0.5" aria-hidden="true" />;
+                return <CheckCircle className={`h-4 w-4 shrink-0 ${tone}`} aria-hidden="true" />;
             case 'error':
-                return <AlertCircle className="h-5 w-5 text-rose-300 shrink-0 mt-0.5" aria-hidden="true" />;
+                return <AlertCircle className={`h-4 w-4 shrink-0 ${tone}`} aria-hidden="true" />;
             case 'warning':
-                return <AlertTriangle className="h-5 w-5 text-amber-300 shrink-0 mt-0.5" aria-hidden="true" />;
+                return <AlertTriangle className={`h-4 w-4 shrink-0 ${tone}`} aria-hidden="true" />;
             case 'info':
             default:
-                return <Info className="h-5 w-5 text-cyan-300 shrink-0 mt-0.5" aria-hidden="true" />;
+                return <Info className={`h-4 w-4 shrink-0 ${tone}`} aria-hidden="true" />;
         }
     };
 
     return (
         <div
-            className={`pointer-events-auto p-4 rounded-bubble border shadow-xl animate-slide-in-right ${typeStyles[toast.type]}`}
+            className="pointer-events-auto relative animate-fade-in overflow-hidden rounded-card border border-white/[0.08] bg-zinc-900/95 p-4 shadow-2xl shadow-black/50 backdrop-blur-xl"
             onMouseEnter={() => setPaused(true)}
             onMouseLeave={() => setPaused(false)}
             onFocus={() => setPaused(true)}
@@ -166,12 +172,13 @@ const ToastItem: React.FC<{ toast: Toast; onDismiss: () => void }> = ({ toast, o
             // announced politely while the comment claimed it shouted.
             role={toast.type === 'error' ? 'alert' : 'status'}
         >
+            <span aria-hidden="true" className={`absolute inset-y-3 left-0 w-0.5 rounded-full ${typeStyles[toast.type].bar}`} />
             <div className="flex items-start gap-3">
-                {renderIcon(toast.type)}
-                <div className="flex-1 min-w-0">
-                    <p className="font-bold text-ui-base">{toast.title}</p>
+                <span className="mt-0.5">{renderIcon(toast.type)}</span>
+                <div className="min-w-0 flex-1">
+                    <p className="text-ui-sm font-semibold leading-5 text-zinc-100">{toast.title}</p>
                     {toast.message && (
-                        <p className="text-ui-sm opacity-80 mt-0.5">{toast.message}</p>
+                        <p className="mt-1 text-ui-dense leading-relaxed text-zinc-400">{toast.message}</p>
                     )}
                     {toast.action && (
                         <button
@@ -179,7 +186,7 @@ const ToastItem: React.FC<{ toast: Toast; onDismiss: () => void }> = ({ toast, o
                                 toast.action!.onClick();
                                 onDismiss();
                             }}
-                            className="mt-2 text-ui-sm font-bold px-3 py-1 rounded-control bg-zinc-700 hover:bg-zinc-600 transition-colors"
+                            className="mt-3 rounded-control bg-white/[0.06] px-3 py-1.5 text-ui-dense font-medium text-zinc-200 transition-colors hover:bg-white/[0.1]"
                         >
                             {toast.action.label}
                         </button>
@@ -187,10 +194,10 @@ const ToastItem: React.FC<{ toast: Toast; onDismiss: () => void }> = ({ toast, o
                 </div>
                 <button
                     onClick={onDismiss}
-                    className="p-1 rounded-control hover:bg-white/10 text-white/70 hover:text-white transition-colors flex-shrink-0"
+                    className="-mr-1 -mt-1 rounded-control p-1 text-zinc-500 transition-colors hover:bg-white/[0.06] hover:text-zinc-200"
                     aria-label="Dismiss"
                 >
-                    <X className="h-4 w-4" aria-hidden="true" />
+                    <X className="h-3.5 w-3.5" aria-hidden="true" />
                 </button>
             </div>
         </div>

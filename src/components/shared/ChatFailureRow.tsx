@@ -16,9 +16,9 @@ export interface ChatFailureRowProps {
 const ChatFailureRow: React.FC<ChatFailureRowProps> = ({ error }) => (
     <div
         data-testid="chat-error-row"
-        className="w-full max-w-full rounded-control border border-rose-500/25 bg-rose-500/[0.06] px-3 py-2 text-ui-base leading-relaxed text-rose-200"
+        className="w-full max-w-full rounded-card border border-rose-500/20 bg-rose-500/[0.05] px-4 py-3 text-ui-sm leading-relaxed text-rose-200"
     >
-        <span className="mb-0.5 block font-mono text-ui-2xs uppercase tracking-wider text-rose-400/80">
+        <span className="mb-1 block font-mono text-ui-2xs uppercase tracking-wider text-rose-400/80">
             request failed
         </span>
         {error}

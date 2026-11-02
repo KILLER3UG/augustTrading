@@ -151,7 +151,7 @@ const ReasoningRow: React.FC<ReasoningRowProps> = ({
             )}
         >
             <div className="relative pr-8">
-                <div className="whitespace-pre-wrap break-words text-ui-sm leading-[1.7] text-zinc-500">
+                <div className="whitespace-pre-wrap break-words text-ui-caption leading-[1.75] text-zinc-500">
                     {stripTraceMarkers(trimmed)}
                 </div>
                 <button

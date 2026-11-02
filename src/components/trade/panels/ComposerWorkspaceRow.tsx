@@ -31,7 +31,7 @@ export interface ComposerWorkspaceRowProps {
 const ComposerWorkspaceRow: React.FC<ComposerWorkspaceRowProps> = ({
     symbol, interval, isPanel, panelCount, pickerOpen, onTogglePicker, botName, contextAt,
 }) => (
-    <div className="flex shrink-0 items-center gap-2 px-1 pb-2 pt-1">
+    <div className="flex shrink-0 items-center gap-2.5 px-1 pb-2.5 pt-1.5">
         <span className="truncate text-ui-sm font-semibold text-zinc-200" title={symbolDisplay(symbol)}>{symbolDisplay(symbol)}</span>
         {isPanel && (
             <button type="button" onClick={onTogglePicker}
@@ -43,12 +43,11 @@ const ComposerWorkspaceRow: React.FC<ComposerWorkspaceRowProps> = ({
         {botName !== null && (
             <span className="truncate rounded-full border border-white/10 px-1.5 py-0.5 text-ui-2xs font-semibold text-zinc-400" title={botName}>{botName}</span>
         )}
-        {/* Pre-packet this used to print `${symbol} · ${interval}` — the SAME
-            instrument twice on one row, in two formats (`BTC/USDT` at the left,
-            `BTCUSDT` here). The interval is the only half that is not already
-            spoken for; the symbol never repeats. */}
+        {/* The fallback names only the interval. Printing `${symbol} · ${interval}`
+            here put the instrument on the row twice in two formats — the same
+            duplication this row was written to remove. */}
         <span className="ml-auto shrink-0 font-mono text-ui-xs text-zinc-600" title={contextAt ? `Live packet fetched ${new Date(contextAt).toISOString()}` : 'No packet yet'}>
-            {contextAt ? `ctx ${phtClock(contextAt)} PHT` : `${symbol} · ${interval}`}
+            {contextAt ? `ctx ${phtClock(contextAt)} PHT` : interval}
         </span>
     </div>
 );

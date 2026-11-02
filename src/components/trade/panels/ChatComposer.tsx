@@ -122,7 +122,7 @@ const ChatComposer: React.FC<ChatComposerProps> = ({
     // now sit on the dock's own panel, and the card's frame is the only boundary
     // in the area — which is the point of the card existing at all.
     return (
-    <div className="shrink-0 px-4 pb-4 pt-2">
+    <div className="shrink-0 px-5 pb-5 pt-3">
         <ModelFallbackBanner modelIssue={modelIssue} provider={provider} />
         <ComposerWorkspaceRow
             symbol={symbol}
@@ -144,7 +144,7 @@ const ChatComposer: React.FC<ChatComposerProps> = ({
             (attachments), and the controls that send it. Market context — the
             coin and the timeframe — does not live in here; on the Agents surface
             they sit on their own row outside the card (see AgentsView). */}
-        <div className="rounded-composer bg-surface-raised px-4 py-3 ring-1 ring-transparent transition-[background-color,box-shadow] duration-150 ease-[var(--ease-snappy)] focus-within:bg-zinc-800/80 focus-within:ring-zinc-700">
+        <div className="rounded-composer bg-surface-raised px-5 py-4 ring-1 ring-transparent transition-[background-color,box-shadow] duration-150 ease-[var(--ease-snappy)] focus-within:bg-zinc-800/80 focus-within:ring-zinc-700">
             <textarea
                 ref={composerRef}
                 data-testid="composer-input"
@@ -155,10 +155,10 @@ const ChatComposer: React.FC<ChatComposerProps> = ({
                 onKeyDown={ev => {
                     if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); void send(draft); }
                 }}
-                placeholder={ready ? 'Ask about the chart, a plan, or your journal…' : isPanel ? 'Add at least 2 panel models above' : 'Configure a provider in Settings first'}
-                className="max-h-32 min-h-[44px] w-full resize-none bg-transparent py-1 text-ui-caption leading-6 text-zinc-100 placeholder:text-zinc-600 disabled:opacity-50"
+                placeholder={ready ? 'Ask about the chart or a plan…' : isPanel ? 'Add at least 2 panel models above' : 'Configure a provider in Settings first'}
+                className="max-h-32 min-h-[56px] w-full resize-none bg-transparent py-1 text-ui-base leading-7 text-zinc-100 placeholder:text-zinc-600 disabled:opacity-50"
             />
-            <div className="mt-2 flex flex-wrap items-center gap-1.5">
+            <div className="mt-3 flex flex-wrap items-center gap-2">
                 {/* `flex-wrap` + nowrap chips: the toolbar was ALWAYS over-
                     tight at the dock's 384px default — before, that showed up
                     as a chip breaking across two lines ("Scan —/skills"), and
@@ -172,8 +172,8 @@ const ChatComposer: React.FC<ChatComposerProps> = ({
                 <div className="relative">
                     <button type="button" onClick={() => setShowAttachMenu(v => !v)} disabled={!ready}
                         title="Attach to this message" aria-label="Attach to this message" aria-expanded={showAttachMenu}
-                        className="rounded-full p-1.5 text-zinc-500 transition-colors hover:bg-white/[0.06] hover:text-zinc-200 disabled:opacity-40">
-                        <Plus className="h-4 w-4" aria-hidden="true" />
+                        className="rounded-full p-2 text-zinc-500 transition-colors hover:bg-white/[0.06] hover:text-zinc-200 disabled:opacity-40">
+                        <Plus className="h-[18px] w-[18px]" aria-hidden="true" />
                     </button>
                     {showAttachMenu && (
                         <>
@@ -198,13 +198,13 @@ const ChatComposer: React.FC<ChatComposerProps> = ({
                     discoverable, like Full analysis. */}
                 <button type="button" onClick={() => void send(SCAN_SKILLS_PROMPT)} disabled={!ready || busy}
                     title="Study every candle in this chart and create candidate skills from what actually worked — each is a trigger + procedure, and evidence sets its status"
-                    className="shrink-0 whitespace-nowrap rounded-control px-1.5 py-1 text-ui-xs text-zinc-500 transition-colors hover:bg-white/[0.05] hover:text-zinc-200 disabled:opacity-40">
+                    className="shrink-0 whitespace-nowrap rounded-control px-2 py-1.5 text-ui-dense text-zinc-500 transition-colors hover:bg-white/[0.05] hover:text-zinc-200 disabled:opacity-40">
                 Scan → skills
                 </button>
                 {onRunAnalysis && draft.trim() && !isPanel && (
                     <button type="button" onClick={() => void runFullAnalysis()} disabled={busy}
                         title="Run the full analysis (live market data + tools + trade plan) on this request"
-                        className="shrink-0 whitespace-nowrap rounded-control px-1.5 py-1 text-ui-xs text-zinc-500 transition-colors hover:bg-white/[0.05] hover:text-zinc-200 disabled:opacity-40">
+                        className="shrink-0 whitespace-nowrap rounded-control px-2 py-1.5 text-ui-dense text-zinc-500 transition-colors hover:bg-white/[0.05] hover:text-zinc-200 disabled:opacity-40">
                     Full analysis
                     </button>
                 )}
@@ -236,16 +236,16 @@ const ChatComposer: React.FC<ChatComposerProps> = ({
                         /* The pair above is what right-aligns this button now,
                            so its own `ml-auto` is gone: the reference keeps the
                            send at the composer's bottom-right, never bottom-left. */
-                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-700 text-zinc-100 transition-colors hover:bg-zinc-600 disabled:opacity-40"
+                        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-zinc-700 text-zinc-100 transition-colors hover:bg-zinc-600 disabled:opacity-40"
                     >
-                        {busy ? <StopIcon className="h-3 w-3" fill="currentColor" /> : <SendIcon className="h-4 w-4" aria-hidden="true" />}
+                        {busy ? <StopIcon className="h-3 w-3" fill="currentColor" /> : <SendIcon className="h-[18px] w-[18px]" aria-hidden="true" />}
                     </button>
                 </div>
             </div>
         </div>
         {/* The footer row that used to hold the two chips is deleted with them;
             the disclaimer keeps its own line under the card. */}
-        <p className="mt-1.5 px-2 text-ui-xs text-zinc-600">
+        <p className="mt-2 px-2 text-ui-xs leading-relaxed text-zinc-600">
             {DISCLAIMER_SHORT}
         </p>
     </div>

@@ -144,7 +144,7 @@ const ChatTranscriptList: React.FC<ChatTranscriptListProps> = ({
                 return (
                 <div key={e.id} className="chat-fade-in" data-entry-id={e.id} data-message-id={analysisId ?? e.id} data-testid={`chat-entry-${e.role}`}>
                     {e.role === 'user' ? (
-                        <div className="flex flex-col items-end gap-1">
+                        <div className="flex flex-col items-end gap-1.5">
                             {e.image && (
                                 <div className="flex flex-col items-end gap-0.5">
                                     <img src={e.image} alt="attached" className="max-h-40 rounded-bubble border border-white/10 object-contain" />
@@ -157,16 +157,16 @@ const ChatTranscriptList: React.FC<ChatTranscriptListProps> = ({
                                 // with a missing src, which renders as a broken icon.
                                 <div
                                     data-testid="chat-image-omitted"
-                                    className="rounded-control border border-white/10 bg-zinc-900/60 px-2 py-1 text-ui-xs text-zinc-500"
+                                    className="rounded-control border border-white/10 bg-zinc-900/60 px-2.5 py-1.5 text-ui-dense text-zinc-500"
                                 >
                                     image not backed up ({e.imageOmitted.mime}, {Math.max(1, Math.round(e.imageOmitted.bytes / 1024))} KB)
                                 </div>
                             )}
                             {e.text && e.text !== '(chart screenshot)' && (
-                                <div className="flex max-w-[85%] items-start gap-1">
-                                    {!answerStreaming && <CopyChip text={e.text} className="mt-2" />}
-                                    {!answerStreaming && <RetryChip onRetry={() => void send('', e.id)} className="mt-2" />}
-                                    <p className="min-w-0 rounded-bubble bg-zinc-800 px-3 py-2 text-ui-base leading-relaxed text-zinc-100">{e.text}</p>
+                                <div className="flex max-w-[80%] items-start gap-1.5">
+                                    {!answerStreaming && <CopyChip text={e.text} className="mt-2.5" />}
+                                    {!answerStreaming && <RetryChip onRetry={() => void send('', e.id)} className="mt-2.5" />}
+                                    <p className="min-w-0 rounded-bubble bg-zinc-800 px-4 py-2.5 text-ui-base leading-relaxed text-zinc-100">{e.text}</p>
                                 </div>
                             )}
                         </div>
@@ -197,11 +197,11 @@ const ChatTranscriptList: React.FC<ChatTranscriptListProps> = ({
                                 <BotFace
                                     face={deskSpeaker ? { shape: 'circle', hue: '#4d9fff' } : 'auto'}
                                     name={e.speaker ?? 'desk'}
-                                    size={24}
+                                    size={28}
                                     working={!!e.streaming}
                                 />
                             </span>
-                            <div className="min-w-0 flex-1 space-y-1">
+                            <div className="min-w-0 flex-1 space-y-2">
                             <ChatWorkTimeline entry={e} />
                             {/* An interrupted run is a half-written answer with no
                                 way forward — say so IN FLOW, and offer the two

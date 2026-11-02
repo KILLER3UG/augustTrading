@@ -158,7 +158,7 @@ const ChatTranscriptRow: React.FC<ChatTranscriptRowProps> = ({
             data-message-id={row.id}
             data-role={row.role}
             data-testid={isUser ? 'agent-message' : 'agent-message'}
-            className={`group/msg flex ${isUser ? 'justify-end pl-8' : 'items-start gap-3 pr-2 sm:pr-8'}`}
+            className={`group/msg flex ${isUser ? 'justify-end pl-8' : 'items-start gap-3.5 pr-2 sm:pr-8'}`}
         >
             {/* The reference identifies the answer with an avatar, not a
                 byline. The seat's name stays on the avatar's accessible name;
@@ -173,7 +173,7 @@ const ChatTranscriptRow: React.FC<ChatTranscriptRowProps> = ({
                     <BotFace
                         face={deskSpeaker ? { shape: 'circle', hue: '#4d9fff' } : 'auto'}
                         name={row.speaker ?? 'desk'}
-                        size={24}
+                        size={28}
                         working={!!row.streaming}
                     />
                 </span>
@@ -237,7 +237,7 @@ const ChatTranscriptRow: React.FC<ChatTranscriptRowProps> = ({
                    mistakes the app's error for the seat's opinion. */
                 <ChatFailureRow error={row.error} />
             ) : (
-                <div className="w-full max-w-full text-ui-base leading-[1.7] text-zinc-200">
+                <div className="w-full max-w-full space-y-2 text-ui-base leading-[1.7] text-zinc-200">
                     <ChatWorkTimeline entry={work} />
                     {body.trim()
                         /* The answer takes the prose measure (`.chat-prose`,
@@ -291,7 +291,7 @@ const ChatTranscriptRow: React.FC<ChatTranscriptRowProps> = ({
                 />
             )}
 
-            <div className="mt-1 flex items-center gap-1">
+            <div className="mt-2 flex items-center gap-1.5">
                 {isUser && onRetry && <RetryChip onRetry={onRetry} />}
                 {canEdit && (
                     <EditChip edited={(priorPrompts?.length ?? 0) > 0} onEdit={startEdit} />

@@ -857,28 +857,28 @@ body {
   overflow: visible;
 }
 .thinking-row .reasoning-row-summary {
-  padding: 2px 0;
-  min-height: 24px;
-  gap: 6px;
+  padding: 3px 0;
+  min-height: 28px;
+  gap: 7px;
   color: var(--color-zinc-500);
-  font-size: var(--text-ui-sm);
-  line-height: 20px;
+  font-size: var(--text-ui-caption);
+  line-height: 22px;
 }
 .thinking-row .reasoning-row-summary:hover { color: var(--color-zinc-300); }
-.thinking-row .reasoning-row-glyph { width: 12px; height: 12px; color: var(--color-zinc-600); }
+.thinking-row .reasoning-row-glyph { width: 13px; height: 13px; color: var(--color-zinc-600); }
 .thinking-row .reasoning-row-label { color: var(--color-zinc-500); }
-.thinking-row .reasoning-row-meta { color: var(--color-zinc-600); font-size: var(--text-ui-2xs); }
+.thinking-row .reasoning-row-meta { color: var(--color-zinc-600); font-size: var(--text-ui-xs); }
 .thinking-row .reasoning-row-chevron { margin-left: 1px; color: var(--color-zinc-600); }
 .thinking-row .reasoning-row-body {
-  margin: 4px 0 8px 5px;
-  padding: 0 0 0 12px;
+  margin: 6px 0 10px 6px;
+  padding: 2px 0 2px 14px;
   border-top: 0;
   border-left: 1px solid var(--color-zinc-800);
   max-height: 16rem;
   overflow-y: auto;
   color: var(--color-zinc-500);
-  font-size: var(--text-ui-sm);
-  line-height: 1.7;
+  font-size: var(--text-ui-caption);
+  line-height: 1.75;
 }
 /* The work wrapper nests the whole timeline and must not become its own scroll
    box; the direct body grows, while each thinking body inside keeps its cap. */
@@ -914,7 +914,7 @@ body {
    reads, not a micro-label, and 12px next to a 14px answer read as a caption
    for something else. */
 .analyzed-row > summary {
-  padding: 5px 2px 8px;
+  padding: 6px 2px 10px;
   font-size: var(--text-ui-caption);
 }
 .analyzed-row > summary .reasoning-row-label { color: var(--color-zinc-300); }
