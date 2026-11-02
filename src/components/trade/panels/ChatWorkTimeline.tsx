@@ -124,6 +124,15 @@ const ChatWorkTimeline: React.FC<ChatWorkTimelineProps> = ({ entry }) => {
             </p>
         ) : null;
     }
+    // A reasoning-only turn IS the reference's thinking block: one quiet line
+    // over the trace, not a work card wrapped around a single thought.
+    if (reasoning.trim().length > 0 && entry.tools.length === 0 && !hasActions && !wireAlone) {
+        return (
+            <div className="my-1">
+                <ReasoningRow thinking={reasoning} running={running} persistedMs={entry.workedMs} />
+            </div>
+        );
+    }
     const segs = splitReasoningAroundTools(reasoning);
     const markerCount = segs.length - 1;
     const nodes: React.ReactNode[] = [];
@@ -206,12 +215,12 @@ const ChatWorkTimeline: React.FC<ChatWorkTimelineProps> = ({ entry }) => {
                 </AnalyzedRow>
             )}
             {wireAlone && (
-                <div className="rounded-bubble border border-white/[0.06] bg-zinc-900/40 px-2.5 py-2">
+                <div className="rounded-card bg-zinc-900/40 px-3 py-2.5">
                     <WireAuditRow entries={wireAudit} noTrace={noTrace} />
                 </div>
             )}
             {hasActions && (
-                <div className="rounded-bubble border border-white/[0.06] bg-zinc-900/40 px-2.5 py-2">
+                <div className="rounded-card bg-zinc-900/40 px-3 py-2.5">
                     <ToolActionsRow actions={entry.actions!} />
                 </div>
             )}

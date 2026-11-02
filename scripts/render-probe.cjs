@@ -416,6 +416,12 @@ async function seedVerdicts(page) {
                     // Solo-attributed to the same pair the seeded bot thinks
                     // with: exactly the row the old claim deleted.
                     modelsUsed: { mock: 'mock-mini' },
+                    // A settled trace for the reference's "Thinking complete"
+                    // row — the only browser check that can see it.
+                    thoughtProcesses: {
+                        mock: 'The reclaim held above the shelf and sell-side was thin; the 1h and 4h reads agree.',
+                    },
+                    runStats: { runId: 'probe-run', startedAt: iso(20), finishedAt: iso(19), durationMs: 12_000 },
                     analysis: analysis({}),
                     evidencePack: {
                         statsLine: '6 similar setups · 4 wins · median 1.8R',
@@ -1234,6 +1240,25 @@ async function main() {
             seededText.includes('budget cap') && seededText.includes('single seat'),
             seededText.slice(0, 160));
         check('the declined verdict explains itself', /why avoid|why no trade/i.test(seededText));
+        // The reference's thinking block: one bare settled line with a frozen
+        // duration, an avatar instead of a byline, and the trace behind it.
+        const thinkingLines = await page.locator('[data-testid="agent-message"][data-role="ai"]')
+            .filter({ hasText: 'Thinking complete' }).count();
+        check('a settled trace renders the bare Thinking complete line',
+            thinkingLines >= 1, `${thinkingLines}`);
+        const avatarRows = await page.locator('[data-testid="row-avatar"]').count();
+        check('AI rows are identified by an avatar, not a byline',
+            avatarRows >= 1, `${avatarRows}`);
+        const expandedThinking = await page.evaluate(() => {
+            const summary = [...document.querySelectorAll('[data-testid="agent-message"] summary')]
+                .find(el => /Thinking complete/.test(el.textContent || ''));
+            if (!(summary instanceof HTMLElement)) return null;
+            summary.click();
+            const details = summary.parentElement;
+            return details?.hasAttribute('open') ?? null;
+        });
+        check('the thinking line expands its trace',
+            expandedThinking === true, `${expandedThinking}`);
 
         // ── Every nav surface must actually mount something ────────────
         // The four nav surfaces are separate lazy trees; a blank one is

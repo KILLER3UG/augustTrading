@@ -122,7 +122,7 @@ const ChatComposer: React.FC<ChatComposerProps> = ({
     // now sit on the dock's own panel, and the card's frame is the only boundary
     // in the area — which is the point of the card existing at all.
     return (
-    <div className="shrink-0 px-3 pb-3 pt-2">
+    <div className="shrink-0 px-4 pb-4 pt-2">
         <ModelFallbackBanner modelIssue={modelIssue} provider={provider} />
         <ComposerWorkspaceRow
             symbol={symbol}
@@ -144,7 +144,7 @@ const ChatComposer: React.FC<ChatComposerProps> = ({
             (attachments), and the controls that send it. Market context — the
             coin and the timeframe — does not live in here; on the Agents surface
             they sit on their own row outside the card (see AgentsView). */}
-        <div className="rounded-bubble border border-white/[0.09] bg-surface-raised px-3 py-3 shadow-lg transition-colors focus-within:border-cyan-500/40">
+        <div className="rounded-composer bg-surface-raised px-4 py-3 ring-1 ring-transparent transition-[background-color,box-shadow] duration-150 ease-[var(--ease-snappy)] focus-within:bg-zinc-800/80 focus-within:ring-zinc-700">
             <textarea
                 ref={composerRef}
                 data-testid="composer-input"
@@ -178,7 +178,7 @@ const ChatComposer: React.FC<ChatComposerProps> = ({
                     {showAttachMenu && (
                         <>
                             <div className="fixed inset-0 z-20" aria-hidden onClick={() => setShowAttachMenu(false)} />
-                            <div className="absolute bottom-9 left-0 z-30 w-48 rounded-bubble border border-white/10 bg-zinc-900 p-1 shadow-xl" data-testid="attach-menu">
+                            <div className="absolute bottom-9 left-0 z-30 w-48 rounded-card border border-zinc-700/60 bg-zinc-800 p-1" data-testid="attach-menu">
                                 <button type="button" onClick={() => { setShowAttachMenu(false); fileInputRef.current?.click(); }}
                                     className="flex w-full items-center gap-2 rounded-control px-2 py-1.5 text-left text-ui-dense text-zinc-300 hover:bg-white/[0.06]">
                                     <FileText className="h-3.5 w-3.5 text-zinc-500" aria-hidden="true" /> Upload files &amp; images
@@ -198,13 +198,13 @@ const ChatComposer: React.FC<ChatComposerProps> = ({
                     discoverable, like Full analysis. */}
                 <button type="button" onClick={() => void send(SCAN_SKILLS_PROMPT)} disabled={!ready || busy}
                     title="Study every candle in this chart and create candidate skills from what actually worked — each is a trigger + procedure, and evidence sets its status"
-                    className="shrink-0 whitespace-nowrap rounded-full border border-white/[0.07] px-2 py-1 text-ui-xs font-semibold text-zinc-400 transition-colors hover:border-white/20 hover:text-zinc-100 disabled:opacity-40">
+                    className="shrink-0 whitespace-nowrap rounded-control px-1.5 py-1 text-ui-xs text-zinc-500 transition-colors hover:bg-white/[0.05] hover:text-zinc-200 disabled:opacity-40">
                 Scan → skills
                 </button>
                 {onRunAnalysis && draft.trim() && !isPanel && (
                     <button type="button" onClick={() => void runFullAnalysis()} disabled={busy}
                         title="Run the full analysis (live market data + tools + trade plan) on this request"
-                        className="shrink-0 whitespace-nowrap rounded-full border border-white/[0.07] px-2 py-1 text-ui-xs font-semibold text-zinc-400 transition-colors hover:border-white/20 hover:text-zinc-100 disabled:opacity-40">
+                        className="shrink-0 whitespace-nowrap rounded-control px-1.5 py-1 text-ui-xs text-zinc-500 transition-colors hover:bg-white/[0.05] hover:text-zinc-200 disabled:opacity-40">
                     Full analysis
                     </button>
                 )}
@@ -236,7 +236,7 @@ const ChatComposer: React.FC<ChatComposerProps> = ({
                         /* The pair above is what right-aligns this button now,
                            so its own `ml-auto` is gone: the reference keeps the
                            send at the composer's bottom-right, never bottom-left. */
-                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-200 text-zinc-900 transition-colors hover:bg-white disabled:opacity-40"
+                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-700 text-zinc-100 transition-colors hover:bg-zinc-600 disabled:opacity-40"
                     >
                         {busy ? <StopIcon className="h-3 w-3" fill="currentColor" /> : <SendIcon className="h-4 w-4" aria-hidden="true" />}
                     </button>

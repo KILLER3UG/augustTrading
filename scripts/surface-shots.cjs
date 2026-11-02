@@ -78,7 +78,18 @@ async function seed(page) {
             id: 'shot-conv', timestamp: Date.now() - 600000, title: 'Shot seeded',
             messages: [
                 { id: 'm1', role: 'user', text: 'What is the bias here?', createdAt: new Date(Date.now() - 120000).toISOString() },
-                { id: 'm2', role: 'ai', text: 'Long bias into the reclaim, stop below the shelf.', createdAt: new Date(Date.now() - 110000).toISOString(), modelsUsed: { mock: 'mock-mini' }, analysis: analysis({}) },
+                {
+                    id: 'm2', role: 'ai', text: 'Long bias into the reclaim, stop below the shelf.',
+                    createdAt: new Date(Date.now() - 110000).toISOString(),
+                    modelsUsed: { mock: 'mock-mini' }, analysis: analysis({}),
+                    thoughtProcesses: { mock: 'The reclaim held above the shelf and sell-side was thin; the 1h and 4h reads agree.' },
+                    runStats: {
+                        runId: 'surface-run',
+                        startedAt: new Date(Date.now() - 122000).toISOString(),
+                        finishedAt: new Date(Date.now() - 110000).toISOString(),
+                        durationMs: 12_000,
+                    },
+                },
             ],
         };
         const db = await new Promise((resolve, reject) => {

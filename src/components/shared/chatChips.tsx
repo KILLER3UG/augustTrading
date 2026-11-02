@@ -48,7 +48,6 @@ export const EditChip: React.FC<{
         title={edited ? 'Edit again — your earlier wording is kept as a version' : 'Edit — keeps your wording as a version and re-answers'}
         className={`flex items-center gap-1 hit-target rounded-control px-1.5 py-0.5 text-ui-xs text-zinc-500 transition-colors hover:bg-white/[0.06] hover:text-zinc-200 focus:outline-none focus-visible:ring-1 focus-visible:ring-zinc-500 ${className}`.trim()}>
         <Pencil className="h-3 w-3" aria-hidden="true" />
-        <span>Edit</span>
     </button>
 );
 
@@ -119,10 +118,9 @@ export const CopyChip: React.FC<{ text: string; className?: string }> = ({ text,
     return (
         <button type="button"
             onClick={() => { void copyText(text).then(ok => { if (ok) { setCopied(true); window.setTimeout(() => setCopied(false), 1400); } }); }}
-            aria-label="Copy message" title={copied ? 'Copied' : 'Copy this message'}
-            className={`flex items-center gap-1 hit-target rounded-control px-1.5 py-0.5 text-ui-xs text-zinc-500 transition-colors hover:bg-white/[0.06] hover:text-zinc-200 focus:outline-none focus-visible:ring-1 focus-visible:ring-zinc-500 ${className}`.trim()}>
+            aria-label={copied ? 'Copied' : 'Copy message'} title={copied ? 'Copied' : 'Copy this message'}
+            className={`flex items-center hit-target rounded-control px-1.5 py-0.5 text-ui-xs text-zinc-500 transition-colors hover:bg-white/[0.06] hover:text-zinc-200 focus:outline-none focus-visible:ring-1 focus-visible:ring-zinc-500 ${className}`.trim()}>
             {copied ? <Check className="h-3 w-3 text-emerald-400" aria-hidden="true" /> : <Copy className="h-3 w-3" aria-hidden="true" />}
-            <span>{copied ? 'Copied' : 'Copy'}</span>
         </button>
     );
 };
@@ -183,11 +181,6 @@ export const SpeakChip: React.FC<{ text: string; className?: string }> = ({ text
             title={speaking ? 'Stop reading aloud' : 'Read this answer aloud'}
             className={`flex items-center hit-target rounded-control px-1.5 py-0.5 text-ui-xs text-zinc-500 transition-colors hover:bg-white/[0.06] hover:text-zinc-200 focus:outline-none focus-visible:ring-1 focus-visible:ring-zinc-500 ${speaking ? 'text-emerald-300' : ''} ${className}`.trim()}>
             {speaking ? <Square className="h-3 w-3" aria-hidden="true" /> : <Volume2 className="h-3 w-3" aria-hidden="true" />}
-            {/* A visible label, same as Copy: the action row used to read
-                "Copy 20731d" because this control was a bare glyph next to a
-                text one. The aria-label alone left sighted users a symbol with
-                no name. */}
-            <span>{speaking ? 'Stop' : 'Read aloud'}</span>
         </button>
     );
 };
@@ -206,8 +199,7 @@ export const PinChip: React.FC<{ pinned: boolean; onToggle: () => void }> = ({ p
         className={`flex items-center gap-1 hit-target rounded-control px-1.5 py-0.5 text-ui-xs transition-colors hover:bg-white/[0.06] ${
             pinned ? 'text-zinc-100' : 'text-zinc-500 hover:text-zinc-200'
         }`}>
-        <Pin className="h-3 w-3" aria-hidden="true" />
-        <span>{pinned ? 'Pinned' : 'Pin'}</span>
+        <Pin className={`h-3 w-3 ${pinned ? 'fill-current' : ''}`} aria-hidden="true" />
     </button>
 );
 

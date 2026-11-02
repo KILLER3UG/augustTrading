@@ -27,6 +27,7 @@ import ChatWorkTimeline, { type ChatWorkView } from '../trade/panels/ChatWorkTim
 import { CopyChip, EditChip, FadingText, PinChip, RevertChip, RetryChip, SpeakChip, ThinkingTierChip, VersionStepper } from './chatChips';
 import AnswerBody from './AnswerBody';
 import ChatFailureRow from './ChatFailureRow';
+import { BotFace } from '../chat/BotFace';
 import KeyLevelsCard from '../trade/KeyLevelsCard';
 import { parseKeyLevels, type ModelKeyLevel } from '../../services/trade/keyLevels';
 import type { PromptEdit } from '../../utils/messageVersions';
@@ -122,6 +123,7 @@ const ChatTranscriptRow: React.FC<ChatTranscriptRowProps> = ({
     onEditPromptMessage, onRevertTo, turnsAfter = 0, versions, priorPrompts, children,
 }) => {
     const isUser = row.role === 'user';
+    const deskSpeaker = !row.speaker || row.speaker.trim().toLowerCase() === 'desk';
     const canEdit = isUser && !!onEditPromptMessage && !row.streaming && !row.error;
     const [editing, setEditing] = useState(false);
     const [draft, setDraft] = useState(row.text);
@@ -156,25 +158,27 @@ const ChatTranscriptRow: React.FC<ChatTranscriptRowProps> = ({
             data-message-id={row.id}
             data-role={row.role}
             data-testid={isUser ? 'agent-message' : 'agent-message'}
-            className={`group/msg flex flex-col ${isUser ? 'items-end pl-8' : 'items-start pr-2 sm:pr-8'}`}
+            className={`group/msg flex ${isUser ? 'justify-end pl-8' : 'items-start gap-3 pr-2 sm:pr-8'}`}
         >
-            {/* WHO said it, quietly. The reference stamps nothing above a
-                message — the turn is identified by the turn. August has to
-                name the seat (the desk, a bot, the trader), so it keeps a
-                label, but it stops SHOUTING it: the uppercase monospace stamp
-                on every row read like a log line in a conversation. The time
-                moved to the action row under the answer, where the reference
-                puts it — it was printed twice, once in the stamp and once in
-                the row's own chips. */}
-            <span className="mb-1.5 flex items-center gap-1.5 text-ui-xs text-zinc-500">
-                {row.error ? null : (
-                    <>
-                        <span className="h-1 w-1 shrink-0 rounded-full bg-zinc-600" aria-hidden="true" />
-                        {row.speaker ?? (isUser ? 'you' : 'desk')}
-                    </>
-                )}
-            </span>
-
+            {/* The reference identifies the answer with an avatar, not a
+                byline. The seat's name stays on the avatar's accessible name;
+                the turn itself carries no stamp above the text. */}
+            {!isUser && (
+                <span
+                    className="mt-0.5 shrink-0"
+                    title={row.speaker ?? 'desk'}
+                    aria-label={row.speaker ?? 'desk'}
+                    data-testid="row-avatar"
+                >
+                    <BotFace
+                        face={deskSpeaker ? { shape: 'circle', hue: '#4d9fff' } : 'auto'}
+                        name={row.speaker ?? 'desk'}
+                        size={24}
+                        working={!!row.streaming}
+                    />
+                </span>
+            )}
+            <div className={`min-w-0 ${isUser ? 'flex max-w-[68%] flex-col items-end' : 'flex-1'}`}>
             {isUser && row.images && row.images.length > 0 && (
                 <div className="mb-1 flex flex-wrap justify-end gap-1">
                     {row.images.map((src, i) => (
@@ -189,7 +193,7 @@ const ChatTranscriptRow: React.FC<ChatTranscriptRowProps> = ({
                    changing the words that produced the answer below them, and
                    sending them through the composer would ask a NEW question
                    while leaving this one's wording on screen. */
-                <div className="w-full max-w-[68%] rounded-bubble border border-white/[0.09] bg-surface-raised p-2.5 shadow-lg">
+                <div className="w-full rounded-bubble border border-white/[0.09] bg-surface-raised p-2.5">
                     <textarea
                         autoFocus
                         rows={3}
@@ -223,7 +227,7 @@ const ChatTranscriptRow: React.FC<ChatTranscriptRowProps> = ({
                    right-hand alignment — the thing that says "this is mine" —
                    disappeared. The trader's own words are INTERFACE, not prose:
                    they stay in the UI sans. */
-                <div className="max-w-[68%] rounded-bubble bg-zinc-800 px-4 py-2.5 text-ui-base leading-relaxed text-zinc-100">
+                <div className="max-w-full rounded-bubble bg-zinc-800 px-4 py-2.5 text-ui-base leading-relaxed text-zinc-100">
                     <FadingText text={body} streaming={!!row.streaming} />
                 </div>
             ) : row.error ? (
@@ -233,7 +237,7 @@ const ChatTranscriptRow: React.FC<ChatTranscriptRowProps> = ({
                    mistakes the app's error for the seat's opinion. */
                 <ChatFailureRow error={row.error} />
             ) : (
-                <div className="w-full max-w-full text-zinc-200 text-ui-lede leading-[1.75]">
+                <div className="w-full max-w-full text-ui-base leading-[1.7] text-zinc-200">
                     <ChatWorkTimeline entry={work} />
                     {body.trim()
                         /* The answer takes the prose measure (`.chat-prose`,
@@ -323,6 +327,7 @@ const ChatTranscriptRow: React.FC<ChatTranscriptRowProps> = ({
                 {row.timeLabel && (
                     <span className="ml-auto shrink-0 text-ui-2xs tabular-nums text-zinc-600">{row.timeLabel}</span>
                 )}
+            </div>
             </div>
         </div>
     );

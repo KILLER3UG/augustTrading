@@ -25,6 +25,7 @@ import { proposalStateOf as sharedProposalStateOf, rememberProposalState } from 
 import { CopyChip, FadingText, PinChip, RetryChip, ThinkingTierChip } from '../../shared/chatChips';
 import AnswerBody from '../../shared/AnswerBody';
 import ChatFailureRow from '../../shared/ChatFailureRow';
+import { BotFace } from '../../chat/BotFace';
 
 /** Per-entry disposition of a model proposal card ('logged' / 'dismissed')
  *  moved to `services/trade/proposalDisposition` when the Agents surface grew a
@@ -131,6 +132,10 @@ const ChatTranscriptList: React.FC<ChatTranscriptListProps> = ({
                 // an entry this dock ran has an id to resolve it from.
                 const verdict = e.streaming || e.notice ? undefined
                     : (analysisId ? getAnalysisMessage?.(analysisId) : undefined);
+                const seatLabel = e.speaker
+                    ? formatSeatLabel(e.speaker.split(':')[1] ?? e.speaker)
+                    : 'desk';
+                const deskSpeaker = !e.speaker || e.speaker.trim().toLowerCase() === 'desk';
                 // The row was projected out of the Chat conversation, which draws
                 // a verdict as a decision table rather than a bare audit — and
                 // since both homes now read that one conversation, this IS every
@@ -182,19 +187,21 @@ const ChatTranscriptList: React.FC<ChatTranscriptListProps> = ({
                            the analysis the trader still has to read. */
                         <ChatFailureRow error={e.error} />
                     ) : (
-                        <div className="space-y-1">
-                            {e.speaker && (
-                                /* WHO said it, quietly. The reference stamps
-                                    nothing above a message; August has to name
-                                    the seat, so it keeps a label — but it
-                                    stops SHOUTING it. The uppercase monospace
-                                    stamp on every row read like a log line in
-                                    a conversation. */
-                                <p className="flex items-center gap-1.5 text-ui-2xs text-zinc-500">
-                                    <span className="h-1 w-1 shrink-0 rounded-full bg-zinc-600" aria-hidden="true" />
-                                    {formatSeatLabel(e.speaker.split(':')[1] ?? e.speaker)}
-                                </p>
-                            )}
+                        <div className="flex items-start gap-3">
+                            <span
+                                className="mt-0.5 shrink-0"
+                                title={seatLabel}
+                                aria-label={seatLabel}
+                                data-testid="row-avatar"
+                            >
+                                <BotFace
+                                    face={deskSpeaker ? { shape: 'circle', hue: '#4d9fff' } : 'auto'}
+                                    name={e.speaker ?? 'desk'}
+                                    size={24}
+                                    working={!!e.streaming}
+                                />
+                            </span>
+                            <div className="min-w-0 flex-1 space-y-1">
                             <ChatWorkTimeline entry={e} />
                             {/* An interrupted run is a half-written answer with no
                                 way forward — say so IN FLOW, and offer the two
@@ -319,6 +326,7 @@ const ChatTranscriptList: React.FC<ChatTranscriptListProps> = ({
                                 />
                             )}
                             {e.proposal && proposalStateOf(e.id) === 'logged' && <TradeProposalLoggedRow />}
+                            </div>
                         </div>
                     )}
                 </div>

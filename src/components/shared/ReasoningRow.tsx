@@ -1,7 +1,8 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Brain, Lightbulb } from './Icons';
+import { Check, ChevronRight, Copy, Lightbulb } from './Icons';
 import { formatElapsed } from './elapsed';
-import { stripTraceMarkers, traceLines } from '../../utils/traceText';
+import { stripTraceMarkers } from '../../utils/traceText';
+import { copyText } from '../../utils/clipboard';
 import { subscribeSharedTicker } from '../../hooks/useSharedTicker';
 import Disclosure from './Disclosure';
 
@@ -12,56 +13,48 @@ export interface ReasoningRowProps {
     running?: boolean;
     /** Kept for API compatibility — rows ALWAYS start collapsed. */
     defaultOpen?: boolean;
+    /** A frozen work duration from the persisted run — what a reloaded row
+     *  shows after the live clock is gone. */
+    persistedMs?: number;
     /** Row label. */
     label?: string;
     className?: string;
     tokens?: number;
 }
 
-/** Expanded traces longer than this truncate with an inline Show-more toggle
- *  (truncation applies inside the expanded state too). */
-const EXPAND_PREVIEW_CHARS = 600;
-
 /**
- * Collapsible thinking row, built on a native `<details>` so it stays a
- * toggle in EVERY state — clicking always expands/collapses the thinking.
- *   · RUNNING + collapsed = a dim glyph, the word `Thinking`, and a live
- *     duration tick. No scrolling ticker — raw trace never previews (models
- *     lean on `**` markdown; it must never leak into the transcript).
- *   · SETTLED + collapsed = a bare ZCode-style `Thought · 14s` row — the
- *     frozen duration PERSISTS so the row still reads as a real step, and
- *     the row stays collapsed (no auto-open; a manual toggle always wins).
- *   · EXPANDED = the boxed trace: clean bulleted lines (one observation per
- *     bullet, emphasis markers peeled) truncated past 600 chars with their
- *     own Show more / Show less toggle.
- * The trace body stays in the DOM when collapsed.
+ * Collapsible thinking row, built on a native `<details>`.
  *
- * **This row labels the TRACE, not the turn.** What the turn is doing right
- * now is the status line one level up (`AnalyzedRow`): it names the activity
- * — "Reading the order book" — and this row answers the other question,
- * "is there a trace, and how long is it". They used to compete: the running
- * row showed a rotating trader tip while the status line said only
- * "Analyzing", so the trader read a generic tip where a real answer was
- * available. The tip has one home now — the waiting placeholder in
- * `ChatWorkTimeline`, which is the one moment a tip is the right thing.
+ * The reference is one quiet line — a small bulb, “Thinking complete”, a muted
+ * duration and a chevron — with the trace as a flat, muted, left-ruled block
+ * underneath. No box, no fill, no second card: the answer is the primary
+ * element and the trace is its receipt.
+ *
+ *  · RUNNING + collapsed = “Thinking” and a soft glyph pulse; no spinner, no
+ *    scrolling trace. The trace never previews raw (models lean on `**`
+ *    markdown; it must never leak into the transcript).
+ *  · SETTLED + collapsed = “Thinking complete · 14s”; the frozen duration
+ *    persists so the row still reads as a real step.
+ *  · EXPANDED = the trace, muted at the small size, max-height 16rem with its
+ *    own scroll, and a copy chip on hover/focus.
+ *
+ * The body stays in the DOM when collapsed (the caller may inspect it), and a
+ * manual toggle always wins over the live state.
  */
 const ReasoningRow: React.FC<ReasoningRowProps> = ({
     thinking,
     running = false,
     defaultOpen: _defaultOpen = false,
+    persistedMs,
     label = 'Thinking',
     className = '',
     tokens,
 }) => {
     const [open, setOpen] = useState(false);
-    // Inner truncation state — independent from the disclosure itself.
-    const [showFullTrace, setShowFullTrace] = useState(false);
+    const [copied, setCopied] = useState(false);
     const bodyRef = useRef<HTMLDivElement>(null);
     const wasRunningRef = useRef(running);
-    // Clock starts at mount if the row is already streaming (live message).
     const startedAtRef = useRef<number | null>(running ? Date.now() : null);
-    // Live seconds while streaming; FROZEN into settledSeconds at settle so
-    // the duration survives on the collapsed row.
     const [liveSeconds, setLiveSeconds] = useState<number | null>(
         running && startedAtRef.current !== null ? Math.round((Date.now() - startedAtRef.current) / 1000) : null,
     );
@@ -71,12 +64,9 @@ const ReasoningRow: React.FC<ReasoningRowProps> = ({
     const bodyPinnedRef = useRef(true);
     const trimmed = thinking.trim();
 
-    // Run start arms a fresh clock (and a fresh body pin); settle freezes the
-    // elapsed time into the row's permanent `Thought · Ns` meta.
     useEffect(() => {
         if (running && !wasRunningRef.current) {
             startedAtRef.current = Date.now();
-            setShowFullTrace(false);
             bodyPinnedRef.current = true;
         }
         if (wasRunningRef.current && !running) {
@@ -87,11 +77,6 @@ const ReasoningRow: React.FC<ReasoningRowProps> = ({
         wasRunningRef.current = running;
     }, [running]);
 
-    // Tick the visible duration once per second while the trace streams.
-    // This row used to run its OWN setInterval — one per row, so a
-    // 200-message conversation held up to 400 live timers. It now subscribes
-    // to the ONE shared ticker (hooks/useSharedTicker.ts); the per-row API is
-    // unchanged.
     useEffect(() => {
         if (!running) {
             setLiveSeconds(null);
@@ -103,46 +88,43 @@ const ReasoningRow: React.FC<ReasoningRowProps> = ({
         return subscribeSharedTicker(() => setLiveSeconds(elapsed()));
     }, [running]);
 
-    // While expanded and live, follow the bottom of the trace ONLY while the
-    // reader is pinned there (layout-phase so the pin happens before paint).
-    // Scrolling up inside the trace unpins until they return to the bottom.
     useLayoutEffect(() => {
         if (!running || !open || !bodyPinnedRef.current) return;
         const body = bodyRef.current;
         if (body) body.scrollTop = body.scrollHeight;
-    }, [thinking, running, open, showFullTrace]);
+    }, [thinking, running, open]);
 
     if (!trimmed) return null;
 
-    const seconds = running ? liveSeconds : settledSeconds;
+    const frozenSeconds = typeof persistedMs === 'number'
+        ? Math.max(0, Math.round(persistedMs / 1000))
+        : null;
+    const seconds = running ? liveSeconds : settledSeconds ?? frozenSeconds;
     const meta = seconds !== null ? formatElapsed(seconds) : null;
+    // The row labels the TRACE. A custom label (e.g. "Moderator thinking")
+    // carries information and shows as-is; the default line reads the way the
+    // reference reads.
+    const rowLabel = label !== 'Thinking'
+        ? label
+        : running ? 'Thinking' : 'Thinking complete';
 
-    // Inner truncation applies to the SETTLED expanded body only — a live
-    // stream shows everything (the user opened it deliberately mid-run).
-    // The cut lands mid-line with an ellipsis riding the last bullet —
-    // "Show more" reveals the whole trace.
-    const needsTrim = !running && trimmed.length > EXPAND_PREVIEW_CHARS;
-    const traceShown = needsTrim && !showFullTrace
-        ? `${trimmed.slice(0, EXPAND_PREVIEW_CHARS).trimEnd()} …`
-        : trimmed;
-
-    // The row labels the TRACE, never the turn. The turn's status line lives
-    // one level up (`AnalyzedRow`): it names what the desk is doing right now
-    // — "Reading the order book" — and this row answers a different question,
-    // "is there a trace, and how long is it". Two rows, two claims; neither
-    // competes with the other. A custom label (e.g. "Moderator thinking")
-    // carries information, so it always shows as-is.
-    const rowLabel = label !== 'Thinking' ? label : (running ? 'Thinking' : 'Thought');
+    const onCopy = (): void => {
+        void copyText(trimmed).then(ok => {
+            if (!ok) return;
+            setCopied(true);
+            window.setTimeout(() => setCopied(false), 1400);
+        });
+    };
 
     return (
         <Disclosure
-            className={`reasoning-row ${open ? 'is-open' : ''} ${className}`.trim()}
+            className={`thinking-row reasoning-row group/reasoning ${open ? 'is-open' : ''} ${className}`.trim()}
             summaryClassName="reasoning-row-summary"
-            bodyClassName="reasoning-row-body custom-scrollbar"
+            bodyClassName="reasoning-row-body thinking-row-body custom-scrollbar"
             state={running ? 'running' : 'ok'}
             open={open}
             onToggle={setOpen}
-            label={`${label} — ${open ? 'collapse' : 'expand'}`}
+            label={`${rowLabel}${meta ? `, ${meta}` : ''} — ${open ? 'collapse' : 'expand'}`}
             bodyRef={bodyRef}
             onBodyScroll={() => {
                 const body = bodyRef.current;
@@ -151,53 +133,37 @@ const ReasoningRow: React.FC<ReasoningRowProps> = ({
             }}
             summary={(
                 <>
-                    {running ? (
-                        <Lightbulb className="reasoning-row-glyph animate-pulse" aria-hidden="true" />
-                    ) : (
-                        <Brain className="reasoning-row-glyph" aria-hidden="true" />
-                    )}
+                    <Lightbulb
+                        className={`reasoning-row-glyph ${running ? 'animate-pulse motion-reduce:animate-none text-zinc-500' : ''}`}
+                        aria-hidden="true"
+                    />
                     <span className="reasoning-row-label">{rowLabel}</span>
                     {meta !== null && (
-                        // Settled reads as a sentence ("Thought for 14s"); live
-                        // keeps the dot separator so the ticking number doesn't
-                        // look like part of the label.
                         <span className="reasoning-row-meta" aria-label={`${meta} of thinking`}>
-                            {running ? `· ${meta}` : `for ${meta}`}
+                            · {meta}
                         </span>
                     )}
+                    {typeof tokens === 'number' && tokens > 0 && (
+                        <span className="reasoning-row-meta hidden sm:inline">· {tokens.toLocaleString()} tokens</span>
+                    )}
+                    <ChevronRight className="reasoning-row-chevron" aria-hidden="true" />
                 </>
             )}
         >
-            {/* While running the body stays plain (marker-stripped) text —
-                re-parsing a growing trace into bullets every chunk is
-                waste for a panel that is usually collapsed mid-run. The
-                blinking caret makes the growth read as live speech. */}
-            {running ? (
-                <div className="whitespace-pre-wrap break-words text-zinc-400">
+            <div className="relative pr-8">
+                <div className="whitespace-pre-wrap break-words text-ui-sm leading-[1.7] text-zinc-500">
                     {stripTraceMarkers(trimmed)}
-                    <span className="reasoning-row-caret" aria-hidden="true" />
                 </div>
-            ) : (
-                <>
-                    <div className="space-y-1">
-                        {traceLines(traceShown).map((line, i) => (
-                            <div key={i} className="flex gap-2">
-                                <span aria-hidden="true" className="shrink-0 text-zinc-600">•</span>
-                                <span className="min-w-0 flex-1 break-words text-zinc-400">{line}</span>
-                            </div>
-                        ))}
-                    </div>
-                    {needsTrim && (
-                        <button
-                            type="button"
-                            onClick={() => setShowFullTrace(prev => !prev)}
-                            className="mt-1 text-ui-dense font-medium text-zinc-300 underline decoration-zinc-600 underline-offset-2 transition-colors hover:text-zinc-100"
-                        >
-                            {showFullTrace ? 'Show less' : 'Show more'}
-                        </button>
-                    )}
-                </>
-            )}
+                <button
+                    type="button"
+                    onClick={onCopy}
+                    aria-label={copied ? 'Thinking copied' : 'Copy thinking'}
+                    title={copied ? 'Copied' : 'Copy thinking'}
+                    className="absolute right-0 top-0 flex h-6 w-6 items-center justify-center rounded-control text-zinc-500 opacity-100 transition-opacity hover:bg-white/[0.06] hover:text-zinc-200 focus-visible:opacity-100 sm:opacity-0 sm:group-hover/reasoning:opacity-100"
+                >
+                    {copied ? <Check className="h-3.5 w-3.5 text-emerald-400" aria-hidden="true" /> : <Copy className="h-3.5 w-3.5" aria-hidden="true" />}
+                </button>
+            </div>
         </Disclosure>
     );
 };

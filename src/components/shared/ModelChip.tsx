@@ -101,7 +101,7 @@ const ModelChip: React.FC<ModelChipProps> = ({
                 aria-expanded={open} aria-haspopup="menu"
                 title={issue ? 'Model fallback active — re-pick a model' : selectedLabel}
                 data-testid="composer-model-chip"
-                className={`flex items-center gap-1.5 rounded-full border border-white/[0.08] bg-zinc-900/60 px-2.5 py-1 text-ui-dense text-zinc-400 transition-colors hover:border-white/[0.16] hover:text-zinc-200 ${compact ? 'max-w-[13rem]' : 'max-w-[22rem] min-w-0'}`}>
+                className={`flex items-center gap-1.5 rounded-control px-1.5 py-1 text-ui-dense text-zinc-500 transition-colors hover:bg-white/[0.05] hover:text-zinc-200 ${compact ? 'max-w-[13rem]' : 'max-w-[22rem] min-w-0'}`}>
                 <span className="min-w-0 truncate" title={selectedLabel}>{selectedLabel}</span>
                 <ChevronDown className={`h-2.5 w-2.5 shrink-0 transition-transform duration-150 ease-[var(--ease-snappy)] ${open ? 'rotate-180' : ''}`} aria-hidden="true" />
             </button>

@@ -46,7 +46,11 @@ export interface AnalyzedRowProps {
  * freezes when the answer text begins.
  */
 const AnalyzedRow: React.FC<AnalyzedRowProps> = ({ running = false, className = '', summary, persistedMs, title, activity, children }) => {
-    const [open, setOpen] = useState(true);
+    // Collapsed by default, like the reference: the line names the work and
+    // the steps are one click away. The body stays mounted, so an assertion
+    // can still read it; auto-opening on every run is what made a conversation
+    // read as a pile of cards.
+    const [open, setOpen] = useState(false);
     const wasRunningRef = useRef(running);
     const startedAtRef = useRef<number | null>(running ? Date.now() : null);
     const [liveSeconds, setLiveSeconds] = useState<number | null>(running ? 0 : null);
@@ -55,7 +59,6 @@ const AnalyzedRow: React.FC<AnalyzedRowProps> = ({ running = false, className = 
     useEffect(() => {
         if (running && !wasRunningRef.current) {
             startedAtRef.current = Date.now();
-            setOpen(true);
         }
         if (wasRunningRef.current && !running) {
             const start = startedAtRef.current;

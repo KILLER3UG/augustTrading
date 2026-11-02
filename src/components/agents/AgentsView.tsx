@@ -965,7 +965,7 @@ const AgentsView: React.FC<AgentsViewProps> = ({
                    custom property, because an inline style would otherwise win
                    at every breakpoint and flatten the drawer too. */
                 style={{ '--rail-w': `${NAV_RAIL_EXPANDED_PX}px` } as React.CSSProperties}
-                className={`fixed inset-y-0 left-0 z-40 flex w-72 shrink-0 transform flex-col border-r border-zinc-800/80 bg-zinc-900 transition-transform duration-[150ms] ease-[var(--ease-snappy)] ${
+                className={`fixed inset-y-0 left-0 z-40 flex w-72 shrink-0 transform flex-col bg-zinc-950 transition-transform duration-[150ms] ease-[var(--ease-snappy)] ${
                     railOpen ? 'translate-x-0' : 'invisible -translate-x-full md:visible'
                 } md:static md:z-auto md:h-full md:min-h-0 md:w-[var(--rail-w)] md:translate-x-0 ${
                     railExpanded ? '' : 'md:hidden'
@@ -1017,7 +1017,7 @@ const AgentsView: React.FC<AgentsViewProps> = ({
                             selectThread({ kind: 'team' });
                             composerRef.current?.focus();
                         }}
-                        className="group flex w-full items-center gap-2.5 rounded-control border border-white/[0.08] bg-zinc-800/60 px-2.5 py-2 text-left text-ui-caption font-medium text-zinc-200 shadow-sm transition-colors duration-[120ms] ease-[var(--ease-snappy)] hover:border-white/[0.14] hover:bg-zinc-800 hover:text-zinc-100">
+                        className="group flex w-full items-center gap-2.5 rounded-control px-2.5 py-2 text-left text-ui-caption text-zinc-400 transition-colors duration-[120ms] ease-[var(--ease-snappy)] hover:bg-white/[0.05] hover:text-zinc-100">
                         <Plus className="h-4 w-4 shrink-0 text-zinc-400" aria-hidden="true" />
                         <span className="flex-1 truncate" title="New chat">New chat</span>
                     </button>
@@ -1044,7 +1044,7 @@ const AgentsView: React.FC<AgentsViewProps> = ({
                     row left here now that the destinations live in the title
                     bar. Above `New` it read as an orphan against the top edge. */}
                 {destinationMenu && (
-                    <div className="shrink-0 border-b border-zinc-800/80 pb-1.5" data-testid="sidebar-destinations">
+                    <div className="shrink-0 pb-1.5" data-testid="sidebar-destinations">
                         {destinationMenu}
                     </div>
                 )}
@@ -1053,7 +1053,7 @@ const AgentsView: React.FC<AgentsViewProps> = ({
                     SESSIONS and BOTS. The search handle rides on this row rather
                     than inside one section, because it filters both lists and
                     lived in the bot header only by accident. */}
-                <div className="flex shrink-0 items-center gap-1 border-b border-zinc-800/80 px-2 pb-1.5">
+                <div className="flex shrink-0 items-center gap-1 px-2 pb-1.5">
                     <div role="tablist" aria-label="Sidebar lists" className="flex items-center gap-1">
                         {([['chats', 'Chats'], ['bots', 'Bots'], ['goals', 'Goals']] as const).map(([id, label]) => (
                             <button key={id} type="button" role="tab" data-testid={`rail-tab-${id}`}
