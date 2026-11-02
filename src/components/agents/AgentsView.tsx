@@ -184,9 +184,6 @@ interface AgentsViewProps {
     /** Journal / Learning / Customize: the records half of the workspace,
      *  above the account exactly as the reference orders its utility group. */
     shellUtilities?: React.ReactNode;
-    /** Shell status strip, rendered under the content column. The reference
-     *  keeps one on every view, including focused chat. */
-    shellStatusBar?: React.ReactNode;
     /** Bumped by the shell rail's Search row. The field is local to this
      *  surface, so the request arrives as a token and is consumed once. */
     searchRequestNonce?: number;
@@ -501,7 +498,7 @@ const AgentsView: React.FC<AgentsViewProps> = ({
     onSendBotTurn, onAnalyze, onLogProposedTrade, onAnalysisError, onStopRun, analysisRunning = false, renderGroup, coachCount, workingBotId, mailboxBusyBotIds,
     lastOpenedMap = {}, modelPicker, modelFallback = null, destinationMenu, accountRow,
     railExpanded = true, onToggleRailExpanded, statusCluster, surfaceSwitch,
-    modeSwitch, shellUtilities, shellStatusBar,
+    modeSwitch, shellUtilities,
     railWidth = NAV_RAIL_EXPANDED_PX, railIsResizing = false,
     onRailResizeStart, onRailResizeReset,
     searchRequestNonce = 0, onSearchRequestConsumed,
@@ -1798,7 +1795,6 @@ const AgentsView: React.FC<AgentsViewProps> = ({
                         </div>
                     </>
                 )}
-                {shellStatusBar}
             </section>
             {/* The agent's FULL card — the reader the launch list opens. It
                 mounts OUTSIDE the pane, because an overlay that mounts inside

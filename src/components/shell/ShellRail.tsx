@@ -21,8 +21,6 @@ import { AccountRow } from './shellChrome';
 import type { NavBadge } from './SurfaceMenuList';
 import type { AppSurface } from '../../hooks/useSurface';
 import type { Conversation } from '../../types';
-import { useSharedTicker } from '../../hooks/useSharedTicker';
-import { PHT_LABEL, phtClock } from '../../utils/timezone';
 import { display } from '../../utils/symbol';
 import * as chatStore from '../../services/trade/chatStore';
 
@@ -142,29 +140,6 @@ export const DeskInstrument: React.FC<{ className?: string }> = ({ className }) 
         <span className={className} data-testid="shell-instrument">
             {display(session.symbol)} · {session.interval}
         </span>
-    );
-};
-
-/** The status strip under the content column. Every item is a fact the app
- *  can prove: where the workspace lives, what is charted, the trader's clock,
- *  and the one promise that matters (no orders leave this app). */
-export const ShellStatusBar: React.FC = () => {
-    const now = useSharedTicker(true);
-    return (
-        <footer
-            data-testid="shell-status-bar"
-            aria-label="Workspace status"
-            className="flex h-8 shrink-0 items-center gap-4 overflow-hidden border-t border-white/[0.06] bg-zinc-950 px-4 text-ui-xs text-zinc-600 whitespace-nowrap"
-        >
-            <span className="inline-flex min-w-0 items-center gap-1.5">
-                <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500/80" />
-                <span className="truncate">August Trading</span>
-            </span>
-            <span className="hidden sm:inline">Local</span>
-            <DeskInstrument className="hidden truncate md:inline" />
-            <span className="ml-auto shrink-0 tabular-nums">{phtClock(now)} {PHT_LABEL}</span>
-            <span className="hidden shrink-0 lg:inline">No order placement</span>
-        </footer>
     );
 };
 

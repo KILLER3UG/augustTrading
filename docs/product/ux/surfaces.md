@@ -105,8 +105,6 @@ the trader's journal in bulk; treat it accordingly.
 - The **content bar** carries the A-mark, the active conversation or record name, the instrument
   context, session state and Activity. `AgentsView`'s own bar IS that bar — no second header
   stacks above it.
-- A **status strip** under the content column names the workspace, `Local`, the instrument, the
-  PHT clock and `No order placement`. Every item is a provable fact; there is no "Ready" state.
 - The rail is 240px by default and drags from its right edge (200–360px; the width persists and
   double-click restores 240). Its top-right control puts it away; collapsed it leaves the layout,
   and its expand affordance is the content bar. Below 1024px it is a drawer over the content

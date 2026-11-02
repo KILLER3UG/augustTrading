@@ -121,7 +121,7 @@ import { AccountRow, NAV_RAIL_AUTO_COLLAPSE_PX, NAV_RAIL_EXPANDED_PX } from './c
 import StatusCluster from './components/shell/StatusCluster';
 import SurfaceSwitch from './components/shell/SurfaceSwitch';
 import ShellRail, {
-    DeskInstrument, ShellModeSwitch, ShellStatusBar, ShellUtility,
+    DeskInstrument, ShellModeSwitch, ShellUtility,
 } from './components/shell/ShellRail';
 // The Journal pulls recharts + react-virtuoso into its chunk — statically
 // importing it put both on the startup path for a surface most users open
@@ -2750,7 +2750,6 @@ const App: React.FC = () => {
                                         onOpenCustomize={openCustomize}
                                         badges={navBadges}
                                     />}
-                                    shellStatusBar={<ShellStatusBar />}
                                     searchRequestNonce={agentsSearchRequest}
                                     onSearchRequestConsumed={consumeAgentsSearchRequest}
                                     statusCluster={shellStatus}
@@ -2779,10 +2778,6 @@ const App: React.FC = () => {
                                 />
                             </React.Suspense>
                         )}
-                    {/* The status strip belongs to the content column, under
-                        the surface. Agents renders its own copy inside the pane
-                        (it owns that column), so this one is for the rest. */}
-                    {surface !== 'agents' && <ShellStatusBar />}
                     </main>
 
 

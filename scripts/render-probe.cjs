@@ -1897,15 +1897,15 @@ async function main() {
                 const now = await page.evaluate(() => {
                     const main = document.querySelector('main');
                     if (!main) return '';
-                    // The title bar and the status strip live INSIDE <main> now,
-                    // so their text is constant across every surface — sampling
-                    // them would make the first two reads equal and return the
-                    // shell as "the surface" a beat before the lazy chunk mounts.
-                    // Measure the branches between them, which are what changes.
+                    // The title bar lives INSIDE <main> now, so its text is
+                    // constant across every surface — sampling it would make the
+                    // first two reads equal and return the band as "the surface"
+                    // a beat before the lazy chunk mounts. Measure the branches
+                    // under it, which are what actually changes.
                     const head = main.querySelector(':scope > header');
                     let text = '';
                     for (const el of main.children) {
-                        if (el === head || el.tagName === 'FOOTER') continue;
+                        if (el === head) continue;
                         text += `${el.innerText ?? ''}\n`;
                     }
                     return text.trim();
