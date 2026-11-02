@@ -1515,11 +1515,11 @@ async function main() {
          *  have forced it collapsed, expands it so the wide sweep is measuring
          *  what a desktop user sees. */
         const openMenu = async () => page.evaluate(() => {
-            const rail = document.querySelector('[data-testid="nav-rail"]');
-            if (rail && rail.getAttribute('data-expanded') === 'true') return 'already expanded';
+            const rail = document.querySelector('[data-testid="shell-rail"]')
+                || document.querySelector('[data-testid="agents-rail"]');
+            if (rail && rail.offsetParent !== null) return 'already expanded';
             // D2 amendment: the collapsed rail is 0px and inert, so the expand
-            // affordance lives in the header. The in-rail toggle only renders
-            // for the collapse direction now.
+            // affordance lives in the content bar.
             const headerToggle = document.querySelector('[data-testid="nav-rail-toggle-header"]');
             if (headerToggle) { headerToggle.click(); return 'expanded'; }
             const toggle = document.querySelector('[data-testid="nav-rail-toggle"]');
@@ -1551,7 +1551,7 @@ async function main() {
                 // width, both times. Where the column ENDS is the line every
                 // surface's content begins at.
                 const el = document.querySelector('[data-testid="agents-rail"]')
-                    || document.querySelector('[data-testid="nav-rail"]');
+                    || document.querySelector('[data-testid="shell-rail"]');
                 const box = el && el.offsetParent !== null
                     ? el.getBoundingClientRect() : null;
                 const sw = document.querySelector('[data-testid^="surface-switch-"]');
@@ -1578,7 +1578,7 @@ async function main() {
                     const el = document.querySelector(sel);
                     return !!el && el.offsetParent !== null;
                 };
-                const el = document.querySelector('[data-testid="nav-rail"]')
+                const el = document.querySelector('[data-testid="shell-rail"]')
                     || document.querySelector('[data-testid="agents-rail"]');
                 const box = el && el.offsetParent !== null
                     ? el.getBoundingClientRect() : null;
@@ -1664,63 +1664,87 @@ async function main() {
                     switchTop: sw.length ? Math.round(sw[0].getBoundingClientRect().top) : -1,
                     marked: sw.filter(b => b.getAttribute('aria-current') === 'page')
                         .map(b => b.getAttribute('data-testid')).join(','),
-                    // The destination rows are gone from the sidebar; only
-                    // Customize remains, so this counts the NON-destination rows
-                    // the reference's sidebar does have.
-                    sidebarRows: rail
-                        ? rail.querySelectorAll('[data-testid="surface-menu"] button').length : -1,
+                    // Journal / Learning / Customize are utility rows now, not
+                    // destinations; the switch owns the two desk modes and the
+                    // utility group owns the records. Customize must still have
+                    // its one home in this column.
+                    customizeInRail: !!rail?.querySelector('[data-testid="nav-customize"]'),
                     railTop: rail ? Math.round(rail.getBoundingClientRect().top) : -1,
-                    topbarHeight: Math.round(document.querySelector('header')?.getBoundingClientRect().height ?? 0),
+                    // No global band on this surface: AgentsView's own bar is
+                    // the content bar, so nothing stacks above the rail.
+                    headerAbove: !!document.querySelector('header'),
                     accountName: !!rail?.querySelector('[data-testid="nav-account-name"]'),
                     switchUserButton: !!rail?.querySelector('[data-testid="nav-switch-user"]'),
                 };
             });
-            check('every surface is reachable from the title-bar switch with no menu to open',
-                nav.switchCount === 4, `${nav.switchCount} entries in the switch`);
+            check('every surface is reachable from the shell rail with no menu to open',
+                nav.switchCount === 4, `${nav.switchCount} entries in the rail switch`);
             check('the switch marks the screen you are actually on',
                 nav.marked === 'surface-switch-agents', nav.marked || 'nothing marked');
-            check('the sidebar keeps only the row that is not a destination',
-                nav.sidebarRows === 1, `${nav.sidebarRows} sidebar nav rows`);
+            check('the sidebar keeps the Customize route with the utility group',
+                nav.customizeInRail, `customize=${nav.customizeInRail}`);
             check('the account row says who is signed in and is not a control',
                 nav.accountName && !nav.switchUserButton,
                 `name=${nav.accountName} switchButton=${nav.switchUserButton}`);
             check('the sidebar runs the full height of the window — nothing is stacked above it',
-                // The v2 shell stacks ONE bar above every surface — the topbar
-                // (brand, tabs, status, account). "Nothing stacked above" now
-                // means: the rail starts exactly at the topbar's bottom edge,
-                // and the only thing above it IS that bar.
-                nav.railTop > 0 && nav.railTop <= 64 && nav.railTop >= nav.topbarHeight - 1,
-                `agents-rail top ${nav.railTop}px, topbar ${nav.topbarHeight}px`);
+                nav.railTop === 0 && !nav.headerAbove,
+                `agents-rail top ${nav.railTop}px, header above=${nav.headerAbove}`);
 
             // Ctrl+B belongs to the RAIL specifically, which the Agents surface no
             // longer mounts — so press it on a surface that has one.
             await navTo('Analyze');
             await sleep(900);
 
-            // The surfaces that lost the rail must show it: the title bar now
-            // starts at the window's left edge, and the switch — not a row list —
-            // is what says where you are.
+            // The shell rail is a sibling of <main> and runs full height, so
+            // the content bar begins exactly where the rail ends — at the
+            // window edge when the rail is put away, at the column's right
+            // edge when it is open.
             const band = await page.evaluate(() => {
-                const sw = document.querySelector('[data-testid^="surface-switch-"]');
-                const head = sw ? sw.closest('header') : null;
+                const rail = document.querySelector('[data-testid="shell-rail"]');
                 const main = document.querySelector('main');
-                if (!head || !main) return null;
+                const head = main ? main.querySelector('header') : null;
+                if (!rail || !main || !head) return null;
+                const r = rail.getBoundingClientRect();
                 const h = head.getBoundingClientRect();
                 const m = main.getBoundingClientRect();
                 return {
+                    railRight: Math.round(r.right),
                     headLeft: Math.round(h.left),
                     headTop: Math.round(h.top),
                     mainLeft: Math.round(m.left),
-                    rail: !!document.querySelector('[data-testid="nav-rail"]'),
                     marked: [...document.querySelectorAll('[data-testid^="surface-switch-"]')]
                         .filter(b => b.getAttribute('aria-current') === 'page')
                         .map(b => b.getAttribute('data-testid')).join(','),
                 };
             });
-            check('the rail-less surfaces put the title bar at the window edge and keep the switch',
-                !!band && !band.rail && band.headLeft === band.mainLeft && band.headTop === 0
-                    && band.marked === 'surface-switch-trade',
-                band ? `header x=${band.headLeft} y=${band.headTop}, rail=${band.rail}, ${band.marked}` : 'no header');
+            check('the rail puts the content bar beside it and keeps the switch in the rail',
+                !!band && band.headLeft === band.mainLeft && band.headLeft === band.railRight
+                    && band.headTop === 0 && band.marked === 'surface-switch-trade',
+                band ? `rail right=${band.railRight}, header x=${band.headLeft} y=${band.headTop}, ${band.marked}` : 'no rail or header');
+
+            // The rail's Search row is the one shell gesture that crosses
+            // surfaces and hands the focused form a token — a row that routes
+            // but never opens the field it promises would pass every static
+            // check. Assert the destination AND the focused input.
+            const searchJump = await page.evaluate(() => {
+                const b = document.querySelector('[data-testid="shell-search"]');
+                if (!b) return 'no row';
+                b.click();
+                return 'clicked';
+            });
+            const searchLanded = await page.locator('[data-testid="agents-view"]')
+                .waitFor({ timeout: 8000 }).then(() => true).catch(() => false);
+            let searchFocused = false;
+            for (let i = 0; i < 40 && !searchFocused; i++) {
+                searchFocused = await page.evaluate(() =>
+                    document.activeElement?.getAttribute('data-testid') === 'rail-search');
+                if (!searchFocused) await sleep(100);
+            }
+            check('the rail Search row opens the desk search field',
+                searchJump === 'clicked' && searchLanded && searchFocused,
+                `${searchJump}/${searchLanded}/focused=${searchFocused}`);
+            await navTo('Analyze');
+            await sleep(700);
 
             // Ctrl/Cmd+B belongs to the one column that still collapses: the
             // Chat sidebar. The rail is gone, so press it where a column exists —
@@ -1786,15 +1810,15 @@ async function main() {
                 const now = await page.evaluate(() => {
                     const main = document.querySelector('main');
                     if (!main) return '';
-                    // The title bar lives INSIDE <main> now, so its text is
-                    // constant across every surface — sampling it would make the
-                    // first two reads equal and return the band as "the surface"
-                    // a beat before the lazy chunk mounts. Measure the branches
-                    // under it, which is what actually changes.
+                    // The title bar and the status strip live INSIDE <main> now,
+                    // so their text is constant across every surface — sampling
+                    // them would make the first two reads equal and return the
+                    // shell as "the surface" a beat before the lazy chunk mounts.
+                    // Measure the branches between them, which are what changes.
                     const head = main.querySelector(':scope > header');
                     let text = '';
                     for (const el of main.children) {
-                        if (el === head) continue;
+                        if (el === head || el.tagName === 'FOOTER') continue;
                         text += `${el.innerText ?? ''}\n`;
                     }
                     return text.trim();
@@ -3202,11 +3226,11 @@ async function main() {
             await navTo(surface.label);
             await sleep(900);
             const bad = await page.evaluate(({ floor }) => {
-                // The Agents surface's sidebar is `agents-rail`, not `nav-rail` —
-                // the rail is not mounted there at all now, so a sweep that only
-                // knew the second name would leave every destination row on that
-                // surface unmeasured.
-                const scopes = ['main', 'aside[data-testid="nav-rail"]',
+                // Navigation lives in `shell-rail` on most surfaces and in
+                // `agents-rail` on the focused-chat one, so both columns are
+                // measured; a sweep that knew one name would leave the other
+                // surface's rows unmeasured.
+                const scopes = ['main', 'aside[data-testid="shell-rail"]',
                     'aside[data-testid="agents-rail"]', 'header'];
                 const seen = new Set();
                 const out = [];

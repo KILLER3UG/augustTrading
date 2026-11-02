@@ -48,11 +48,13 @@ logged did not happen as far as the app is concerned.
 
 ## Agents (`agents`)
 
-Three regions: a conversation rail, a main pane, and one pill composer.
+Three regions: a full-height rail, a main pane, and one pill composer. The rail's top is the
+**Analyze ⇄ Agents mode switch** — a route between the charted and focused forms of the same desk,
+not a per-turn mode. Journal, Learning and Customize sit at its foot.
 
-- A send routes on **what is selected**, not on a mode switch (there is no switch): a selected bot
-  answers through the bot turn path; nothing selected hands the text to the real pipeline, so desk
-  tools and memory run exactly as they do from the chart dock.
+- A send routes on **what is selected**, not on a send-mode switch (there is none inside the
+  composer): a selected bot answers through the bot turn path; nothing selected hands the text to
+  the real pipeline, so desk tools and memory run exactly as they do from the chart dock.
 - Rooms delegate to the group-round view rather than reimplementing it.
 - **One thread across homes.** The Agents surface and the chart dock show the same conversation
   under the same id; a run keeps its activity line when the trader switches surfaces. Two stores,
@@ -92,11 +94,22 @@ the trader's journal in bulk; treat it accordingly.
 
 ## The shell
 
-- A top strip with the four surface tabs; no left rail (the rail was built and rejected on
-  2026-10-27 — the top strip stays).
-- The sidebar is 240px expanded. `NAV_RAIL_COLLAPSED_PX = 0`: collapsed means it leaves the layout,
-  and its expand affordance is the header toggle. Below 1024px it is hidden whatever the user last
-  chose — applied at render time, not written back, so widening the window restores the choice.
+- **One full-height left rail** on every surface (owner ruling, 2026-11-02). At its top: the
+  Analyze ⇄ Agents **mode switch** — two modes of one desk, not two products. Then New chat,
+  Approvals and Search; the August Trading workspace with its conversations nested as plain rows;
+  and, at its foot, Journal / Learning / Customize above the account.
+- On the **Agents** surface the same mode switch and utility rows live in `AgentsView`'s richer
+  sidebar (bots, rooms, goals, conversations). A mode hop moves the content and not the chrome.
+- The **content bar** carries the A-mark, the active conversation or record name, the instrument
+  context, session state and Activity. `AgentsView`'s own bar IS that bar — no second header
+  stacks above it.
+- A **status strip** under the content column names the workspace, `Local`, the instrument, the
+  PHT clock and `No order placement`. Every item is a provable fact; there is no "Ready" state.
+- The rail is 240px expanded. Collapsed it leaves the layout, and its expand affordance is the
+  content bar. Below 1024px it is hidden whatever the user last chose — applied at render time,
+  not written back, so widening the window restores the choice. At those widths the
+  four-destination fallback switch rides the content bar, so navigation never disappears with
+  the column.
 - Electron's floor is 800px wide. A layout that only breaks below 1024 is a bug.
 - Heavy surfaces are `React.lazy` with `SurfaceSkeleton`, never `fallback={null}`.
 - Overlays mount **outside** `<main>`. A probe that measures `<main>` after opening one re-reports
@@ -104,7 +117,7 @@ the trader's journal in bulk; treat it accordingly.
 
 ## Current state
 
-One 1440px capture per surface, taken 2026-10-29 from the app with the probe's seeded profile:
+One 1440px capture per surface, taken 2026-11-02 from the app with the probe's seeded profile:
 
 | Analyze | Journal |
 |---|---|

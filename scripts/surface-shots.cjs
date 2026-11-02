@@ -174,7 +174,7 @@ async function main() {
         // chart with the Chart AI dock carrying the SAME conversation. Judging
         // "is this as clean as Claude" off the thread alone would miss the one
         // hop this surface has.
-        await navTo('Chat');
+        await navTo('Agents');
         await sleep(1200);
         const pill = page.locator('[data-testid="surface-switch-trade"]');
         if (await pill.count()) {
@@ -248,7 +248,7 @@ async function main() {
 
         // The audit disclosure under a settled verdict: August's answer to the
         // reference's collapsible "Ran a command" stack.
-        await navTo('Chat');
+        await navTo('Agents');
         await sleep(1500);
         how = await press('[data-testid="agent-thread"] details summary', 900);
         await shoot('ui-chat-audit-open', how);

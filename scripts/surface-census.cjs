@@ -216,6 +216,7 @@ async function main() {
             trade: '[data-testid="trade-view"]',
             journal: '[data-testid="journal-view"]',
             chat: '[data-testid="agents-view"]',
+            agents: '[data-testid="agents-view"]',
             learn: '[data-testid="learn-view"]',
         };
         // 'Skills' is gone from the rail sweep — the Studio is measured under
@@ -247,7 +248,7 @@ async function main() {
         // a row that is not mounted would fall through to `main` and report
         // whatever surface happened to be open, the vacuous read this census
         // documents for every other surface.
-        if (!await navTo('Chat')) throw new Error('no switch entry back to Chat');
+        if (!await navTo('Agents')) throw new Error('no switch entry back to Agents');
         await page.waitForSelector('[data-testid="nav-customize"]', { timeout: 15000 })
             .then(() => true).catch(() => false);
         const studioOpened = await page.evaluate(() => {

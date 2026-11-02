@@ -108,7 +108,7 @@ import { useSurfaceRouter } from './hooks/useSurfaceRouter';
 import type { AppSurface } from './hooks/useSurface';
 import type { TradeMode } from './components/trade/TradeView';
 import type { SoloTurnRow } from './services/trade/chatTurnMirror';
-import SurfaceMenuList, { type NavBadge } from './components/shell/SurfaceMenuList';
+import { type NavBadge } from './components/shell/SurfaceMenuList';
 // The rail is DELETED (2026-10-28). Its live row and collapse threshold moved
 // to shellChrome; the update control moved to the header. Nothing imports the
 // old module, and the dead test reference went with it.
@@ -119,6 +119,9 @@ import SurfaceMenuList, { type NavBadge } from './components/shell/SurfaceMenuLi
 import { AccountRow, NAV_RAIL_AUTO_COLLAPSE_PX } from './components/shell/shellChrome';
 import StatusCluster from './components/shell/StatusCluster';
 import SurfaceSwitch from './components/shell/SurfaceSwitch';
+import ShellRail, {
+    DeskInstrument, ShellModeSwitch, ShellStatusBar, ShellUtility,
+} from './components/shell/ShellRail';
 // The Journal pulls recharts + react-virtuoso into its chunk — statically
 // importing it put both on the startup path for a surface most users open
 // after days of logging. Lazy-once like the other surfaces; the deep-link
@@ -1967,6 +1970,25 @@ const App: React.FC = () => {
         return next;
     }, [workingBotId, dmWorkingBotId, isInsightGenerating, insightProgress, activeUsername, skillDraftNonce, learningQueueNonce, approvalsWaiting]);
     const selectTeamThread = useCallback(() => setActiveThread({ kind: 'team' }), []);
+    // One shell rail, two modes. A conversation row, New chat and Search all
+    // land on the desk's focused form (Agents); the dock is the same thread
+    // with the chart beside it, reached by the mode switch.
+    const [agentsSearchRequest, setAgentsSearchRequest] = useState(0);
+    const openDeskConversation = useCallback((id: string) => {
+        handleLoadConversation(id);
+        selectTeamThread();
+        setSurface('agents');
+    }, [handleLoadConversation, selectTeamThread, setSurface]);
+    const startDeskChat = useCallback(() => {
+        handleStartNewConversation();
+        selectTeamThread();
+        setSurface('agents');
+    }, [handleStartNewConversation, selectTeamThread, setSurface]);
+    const requestDeskSearch = useCallback(() => {
+        setAgentsSearchRequest(n => n + 1);
+        setSurface('agents');
+    }, [setSurface]);
+    const consumeAgentsSearchRequest = useCallback(() => setAgentsSearchRequest(0), []);
     const coachAllowDraft = useCallback((draft: SkillDraft): void => {
         void approveSkillDraft(draft, activeUsername || 'default', loggedTradesRef.current)
             .then(r => { const t = skillApprovalToast(r, draft.crafted.name); toast[t.kind](t.title, t.body); });
@@ -2247,6 +2269,44 @@ const App: React.FC = () => {
         ),
         [surface, handleSurfaceSelect, openChartAi, navBadges],
     );
+    /** The rail's mode switch: Analyze and Agents are the same desk, so the
+     *  chat → chart hop keeps its carry-over rule here too. */
+    const shellModeSwitch = useMemo(
+        () => (
+            <ShellModeSwitch
+                surface={surface}
+                onSelect={(next) => {
+                    if (next === 'trade' && surface === 'agents') { openChartAi(); return; }
+                    handleSurfaceSelect(next);
+                }}
+            />
+        ),
+        [surface, handleSurfaceSelect, openChartAi],
+    );
+    const shellUtilities = useMemo(
+        () => (
+            <ShellUtility
+                surface={surface}
+                onSelect={handleSurfaceSelect}
+                onOpenCustomize={openCustomize}
+                badges={navBadges}
+            />
+        ),
+        [surface, handleSurfaceSelect, openCustomize, navBadges],
+    );
+    /** What the content bar is about. The rail names the workspace; this names
+     *  the thing being worked on. */
+    const shellTitle = surface === 'journal'
+        ? 'Journal'
+        : surface === 'learn'
+            ? 'Learning'
+            : (activeConversation?.title?.trim() || 'Desk');
+    // Memoized because Header is memoized on purpose: a fresh element on every
+    // price tick would re-render the whole bar for a label that has not moved.
+    const shellContext = useMemo(
+        () => (surface === 'trade' ? <DeskInstrument /> : undefined),
+        [surface],
+    );
     const shellStatus = useMemo(() => (
         <StatusCluster
             saveStatus={saveStatus}
@@ -2413,42 +2473,58 @@ const App: React.FC = () => {
             <AskUserInputCard />
 
 
-            {/* Main row. The NavRail is GONE: its five destination rows were the
-                tab strip the redesign was asked to remove, and the switch in each
-                surface's title bar replaces them. The Agents surface keeps its own
-                conversation column, which is the sidebar the reference has. */}
+            {/* The shell: one navigation column beside the content, the way the
+                reference draws it. The rail is the full height of the window and
+                owns every route; the content bar names the thing being worked
+                on. On the Agents surface the column is AgentsView's own richer
+                sidebar, which carries the same mode switch and utility rows, so
+                a mode hop moves the content and not the chrome. */}
             <div className="flex-1 flex flex-row min-h-0">
-                {/* The NavRail is gone. Its five destination rows were the tab
-                    strip this redesign was asked to remove; the switch now in
-                    each surface's title bar replaces them, and the Agents surface
-                    keeps the conversation column that IS the reference's sidebar. */}
-                {/* Surfaces: pages, not modals. The Agents surface is gone — the
-                    trade surface's Chart AI dock carries the chats, panels and
-                    roster threads; the Coach inbox is a Learning tab; the other
-                    tabs embed existing components. */}
-                <main className="flex-1 flex flex-col min-h-0 min-w-0 relative bg-zinc-950">
-                    {/* The v2 topbar is the ONE shell bar on EVERY surface —
-                        brand, surface tabs, status, settings, account. The Chat
-                        surface keeps its conversation column but no longer its
-                        own navigation: the tabs above own it, which is also
-                        what keeps the switch in the same place on every hop. */}
-                    <Header
-                        saveStatus={saveStatus}
-                        isAnalysisInProgress={isAnalysisInProgress}
-                        currentVisionData={currentVisionData}
+                {surface !== 'agents' && isNavRailOpen && (
+                    <ShellRail
                         surface={surface}
-                        isOnline={isOnline}
-                        pendingQueueCount={pendingQueueCount}
-                        liveMarketConditions={liveMarketConditions}
-                        liveMarketSymbol={liveMarketSymbol}
-                        onOpenActivity={() => setIsJobsDrawerVisible(true)}
-                        onOpenLiveMarket={handleOpenLiveMarket}
-                        onOpenVisionData={() => setIsVisionDataVisible(true)}
-                        hasVisionData={currentVisionData.length > 0}
-                        status={shellStatus}
-                        surfaceSwitch={shellNavSwitch}
-                        onExpandNavRail={isNavRailOpen ? undefined : toggleNavRail}
+                        onSelectSurface={handleSurfaceSelect}
+                        onNewChat={startDeskChat}
+                        onOpenApprovals={openApprovalsInLearn}
+                        approvalsCount={approvalsWaiting}
+                        onOpenSearch={requestDeskSearch}
+                        conversations={conversationHistory}
+                        activeConversationId={activeConversationId}
+                        onOpenConversation={openDeskConversation}
+                        onDeleteConversation={handleDeleteConversationFromSidebar}
+                        onClearConversation={(id) => { void handleClearChat(id); }}
+                        onOpenCustomize={openCustomize}
+                        activeUsername={activeUsername}
+                        onOpenSettings={() => setIsSettingsMenuVisible(true)}
                     />
+                )}
+                {/* Surfaces: pages, not modals. */}
+                <main className="flex-1 flex flex-col min-h-0 min-w-0 relative bg-zinc-950">
+                    {/* The content bar. The rail owns navigation; this bar names
+                        what is being worked on and carries the live state. On
+                        Agents, AgentsView's own bar is this bar — rendering a
+                        second one above it stacked two titles for one screen. */}
+                    {surface !== 'agents' && (
+                        <Header
+                            saveStatus={saveStatus}
+                            isAnalysisInProgress={isAnalysisInProgress}
+                            currentVisionData={currentVisionData}
+                            surface={surface}
+                            isOnline={isOnline}
+                            pendingQueueCount={pendingQueueCount}
+                            liveMarketConditions={liveMarketConditions}
+                            liveMarketSymbol={liveMarketSymbol}
+                            onOpenActivity={() => setIsJobsDrawerVisible(true)}
+                            onOpenLiveMarket={handleOpenLiveMarket}
+                            onOpenVisionData={() => setIsVisionDataVisible(true)}
+                            hasVisionData={currentVisionData.length > 0}
+                            status={shellStatus}
+                            title={shellTitle}
+                            context={shellContext}
+                            surfaceSwitch={isNavRailOpen ? undefined : shellNavSwitch}
+                            onExpandNavRail={isNavRailOpen ? undefined : toggleNavRail}
+                        />
+                    )}
 
                     {/* The first-run onboarding card used to sit here as a
                         centered banner, but it ate ~50% of the Analyze surface
@@ -2630,21 +2706,25 @@ const App: React.FC = () => {
                                     onStepVersion={stepMessageGeneration}
                                     parkedCount={(activeConversation?.parked ?? []).reduce((n, p) => n + p.rows.length, 0)}
                                     onRestoreParked={restoreParkedTurns}
-                                    destinationMenu={(
-                                        <SurfaceMenuList
-                                            surface={surface}
-                                            badges={navBadges}
-                                            onOpenCustomize={openCustomize}
-                                            onSelect={handleSurfaceSelect}
-                                            hideSurfaces
-                                        />
-                                    )}
-                                    /* surfaceSwitch and statusCluster are
-                                       deliberately NOT passed: the v2 topbar
-                                       owns navigation and status on every
-                                       surface, and a second switch in the rail
-                                       would be a second answer to the same
-                                       question. */
+                                    /* Navigation on this surface follows the same
+                                       rule as the shell rail: the mode switch owns
+                                       the top of the column at every width, the
+                                       four-destination switch only comes back when
+                                       the column is put away (the title bar then
+                                       has to carry it), and Journal/Learning/
+                                       Customize sit above the account. */
+                                    modeSwitch={shellModeSwitch}
+                                    surfaceSwitch={shellNavSwitch}
+                                    shellUtilities={<ShellUtility
+                                        surface={surface}
+                                        onSelect={handleSurfaceSelect}
+                                        onOpenCustomize={openCustomize}
+                                        badges={navBadges}
+                                    />}
+                                    shellStatusBar={<ShellStatusBar />}
+                                    searchRequestNonce={agentsSearchRequest}
+                                    onSearchRequestConsumed={consumeAgentsSearchRequest}
+                                    statusCluster={shellStatus}
                                     accountRow={(
                                         <AccountRow
                                             expanded
@@ -2670,6 +2750,10 @@ const App: React.FC = () => {
                                 />
                             </React.Suspense>
                         )}
+                    {/* The status strip belongs to the content column, under
+                        the surface. Agents renders its own copy inside the pane
+                        (it owns that column), so this one is for the rest. */}
+                    {surface !== 'agents' && <ShellStatusBar />}
                     </main>
 
 

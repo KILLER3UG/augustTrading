@@ -177,6 +177,20 @@ interface AgentsViewProps {
      *  renders no global band, so the navigation the sidebar rows used to be has
      *  to live in the one title bar this surface has. */
     surfaceSwitch?: React.ReactNode;
+    /** The desk's mode switch (Analyze | Agents). It owns the top of the rail,
+     *  at the same x/y the rail-less surfaces put it, so a mode hop does not
+     *  move the control that caused it. */
+    modeSwitch?: React.ReactNode;
+    /** Journal / Learning / Customize: the records half of the workspace,
+     *  above the account exactly as the reference orders its utility group. */
+    shellUtilities?: React.ReactNode;
+    /** Shell status strip, rendered under the content column. The reference
+     *  keeps one on every view, including focused chat. */
+    shellStatusBar?: React.ReactNode;
+    /** Bumped by the shell rail's Search row. The field is local to this
+     *  surface, so the request arrives as a token and is consumed once. */
+    searchRequestNonce?: number;
+    onSearchRequestConsumed?: () => void;
     /** The SAME left-column state every other surface drives, handed in rather
      *  than re-derived per profile. This surface used to keep its own collapse
      *  key and its own width, so the Chat ⇄ Chart AI hop restacked the shell:
@@ -481,6 +495,8 @@ const AgentsView: React.FC<AgentsViewProps> = ({
     onSendBotTurn, onAnalyze, onLogProposedTrade, onAnalysisError, onStopRun, analysisRunning = false, renderGroup, coachCount, workingBotId, mailboxBusyBotIds,
     lastOpenedMap = {}, modelPicker, modelFallback = null, destinationMenu, accountRow,
     railExpanded = true, onToggleRailExpanded, statusCluster, surfaceSwitch,
+    modeSwitch, shellUtilities, shellStatusBar,
+    searchRequestNonce = 0, onSearchRequestConsumed,
     onRevertTo, onEditPromptMessage, onStepVersion, parkedCount = 0, onRestoreParked,
     attentionMap, onDeleteBot, onDeleteGroup, onEditGroup,
     botStats,
@@ -635,6 +651,16 @@ const AgentsView: React.FC<AgentsViewProps> = ({
     useEffect(() => {
         if (searching) searchRef.current?.focus();
     }, [searching]);
+
+    // The shell rail's Search row lands here. The request is a token rather
+    // than a boolean so two presses in a row both open the field; App clears
+    // it once consumed, which is why a later remount does not replay it.
+    useEffect(() => {
+        if (!searchRequestNonce) return;
+        setRailOpen(true);
+        setSearchFocusNonce(n => n + 1);
+        onSearchRequestConsumed?.();
+    }, [searchRequestNonce, onSearchRequestConsumed]);
 
     const statFor = useCallback((botId: string): BotLearningStat | undefined =>
         botStats?.find(s => s.id === botId), [botStats]);
@@ -914,6 +940,12 @@ const AgentsView: React.FC<AgentsViewProps> = ({
     const contextNote = activeBot
         ? `@${activeBot.name} answers here`
         : 'No agent selected — the desk can check the tape';
+    /** A loaded App conversation's own name. The chat store's session title can
+     *  still be the placeholder "New chat" while the conversation the trader
+     *  picked already has a name, and this bar is the one place that name is the
+     *  subject of the screen. */
+    const activeConversationTitle = conversations
+        .find(c => c.id === activeConversationId)?.title?.trim();
 
     // The + New menu: one creator, four honest verbs. The old chip row made
     // "Agents" and "Rooms" look like navigation when both only opened create
@@ -981,10 +1013,11 @@ const AgentsView: React.FC<AgentsViewProps> = ({
                     (which pins the switch across the hop) went red. */}
                 {(switchInRail || onToggleRailExpanded) && (
                     <div className="flex shrink-0 items-center justify-between gap-2 px-2 pb-1 pt-2">
-                        {/* pt-2, not pt-2.5: the header band's effective top
+                        {/* pt-2, not pt-2.5: the shell rail's effective top
                             padding is 8px, and the hop check pins this switch's
-                            y to the header's across the Chat ⇄ Trade hop. */}
-                        {switchInRail ? surfaceSwitch : <span aria-hidden />}
+                            y to the shell rail's across the Analyze ⇄ Agents
+                            hop. */}
+                        {switchInRail ? (modeSwitch ?? surfaceSwitch) : <span aria-hidden />}
                         {onToggleRailExpanded && (
                             <button type="button" onClick={onToggleRailExpanded} data-testid="rail-collapse"
                                 aria-label="Collapse conversations" title="Collapse the conversation rail"
@@ -1284,6 +1317,15 @@ const AgentsView: React.FC<AgentsViewProps> = ({
                     )}
                 </div>
 
+                {/* The records half of the workspace, above the account — the
+                    reference's utility group. Same rows the shell rail renders,
+                    so Journal and Learning never move between modes. */}
+                {shellUtilities && (
+                    <div className="shrink-0 border-t border-white/[0.06] px-2 py-1.5">
+                        {shellUtilities}
+                    </div>
+                )}
+
                 {/* Identity, when this column IS the sidebar. It used to live only
                     in the nav rail, and putting it in both places at once is what
                     made two account rows share one screen — so it arrives as a
@@ -1347,15 +1389,18 @@ const AgentsView: React.FC<AgentsViewProps> = ({
                                         /* The desk pane IS the active chat session —
                                             loaded App conversations included — so the
                                             title names the session, not a brand. The
-                                            dock row above keeps the "Chart AI" name. */
-                                        : (activeSession?.title?.trim() || 'Desk')}>
+                                            App conversation's own name wins when one is
+                                            loaded; the chat-session title is the
+                                            fallback for a thread that has not been
+                                            named yet. The dock row above keeps the
+                                            "Chart AI" name. */
+                                        : (activeConversationTitle || activeSession?.title?.trim() || 'Desk')}>
                                     {activeBot
                                         ? `@${activeBot.name}`
-                                        /* The desk pane IS the active chat session —
-                                            loaded App conversations included — so the
-                                            title names the session, not a brand. The
-                                            dock row above keeps the "Chart AI" name. */
-                                        : (activeSession?.title?.trim() || 'Desk')}
+                                        /* Same rule as the tooltip above: the loaded
+                                            conversation's name, then the session's, then
+                                            the desk. */
+                                        : (activeConversationTitle || activeSession?.title?.trim() || 'Desk')}
                                 </span>
                                 {/* Which goal the seat is working inside — and the
                                     one press that ends it. Its tool policy is
@@ -1729,6 +1774,7 @@ const AgentsView: React.FC<AgentsViewProps> = ({
                         </div>
                     </>
                 )}
+                {shellStatusBar}
             </section>
             {/* The agent's FULL card — the reader the launch list opens. It
                 mounts OUTSIDE the pane, because an overlay that mounts inside

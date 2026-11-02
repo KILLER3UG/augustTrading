@@ -40,10 +40,18 @@ interface HeaderProps {
      *  the hidden sidebar's expand button also carries the update-status dot,
      *  so the one quiet status carrier stays visible in the resting view. */
     onExpandNavRail?: () => void;
-    /** The screen switch — the v2 tab strip — built once by the App and
-     *  rendered here. The topbar is the ONE navigation on every surface, which
-     *  is what keeps the switch in the same place across a hop. */
+    /** The collapsed-rail fallback: the four-destination switch, rendered only
+     *  when the shell rail is not on screen (narrow viewport or put away). The
+     *  rail owns navigation whenever it is visible, so this is never a second
+     *  copy of it. */
     surfaceSwitch?: React.ReactNode;
+    /** What the content column is about: the conversation's name on Analyze, or
+     *  the record surface's name. The rail carries the workspace, so the bar
+     *  carries the thing being worked on. */
+    title?: React.ReactNode;
+    /** The instrument line beside the title (`BTC/USDT · 4h`). Omitted when the
+     *  surface has no market context of its own. */
+    context?: React.ReactNode;
     /** The band's own status cluster, overridable so the App can build it ONCE
      *  and hand the same node around. Absent, the band wires its own. */
     status?: React.ReactNode;
@@ -63,6 +71,8 @@ export const Header: React.FC<HeaderProps> = memo(({
     hasVisionData = false,
     onExpandNavRail,
     surfaceSwitch,
+    title,
+    context,
     status,
 }) => {
     const [sessionContext, setSessionContext] = useState<SessionContext | null>(null);
@@ -162,29 +172,38 @@ export const Header: React.FC<HeaderProps> = memo(({
                             <NavExpandButton onExpand={onExpandNavRail} />
                         </div>
                     )}
-                    {/* The brand, v2 style: the A-mark and the plain-ink word.
-                        The mark was the wordmark's one gradient; the 2026-10-27
-                        ruling retired the gradient outright, so this is one ink
-                        shape and the `<defs>` it needed went with it. */}
+                    {/* The A-mark, and only the mark: the rail has no brand row
+                        (the reference puts the wordmark nowhere), so this is
+                        the one brand cue in the shell. The word "August" used
+                        to sit beside it and repeated what the window already
+                        says. */}
                     <div className="flex select-none items-center gap-2 self-center" aria-label="August">
                         <svg className="h-6 w-6" viewBox="0 0 24 24" aria-hidden="true">
                             <path d="M12 2 21.5 21h-5.1L12 11.4 7.6 21H2.5L12 2Z" fill="var(--color-zinc-100)" />
                             <rect x="9.1" y="15.7" width="5.8" height="1.5" rx=".75" fill="var(--color-zinc-950)" />
                         </svg>
-                        <span className="text-ui-lede font-semibold tracking-[-0.02em] text-zinc-100">August</span>
                     </div>
-                    {/* The screen switch — the v2 tab strip. The destination
-                        rows used to sit in the sidebar and the band then spelled
-                        out the same place a second time; the rows are gone and
-                        this strip is the one answer to "where am I, and where
-                        do I go", on every surface alike. */}
+                    {/* The content title. When the rail is away this slot
+                        becomes the four-destination switch instead — navigation
+                        must never disappear with the column. */}
                     {surfaceSwitch ?? (
-                        <span
-                            data-testid="header-surface-label"
-                            className="flex select-none items-center text-ui-sm font-medium text-zinc-300"
-                        >
-                            {surfaceLabel(surface)}
-                        </span>
+                        <div className="flex min-w-0 items-center gap-2">
+                            <span
+                                data-testid="header-surface-label"
+                                className="min-w-0 truncate text-ui-sm font-medium text-zinc-200"
+                                title={typeof title === 'string' ? title : undefined}
+                            >
+                                {title ?? surfaceLabel(surface)}
+                            </span>
+                            {context && (
+                                <>
+                                    <span aria-hidden="true" className="h-3.5 w-px shrink-0 bg-white/10" />
+                                    <span className="hidden min-w-0 truncate text-ui-xs text-zinc-500 sm:inline">
+                                        {context}
+                                    </span>
+                                </>
+                            )}
+                        </div>
                     )}
                 </div>
                 {/* Right side: the live session state and the shell's status
