@@ -178,8 +178,11 @@ export async function evaluateSkillPredicates(args: {
                 ? LIVE_FETCH_BARS
                 : replayBarsFor(timeframe, args.asOfMs));
             const klines = await fetchKlines(args.coin, timeframe, bars);
+            // KlineService stores time in MILLISECONDS; `asOfMs` is a
+            // millisecond cutoff. Multiplying here made the filter impossible
+            // to satisfy and turned every replay verdict into "inconclusive".
             const candles: ScanCandle[] = klines
-                .filter(k => args.asOfMs === undefined || k.time * 1000 <= args.asOfMs)
+                .filter(k => args.asOfMs === undefined || k.time <= args.asOfMs)
                 .map(k => ({
                     time: k.time, open: k.open, high: k.high, low: k.low, close: k.close, volume: k.volume,
                 }));

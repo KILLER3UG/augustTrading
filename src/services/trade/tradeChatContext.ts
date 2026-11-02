@@ -158,7 +158,10 @@ export const describeChartSnapshotForModel = (snap: {
 }): string => {
     if (!snap || snap.candles.length === 0) return '';
     // Candle stamps in Philippine time — the model quotes the clock the user
-    // sees, never UTC to convert.
+    // sees, never UTC to convert. These candles come from the CANVAS snapshot,
+    // whose `time` is lightweight-charts UNIX SECONDS, so this ×1000 is the
+    // correct conversion; the desk-tool rows use KlineService's MILLISECONDS
+    // and must not multiply again (utils/klineRows.ts).
     const rows = snap.candles.map(c =>
         `${phtStamp(c.time * 1000)} O${c.open} H${c.high} L${c.low} C${c.close}`,
     ).join('\n');

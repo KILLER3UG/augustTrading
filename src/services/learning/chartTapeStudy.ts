@@ -27,7 +27,7 @@
 
 import type { ScanCandle } from '../trade/setupScan';
 import { rsiSeries } from '../trade/setupScan';
-import { phtHourOf } from '../../utils/timezone';
+import { phtClock, phtDayYear, phtHourOf } from '../../utils/timezone';
 
 export interface HourStudy {
     hour: number;
@@ -336,7 +336,11 @@ const moveLine = (m: BigMove, i: number): string => {
     // The magnitude is stored positive on both sides; the SIGN comes from the
     // side, so a drop never prints as "+10.7%".
     const magnitude = `${m.side === 'up' ? '+' : '−'}${(m.movePct * 100).toFixed(1)}%`;
-    return `${m.side} #${i + 1} ${new Date(m.startTime).toISOString().slice(0, 16).replace('T', ' ')}Z @ ${hh(m.hour)} `
+    // The start time is PHT, the same clock as the hour buckets and every
+    // other stamp the model reads. It used to print a UTC ISO string beside a
+    // PHT hour for the same bar — two clocks in one line, the exact mix the
+    // candle rows were fixed for.
+    return `${m.side} #${i + 1} ${phtDayYear(m.startTime)} ${phtClock(m.startTime)} PHT `
         + `${px(m.startPrice)}→${px(m.endPrice)} ${magnitude} in ${m.bars} bar${m.bars === 1 ? '' : 's'} · prior 6 ${pct(m.priorReturn)} · ${vol} · ${comp} `
         + `· gap ${pct(m.gapPct)} · RSI ${m.rsi === null ? '–' : m.rsi.toFixed(0)}`;
 };
@@ -367,10 +371,10 @@ export const formatTapeStudy = (study: TapeStudy): TapeStudyText => {
         ...study.upMoves.slice(-8).map(moveLine),
         ...study.downMoves.slice(-8).map(moveLine),
         study.largestUp && study.largestUp.movePct < study.thresholdPct
-            ? `  largest UP leg was ${(study.largestUp.movePct * 100).toFixed(1)}% at ${new Date(study.largestUp.startTime).toISOString().slice(0, 16)}Z (${hh(study.largestUp.hour)}) — below the threshold.`
+            ? `  largest UP leg was ${(study.largestUp.movePct * 100).toFixed(1)}% at ${phtDayYear(study.largestUp.startTime)} ${phtClock(study.largestUp.startTime)} PHT — below the threshold.`
             : '',
         study.largestDown && study.largestDown.movePct < study.thresholdPct
-            ? `  largest DOWN leg was ${(study.largestDown.movePct * 100).toFixed(1)}% at ${new Date(study.largestDown.startTime).toISOString().slice(0, 16)}Z (${hh(study.largestDown.hour)}) — below the threshold.`
+            ? `  largest DOWN leg was ${(study.largestDown.movePct * 100).toFixed(1)}% at ${phtDayYear(study.largestDown.startTime)} ${phtClock(study.largestDown.startTime)} PHT — below the threshold.`
             : '',
     ].filter(Boolean).join('\n');
 

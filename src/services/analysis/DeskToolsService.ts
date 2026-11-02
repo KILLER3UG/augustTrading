@@ -9,6 +9,7 @@ import type { ProviderConfig } from '../../types/provider';
 import { getHarnessSettings } from '../../utils/harnessSettings';
 import { baseOf } from '../../utils/symbol';
 import { phtStamp } from '../../utils/timezone';
+import { compactKlineRow, fullKlineRow } from '../../utils/klineRows';
 import {
     RECENT_TRADES_WINDOW,
     buildRecentTradesBrief,
@@ -963,10 +964,15 @@ const rawToolDigest = (name: string, content: string): string => {
         }
         if (name === 'get_derivatives') {
             const funding = parsed.fundingRate ?? parsed.funding;
-            const oi = parsed.openInterest ?? parsed.openInterestUsd;
+            // `openInterest` is CONTRACTS; `openInterestValue` is USDT. The
+            // digest used to prefer the contract count and label it `$M`,
+            // which read as a ~$0M book on a liquid perp.
+            const oiUsd = Number(parsed.openInterestValue ?? parsed.openInterestUsd);
             const bits = [
-                funding != null ? `funding ${Number(funding).toFixed(4)}` : '',
-                oi != null ? `OI $${Math.round(Number(oi) / 1e6)}M` : '',
+                funding != null && Number.isFinite(Number(funding))
+                    ? `funding ${(Number(funding) * 100).toFixed(4)}%`
+                    : '',
+                Number.isFinite(oiUsd) && oiUsd > 0 ? `OI $${Math.round(oiUsd / 1e6)}M` : '',
             ].filter(Boolean);
             return bits.length > 0 ? bits.join(' · ') : 'ok';
         }
@@ -986,7 +992,9 @@ const rawToolDigest = (name: string, content: string): string => {
         if (name === 'get_setup_history_stats') {
             const sample = typeof parsed.sample === 'number' ? parsed.sample : 0;
             if (sample <= 0) return 'no logged trades';
-            const wr = typeof parsed.winRate === 'number' ? `${Math.round(parsed.winRate * 100)}% win` : '';
+            // The tool body already returns `winRate` as a 0–100 percent; the
+            // digest multiplied it by 100 again (55 → 5500% win).
+            const wr = typeof parsed.winRate === 'number' ? `${Math.round(parsed.winRate)}% win` : '';
             return `${parsed.wins}W/${parsed.losses}L${wr ? ` (${wr})` : ''}`;
         }
         if (name === 'get_trade_log') {
@@ -1494,7 +1502,7 @@ export const DESK_TOOL_DEFINITIONS: DeskToolDefinition[] = [
         function: {
             name: 'get_derivatives',
             description:
-                'Live perpetual derivatives: funding rate, open interest, long/short ratios, taker buy/sell. Use before sizing or calling crowded trades. Works for ANY symbol — scan another coin without the user switching charts.',
+                'Live perpetual derivatives: funding rate, open interest, long/short ratios, taker buy/sell. Funding is a decimal fraction (0.0001 = 0.01%); openInterest is contracts and openInterestValue is USDT — quote the VALUE when you mean dollars. Use before sizing or calling crowded trades. Works for ANY symbol — scan another coin without the user switching charts.',
             parameters: {
                 type: 'object',
                 properties: {
@@ -2766,20 +2774,10 @@ async function runIndicators(symbol: string, interval: string, groups: string[])
 /** Timeframes the compendium covers, low → high. */
 const ALL_TIMEFRAMES = ['5m', '15m', '1h', '4h', '1d'] as const;
 
-/**
- * Compact OHLCV row: "Sep 11 21:45 O77100 H77190 L77050 C77150 V312".
- *
- * Philippine time, because every other candle the model is shown is PHT — the
- * [ON SCREEN] block and the drawing notes both go through phtStamp. This row
- * used to be `toISOString().slice(5, 16)`, i.e. UTC, so a single message
- * carried the same bar at two clocks eight hours apart, and the model had no
- * way to reconcile them. `k.time` is unix SECONDS; phtStamp wants millis.
- */
-const compactCandleRow = (k: { time: number; open: number; high: number; low: number; close: number; volume: number }): string => {
-    const stamp = phtStamp(k.time * 1000);
-    const r = (v: number): number => (v >= 1000 ? Math.round(v) : Number(v.toFixed(v >= 1 ? 2 : 4)));
-    return `${stamp} O${r(k.open)} H${r(k.high)} L${r(k.low)} C${r(k.close)} V${Math.round(k.volume)}`;
-};
+/** `spreadPercent` is already a percent. A 0.00013% BTC spread must not print
+ *  as "0.000%": that reads as a locked book to the trader and to the model. */
+const formatSpreadPct = (pct: number): string =>
+    !Number.isFinite(pct) ? '—' : pct > 0 && pct < 0.001 ? '<0.001%' : `${pct.toFixed(3)}%`;
 
 /**
  * get_all_timeframes — the full compendium: per-timeframe candles, trend,
@@ -2821,7 +2819,7 @@ async function runAllTimeframes(symbol: string, liveMark?: number | null): Promi
             : 'No recent liquidation events.',
     ];
     if (book) {
-        head.push(`Order book: bid ${book.bestBid} / ask ${book.bestAsk} · spread ${book.spreadPercent.toFixed(3)}% · imbalance ${((book.depthImbalance ?? 0) * 100).toFixed(0)}% bid · dominant ${book.dominantSide}`);
+        head.push(`Order book: bid ${book.bestBid} / ask ${book.bestAsk} · spread ${formatSpreadPct(book.spreadPercent)} · imbalance ${((book.depthImbalance ?? 0) * 100).toFixed(0)}% bid · dominant ${book.dominantSide}`);
         const wall = (w: { price: number; usdValue?: number } | undefined): string | null =>
             w ? `${w.price}${w.usdValue ? `($${Math.round(w.usdValue / 1000)}k)` : ''}` : null;
         const bw = wall(book.buyWalls?.[0]);
@@ -2850,7 +2848,7 @@ async function runAllTimeframes(symbol: string, liveMark?: number | null): Promi
                 `close ${last.close} (${spanPct}% over window) · EMA20 ${Number(ind.ema.ema20.toFixed(last.close >= 1000 ? 0 : 2))} / EMA50 ${Number(ind.ema.ema50.toFixed(last.close >= 1000 ? 0 : 2))} · RSI14 ${ind.rsi.rsi14.toFixed(1)} (${ind.rsiTrend}) · MACD ${ind.macd.trend}`,
                 formations.length > 0 ? `formations: ${formations.join('; ')}` : 'formations: none named in the last 12 bars',
                 'candles (last 8, oldest→newest):',
-                ...candles.slice(-8).map(compactCandleRow),
+                ...candles.slice(-8).map(compactKlineRow),
             ].join('\n'));
         } catch {
             tfBlocks.push(`## ${tf}\n(source FAILED — treat this timeframe as UNKNOWN, not empty)`);
@@ -4150,15 +4148,15 @@ ${body}`);
                 }
                 const rows = klines.map(k =>
                     // PHT, like every other candle the model is shown — see
-                // compactCandleRow. This row used to be UTC, which put the same
+                // klineRows. This row used to be UTC, which put the same
                 // bar at two clocks in one message.
-                `${phtStamp(k.time * 1000)} O${k.open} H${k.high} L${k.low} C${k.close} V${k.volume}`,
+                fullKlineRow(k),
                 ).join('\n');
                 // The book column the user watches — condensed to the levels
                 // they can actually see, not the raw 100-row ladder.
                 const bookLines: string[] = [];
                 if (book) {
-                    bookLines.push(`Order book: best bid ${book.bestBid} · best ask ${book.bestAsk} · spread ${book.spreadPercent.toFixed(3)}% · dominant side ${book.dominantSide}`);
+                    bookLines.push(`Order book: best bid ${book.bestBid} · best ask ${book.bestAsk} · spread ${formatSpreadPct(book.spreadPercent)} · dominant side ${book.dominantSide}`);
                     const fmtWall = (w: { price: number; usdValue?: number } | undefined): string | null =>
                         w ? `${w.price}${w.usdValue ? ` ($${Math.round(w.usdValue / 1000)}k)` : ''}` : null;
                     const buyWall = fmtWall(book.buyWalls?.[0]);

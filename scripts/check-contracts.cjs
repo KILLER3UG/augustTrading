@@ -745,6 +745,51 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
         JSON.stringify(amendChip));
 })();
 
+// ─── 13b. candle rows stamp the kline's MILLISECOND epoch ──────────────────
+// The compendium used `phtStamp(k.time * 1000)` on a value KlineService already
+// stores in milliseconds. The result was not an error string: it was a
+// plausible-looking date in a far-future year, so a 5m series read 3.5 days
+// apart and a 1d series read years apart. The price columns were the real tape,
+// which is what made it believable. Pin the unit at the shared row formatter.
+(() => {
+    const { compactKlineRow, fullKlineRow } = loadModule('src/utils/klineRows.ts');
+    const { phtStamp } = loadModule('src/utils/timezone.ts');
+    const ms = Date.UTC(2026, 10, 2, 12, 0); // Nov 2 2026 12:00 UTC = 20:00 PHT
+    const k = { time: ms, open: 77850, high: 77860, low: 77840, close: 77855, volume: 12.4 };
+    const compact = compactKlineRow(k);
+    const full = fullKlineRow(k);
+    const right = phtStamp(ms);
+    const doubled = phtStamp(ms * 1000);
+    ok('kline rows: the PHT stamp is the millisecond epoch, not epoch × 1000',
+        compact.startsWith(right) && full.startsWith(right), `${compact} / ${full}`);
+    ok('kline rows: the old double conversion is measurably different',
+        doubled !== right && !compact.startsWith(doubled), `right=${right}, doubled=${doubled}`);
+})();
+
+// ─── 13c. tool-chip digests do not re-scale already-scaled numbers ──────────
+// The tool body and its chip are two readers of one result. `get_setup_history_stats`
+// returns winRate as a 0–100 percent, and the chip multiplied it by 100 again
+// (55 → 5500% win). `runDerivatives` returns openInterest in CONTRACTS beside
+// openInterestValue in USDT, and the chip preferred the contract count while
+// labelling it `$M`. Both are silent plausibility failures: the number looks
+// like data, just the wrong quantity.
+(() => {
+    const desk = loadModule('src/services/analysis/DeskToolsService.ts');
+    const setup = desk.digestToolResult('get_setup_history_stats', true, JSON.stringify({
+        sample: 20, wins: 11, losses: 9, winRate: 55,
+    }));
+    ok('desk digest: a win rate is not multiplied by 100 twice',
+        /55% win/.test(setup) && !/5500/.test(setup), setup);
+    const deriv = desk.digestToolResult('get_derivatives', true, JSON.stringify({
+        fundingRate: 0.0001,
+        openInterest: 123456,
+        openInterestValue: 7_800_000_000,
+    }));
+    ok('desk digest: OI is the USDT value and funding is a percentage',
+        /OI \$7800M/.test(deriv) && /funding 0\.0100%/.test(deriv)
+        && !/123456/.test(deriv), deriv);
+})();
+
 // ─── 15. profile memory: soft delete, undo, versions, observed context ─────
 (() => {
     const store = new Map();
@@ -1232,6 +1277,9 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
     ok('tape study: a down leg prints as a drop, never as a plus',
         /down #1 [^\n]*−\d+\.\d+% in/.test(downText.bigMoves)
         && !/down #1 [^\n]*\+\d+\.\d+% in/.test(downText.bigMoves), downText.bigMoves);
+    ok('tape study: a big-move start prints the PHT clock, not UTC beside a PHT hour',
+        /PHT/.test(downText.bigMoves) && !/\d{2}:\d{2}Z/.test(downText.bigMoves)
+        && /10:0\d PHT/.test(downText.bigMoves), downText.bigMoves);
 
     const tiny = scan.fitDigestSections([
         { key: 'header', priority: 1, text: 'HEADER' },
@@ -2551,4 +2599,4 @@ if (failures.length) {
     console.error('CONTRACT CHECK FAIL — a pinned contract broke; fix the module, not this file.');
     process.exit(1);
 }
-console.log('CONTRACT CHECK OK — risk/reward math, retry classification, harness marks, notebook pressure, tool-pair compaction, AI-boundary coercion, the skill/memory authoring screens, the shared index budget, both policy tables (self-modification, goal tool narrowing), the desk tool budget, the skill outcome correction, the startup call gates, the insight store pin, the signal loop (resolver order, costs, ledger, venue data), the chart tape study, the signal accuracy fold, the skill format, the journal-rules store, the post-mortem clause, the memory page export, the tracked position (signal adoption, ledger-wins resolution, exit order, gaps, excursions, capped path, independence, diagnosis queue), journal tracking (pending registration, settlement payload, plan-preserving merge, orphan handling), the post-mortem diagnosis (authoritative outcome, packet facts/absences, refusal audit, journal-note parse) and the tentative skill path (three independent outcomes, the auto-demotion floor, the labelled + capped index) all hold.');
+console.log('CONTRACT CHECK OK — risk/reward math, retry classification, harness marks, notebook pressure, tool-pair compaction, AI-boundary coercion, the skill/memory authoring screens, the shared index budget, both policy tables (self-modification, goal tool narrowing), the desk tool budget, the kline row\'s PHT unit, the desk digest units, the skill outcome correction, the startup call gates, the insight store pin, the signal loop (resolver order, costs, ledger, venue data), the chart tape study, the signal accuracy fold, the skill format, the journal-rules store, the post-mortem clause, the memory page export, the tracked position (signal adoption, ledger-wins resolution, exit order, gaps, excursions, capped path, independence, diagnosis queue), journal tracking (pending registration, settlement payload, plan-preserving merge, orphan handling), the post-mortem diagnosis (authoritative outcome, packet facts/absences, refusal audit, journal-note parse) and the tentative skill path (three independent outcomes, the auto-demotion floor, the labelled + capped index) all hold.');
