@@ -1814,6 +1814,32 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
         capped.position.timeline.some(p => p.t === T0 && p.decisive),
         JSON.stringify(capped.position.timeline.slice(0, 2)));
 
+    // Resume: a second pass advances an OPEN position from its persisted
+    // state; it does not need a second exit or a fresh entry.
+    const firstPass = run(base(), [bar(0, 100, 101, 99, 100), bar(1, 100, 102, 99, 101)], T0 + 3 * STEP);
+    ok('tracker: an open position stays open after the first pass',
+        firstPass.position.status === 'open' && firstPass.closed === false);
+    const resumed = run(
+        firstPass.position,
+        [bar(0, 100, 101, 99, 100), bar(1, 100, 102, 99, 101), bar(2, 101, 108, 100, 107)],
+        T0 + 4 * STEP,
+    );
+    ok('tracker: a resumed pass extends MFE and the path without a second exit',
+        resumed.position.status === 'open'
+        && near(resumed.position.mfeR, 1.6)
+        && resumed.position.timeline.some(p => p.t === T0 + 2 * STEP)
+        && resumed.position.exit === undefined,
+        JSON.stringify({ status: resumed.position.status, mfe: resumed.position.mfeR }));
+
+    // Manual close: a trader can end a position at a price the tape has not
+    // decided; the cost is still charged.
+    const manual = pt.closePositionManually(firstPass.position, 105, T0 + 3 * STEP);
+    ok('tracker: a manual close records the price and the cost',
+        manual.status === 'closed' && manual.exit?.reason === 'manual'
+        && near(manual.exit?.realizedR, 1)
+        && manual.exit?.netR < 1,
+        JSON.stringify(manual.exit));
+
     // Resume/idempotency: a terminal position is not re-resolved.
     const again = run(win.position, winBars, T0 + 3 * STEP);
     ok('tracker: a terminal position is not resolved twice',
@@ -1849,6 +1875,24 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
         && jLadder.position.exit?.gapAtOpen === true,
         JSON.stringify(jLadder.position.exit));
 
+    const jGap = run(journal, [bar(0, 100, 101, 99, 100), bar(1, 90, 96, 89, 90)], T0 + 3 * STEP);
+    ok('tracker: a journal gap through the stop fills at the open',
+        near(jGap.position.exit?.price, 90)
+        && jGap.position.exit?.gapAtOpen === true
+        && near(jGap.position.exit?.realizedR, -2),
+        JSON.stringify(jGap.position.exit));
+
+    const jExpire = run(
+        base({ id: 'j-3', source: 'journal', sourceId: 'trade-3', status: 'open', entryConfirmed: true, targets: [120], expiresAt: T0 + 2 * STEP }),
+        [bar(0, 100, 101, 99, 100)],
+        T0 + 3 * STEP,
+    );
+    ok('tracker: a journal expiry marks to the last close',
+        jExpire.position.status === 'expired'
+        && jExpire.position.exit?.reason === 'expiry'
+        && near(jExpire.position.exit?.realizedR, 0),
+        JSON.stringify(jExpire.position.exit));
+
     const jBoth = run(journal, [bar(0, 100, 111, 94, 100)], T0 + 2 * STEP);
     ok('tracker: a journal same-candle both-hit is stop-first and ambiguous',
         jBoth.position.exit?.reason === 'stop'
@@ -1874,6 +1918,9 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
             w('a', 'breakout', Date.UTC(2026, 0, 1, 17, 0), Date.UTC(2026, 0, 1, 18, 0)),
             w('b', 'breakout', Date.UTC(2026, 0, 2, 1, 0), Date.UTC(2026, 0, 2, 2, 0)),
         ));
+    ok('independence: only a terminal filled outcome has a window',
+        pt.outcomeWindowOf(base({ status: 'open' })) === null
+        && pt.outcomeWindowOf(win.position)?.id === 'pos-1');
     ok('independence: the 3-outcome threshold is a greedy independent set',
         pt.countIndependentOutcomes([
             w('a', 'breakout', day1, day1 + 3600_000),
