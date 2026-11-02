@@ -51,6 +51,10 @@
  *      {when, action}, with the legacy IF/THEN prose still readable
  *  26. the memory page's export — one Markdown document, one section per
  *      category, and the page's toggles wired to real settings
+ *  27. the tracked position — stop-first same-candle resolution, the 1m drill,
+ *      gap fills at the open, MFE/MAE bounded to the held window, the capped
+ *      path, resume idempotency, the 3-outcome independence rule, the
+ *      diagnosis queue's no-drop overflow, and the diagnosis boundary
  *
  * Plain node, no vitest, no jsdom, no network: each module is bundled from
  * TypeScript with esbuild (already a vite dependency) into a temp file and
@@ -1685,6 +1689,244 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
     ok('electron shell: every relative require names a file that exists', bad.length === 0, bad.join(', '));
 })();
 
+// ─── 30. the tracked position — exit order, gaps, excursions, independence ───
+(() => {
+    const pt = loadModule('src/services/tracking/positionTracker.ts');
+    const schema = loadModule('src/schemas/tracking.ts');
+    const STEP = 5 * 60_000;
+    const T0 = STEP * 100;
+    const bar = (i, o, h, l, c, v = 1000) => ({
+        time: T0 + i * STEP, open: o, high: h, low: l, close: c, volume: v,
+    });
+    const base = (over = {}) => ({
+        id: 'pos-1',
+        source: 'signal',
+        sourceId: 'sig-1',
+        symbol: 'BTCUSDT',
+        direction: 'long',
+        entry: 100,
+        stop: 95,
+        targets: [110],
+        expiresAt: T0 + 50 * STEP,
+        status: 'pending_entry',
+        openedAt: T0,
+        entryConfirmed: false,
+        entryContext: { thesis: 'test thesis', evidenceRefs: [] },
+        cursor: { lastClosedBarTime: 0, timeframe: '5m' },
+        mfeR: null,
+        maeR: null,
+        mfePrice: null,
+        maePrice: null,
+        mfeAt: null,
+        maeAt: null,
+        barsRead: 0,
+        gaps: [],
+        tapeCoversWindow: true,
+        timeline: [],
+        timelineDownsampled: false,
+        timelinePointsDropped: 0,
+        context: [],
+        contextDownsampled: false,
+        version: 1,
+        ...over,
+    });
+    const run = (position, bars, now, drill = []) =>
+        pt.advancePosition({ position, bars, now, drill });
+    const near = (a, b, eps = 1e-6) => typeof a === 'number' && Number.isFinite(a) && Math.abs(a - b) <= eps;
+
+    // Target first, then the stop: the two terminal shapes and the R arithmetic.
+    const winBars = [bar(0, 100, 101, 99, 100), bar(1, 100, 111, 100, 110)];
+    const win = run(base(), winBars, T0 + 3 * STEP);
+    ok('tracker: long target hit closes the position', win.closed && win.position.status === 'closed',
+        JSON.stringify(win.position.status));
+    ok('tracker: target exit is a win at the target', win.position.exit?.reason === 'target'
+        && near(win.position.exit?.price, 110), JSON.stringify(win.position.exit));
+    ok('tracker: gross R is the planned 2R', near(win.position.exit?.realizedR, 2),
+        String(win.position.exit?.realizedR));
+    ok('tracker: the signal cost is charged, so net is below gross',
+        win.position.exit?.costR > 0 && win.position.exit?.netR < win.position.exit?.realizedR,
+        JSON.stringify(win.position.exit));
+
+    const lossBars = [bar(0, 100, 101, 99, 100), bar(1, 100, 101, 94, 95)];
+    const loss = run(base(), lossBars, T0 + 3 * STEP);
+    ok('tracker: stop hit closes at −1R gross', loss.position.exit?.reason === 'stop'
+        && near(loss.position.exit?.realizedR, -1), JSON.stringify(loss.position.exit));
+
+    // Same candle: both levels touched, no 1m series → stop-first, flagged.
+    const both = run(base(), [bar(0, 100, 111, 94, 100)], T0 + 2 * STEP);
+    ok('tracker: same-candle both levels settles STOP-FIRST and says it was ambiguous',
+        both.position.exit?.reason === 'stop'
+        && both.position.exit?.sameCandle === 'stop-first'
+        && both.position.exit?.ambiguous === true,
+        JSON.stringify(both.position.exit));
+
+    // A complete 1m series orders the same bar: target at minute 0 wins.
+    const drill = [
+        { time: T0, open: 100, high: 111, low: 100, close: 110 },
+        { time: T0 + 60_000, open: 110, high: 110, low: 105, close: 106 },
+        { time: T0 + 120_000, open: 106, high: 106, low: 94, close: 95 },
+        { time: T0 + 180_000, open: 95, high: 96, low: 94, close: 95 },
+        { time: T0 + 240_000, open: 95, high: 95, low: 94, close: 95 },
+    ];
+    const ordered = run(base(), [bar(0, 100, 111, 94, 100)], T0 + 2 * STEP, drill);
+    ok('tracker: a complete 1m drill orders the bar and records ordered-1m',
+        ordered.position.exit?.reason === 'target'
+        && ordered.position.exit?.sameCandle === 'ordered-1m'
+        && ordered.position.exit?.ambiguous === false,
+        JSON.stringify(ordered.position.exit));
+
+    // A gap through the stop fills at the OPEN, not at the stop price.
+    const gap = run(base(), [bar(0, 100, 101, 99, 100), bar(1, 90, 96, 89, 90)], T0 + 3 * STEP);
+    ok('tracker: a gap through the stop fills at the open and is flagged',
+        gap.position.exit?.reason === 'stop'
+        && near(gap.position.exit?.price, 90)
+        && gap.position.exit?.gapAtOpen === true
+        && near(gap.position.exit?.realizedR, -2),
+        JSON.stringify(gap.position.exit));
+
+    // Expiry marks to the last close; never-triggered is not a loss.
+    const expire = run(base({ expiresAt: T0 + 2 * STEP }), [bar(0, 100, 101, 99, 100)], T0 + 3 * STEP);
+    ok('tracker: expiry marks to the last close', expire.position.status === 'expired'
+        && expire.position.exit?.reason === 'expiry', JSON.stringify(expire.position.exit));
+
+    const never = run(base({ expiresAt: T0 + 2 * STEP }), [bar(0, 102, 103, 101, 102)], T0 + 3 * STEP);
+    ok('tracker: an entry never touched is cancelled, not a loss',
+        never.position.status === 'cancelled'
+        && never.position.exit === undefined
+        && never.position.discrepancy === 'entry never triggered',
+        JSON.stringify({ status: never.position.status, exit: never.position.exit }));
+
+    // MFE/MAE over the held window; the stop fill is −1R but the wick was worse.
+    const excursion = run(base(), [bar(0, 100, 101, 99, 100), bar(1, 100, 108, 94, 95)], T0 + 3 * STEP);
+    ok('tracker: MFE is the best favourable R', near(excursion.position.mfeR, 1.6),
+        String(excursion.position.mfeR));
+    ok('tracker: MAE is the worst adverse R, signed negative',
+        near(excursion.position.maeR, -1.2), String(excursion.position.maeR));
+
+    // The path is capped; decisive points survive and the loss is recorded.
+    const longRun = Array.from({ length: 500 }, (_, i) => bar(i, 100, 101, 99, 100));
+    const capped = run(base({ expiresAt: T0 + 1000 * STEP }), longRun, T0 + 501 * STEP);
+    ok('tracker: the timeline is capped hard', capped.position.timeline.length <= pt.TRACKED_TIMELINE_MAX_POINTS
+        && capped.position.timelineDownsampled === true
+        && capped.position.timelinePointsDropped > 0,
+        JSON.stringify({ n: capped.position.timeline.length, dropped: capped.position.timelinePointsDropped }));
+    ok('tracker: the entry bar survives downsampling',
+        capped.position.timeline.some(p => p.t === T0 && p.decisive),
+        JSON.stringify(capped.position.timeline.slice(0, 2)));
+
+    // Resume/idempotency: a terminal position is not re-resolved.
+    const again = run(win.position, winBars, T0 + 3 * STEP);
+    ok('tracker: a terminal position is not resolved twice',
+        again.blocked === 'already-closed' && again.exitedNow === false
+        && JSON.stringify(again.position.exit) === JSON.stringify(win.position.exit));
+
+    // A tape that starts after the entry window is not evidence.
+    const late = run(base(), [bar(2, 100, 101, 99, 100)], T0 + 4 * STEP);
+    ok('tracker: an incomplete tape stays open and says so',
+        late.blocked === 'tape-incomplete' && late.position.tapeCoversWindow === false,
+        JSON.stringify({ blocked: late.blocked, covers: late.position.tapeCoversWindow }));
+
+    // Journal shape: the same exit engine, fee-only costs.
+    const journal = base({
+        id: 'j-1', source: 'journal', sourceId: 'trade-1', status: 'open',
+        entryConfirmed: true, expiresAt: undefined,
+    });
+    const jWin = run(journal, [bar(0, 100, 101, 99, 100), bar(1, 100, 111, 100, 110)], T0 + 3 * STEP);
+    ok('tracker: a journal trade uses the journal cost model (slippage not modeled)',
+        jWin.position.exit?.reason === 'target'
+        && jWin.position.exit?.slippageModeled === false
+        && jWin.position.exit?.costR > 0,
+        JSON.stringify(jWin.position.exit));
+
+    const jLadder = run(
+        base({ id: 'j-2', source: 'journal', sourceId: 'trade-2', status: 'open', entryConfirmed: true, expiresAt: undefined, targets: [110, 120] }),
+        [bar(0, 100, 101, 99, 100), bar(1, 115, 121, 114, 120)],
+        T0 + 3 * STEP,
+    );
+    ok('tracker: a gapped TP1 improves the blended ladder exit',
+        near(jLadder.position.exit?.price, 117.5)
+        && near(jLadder.position.exit?.realizedR, 3.5)
+        && jLadder.position.exit?.gapAtOpen === true,
+        JSON.stringify(jLadder.position.exit));
+
+    const jBoth = run(journal, [bar(0, 100, 111, 94, 100)], T0 + 2 * STEP);
+    ok('tracker: a journal same-candle both-hit is stop-first and ambiguous',
+        jBoth.position.exit?.reason === 'stop'
+        && jBoth.position.exit?.sameCandle === 'stop-first'
+        && jBoth.position.exit?.ambiguous === true,
+        JSON.stringify(jBoth.position.exit));
+
+    // Independence: overlap, same setup same PHT day, and different trade.
+    const day1 = Date.UTC(2026, 0, 1, 0, 0);
+    const day2 = Date.UTC(2026, 0, 2, 0, 0);
+    const w = (id, setup, openedAt, closedAt) => ({ id, setupKey: setup, openedAt, closedAt });
+    ok('independence: same setup on the same day is not independent',
+        !pt.areIndependentOutcomes(w('a', 'breakout', day1, day1 + 3600_000), w('b', 'breakout', day1 + 7200_000, day1 + 10800_000)));
+    ok('independence: the same setup on a different day is independent',
+        pt.areIndependentOutcomes(w('a', 'breakout', day1, day1 + 3600_000), w('b', 'breakout', day2, day2 + 3600_000)));
+    ok('independence: different setups on the same day are independent',
+        pt.areIndependentOutcomes(w('a', 'breakout', day1, day1 + 3600_000), w('b', 'reversal', day1 + 7200_000, day1 + 10800_000)));
+    ok('independence: overlapping holding windows are never independent',
+        !pt.areIndependentOutcomes(w('a', 'a', day1, day1 + 7200_000), w('b', 'b', day1 + 3600_000, day1 + 10800_000)));
+    // 17:00Z and 01:00Z are the SAME PHT day (UTC+8): the day key is PHT, not UTC.
+    ok('independence: the day boundary is PHT, not UTC',
+        !pt.areIndependentOutcomes(
+            w('a', 'breakout', Date.UTC(2026, 0, 1, 17, 0), Date.UTC(2026, 0, 1, 18, 0)),
+            w('b', 'breakout', Date.UTC(2026, 0, 2, 1, 0), Date.UTC(2026, 0, 2, 2, 0)),
+        ));
+    ok('independence: the 3-outcome threshold is a greedy independent set',
+        pt.countIndependentOutcomes([
+            w('a', 'breakout', day1, day1 + 3600_000),
+            w('b', 'breakout', day2, day2 + 3600_000),
+            w('c', 'reversal', Date.UTC(2026, 0, 3), Date.UTC(2026, 0, 3) + 3600_000),
+        ]) === 3 && pt.MIN_INDEPENDENT_OUTCOMES === 3);
+
+    // The diagnosis queue never drops overflow.
+    const queue = Array.from({ length: 5 }, (_, i) => ({
+        id: `q${i}`, tradeId: `t${i}`, queuedAt: i, attempts: 0, status: 'pending',
+    }));
+    const first = pt.selectDiagnosisBatch(queue, 3);
+    const second = pt.selectDiagnosisBatch(first.remaining, 3);
+    ok('queue: the per-pass cap delays, never drops',
+        first.batch.length === 3 && first.remaining.length === 2
+        && second.batch.length === 2 && second.remaining.length === 0,
+        JSON.stringify({ first: first.batch.length, left: first.remaining.length, second: second.batch.length }));
+    ok('queue: a done item is not re-diagnosed',
+        pt.selectDiagnosisBatch([...queue, { id: 'done', tradeId: 't9', queuedAt: 9, attempts: 1, status: 'done' }], 9)
+            .batch.every(item => item.status === 'pending'));
+    ok('queue: a stale running item is requeued after a restart',
+        pt.requeueStaleDiagnoses([
+            { id: 'r1', tradeId: 't1', queuedAt: 0, startedAt: 0, attempts: 1, status: 'running' },
+        ], 20 * 60_000).every(item => item.status === 'pending'));
+
+    // The AI boundary: a real answer parses, a decline writes nothing, junk is null.
+    const answer = {
+        outcome: 'loss',
+        whatHappened: 'Price touched the entry, then sold through the stop before the target.',
+        rootCause: 'The entry was late in a falling market.',
+        whatShouldHaveBeenDone: 'Wait for a reclaim of the level before entering.',
+        primaryChange: 'entry',
+        lesson: 'Do not buy a level that is being sold through.',
+        when: 'price is making lower highs into support',
+        action: 'skip the long and wait for a reclaim',
+        confidence: 72,
+        evidenceRefs: ['get_market_packet'],
+    };
+    ok('diagnosis: a complete answer parses',
+        schema.parseTrackedDiagnosisAnswer(answer)?.confidence === 72);
+    ok('diagnosis: the honest decline writes nothing',
+        schema.parseTrackedDiagnosisAnswer({ noLesson: true }) === null);
+    ok('diagnosis: a malformed answer is null, never a fabricated lesson',
+        schema.parseTrackedDiagnosisAnswer({ outcome: 'loss' }) === null);
+    ok('diagnosis: the stored record carries provenance',
+        schema.parseTrackedDiagnosis({
+            ...answer, id: 'd1', tradeId: 'pos-1', source: 'signal',
+            evidenceCount: 3, createdAt: new Date().toISOString(), tentative: true,
+        })?.tradeId === 'pos-1');
+    ok('position: a stored row missing its entry is refused',
+        schema.parseTrackedPosition({ id: 'x', source: 'signal', status: 'open' }) === null);
+})();
+
 // ─── report ────────────────────────────────────────────────────────────────
 console.log(`contracts: ${passed} passed, ${failures.length} failed`);
 for (const f of failures) console.log(`  FAIL ${f}`);
@@ -1692,4 +1934,4 @@ if (failures.length) {
     console.error('CONTRACT CHECK FAIL — a pinned contract broke; fix the module, not this file.');
     process.exit(1);
 }
-console.log('CONTRACT CHECK OK — risk/reward math, retry classification, harness marks, notebook pressure, tool-pair compaction, AI-boundary coercion, the skill/memory authoring screens, the shared index budget, both policy tables (self-modification, goal tool narrowing), the desk tool budget, the skill outcome correction, the startup call gates, the insight store pin, the signal loop (resolver order, costs, ledger, venue data), the chart tape study, the signal accuracy fold, the skill format, the journal-rules store, the post-mortem clause and the memory page export all hold.');
+console.log('CONTRACT CHECK OK — risk/reward math, retry classification, harness marks, notebook pressure, tool-pair compaction, AI-boundary coercion, the skill/memory authoring screens, the shared index budget, both policy tables (self-modification, goal tool narrowing), the desk tool budget, the skill outcome correction, the startup call gates, the insight store pin, the signal loop (resolver order, costs, ledger, venue data), the chart tape study, the signal accuracy fold, the skill format, the journal-rules store, the post-mortem clause, the memory page export, and the tracked position (exit order, gaps, excursions, capped path, independence, diagnosis queue) all hold.');
