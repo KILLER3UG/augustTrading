@@ -564,38 +564,44 @@ export const useTradeLogging = (params: UseTradeLoggingParams) => {
         // The trader's click is still not made to wait: the whole chain stays
         // fire-and-forget exactly as it was, so a slow model delays the diary,
         // not the journal.
-        void (async () => {
-            let settledTrade = loggedTrade;
-            try {
-                const reflection = await reflectOnClosedTrade(loggedTrade, {
-                    username: notebookUser,
-                    ...(message.injectedSkills?.length ? { injectedSkills: message.injectedSkills } : {}),
-                });
-                settledTrade = reflection.trade;
-                if (reflection.wrote) {
-                    const reflected = reflection.trade;
-                    loggedTradesRef.current = loggedTradesRef.current.map(t => t.id === reflected.id ? reflected : t);
-                    setLoggedTrades(prev => prev.map(t => t.id === reflected.id ? reflected : t));
-                } else if (reflection.reason === 'failed' || reflection.reason === 'no-provider') {
-                    // A gap the app CHOSE (a trader's own note, an entry that never
-                    // filled) stays silent. A gap caused by the call not working is
-                    // reported, because "the notebook has no lesson for this trade"
-                    // is otherwise indistinguishable from the leg never existing.
-                    console.warn(`[TraderNotebook] settlement reflection skipped: ${reflection.reason}`);
+        // A tracker settlement is diagnosed by the tracker's ONE structured
+        // call; running the legacy four-field reflection here would pay twice
+        // and let two different notes compete. The diagnosis pass writes the
+        // post-mortem and runs this same notebook sync through the bridge.
+        if (feedback.resolutionSource !== 'tracker') {
+            void (async () => {
+                let settledTrade = loggedTrade;
+                try {
+                    const reflection = await reflectOnClosedTrade(loggedTrade, {
+                        username: notebookUser,
+                        ...(message.injectedSkills?.length ? { injectedSkills: message.injectedSkills } : {}),
+                    });
+                    settledTrade = reflection.trade;
+                    if (reflection.wrote) {
+                        const reflected = reflection.trade;
+                        loggedTradesRef.current = loggedTradesRef.current.map(t => t.id === reflected.id ? reflected : t);
+                        setLoggedTrades(prev => prev.map(t => t.id === reflected.id ? reflected : t));
+                    } else if (reflection.reason === 'failed' || reflection.reason === 'no-provider') {
+                        // A gap the app CHOSE (a trader's own note, an entry that never
+                        // filled) stays silent. A gap caused by the call not working is
+                        // reported, because "the notebook has no lesson for this trade"
+                        // is otherwise indistinguishable from the leg never existing.
+                        console.warn(`[TraderNotebook] settlement reflection skipped: ${reflection.reason}`);
+                    }
+                } catch (err) {
+                    // The service is written never to throw, but this leg owns the
+                    // notebook sync BELOW it: an escaping error must cost the
+                    // reflection, never the diary and the lesson draft.
+                    console.warn('[TraderNotebook] settlement reflection failed:', err);
                 }
-            } catch (err) {
-                // The service is written never to throw, but this leg owns the
-                // notebook sync BELOW it: an escaping error must cost the
-                // reflection, never the diary and the lesson draft.
-                console.warn('[TraderNotebook] settlement reflection failed:', err);
-            }
-            await syncClosedTradeToNotebook(
-                settledTrade,
-                tradesForNotebook.map(t => t.id === settledTrade.id ? settledTrade : t),
-                notebookUser,
-                tradeOrigin ?? undefined,
-            );
-        })().catch(err => console.warn('[TraderNotebook] Closed-trade sync failed:', err));
+                await syncClosedTradeToNotebook(
+                    settledTrade,
+                    tradesForNotebook.map(t => t.id === settledTrade.id ? settledTrade : t),
+                    notebookUser,
+                    tradeOrigin ?? undefined,
+                );
+            })().catch(err => console.warn('[TraderNotebook] Closed-trade sync failed:', err));
+        }
 
         // === ThinkingStore: Update outcome for all thinking records of this trade ===
         // This correlates the stored reasoning with the actual outcome (WIN/LOSS),
@@ -771,6 +777,7 @@ export const useTradeLogging = (params: UseTradeLoggingParams) => {
                 ...(row.outcomeResolvedAt ? { resolvedAt: row.outcomeResolvedAt } : {}),
             };
         },
+        readTrade: (tradeId) => loggedTradesRef.current.find(t => t.id === tradeId) ?? null,
         settle: async (tradeId, settlement) => {
             const row = loggedTradesRef.current.find(t => t.id === tradeId);
             if (!row) return { ok: false, error: 'the journal row is no longer present' };
@@ -787,6 +794,48 @@ export const useTradeLogging = (params: UseTradeLoggingParams) => {
                         ...(settlement.excursions ? { excursions: settlement.excursions } : {}),
                         resolutionSource: 'tracker',
                     },
+                );
+                return { ok: true };
+            } catch (e) {
+                return { ok: false, error: e instanceof Error ? e.message : String(e) };
+            }
+        },
+        applyDiagnosis: async (tradeId, diagnosis, postMortem) => {
+            const row = loggedTradesRef.current.find(t => t.id === tradeId);
+            if (!row) return { ok: false, error: 'the journal row is no longer present' };
+            // A note the trader wrote is never overwritten by the app; the
+            // structured diagnosis is still stored beside the row.
+            const traderNote = (row.postMortem ?? '').trim().length > 0 && !row.postMortemModel;
+            if (traderNote) return { ok: true, preserved: true };
+            const next: LoggedTrade = {
+                ...row,
+                postMortem,
+                postMortemCreatedAt: diagnosis.createdAt,
+                ...(diagnosis.model ? { postMortemModel: diagnosis.model } : {}),
+            };
+            loggedTradesRef.current = loggedTradesRef.current.map(t => t.id === tradeId ? next : t);
+            setLoggedTrades(prev => prev.map(t => t.id === tradeId ? next : t));
+            try {
+                await syncClosedTradeToNotebook(
+                    next,
+                    loggedTradesRef.current,
+                    getActiveUsername(),
+                    botOriginForMessage(next.modelsUsed) ?? undefined,
+                );
+                return { ok: true };
+            } catch (e) {
+                return { ok: false, error: e instanceof Error ? e.message : String(e) };
+            }
+        },
+        recordSettlement: async (tradeId) => {
+            const row = loggedTradesRef.current.find(t => t.id === tradeId);
+            if (!row) return { ok: false, error: 'the journal row is no longer present' };
+            try {
+                await syncClosedTradeToNotebook(
+                    row,
+                    loggedTradesRef.current,
+                    getActiveUsername(),
+                    botOriginForMessage(row.modelsUsed) ?? undefined,
                 );
                 return { ok: true };
             } catch (e) {

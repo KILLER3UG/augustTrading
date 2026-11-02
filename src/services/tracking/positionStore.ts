@@ -272,6 +272,7 @@ const parseQueueItem = (raw: unknown): DiagnosisQueueItem | null => {
     return {
         id: item.id,
         tradeId: item.tradeId,
+        ...(item.source === 'journal' || item.source === 'signal' ? { source: item.source } : {}),
         queuedAt: item.queuedAt,
         attempts: typeof item.attempts === 'number' && Number.isFinite(item.attempts) ? item.attempts : 0,
         status: item.status,

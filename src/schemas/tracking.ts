@@ -53,6 +53,7 @@ export const TrackedDiagnosisSchema = TrackedDiagnosisAnswerSchema.extend({
     id: z.string().min(1).max(120),
     tradeId: z.string().min(1).max(120),
     source: z.enum(['signal', 'journal']),
+    modelOutcome: DiagnosisOutcomeSchema.optional(),
     evidenceCount: z.number().int().min(0).max(10000).default(0),
     model: z.string().max(120).optional(),
     provider: z.string().max(120).optional(),

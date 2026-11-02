@@ -57,6 +57,7 @@ import {
     readJournalOutcome,
     settleJournalTrade,
 } from './journalOutcomeBridge';
+import { runDiagnosisPass } from './postMortemDiagnosis';
 
 const PASS_INTERVAL_MS = 60_000;
 export const MAX_ADOPT_PER_PASS = 8;
@@ -72,6 +73,8 @@ export interface TrackerPassResult {
     closed: number;
     journalSettled: number;
     queued: number;
+    diagnosed: number;
+    diagnosisRefused: number;
     skipped: { positionId: string; reason: string }[];
     busy?: boolean;
 }
@@ -101,6 +104,8 @@ const emptyResult = (): TrackerPassResult => ({
     closed: 0,
     journalSettled: 0,
     queued: 0,
+    diagnosed: 0,
+    diagnosisRefused: 0,
     skipped: [],
 });
 
@@ -512,6 +517,7 @@ const queueDiagnoses = async (user: string): Promise<QueueResult> => {
         .map(position => ({
             id: `diag-${position.id}`,
             tradeId: position.id,
+            source: position.source,
             queuedAt: Date.now(),
             attempts: 0,
             status: 'pending' as const,
@@ -536,7 +542,13 @@ const hasWork = async (user: string, adoptRemaining: number): Promise<boolean> =
         position.source === 'journal'
         && position.exit !== undefined
         && position.journalSettledAt === undefined);
-    return open || unsettled;
+    // A queued diagnosis is a debt; the loop keeps retrying it (for example
+    // while no memory provider is configured) instead of stopping silently.
+    const queue = await readDiagnosisQueue(user);
+    const diagnosisDebt = queue.ok && queue.value.some(item =>
+        item.status === 'pending'
+        || (item.status === 'failed' && item.attempts < 3));
+    return open || unsettled || diagnosisDebt;
 };
 
 /** One tracker pass. Concurrent callers share the in-flight pass. */
@@ -615,6 +627,10 @@ export const runTrackerPass = async (
         const queued = await queueDiagnoses(user);
         result.queued = queued.queued;
         if (queued.error) result.skipped.push({ positionId: '*', reason: `diagnosis queue: ${queued.error}` });
+
+        const diagnosis = await runDiagnosisPass(user);
+        result.diagnosed = diagnosis.diagnosed;
+        result.diagnosisRefused = diagnosis.refused;
 
         if (activeUser === user && !(await hasWork(user, result.adoptRemaining))) stopLoop();
         return result;

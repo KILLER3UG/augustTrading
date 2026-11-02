@@ -28,6 +28,7 @@ export const PROMPT_REGISTRY_IDS: readonly string[] = [
     'learning.skill_worth',
     'learning.chart_scan',
     'learning.settlement_reflection',
+    'learning.post_mortem_diagnosis',
 ];
 
 /** Whether `id` names a prompt the Settings tab can edit and a call site resolves. */

@@ -15,11 +15,29 @@
  * and retries; the diagnosis queue waits for `journalSettledAt`.
  */
 
-import type { JournalOutcomeSnapshot, JournalSettlement } from '../../types/tracking';
+import type { LoggedTrade } from '../../types/trade';
+import type {
+    JournalOutcomeSnapshot,
+    JournalSettlement,
+    TrackedDiagnosis,
+} from '../../types/tracking';
 
 export interface JournalOutcomeBridge {
     read: (tradeId: string) => JournalOutcomeSnapshot | null;
+    /** The full row, for the diagnosis packet (benchmark, regime, gate,
+     *  plan adherence, the model's own stated size). */
+    readTrade: (tradeId: string) => LoggedTrade | null;
     settle: (tradeId: string, settlement: JournalSettlement) => Promise<{ ok: boolean; error?: string }>;
+    /** Write the diagnosis's post-mortem onto the row and run the notebook
+     *  sync. A trader-authored note is preserved (`preserved: true`). */
+    applyDiagnosis: (
+        tradeId: string,
+        diagnosis: TrackedDiagnosis,
+        postMortem: string,
+    ) => Promise<{ ok: boolean; error?: string; preserved?: boolean }>;
+    /** Record the closed trade in the notebook WITHOUT a lesson (a refusal, or
+     *  a diagnosis the row could not carry). */
+    recordSettlement: (tradeId: string) => Promise<{ ok: boolean; error?: string }>;
 }
 
 let bridge: JournalOutcomeBridge | null = null;
@@ -44,4 +62,23 @@ export const settleJournalTrade = async (
 ): Promise<{ ok: boolean; error?: string }> => {
     if (!bridge) return { ok: false, error: 'the journal outcome bridge is not mounted' };
     return bridge.settle(tradeId, settlement);
+};
+
+export const readJournalTrade = (tradeId: string): LoggedTrade | null =>
+    bridge ? bridge.readTrade(tradeId) : null;
+
+export const applyJournalDiagnosis = async (
+    tradeId: string,
+    diagnosis: TrackedDiagnosis,
+    postMortem: string,
+): Promise<{ ok: boolean; error?: string; preserved?: boolean }> => {
+    if (!bridge) return { ok: false, error: 'the journal outcome bridge is not mounted' };
+    return bridge.applyDiagnosis(tradeId, diagnosis, postMortem);
+};
+
+export const recordJournalSettlement = async (
+    tradeId: string,
+): Promise<{ ok: boolean; error?: string }> => {
+    if (!bridge) return { ok: false, error: 'the journal outcome bridge is not mounted' };
+    return bridge.recordSettlement(tradeId);
 };

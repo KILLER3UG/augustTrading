@@ -59,6 +59,9 @@
  *  28. journal tracking — a PENDING row becomes a tracked plan, its exit
  *      becomes a journal settlement, and the settled row merges over the
  *      pending one without losing the plan or its provenance
+ *  29. post-mortem diagnosis — the tape/journal outcome is authoritative, the
+ *      packet prints its facts and absences, a refusal is a stored audit row,
+ *      and the rendered note is still readable by the existing lesson parser
  *
  * Plain node, no vitest, no jsdom, no network: each module is bundled from
  * TypeScript with esbuild (already a vite dependency) into a temp file and
@@ -2239,6 +2242,176 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
         && jt.isJournalSettled('PENDING') === false);
 })();
 
+// ─── 33. post-mortem diagnosis — authoritative outcome and packet ─────────
+(() => {
+    const dp = loadModule('src/services/tracking/diagnosisPacket.ts');
+    const schema = loadModule('src/schemas/tracking.ts');
+    const lessons = loadModule('src/utils/lessonClause.ts');
+    const STEP = 5 * 60_000;
+    const T0 = STEP * 1000;
+    const timeline = [
+        { t: T0, o: 100, h: 101, l: 99, c: 100, decisive: true },
+        { t: T0 + STEP, o: 100, h: 111, l: 100, c: 110, decisive: true },
+    ];
+    const exit = {
+        reason: 'target', price: 110, at: T0 + STEP, sameCandle: 'single-level',
+        ambiguous: false, gapAtOpen: false, barsRead: 2,
+        realizedR: 2, costR: 0.02, netR: 1.98, slippageModeled: true,
+    };
+    const position = {
+        id: 'signal-s1', source: 'signal', sourceId: 's1', symbol: 'BTCUSDT',
+        direction: 'long', entry: 100, stop: 95, targets: [110],
+        openedAt: T0, entryConfirmed: false,
+        entryContext: {
+            thesis: 'breakout above the shelf',
+            evidenceRefs: ['get_market_packet'],
+            provider: 'prov-1', model: 'model-1', promptVersion: 'emit-v1',
+            injectedSkills: ['skill-a'],
+            snapshot: { confidence: 'High', probability: 72 },
+        },
+        status: 'closed', closedAt: T0 + 2 * STEP, barsRead: 2, gaps: [],
+        tapeCoversWindow: true, mfeR: 2.2, maeR: -0.5,
+        mfePrice: 111, maePrice: 97.5, mfeAt: T0 + STEP, maeAt: T0,
+        timeline, timelineDownsampled: false, timelinePointsDropped: 0,
+        context: [], contextDownsampled: false, exit, version: 1,
+    };
+    const signalRow = {
+        signal: {
+            id: 's1', coin: 'BTCUSDT', direction: 'long', entry: 100, stop: 95, target: 110,
+            emittedAt: T0, expiresAt: T0 + 50 * STEP, evidenceRefs: ['get_market_packet'],
+            dataHash: 'abc', provider: 'prov-1', model: 'model-1', promptVersion: 'emit-v1',
+            source: 'signal', thesis: 'breakout above the shelf',
+        },
+        status: 'won',
+        resolution: {
+            status: 'won', at: T0 + 3600_000, grossR: 2, feeR: 0.02, outcomeR: 1.98,
+            usedBarTimes: [T0, T0 + STEP], path: 'bar', ambiguous: false,
+            crossCheck: 'agree', primarySource: 'okx', exitAt: T0 + STEP, exitPrice: 110,
+            base: { samples: 37, hitRate: 0.42, horizonBars: 10, riskPct: 5, rewardPct: 10 },
+        },
+        gate: { status: 'pass', at: T0, confidenceCap: 1, reason: 'ok' },
+        grounding: { at: T0, verdict: 'cited', missing: [] },
+    };
+    const journalRow = {
+        id: 'trade-1', source: 'manual', outcome: 'WIN',
+        timestamp: new Date(T0).toISOString(), decidedAt: new Date(T0).toISOString(),
+        analysis: {
+            strategy: 'breakout continuation', confidence: 'High', probability: 72,
+            gate: { status: 'evaluated', confidenceCap: 0.7, skillCeiling: 0.8, warnings: ['stop wide'] },
+        },
+        resolutionSource: 'tracker', marketRegime: 'trending', marketRegimeSource: 'snapshot',
+        followedPlan: true, suggestedRiskUsd: 50, suggestedNotionalUsd: 500,
+        suggestedSizeReason: 'risk 50', modelStatedRiskUsd: 100,
+        benchmark: {
+            benchmarkSymbol: 'BTCUSDT', benchmarkPct: 1.2, tradePct: 10,
+            alphaPct: 8.8, windowMs: 10 * 60_000,
+        },
+    };
+    const context = [{
+        at: T0 + STEP, timeframe: '1h', open: 100, high: 112, low: 99, close: 110,
+        volume: 1234,
+        indicators: { ema20: 99, ema50: 98, rsi14: 55, atrPercent: 1.2 },
+        funding: 0.0001, openInterest: 1000000,
+    }];
+
+    ok('diagnosis: a journal WIN overrides a tracker stop',
+        dp.authoritativeOutcome({ ...position, exit: { ...exit, reason: 'stop' } }, journalRow, null) === 'win');
+    ok('diagnosis: a signal loss is a loss',
+        dp.authoritativeOutcome(position, null, { ...signalRow, status: 'lost' }) === 'loss');
+    ok('diagnosis: a signal expiry follows the net R',
+        dp.authoritativeOutcome(position, null, {
+            ...signalRow, status: 'expired',
+            resolution: { ...signalRow.resolution, outcomeR: 0.2 },
+        }) === 'win'
+        && dp.authoritativeOutcome(position, null, {
+            ...signalRow, status: 'expired',
+            resolution: { ...signalRow.resolution, outcomeR: -0.2 },
+        }) === 'loss');
+    ok('diagnosis: a target is a win, a stop a loss, an expiry near flat a breakeven',
+        dp.authoritativeOutcome(position) === 'win'
+        && dp.authoritativeOutcome({ ...position, exit: { ...exit, reason: 'stop' } }) === 'loss'
+        && dp.authoritativeOutcome({ ...position, exit: { ...exit, reason: 'expiry', netR: -0.02 } }) === 'breakeven');
+
+    ok('diagnosis: thin/gappy/ambiguous records are tentative',
+        dp.diagnosisIsTentative({ ...position, barsRead: 10 }) === false
+        && dp.diagnosisIsTentative(position) === true // 2 bars is thin
+        && dp.diagnosisIsTentative({ ...position, barsRead: 10, gaps: [T0] }) === true
+        && dp.diagnosisIsTentative({ ...position, barsRead: 10, exit: { ...exit, ambiguous: true } }) === true
+        && dp.diagnosisIsTentative({ ...position, barsRead: 10, tapeCoversWindow: false }) === true);
+
+    const packet = dp.diagnosisPacket({ position, outcome: 'win', signalRow, journalRow, context });
+    ok('diagnosis: the packet states the authoritative outcome and R',
+        packet.includes('OUTCOME (authoritative): WIN')
+        && packet.includes('R: +2.00R gross · +0.02R cost · +1.98R net'));
+    ok('diagnosis: the packet carries MFE/MAE and the hold window',
+        packet.includes('MFE +2.20R at 111')
+        && packet.includes('MAE -0.50R at 97.5')
+        && packet.includes('HOLD:'));
+    ok('diagnosis: the packet carries the journal plan, gate, regime and benchmark',
+        packet.includes('PLAN (journal): breakout continuation')
+        && packet.includes('GATE: evaluated at a 70% cap')
+        && packet.includes('REGIME: trending (snapshot)')
+        && packet.includes('PLAN FOLLOWED: yes')
+        && packet.includes('BENCHMARK: vs BTCUSDT 1.20% · trade 10.00% · alpha 8.80%'));
+    ok('diagnosis: the packet carries the signal thesis, evidence and base rate',
+        packet.includes('SIGNAL THESIS: breakout above the shelf')
+        && packet.includes('SIGNAL EVIDENCE: get_market_packet')
+        && packet.includes('BASE RATE (same levels): 42.0% over 37 entries'));
+    ok('diagnosis: the packet carries the context at close',
+        packet.includes('1h: close 110')
+        && packet.includes('vol 1234.00')
+        && packet.includes('EMA20 99')
+        && packet.includes('RSI14 55.00')
+        && packet.includes('ATR 1.20%')
+        && packet.includes('funding 0.0100%')
+        && packet.includes('OI 1000000.00 USDT'));
+    ok('diagnosis: the packet carries the path and its decisive marks',
+        packet.includes('PATH (2 stored points')
+        && packet.includes('O100 H101 L99 C100 *')
+        && packet.includes('O100 H111 L100 C110 *'));
+
+    const noFacts = dp.diagnosisPacket({
+        position: { ...position, entryContext: { thesis: 'x', evidenceRefs: [] } },
+        outcome: 'loss',
+        context: [],
+    });
+    ok('diagnosis: absent facts are named, never filled',
+        noFacts.includes('BENCHMARK: never measured') === false // no journal row, so no line at all
+        && noFacts.includes('CONTEXT AT CLOSE (higher timeframes') && noFacts.includes('not captured')
+        && noFacts.includes('SIGNAL EVIDENCE') === false);
+
+    const refusal = dp.refusalDiagnosis(
+        { id: 'diag-x', tradeId: 't-x', source: 'signal', queuedAt: T0, attempts: 0, status: 'pending' },
+        position,
+        'win',
+        'thin-tape',
+        'the tape covers 0 bars',
+    );
+    ok('diagnosis: a refusal is a stored, parseable audit row',
+        refusal.refusal === 'thin-tape'
+        && refusal.tentative === true
+        && refusal.confidence === 0
+        && schema.parseTrackedDiagnosis(refusal)?.refusal === 'thin-tape',
+        JSON.stringify(refusal));
+
+    const text = dp.renderDiagnosisPostMortem({
+        ...refusal,
+        refusal: undefined,
+        whatHappened: 'Price swept the shelf, reclaimed it, and ran to the target.',
+        rootCause: 'The entry caught the reclaim, not the first break.',
+        whatShouldHaveBeenDone: 'No change.',
+        lesson: 'Wait for the reclaim before entering a shelf break.',
+        when: 'price breaks a shelf and reclaims it on the close',
+        action: 'enter on the reclaim, not the break',
+    });
+    const clauses = lessons.parseLessonClauses(text);
+    ok('diagnosis: the rendered note keeps the existing readers working',
+        text.includes('Lesson: Wait for the reclaim')
+        && clauses.length > 0
+        && clauses[0].when.includes('price breaks a shelf'),
+        JSON.stringify(clauses));
+})();
+
 // ─── report ────────────────────────────────────────────────────────────────
 console.log(`contracts: ${passed} passed, ${failures.length} failed`);
 for (const f of failures) console.log(`  FAIL ${f}`);
@@ -2246,4 +2419,4 @@ if (failures.length) {
     console.error('CONTRACT CHECK FAIL — a pinned contract broke; fix the module, not this file.');
     process.exit(1);
 }
-console.log('CONTRACT CHECK OK — risk/reward math, retry classification, harness marks, notebook pressure, tool-pair compaction, AI-boundary coercion, the skill/memory authoring screens, the shared index budget, both policy tables (self-modification, goal tool narrowing), the desk tool budget, the skill outcome correction, the startup call gates, the insight store pin, the signal loop (resolver order, costs, ledger, venue data), the chart tape study, the signal accuracy fold, the skill format, the journal-rules store, the post-mortem clause, the memory page export, the tracked position (signal adoption, ledger-wins resolution, exit order, gaps, excursions, capped path, independence, diagnosis queue) and journal tracking (pending registration, settlement payload, plan-preserving merge, orphan handling) all hold.');
+console.log('CONTRACT CHECK OK — risk/reward math, retry classification, harness marks, notebook pressure, tool-pair compaction, AI-boundary coercion, the skill/memory authoring screens, the shared index budget, both policy tables (self-modification, goal tool narrowing), the desk tool budget, the skill outcome correction, the startup call gates, the insight store pin, the signal loop (resolver order, costs, ledger, venue data), the chart tape study, the signal accuracy fold, the skill format, the journal-rules store, the post-mortem clause, the memory page export, the tracked position (signal adoption, ledger-wins resolution, exit order, gaps, excursions, capped path, independence, diagnosis queue), journal tracking (pending registration, settlement payload, plan-preserving merge, orphan handling) and the post-mortem diagnosis (authoritative outcome, packet facts/absences, refusal audit, journal-note parse) all hold.');

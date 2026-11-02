@@ -38,6 +38,7 @@ import { SKILL_WORTH_FALLBACK } from '../services/learning/skillWorthGate';
 import { CHART_SCAN_FALLBACK_PROMPT } from '../services/learning/chartScanSkills';
 import { DEFAULT_OCR_PAGE_PROMPT } from '../services/learning/pdfOcrService';
 import { SETTLEMENT_REFLECTION_FALLBACK } from '../services/learning/settlementReflection';
+import { POST_MORTEM_DIAGNOSIS_FALLBACK } from '../services/tracking/postMortemDiagnosis';
 
 export interface PromptRegistryEntry {
     /** Stable id — the key user overrides are stored under. */
@@ -171,5 +172,12 @@ export const PROMPT_REGISTRY: PromptRegistryEntry[] = [
         // that drops it costs the notebook its lesson — and the Settings diff
         // has to show the truth about what runs.
         fallback: SETTLEMENT_REFLECTION_FALLBACK,
+    },
+    {
+        id: 'learning.post_mortem_diagnosis',
+        name: 'Tracked-trade post-mortem diagnosis',
+        description: 'When a tracked signal or journal trade closes, the memory model diagnoses it from the measured record: outcome, what happened, root cause, what should have been done, the lesson, a mechanical When/do clause and confidence. The tape outcome is authoritative; a disagreement is recorded, not accepted.',
+        usage: ['The tracker diagnosis queue (signals + tracked journal trades; one call per closed position, max 3 per pass)'],
+        fallback: POST_MORTEM_DIAGNOSIS_FALLBACK,
     },
 ];

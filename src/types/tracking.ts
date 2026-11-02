@@ -232,6 +232,10 @@ export interface TrackedDiagnosis extends TrackedDiagnosisAnswer {
     id: string;
     tradeId: string;
     source: TrackedSource;
+    /** The outcome the MODEL claimed. The stored `outcome` is the tape's /
+     *  journal's authoritative one; this field keeps a disagreement visible
+     *  instead of letting the model overrule a measured result. */
+    modelOutcome?: DiagnosisOutcome;
     evidenceCount: number;
     model?: string;
     provider?: string;
@@ -250,6 +254,9 @@ export interface TrackedDiagnosis extends TrackedDiagnosisAnswer {
 export interface DiagnosisQueueItem {
     id: string;
     tradeId: string;
+    /** Source of the tracked position. Optional on rows queued before the
+     *  field existed; a missing position can then still be attributed. */
+    source?: TrackedSource;
     queuedAt: number;
     attempts: number;
     status: 'pending' | 'running' | 'done' | 'failed';
