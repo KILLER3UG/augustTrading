@@ -2640,6 +2640,13 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
         /integrityCheck\.newLossAlert/.test(loader)
         && /integrityCheck\.recoveryBackup/.test(loader)
         && !/integrityCheck\.latestBackup/.test(loader));
+    const journal = readSrc('src/hooks/useTradeJournalActions.ts');
+    ok('data warnings: only a deletion that removed rows moves the baseline',
+        /if \(removed\) void recordIntentionalTradeCount\(username, nextTrades\.length\)/.test(journal)
+        && /if \(prevTrades\.length > 0\) \{[\s\S]*?recordIntentionalTradeCount\(username, 0\)/.test(journal));
+    const integrity = readSrc('src/services/validation/DataIntegrityService.ts');
+    ok('data warnings: a past warning is adopted only when it had no recovery to offer',
+        /offered <= currentTradeCount/.test(integrity));
 }
 
 // ─── report ────────────────────────────────────────────────────────────────

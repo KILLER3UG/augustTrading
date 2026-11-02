@@ -133,9 +133,11 @@ export const useTradeJournalActions = (args: UseTradeJournalActionsArgs): UseTra
         // keyed to the deleted trades must not survive — a deleted trade
         // would otherwise re-trigger "outcome detected" and be re-logged.
         const username = activeUsernameRef.current || 'default';
-        // A deletion is deliberate, not a storage loss: move the integrity
-        // baseline so the next boot does not warn about the rows just removed.
-        void recordIntentionalTradeCount(username, nextTrades.length);
+        // A deletion that actually removed rows is deliberate, not a storage
+        // loss. A no-op must NOT move the baseline: if the on-screen count is
+        // stale-low, writing it would erase the evidence of a real loss.
+        const removed = nextTrades.length !== loggedTrades.length;
+        if (removed) void recordIntentionalTradeCount(username, nextTrades.length);
         const deletedTrades = loggedTrades.filter(t => idSet.has(t.id));
         deletedTrades.forEach(t => {
             void deleteThinkingByTrade(getThinkingTradeId(t.analysis?.createdAt, t.id), username);
@@ -162,7 +164,9 @@ export const useTradeJournalActions = (args: UseTradeJournalActionsArgs): UseTra
                 setLoggedTrades(prevTrades);
                 setTradeSummaries(prevSummaries);
                 setFinalTradeSummary(prevFinalSummary);
-                void recordIntentionalTradeCount(username, prevTrades.length);
+                if (prevTrades.length > 0) {
+                    void recordIntentionalTradeCount(username, prevTrades.length);
+                }
                 toast.success('Trade history restored');
             },
         });
@@ -170,9 +174,12 @@ export const useTradeJournalActions = (args: UseTradeJournalActionsArgs): UseTra
             setLoggedTrades([]);
             setTradeSummaries([]);
             setFinalTradeSummary(null);
-            // Clearing is deliberate: move the integrity baseline so the next
-            // startup does not warn that four trades became zero.
-            void recordIntentionalTradeCount(username, 0);
+            // Clearing rows that were actually there is deliberate: move the
+            // integrity baseline. With none on screen, do NOT write 0 — that
+            // would clear a real loss alert on a stale view.
+            if (prevTrades.length > 0) {
+                void recordIntentionalTradeCount(username, 0);
+            }
             void syncPatternMemory(null, username).catch(reportPatternMemoryFailure);
             // AFTER the undo grace window — an undo restores the trades, so
             // their artifacts must survive until the delete is final.

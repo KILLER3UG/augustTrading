@@ -86,12 +86,25 @@ export const checkDataIntegrity = async (
             try {
                 const previousLog = await getPreferenceObject<Array<{
                     event?: string;
-                    data?: { previousTradeCount?: number; currentTradeCount?: number };
+                    data?: {
+                        previousTradeCount?: number;
+                        currentTradeCount?: number;
+                        recoveryBackup?: { tradeCount?: number } | null;
+                        latestBackup?: { tradeCount?: number } | null;
+                    };
                 }>>(PREF_KEYS.DATA_INTEGRITY_LOG) || [];
-                const alreadyShown = previousLog.some(entry =>
-                    entry?.event === 'DATA_LOSS_DETECTED'
-                    && entry.data?.previousTradeCount === previousTradeCount
-                    && entry.data?.currentTradeCount === currentTradeCount);
+                const alreadyShown = previousLog.some(entry => {
+                    if (entry?.event !== 'DATA_LOSS_DETECTED') return false;
+                    if (entry.data?.previousTradeCount !== previousTradeCount) return false;
+                    if (entry.data?.currentTradeCount !== currentTradeCount) return false;
+                    // Only adopt a past warning that had nothing better to
+                    // offer. A loss first seen with no recovery, then found
+                    // against a full backup, is new advice.
+                    const offered = entry.data?.recoveryBackup?.tradeCount
+                        ?? entry.data?.latestBackup?.tradeCount
+                        ?? 0;
+                    return offered <= currentTradeCount;
+                });
                 if (alreadyShown) {
                     lastAlerted = lossSignature;
                     await setPreference(alertKey, lossSignature);
