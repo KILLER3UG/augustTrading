@@ -500,17 +500,21 @@ export const useUserProfileLoader = (args: UseUserProfileLoaderArgs): UseUserPro
 
                 const integrityCheck = await checkDataIntegrity(username, tradeCount);
                 if (isStale()) return;
-                if (!integrityCheck.valid && integrityCheck.tradeCountChanged) {
+                if (!integrityCheck.valid && integrityCheck.tradeCountChanged && integrityCheck.newLossAlert) {
                     logIntegrityEvent('DATA_LOSS_DETECTED', integrityCheck);
                     // Title + body, not one blob in the TITLE slot: the title
                     // renders bold at body size, so the whole warning came out
                     // as a five-line block of bold text over the chart. And
                     // `warning` is the honest tone — cyan `info` reads as a
                     // status update, and this says trades went missing.
+                    // ONE notice per unchanged loss: the count baseline is not
+                    // re-written to 0, so without the flag this fired on every
+                    // launch. `recoveryBackup` is the best backup, never the
+                    // startup backup that captured the loss.
                     const counts = `Your trade log has fewer trades than before (${integrityCheck.previousTradeCount} → ${integrityCheck.currentTradeCount}).`;
-                    toast.warning('Data issue detected', integrityCheck.hasBackups && integrityCheck.latestBackup
-                        ? `${counts} A backup with ${integrityCheck.latestBackup.tradeCount} trades from ${new Date(integrityCheck.latestBackup.timestamp).toLocaleString()} is available — open Settings → Data to restore it.`
-                        : `${counts} No backup holds more, so export your data regularly to prevent future loss.`, 15_000);
+                    toast.warning('Data issue detected', integrityCheck.recoveryBackup
+                        ? `${counts} A backup with ${integrityCheck.recoveryBackup.tradeCount} trades from ${new Date(integrityCheck.recoveryBackup.timestamp).toLocaleString()} is available — open Settings → Data to restore it.`
+                        : `${counts} No backup holds more trades, so export your data regularly to prevent future loss.`, 15_000);
                 }
             } else {
                 await resetAppState(username);

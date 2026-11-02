@@ -2592,6 +2592,56 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
         && tracker.countIndependentOutcomes(windows) === 3);
 })();
 
+// ─── backup recovery: the advisory must name a backup that can help ────────
+{
+    const { selectRecoveryBackup } = loadModule('src/utils/backupSelection.ts');
+    const backup = (id, timestamp, tradeCount) => ({ id, timestamp, tradeCount });
+    const newestEmpty = backup('startup-0', '2026-11-03T01:06:20.000Z', 0);
+    const olderFull = backup('full-4', '2026-11-02T20:00:00.000Z', 4);
+    const olderTwo = backup('two-2', '2026-11-01T20:00:00.000Z', 2);
+    const list = [newestEmpty, olderFull, olderTwo];
+
+    ok('backup: recovery picks the fullest backup, never the newest empty one',
+        selectRecoveryBackup(list, 0)?.id === 'full-4',
+        JSON.stringify(selectRecoveryBackup(list, 0)));
+    ok('backup: a backup that holds no more than the profile is not offered',
+        selectRecoveryBackup([newestEmpty], 0) === null
+        && selectRecoveryBackup(list, 4) === null);
+    ok('backup: the highest count wins even when it is older',
+        selectRecoveryBackup([
+            backup('new-4', '2026-11-03T00:00:00.000Z', 4),
+            backup('old-5', '2026-10-01T00:00:00.000Z', 5),
+        ], 3)?.id === 'old-5');
+    ok('backup: equal counts prefer the newer backup',
+        selectRecoveryBackup([
+            backup('old-4', '2026-10-01T00:00:00.000Z', 4),
+            backup('new-4', '2026-11-01T00:00:00.000Z', 4),
+        ], 0)?.id === 'new-4');
+    ok('backup: a profile with more trades than every backup has no recovery offer',
+        selectRecoveryBackup(list, 5) === null);
+}
+
+// ─── notification freshness: once, accurate, and actually dismissed ────────
+{
+    const readSrc = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+    const autopilot = readSrc('src/services/ui/OutcomeAutopilotService.ts');
+    ok('shadow: a notified resolution is persisted and skipped on re-registration',
+        /shadowNotified: \[\.\.\.this\.shadowNotified\]/.test(autopilot)
+        && /this\.shadowNotified\.has\(messageId\)\)\s*return;/.test(autopilot)
+        && /markShadowNotified\(messageId: string\): boolean/.test(autopilot));
+    const watch = readSrc('src/hooks/useWatchSideEffects.ts');
+    ok('shadow: the toast only fires for a first announcement',
+        /if \(OutcomeAutopilotService\.markShadowNotified\(messageId\)\) \{/.test(watch));
+    const toast = readSrc('src/components/shared/Toast.tsx');
+    ok('toasts: the dismiss timer is independent of the container render',
+        /onDismissRef/.test(toast) && /\}, \[duration, paused\]\);/.test(toast));
+    const loader = readSrc('src/hooks/useUserProfileLoader.ts');
+    ok('data warnings: best backup and one-time alert, never the latest empty backup',
+        /integrityCheck\.newLossAlert/.test(loader)
+        && /integrityCheck\.recoveryBackup/.test(loader)
+        && !/integrityCheck\.latestBackup/.test(loader));
+}
+
 // ─── report ────────────────────────────────────────────────────────────────
 console.log(`contracts: ${passed} passed, ${failures.length} failed`);
 for (const f of failures) console.log(`  FAIL ${f}`);

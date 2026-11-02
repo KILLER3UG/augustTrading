@@ -68,6 +68,10 @@ interface Registration {
 interface PersistedUserState {
     processed: string[];  // message ids confirmed/logged — never re-detect
     dismissed: string[];  // user dismissed the banner
+    /** Resolutions already announced while settlement is in shadow mode.
+     *  Shadow outcomes are never logged, so without this list the same old
+     *  outcome re-resolved and re-toasted on every launch. */
+    shadowNotified?: string[];
 }
 
 /** Legacy (pre-scoping) global shape: one flat processed/dismissed pair. */
@@ -100,6 +104,9 @@ const normalizePartitions = (stored: unknown): PersistedPartitions => {
             out[key] = {
                 processed: v.processed.filter((x): x is string => typeof x === 'string'),
                 dismissed: v.dismissed.filter((x): x is string => typeof x === 'string'),
+                shadowNotified: Array.isArray(v.shadowNotified)
+                    ? v.shadowNotified.filter((x): x is string => typeof x === 'string')
+                    : [],
             };
         }
     }
@@ -117,6 +124,7 @@ class OutcomeAutopilotServiceClass {
     private resolutions = new Map<string, AutopilotResolution>();
     private dismissed = new Set<string>();
     private processed = new Set<string>();
+    private shadowNotified = new Set<string>();
     private listeners = new Set<Listener>();
     private tickListeners = new Set<TickListener>();
     private timer: ReturnType<typeof setInterval> | null = null;
@@ -150,6 +158,7 @@ class OutcomeAutopilotServiceClass {
         this.resolutions.clear();
         this.processed.clear();
         this.dismissed.clear();
+        this.shadowNotified.clear();
         this.loadedUser = user;
         try {
             const stored = await getPreferenceObject<LegacyPersistedState & PersistedPartitions>(
@@ -166,6 +175,7 @@ class OutcomeAutopilotServiceClass {
             if (mine) {
                 (mine.processed || []).forEach(id => this.processed.add(id));
                 (mine.dismissed || []).forEach(id => this.dismissed.add(id));
+                (mine.shadowNotified || []).forEach(id => this.shadowNotified.add(id));
                 this.pruneIdSets();
             }
             if (isLegacy) void this.persist(); // migrate to the partition map
@@ -187,7 +197,8 @@ class OutcomeAutopilotServiceClass {
      * (it stayed stale while register early-returned on existing id).
      */
     register(messageId: string, analysis: TradeAnalysis, leverage: number): void {
-        if (this.processed.has(messageId) || this.dismissed.has(messageId)) return;
+        if (this.processed.has(messageId) || this.dismissed.has(messageId)
+            || this.shadowNotified.has(messageId)) return;
         const lev = leverage || LEGACY_LEVERAGE;
         const existing = this.registrations.get(messageId);
         if (existing) {
@@ -264,6 +275,24 @@ class OutcomeAutopilotServiceClass {
     }
 
     /**
+     * The shadow settlement announced this outcome; it will never be logged.
+     * Persist the announcement so a restart does not re-verify the old setup
+     * and toast the same outcome again. Returns false for a repeat.
+     */
+    markShadowNotified(messageId: string): boolean {
+        if (this.shadowNotified.has(messageId)) return false;
+        this.shadowNotified.add(messageId);
+        this.pruneIdSets();
+        // The outcome stays available for this session's banner; only future
+        // registrations are suppressed. Drop the registration like a resolved
+        // one so the loop stops polling a settled setup.
+        this.dropRegistration(messageId);
+        this.stopLoopIfEmpty();
+        void this.persist();
+        return true;
+    }
+
+    /**
      * Cap the persisted processed/dismissed id lists — they grew unbounded
      * (one entry per resolved analysis, forever). Old entries are only used
      * to suppress re-detection of messages that no longer exist anyway, so
@@ -278,6 +307,7 @@ class OutcomeAutopilotServiceClass {
         };
         trim(this.processed);
         trim(this.dismissed);
+        trim(this.shadowNotified);
     }
 
     getResolution(messageId: string): AutopilotResolution | undefined {
@@ -322,6 +352,7 @@ class OutcomeAutopilotServiceClass {
         this.resolutions.clear();
         this.dismissed.clear();
         this.processed.clear();
+        this.shadowNotified.clear();
         if (this.timer) {
             clearInterval(this.timer);
             this.timer = null;
@@ -653,6 +684,7 @@ class OutcomeAutopilotServiceClass {
             // re-detectable after a restart.
             processed: [...this.processed].slice(-MAX_TRACKED_IDS),
             dismissed: [...this.dismissed].slice(-MAX_TRACKED_IDS),
+            shadowNotified: [...this.shadowNotified].slice(-MAX_TRACKED_IDS),
         };
         this.partitions[user] = snapshot;
         // Read-modify-write the partition map under the write chain so a

@@ -53,7 +53,12 @@ export const useWatchSideEffects = ({
                 // The shadow month: resolve and show, never record. The
                 // disagreement between this banner and what the trader would
                 // confirm is the evidence that decides whether automatic is safe.
-                toast.success('Shadow: outcome detected (not recorded)', `${resolution.detail} — settlement is in shadow mode.`);
+                // One announcement per outcome: the setup stays watched across
+                // boots, and without the persisted mark the same old result
+                // re-toasted on every launch.
+                if (OutcomeAutopilotService.markShadowNotified(messageId)) {
+                    toast.success('Shadow: outcome detected (not recorded)', `${resolution.detail} — settlement is in shadow mode.`);
+                }
                 return;
             }
             if (action === 'log-now') {

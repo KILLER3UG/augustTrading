@@ -3,7 +3,7 @@
  * Provides visual feedback for user actions and errors
  */
 
-import React, { createContext, useContext, useState, useCallback, useEffect, useMemo } from 'react';
+import React, { createContext, useContext, useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { AlertCircle, AlertTriangle, CheckCircle, Info, X } from './Icons';
 
 export type ToastType = 'success' | 'error' | 'warning' | 'info';
@@ -127,13 +127,18 @@ const ToastItem: React.FC<{ toast: Toast; onDismiss: () => void }> = ({ toast, o
     // action are shown together, and an 8s error can time out mid-read (WCAG
     // 2.2.1). Hover and focus both count; the timer restarts on leave.
     const [paused, setPaused] = useState(false);
+    // The container passes a fresh arrow on every render; taking it into the
+    // effect's deps restarted the timer whenever ANY toast was added, so an
+    // old warning could sit on screen indefinitely. The ref keeps the timer
+    // tied to the toast's own lifetime.
+    const onDismissRef = useRef(onDismiss);
+    onDismissRef.current = onDismiss;
 
     useEffect(() => {
-        if (duration > 0 && !paused) {
-            const timer = setTimeout(onDismiss, duration);
-            return () => clearTimeout(timer);
-        }
-    }, [duration, paused, onDismiss]);
+        if (duration <= 0 || paused) return;
+        const timer = setTimeout(() => onDismissRef.current(), duration);
+        return () => clearTimeout(timer);
+    }, [duration, paused]);
 
     // The surface stays neutral; the TYPE lives on the icon and a 2px edge.
     // A whole emerald panel for "outcome detected" read as a trading result

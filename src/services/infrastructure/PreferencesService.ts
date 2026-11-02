@@ -42,6 +42,8 @@ export const PREF_KEYS = {
     LAST_SESSION: 'last_session',
     DATA_VERSION: 'data_version',
     DATA_INTEGRITY_LOG: 'data_integrity_log',
+    /** Signature of the last data-loss warning this profile was shown. */
+    DATA_LOSS_ALERT: 'data_loss_alert',
 
     // Error tracking
     LAST_CRASH_ERROR: 'lastCrashError',

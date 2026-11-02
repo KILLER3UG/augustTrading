@@ -4,6 +4,7 @@ import { generateFinalSummary } from '../services/providers/GenericAnalysisServi
 import { syncPatternMemory } from '../services/learning/MemoryFilesService';
 import { getThinkingTradeId, updateThinkingOutcome, deleteThinkingByTrade } from '../services/infrastructure/ThinkingStoreService';
 import { OutcomeAutopilotService } from '../services/ui/OutcomeAutopilotService';
+import { recordIntentionalTradeCount } from '../services/validation/DataIntegrityService';
 import { insightTextForTrade } from '../utils/tradeInsightBrief';
 import { recalculateAnalysisMetrics } from '../utils/analysisUtils';
 import { sanitizeErrorText } from '../utils/runStatus';
@@ -132,6 +133,9 @@ export const useTradeJournalActions = (args: UseTradeJournalActionsArgs): UseTra
         // keyed to the deleted trades must not survive — a deleted trade
         // would otherwise re-trigger "outcome detected" and be re-logged.
         const username = activeUsernameRef.current || 'default';
+        // A deletion is deliberate, not a storage loss: move the integrity
+        // baseline so the next boot does not warn about the rows just removed.
+        void recordIntentionalTradeCount(username, nextTrades.length);
         const deletedTrades = loggedTrades.filter(t => idSet.has(t.id));
         deletedTrades.forEach(t => {
             void deleteThinkingByTrade(getThinkingTradeId(t.analysis?.createdAt, t.id), username);
@@ -146,6 +150,7 @@ export const useTradeJournalActions = (args: UseTradeJournalActionsArgs): UseTra
         const prevTrades = loggedTrades;
         const prevSummaries = tradeSummaries;
         const prevFinalSummary = finalTradeSummary;
+        const username = activeUsernameRef.current || 'default';
         let restored = false;
         const ok = await confirmDialog({
             title: 'Delete all trade history?',
@@ -157,6 +162,7 @@ export const useTradeJournalActions = (args: UseTradeJournalActionsArgs): UseTra
                 setLoggedTrades(prevTrades);
                 setTradeSummaries(prevSummaries);
                 setFinalTradeSummary(prevFinalSummary);
+                void recordIntentionalTradeCount(username, prevTrades.length);
                 toast.success('Trade history restored');
             },
         });
@@ -164,12 +170,14 @@ export const useTradeJournalActions = (args: UseTradeJournalActionsArgs): UseTra
             setLoggedTrades([]);
             setTradeSummaries([]);
             setFinalTradeSummary(null);
-            void syncPatternMemory(null, activeUsernameRef.current || 'default').catch(reportPatternMemoryFailure);
+            // Clearing is deliberate: move the integrity baseline so the next
+            // startup does not warn that four trades became zero.
+            void recordIntentionalTradeCount(username, 0);
+            void syncPatternMemory(null, username).catch(reportPatternMemoryFailure);
             // AFTER the undo grace window — an undo restores the trades, so
             // their artifacts must survive until the delete is final.
             window.setTimeout(() => {
                 if (restored || prevTrades.length === 0) return;
-                const username = activeUsernameRef.current || 'default';
                 prevTrades.forEach(t => {
                     void deleteThinkingByTrade(getThinkingTradeId(t.analysis?.createdAt, t.id), username);
                     OutcomeAutopilotService.unregister(t.id);
