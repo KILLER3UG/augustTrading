@@ -12,6 +12,7 @@ import { captureEfficiencyPct } from '../../utils/disciplineAnalytics';
 import { useConfirmDialog } from '../shared/ConfirmDialog';
 import SetupLifecycleCard from '../analysis/SetupLifecycleCard';
 import MarkdownContent from '../shared/MarkdownContent';
+import TrackedPostMortem from './TrackedPostMortem';
 import { phtDayYear } from '../../utils/timezone';
 
 interface TradeLogContentProps {
@@ -415,6 +416,19 @@ const TradeDetailView: React.FC<{
                             <p className="mt-3 text-ui-base leading-relaxed text-zinc-300 whitespace-pre-wrap">{postMortem}</p>
                         </section>
                     )}
+
+                    {/* The tracker's record. It is separate from the legacy note
+                        above on purpose: the note is prose the old settlement
+                        path wrote, while this one carries the measured path and
+                        the diagnosis, and only exists for trades the tracker
+                        followed. A trade with both shows both, with different
+                        titles, rather than one record impersonating the other. */}
+                    <TrackedPostMortem
+                        trade={trade}
+                        username={username}
+                        modelIdToName={modelIdToName}
+                        title={postMortem?.trim() ? 'Tracked post-mortem' : 'Post-mortem'}
+                    />
                 </div>
             </div>
 

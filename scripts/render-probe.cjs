@@ -345,6 +345,7 @@ async function seedVerdicts(page) {
                     'status: confirmed',
                     'wins: 4',
                     'losses: 1',
+                    'tradeIds: "journal-pt-2"',
                     '---',
                     '**When:** the first breakout of the session on thin volume',
                     '**What I do:** fade it back inside the range.',
@@ -392,6 +393,100 @@ async function seedVerdicts(page) {
                 updatedAt: iso(1400),
             }],
         }));
+
+        // ── The tracked journal row and its diagnosis ─────────────────────
+        // The post-mortem view has no writer in this probe: a real settlement
+        // needs a live tape and a model call. Seed the exact bytes the tracker
+        // stores so the detail is proven to READ them — including the path,
+        // the excursions and the refusal/pending arms that cannot be reached
+        // by clicking. `pt-2` is a settled LOSS; the diagnosis names the skill
+        // file's tradeIds so the linked-skill join is exercised too.
+        const now = Date.now();
+        const bar = 5 * 60 * 1000;
+        const opened = now - 280 * 60 * 1000;
+        const timeline = [100, 99.8, 99.6, 99.4, 99.7, 100.2, 100.7, 101].map((c, i) => ({
+            t: opened + i * bar,
+            o: c + 0.1, h: c + 0.2, l: c - 0.2, c, v: 120,
+            ...(i === 0 || i === 3 || i === 7 ? { decisive: true } : {}),
+        }));
+        localStorage.setItem('tracked_positions_v1_Probe User', JSON.stringify([{
+            id: 'journal-pt-2',
+            source: 'journal',
+            sourceId: 'pt-2',
+            symbol: 'BTCUSDT',
+            direction: 'short',
+            entry: 100,
+            stop: 101,
+            targets: [97],
+            size: 1,
+            leverage: 10,
+            status: 'closed',
+            openedAt: opened,
+            closedAt: opened + 7 * bar,
+            entryBarTime: opened,
+            entryConfirmed: true,
+            entryContext: {
+                thesis: 'Short the failed reclaim of the session high.',
+                evidenceRefs: ['get_market_packet', 'the 1h shelf at 100.6'],
+                model: 'zz-probe-diagnosis-model',
+                provider: 'mock',
+                family: 'failed-reclaim',
+            },
+            cursor: { lastClosedBarTime: opened + 7 * bar, timeframe: '5m' },
+            mfeR: 0.8,
+            maeR: -1,
+            mfePrice: 99.2,
+            maePrice: 101,
+            mfeAt: opened + 3 * bar,
+            maeAt: opened + 7 * bar,
+            barsRead: 8,
+            gaps: [],
+            tapeCoversWindow: true,
+            timeline,
+            timelineDownsampled: false,
+            timelinePointsDropped: 0,
+            context: [],
+            contextDownsampled: false,
+            exit: {
+                reason: 'stop',
+                price: 101,
+                at: opened + 7 * bar,
+                sameCandle: 'single-level',
+                ambiguous: false,
+                gapAtOpen: false,
+                barsRead: 8,
+                realizedR: -1,
+                costR: 0.05,
+                netR: -1.05,
+                slippageModeled: false,
+            },
+            journalSettledAt: opened + 7 * bar + 60 * 1000,
+            diagnosisId: 'diag-journal-pt-2',
+            version: 1,
+        }]));
+        localStorage.setItem('tracked_diagnoses_v1_Probe User', JSON.stringify([{
+            id: 'diag-journal-pt-2',
+            tradeId: 'journal-pt-2',
+            source: 'journal',
+            outcome: 'loss',
+            modelOutcome: 'loss',
+            whatHappened: 'The short entered at 100. The tape never traded below 99.2, then the stop at 101 was hit after eight closed bars.',
+            rootCause: 'The entry was chased into the middle of the prior range with the stop inside the swept high.',
+            whatShouldHaveBeenDone: 'Wait for the reclaim of 100.6 to fail before entering.',
+            primaryChange: 'entry',
+            lesson: 'A short at the middle of the range pays for the sweep, not the move.',
+            when: 'the entry is inside the prior range and the stop sits under the swept high',
+            action: 'wait for the reclaim to fail before entering',
+            confidence: 72,
+            evidenceCount: 3,
+            model: 'zz-probe-diagnosis-model',
+            provider: 'mock',
+            promptVersion: 'post-mortem-v1',
+            packetHash: 'cafebabe',
+            createdAt: new Date(now - 240 * 60 * 1000).toISOString(),
+            tentative: true,
+        }]));
+
         const analysis = (over) => ({
             direction: 'Long', confidence: 'High', coinName: 'BTCUSDT',
             entryPoints: [{ price: '84210.5', description: 'reclaim' }],
@@ -2646,11 +2741,17 @@ async function main() {
                 row.click();
                 await sleep(400);
                 const block = document.querySelector('[data-testid="trade-post-mortem"]');
+                const tracked = document.querySelector('[data-testid="tracked-post-mortem"]');
                 details.push({
                     rowText: (row.textContent || '').trim().slice(0, 60),
                     hasBlock: !!block,
                     text: block ? (block.textContent || '').trim() : '',
                     byline: (document.querySelector('[data-testid="trade-post-mortem-when"]')?.textContent || '').trim(),
+                    hasTracked: !!tracked,
+                    trackedText: tracked ? (tracked.textContent || '').trim() : '',
+                    trackedByline: (document.querySelector('[data-testid="tracked-post-mortem-when"]')?.textContent || '').trim(),
+                    hasPath: !!document.querySelector('[data-testid="tracked-path"]'),
+                    pathMarks: document.querySelector('[data-testid="tracked-path"]')?.querySelectorAll('path,line,circle').length || 0,
                 });
                 if (!(await clickBack())) break;
             }
@@ -2658,6 +2759,8 @@ async function main() {
                 opened: details.length,
                 withNote: details.filter(d => d.hasBlock).length,
                 sample: details.find(d => d.hasBlock) || null,
+                withTracked: details.filter(d => d.hasTracked).length,
+                trackedSample: details.find(d => d.hasTracked) || null,
             };
         });
         check('a journal History row opens its trade detail', reflectionSeen.opened >= 2,
@@ -2671,6 +2774,34 @@ async function main() {
         check('control: only the seeded row shows a post-mortem block',
             reflectionSeen.opened >= 2 && reflectionSeen.withNote === 1,
             `opened=${reflectionSeen.opened} withNote=${reflectionSeen.withNote}`);
+        // The TRACKED record is a second read of a different store. Its control
+        // is separate from the legacy note's: a component that mounted for
+        // every trade would pass "the text is somewhere" and fail this one.
+        check('the tracked record renders on the trade the tracker followed',
+            reflectionSeen.withTracked === 1
+                && !!reflectionSeen.trackedSample
+                && reflectionSeen.trackedSample.trackedText.includes('The entry was chased'),
+            `withTracked=${reflectionSeen.withTracked}`);
+        check('…with the measured path and both excursions',
+            !!reflectionSeen.trackedSample
+                && reflectionSeen.trackedSample.hasPath === true
+                && reflectionSeen.trackedSample.pathMarks >= 8
+                && /MFE \+0\.80R/.test(reflectionSeen.trackedSample.trackedText)
+                && /MAE -1\.00R/.test(reflectionSeen.trackedSample.trackedText)
+                && /Root cause/.test(reflectionSeen.trackedSample.trackedText),
+            reflectionSeen.trackedSample
+                ? `path=${reflectionSeen.trackedSample.hasPath} marks=${reflectionSeen.trackedSample.pathMarks} ${reflectionSeen.trackedSample.trackedText.slice(0, 120)}`
+                : 'no tracked-post-mortem block on any row');
+        check('…names the diagnosis model and the skill citing the trade',
+            !!reflectionSeen.trackedSample
+                && reflectionSeen.trackedSample.trackedByline.includes('zz-probe-diagnosis-model')
+                && /Fade the first break/i.test(reflectionSeen.trackedSample.trackedText),
+            reflectionSeen.trackedSample
+                ? `byline=${reflectionSeen.trackedSample.trackedByline}`
+                : 'no byline element');
+        check('control: only the followed trade shows the tracked record',
+            reflectionSeen.opened >= 2 && reflectionSeen.withTracked === 1,
+            `opened=${reflectionSeen.opened} withTracked=${reflectionSeen.withTracked}`);
 
         // ── Journal → Signals: the desk's own call record ─────────────────
         // The feed is a rendered LIST, so no other gate can see it. Seed one
@@ -2731,6 +2862,30 @@ async function main() {
             check('the feed states the hit rate against the same-levels base rate',
                 /vs base/i.test(feedText) && /35\.0%/.test(feedText) && /thin/i.test(feedText),
                 feedText.slice(0, 220));
+            // The rows are a table now. A chevron that flips aria-expanded but
+            // renders nothing is the exact inert-control failure the sweep
+            // cannot see, so the detail row is asserted by presence, not style.
+            const detailBefore = await page.locator('[data-testid="signal-detail-sig-probe-1"]').count();
+            // DOM click, not Playwright's: an Activity drawer left open by the
+            // earlier sweep sits over the Journal and intercepts pointer
+            // events. The click handler is what is under test, and a DOM click
+            // reaches it without pretending the drawer is not there.
+            const expandClicked = await page.evaluate(() => {
+                const btn = document.querySelector('[data-testid="signal-expand-sig-probe-1"]');
+                if (btn) btn.click();
+                return !!btn;
+            });
+            const detailAfter = await pollFor(async () =>
+                (await page.locator('[data-testid="signal-detail-sig-probe-1"]').count()) === 1);
+            check('opening a signal row reveals its evidence and shadow checks',
+                detailBefore === 0 && expandClicked && detailAfter === true,
+                `before=${detailBefore} clicked=${expandClicked} after=${detailAfter}`);
+            if (detailAfter) {
+                const detailText = await page.locator('[data-testid="signal-detail-sig-probe-1"]').innerText();
+                check('the signal detail names the cited evidence and the gate shadow',
+                    detailText.includes('get_market_packet') && /gate shadow/i.test(detailText),
+                    detailText.slice(0, 200));
+            }
         }
         // Back to History for the generic sweep below.
         await page.evaluate(() => document.querySelector('#journal-tab-log')?.click());
