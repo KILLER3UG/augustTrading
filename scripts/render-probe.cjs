@@ -487,6 +487,10 @@ async function seedVerdicts(page) {
                 tradeRow('pt-2', 280, 'LOSS', 'scalp', 'Short', 'BTCUSDT'),
                 tradeRow('pt-3', 260, 'WIN', 'swing', 'Long', 'ETHUSDT'),
                 tradeRow('pt-4', 240, 'ENTRY_NOT_HIT', 'swing', 'Short', 'SOLUSDT'),
+                // The tracker's open row: the Journal must show it as OPEN and
+                // offer the OPEN filter, not silently hide a trade that has no
+                // settled outcome yet.
+                tradeRow('pt-5', 220, 'PENDING', 'scalp', 'Long', 'BTCUSDT'),
             ],
             tradeSummaries: [],
             finalTradeSummary: null,
@@ -2522,6 +2526,41 @@ async function main() {
         check('the seeded journal is populated before it is swept',
             journalHow === 'clicked' && !/No trades logged yet/i.test(journalText),
             journalText.slice(0, 120));
+        // The tracker writes PENDING journal rows while a trade is open. This
+        // is the only gate that can see the rendered OPEN state and its filter.
+        const openFilterPresent = await page.evaluate(() => {
+            const main = document.querySelector('main');
+            if (!main) return false;
+            return [...main.querySelectorAll('button')]
+                .some(el => (el.textContent || '').trim() === 'OPEN');
+        });
+        check('the journal offers an OPEN filter', openFilterPresent === true);
+        // The list is virtualized, so the oldest row is not in the DOM until
+        // the filter brings it in. Clicking OPEN must leave the PENDING row
+        // (and its badge) on screen; a filter that changes nothing is inert.
+        const openFilterClicked = await page.evaluate(() => {
+            const main = document.querySelector('main');
+            const button = [...(main?.querySelectorAll('button') ?? [])]
+                .find(el => (el.textContent || '').trim() === 'OPEN');
+            if (!(button instanceof HTMLElement)) return false;
+            button.click();
+            return true;
+        });
+        await sleep(500);
+        const openBadge = await page.evaluate(() => {
+            const main = document.querySelector('main');
+            const text = (el) => (el.textContent || '').trim();
+            return [...(main?.querySelectorAll('span') ?? [])]
+                .some(el => text(el) === 'OPEN');
+        });
+        check('a PENDING journal row renders the OPEN state',
+            openFilterClicked === true && openBadge === true,
+            JSON.stringify({ openFilterClicked, openBadge }));
+        await page.evaluate(() => {
+            const clear = document.querySelector('[aria-label="Clear outcome filter"]');
+            if (clear instanceof HTMLElement) clear.click();
+        });
+        await sleep(300);
 
         // Journal → Stats carries the same "last 20" the seats are shown. This
         // is the only gate that can see it: the card renders from a list, and a

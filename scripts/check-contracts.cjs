@@ -56,6 +56,9 @@
  *      path, resume idempotency, the 3-outcome independence rule, the
  *      diagnosis queue's no-drop overflow, the diagnosis boundary, and
  *      signal adoption with the ledger-wins overlay
+ *  28. journal tracking — a PENDING row becomes a tracked plan, its exit
+ *      becomes a journal settlement, and the settled row merges over the
+ *      pending one without losing the plan or its provenance
  *
  * Plain node, no vitest, no jsdom, no network: each module is bundled from
  * TypeScript with esbuild (already a vite dependency) into a temp file and
@@ -2094,6 +2097,148 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
         JSON.stringify(bars.map(b => b.volume)));
 })();
 
+// ─── 32. journal tracking — pending row, settlement, merge ────────────────
+(() => {
+    const jt = loadModule('src/services/tracking/journalTracking.ts');
+    const STEP = 5 * 60_000;
+    const T0 = STEP * 1000;
+    const analysis = {
+        coinName: 'BTCUSDT',
+        direction: 'Long',
+        entryPoints: [{ price: '100' }],
+        stopLoss: '95',
+        takeProfit: [{ price: '110' }, { price: '120' }],
+        strategy: 'breakout continuation',
+        historicalCorrelation: '',
+        detectedPatternFamily: 'breakout',
+        confidence: 'High',
+        probability: 72,
+        rrRatio: 2,
+        validityDurationMinutes: 240,
+        marketConditions: {
+            pattern: 'breakout', candleBehavior: '', timeframeAlignment: '',
+            rsi: '', macd: '', sentiment: '',
+        },
+        createdAt: new Date(T0).toISOString(),
+    };
+    const trade = {
+        id: 'trade-1',
+        source: 'manual',
+        analysis,
+        outcome: 'PENDING',
+        timestamp: new Date(T0).toISOString(),
+        decidedAt: new Date(T0).toISOString(),
+        planId: 'btc-plan-1',
+        leverage: 10,
+        investmentAmount: 1000,
+        suggestedRiskUsd: 50,
+        suggestedNotionalUsd: 500,
+        modelsUsed: { 'prov-1': 'model-1' },
+        promptVersion: 'prompt-v1',
+        sourceRunId: 'run-1',
+    };
+
+    const position = jt.trackedPositionFromJournalTrade(trade);
+    ok('journal: a PENDING row becomes a tracked plan',
+        position?.id === 'journal-trade-1'
+        && position.source === 'journal'
+        && position.sourceId === 'trade-1'
+        && position.symbol === 'BTCUSDT'
+        && position.direction === 'long'
+        && position.entry === 100 && position.stop === 95
+        && position.targets.length === 2 && position.targets[1] === 120
+        && position.status === 'pending_entry'
+        && position.entryConfirmed === false
+        && position.expiresAt === T0 + 240 * 60_000
+        && position.entryContext.family === 'breakout'
+        && position.entryContext.provider === 'prov-1'
+        && position.entryContext.model === 'model-1'
+        && position.entryContext.runId === 'run-1'
+        && position.cursor.lastClosedBarTime === T0 + STEP,
+        JSON.stringify(position && { id: position.id, expires: position.expiresAt }));
+
+    ok('journal: a plan without a usable direction/levels is refused',
+        jt.trackedPositionFromJournalTrade({ ...trade, analysis: { ...analysis, direction: 'Neutral' } }) === null
+        && jt.trackedPositionFromJournalTrade({ ...trade, analysis: { ...analysis, takeProfit: [] } }) === null);
+
+    const closed = {
+        ...position,
+        status: 'closed',
+        closedAt: T0 + 2 * STEP,
+        mfeR: 2.2,
+        maeR: -0.5,
+        exit: {
+            reason: 'target', price: 110, at: T0 + STEP, sameCandle: 'single-level',
+            ambiguous: false, gapAtOpen: false, barsRead: 2,
+            realizedR: 2, costR: 0.02, netR: 1.98, slippageModeled: false,
+        },
+    };
+    const settlement = jt.journalSettlementFromPosition(closed);
+    ok('journal: a target exit settles WIN with R, costs and raw excursions',
+        settlement?.outcome === 'WIN'
+        && settlement.realizedR === 2
+        && settlement.costR === 0.02
+        && settlement.netR === 1.98
+        && settlement.exitPrice === 110
+        && settlement.excursions?.mfePercent === 11
+        && settlement.excursions?.maePercent === 2.5
+        && settlement.resolvedAt === new Date(T0 + 2 * STEP).toISOString(),
+        JSON.stringify(settlement));
+
+    const stopped = jt.journalSettlementFromPosition({
+        ...closed,
+        exit: { ...closed.exit, reason: 'stop', price: 95, realizedR: -1, costR: 0.02, netR: -1.02 },
+    });
+    ok('journal: a stop exits is a LOSS', stopped?.outcome === 'LOSS');
+    const expiryWin = jt.journalSettlementFromPosition({
+        ...closed,
+        exit: { ...closed.exit, reason: 'expiry', price: 101, realizedR: 0.2 },
+    });
+    const expiryLoss = jt.journalSettlementFromPosition({
+        ...closed,
+        exit: { ...closed.exit, reason: 'expiry', price: 99, realizedR: -0.2 },
+    });
+    ok('journal: an expiry follows the tape R sign',
+        expiryWin?.outcome === 'WIN' && expiryLoss?.outcome === 'LOSS');
+    ok('journal: no exit means no settlement',
+        jt.journalSettlementFromPosition({ ...position }) === null);
+
+    const settled = {
+        ...trade,
+        timestamp: new Date(T0 + 3600_000).toISOString(),
+        outcome: 'WIN',
+        outcomeResolvedAt: new Date(T0 + 2 * STEP).toISOString(),
+        resolutionSource: 'tracker',
+        realizedR: 2,
+        rSource: 'tracker',
+        maxAdverseExcursion: -5,
+        maxFavorableExcursion: 10,
+        excursionSource: 'tracker',
+        pnlAmount: 100,
+    };
+    const merged = jt.mergePendingJournalRow(trade, settled);
+    ok('journal: settlement merges over PENDING without losing the plan',
+        merged.id === trade.id
+        && merged.timestamp === trade.timestamp
+        && merged.decidedAt === trade.decidedAt
+        && merged.analysis === trade.analysis
+        && merged.planId === 'btc-plan-1'
+        && merged.sourceRunId === 'run-1'
+        && merged.suggestedRiskUsd === 50
+        && merged.outcome === 'WIN'
+        && merged.outcomeResolvedAt === settled.outcomeResolvedAt
+        && merged.resolutionSource === 'tracker'
+        && merged.realizedR === 2
+        && merged.rSource === 'tracker'
+        && merged.maxFavorableExcursion === 10,
+        JSON.stringify({ timestamp: merged.timestamp, outcome: merged.outcome }));
+
+    ok('journal: settled means no tracker write is needed',
+        jt.isJournalSettled('WIN') && jt.isJournalSettled('LOSS')
+        && jt.isJournalSettled('ENTRY_NOT_HIT') && jt.isJournalSettled('SKIPPED')
+        && jt.isJournalSettled('PENDING') === false);
+})();
+
 // ─── report ────────────────────────────────────────────────────────────────
 console.log(`contracts: ${passed} passed, ${failures.length} failed`);
 for (const f of failures) console.log(`  FAIL ${f}`);
@@ -2101,4 +2246,4 @@ if (failures.length) {
     console.error('CONTRACT CHECK FAIL — a pinned contract broke; fix the module, not this file.');
     process.exit(1);
 }
-console.log('CONTRACT CHECK OK — risk/reward math, retry classification, harness marks, notebook pressure, tool-pair compaction, AI-boundary coercion, the skill/memory authoring screens, the shared index budget, both policy tables (self-modification, goal tool narrowing), the desk tool budget, the skill outcome correction, the startup call gates, the insight store pin, the signal loop (resolver order, costs, ledger, venue data), the chart tape study, the signal accuracy fold, the skill format, the journal-rules store, the post-mortem clause, the memory page export, and the tracked position (signal adoption, ledger-wins resolution, exit order, gaps, excursions, capped path, independence, diagnosis queue) all hold.');
+console.log('CONTRACT CHECK OK — risk/reward math, retry classification, harness marks, notebook pressure, tool-pair compaction, AI-boundary coercion, the skill/memory authoring screens, the shared index budget, both policy tables (self-modification, goal tool narrowing), the desk tool budget, the skill outcome correction, the startup call gates, the insight store pin, the signal loop (resolver order, costs, ledger, venue data), the chart tape study, the signal accuracy fold, the skill format, the journal-rules store, the post-mortem clause, the memory page export, the tracked position (signal adoption, ledger-wins resolution, exit order, gaps, excursions, capped path, independence, diagnosis queue) and journal tracking (pending registration, settlement payload, plan-preserving merge, orphan handling) all hold.');

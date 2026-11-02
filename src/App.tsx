@@ -594,6 +594,7 @@ const App: React.FC = () => {
         handleDataCaptureAuto,
         handleDataCaptureSkip,
         handleInitiateLogTrade,
+        trackProposedTrade,
         handleEntryNotHitAutoCapture,
         handleEntryNotHitSkip,
     } = useTradeLogging({
@@ -1565,24 +1566,45 @@ const App: React.FC = () => {
             });
             if (!ok) return false;
         }
-        updateMessages(prev => {
-            // planId dedupe, keyed on the JOURNAL ROW (`LoggedTrade.planId`) and
-            // the pending card's own field — never on the headline string. The
-            // dock's per-card map stops a double-click on one card; re-presenting
-            // the same plan from another surface used to mint a byte-identical
-            // second card because the only trace of the plan was prose.
-            if (stamped.planId
-                && (loggedTrades.some(t => t.planId === stamped.planId)
-                    || prev.some(m => m.planId === stamped.planId))) {
-                return prev;
+        // planId dedupe, keyed on the JOURNAL ROW (`LoggedTrade.planId`) and
+        // the pending card's own field — never on the headline string. The
+        // dock's per-card map stops a double-click on one card; re-presenting
+        // the same plan from another surface used to mint a byte-identical
+        // second card because the only trace of the plan was prose.
+        const duplicate = !!stamped.planId
+            && (loggedTrades.some(t => t.planId === stamped.planId)
+                || messages.some(m => m.planId === stamped.planId));
+        if (duplicate) {
+            // A prior attempt may have written the PENDING row/message but
+            // failed to register the tracker. Retry registration for that
+            // pending receipt; a settled plan needs nothing.
+            const pendingReceipt = messages.find(m =>
+                m.planId === stamped.planId && m.outcome === TradeOutcome.PENDING);
+            if (pendingReceipt) {
+                const tracked = await trackProposedTrade(pendingReceipt);
+                if (!tracked.ok) {
+                    toast.error('Could not track this trade', tracked.error);
+                    return false;
+                }
             }
-            // The plan's own answer row carries the model and run identity, so the
-            // accepted receipt copies them instead of arriving bare.
-            const presenting = [...prev].reverse().find(m => m.role === MessageRole.AI && m.modelsUsed);
-            return [...prev, buildProposedTradeMessage(stamped, `proposed-${Date.now()}`, presenting)];
-        });
+            return true;
+        }
+
+        // The plan's own answer row carries the model and run identity, so the
+        // accepted receipt copies them instead of arriving bare.
+        const presenting = [...messages].reverse().find(m => m.role === MessageRole.AI && m.modelsUsed);
+        const pendingReceipt = buildProposedTradeMessage(stamped, `proposed-${Date.now()}`, presenting);
+        updateMessages(prev => [...prev, pendingReceipt]);
+        // "Track this trade" writes the PENDING journal row and registers the
+        // tracker. The receipt is already in the transcript; a failure keeps
+        // the card live and leaves the PENDING row for the retry above.
+        const tracked = await trackProposedTrade(pendingReceipt);
+        if (!tracked.ok) {
+            toast.error('Could not track this trade', tracked.error);
+            return false;
+        }
         return true;
-    }, [updateMessages, loggedTrades, confirmDialog, messages]);
+    }, [updateMessages, loggedTrades, confirmDialog, messages, trackProposedTrade, toast]);
 
     /** The dock holds a settled verdict's message id, not a copy of the
      *  analysis — a persisted chat session would otherwise store a whole

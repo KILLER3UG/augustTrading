@@ -76,7 +76,7 @@ export interface LoggedTrade {
    * the distinction so an automatic mistake is auditable and never looks like
    * a trader's own call.
    */
-  resolutionSource?: 'autopilot' | 'manual' | 'correction';
+  resolutionSource?: 'autopilot' | 'manual' | 'correction' | 'tracker';
   /** On a correction: the outcome this row carried before the trader changed it. */
   correctedFrom?: TradeOutcome;
   /** On a correction: when the trader changed it. */
@@ -219,8 +219,8 @@ export interface LoggedTrade {
    * answer for the other: first writer wins, and the field says who. Absent on
    * rows written before stage 3.
    */
-  rSource?: 'autopilot' | 'postMortem';
-  excursionSource?: 'autopilot' | 'postMortem';
+  rSource?: 'autopilot' | 'postMortem' | 'tracker';
+  excursionSource?: 'autopilot' | 'postMortem' | 'tracker';
   /**
    * The round-trip COST of this trade, in R, when it could be computed.
    *

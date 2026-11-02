@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { Message, TradeOutcome, LoggedTrade, TradeSummary, ImageMetadata, AIProvider, BenchmarkAlpha } from '../types';
+import { Message, MessageRole, TradeOutcome, LoggedTrade, TradeSummary, ImageMetadata, AIProvider, BenchmarkAlpha } from '../types';
 import { captureOutcomeComparison } from '../services/ui/AutoCaptureService';
 import { toLeveragedExcursionPct } from '../services/backtesting/outcomeEngine';
 import * as MemoryService from '../services/learning/MemoryService';
@@ -26,9 +26,31 @@ import { getHarnessSettings } from '../utils/harnessSettings';
 import { computeContractSize } from '../utils/ticketSize';
 import { netRiskReward, roundTripCostR, stopDistancePercent } from '../utils/netRiskReward';
 import { modelStatedSize } from '../services/trade/proposedTrade';
+import { mergePendingJournalRow, trackedPositionFromJournalTrade } from '../services/tracking/journalTracking';
+import { registerJournalOutcomeBridge } from '../services/tracking/journalOutcomeBridge';
 
 // Maximum number of trade summaries (Recent Insights) to keep - enforces FIFO when limit reached
 export const MAX_TRADE_SUMMARIES = 100;
+
+/** The message a settled journal row no longer has in the open thread. The
+ *  settlement funnel reads analysis/provenance off a Message; the row carries
+ *  the same facts, so the row IS the message source when the transcript is
+ *  gone (another conversation, a reload, a bot thread). */
+const messageFromJournalRow = (row: LoggedTrade): Message => ({
+    id: row.id,
+    role: MessageRole.AI,
+    text: '',
+    createdAt: row.decidedAt ?? row.timestamp,
+    ...(row.analysis ? { analysis: row.analysis } : {}),
+    outcome: TradeOutcome.PENDING,
+    ...(row.planId ? { planId: row.planId } : {}),
+    ...(row.modelsUsed ? { modelsUsed: row.modelsUsed } : {}),
+    ...(row.thoughtProcesses ? { thoughtProcesses: row.thoughtProcesses } : {}),
+    ...(row.ocrModelUsed ? { ocrModelUsed: row.ocrModelUsed } : {}),
+    ...(row.debateTurns ? { debateTurns: row.debateTurns } : {}),
+    ...(row.patternMemoryGate ? { patternMemoryGate: row.patternMemoryGate } : {}),
+    ...(row.userPriorCall ? { userPriorCall: row.userPriorCall } : {}),
+});
 
 /**
  * The trade a capture flow is working on: the analysis message it came from,
@@ -275,7 +297,7 @@ export const useTradeLogging = (params: UseTradeLoggingParams) => {
     // ─── Trade Logging ────────────────────────────────────────────────────
 
     // Helper function to log trade (called by all capture handlers)
-    const logTradeWithFeedback = useCallback(async (message: Message, outcome: TradeOutcome.WIN | TradeOutcome.LOSS, feedback: { pnlAmount?: number; pnlPercent?: number; correctedStopLoss?: string; correctedTakeProfit?: string; selectedEntryIndices?: number[]; slOptimizationData?: SLOptimizationData; journalTags?: CaptureJournalTags; benchmark?: BenchmarkAlpha; outcomeResolvedAt?: string; excursions?: { maePercent: number; mfePercent: number }; realizedR?: number; resolutionSource?: 'autopilot' | 'manual'; }, conversationId?: string) => {
+    const logTradeWithFeedback = useCallback(async (message: Message, outcome: TradeOutcome.WIN | TradeOutcome.LOSS, feedback: { pnlAmount?: number; pnlPercent?: number; correctedStopLoss?: string; correctedTakeProfit?: string; selectedEntryIndices?: number[]; slOptimizationData?: SLOptimizationData; journalTags?: CaptureJournalTags; benchmark?: BenchmarkAlpha; outcomeResolvedAt?: string; excursions?: { maePercent: number; mfePercent: number }; realizedR?: number; resolutionSource?: 'autopilot' | 'manual' | 'tracker'; }, conversationId?: string) => {
         // The regime this trade was settled in, resolved once in the agreed
         // order: the live hybrid packet, else the regime ledger's observation
         // for this coin on this day (or the nearest earlier one), else the
@@ -300,6 +322,9 @@ export const useTradeLogging = (params: UseTradeLoggingParams) => {
         // leveraged — so one trade cannot have two "worst move" numbers.
         const mae = toLeveragedExcursionPct(feedback.excursions?.maePercent, leverageUsed);
         const mfe = toLeveragedExcursionPct(feedback.excursions?.mfePercent, leverageUsed);
+        // Who MEASURED the R/excursions. The tracker is its own writer; an
+        // autopilot detection is not relabelled as one.
+        const measuredBy = feedback.resolutionSource === 'tracker' ? 'tracker' as const : 'autopilot' as const;
 
         // ─── The SUGGESTED size ────────────────────────────────────────────
         // The trader's OWN equity and risk %, against the plan's stop
@@ -360,7 +385,7 @@ export const useTradeLogging = (params: UseTradeLoggingParams) => {
             ? { costR: cost.costR, slippageModeled: false as const }
             : { slippageModeled: false as const, costUnknown: cost.unknown ?? ('stop-distance' as const) };
 
-        const loggedTrade: LoggedTrade = {
+        let loggedTrade: LoggedTrade = {
             id: message.id,
             // Every row this path writes is the trader's own log. Imported
             // history and tape-resolved signals use their own writers when
@@ -412,9 +437,9 @@ export const useTradeLogging = (params: UseTradeLoggingParams) => {
             // Provenance, not decoration: the post-mortem measures the same pair
             // over its own window, and the row must say which one it is holding
             // rather than letting the later writer swap it in silently.
-            ...(mae !== undefined || mfe !== undefined ? { excursionSource: 'autopilot' as const } : {}),
+            ...(mae !== undefined || mfe !== undefined ? { excursionSource: measuredBy } : {}),
             ...(typeof feedback.realizedR === 'number' && Number.isFinite(feedback.realizedR)
-                ? { realizedR: feedback.realizedR, rSource: 'autopilot' as const }
+                ? { realizedR: feedback.realizedR, rSource: measuredBy }
                 : {}),
             // The cost, and the net R beside the gross one above.
             ...costFields,
@@ -460,11 +485,22 @@ export const useTradeLogging = (params: UseTradeLoggingParams) => {
         // double-counted the same trade in every stats sink. isDuplicate reads
         // the ref, and the ref is advanced HERE: the effect sync lags one
         // commit, which is exactly the window a double-confirm fires in.
-        const isDuplicate = loggedTradesRef.current.some(t => t.id === loggedTrade.id);
+        //
+        // A PENDING row is NOT a duplicate: it is the open trade this settlement
+        // closes. The settled row is merged over it (identity, open time and
+        // the plan survive) and the tail runs exactly once.
+        const existingRow = loggedTradesRef.current.find(t => t.id === loggedTrade.id);
+        const pendingRow = existingRow?.outcome === TradeOutcome.PENDING ? existingRow : null;
+        if (pendingRow) loggedTrade = mergePendingJournalRow(pendingRow, loggedTrade);
+        const isDuplicate = existingRow !== undefined && pendingRow === null;
         if (!isDuplicate) {
-            loggedTradesRef.current = [loggedTrade, ...loggedTradesRef.current];
+            loggedTradesRef.current = [loggedTrade, ...loggedTradesRef.current.filter(t => t.id !== loggedTrade.id)];
         }
-        setLoggedTrades(prev => prev.some(t => t.id === loggedTrade.id) ? prev : [loggedTrade, ...prev]);
+        setLoggedTrades(prev => {
+            if (isDuplicate) return prev;
+            if (pendingRow) return prev.map(t => t.id === loggedTrade.id ? loggedTrade : t);
+            return [loggedTrade, ...prev.filter(t => t.id !== loggedTrade.id)];
+        });
         updateMessages(prev => prev.map(m => {
             if (m.id !== message.id) return m;
             const next = { ...m, outcome };
@@ -641,6 +677,123 @@ export const useTradeLogging = (params: UseTradeLoggingParams) => {
         void autoAddRecentInsight(loggedTrade);
 
     }, [activeConversationLeverage, moderatorProviderId, moderatorModel, updateMessages, memoryModel, memoryConfig, useAlgorithmicInsights, toast, autoAddRecentInsight]);
+
+    /**
+     * "Track this trade" — the ONE action a presented plan needs. It writes
+     * the PENDING journal row the trader can see, then registers the tracker.
+     * It never runs a closed-trade side effect; those belong to settlement.
+     * A plan merely presented and never accepted is never tracked.
+     */
+    const trackProposedTrade = useCallback(async (
+        message: Message,
+    ): Promise<{ ok: boolean; already?: boolean; error?: string }> => {
+        const analysis = message.analysis;
+        if (!analysis) return { ok: false, error: 'the plan has no analysis' };
+        const existing = loggedTradesRef.current.find(t => t.id === message.id);
+        if (existing && existing.outcome !== TradeOutcome.PENDING) {
+            return { ok: true, already: true };
+        }
+
+        let pending: LoggedTrade;
+        if (existing) {
+            pending = existing;
+        } else {
+            const regime = resolveTradeRegime({
+                coin: analysis.coinName || message.text?.match(/\b([A-Z]{2,10}USDT?)\b/)?.[1],
+                timestamp: analysis.createdAt || message.createdAt || new Date().toISOString(),
+                analysis,
+            });
+            const leverage = activeConversationLeverage || defaultLeverage();
+            const harness = getHarnessSettings();
+            const ticket = computeContractSize(analysis, harness.equityUsd, leverage, harness.riskPercent);
+            const stated = modelStatedSize(analysis.historicalCorrelation);
+            pending = {
+                id: message.id,
+                source: 'manual',
+                analysis: withDetectedTradeType(analysis),
+                outcome: TradeOutcome.PENDING,
+                timestamp: new Date().toISOString(),
+                decidedAt: analysis.createdAt || message.createdAt || new Date().toISOString(),
+                ...(message.planId ? { planId: message.planId } : {}),
+                leverage,
+                marketSnapshot: analysis.marketSnapshot,
+                ...(regime.regime ? { marketRegime: regime.regime, marketRegimeSource: regime.source } : {}),
+                ...(ticket.equityUsd > 0
+                    ? {
+                        suggestedRiskUsd: ticket.riskUsd,
+                        suggestedNotionalUsd: ticket.notionalUsd,
+                        suggestedSizeReason: ticket.reason,
+                    }
+                    : { suggestedSizeReason: ticket.reason }),
+                ...(stated.riskUsd !== undefined ? { modelStatedRiskUsd: stated.riskUsd } : {}),
+                ...(stated.notionalUsd !== undefined ? { modelStatedNotionalUsd: stated.notionalUsd } : {}),
+                modelsUsed: message.modelsUsed,
+                thoughtProcesses: message.thoughtProcesses,
+                ocrModelUsed: message.ocrModelUsed,
+                moderatorProvider: moderatorProviderId,
+                moderatorModel,
+                debateTurns: message.debateTurns,
+                patternMemoryGate: message.patternMemoryGate,
+                promptVersion: message.runStats?.promptVersion,
+                promptLane: message.runStats?.promptLane,
+                sourceRunId: message.runStats?.runId,
+                userPriorCall: message.userPriorCall,
+            };
+            loggedTradesRef.current = [pending, ...loggedTradesRef.current.filter(t => t.id !== pending.id)];
+            setLoggedTrades(prev => [pending, ...prev.filter(t => t.id !== pending.id)]);
+        }
+
+        const position = trackedPositionFromJournalTrade(pending);
+        if (!position) {
+            return { ok: false, error: 'the plan has no usable direction, entry, stop and target' };
+        }
+        try {
+            const { registerJournalPositionForTracking } = await import('../services/tracking/trackerService');
+            const registered = await registerJournalPositionForTracking(position);
+            return registered.ok ? { ok: true } : { ok: false, error: registered.error };
+        } catch (e) {
+            return { ok: false, error: e instanceof Error ? e.message : String(e) };
+        }
+    }, [activeConversationLeverage, moderatorProviderId, moderatorModel]);
+
+    // The tracker reads/settles journal rows through this bridge. The ref
+    // keeps the latest settlement closure without re-registering on every
+    // render; the bridge itself is unmounted with this hook.
+    const logTradeWithFeedbackRef = useRef(logTradeWithFeedback);
+    useEffect(() => { logTradeWithFeedbackRef.current = logTradeWithFeedback; }, [logTradeWithFeedback]);
+
+    useEffect(() => registerJournalOutcomeBridge({
+        read: (tradeId) => {
+            const row = loggedTradesRef.current.find(t => t.id === tradeId);
+            if (!row) return null;
+            return {
+                outcome: row.outcome as 'PENDING' | 'WIN' | 'LOSS' | 'ENTRY_NOT_HIT' | 'SKIPPED',
+                ...(row.outcomeResolvedAt ? { resolvedAt: row.outcomeResolvedAt } : {}),
+            };
+        },
+        settle: async (tradeId, settlement) => {
+            const row = loggedTradesRef.current.find(t => t.id === tradeId);
+            if (!row) return { ok: false, error: 'the journal row is no longer present' };
+            if (row.outcome !== TradeOutcome.PENDING) return { ok: true };
+            if (!row.analysis) return { ok: false, error: 'the journal row has no analysis' };
+            const message = messagesRef.current.find(m => m.id === tradeId) ?? messageFromJournalRow(row);
+            try {
+                await logTradeWithFeedbackRef.current(
+                    message,
+                    settlement.outcome === 'WIN' ? TradeOutcome.WIN : TradeOutcome.LOSS,
+                    {
+                        outcomeResolvedAt: settlement.resolvedAt,
+                        ...(settlement.realizedR !== undefined ? { realizedR: settlement.realizedR } : {}),
+                        ...(settlement.excursions ? { excursions: settlement.excursions } : {}),
+                        resolutionSource: 'tracker',
+                    },
+                );
+                return { ok: true };
+            } catch (e) {
+                return { ok: false, error: e instanceof Error ? e.message : String(e) };
+            }
+        },
+    }), []);
 
     // ─── Data Capture Modal Handlers ──────────────────────────────────────
     // No screenshot option: the post-mortem was the only consumer of a
@@ -1009,6 +1162,7 @@ export const useTradeLogging = (params: UseTradeLoggingParams) => {
         handleDataCaptureAuto,
         handleDataCaptureSkip,
         handleInitiateLogTrade,
+        trackProposedTrade,
         handleEntryNotHitAutoCapture,
         handleEntryNotHitSkip,
         // Outcome-resolution harness visibility: drops the trade from the

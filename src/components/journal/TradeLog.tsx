@@ -39,12 +39,14 @@ const OutcomeBadge: React.FC<{ outcome: TradeOutcome }> = ({ outcome }) => {
     const tone: { [key in TradeOutcome]?: PillTone } = {
         [TradeOutcome.WIN]: 'up',
         [TradeOutcome.LOSS]: 'down',
+        [TradeOutcome.PENDING]: 'info',
         [TradeOutcome.ENTRY_NOT_HIT]: 'neutral',
         [TradeOutcome.SKIPPED]: 'neutral',
     };
     const text: { [key in TradeOutcome]?: string } = {
         [TradeOutcome.WIN]: 'WIN',
         [TradeOutcome.LOSS]: 'LOSS',
+        [TradeOutcome.PENDING]: 'OPEN',
         [TradeOutcome.ENTRY_NOT_HIT]: 'NO ENTRY',
         [TradeOutcome.SKIPPED]: 'SKIPPED',
     };
@@ -643,7 +645,7 @@ const TradeLogContent: React.FC<TradeLogContentProps> = ({
                         </button>
                     ))}
                     <span className="w-px h-4 bg-white/10 mx-1" />
-                    {[TradeOutcome.WIN, TradeOutcome.LOSS, TradeOutcome.ENTRY_NOT_HIT, TradeOutcome.SKIPPED].map(o => (
+                    {[TradeOutcome.WIN, TradeOutcome.LOSS, TradeOutcome.PENDING, TradeOutcome.ENTRY_NOT_HIT, TradeOutcome.SKIPPED].map(o => (
                         <button
                             key={o}
                             onClick={() => setOutcomeFilter(prev => prev === o ? 'all' : o)}
@@ -653,7 +655,7 @@ const TradeLogContent: React.FC<TradeLogContentProps> = ({
                                     : 'text-zinc-500 hover:text-zinc-200 hover:bg-zinc-900'
                             }`}
                         >
-                            {o === TradeOutcome.ENTRY_NOT_HIT ? 'NO ENTRY' : o}
+                            {o === TradeOutcome.ENTRY_NOT_HIT ? 'NO ENTRY' : o === TradeOutcome.PENDING ? 'OPEN' : o}
                         </button>
                     ))}
                     {outcomeFilter !== 'all' && (

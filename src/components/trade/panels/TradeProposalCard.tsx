@@ -206,7 +206,7 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({ proposal, canLog,
                     disabled={awaitingLog || !!refused}
                     title={refused ? 'The gate refused this plan; the reason is printed above.' : undefined}
                     className="rounded-control bg-emerald-600/90 px-2.5 py-1 text-ui-dense font-medium text-white transition-colors hover:bg-emerald-500 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-300">
-                    {refused ? 'Refused by the gate' : awaitingLog ? 'Checking the gate…' : 'Log this trade'}
+                    {refused ? 'Refused by the gate' : awaitingLog ? 'Checking the gate…' : 'Track this trade'}
                 </button>
             )}
             <button type="button"
@@ -224,7 +224,7 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({ proposal, canLog,
 export const TradeProposalLoggedRow: React.FC = () => (
     <p className="mt-1 flex items-center gap-1.5 text-ui-xs font-semibold uppercase tracking-wider text-emerald-400">
         <CheckCircle className="h-3 w-3 shrink-0" aria-hidden="true" />
-        <span>✓ Logged as an open trade — the harness will score it against the outcome.</span>
+        <span>✓ Tracking this trade — the harness will score it against the outcome.</span>
     </p>
 );
 

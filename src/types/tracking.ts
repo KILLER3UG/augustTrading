@@ -177,12 +177,38 @@ export interface TrackedPosition {
     context: TrackedContextPoint[];
     contextDownsampled: boolean;
     exit?: TrackedExit;
+    /** Journal only: when the journal row itself reached a settled outcome.
+     *  A diagnosis is queued only after this is set, so the post-mortem and
+     *  the journal row cannot disagree about whether the trade closed. */
+    journalSettledAt?: number;
     diagnosisId?: string;
     skillIds?: string[];
     /** A recorded disagreement with the deterministic resolver, or a reason a
      *  plan was refused. Never silently overwritten. */
     discrepancy?: string;
     version: 1;
+}
+
+/** What the journal currently says about a tracked row, read through the
+ *  bridge the app mounts. `null` from the bridge means the row is not present. */
+export interface JournalOutcomeSnapshot {
+    outcome: 'PENDING' | 'WIN' | 'LOSS' | 'ENTRY_NOT_HIT' | 'SKIPPED';
+    resolvedAt?: string;
+}
+
+/** The tracker's settlement payload for a journal row. The journal's existing
+ *  funnel turns this into the row's outcome, R, costs and excursions. */
+export interface JournalSettlement {
+    outcome: 'WIN' | 'LOSS';
+    exitPrice?: number;
+    exitAt?: number;
+    /** ISO timestamp when the outcome became known (the exit bar's close). */
+    resolvedAt: string;
+    realizedR?: number;
+    costR?: number;
+    netR?: number;
+    /** RAW price percent; the journal applies leverage once. */
+    excursions?: { maePercent: number; mfePercent: number };
 }
 
 /** The six fields the post-mortem prompt asks for, plus the two the existing

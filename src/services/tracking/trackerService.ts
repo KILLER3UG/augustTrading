@@ -35,8 +35,9 @@ import {
     okxInstId,
     tapeCoversEmission,
 } from '../signals/signalMarketData';
+import { fetchFuturesOHLCVFromTime } from '../analysis/MarketDataService';
 import { getActiveUsername } from '../../utils/activeUser';
-import { advancePosition } from './positionTracker';
+import { advancePosition, closePositionManually, type AdvanceResult } from './positionTracker';
 import {
     readDiagnoses,
     readDiagnosisQueue,
@@ -50,6 +51,12 @@ import {
     signalBarsToKlines,
     trackedPositionFromSignal,
 } from './signalTracking';
+import { isJournalSettled, journalSettlementFromPosition } from './journalTracking';
+import {
+    hasJournalOutcomeBridge,
+    readJournalOutcome,
+    settleJournalTrade,
+} from './journalOutcomeBridge';
 
 const PASS_INTERVAL_MS = 60_000;
 export const MAX_ADOPT_PER_PASS = 8;
@@ -63,12 +70,13 @@ export interface TrackerPassResult {
     advanced: number;
     reconciled: number;
     closed: number;
+    journalSettled: number;
     queued: number;
     skipped: { positionId: string; reason: string }[];
     busy?: boolean;
 }
 
-export interface SignalRegistrationResult {
+export interface TrackingRegistrationResult {
     ok: boolean;
     already?: boolean;
     position?: TrackedPosition;
@@ -91,6 +99,7 @@ const emptyResult = (): TrackerPassResult => ({
     advanced: 0,
     reconciled: 0,
     closed: 0,
+    journalSettled: 0,
     queued: 0,
     skipped: [],
 });
@@ -169,12 +178,30 @@ export const initTracker = async (username: string): Promise<void> => {
 export const registerSignalForTracking = async (
     signal: SignalRecord,
     user: string = getActiveUsername(),
-): Promise<SignalRegistrationResult> => {
+): Promise<TrackingRegistrationResult> => {
     const existing = await readTrackedPositions(user);
     if (!existing.ok) return { ok: false, error: existing.error };
     const id = `signal-${signal.id}`;
     if (existing.value.some(p => p.id === id)) return { ok: true, already: true };
     const position = trackedPositionFromSignal(signal);
+    const saved = await saveTrackedPosition(user, position);
+    if (!saved.ok) return { ok: false, error: saved.error };
+    if (activeUser === user) ensureLoop();
+    return { ok: true, position };
+};
+
+/** Register a journal plan (a PENDING row) for tape tracking. Same contract
+ *  as the signal registration: deterministic id, idempotent, and the loop
+ *  restarts for a new plan. */
+export const registerJournalPositionForTracking = async (
+    position: TrackedPosition,
+    user: string = getActiveUsername(),
+): Promise<TrackingRegistrationResult> => {
+    const existing = await readTrackedPositions(user);
+    if (!existing.ok) return { ok: false, error: existing.error };
+    if (existing.value.some(p => p.id === position.id)) {
+        return { ok: true, already: true, position };
+    }
     const saved = await saveTrackedPosition(user, position);
     if (!saved.ok) return { ok: false, error: saved.error };
     if (activeUser === user) ensureLoop();
@@ -251,6 +278,197 @@ const fetchSignalDrill = async (position: TrackedPosition, exitAt: number): Prom
     return candles.filter(c => c.time >= exitAt && c.time < exitAt + SIGNAL_BAR_MS);
 };
 
+/** The journal tape. 1500 5m bars is ~5.2 days; a longer hold cannot be
+ *  covered at this granularity, and `advancePosition` refuses rather than
+ *  reading a truncated window. */
+const fetchJournalBars = async (position: TrackedPosition): Promise<Kline[]> => {
+    const start = Math.max(position.openedAt - SIGNAL_BAR_MS, Date.now() - 1500 * SIGNAL_BAR_MS);
+    try {
+        return await fetchFuturesOHLCVFromTime(position.symbol, '5m', start);
+    } catch {
+        return [];
+    }
+};
+
+/**
+ * Advance a journal position, then reconcile it with the journal row.
+ *
+ *  · row already settled by the trader/autopilot → the row's call wins; an
+ *    open tracker position is closed manually at the last close and the
+ *    disagreement is recorded;
+ *  · tracker closed while the row is PENDING → the bridge hands the exit to
+ *    the existing journal funnel, and only a successful write stamps
+ *    `journalSettledAt`;
+ *  · bridge absent/failed → the position stays closed as a debt and the next
+ *    pass retries. Nothing is silently marked settled.
+ */
+const settleJournalIfNeeded = async (
+    position: TrackedPosition,
+    bars: readonly Kline[],
+    now: number,
+): Promise<AdvanceResult> => {
+    const advanced = advancePosition({ position, bars, now });
+    const snapshot = readJournalOutcome(position.sourceId);
+    const settledAtRaw = snapshot?.resolvedAt ? Date.parse(snapshot.resolvedAt) : Number.NaN;
+    const settledAt = Number.isFinite(settledAtRaw) ? settledAtRaw : now;
+
+    if (snapshot && isJournalSettled(snapshot.outcome)) {
+        if (snapshot.outcome === 'ENTRY_NOT_HIT' || snapshot.outcome === 'SKIPPED') {
+            return {
+                position: {
+                    ...advanced.position,
+                    status: 'cancelled',
+                    closedAt: advanced.position.closedAt ?? now,
+                    journalSettledAt: settledAt,
+                },
+                closed: true,
+                exitedNow: false,
+            };
+        }
+        if (!isTerminal(advanced.position)) {
+            const last = bars[bars.length - 1];
+            if (!last) return advanced;
+            // The row proves the trade was taken; a tracker that never saw the
+            // entry must still be closed, not left pending beside a settled row.
+            const wasPending = advanced.position.status === 'pending_entry';
+            const base = wasPending
+                ? { ...advanced.position, status: 'open' as const, entryConfirmed: true }
+                : advanced.position;
+            const manual = closePositionManually(base, last.close, last.time + SIGNAL_BAR_MS);
+            const r = manual.exit?.realizedR;
+            const mismatch = wasPending
+                || (r !== null && r !== undefined
+                    && ((snapshot.outcome === 'WIN' && r < 0) || (snapshot.outcome === 'LOSS' && r > 0)));
+            return {
+                position: {
+                    ...manual,
+                    journalSettledAt: settledAt,
+                    ...(mismatch
+                        ? {
+                            discrepancy: wasPending
+                                ? `journal row settled ${snapshot.outcome} before the tracker saw an entry; closed at the last close (${r ?? '—'}R)`
+                                : `journal row settled ${snapshot.outcome}; tracker marked the last close at ${r}R`,
+                        }
+                        : {}),
+                },
+                closed: true,
+                exitedNow: true,
+            };
+        }
+        const exit = advanced.position.exit;
+        const wasCancelled = advanced.position.status === 'cancelled';
+        const mismatch = wasCancelled
+            || (exit !== undefined
+                && ((snapshot.outcome === 'WIN' && exit.reason === 'stop')
+                    || (snapshot.outcome === 'LOSS' && exit.reason === 'target')));
+        return {
+            position: {
+                ...advanced.position,
+                journalSettledAt: settledAt,
+                ...(mismatch
+                    ? {
+                        discrepancy: wasCancelled
+                            ? `journal row settled ${snapshot.outcome} but the tracker never triggered`
+                            : `journal row settled ${snapshot.outcome}; tracker exited ${exit?.reason} at ${exit?.price}`,
+                    }
+                    : {}),
+            },
+            closed: true,
+            exitedNow: false,
+        };
+    }
+
+    if (isTerminal(advanced.position) && advanced.position.exit) {
+        const settlement = journalSettlementFromPosition(advanced.position);
+        if (settlement) {
+            const wrote = await settleJournalTrade(position.sourceId, settlement);
+            if (wrote.ok) {
+                return {
+                    position: { ...advanced.position, journalSettledAt: Date.now() },
+                    closed: true,
+                    exitedNow: advanced.exitedNow,
+                };
+            }
+            return {
+                ...advanced,
+                position: {
+                    ...advanced.position,
+                    discrepancy: `journal settlement pending: ${wrote.error ?? 'unknown error'}`,
+                },
+            };
+        }
+    }
+    return advanced;
+};
+
+/**
+ * Settle journal positions that closed on an earlier pass but whose row was
+ * never accepted (the bridge was not mounted, or its write failed). Closed
+ * positions are not in the fetch batch, so without this step their debt would
+ * spin forever. A row the trader deleted is cancelled as orphaned rather than
+ * resurrected; a row that is already settled is stamped and left alone.
+ */
+const settleClosedJournalDebts = async (user: string): Promise<number> => {
+    if (!hasJournalOutcomeBridge()) return 0;
+    const positions = await readTrackedPositions(user);
+    if (!positions.ok) return 0;
+    let settled = 0;
+    for (const position of positions.value) {
+        if (position.source !== 'journal'
+            || position.exit === undefined
+            || position.journalSettledAt !== undefined) continue;
+        const snapshot = readJournalOutcome(position.sourceId);
+        const parsed = snapshot?.resolvedAt ? Date.parse(snapshot.resolvedAt) : Number.NaN;
+        const stamp = Number.isFinite(parsed) ? parsed : Date.now();
+
+        if (snapshot === null) {
+            const saved = await saveTrackedPosition(user, {
+                ...position,
+                status: 'cancelled',
+                exit: undefined,
+                journalSettledAt: stamp,
+                discrepancy: 'journal row no longer exists; the tracker position was closed as orphaned',
+            });
+            if (saved.ok) settled += 1;
+            continue;
+        }
+        if (snapshot.outcome === 'ENTRY_NOT_HIT' || snapshot.outcome === 'SKIPPED') {
+            const saved = await saveTrackedPosition(user, {
+                ...position,
+                status: 'cancelled',
+                exit: undefined,
+                journalSettledAt: stamp,
+                discrepancy: `journal row settled ${snapshot.outcome}; the tracker exit was discarded`,
+            });
+            if (saved.ok) settled += 1;
+            continue;
+        }
+        if (snapshot.outcome === 'WIN' || snapshot.outcome === 'LOSS') {
+            const exit = position.exit;
+            const mismatch = (snapshot.outcome === 'WIN' && exit.reason === 'stop')
+                || (snapshot.outcome === 'LOSS' && exit.reason === 'target');
+            const saved = await saveTrackedPosition(user, {
+                ...position,
+                journalSettledAt: stamp,
+                ...(mismatch
+                    ? { discrepancy: `journal row settled ${snapshot.outcome}; tracker exited ${exit.reason} at ${exit.price}` }
+                    : {}),
+            });
+            if (saved.ok) settled += 1;
+            continue;
+        }
+
+        // The row is still PENDING; the bridge funnel owns the transition.
+        const settlement = journalSettlementFromPosition(position);
+        if (!settlement) continue;
+        const wrote = await settleJournalTrade(position.sourceId, settlement);
+        if (!wrote.ok) continue;
+        const saved = await saveTrackedPosition(user, { ...position, journalSettledAt: Date.now() });
+        if (saved.ok) settled += 1;
+    }
+    return settled;
+};
+
 /** Overlay every resolved ledger row onto its tracked signal position. No
  *  network, so a position the fetch budget skipped still gets the verdict. */
 const reconcileSignals = async (user: string): Promise<number> => {
@@ -287,6 +505,9 @@ const queueDiagnoses = async (user: string): Promise<QueueResult> => {
             position.status !== 'cancelled'
             && position.exit !== undefined
             && !position.diagnosisId
+            // A journal position is diagnosable only once its ROW is settled;
+            // a tape close the journal never accepted is a debt, not a lesson.
+            && (position.source === 'signal' || position.journalSettledAt !== undefined)
             && !known.has(position.id))
         .map(position => ({
             id: `diag-${position.id}`,
@@ -307,7 +528,15 @@ const hasWork = async (user: string, adoptRemaining: number): Promise<boolean> =
     if (readSignals(user).some(row => row.status === 'open')) return true;
     const positions = await readTrackedPositions(user);
     // A failed read is not proof the loop is idle; keep it alive and retry.
-    return !positions.ok || positions.value.some(position => !isTerminal(position));
+    if (!positions.ok) return true;
+    const open = positions.value.some(position => !isTerminal(position));
+    // A closed journal position the journal has not accepted is a debt; the
+    // bridge may not have been mounted on the pass that closed it.
+    const unsettled = positions.value.some(position =>
+        position.source === 'journal'
+        && position.exit !== undefined
+        && position.journalSettledAt === undefined);
+    return open || unsettled;
 };
 
 /** One tracker pass. Concurrent callers share the in-flight pass. */
@@ -332,7 +561,6 @@ export const runTrackerPass = async (
         const pending = read.value
             .filter(position =>
                 !isTerminal(position)
-                && position.source === 'signal'
                 // No fetch until the next 5m bar can have closed. A 60s pass
                 // must not pull the same 300-bar window five times per bar.
                 && now >= position.cursor.lastClosedBarTime + SIGNAL_BAR_MS)
@@ -342,20 +570,30 @@ export const runTrackerPass = async (
         for (const position of pending) {
             result.attempted += 1;
             try {
-                const bars = await fetchSignalBars(position);
-                if (!bars) {
-                    result.skipped.push({ positionId: position.id, reason: 'the tape does not reach back to the emission' });
-                    continue;
-                }
-                let advanced = advancePosition({ position, bars, now });
-                // A coarse bar that contained both levels is retried with the
-                // 1m series; an incomplete series leaves the stop-first policy.
-                if (advanced.position.exit?.ambiguous && advanced.position.exit.at !== undefined) {
-                    const drill = await fetchSignalDrill(position, advanced.position.exit.at);
-                    if (drill.length > 0) {
-                        const ordered = advancePosition({ position, bars, drill, now });
-                        if (ordered.position.exit && !ordered.position.exit.ambiguous) advanced = ordered;
+                let advanced: AdvanceResult;
+                if (position.source === 'signal') {
+                    const bars = await fetchSignalBars(position);
+                    if (!bars) {
+                        result.skipped.push({ positionId: position.id, reason: 'the tape does not reach back to the emission' });
+                        continue;
                     }
+                    advanced = advancePosition({ position, bars, now });
+                    // A coarse bar that contained both levels is retried with the
+                    // 1m series; an incomplete series leaves the stop-first policy.
+                    if (advanced.position.exit?.ambiguous && advanced.position.exit.at !== undefined) {
+                        const drill = await fetchSignalDrill(position, advanced.position.exit.at);
+                        if (drill.length > 0) {
+                            const ordered = advancePosition({ position, bars, drill, now });
+                            if (ordered.position.exit && !ordered.position.exit.ambiguous) advanced = ordered;
+                        }
+                    }
+                } else {
+                    const bars = await fetchJournalBars(position);
+                    if (bars.length === 0) {
+                        result.skipped.push({ positionId: position.id, reason: 'no closed 5m tape for this journal position' });
+                        continue;
+                    }
+                    advanced = await settleJournalIfNeeded(position, bars, now);
                 }
                 const saved = await saveTrackedPosition(user, advanced.position);
                 if (!saved.ok) {
@@ -373,6 +611,7 @@ export const runTrackerPass = async (
         }
 
         result.reconciled = await reconcileSignals(user);
+        result.journalSettled = await settleClosedJournalDebts(user);
         const queued = await queueDiagnoses(user);
         result.queued = queued.queued;
         if (queued.error) result.skipped.push({ positionId: '*', reason: `diagnosis queue: ${queued.error}` });
