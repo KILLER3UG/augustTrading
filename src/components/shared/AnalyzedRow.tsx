@@ -18,6 +18,9 @@ export interface AnalyzedRowProps {
      *  A reloaded turn has no live clock, so this is what keeps its
      *  "Analyzed for Ns" on screen. */
     persistedMs?: number;
+    /** Epoch-ms the turn started. The live clock and the frozen settle both
+     *  read it, so a remount from a surface hop does not restart the count. */
+    startedAt?: number;
     /** What the work was, named from real data — "Read the chart, order book
      *  and notebook". Rendered after the duration; omitted when unknown. */
     title?: string;
@@ -45,20 +48,25 @@ export interface AnalyzedRowProps {
  * The clock covers the pre-answer work phase only — it starts at turn start and
  * freezes when the answer text begins.
  */
-const AnalyzedRow: React.FC<AnalyzedRowProps> = ({ running = false, className = '', summary, persistedMs, title, activity, children }) => {
+const AnalyzedRow: React.FC<AnalyzedRowProps> = ({ running = false, className = '', summary, persistedMs, startedAt, title, activity, children }) => {
     // Collapsed by default, like the reference: the line names the work and
     // the steps are one click away. The body stays mounted, so an assertion
     // can still read it; auto-opening on every run is what made a conversation
     // read as a pile of cards.
     const [open, setOpen] = useState(false);
+    const turnStartMs = typeof startedAt === 'number' && Number.isFinite(startedAt) ? startedAt : null;
     const wasRunningRef = useRef(running);
-    const startedAtRef = useRef<number | null>(running ? Date.now() : null);
-    const [liveSeconds, setLiveSeconds] = useState<number | null>(running ? 0 : null);
+    const startedAtRef = useRef<number | null>(turnStartMs ?? (running ? Date.now() : null));
+    const [liveSeconds, setLiveSeconds] = useState<number | null>(
+        running
+            ? Math.max(0, Math.round((Date.now() - (turnStartMs ?? Date.now())) / 1000))
+            : null,
+    );
     const [settledSeconds, setSettledSeconds] = useState<number | null>(null);
 
     useEffect(() => {
         if (running && !wasRunningRef.current) {
-            startedAtRef.current = Date.now();
+            startedAtRef.current = turnStartMs ?? Date.now();
         }
         if (wasRunningRef.current && !running) {
             const start = startedAtRef.current;
@@ -69,7 +77,7 @@ const AnalyzedRow: React.FC<AnalyzedRowProps> = ({ running = false, className = 
             // a click is what this component used to do.
         }
         wasRunningRef.current = running;
-    }, [running]);
+    }, [running, turnStartMs]);
 
     // The live clock. This row used to run its OWN setInterval, so a
     // 200-message conversation held up to 400 live timers — one per row —
@@ -80,11 +88,11 @@ const AnalyzedRow: React.FC<AnalyzedRowProps> = ({ running = false, className = 
             setLiveSeconds(null);
             return;
         }
-        const start = startedAtRef.current ?? Date.now();
+        const start = turnStartMs ?? startedAtRef.current ?? Date.now();
         const elapsed = (): number => Math.max(0, Math.round((Date.now() - start) / 1000));
         setLiveSeconds(elapsed());
         return subscribeSharedTicker(() => setLiveSeconds(elapsed()));
-    }, [running]);
+    }, [running, turnStartMs]);
 
     // Precedence is deliberate: a LIVE tick outranks everything, then the clock
     // this component froze when the turn settled, and only then the persisted

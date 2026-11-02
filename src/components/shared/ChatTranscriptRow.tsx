@@ -70,6 +70,9 @@ export interface ChatRowView {
      *  block shows after the live clock is gone. Persisted, so it survives a
      *  reload of a settled answer. */
     workedMs?: number;
+    /** Epoch-ms the turn started (`Message.createdAt`). The live clock reads
+     *  it, so a row remounted by a surface hop continues the timer. */
+    startedAt?: number;
     analysis?: TradeAnalysis;
     /** This run was interrupted (explicit Stop, or a failure mid-turn). The row
      *  renders an in-flow notice offering Edit prompt / Try again rather than
@@ -151,6 +154,7 @@ const ChatTranscriptRow: React.FC<ChatTranscriptRowProps> = ({
         text: row.text,
         actions: row.actions,
         workedMs: row.workedMs,
+        startedAt: row.startedAt,
     };
 
     return (
@@ -158,7 +162,7 @@ const ChatTranscriptRow: React.FC<ChatTranscriptRowProps> = ({
             data-message-id={row.id}
             data-role={row.role}
             data-testid={isUser ? 'agent-message' : 'agent-message'}
-            className={`group/msg flex ${isUser ? 'justify-end pl-8' : 'items-start gap-3.5 pr-2 sm:pr-8'}`}
+            className={`group/msg chat-fade-in flex ${isUser ? 'justify-end pl-8' : 'items-start gap-3.5 pr-2 sm:pr-8'}`}
         >
             {/* The reference identifies the answer with an avatar, not a
                 byline. The seat's name stays on the avatar's accessible name;

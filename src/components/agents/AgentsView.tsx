@@ -142,8 +142,6 @@ interface AgentsViewProps {
     /** WS-3.4: what each bot has learned — lessons, skills authored, evidence.
      *  Shown on the active bot's header and as a row badge. */
     botStats?: BotLearningStat[];
-    /** Any ready provider at all — the desk's status dot, not a decoration. */
-    providerReady?: boolean;
     /** Rename a bot in place (WS-6's row affordances). */
     onRenameBot?: (botId: string, name: string) => void;
     /** Jump to the Coach inbox, which lives on the Learning surface. Without it
@@ -275,6 +273,7 @@ const chatRowFrom = (m: Message, username: string, deskName: string): ChatRowVie
         .flatMap(feed => feed.split('\n'))
         .filter(line => line.trim().length > 0);
     const trail = m.toolEvents && m.toolEvents.length > 0 ? m.toolEvents : liveFeed;
+    const startedAtMs = m.createdAt ? Date.parse(m.createdAt) : NaN;
     return {
         id: m.id,
         role: m.role === MessageRole.USER ? 'user' : 'ai',
@@ -298,6 +297,7 @@ const chatRowFrom = (m: Message, username: string, deskName: string): ChatRowVie
         interrupted: m.interrupted,
         actions: m.toolActions,
         workedMs: typeof m.runStats?.durationMs === 'number' ? m.runStats.durationMs : undefined,
+        startedAt: Number.isFinite(startedAtMs) ? startedAtMs : undefined,
         // The thinking tier this answer was produced under, so the row can
         // show it — the run's own record of how hard the model was asked to
         // think, which no amount of reading the text can recover.
@@ -484,7 +484,6 @@ const AgentsView: React.FC<AgentsViewProps> = ({
     onRevertTo, onEditPromptMessage, onStepVersion, parkedCount = 0, onRestoreParked,
     attentionMap, onDeleteBot, onDeleteGroup, onEditGroup,
     botStats,
-    providerReady = false,
     onRenameBot,
     onOpenCoach,
     conversations = [], activeConversationId = null, onLoadConversation, onDeleteConversation, onClearConversation, onNewChat,
@@ -1290,15 +1289,6 @@ const AgentsView: React.FC<AgentsViewProps> = ({
                     made two account rows share one screen — so it arrives as a
                     node from App, which knows whether the rail is mounted. */}
                 {accountRow}
-                {/* What the pane actually owns is the live signal — is a provider
-                    ready for the desk — so that is all its own row says, in the
-                    pattern the references' status bars use: a dot and five words
-                    on one hairline. */}
-                <div className="flex shrink-0 items-center gap-1.5 border-t border-zinc-800/80 px-3 py-2">
-                    <span data-testid="desk-status" title={providerReady ? 'A provider is configured — the desk can think' : 'No provider ready — configure one in Settings'}
-                        className={`h-1.5 w-1.5 shrink-0 rounded-full ${providerReady ? 'bg-emerald-500' : 'bg-zinc-600'}`} />
-                    <span className="min-w-0 flex-1 truncate text-ui-dense text-zinc-500" title={providerReady ? 'Ready' : 'No provider'}>{providerReady ? 'Ready' : 'No provider'}</span>
-                </div>
             </aside>
 
             {/* ── Main pane ── */}

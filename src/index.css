@@ -683,6 +683,41 @@ body {
   animation: stream-fade 160ms ease-out;
 }
 
+/* Blocks that ARRIVE during a stream fade in; text appended inside an
+   existing paragraph updates in place, so the effect never restarts on every
+   token. This is the smooth-arrival half of the streaming read — the markdown
+   is never re-mounted just to earn an animation. */
+@keyframes stream-block-in {
+  from { opacity: 0; transform: translateY(2px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.stream-fade .prose > p,
+.stream-fade .prose > ul,
+.stream-fade .prose > ol,
+.stream-fade .prose > h1,
+.stream-fade .prose > h2,
+.stream-fade .prose > h3,
+.stream-fade .prose > h4,
+.stream-fade .prose > blockquote,
+.stream-fade .prose > pre,
+.stream-fade .prose > table {
+  animation: stream-block-in 200ms ease-out both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .stream-fade .prose > p,
+  .stream-fade .prose > ul,
+  .stream-fade .prose > ol,
+  .stream-fade .prose > h1,
+  .stream-fade .prose > h2,
+  .stream-fade .prose > h3,
+  .stream-fade .prose > h4,
+  .stream-fade .prose > blockquote,
+  .stream-fade .prose > pre,
+  .stream-fade .prose > table {
+    animation: none;
+  }
+}
+
 /* Chart AI transcript rows fade in as they land (the reference's rendering
    feel). One-shot on mount — streaming text already fades via .stream-fade. */
 @keyframes chat-fade-in {
@@ -879,6 +914,12 @@ body {
   color: var(--color-zinc-500);
   font-size: var(--text-ui-caption);
   line-height: 1.75;
+}
+/* Opening a trace is an appearance, not a jump cut. The body is always
+   mounted; the class change is what starts the fade. */
+.thinking-row.is-open .reasoning-row-body,
+.analyzed-row.is-open > .reasoning-row-body {
+  animation: chat-fade-in 180ms ease-out;
 }
 /* The work wrapper nests the whole timeline and must not become its own scroll
    box; the direct body grows, while each thinking body inside keeps its cap. */

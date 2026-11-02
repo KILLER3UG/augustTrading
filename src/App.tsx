@@ -2447,8 +2447,6 @@ const App: React.FC = () => {
                         hasVisionData={currentVisionData.length > 0}
                         status={shellStatus}
                         surfaceSwitch={shellNavSwitch}
-                        username={activeUsername ?? undefined}
-                        onOpenSettings={() => setIsSettingsMenuVisible(true)}
                         onExpandNavRail={isNavRailOpen ? undefined : toggleNavRail}
                     />
 
@@ -2599,7 +2597,6 @@ const App: React.FC = () => {
                                     lastOpenedMap={threadOpenedMap}
                                     attentionMap={attentionMap}
                                     botStats={botStats}
-                                    providerReady={readyProviders.length > 0}
                                     onDeleteBot={deleteBot}
                                     onRenameBot={(botId, name) => updateBot(botId, { name })}
                                     onOpenCoach={openApprovalsInLearn}

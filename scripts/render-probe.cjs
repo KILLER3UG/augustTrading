@@ -843,6 +843,21 @@ async function main() {
         check('the settled turn grew the usage ledger the Learning panel reads',
             ledgerAfter > ledgerBefore, `ledger bytes ${ledgerBefore} -> ${ledgerAfter}`);
 
+        // The chat store is debounced by 1.5s. The reload used to happen at
+        // exactly that boundary, so a slow frame could lose the write and the
+        // next check reported a lost tool line that was never saved yet. Wait
+        // for the stored bytes that carry this call's title — the persistence
+        // check then measures the STORE, not the timer.
+        const toolPersisted = await page.waitForFunction(() => {
+            for (const key of Object.keys(localStorage)) {
+                if (!key.startsWith('trade_chat_sessions_v1_')) continue;
+                if ((localStorage.getItem(key) || '').includes('Session-open fade short')) return true;
+            }
+            return false;
+        }, null, { timeout: 8000 }).then(() => true).catch(() => false);
+        check('the tool round reaches the stored session before the reload',
+            toolPersisted, toolPersisted ? 'stored' : 'the session bytes never contained the tool title within 8s');
+
         await page.reload({ waitUntil: 'domcontentloaded' });
         await page.waitForFunction(() => !document.querySelector('#splash'), null, { timeout: 25000 });
         await page.waitForSelector('[data-testid="trade-view"]', { timeout: 25000 });
@@ -869,7 +884,7 @@ async function main() {
             const btn = [...document.querySelectorAll('button')].find(b => !b.disabled && /send/i.test(
                 `${b.getAttribute('aria-label') || ''} ${b.title || ''} ${b.textContent || ''}`));
             if (btn) btn.click();
-        }, 'PROBE_TOOL_ROUND stop me mid tool');
+        }, 'PROBE_TOOL_ROUND PROBE_SLOW_STREAM stop me mid tool');
         let clickedStop = false;
         for (let i = 0; i < 15 && !clickedStop; i++) {
             clickedStop = await page.evaluate(() => {
@@ -1179,6 +1194,75 @@ async function main() {
             if (hit) hit.click();
         });
         await page.locator('[data-testid="trade-view"]').waitFor({ timeout: 8000 }).catch(() => {});
+
+        // ── THE THINKING CLOCK CROSSES THE HOP ────────────────────────────
+        // The bug was a remount: each surface's row started its clock at mount,
+        // so Agents → Analyze showed 0s for a turn that had been thinking for
+        // 13s. The mock streams a real reasoning trace first (request-scoped),
+        // leaving both homes on the same live row long enough to measure.
+        // Every later reading must be at least the earlier one; a reset fails
+        // loudly instead of looking like a fresh turn.
+        const dockThinking = () => page.evaluate(() => {
+            const text = document.querySelector('[data-testid="trade-chat-panel"]')?.textContent || '';
+            const m = /Thinking\s*·\s*(\d+)s/.exec(text);
+            return m ? Number(m[1]) : null;
+        });
+        const agentsThinking = () => page.evaluate(() => {
+            const rows = [...document.querySelectorAll('[data-testid="agent-message"][data-role="ai"]')];
+            for (const row of rows) {
+                const m = /Thinking\s*·\s*(\d+)s/.exec(row.textContent || '');
+                if (m) return Number(m[1]);
+            }
+            return null;
+        });
+        await page.evaluate((needle) => {
+            const ta = document.querySelector('textarea');
+            if (!ta || ta.disabled) return;
+            Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')
+                .set.call(ta, needle);
+            ta.dispatchEvent(new Event('input', { bubbles: true }));
+            const btn = [...document.querySelectorAll('button')].find(b => !b.disabled && /send/i.test(
+                `${b.getAttribute('aria-label') || ''} ${b.title || ''} ${b.textContent || ''}`));
+            if (btn) btn.click();
+        }, 'PROBE_REASONING_STREAM keep the clock running');
+        let clockStart = null;
+        for (let i = 0; i < 80 && clockStart === null; i++) {
+            clockStart = await dockThinking();
+            if (clockStart === null) await sleep(100);
+        }
+        check('the live thinking clock is readable before the hop', clockStart !== null,
+            clockStart === null ? 'no "Thinking · Ns" row within 8s' : `start=${clockStart}s`);
+        await sleep(1200);
+        const clockBeforeHop = await dockThinking();
+        await page.evaluate(() => {
+            const hit = document.querySelector('[data-testid="surface-switch-agents"]');
+            if (hit) hit.click();
+        });
+        await page.waitForSelector('main textarea', { timeout: 20000 });
+        await sleep(600);
+        const clockOnAgents = await agentsThinking();
+        check('the thinking clock continues on the Agents surface',
+            clockStart !== null && clockOnAgents !== null && clockOnAgents > 0
+                && clockOnAgents >= (clockBeforeHop ?? 0),
+            `dock ${clockStart}s → ${clockBeforeHop}s, agents ${clockOnAgents}s`);
+        await page.evaluate(() => {
+            const hit = document.querySelector('[data-testid="surface-switch-trade"]');
+            if (hit) hit.click();
+        });
+        await page.locator('[data-testid="trade-view"]').waitFor({ timeout: 8000 }).catch(() => {});
+        await sleep(600);
+        const clockBackOnDock = await dockThinking();
+        check('…and continues when it comes back to Analyze',
+            clockOnAgents !== null && clockBackOnDock !== null && clockBackOnDock >= clockOnAgents,
+            `agents ${clockOnAgents}s, dock ${clockBackOnDock}s`);
+        // Let the reasoning-only turn settle before the next phase counts rows.
+        let clockTurnSettled = false;
+        for (let i = 0; i < 200 && !clockTurnSettled; i++) {
+            clockTurnSettled = await page.evaluate(() => ![...document.querySelectorAll('button')]
+                .some(b => /stop/i.test(`${b.getAttribute('aria-label') || ''} ${b.title || ''}`)));
+            if (!clockTurnSettled) await sleep(200);
+        }
+        await waitStableAnswer(page);
 
 
         // ── The Agents surface (id/testids still "agents") ───────────────────────────────────────────

@@ -1,6 +1,6 @@
 import React, { memo, useState, useEffect, useRef } from 'react';
 import { UpdateButton } from './UpdateButton';
-import { ActivityIcon, SettingsIcon } from './Icons';
+import { ActivityIcon } from './Icons';
 import NavExpandButton from '../shell/NavExpandButton';
 import StatusCluster from '../shell/StatusCluster';
 import { getSessionContext, getAllSessionsStatus, SessionContext, SessionStatus } from '../../services/infrastructure/SessionService';
@@ -44,11 +44,6 @@ interface HeaderProps {
      *  rendered here. The topbar is the ONE navigation on every surface, which
      *  is what keeps the switch in the same place across a hop. */
     surfaceSwitch?: React.ReactNode;
-    /** The signed-in user's name: the avatar shows its initial. */
-    username?: string;
-    /** Settings. The v2 topbar carries the gear and the account chip on every
-     *  surface, so the Agents surface's account row no longer has to. */
-    onOpenSettings?: () => void;
     /** The band's own status cluster, overridable so the App can build it ONCE
      *  and hand the same node around. Absent, the band wires its own. */
     status?: React.ReactNode;
@@ -68,8 +63,6 @@ export const Header: React.FC<HeaderProps> = memo(({
     hasVisionData = false,
     onExpandNavRail,
     surfaceSwitch,
-    username,
-    onOpenSettings,
     status,
 }) => {
     const [sessionContext, setSessionContext] = useState<SessionContext | null>(null);
@@ -194,8 +187,12 @@ export const Header: React.FC<HeaderProps> = memo(({
                         </span>
                     )}
                 </div>
-                {/* Right side, v2 order: the live session state, the shell's
-                    status cluster, settings, account. */}
+                {/* Right side: the live session state and the shell's status
+                    cluster only. The gear and the account disc moved off this
+                    edge — Settings already has two homes (the Agents account
+                    row and ⌘/Ctrl+,) and the disc was a second door to the same
+                    settings modal. An edge with no job is not an edge worth
+                    decorating. */}
                 <div className="flex shrink-0 items-center gap-1.5 self-center">
                     {/* Session Display — the design's live-feed pill, carrying
                         REAL session state; the popover keeps the market
@@ -328,33 +325,6 @@ export const Header: React.FC<HeaderProps> = memo(({
                         (the 2026-10-27 audit §8). The button renders nothing unless
                         Electron has something to say. */}
                     <UpdateButton />
-                    {onOpenSettings && (
-                        <button
-                            type="button"
-                            data-testid="header-settings"
-                            onClick={onOpenSettings}
-                            aria-label="Settings"
-                            title="Settings · Ctrl+,"
-                            className="flex h-8 w-8 items-center justify-center rounded-control text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-zinc-100 focus-visible:ring-2 focus-visible:ring-zinc-400"
-                        >
-                            <SettingsIcon className="h-4 w-4" aria-hidden="true" />
-                        </button>
-                    )}
-                    {/* Account chip, v2 style: the initial on a hairline disc,
-                        opening settings — the same destination the Chat
-                        surface's account row used to own alone. */}
-                    {onOpenSettings && (
-                        <button
-                            type="button"
-                            data-testid="header-account"
-                            onClick={onOpenSettings}
-                            aria-label={username ? `Account — ${username}` : 'Account settings'}
-                            title={username ? `${username} — account & settings` : 'Account settings'}
-                            className="flex h-7 w-7 items-center justify-center rounded-full border border-white/[0.12] bg-zinc-800 font-mono text-ui-2xs font-semibold text-zinc-300 transition-colors hover:border-white/[0.28] hover:text-zinc-100 focus-visible:ring-2 focus-visible:ring-zinc-400"
-                        >
-                            {(username?.trim()?.[0] ?? 'A').toUpperCase()}
-                        </button>
-                    )}
                 </div>
             </div>
         </header >

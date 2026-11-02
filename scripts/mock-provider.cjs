@@ -143,7 +143,14 @@ const SLOW_MARK = 'PROBE_SLOW_STREAM';
 const SLOW_FILLER = 'The desk is up and the feed is live, so this sentence keeps '
     + 'arriving token by token while the trader reads the other surface. '.repeat(9);
 
-const stream = (res, text, delayMs = 12) => {
+/** The clock scenario: stream a REAL `reasoning_content` trace before any
+ *  answer text, so both homes show the live "Thinking · Ns" row long enough
+ *  to cross a surface hop. The timer check is a claim about the same turn
+ *  continuing, which cannot be measured on a trace that settles in 60 ms. */
+const REASONING_MARK = 'PROBE_REASONING_STREAM';
+const REASONING_FILLER = 'The desk is checking structure, liquidity and the tape before it commits to a direction. '.repeat(20);
+
+const stream = (res, text, delayMs = 12, reasoning = '') => {
     res.writeHead(200, {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache, no-transform',
@@ -151,9 +158,19 @@ const stream = (res, text, delayMs = 12) => {
     });
     // Chunk it: a single giant delta would never exercise the streaming rows.
     const words = text.split(' ');
+    const reasoningWords = reasoning.split(' ').filter(Boolean);
     let i = 0;
+    let r = 0;
     const tick = () => {
         if (res.writableEnded) return;
+        // Reasoning first, as the providers that support it send it.
+        if (r < reasoningWords.length) {
+            const piece = reasoningWords.slice(r, r + 3).join(' ');
+            r += 3;
+            res.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { reasoning_content: `${piece} ` } }] })}\n\n`);
+            setTimeout(tick, 90);
+            return;
+        }
         if (i >= words.length) {
             res.write('data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n');
             res.write('data: [DONE]\n\n');
@@ -239,9 +256,12 @@ const server = http.createServer((req, res) => {
         }
         const text = replyTo(body);
         if (body.stream) {
-            const slow = JSON.stringify((body && body.messages) || []).includes(SLOW_MARK);
+            const serialized = JSON.stringify((body && body.messages) || []);
+            const slow = serialized.includes(SLOW_MARK);
+            const reasoning = serialized.includes(REASONING_MARK) ? REASONING_FILLER : '';
             if (slow) console.log('[mock-provider] slow-stream scenario');
-            stream(res, slow ? `${text} ${SLOW_FILLER}` : text, slow ? 90 : 12);
+            if (reasoning) console.log('[mock-provider] reasoning-clock scenario');
+            stream(res, slow ? `${text} ${SLOW_FILLER}` : text, slow ? 90 : 12, reasoning);
             return;
         }
         res.writeHead(200, { 'Content-Type': 'application/json' });

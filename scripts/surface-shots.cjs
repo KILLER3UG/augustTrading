@@ -187,9 +187,10 @@ async function main() {
         } else {
             console.log('  Chat → Chart AI hop: NO SWITCH FOUND');
         }
-        // Settings modal — opened the way a person does (the rail button);
-        // there is no #/settings hash route, and the overlay mounts outside
-        // <main> regardless.
+        // Settings modal — opened the way a person does (the Agents account
+        // row's gear); there is no #/settings hash route, and the overlay mounts
+        // outside <main> regardless. The title-bar gear was removed at the
+        // owner's request; Ctrl+, remains the global shortcut.
         await page.locator('[data-testid="nav-settings"]').last().click();
         await page.waitForSelector('[aria-labelledby="settings-title"]', { timeout: 15000 });
         await sleep(1500);
@@ -263,10 +264,10 @@ async function main() {
 
         // Settings on a section that is not the first — the reference's Memory
         // list is what the Learning surface's own tabs are compared against.
-        // The gear lives in two places by design: the title-bar band everywhere
-        // except Chat, and Chat's account row (that surface has no band). A
-        // selector list, so this does not silently shoot the open surface again.
-        await press('[data-testid="header-settings"],[data-testid="nav-settings"]', 1500);
+        // The gear now lives only in the Agents account row (the title-bar gear
+        // was removed) and Ctrl+, is the global route; a selector list keeps
+        // this from silently shooting the open surface again.
+        await press('[data-testid="nav-settings"]', 1500);
         how = await page.evaluate(() => {
             const hit = [...document.querySelectorAll('[aria-labelledby="settings-title"] button')]
                 .find(b => /^Memory$/i.test((b.textContent || '').trim()));

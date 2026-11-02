@@ -16,6 +16,10 @@ export interface ReasoningRowProps {
     /** A frozen work duration from the persisted run — what a reloaded row
      *  shows after the live clock is gone. */
     persistedMs?: number;
+    /** Epoch-ms the turn started. Live and settled durations read this first,
+     *  so a row remounted by a surface hop keeps counting from the real start
+     *  instead of from its own mount. */
+    startedAt?: number;
     /** Row label. */
     label?: string;
     className?: string;
@@ -46,6 +50,7 @@ const ReasoningRow: React.FC<ReasoningRowProps> = ({
     running = false,
     defaultOpen: _defaultOpen = false,
     persistedMs,
+    startedAt,
     label = 'Thinking',
     className = '',
     tokens,
@@ -53,10 +58,13 @@ const ReasoningRow: React.FC<ReasoningRowProps> = ({
     const [open, setOpen] = useState(false);
     const [copied, setCopied] = useState(false);
     const bodyRef = useRef<HTMLDivElement>(null);
+    const turnStartMs = typeof startedAt === 'number' && Number.isFinite(startedAt) ? startedAt : null;
     const wasRunningRef = useRef(running);
-    const startedAtRef = useRef<number | null>(running ? Date.now() : null);
+    const startedAtRef = useRef<number | null>(turnStartMs ?? (running ? Date.now() : null));
     const [liveSeconds, setLiveSeconds] = useState<number | null>(
-        running && startedAtRef.current !== null ? Math.round((Date.now() - startedAtRef.current) / 1000) : null,
+        running
+            ? Math.max(0, Math.round((Date.now() - (turnStartMs ?? Date.now())) / 1000))
+            : null,
     );
     const [settledSeconds, setSettledSeconds] = useState<number | null>(null);
     // The live body only follows the stream's bottom while the reader IS at
@@ -66,7 +74,7 @@ const ReasoningRow: React.FC<ReasoningRowProps> = ({
 
     useEffect(() => {
         if (running && !wasRunningRef.current) {
-            startedAtRef.current = Date.now();
+            startedAtRef.current = turnStartMs ?? Date.now();
             bodyPinnedRef.current = true;
         }
         if (wasRunningRef.current && !running) {
@@ -75,18 +83,18 @@ const ReasoningRow: React.FC<ReasoningRowProps> = ({
             startedAtRef.current = null;
         }
         wasRunningRef.current = running;
-    }, [running]);
+    }, [running, turnStartMs]);
 
     useEffect(() => {
         if (!running) {
             setLiveSeconds(null);
             return;
         }
-        const start = startedAtRef.current ?? Date.now();
+        const start = turnStartMs ?? startedAtRef.current ?? Date.now();
         const elapsed = (): number => Math.max(0, Math.round((Date.now() - start) / 1000));
         setLiveSeconds(elapsed());
         return subscribeSharedTicker(() => setLiveSeconds(elapsed()));
-    }, [running]);
+    }, [running, turnStartMs]);
 
     useLayoutEffect(() => {
         if (!running || !open || !bodyPinnedRef.current) return;

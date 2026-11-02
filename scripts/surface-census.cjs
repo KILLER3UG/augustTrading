@@ -229,9 +229,12 @@ async function main() {
             out[surface.toLowerCase()] = await page.evaluate(census, ok ? sel : 'main');
         }
         // Settings is an overlay mounted outside <main> and has no hash route:
-        // open it with the title-bar gear — the rail's button went with the rail —
+        // open it with the global Ctrl+, shortcut — the title-bar gear was
+        // removed and the Agents account row is not mounted on every surface —
         // measure its own dialog root, close it.
-        await page.locator('[data-testid="header-settings"]').last().click();
+        await page.keyboard.down('Control');
+        await page.keyboard.press(',');
+        await page.keyboard.up('Control');
         const dlg = '[aria-labelledby="settings-title"]';
         const dlgOk = await page.waitForSelector(dlg, { timeout: 15000 })
             .then(() => true).catch(() => false);

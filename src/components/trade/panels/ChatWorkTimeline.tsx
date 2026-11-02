@@ -53,6 +53,12 @@ export interface ChatWorkView {
     actions?: ToolAction[];
     /** Frozen work time in ms, persisted at settle — survives a reload. */
     workedMs?: number;
+    /** Epoch-ms the turn STARTED. The live clocks read this instead of their
+     *  own mount time, so crossing between the Agents surface and the dock
+     *  continues the same count rather than restarting at zero. */
+    startedAt?: number;
+    /** The stored entry's own stamp — the dock's native entries carry `at`. */
+    at?: number;
     /** One payload id per entry in `tools`, same order. */
     toolIds?: string[];
     /** The live-only "still working" line for a slow call. It is never part of
@@ -71,6 +77,10 @@ export interface ChatWorkTimelineProps {
 const ChatWorkTimeline: React.FC<ChatWorkTimelineProps> = ({ entry }) => {
     const reasoning = entry.reasoning ?? '';
     const running = !!entry.streaming && !entry.text;
+    // One start stamp for every clock in this turn. Both homes mount a fresh
+    // row when the trader hops surfaces; without the stamp each mount read
+    // "0s" and the turn appeared to restart.
+    const startedAt = entry.startedAt ?? entry.at;
     const hasWork = reasoning.trim().length > 0 || entry.tools.length > 0;
     const hasActions = !!(entry.actions && entry.actions.length > 0);
     // The wire's own record of what it was asked. It rides on the row because
@@ -129,7 +139,7 @@ const ChatWorkTimeline: React.FC<ChatWorkTimelineProps> = ({ entry }) => {
     if (reasoning.trim().length > 0 && entry.tools.length === 0 && !hasActions && !wireAlone) {
         return (
             <div className="my-1">
-                <ReasoningRow thinking={reasoning} running={running} persistedMs={entry.workedMs} />
+                <ReasoningRow thinking={reasoning} running={running} persistedMs={entry.workedMs} startedAt={startedAt} />
             </div>
         );
     }
@@ -159,6 +169,7 @@ const ChatWorkTimeline: React.FC<ChatWorkTimelineProps> = ({ entry }) => {
                     key={`thought-${s}`}
                     thinking={segs[s]}
                     running={running && s === segs.length - 1}
+                    startedAt={startedAt}
                 />
             );
         }
@@ -195,6 +206,7 @@ const ChatWorkTimeline: React.FC<ChatWorkTimelineProps> = ({ entry }) => {
                     running={running}
                     summary={ranSummary}
                     persistedMs={entry.workedMs}
+                    startedAt={startedAt}
                     title={workSummaryLabel(entry.tools) ?? undefined}
                     activity={activity}
                 >
