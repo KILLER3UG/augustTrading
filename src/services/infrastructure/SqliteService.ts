@@ -260,6 +260,22 @@ const createTables = async (): Promise<void> => {
         CREATE INDEX IF NOT EXISTS idx_thinking_lens ON thinking_records(analystLens);
     `);
 
+    // The tracked-position store. A dedicated table, NOT a column on
+    // `users`: a position carries a capped path/context timeline that must
+    // not be rewritten by every profile save. `kind` names the document
+    // (`positions`, `diagnoses`, `diagnosis_queue`), one JSON payload each.
+    // CREATE IF NOT EXISTS runs on every open, so existing installs get the
+    // table without an ALTER migration.
+    await db.execute(`
+        CREATE TABLE IF NOT EXISTS tracking_store (
+            username TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            payload TEXT NOT NULL,
+            updatedAt TEXT,
+            PRIMARY KEY (username, kind)
+        );
+    `);
+
     // Schema migration tracking — must exist before the gated blocks below.
     // Records which ALTER migrations have already been applied so the blocks
     // run once per install instead of on every startup.
@@ -808,6 +824,7 @@ export const sqliteDeleteUser = async (username: string): Promise<void> => {
             await connection.run('DELETE FROM trade_summaries WHERE username = ?', [username]);
             await connection.run('DELETE FROM saved_analyses WHERE username = ?', [username]);
             await connection.run('DELETE FROM thinking_records WHERE username = ?', [username]);
+            await connection.run('DELETE FROM tracking_store WHERE username = ?', [username]);
             await connection.run('DELETE FROM users WHERE username = ?', [username]);
             await connection.execute('COMMIT');
             transactionOpen = false;

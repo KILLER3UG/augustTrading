@@ -4,6 +4,7 @@ export * from './enums';
 export * from './analysis';
 export * from './message';
 export * from './trade';
+export * from './tracking';
 export * from './learning';
 export * from './calibration';
 export * from './user';

@@ -412,6 +412,13 @@ const RAW_LOCAL_STORAGE_PREFIXES: readonly string[] = [
     // leaving it out would make a restored profile forget every call the desk
     // was graded on while the journal came back.
     'signal_ledger_v1',
+    // The tracked-position store (services/tracking/positionStore.ts). A
+    // dedicated backend, but the restore path writes the same keys through
+    // Preferences/localStorage; without these prefixes a restored profile
+    // would forget every open plan and its post-mortem.
+    'tracked_positions_v1',
+    'tracked_diagnoses_v1',
+    'tracked_diagnosis_queue_v1',
 ];
 
 /** The cap for a SMALL raw-localStorage store. The notebook's own hard ceiling is
@@ -464,6 +471,12 @@ const EXPORT_KEY_CAPS: ReadonlyArray<{ prefix: string; bytes: number }> = [
     // sits just above it so a normally-pruned store is never left out, and a
     // corrupt oversized one is named rather than silently truncated.
     { prefix: 'signal_ledger_v1', bytes: 256 * 1024 },
+    // The tracker's own caps are 240 path points + 60 context points per
+    // position and 100 closed positions; 8 MiB carries a full store without
+    // truncating, while still bounding a runaway backup.
+    { prefix: 'tracked_positions_v1', bytes: 8 * 1024 * 1024 },
+    { prefix: 'tracked_diagnoses_v1', bytes: 2 * 1024 * 1024 },
+    { prefix: 'tracked_diagnosis_queue_v1', bytes: 256 * 1024 },
 ];
 
 /** The placeholder that replaces an image payload in an EXPORT COPY. Text, order
@@ -543,6 +556,15 @@ const isRawStringEnvelope = (value: unknown): value is Record<string, string> =>
 const STOREBACKED_DRAWING_PREFIXES: readonly string[] = [
     'trade_session_drawings_v1_',
     'trade_session_model_v1_',
+];
+
+/** The tracker's dedicated store: FILE-backed on desktop, SQLite on native,
+ *  and therefore invisible to both generic sweeps. The explicit loop below
+ *  reads it through `readTrackingSnapshot`, the tracker's own backend. */
+const TRACKED_STORE_PREFIXES: readonly string[] = [
+    'tracked_positions_v1_',
+    'tracked_diagnoses_v1_',
+    'tracked_diagnosis_queue_v1_',
 ];
 
 const readSweptValue = async (key: string): Promise<unknown> => {
@@ -744,6 +766,31 @@ export const exportPreferencesData = async (): Promise<Record<string, any>> => {
         console.warn('[ExportService] Session-store sweep failed:', e);
     }
 
+    // The tracker's dedicated store is not part of the profile blob. Read it
+    // through its OWN backend: on native that is SQLite, which `readStore`
+    // cannot see.
+    try {
+        const user = getActiveUsername();
+        const { readTrackingSnapshot } = await import('../tracking/positionStore');
+        const snapshot = await readTrackingSnapshot(user);
+        if (!snapshot.ok) {
+            console.warn('[ExportService] Tracker-store read failed:', snapshot.error);
+        } else {
+            for (const prefix of TRACKED_STORE_PREFIXES) {
+                const kind = prefix.replace(/^tracked_/, '').replace(/_v1_$/, '') as keyof typeof snapshot.snapshot;
+                const raw = snapshot.snapshot[kind];
+                if (raw === null) continue;
+                try {
+                    putSweptValue(backup, notices, `${prefix}${user}`, JSON.parse(raw));
+                } catch {
+                    console.warn(`[ExportService] Tracker ${kind} is not JSON; left out of the backup.`);
+                }
+            }
+        }
+    } catch (e) {
+        console.warn('[ExportService] Tracker-store sweep failed:', e);
+    }
+
     // Only present when something was left out. Restores skip it as an
     // un-allow-listed key, which is what makes the omission visible on both ends
     // instead of a silent hole in the backup.
@@ -824,6 +871,11 @@ const RESTORABLE_PREFERENCE_KEY_PREFIXES: readonly string[] = [
     // `signal_ledger_v1:<user>`; without this prefix a restore would return the
     // journal but drop the calls the desk was graded on.
     'signal_ledger_v1',
+    // The tracked-position store — open plans, their paths and their
+    // post-mortems. Scoped `tracked_<kind>_v1_<user>`.
+    'tracked_positions_v1_',
+    'tracked_diagnoses_v1_',
+    'tracked_diagnosis_queue_v1_',
     // The supervisor's own throttle stamp (skillSupervisor.ts, LAST_RUN_KEY).
     // Was in NEITHER list: the export sweep found it in localStorage and wrote
     // it into every backup, then import dropped it as un-allow-listed — a key
