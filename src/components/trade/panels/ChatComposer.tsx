@@ -12,7 +12,7 @@
  */
 
 import React, { useLayoutEffect } from 'react';
-import {Camera, FileText, Plus, TriangleAlert, SendIcon, StopIcon} from '../../shared/Icons';
+import {Camera, FileText, Plus, TriangleAlert, SendIcon, StopIcon, ChartBarIcon} from '../../shared/Icons';
 import type { ProviderConfig } from '../../../types/provider';
 import type { Attachment } from '../../../hooks/useChatAttachments';
 import type { ReasoningEffort } from '../../../services/providers/reasoningControls';
@@ -116,12 +116,28 @@ const ChatComposer: React.FC<ChatComposerProps> = ({
     // a fixed `min-h-[56px]` gave a one-line "what about now?" two lines of
     // empty card, which is most of what made the composer read as a panel.
     // `rows={1}` stays the SSR/first-paint height; this only replaces it after
-    // a real measurement. The inline height is inert while the dock is hidden.
+    // a real measurement. The observer re-fits when the DOCK is dragged wider
+    // or narrower — the height is a function of the current width, not only of
+    // the draft, and a stale height after a resize is a tall empty box.
     useLayoutEffect(() => {
         const el = composerRef.current;
         if (!el) return;
-        el.style.height = 'auto';
-        el.style.height = `${Math.min(Math.max(el.scrollHeight, 40), 160)}px`;
+        const fit = (): void => {
+            el.style.height = 'auto';
+            el.style.height = `${Math.min(Math.max(el.scrollHeight, 40), 160)}px`;
+        };
+        fit();
+        const host = el.parentElement;
+        if (!host || typeof ResizeObserver === 'undefined') return;
+        let lastWidth = host.clientWidth;
+        const observer = new ResizeObserver(entries => {
+            const width = Math.round(entries[0]?.contentRect.width ?? 0);
+            if (width === lastWidth) return;
+            lastWidth = width;
+            fit();
+        });
+        observer.observe(host);
+        return () => observer.disconnect();
     }, [draft, composerRef]);
 
     // One shared ModelChip (components/shared/ModelChip.tsx), which is now also
@@ -171,12 +187,11 @@ const ChatComposer: React.FC<ChatComposerProps> = ({
                 className="max-h-40 min-h-[40px] w-full resize-none overflow-y-auto bg-transparent py-0.5 text-ui-base leading-7 text-zinc-100 placeholder:text-zinc-600 disabled:opacity-50"
             />
             <div className="mt-2 flex flex-wrap items-center gap-2">
-                {/* `flex-wrap` + nowrap chips: the toolbar was ALWAYS over-
-                    tight at the dock's 384px default — before, that showed up
-                    as a chip breaking across two lines ("Scan —/skills"), and
-                    once the chips were nowrap it showed up as 6px of page
-                    overflow (render-probe caught it). Wrapping BETWEEN chips is
-                    the honest middle: a label stays whole, and nothing overflows. */}
+                {/* The control set is STABLE: Full analysis is present from the
+                    first paint (disabled until there is a draft) and the model
+                    chip takes the remaining width with `flex-1`, so typing the
+                    first character cannot reveal a control, wrap the row, and
+                    grow the card under the cursor. The chip truncates instead. */}
                 <input type="file" multiple accept="image/*,.md,.txt,.csv,.json" ref={fileInputRef} className="hidden"
                     onChange={ev => { attachFiles(ev.target.files); ev.target.value = ''; }} />
                 {/* Reference layout: ONE + button opens everything that
@@ -213,20 +228,24 @@ const ChatComposer: React.FC<ChatComposerProps> = ({
                     className="shrink-0 whitespace-nowrap rounded-control px-2 py-1.5 text-ui-dense text-zinc-500 transition-colors hover:bg-white/[0.05] hover:text-zinc-200 disabled:opacity-40">
                 Scan → skills
                 </button>
-                {onRunAnalysis && draft.trim() && !isPanel && (
-                    <button type="button" onClick={() => void runFullAnalysis()} disabled={busy}
-                        title="Run the full analysis (live market data + tools + trade plan) on this request"
-                        className="shrink-0 whitespace-nowrap rounded-control px-2 py-1.5 text-ui-dense text-zinc-500 transition-colors hover:bg-white/[0.05] hover:text-zinc-200 disabled:opacity-40">
-                    Full analysis
+                {onRunAnalysis && !isPanel && (
+                    <button type="button" onClick={() => void runFullAnalysis()}
+                        disabled={busy || !draft.trim()}
+                        aria-label="Full analysis"
+                        data-testid="composer-full-analysis"
+                        title={draft.trim()
+                            ? 'Run the full analysis (live market data + tools + trade plan) on this request'
+                            : 'Type a request to run the full analysis'}
+                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-control text-zinc-500 transition-colors hover:bg-white/[0.05] hover:text-zinc-200 disabled:opacity-40">
+                        <ChartBarIcon className="h-4 w-4" aria-hidden="true" />
                     </button>
                 )}
                 {/* D-A (docs/plan/model-menu-redesign.md): the model control
-                    lives IN the card, immediately left of send — not on a
-                    footer row under it. `ml-auto` on the PAIR is what keeps
-                    send the bottom-right element when the 384px toolbar wraps
-                    onto a second line; the trigger truncates instead of
-                    pushing the row sideways. */}
-                <div className="ml-auto flex min-w-0 items-center gap-1.5" data-testid="composer-model-and-send">
+                    lives IN the card, immediately left of send. `flex-1` +
+                    `justify-end` is what keeps send the bottom-right element:
+                    the pair takes the remaining width and the trigger truncates
+                    instead of pushing the row sideways or wrapping. */}
+                <div className="ml-auto flex min-w-0 flex-1 items-center justify-end gap-1.5" data-testid="composer-model-and-send">
                     {!isPanel && (
                         <ModelChip providers={providers} value={selectedChatModel} onChange={changeSoloModel}
                             onRefreshModels={onRefreshModels} issue={modelIssue} fallbackLabel={provider?.name}

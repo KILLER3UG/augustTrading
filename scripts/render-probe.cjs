@@ -3424,9 +3424,11 @@ async function main() {
         const composerSizes = () => page.evaluate(() => {
             const ta = document.querySelector('[data-testid="composer-input"]');
             const card = ta ? ta.closest('.rounded-composer') : null;
+            const toolbar = document.querySelector('[data-testid="composer-model-and-send"]')?.parentElement;
             return {
                 ta: ta ? Math.round(ta.getBoundingClientRect().height) : -1,
                 card: card ? Math.round(card.getBoundingClientRect().height) : -1,
+                toolbar: toolbar ? Math.round(toolbar.getBoundingClientRect().height) : -1,
                 value: ta ? ta.value : null,
             };
         });
@@ -3450,6 +3452,13 @@ async function main() {
             grownComposer.ta > emptyComposer.ta + 30 && grownComposer.ta <= 164
                 && grownComposer.card > emptyComposer.card,
             `${emptyComposer.ta}px -> ${grownComposer.ta}px field, card ${emptyComposer.card} -> ${grownComposer.card}`);
+        // The first keystroke must not reveal a control that wraps the action
+        // row: the UI jumped ~42px when "Full analysis" appeared only once the
+        // draft was non-empty. The button is now always present; the toolbar
+        // height is the invariant.
+        check('typing does not add a toolbar row or move the composer actions',
+            grownComposer.toolbar === emptyComposer.toolbar,
+            `toolbar ${emptyComposer.toolbar}px -> ${grownComposer.toolbar}px`);
         await setComposerDraft('');
         await sleep(150);
         const clearedComposer = await composerSizes();
