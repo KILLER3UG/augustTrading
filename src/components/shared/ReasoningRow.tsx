@@ -4,6 +4,7 @@ import { formatElapsed } from './elapsed';
 import { stripTraceMarkers } from '../../utils/traceText';
 import { copyText } from '../../utils/clipboard';
 import { subscribeSharedTicker } from '../../hooks/useSharedTicker';
+import { useLetterReveal } from '../../hooks/useLetterReveal';
 import Disclosure from './Disclosure';
 
 export interface ReasoningRowProps {
@@ -96,11 +97,18 @@ const ReasoningRow: React.FC<ReasoningRowProps> = ({
         return subscribeSharedTicker(() => setLiveSeconds(elapsed()));
     }, [running, turnStartMs]);
 
+    // The trace is written letter by letter only while it is being WATCHED
+    // (expanded and running); a collapsed row must not tick 60 times a second
+    // for text nobody can see. Expanding shows the trace received so far and
+    // types the rest.
+    const trace = stripTraceMarkers(trimmed);
+    const visibleTrace = useLetterReveal(trace, running && open);
+
     useLayoutEffect(() => {
         if (!running || !open || !bodyPinnedRef.current) return;
         const body = bodyRef.current;
         if (body) body.scrollTop = body.scrollHeight;
-    }, [thinking, running, open]);
+    }, [visibleTrace, running, open]);
 
     if (!trimmed) return null;
 
@@ -159,8 +167,8 @@ const ReasoningRow: React.FC<ReasoningRowProps> = ({
             )}
         >
             <div className="relative pr-8">
-                <div className="whitespace-pre-wrap break-words text-ui-caption leading-[1.75] text-zinc-500">
-                    {stripTraceMarkers(trimmed)}
+                <div className={`whitespace-pre-wrap break-words text-ui-caption leading-[1.75] text-zinc-500 ${running && open ? 'stream-typing' : ''}`}>
+                    {visibleTrace}
                 </div>
                 <button
                     type="button"

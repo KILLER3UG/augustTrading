@@ -9,11 +9,12 @@
  * not know to hunt for it; `group/msg` is gone from every caller, so a row does
  * not need a group class to make them appear.
  */
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Brain, Check, ChevronLeftIcon, ChevronRight, Copy, Pencil, Pin, RotateCcw, Square, Undo2, Volume2 } from './Icons';
 import { copyText } from '../../utils/clipboard';
 import MarkdownContent from './MarkdownContent';
 import { effortChoiceOf } from './effortScale';
+import { useLetterReveal } from '../../hooks/useLetterReveal';
 import type { ReasoningEffort } from '../../types/provider';
 
 /** Hover chip on USER bubbles: re-run the turn from this message — the
@@ -230,20 +231,61 @@ export const ThinkingTierChip: React.FC<{ effort: ReasoningEffort; className?: s
     );
 };
 
-/** Every character the store holds, every render. The reveal used to be a
- *  requestAnimationFrame-driven prefix of the text, which silently withheld
- *  content: measured on a 4,800-char answer, only 1,728 characters were in the
- *  DOM while the window was hidden (rAF fired 0 times in 400ms). The tail was
- *  unrendered and therefore unscrollable, while the Copy chip — handed the
- *  full string — revealed that the model had answered completely. The chunks
- *  arriving from the provider already give the typewriter feel; the fade here
- *  is CSS-only and can never eat text. */
-export const FadingText: React.FC<{ text: string; streaming: boolean; className?: string }> = ({ text, streaming, className }) => (
-    <div className={streaming ? 'stream-fade' : undefined}>
-        {/* The caller's class is ADDED to the base rules, not swapped for
-            them: a caller that says "this answer carries the reading role"
-            must not lose the size and the paragraph rhythm every answer
-            shares. */}
+/** The streamed answer, written letter by letter.
+ *
+ *  The provider sends chunks, so a fast model can land a whole paragraph at
+ *  once. `useLetterReveal` reveals the received text at 3 characters per frame
+ *  (5 when a burst builds a backlog), which reads as writing without waiting
+ *  for the turn to finish. It is timer-based and snaps to the full text when
+ *  the tab hides, when the turn settles, or when a remounted row already holds
+ *  a long text — the three ways the old rAF prefix reveal used to strand a
+ *  tail. Copy and the action chips read the source text, never this prefix.
+ *
+ *  While streaming the text is rendered RAW and parsed as markdown once at
+ *  settle: re-parsing markdown on every letter would be the expensive,
+ *  flickering version of this effect. The answer's voice (size, reading role,
+ *  colour) is the same in both states. */
+export const FadingText: React.FC<{ text: string; streaming: boolean; className?: string }> = ({ text, streaming, className }) => {
+    const visible = useLetterReveal(text, streaming);
+    const typingRef = useRef<HTMLDivElement>(null);
+    const scrollerRef = useRef<HTMLElement | null>(null);
+
+    // Keep the transcript pinned while letters grow the answer. The check is a
+    // live distance, not a flag: a reader who scrolled up stays where they are.
+    useLayoutEffect(() => {
+        if (!streaming) {
+            scrollerRef.current = null;
+            return;
+        }
+        if (!scrollerRef.current) {
+            let node: HTMLElement | null = typingRef.current?.parentElement ?? null;
+            while (node && node !== document.body) {
+                const overflowY = getComputedStyle(node).overflowY;
+                if ((overflowY === 'auto' || overflowY === 'scroll')
+                    && node.scrollHeight > node.clientHeight) {
+                    scrollerRef.current = node;
+                    break;
+                }
+                node = node.parentElement;
+            }
+        }
+        const scroller = scrollerRef.current;
+        if (!scroller) return;
+        const distance = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+        if (distance < 64) scroller.scrollTop = scroller.scrollHeight;
+    }, [visible, streaming]);
+
+    if (streaming) {
+        return (
+            <div
+                ref={typingRef}
+                className={`stream-typing whitespace-pre-wrap text-ui-base leading-relaxed text-zinc-200 ${className ?? ''}`}
+            >
+                {visible}
+            </div>
+        );
+    }
+    return (
         <MarkdownContent content={text} className={`!text-ui-base [&_p]:my-1 [&_li]:text-ui-base ${className ?? ''}`} />
-    </div>
-);
+    );
+};
