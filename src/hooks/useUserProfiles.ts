@@ -102,6 +102,8 @@ export const useUserProfiles = (params: UseUserProfilesParams) => {
                 // a deleted profile until the next user loads.
                 const { OutcomeAutopilotService } = await import('../services/ui/OutcomeAutopilotService');
                 OutcomeAutopilotService.reset();
+                const { resetTracker } = await import('../services/tracking/trackerService');
+                resetTracker();
                 const { setAttributedInsightsUser } = await import('../services/learning/PatternMemorySynthesisService');
                 setAttributedInsightsUser(null);
                 setIsUserModalOpen(true);

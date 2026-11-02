@@ -44,6 +44,9 @@ export interface SignalCandle {
     high: number;
     low: number;
     close: number;
+    /** Base-asset volume when the venue supplied it. Optional because a
+     *  cross-check/normalizer may drop it; the resolver never reads it. */
+    volume?: number;
 }
 
 /** The coarse resolution bar. 5m keeps the fetch small; the 1m series exists

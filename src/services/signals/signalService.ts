@@ -172,6 +172,16 @@ export const emitSignal = (input: EmitSignalInput, context: EmitSignalContext = 
     // The market gate is a network scan; it must not delay the answer.
     void shadowGate(signal, user);
 
+    // The tracker adopts this open call from the ledger on its next pass. The
+    // direct registration is immediate and carries the emission context; the
+    // ledger adoption covers a signal emitted while the tracker was off.
+    void import('../tracking/trackerService')
+        .then(tracker => tracker.registerSignalForTracking(signal, user))
+        .then(registered => {
+            if (!registered.ok) console.warn('[Signal] tracker registration failed:', registered.error);
+        })
+        .catch(err => console.warn('[Signal] tracker registration failed:', err));
+
     return { ok: true, signal };
 };
 

@@ -34,6 +34,7 @@ import {
 import GlobalLearningService from '../services/learning/GlobalLearningService';
 import { PriceAlertService } from '../services/ui/PriceAlertService';
 import { OutcomeAutopilotService } from '../services/ui/OutcomeAutopilotService';
+import { initTracker, resetTracker } from '../services/tracking/trackerService';
 import { VetoLedgerService } from '../services/ui/VetoLedgerService';
 import { storageService } from '../services/infrastructure/StorageService';
 import { offlineQueue } from '../services/infrastructure/OfflineQueueService';
@@ -312,6 +313,7 @@ export const useUserProfileLoader = (args: UseUserProfileLoaderArgs): UseUserPro
         // offline queue must stop replaying the previous user's requests.
         // (watchService/levelWatchService scope themselves per user.)
         OutcomeAutopilotService.reset();
+        resetTracker();
         PriceAlertService.reset();
         offlineQueue.setActiveUser(username);
 
@@ -370,6 +372,8 @@ export const useUserProfileLoader = (args: UseUserProfileLoaderArgs): UseUserPro
             await PriceAlertService.init(username);
             if (isStale()) return;
             await OutcomeAutopilotService.init(username);
+            if (isStale()) return;
+            await initTracker(username);
             if (isStale()) return;
             await VetoLedgerService.init(username);
             if (isStale()) return;

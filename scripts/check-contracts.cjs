@@ -54,7 +54,8 @@
  *  27. the tracked position — stop-first same-candle resolution, the 1m drill,
  *      gap fills at the open, MFE/MAE bounded to the held window, the capped
  *      path, resume idempotency, the 3-outcome independence rule, the
- *      diagnosis queue's no-drop overflow, and the diagnosis boundary
+ *      diagnosis queue's no-drop overflow, the diagnosis boundary, and
+ *      signal adoption with the ledger-wins overlay
  *
  * Plain node, no vitest, no jsdom, no network: each module is bundled from
  * TypeScript with esbuild (already a vite dependency) into a temp file and
@@ -1096,6 +1097,8 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
     });
     ok('venue: OKX parsing keeps closed bars only, ascending',
         parsed.length === 1 && parsed[0].time === 100000 && parsed[0].close === 1.5);
+    ok('venue: OKX parsing keeps the volume the tracker reads',
+        parsed[0].volume === 1);
     const primary = [{ time: 100000, open: 1, high: 2, low: 0.5, close: 1.5 }];
     ok('venue: the cross-check agrees, disagrees, or is unavailable — never a silent pass',
         md.crossCheckBars(primary, [{ time: 100000, open: 1, high: 2, low: 0.5, close: 1.5 }], [100000]) === 'agree'
@@ -1976,6 +1979,121 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
         schema.parseTrackedPosition({ id: 'x', source: 'signal', status: 'open' }) === null);
 })();
 
+// ─── 31. signal adoption and the ledger-wins overlay ──────────────────────
+(() => {
+    const st = loadModule('src/services/tracking/signalTracking.ts');
+    const STEP = 5 * 60_000;
+    const T0 = STEP * 100;
+    const signal = {
+        id: 'sig-1',
+        coin: 'BTCUSDT',
+        direction: 'long',
+        entry: 100,
+        stop: 95,
+        target: 110,
+        emittedAt: T0,
+        expiresAt: T0 + 50 * STEP,
+        evidenceRefs: ['get_market_packet'],
+        dataHash: 'abc12345',
+        markAtEmit: 100,
+        provider: 'prov-1',
+        model: 'model-1',
+        promptVersion: 'emit-signal-v1',
+        source: 'signal',
+        thesis: 'A test thesis',
+    };
+    const resolution = (over = {}) => ({
+        status: 'won',
+        at: T0 + 60 * 60_000,
+        grossR: 2,
+        feeR: 0.02,
+        outcomeR: 1.98,
+        usedBarTimes: [T0],
+        path: 'bar',
+        ambiguous: false,
+        crossCheck: 'agree',
+        primarySource: 'okx',
+        triggeredAt: T0,
+        exitAt: T0 + STEP,
+        exitPrice: 110,
+        ...over,
+    });
+    const row = (over = {}) => ({ signal, status: 'open', ...over });
+
+    const position = st.trackedPositionFromSignal(signal);
+    ok('signal adoption: a signal becomes a pending tracked position',
+        position.id === 'signal-sig-1'
+        && position.source === 'signal'
+        && position.sourceId === 'sig-1'
+        && position.status === 'pending_entry'
+        && position.entry === 100 && position.stop === 95
+        && position.targets.length === 1 && position.targets[0] === 110
+        && position.openedAt === T0 && position.expiresAt === T0 + 50 * STEP
+        && position.entryContext.thesis === 'A test thesis'
+        && position.entryContext.evidenceRefs[0] === 'get_market_packet'
+        && position.entryContext.model === 'model-1'
+        && position.entryConfirmed === false);
+
+    const won = st.applySignalResolution(position, row({
+        status: 'won',
+        resolution: resolution(),
+    }));
+    ok('signal adoption: the ledger resolution closes the position',
+        won.changed && won.position.status === 'closed'
+        && won.position.exit?.reason === 'target'
+        && won.position.exit?.price === 110
+        && won.position.exit?.realizedR === 2
+        && won.position.exit?.costR === 0.02
+        && won.position.exit?.netR === 1.98
+        && won.position.exit?.slippageModeled === true,
+        JSON.stringify(won.position.exit));
+    ok('signal adoption: a matching ledger row is a no-op',
+        st.applySignalResolution(won.position, row({ status: 'won', resolution: resolution() })).changed === false);
+
+    const resigned = st.applySignalResolution(position, row({
+        status: 'never_triggered',
+        resolution: resolution({ status: 'never_triggered', grossR: 0, feeR: 0, outcomeR: 0, exitAt: undefined, exitPrice: undefined }),
+    }));
+    ok('signal adoption: never triggered cancels, with no exit and no diagnosis trade',
+        resigned.changed && resigned.position.status === 'cancelled'
+        && resigned.position.exit === undefined);
+
+    const trackerHadLoss = {
+        ...position,
+        status: 'closed',
+        closedAt: T0 + 2 * STEP,
+        exit: {
+            reason: 'stop', price: 95, at: T0 + STEP, sameCandle: 'single-level',
+            ambiguous: false, gapAtOpen: false, barsRead: 2,
+            realizedR: -1, costR: 0.02, netR: -1.02, slippageModeled: true,
+        },
+    };
+    const ledgerWins = st.applySignalResolution(trackerHadLoss, row({ status: 'won', resolution: resolution() }));
+    ok('signal adoption: the ledger wins a disagreement and records it',
+        ledgerWins.changed
+        && ledgerWins.position.status === 'closed'
+        && ledgerWins.position.exit?.reason === 'target'
+        && ledgerWins.position.exit?.price === 110
+        && String(ledgerWins.position.discrepancy).includes('signal ledger resolved won'),
+        JSON.stringify({ exit: ledgerWins.position.exit, discrepancy: ledgerWins.position.discrepancy }));
+
+    const now = T0 + 48 * 60 * 60_000;
+    ok('signal adoption: open calls are always adoptable',
+        st.isSignalAdoptable(row(), now));
+    ok('signal adoption: a resolved call is adoptable inside the 24h window',
+        st.isSignalAdoptable(row({ status: 'won', resolution: resolution() }), T0 + 60 * 60_000));
+    ok('signal adoption: an old resolved call is a ledger record, not a live position',
+        st.isSignalAdoptable(row({ status: 'won', resolution: resolution() }), T0 + 25 * 60 * 60_000) === false);
+
+    const bars = st.signalBarsToKlines([
+        { time: T0, open: 100, high: 101, low: 99, close: 100, volume: 12 },
+        { time: T0 + STEP, open: 100, high: 102, low: 100, close: 101 },
+    ]);
+    ok('signal adoption: venue volume survives, a missing volume is NaN not zero',
+        bars[0].volume === 12 && Number.isNaN(bars[1].volume),
+        JSON.stringify(bars.map(b => b.volume)));
+})();
+
 // ─── report ────────────────────────────────────────────────────────────────
 console.log(`contracts: ${passed} passed, ${failures.length} failed`);
 for (const f of failures) console.log(`  FAIL ${f}`);
@@ -1983,4 +2101,4 @@ if (failures.length) {
     console.error('CONTRACT CHECK FAIL — a pinned contract broke; fix the module, not this file.');
     process.exit(1);
 }
-console.log('CONTRACT CHECK OK — risk/reward math, retry classification, harness marks, notebook pressure, tool-pair compaction, AI-boundary coercion, the skill/memory authoring screens, the shared index budget, both policy tables (self-modification, goal tool narrowing), the desk tool budget, the skill outcome correction, the startup call gates, the insight store pin, the signal loop (resolver order, costs, ledger, venue data), the chart tape study, the signal accuracy fold, the skill format, the journal-rules store, the post-mortem clause, the memory page export, and the tracked position (exit order, gaps, excursions, capped path, independence, diagnosis queue) all hold.');
+console.log('CONTRACT CHECK OK — risk/reward math, retry classification, harness marks, notebook pressure, tool-pair compaction, AI-boundary coercion, the skill/memory authoring screens, the shared index budget, both policy tables (self-modification, goal tool narrowing), the desk tool budget, the skill outcome correction, the startup call gates, the insight store pin, the signal loop (resolver order, costs, ledger, venue data), the chart tape study, the signal accuracy fold, the skill format, the journal-rules store, the post-mortem clause, the memory page export, and the tracked position (signal adoption, ledger-wins resolution, exit order, gaps, excursions, capped path, independence, diagnosis queue) all hold.');

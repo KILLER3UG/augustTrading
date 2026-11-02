@@ -48,8 +48,12 @@ export const parseOkxCandles = (json: unknown): SignalCandle[] => {
         // [ts, o, h, l, c, vol, volCcy, volCcyQuote, confirm]
         if (String(row[8]) !== '1') continue; // closed bars only — a forming bar is not evidence
         const [time, open, high, low, close] = row.map(Number);
+        const volume = Number(row[5]);
         if (![time, open, high, low, close].every(Number.isFinite)) continue;
-        out.push({ time, open, high, low, close });
+        out.push({
+            time, open, high, low, close,
+            ...(Number.isFinite(volume) ? { volume } : {}),
+        });
     }
     return out.sort((a, b) => a.time - b.time);
 };
@@ -83,7 +87,10 @@ export const fetchOkxCandles = async (
 
 const fromKlines = (klines: readonly Kline[]): SignalCandle[] =>
     klines
-        .map(k => ({ time: k.time, open: k.open, high: k.high, low: k.low, close: k.close }))
+        .map(k => ({
+            time: k.time, open: k.open, high: k.high, low: k.low, close: k.close,
+            ...(Number.isFinite(k.volume) ? { volume: k.volume } : {}),
+        }))
         .filter(c => [c.time, c.open, c.high, c.low, c.close].every(Number.isFinite))
         .sort((a, b) => a.time - b.time);
 
