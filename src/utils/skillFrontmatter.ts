@@ -300,6 +300,85 @@ export const skillBodyCaps = (body: string): { lines: number; chars: number; ove
     return { lines, chars, overSoft: lines > SKILL_BODY_SOFT_LINES, overHard: chars > SKILL_BODY_HARD_CHARS };
 };
 
+// ── THE ONE FORMAT, AUDITED (2026-11-03) ────────────────────────────────────
+// A skill is a slug-named file carrying ONE `when` trigger, a description the
+// index and recall read, and a non-empty procedure body inside the caps. The
+// draft gates and the craft enforce this on the way in; this audit is the gate
+// for everything ALREADY in the library — an imported file, a hand-edited one,
+// a pre-format legacy file — so the Health tab can name every file that does
+// not follow the same shape as the rest. Structural input on purpose: the
+// checker never imports the service layer's types.
+
+export interface SkillFormatInput {
+    fileName: string;
+    when?: string;
+    description?: string;
+    body?: string;
+}
+
+/** Every reason `fileName` does not follow the one format. Empty = conforms. */
+export const skillFormatIssues = (input: SkillFormatInput): string[] => {
+    const issues: string[] = [];
+    const slug = input.fileName.replace(/\.md$/i, '');
+    if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(slug)) {
+        issues.push('file name is not a slug (lowercase letters, digits, hyphens, up to 64)');
+    }
+    if (!input.when || !input.when.trim()) {
+        issues.push('no `when` trigger — the one checkable sentence a match reads');
+    }
+    if (!input.description || !input.description.trim()) {
+        issues.push('no `description` — the skills index and the recall tool read it');
+    }
+    if (!input.body || !input.body.trim()) {
+        issues.push('empty procedure body — the format is one trigger plus steps');
+    } else {
+        const caps = skillBodyCaps(input.body);
+        if (caps.overHard) issues.push(`body is over the ${SKILL_BODY_HARD_CHARS}-character hard cap`);
+    }
+    return issues;
+};
+
+/** The missing face, DERIVED from what the file already says.
+ *
+ *  The gate can refuse a new file before it is written, but an existing file
+ *  is bytes a trader can see: deleting it because its frontmatter is old is
+ *  worse than filling in the one key it lacks. So the repair reads, in order,
+ *  the `when` key, the body's own `**When:**` line, a "Use this skill
+ *  whenever …" description, and finally the first prose line for a
+ *  description. Nothing is invented when the file states nothing — the caller
+ *  keeps the file and reports it instead. Pure text in, fields out, so the
+ *  gate can pin the derivation without a notebook. */
+export interface SkillFaceDefaults {
+    when?: string;
+    description?: string;
+}
+
+export const deriveSkillFace = (input: {
+    when?: string;
+    description?: string;
+    body?: string;
+}): SkillFaceDefaults => {
+    const body = input.body ?? '';
+    const clean = (value?: string): string | undefined => {
+        const text = (value ?? '').replace(/\s+/g, ' ').trim().replace(/\.+$/, '');
+        return text ? text.slice(0, 280) : undefined;
+    };
+    const whenFromKey = clean(input.when);
+    const whenFromBody = clean(/^\*\*When:\*\*\s*(.+)$/im.exec(body)?.[1])
+        ?? clean(/^##\s*When to use\s*\n+([^\n#]+)$/im.exec(body)?.[1]);
+    const whenFromDescription = clean(
+        /^use (?:this skill )?whenever\s+(.+?)(?:\.\s+do not use for|$)/im.exec(input.description ?? '')?.[1],
+    );
+    const when = whenFromKey ?? whenFromBody ?? whenFromDescription;
+    const description = clean(input.description)
+        ?? (when ? `Use this skill whenever ${when}.` : undefined)
+        ?? clean(body.split(/\n\s*\n/).map(p => p.trim()).find(p => p && !/^[#*\-0-9]/.test(p)));
+    return {
+        ...(when ? { when } : {}),
+        ...(description ? { description } : {}),
+    };
+};
+
 /** A description that tells the model WHEN to use the skill — the trigger —
  *  in the same spirit as the spec's "Use when / Don't use for". Warned on at
  *  authoring, never blocking. */

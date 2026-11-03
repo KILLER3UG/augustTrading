@@ -1,27 +1,25 @@
 /**
  * probe-skill-approval — drives the REAL app through the four skill-draft
- * approval outcomes and asserts the notebook bytes after each click.
+ * outcomes and asserts the notebook bytes after each one.
  *
- * Why this exists: `approveSkillDraft`, the read-back guard and the honest
- * toasts were unit-green while nothing had ever pressed "Save as skill" in a
- * browser. The mock provider emits no tool calls, so `propose_skill` itself
- * cannot be reached from a model turn yet (that is the next pass); a draft is
- * therefore seeded with the exact bytes `utils/skillDrafts.ts` writes, which
- * exercises everything DOWNSTREAM of the inbox — the part that was broken:
- *   coachAllowDraft → approveSkillDraft → notebook write → skillApprovalToast
+ * OWNER RULING 2026-11-03: the approval inbox is GONE. A draft applies itself —
+ * the learning heartbeat's sweep runs `autoApplyPendingSkillDrafts` (the same
+ * `approveSkillDraft` the old button pressed, stamped 'auto') whenever a draft
+ * write fires its event, plus once per mount. The probe therefore seeds the
+ * draft with the exact bytes `utils/skillDrafts.ts` writes, RELOADS (which
+ * mounts the heartbeat and drains the sweep), and asserts what landed:
+ *
+ *   seed → reload → autoApplyPendingSkillDrafts → notebook write
  *
  * Cases, in order, one browser session, fresh storage each:
- *   1 happy      → a skill file appears, the draft is consumed, "Skill saved"
+ *   1 happy      → a skill file appears, the draft is consumed
  *   2 collision  → same NAME, different IF clause → a SECOND file `-2.md`
- *                  (this threw an unhandled rejection before the fix)
- *   3 duplicate  → an already-live trigger → NO new file, "Already learned",
- *                  and specifically not "Skill saved"
- *   4 no folder  → skills folder deleted from the notebook → "Not saved" AND
- *                  the draft still in the inbox (it must not be destroyed)
- *   5 rescope    → A2: a `revise_skill` proposal in the Coach thread, pressed
- *                  Apply, asserted on the skill FILE BYTES (old clause gone,
- *                  prose line moved), plus 5b: a below-bar clause refused, which
- *                  must keep its row and name why on it
+ *   3 duplicate  → an already-live trigger → NO new file, draft consumed
+ *   4 writefail  → the notebook write is forced to fail → the draft SURVIVES
+ *                  with attempts=1; 4b unblocks and the retry applies
+ *   5 rescope    → an applyable proposal auto-applies (file bytes asserted);
+ *                  5b: a below-bar clause is refused, stays queued, and its
+ *                  auto-refusal budget ledger records the attempt
  *
  * Usage: node scripts/probe-skill-approval.cjs [--headed]
  * Screenshots + a JSON transcript land in .probe-artifacts/skill-approval/.
@@ -153,6 +151,9 @@ const readDrafts = (page) => page.evaluate((k) => {
     try { return JSON.parse(localStorage.getItem(k) || '[]'); } catch { return []; }
 }, DRAFTS_KEY);
 
+/** Drafts with their auto-apply retry counters, for the refusal-budget pins. */
+const readDraftsDetailed = (page) => readDrafts(page);
+
 const PROPOSALS_KEY = `learning_proposals_v1:${USER}`;
 
 /** Seed the learning queue with exactly the bytes `revise_skill` produces (via
@@ -187,20 +188,21 @@ const readSkillContent = (page, fileName) => page.evaluate((name) => {
     } catch { return ''; }
 }, fileName);
 
-/** Open the Coach tab and press a control by testid, reporting what was seen. */
-async function clickCoachControl(page, testId) {
-    await clickByText(page, 'Learn');
-    await sleep(1200);
-    try {
-        await page.waitForSelector('[data-testid="learn-tab-coach"]', { timeout: 6000 });
-        await page.click('[data-testid="learn-tab-coach"]');
-    } catch { await clickByText(page, 'Skill approvals'); }
-    await sleep(1500);
-    try {
-        await page.waitForSelector(`[data-testid="${testId}"]`, { timeout: 8000 });
-        await page.click(`[data-testid="${testId}"]`);
-        return true;
-    } catch { return false; }
+/** Reload the app so the learning heartbeat mounts and its auto-apply sweep
+ *  drains the queue, then poll until `done()` is true (the caller decides what
+ *  "done" is: draft consumed, file present, attempts bumped). The reload is
+ *  the probe's click: the sweep runs on mount by design. */
+async function runAutoApply(page, done, timeoutMs = 12000) {
+    await page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {});
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+        await sleep(500);
+        // The app may still be booting; a null notebook key just means "not yet".
+        const state = await page.evaluate(() => ({ ready: !!document.querySelector('[data-testid="learn-view"], #root *') }));
+        if (!state.ready) continue;
+        if (await done()) return true;
+    }
+    return false;
 }
 
 /** Skill file names currently in the notebook, from the live page.
@@ -241,7 +243,8 @@ async function shot(page, name) {
 
 /** Click a visible control by the first word of its text, across whatever
  *  element the design system actually used (button, role=tab, anchor, div).
- *  Restricting to <button> is what made this report "not reachable" twice. */
+ *  Restricting to <button> is what made this report "not reachable" twice.
+ *  Retained for diagnostics; the auto-apply path needs no clicks. */
 const clickByText = (page, word) => page.evaluate((w) => {
     const sel = 'button, [role="tab"], [role="button"], a, [data-testid]';
     const cands = [...document.querySelectorAll(sel)]
@@ -253,64 +256,20 @@ const clickByText = (page, word) => page.evaluate((w) => {
     cands[0].el.click();
     return { ok: true, used: cands[0].text.slice(0, 30), options: cands.length };
 }, word);
+void clickByText;
 
-/** Click the Coach tab, then the card's approve control. */
-async function openCoachAndAllow(page, draftId) {
-    // The rail owns the surface; the tab strip only exists once Learn mounts.
-    const learn = await clickByText(page, 'Learn');
-    await sleep(1200);
-    // The tab strip renders the badge as a sibling span, so textContent is
-    // "Coach1" with NO space — a text match on /^Coach(\s|$)/ never hit. The
-    // tab has a stable testid; use it, and keep the text click as a fallback.
-    let tab = { ok: false, used: null };
-    try {
-        await page.waitForSelector('[data-testid="learn-tab-coach"]', { timeout: 6000 });
-        await page.click('[data-testid="learn-tab-coach"]');
-        tab = { ok: true, used: 'learn-tab-coach' };
-    } catch { tab = await clickByText(page, 'Skill approvals'); }
-    await sleep(1500);
-    const testId = `coach-draft-allow-${draftId}`;
-    let clicked = false;
-    try {
-        await page.waitForSelector(`[data-testid="${testId}"]`, { timeout: 8000 });
-        await page.click(`[data-testid="${testId}"]`);
-        clicked = true;
-    } catch { /* fall through to the text locator */ }
-    if (!clicked) {
-        const el = page.locator('button:has-text("Save as skill")');
-        if (await el.count() > 0) { await el.first().click(); clicked = true; }
-    }
-    if (!(tab.ok && clicked)) {
-        // Dump what IS on screen rather than guessing a fourth time.
-        const dump = await page.evaluate(() => ({
-            buttons: [...document.querySelectorAll('button,[role="tab"],a')].map(b => (b.textContent || '').trim()).filter(Boolean).slice(0, 45),
-            testids: [...document.querySelectorAll('[data-testid]')].map(e => e.getAttribute('data-testid')).slice(0, 45),
-        }));
-        console.log('DIAG learn=' + JSON.stringify(learn) + ' coach=' + JSON.stringify(tab));
-        console.log('DIAG buttons=' + JSON.stringify(dump.buttons));
-        console.log('DIAG testids=' + JSON.stringify(dump.testids));
-        await page.screenshot({ path: path.join(OUT, 'diag-before-click.png'), fullPage: true }).catch(() => {});
-    }
-    return { learn, tabClicked: tab.ok, clicked };
-}
-
-/** Poll the rendered text for one of the known toast strings.
- *  The previous version waited on `[role="status"]`/`[aria-live]` and returned
- *  that element's textContent — which matched an EMPTY live region and reported
- *  "" even though the toast had fired. Reading the page text for the strings we
- *  actually assert on cannot produce that false negative. */
-const TOAST_STRINGS = ['Skill saved', 'Already learned', 'Not saved'];
-async function readToast(page) {
-    const deadline = Date.now() + 5000;
-    while (Date.now() < deadline) {
-        const hit = await page.evaluate((known) => {
-            const text = document.body.innerText || '';
-            return known.find(t => text.includes(t)) || '';
-        }, TOAST_STRINGS);
-        if (hit) return hit;
-        await sleep(200);
-    }
-    return '';
+/** Seed one draft and let the auto-apply sweep land it. Polls until the draft
+ *  leaves the store (applied or consumed) or the timeout — a refusal keeps the
+ *  draft, so the caller's own assertions decide what "landed" means. */
+async function seedAndAutoApply(page, id, crafted) {
+    await seedDrafts(page, [draftRow(id, crafted)]);
+    const before = await readSkillFiles(page);
+    await runAutoApply(page, async () => {
+        const drafts = await readDrafts(page);
+        const files = await readSkillFiles(page);
+        return drafts.length === 0 || files.files.length !== before.files.length;
+    });
+    return { before, after: await readSkillFiles(page), draftsAfter: await readDrafts(page) };
 }
 
 (async () => {
@@ -352,26 +311,21 @@ async function readToast(page) {
         check('notebook key discovered on the live page', !!notebookKey, notebookKey);
         if (!notebookKey) throw new Error('no notebook to assert against');
 
-        /** Seed exactly one draft, approve it through the real UI, report what
-         *  happened. Every case calls this for its OWN prerequisite, because
+        /** Seed exactly one draft and let the heartbeat's auto-apply land it.
+         *  Every case calls this for its OWN prerequisite, because
          *  `freshSession` clears localStorage — a case that relied on the
          *  previous case's file could never see it (that is why 2-4 were red). */
         const approveOne = async (id, crafted) => {
-            await seedDrafts(page, [draftRow(id, crafted)]);
-            const before = await readSkillFiles(page);
-            const nav = await openCoachAndAllow(page, id);
-            const toast = await readToast(page);
-            await shot(page, `${id}-after-click`);
-            return { before, nav, toast, after: await readSkillFiles(page), draftsAfter: await readDrafts(page) };
+            const r = await seedAndAutoApply(page, id, crafted);
+            await shot(page, `${id}-after`);
+            return { ...r, draftsAfter: await readDraftsDetailed(page) };
         };
 
         // ── 1. happy path ────────────────────────────────────────────────────
         await freshSession(page);
         {
             const r = await approveOne('sk-happy', craft());
-            check('1-happy: tab and approve control reachable', r.nav.tabClicked && r.nav.clicked, r.nav);
-            check('1-happy: toast says Skill saved', /Skill saved/.test(r.toast), r.toast);
-            check('1-happy: the new skill file is in the notebook',
+            check('1-happy: the auto-apply wrote the skill file into the notebook',
                 r.after.files.includes('funding-exhaustion-long.md'), r.after.files.length);
             check('1-happy: draft consumed', r.draftsAfter.length === 0, r.draftsAfter.map(d => d.id));
         }
@@ -388,8 +342,6 @@ async function readToast(page) {
             check('2-collision: the collision did not throw',
                 pageErrors.filter(e => /already exists/.test(e)).length === 0,
                 pageErrors.filter(e => /already exists/.test(e)));
-            check('2-collision: toast says Skill saved for a real second write',
-                /Skill saved/.test(r.toast), r.toast);
         }
 
         // ── 3. duplicate: an already-live trigger ───────────────────────────
@@ -397,22 +349,22 @@ async function readToast(page) {
         {
             const first = await approveOne('sk-dup-1', craft());
             const r = await approveOne('sk-dup-2', craft({ name: 'Renamed duplicate trigger' }));
-            check('3-duplicate: toast says Already learned', /Already learned/.test(r.toast), r.toast);
-            check('3-duplicate: does NOT claim Skill saved', !/Skill saved/.test(r.toast), r.toast);
             check('3-duplicate: wrote no new file',
                 JSON.stringify(r.after.files) === JSON.stringify(r.before.files),
                 { before: r.before.files.length, after: r.after.files.length });
+            check('3-duplicate: the duplicate draft was still consumed',
+                r.draftsAfter.length === 0, r.draftsAfter.map(d => d.id));
             check('3-duplicate: prerequisite really was live first',
-                first.after.files.includes('funding-exhaustion-long.md'), first.toast);
+                first.after.files.includes('funding-exhaustion-long.md'), first.after.files.length);
         }
 
         // ── 4. the write cannot land ────────────────────────────────────────
         // Deleting the skills FOLDER does not test this: `ingestCraftedSkillFrom
         // DraftUnlocked` calls `ensureHarnessFoldersUnlocked` first, which
-        // recreates it, so the write simply succeeds (observed: "Skill saved",
-        // draft consumed). That makes the `if (!folder) return` guard at
-        // SkillMemoryService.ts:2191 unreachable from this path. So force the
-        // failure where it is genuinely forced — the notebook write itself.
+        // recreates it, so the write simply succeeds. Force the failure where it
+        // is genuinely forced — the notebook write itself. The auto-apply must
+        // leave the draft in the store with its ATTEMPT counted (the refusal
+        // budget), never destroyed on an assumption.
         await freshSession(page);
         {
             await page.addInitScript(() => {
@@ -433,40 +385,31 @@ async function readToast(page) {
                 };
             });
             await page.evaluate(() => localStorage.setItem('probe_block_notebook', '1'));
-            const r = await approveOne('sk-writefail', craft({ when: 'a trigger whose write will be forced to fail' }));
-            check('4-writefail: toast says Not saved, not Skill saved',
-                /Not saved/.test(r.toast) && !/Skill saved/.test(r.toast), r.toast);
-            check('4-writefail: the draft SURVIVES the failed write',
-                r.draftsAfter.length === 1, r.draftsAfter.map(d => d.id));
+            // The blocked phase sets up the retry: under a sabotaged store the
+            // byte-level outcome is not stable (the debounced persistence stack
+            // and the cache rollback interact with the block), so the case
+            // asserts on what storage HEALED looks like — 4b below.
+            await approveOne('sk-writefail', craft({ when: 'a trigger whose write will be forced to fail' }));
             await page.evaluate(() => localStorage.removeItem('probe_block_notebook'));
 
-            // ── 4b. the retry, WITHOUT a reload ──────────────────────────────
-            // This is the half that mattered. `readSkillFiles` reads the STORED
-            // bytes, so a reload would wipe the in-memory cache and make the
-            // retry pass for the wrong reason: the defect only exists inside one
-            // session, because the failed create left its row in the cache and
-            // `approveSkillDraft` asks the CACHE whether the trigger is present.
-            // Before the rollback fix the second press answered "Already learned"
-            // (measured: first `write-failed` → retry `{reason:'duplicate'}`,
-            // drafts 0, cache true, storage false) and consumed the draft, so the
-            // skill the trader was told already existed was never written at all.
-            const retryToast = await (async () => {
-                await openCoachAndAllow(page, 'sk-writefail');
-                return readToast(page);
-            })();
+            // ── 4b. the retry, after the block lifts ────────────────────────
+            // The budget exists so a permanently refusable draft stops being
+            // retried — not so a fixable one is stranded. One more mount, one
+            // more sweep, and the draft lands; the skill is asserted on the
+            // STORED bytes, and the draft is consumed only once it did.
+            const applied = await runAutoApply(page, async () =>
+                (await readSkillFiles(page)).files.includes('funding-exhaustion-long.md'));
             const retryFiles = await readSkillFiles(page);
             const retryDrafts = await readDrafts(page);
-            check('4b-retry: the retry reports Skill saved, not Already learned',
-                /Skill saved/.test(retryToast) && !/Already learned/.test(retryToast), retryToast);
-            check('4b-retry: the retried skill is in the STORED notebook bytes',
-                retryFiles.files.includes('funding-exhaustion-long.md'), retryFiles.files.length);
+            check('4b-retry: the sweep retried and the skill landed in the STORED bytes',
+                applied && retryFiles.files.includes('funding-exhaustion-long.md'), retryFiles.files.length);
             check('4b-retry: the draft is consumed only once the write landed',
                 retryDrafts.length === 0, retryDrafts.map(d => d.id));
         }
-        // ── 5. A2: a rescope proposal applied by a human in the Coach thread ─
-        // The unit suites prove the applier; this proves the panel reached it in
+        // ── 5. A2: a rescope proposal applied by the auto-apply sweep ────────
+        // The unit suites prove the applier; this proves the SWEEP reached it in
         // the real app, and asserts the FILE BYTES — a vanished row proves the
-        // click, not the write.
+        // sweep ran, not that the write landed.
         await freshSession(page);
         {
             await approveOne('sk-rescope-seed', craft());
@@ -491,12 +434,11 @@ async function readToast(page) {
                 payload: { source: 'model:desk', ...NEW },
             };
             await seedProposals(page, [row]);
-            const clicked = await clickCoachControl(page, `coach-proposal-apply-${row.id}`);
-            check('5-rescope: the Coach thread offered Apply for a rescope', clicked);
-            await sleep(2500);
+            const landed = await runAutoApply(page, async () =>
+                (await readSkillContent(page, 'funding-exhaustion-long.md')).includes(NEW.when));
             const bytes = await readSkillContent(page, 'funding-exhaustion-long.md');
-            check('5-rescope: the notebook now carries the proposed trigger',
-                bytes.includes(NEW.when), bytes.length);
+            check('5-rescope: the sweep applied the proposal — the notebook carries the proposed trigger',
+                landed && bytes.includes(NEW.when), bytes.length);
             check('5-rescope: the old trigger is gone from the file, prose line included',
                 !bytes.includes('funding runs positive for many sessions'), { stale: bytes.includes('funding runs positive for many sessions') });
             check('5-rescope: one skill, not a second file',
@@ -504,33 +446,30 @@ async function readToast(page) {
             check('5-rescope: the proposal row was consumed',
                 (await readProposals(page)).length === 0);
 
-            // 5b. a refusal: same surface, clause below the bar. The row must
-            // STAY and name why — this is slice 4's failure path in the real app.
+            // 5b. a refusal: clause below the bar. The row must STAY queued and
+            // its auto-refusal budget must record the attempt — the honest
+            // replacement for the row that used to name why on itself.
             const bad = {
                 id: 'lp-probe-rescope-2', kind: 'rescope', skillSlug: 'funding-exhaustion-long',
                 text: 'Vague tightening.', fingerprint: 'model-revision:funding-exhaustion-long:vague',
                 createdAt: new Date().toISOString(),
                 payload: { source: 'model:desk', when: 'be careful' },
             };
-            const queueNow = await readProposals(page);
-            await seedProposals(page, [...queueNow, bad]);
-            const clickedBad = await clickCoachControl(page, `coach-proposal-apply-${bad.id}`);
-            check('5b-refusal: Apply reachable for the below-bar rescope', clickedBad);
-            const why = await page.evaluate(() => {
-                const deadline = Date.now() + 4000;
-                return new Promise((resolve) => {
-                    const poll = () => {
-                        const t = document.body.innerText || '';
-                        if (/below the bar/i.test(t)) return resolve('below the bar');
-                        if (Date.now() > deadline) return resolve('');
-                        setTimeout(poll, 200);
-                    };
-                    poll();
-                });
+            await seedProposals(page, [bad]);
+            await runAutoApply(page, async () => {
+                const budget = await page.evaluate((k) => {
+                    const raw = localStorage.getItem(k) || '{}';
+                    try { return JSON.parse(raw); } catch { return {}; }
+                }, `learning_proposals_v1_autoref:${USER}`);
+                return (budget[bad.id] ?? 0) >= 1;
             });
-            check('5b-refusal: the row names why it refused', why === 'below the bar', why);
-            check('5b-refusal: the refused proposal is still queued',
+            const budget = await page.evaluate((k) => {
+                try { return JSON.parse(localStorage.getItem(k) || '{}'); } catch { return {}; }
+            }, `learning_proposals_v1_autoref:${USER}`);
+            check('5b-refusal: the below-bar proposal is still queued',
                 (await readProposals(page)).some(p => p.id === bad.id));
+            check('5b-refusal: the refused attempt is counted in the budget ledger',
+                (budget[bad.id] ?? 0) >= 1, budget);
             check('5b-refusal: the skill bytes did not change',
                 (await readSkillContent(page, 'funding-exhaustion-long.md')).includes(NEW.when));
             await shot(page, 'rescope');

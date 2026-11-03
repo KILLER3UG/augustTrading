@@ -32,7 +32,7 @@ flowchart TD
     SR --> J["Journal · journal-view · src/App.tsx"]
     SR --> C["Agents · agents-view · src/App.tsx"]
     SR --> K["Learning · learn-view · src/App.tsx"]
-    K -.-> AP["Approvals is a TAB of Learning — src/components/learn/LearnView.tsx"]
+    K -.-> AP["NO Approvals tab (removed 2026-11-03) — the queues auto-apply; the memory corrections log is Settings → Memory"]
     NR["NavRail — DELETED (only the shell-chrome consts src/App.tsx remain), NEVER rendered (see correction 5); its AccountRow export IS, src/App.tsx; NAV_RAIL_AUTO_COLLAPSE_PX and NAV_RAIL_EXPANDED_PX are live too"]:::dead
     SM["SurfaceMenuList — DELETED 2026-11-03 with the old four-tab bar"]:::dead
     classDef dead stroke-dasharray: 5 5,opacity:.5
@@ -930,11 +930,13 @@ The lifecycle has four stages:
    `queueLearningProposal` (`src/utils/learningQueue.ts › queueLearningProposal`) write the inbox.
 2. **Gate** — `deterministicDraftGate` (`src/services/learning/draftGates.ts › deterministicDraftGate`) rejects duplicates and
    malformed clauses; `gateEvidenceBackedDraft` requires evidence before
-   a draft can reach a human.
-3. **Human approval** — `approveSkillDraft` (`src/services/learning/skillApproval.ts › approveSkillDraft`) is the only
-   writer that turns a draft into a skill file; it reads the library back, and a
-   failed write leaves the draft in the inbox. `collectApprovalItems`
-   (`src/utils/approvalInbox.ts › collectApprovalItems`) is the one badge/list source for every queue.
+   a draft can reach the library.
+3. **Auto-apply** — `autoApplyPendingSkillDrafts` (`src/services/learning/skillApproval.ts › autoApplyPendingSkillDrafts`)
+   runs on the heartbeat's draft-write event and calls `approveSkillDraft`
+   (`src/services/learning/skillApproval.ts › approveSkillDraft`), the only writer that turns a draft into a skill file.
+   It reads the library back; a failed write keeps the draft with an attempt budget. There is no approval inbox
+   (owner ruling, 2026-11-03). `repairSkillFileFormats`
+   (`src/services/learning/SkillMemoryService.ts › repairSkillFileFormats`) rewrites pre-format files into the one format at boot.
 4. **Retrieval and decay** — `rankSkillIndexRows`
    (`src/services/trade/tradeChatContext.ts › rankSkillIndexRows`) ranks the 30-slot index;
    `buildSkillsIndexForPrompt` renders it; `resolveInvokedSkills`
@@ -1277,7 +1279,7 @@ it to `NO_TOOLS_ALLOWED` rather than grant anything.
 | 26 | panel tools → chart echo | `executePanelTool src/services/trade/chatTurnRunner.ts › createChatTurnRunner` is what echoes the result back into the panel |
 | 27 | ~~automation tick → runAutomation~~ | DELETED (2026-10-24, owner request): the surface, the scheduler, the ration, the breaker and the bot-scoped routine executor are gone — see E |
 | 29 | rooms → groupRounds | `useAgentGroups src/hooks/useAgentGroups.ts › useAgentGroups` → `streamQuickResponse src/services/providers/GenericAnalysisService.ts › streamQuickResponse` |
-| 30 | review passes / propose_skill → draft → approval → skill | `draftGates.ts` → `approveSkillDraft src/services/learning/skillApproval.ts › approveSkillDraft` — the post-mortem leg is starved, not deleted (see D) |
+| 30 | review passes / propose_skill → draft → gates → auto-apply → skill | `draftGates.ts` → `approveSkillDraft src/services/learning/skillApproval.ts › approveSkillDraft` — the post-mortem leg is starved, not deleted (see D) |
 | 31 | approved skill → next prompt | `resolveInvokedSkills src/services/learning/SkillMemoryService.ts › resolveInvokedSkills` — closes into 24's stage 3 |
 | 32 | logged trade → memory + autopilot | `useTradeLogging src/hooks/useTradeLogging.ts › useTradeLogging` writes the journal row and the memory note → MemoryService; proposedTrade leaves outcome PENDING so the autopilot watches it |
 | 33 | App messages + dock entries → one thread | `entriesForSession src/services/trade/chatSessions.ts › entriesForSession` |
@@ -1290,7 +1292,7 @@ it to `NO_TOOLS_ALLOWED` rather than grant anything.
 | 40 | reasoning deltas → their own field | the trace rides ON THE ROW: `thoughtProcesses src/types/message.ts › Message` is what the Thinking row draws. The thinking STORE is written when a trade is logged (`useTradeLogging src/hooks/useTradeLogging.ts › useTradeLogging`); `saveThinkingBatch src/services/infrastructure/ThinkingStoreService.ts › saveThinkingBatch` is the RESTORE/migration path (`BackupService`, `SqliteService`), not a per-delta write |
 | 41 | notebook writes → byte tiers | a write asks `notebookPressureAllows src/services/learning/MemoryFilesService.ts › notebookPressureAllows` before the notebook may grow; the tiers come from utils/memoryBudget.ts and Settings Health reads memoryHealth.ts |
 | 42 | heartbeat → hygiene + idle sweep | `useLearningHeartbeat src/hooks/useLearningHeartbeat.ts › useLearningHeartbeat` → `memoryHygiene.ts` → `skillIdleLifecycle.ts` |
-| 43 | approval tray → badge | `collectApprovalItems src/utils/approvalInbox.ts › collectApprovalItems` → `approvalsWaiting src/App.tsx › App` → Learning tab only |
+| 43 | ~~approval tray → badge~~ | DELETED (2026-11-03, owner request): the Approvals tab, its rail count and `collectApprovalItems` are gone; the queues apply themselves |
 | 44 | the pane filters what it shows | `deskThread src/utils/agentThreads.ts › deskThread` read at `AgentsView.tsx` |
 | 45 | `present_trade` → a card in either home | `runPresentTrade src/services/trade/presentTradeTool.ts › runPresentTrade` ← dock sink `chatTurnRunner.ts` / desk sink `chatSurfaceTurn.ts`; gate scan starts there, the cap binds at log time (`ensureStamp src/services/trade/proposalGate.ts › ensureStamp`), and the same stamp answers for the shape of the plan — `assessPlanShape src/services/trade/proposalGate.ts › assessPlanShape` refuses an inverted one and warns on a sub-floor ratio or an out-of-band stop, per ruling (c) of E-57 §5 |
 | 46 | `chatSurfaceSystemPrompt` → the desk arm's prompt | `chatSurfaceSystemPrompt src/services/trade/chatSurfaceTurn.ts › chatSurfaceSystemPrompt` — mandate (`CHAT_SURFACE_SYSTEM_PROMPT src/constants/prompts/chatPrompts.ts › CHAT_SURFACE_SYSTEM_PROMPT`) + skills index + active strategies and uploaded books + memory index, read FRESH per turn; the 30 slugs printed are the 30 recorded on the row (`src/types/message.ts › Message`) |
@@ -1311,7 +1313,7 @@ it to `NO_TOOLS_ALLOWED` rather than grant anything.
 | 61 | autopilot → settlement | `subscribe src/services/ui/OutcomeAutopilotService.ts › OutcomeAutopilotServiceClass` → `settlementActionFor src/utils/outcomeSettlement.ts › settlementActionFor` (automatic · shadow · confirm; 15s undo) |
 | 62 | outcome → skill ledger + pattern memory | `applySkillEvidence src/services/learning/SkillMemoryService.ts › applySkillEvidence` and `calculatePnlR src/services/learning/PatternMemorySynthesisService.ts › calculatePnlR` consume the measured outcome, never a ±1 stand-in |
 | 63 | review → draft | `runSessionSkillReview src/services/learning/sessionSkillReview.ts › runSessionSkillReview` · `runWeeklyReviewIfDue src/services/learning/weeklyReview.ts › runWeeklyReviewIfDue` · `runMonthlyReportIfDue src/services/learning/monthlyReport.ts › runMonthlyReportIfDue` → `queueSkillDraft src/utils/skillDrafts.ts › queueSkillDraft` |
-| 64 | draft → gate → human | `deterministicDraftGate src/services/learning/draftGates.ts › deterministicDraftGate` / `gateEvidenceBackedDraft src/services/learning/draftGates.ts › gateEvidenceBackedDraft` → `approveSkillDraft src/services/learning/skillApproval.ts › approveSkillDraft` |
+| 64 | draft → gates → auto-apply | `deterministicDraftGate src/services/learning/draftGates.ts › deterministicDraftGate` / `gateEvidenceBackedDraft src/services/learning/draftGates.ts › gateEvidenceBackedDraft` → `approveSkillDraft src/services/learning/skillApproval.ts › approveSkillDraft` |
 | 65 | approved skill → notebook → prompt | `approveSkillDraft src/services/learning/skillApproval.ts › approveSkillDraft` writes the file; `resolveInvokedSkills src/services/learning/SkillMemoryService.ts › resolveInvokedSkills` returns the rows the next prompt may name |
 | 66 | heartbeat → hygiene + idle | `useLearningHeartbeat src/hooks/useLearningHeartbeat.ts › useLearningHeartbeat` → `runMemoryHygiene src/services/learning/memoryHygiene.ts › runMemoryHygiene` → `runSkillIdleSweep src/services/learning/skillIdleLifecycle.ts › runSkillIdleSweep` |
 | 67 | failure → failure row | `toFriendlyProviderError src/services/providers/GenericProviderService.ts › errorCauseChain` preserves the cause chain → `Message.error` → `ChatFailureRow`, in both homes |
@@ -1332,8 +1334,9 @@ it to `NO_TOOLS_ALLOWED` rather than grant anything.
 2. There is **no `utils/deskThread.ts`** — `deskThread` is `utils/agentThreads.ts`.
 3. The provider layer speaks **four** wire formats; "three" describes only `electron/sseParser.cjs`,
    which has no `google` dialect.
-4. **Approvals is a tab of Learning**, not a fifth destination. The destination set is exactly
-   `trade | journal | agents | learn`, labelled Analyze, Journal, Agents, Learning.
+4. **There is no Approvals destination.** The destination set is exactly
+   `trade | journal | agents | learn`, labelled Analyze, Journal, Agents, Learning; Learning is
+   Skills → Memory → Health, and the queues that used to wait there apply themselves.
 5. **`NavRail` is deleted.** The layout constants and `AccountRow` live in
    `components/shell/shellChrome.tsx`.
 6. **The Agents desk is never seeded.** A fresh profile opens on the empty state; an agent exists

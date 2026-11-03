@@ -21,6 +21,7 @@
 
 import type { SignalCandle } from './signalResolver';
 import { fetchOHLCV, type Kline } from '../analysis/MarketDataService';
+import { coerceCandles } from '../../utils/candleShape';
 
 const OKX_BASE = 'https://www.okx.com';
 const OKX_TIMEOUT_MS = 8000;
@@ -55,7 +56,14 @@ export const parseOkxCandles = (json: unknown): SignalCandle[] => {
             ...(Number.isFinite(volume) ? { volume } : {}),
         });
     }
-    return out.sort((a, b) => a.time - b.time);
+    // The resolver's tape obeys the shared shape rule (utils/candleShape): a
+    // candle that violates its own OHLC is a broken row, dropped and named —
+    // never a quieter bar the ledger grades on.
+    const { kept, dropped } = coerceCandles(out);
+    if (dropped > 0) {
+        console.warn(`[signalMarketData] dropped ${dropped} incoherent OKX candle(s) (OHLC shape)`);
+    }
+    return kept.sort((a, b) => a.time - b.time);
 };
 
 export type OkxFetched = { ok: true; candles: SignalCandle[] } | { ok: false; error: string };
@@ -85,14 +93,21 @@ export const fetchOkxCandles = async (
     }
 };
 
-const fromKlines = (klines: readonly Kline[]): SignalCandle[] =>
-    klines
+const fromKlines = (klines: readonly Kline[]): SignalCandle[] => {
+    const rows: SignalCandle[] = klines
         .map(k => ({
             time: k.time, open: k.open, high: k.high, low: k.low, close: k.close,
             ...(Number.isFinite(k.volume) ? { volume: k.volume } : {}),
         }))
-        .filter(c => [c.time, c.open, c.high, c.low, c.close].every(Number.isFinite))
-        .sort((a, b) => a.time - b.time);
+        .filter(c => [c.time, c.open, c.high, c.low, c.close].every(Number.isFinite));
+    // The cross-check series obeys the same shape rule as the primary — a
+    // broken row here would fabricate a disagreement.
+    const { kept, dropped } = coerceCandles(rows);
+    if (dropped > 0) {
+        console.warn(`[signalMarketData] dropped ${dropped} incoherent Binance candle(s) (OHLC shape)`);
+    }
+    return kept.sort((a, b) => a.time - b.time);
+};
 
 /** Binance is the cross-check, never the silent primary. Throws are an
  *  unavailable check, not a disagreement. */

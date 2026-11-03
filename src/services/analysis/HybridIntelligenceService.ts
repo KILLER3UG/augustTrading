@@ -1048,6 +1048,12 @@ export const generateHybridPromptInjection = (data: HybridDataPacket, options?: 
         `Aligned: ${data.confluence.alignment.slice(0, 4).join('; ') || 'none'}`,
         `Conflicts: ${data.confluence.conflicts.slice(0, 2).join('; ') || 'none'}`,
         `### Indicators (code-calculated)`,
+        // Forming-candle disclosure (F4 audit 2026-11-03): each TF's series
+        // INCLUDES its forming candle, so every row below is an as-of-now
+        // read — the same numbers the chart paints — never a closed-bar
+        // restatement. Say so; an undisclosed partial bar is how a read gets
+        // mistaken for settled structure.
+        `_Per-TF values include each timeframe's forming candle as of this packet — as-of-now reads, not closed-bar restatement._`,
         mdTable(
             ['TF', 'Price', 'RSI14', 'RSI', 'MACD hist', 'MACD', 'EMA20', 'EMA50', 'EMA200', 'ATR', 'Trend'],
             tfs.map(tf => indicatorRow(tf, data.indicators[tf]))

@@ -82,6 +82,14 @@ export interface ClusterEvidence {
     evidence: DiagnosisSkillEvidence[];
     /** The windows that survived the independence rule, oldest first. */
     windows: TrackedOutcomeWindow[];
+    /** Diagnoses on the SAME setup that propose a DIFFERENT kind of
+     *  correction. Agreement is only evidence while it is unanimous: one side
+     *  of a live disagreement must not become doctrine (E6, the deterioration
+     *  guard). */
+    dissentCount: number;
+    /** Set when the newest dissent is NEWER than the newest agreeing outcome:
+     *  the cluster mints nothing until the disagreement resolves one way. */
+    blockedReason?: string;
 }
 
 export const collectClusterEvidence = (
@@ -94,14 +102,17 @@ export const collectClusterEvidence = (
     const key = clusterKeyFor(currentPosition, currentDiagnosis);
     const byId = new Map(positions.map(position => [position.id, position]));
     const candidates: Array<{ diagnosis: TrackedDiagnosis; position: TrackedPosition }> = [];
+    const dissent: TrackedDiagnosis[] = [];
     for (const diagnosis of diagnoses) {
         if (diagnosis.refusal || diagnosis.tentative) continue;
         if (diagnosis.outcome !== 'win' && diagnosis.outcome !== 'loss') continue;
-        if (diagnosis.primaryChange !== currentDiagnosis.primaryChange) continue;
         const position = byId.get(diagnosis.tradeId);
         if (!position || position.status === 'cancelled') continue;
         if (setupKeyOf(position) !== setupKeyOf(currentPosition)) continue;
-        if (clusterKeyFor(position, diagnosis) !== key) continue;
+        if (clusterKeyFor(position, diagnosis) !== key) {
+            dissent.push(diagnosis);
+            continue;
+        }
         candidates.push({ diagnosis, position });
     }
     const windows = candidates
@@ -113,11 +124,20 @@ export const collectClusterEvidence = (
         .filter(candidate => independentIds.has(candidate.position.id))
         .map(candidate => evidenceFrom(candidate.diagnosis, candidate.position, regime))
         .filter((item): item is DiagnosisSkillEvidence => item !== null);
+    const newestAgree = candidates.reduce((latest, c) =>
+        Math.max(latest, Date.parse(c.diagnosis.createdAt) || 0), 0);
+    const newestDissent = dissent.reduce((latest, d) =>
+        Math.max(latest, Date.parse(d.createdAt) || 0), 0);
+    const contested = dissent.length > 0 && newestDissent > newestAgree;
     return {
-        ready: evidence.length >= MIN_INDEPENDENT_SKILL_OUTCOMES,
+        ready: evidence.length >= MIN_INDEPENDENT_SKILL_OUTCOMES && !contested,
         independentCount: evidence.length,
         evidence,
         windows: independent,
+        dissentCount: dissent.length,
+        ...(contested ? {
+            blockedReason: `a newer diagnosis on this setup proposes a different correction (${dissent[dissent.length - 1]?.primaryChange ?? 'other'} vs ${currentDiagnosis.primaryChange}) — the disagreement has to resolve before three outcomes can become a skill`,
+        } : {}),
     };
 };
 
@@ -148,5 +168,46 @@ export const buildTentativeCraft = (
         reason: `Root cause: ${diagnosis.rootCause.trim()} What happened: ${diagnosis.whatHappened.trim()}`.slice(0, 600),
         source: 'post-mortem',
         prediction: defaultPrediction({ coin, ...(family ? { family } : {}), ...(regime ? { regime } : {}) }),
+    };
+};
+
+// ─── E7: the forward-fed diagnosis ──────────────────────────────────────────
+
+export interface DiagnosisBrief {
+    outcome: TrackedDiagnosis['outcome'];
+    primaryChange: string;
+    /** The lesson and trigger, clipped — a receipt line, not the full note. */
+    lesson: string;
+    when: string;
+    at: string;
+}
+
+const clip = (text: string, max: number): string => {
+    const trimmed = text.trim().replace(/\s+/g, ' ');
+    return trimmed.length > max ? `${trimmed.slice(0, max - 1)}…` : trimmed;
+};
+
+/** The most recent stored diagnosis for one instrument, in receipt form.
+ *  Refusals carry no lesson and are skipped — a "no lesson" is not a lesson.
+ *  The caller frames it as REFERENCE ONLY: adopt, improve, or reject. */
+export const latestDiagnosisBrief = (
+    diagnoses: readonly TrackedDiagnosis[],
+    positions: readonly TrackedPosition[],
+    symbol: string,
+): DiagnosisBrief | null => {
+    const sym = symbol.trim().toUpperCase();
+    if (!sym) return null;
+    const byId = new Map(positions.map(position => [position.id, position]));
+    const mine = diagnoses
+        .filter(d => !d.refusal && byId.get(d.tradeId)?.symbol.toUpperCase() === sym)
+        .sort((a, b) => (Date.parse(b.createdAt) || 0) - (Date.parse(a.createdAt) || 0));
+    const latest = mine[0];
+    if (!latest) return null;
+    return {
+        outcome: latest.outcome,
+        primaryChange: latest.primaryChange,
+        lesson: clip(latest.lesson, 160),
+        when: clip(latest.when, 100),
+        at: latest.createdAt,
     };
 };

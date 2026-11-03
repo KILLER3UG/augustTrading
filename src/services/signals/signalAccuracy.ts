@@ -29,6 +29,19 @@ import { resolveSignal, SIGNAL_BAR_MS, type SignalCandle } from './signalResolve
  *  pure noise at this hit-rate range (0.5 ± ~0.22 at 1σ). */
 export const MIN_ACCURACY_FILLS = 20;
 
+/** The 95% Wilson score interval on a binomial proportion. Chosen over the
+ *  naive ±1.96·√(p(1−p)/n) because it stays inside [0,1] at small n — exactly
+ *  the regime this ledger lives in. */
+export const wilsonInterval95 = (wins: number, n: number): { low: number; high: number } | null => {
+    if (!(n > 0) || !(wins >= 0) || wins > n) return null;
+    const z = 1.959963984540054;
+    const p = wins / n;
+    const denom = 1 + (z * z) / n;
+    const center = (p + (z * z) / (2 * n)) / denom;
+    const half = (z * Math.sqrt((p * (1 - p)) / n + (z * z) / (4 * n * n))) / denom;
+    return { low: Math.max(0, center - half), high: Math.min(1, center + half) };
+};
+
 export interface SignalScorecard {
     fills: number;
     thin: boolean;
@@ -38,6 +51,13 @@ export interface SignalScorecard {
     lift: number | null;
     expectancyR: number | null;
     ambiguityRate: number | null;
+    /** Mean winning outcomeR over |mean losing outcomeR| — how big the wins
+     *  are relative to the losses. Null unless BOTH sides have fills; a
+     *  one-sided sample has no slugging, not an infinite one. */
+    slugging: number | null;
+    /** 95% Wilson interval on hitRate. Null when nothing has filled. A wide
+     *  interval IS the honest display at small samples. */
+    hitCi: { low: number; high: number } | null;
 }
 
 /**
@@ -95,9 +115,8 @@ const mean = (xs: readonly number[]): number | null =>
 /** The same fill definition the feed uses: won / (won + lost + expired). */
 export const scoreSignals = (rows: readonly SignalRow[]): SignalScorecard => {
     const fills = rows.filter(r => r.status === 'won' || r.status === 'lost' || r.status === 'expired');
-    const hitRate = fills.length > 0
-        ? fills.filter(r => r.status === 'won').length / fills.length
-        : null;
+    const wins = fills.filter(r => r.status === 'won');
+    const hitRate = fills.length > 0 ? wins.length / fills.length : null;
     const bases = fills
         .map(r => r.resolution?.base?.hitRate)
         .filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
@@ -106,6 +125,20 @@ export const scoreSignals = (rows: readonly SignalRow[]): SignalScorecard => {
         .map(r => r.resolution?.outcomeR)
         .filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
     const ambiguous = fills.filter(r => r.resolution?.ambiguous).length;
+    // Slugging reads NET outcomeR, so it answers "do the wins pay for the
+    // losses AND the costs" — the question the trader actually asks.
+    const winRs = wins
+        .map(r => r.resolution?.outcomeR)
+        .filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
+    const lossRs = fills
+        .filter(r => r.status === 'lost')
+        .map(r => r.resolution?.outcomeR)
+        .filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
+    const meanWinR = mean(winRs);
+    const meanLossR = mean(lossRs);
+    const slugging = meanWinR !== null && meanLossR !== null && meanLossR < 0
+        ? meanWinR / Math.abs(meanLossR)
+        : null;
     return {
         fills: fills.length,
         thin: fills.length < MIN_ACCURACY_FILLS,
@@ -114,5 +147,7 @@ export const scoreSignals = (rows: readonly SignalRow[]): SignalScorecard => {
         lift: hitRate !== null && baseRate !== null ? hitRate - baseRate : null,
         expectancyR: mean(rs),
         ambiguityRate: fills.length > 0 ? ambiguous / fills.length : null,
+        slugging,
+        hitCi: hitRate !== null ? wilsonInterval95(wins.length, fills.length) : null,
     };
 };

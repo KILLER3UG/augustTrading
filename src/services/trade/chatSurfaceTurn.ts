@@ -504,8 +504,10 @@ export const runChatSurfaceTurn = async (req: ChatSurfaceTurnRequest): Promise<T
     // A cut-off answer is said out loud, on the row it belongs to, BEFORE the
     // "nothing looked up" notice: that notice is about the TOOLS, this one is
     // about the ANSWER being incomplete, and a trader reading the row must not
-    // mistake a truncated analysis for a complete one.
-    const cutOff = truncationNotice(summary);
+    // mistake a truncated analysis for a complete one. A RECOVERED run is
+    // exempt: the loop repaired the ceiling-hit (re-ask or continuation) and
+    // returned a whole answer, so warning about it would be noise.
+    const cutOff = out.recoveredFromTruncation ? '' : truncationNotice(summary);
     if (cutOff) {
         return {
             ...out,

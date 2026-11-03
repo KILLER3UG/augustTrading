@@ -91,8 +91,8 @@ container and it resolves against the nearest positioned ancestor and inflates t
 - [ ] **A label names the function, never a capability the app lacks.** The four surfaces are
       Analyze · Journal · Agents · Learning for exactly this reason ("Trade does not trade").
 - [ ] A surface's information architecture follows the thing it models. Learning is
-      Approvals → Skills → Memory → Health because that is the loop's own order: what it's deciding,
-      where it lives, whether it's sound, your call.
+      Skills → Memory → Health because that is the loop's own order: where it lives, whether it's
+      sound, and your call — with the decisions themselves applying automatically.
 - [ ] One home per concern. If a component appears in two surfaces, one of them mounts the other's
       component — nobody reimplements a table.
 - [ ] No dead-end state. A surface with nothing selected says something true and offers the next

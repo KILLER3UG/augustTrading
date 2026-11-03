@@ -18,15 +18,41 @@
  */
 
 import { Kline } from '../../types';
+import { coerceCandles } from '../../utils/candleShape';
 
 // --- Short-TTL cache + in-flight coalescing ---
-// Chart mounts/polls re-race up to 4 proxy sources per fetch; a 30s TTL and
+// Chart mounts/polls re-race up to 4 proxy sources per fetch; a short TTL and
 // shared promise dedupe concurrent identical requests (mirrors
-// MarketDataService's pattern).
-const klineCache = new Map<string, { at: number; data: Kline[] }>();
+// MarketDataService's pattern). The TTL is CANDLE-ALIGNED, not wall-clock:
+// a closed bar never changes, so a series fetched mid-bar stays valid until
+// THAT bar closes — the only volatile row is the forming one, and it stops
+// being servable the moment its close prints.
+const klineCache = new Map<string, { at: number; ttl: number; data: Kline[] }>();
 const klineInFlight = new Map<string, Promise<Kline[]>>();
 const KLINE_CACHE_TTL_MS = 30_000;
+/** The ceiling of a candle-aligned TTL: even a 1h series is re-read at most
+ *  this often, so a symbol left on screen cannot pin a mid-hour snapshot. */
+const KLINE_CACHE_MAX_TTL_MS = 300_000;
 const KLINE_CACHE_MAX = 200;
+
+/** Candle-aligned freshness (ms) for one interval at `now`: the time left
+ *  before the CURRENT bar of that interval closes. 5m/15m/1h align to their
+ *  boundary (capped at KLINE_CACHE_MAX_TTL_MS); slower or unknown intervals
+ *  keep the flat wall-clock bound, which is strictly no worse than the old
+ *  fixed 30s. The 5s floor stops a read in a bar's last seconds from pinning
+ *  a bar that is about to print its close. */
+export const candleAlignedTtlMs = (interval: string, now: number): number => {
+    const span = INTERVAL_MS[interval];
+    if (!span || span > 60 * 60_000) return KLINE_CACHE_TTL_MS;
+    const remaining = span - (now % span);
+    return Math.max(5_000, Math.min(remaining, KLINE_CACHE_MAX_TTL_MS));
+};
+
+const INTERVAL_MS: Record<string, number> = {
+    '5m': 5 * 60_000,
+    '15m': 15 * 60_000,
+    '1h': 60 * 60_000,
+};
 
 /** Expired sweep + insertion-ordered eviction on WRITE. The map used to grow
  *  without bound (one entry per symbol × interval × limit, each up to 1000
@@ -35,7 +61,7 @@ const KLINE_CACHE_MAX = 200;
 const trimKlineCache = (): void => {
     const now = Date.now();
     for (const [key, entry] of klineCache) {
-        if (now - entry.at >= KLINE_CACHE_TTL_MS) klineCache.delete(key);
+        if (now - entry.at >= entry.ttl) klineCache.delete(key);
     }
     while (klineCache.size > KLINE_CACHE_MAX) {
         const oldest = klineCache.keys().next().value;
@@ -134,8 +160,16 @@ const fetchKlinesFromSources = async (
     const attempts = sources.map(async (source) => {
         const data = await fetchJson(source);
         const klines = parse(data);
-        if (klines.length === 0) throw new Error('empty payload');
-        return klines;
+        // Shape gate (utils/candleShape): a candle that violates its own OHLC
+        // is a broken row, not a quiet market. Drop it NAMED, and treat an
+        // all-incoherent payload as a failed source so the race tries the
+        // next mirror — an empty market must never masquerade as data.
+        const { kept, dropped } = coerceCandles(klines);
+        if (dropped > 0) {
+            console.warn(`[KlineService] ${label}: dropped ${dropped} incoherent candle(s) (OHLC shape)`);
+        }
+        if (kept.length === 0) throw new Error('no usable candles in payload');
+        return kept;
     });
 
     try {
@@ -212,7 +246,7 @@ export const fetchKlines = async (
 
     const freshEntry = (key: string): Kline[] | null => {
         const cached = klineCache.get(key);
-        return cached && Date.now() - cached.at < KLINE_CACHE_TTL_MS ? cached.data : null;
+        return cached && Date.now() - cached.at < cached.ttl ? cached.data : null;
     };
 
     if (!opts?.noCache) {
@@ -236,7 +270,7 @@ export const fetchKlines = async (
                 `${symbol} ${interval} (futures)`,
             );
             if (data.length > 0) {
-                klineCache.set(futuresKey, { at: Date.now(), data });
+                klineCache.set(futuresKey, { at: Date.now(), ttl: candleAlignedTtlMs(interval, Date.now()), data });
                 trimKlineCache();
                 return data;
             }
@@ -250,7 +284,7 @@ export const fetchKlines = async (
             );
             // The degraded market gets its OWN key — a later native success
             // must never be served from (or serve) this entry.
-            klineCache.set(spotData.length > 0 ? spotKey : failedKey, { at: Date.now(), data: spotData });
+            klineCache.set(spotData.length > 0 ? spotKey : failedKey, { at: Date.now(), ttl: candleAlignedTtlMs(interval, Date.now()), data: spotData });
             trimKlineCache();
             return spotData;
         } finally {

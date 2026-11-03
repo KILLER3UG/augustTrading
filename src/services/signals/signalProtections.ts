@@ -14,6 +14,10 @@
  *  2. Drawdown breaker — the last W settled calls sum to at most −X R.
  *  3. Low-profit retirement — a full window that still sums to ≤ 0 R: the
  *     setup family is not paying for its own costs.
+ *  4. Family cooldown — the SAME instrument and direction keeps stopping out
+ *     while the rest of the book is fine. The global rules average across
+ *     coins, so one refuted setup could dig forever under a healthy book;
+ *     this one refuses that coin+direction until the window cools.
  *
  * `never_triggered` fills are not losses and are excluded (outcomeR is 0 by
  * the resolver's own definition). A blocked emission does NOT write a signal:
@@ -40,6 +44,9 @@ export interface ProtectionConfig {
     maxDrawdownR: number;
     /** Fills needed before the low-profit rule may fire. */
     minSample: number;
+    /** Same coin+direction stopouts that trip the family cooldown. */
+    familyLosses: number;
+    familyCooldownMs: number;
 }
 
 export const SIGNAL_PROTECTIONS: ProtectionConfig = {
@@ -48,11 +55,13 @@ export const SIGNAL_PROTECTIONS: ProtectionConfig = {
     cooldownMs: 6 * 60 * 60_000,
     maxDrawdownR: -6,
     minSample: 8,
+    familyLosses: 3,
+    familyCooldownMs: 12 * 60 * 60_000,
 };
 
 export interface ProtectionVerdict {
     blocked: boolean;
-    rule?: 'cooldown' | 'drawdown' | 'low-profit';
+    rule?: 'cooldown' | 'family-cooldown' | 'drawdown' | 'low-profit';
     reason?: string;
     /** How many settled calls the rule read. */
     sample: number;
@@ -82,6 +91,20 @@ export const signalProtectionVerdict = (
             ...base, blocked: true, rule: 'cooldown',
             reason: `cooling down: the last ${cfg.cooldownLosses} settled calls lost (${r1(tail.reduce((s, h) => s + (h.outcomeR as number), 0))}R); no new signal for ${Math.ceil((cfg.cooldownMs - (now - newest)) / 60_000)} more minutes`,
         };
+    }
+    // Family cooldown (rule 4): stopouts on THIS coin+direction, counted over
+    // the settled window regardless of what the rest of the book did. A
+    // stopout is any fill at or beyond −1R (a gap can make it worse).
+    const mine = settled.filter(h => h.coin === candidate.coin && h.direction === candidate.direction);
+    const mineTail = mine.slice(-cfg.familyLosses);
+    if (mineTail.length === cfg.familyLosses && mineTail.every(h => (h.outcomeR as number) <= -1)) {
+        const mineNewest = mineTail[mineTail.length - 1].settledAt as number;
+        if (now - mineNewest < cfg.familyCooldownMs) {
+            return {
+                ...base, blocked: true, rule: 'family-cooldown',
+                reason: `${candidate.coin} ${candidate.direction} is cooling down: its last ${cfg.familyLosses} settled calls all stopped out (${r1(mineTail.reduce((s, h) => s + (h.outcomeR as number), 0))}R); no new call on this family for ${Math.ceil((cfg.familyCooldownMs - (now - mineNewest)) / 60_000)} more minutes`,
+            };
+        }
     }
     if (settled.length >= cfg.minSample && windowR <= cfg.maxDrawdownR) {
         return {

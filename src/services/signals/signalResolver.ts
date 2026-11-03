@@ -10,6 +10,14 @@
  *     inside it; if the 1m series is unavailable or a single 1m bar contains
  *     both levels too, the order is unknowable and the result is STOP-FIRST
  *     with `ambiguous: true` — conservative by construction, and counted.
+ *  2b. GAP RULE: after the position exists, a bar that OPENED beyond the stop
+ *     fills at the open, never at the stop price — the stop was already
+ *     breached at the bar's first tick, so a fill "at the stop" is a price the
+ *     tape never printed. A long that gaps below its stop loses MORE than 1R,
+ *     and the ledger says so (`gapAdjusted: true`). The trigger bar itself is
+ *     exempt: entry limit and stop fire around the same tick and the
+ *     birth-tick microstructure is genuinely unknowable, so the pre-existing
+ *     stop-first-at-the-stop convention covers it.
  *  3. If neither level is touched by expiry, the position is marked to the last
  *     closed bar's close and the result is `expired` with a signed R.
  *  4. If `entry` is never touched, the result is `never_triggered` and costs
@@ -114,6 +122,30 @@ const drillFor = (bar: SignalCandle, drill: readonly SignalCandle[]): SignalCand
     return inside;
 };
 
+/** The fill price and signed R of a stop-side exit on `bar`.
+ *
+ *  Header 2b, the gap rule: when `applyGap`, a bar that OPENED beyond the stop
+ *  fills at the open — the stop was already breached at the bar's first tick,
+ *  so the stop price is a print the tape never made. Without the gap (or with
+ *  `applyGap` false, the trigger bar's birth-tick convention) the fill is the
+ *  stop price and the loss is exactly 1R before costs. */
+const stopExit = (
+    bar: SignalCandle,
+    direction: SignalDirection,
+    levels: SignalLevels,
+    risk: number,
+    applyGap: boolean,
+): { gap: boolean; exitPrice: number; grossR: number } => {
+    const gap = applyGap && (direction === 'long'
+        ? bar.open < levels.stop
+        : bar.open > levels.stop);
+    const exitPrice = gap ? bar.open : levels.stop;
+    const grossR = (direction === 'long'
+        ? exitPrice - levels.entry
+        : levels.entry - exitPrice) / risk;
+    return { gap, exitPrice, grossR };
+};
+
 export interface ResolutionDraft {
     status: Exclude<SignalStatus, 'open'>;
     grossR: number;
@@ -125,6 +157,14 @@ export interface ResolutionDraft {
     triggeredAt?: number;
     exitAt?: number;
     exitPrice?: number;
+    /** The exit bar OPENED beyond the stop, so the fill is the open (header
+     *  2b). The loss exceeds 1R by the gap; absent on a stop-price fill. */
+    gapAdjusted?: boolean;
+    /** Signed R from the trigger bar's open to the assumed entry fill — the
+     *  fill-realism measure (see the header's cost note). */
+    entryOpenR?: number;
+    /** The same measure on the exit bar. Absent on `never_triggered`. */
+    exitOpenR?: number;
 }
 
 export type SignalBracket = Pick<SignalRecord, 'direction' | 'entry' | 'stop' | 'target' | 'emittedAt' | 'expiresAt'>;
@@ -172,6 +212,13 @@ export const resolveSignal = (
     }
 
     const trigger = bars[triggerIndex];
+    // Fill-realism measurement (N4): how far the trigger bar's OPEN sat from
+    // the assumed entry fill. The resolver assumes a limit fill AT the level;
+    // this number is what a real fill at the bar's open would have been, in
+    // signed R. Measured once, carried on every filled outcome.
+    const entryOpenR = (signal.direction === 'long'
+        ? trigger.open - signal.entry
+        : signal.entry - trigger.open) / risk;
     for (let i = triggerIndex; i < bars.length; i++) {
         const bar = bars[i];
         const side = sideOf(bar, signal.direction, levels);
@@ -180,20 +227,55 @@ export const resolveSignal = (
 
         if (side !== 'both') {
             const win = side === 'target';
-            const exitPrice = win ? signal.target : signal.stop;
-            const grossR = win ? Math.abs(signal.target - signal.entry) / risk : -1;
+            // Header 2b: the gap rule applies only AFTER the position exists —
+            // the trigger bar keeps the stop-price birth-tick convention.
+            const se = win
+                ? { gap: false, exitPrice: signal.target, grossR: Math.abs(signal.target - signal.entry) / risk }
+                : stopExit(bar, signal.direction, levels, risk, i > triggerIndex);
             return {
                 status: win ? 'won' : 'lost',
-                grossR,
+                grossR: se.grossR,
                 feeR,
-                outcomeR: grossR - feeR,
+                outcomeR: se.grossR - feeR,
                 usedBarTimes,
                 path: 'bar',
                 ambiguous: false,
                 triggeredAt: trigger.time,
                 exitAt: bar.time,
-                exitPrice,
+                exitPrice: se.exitPrice,
+                entryOpenR,
+                exitOpenR: (signal.direction === 'long'
+                    ? bar.open - signal.entry
+                    : signal.entry - bar.open) / risk,
+                ...(se.gap ? { gapAdjusted: true } : {}),
             };
+        }
+
+        // A post-trigger bar that OPENED beyond the stop ordered itself at its
+        // first tick: the stop fired before anything later in this bar could
+        // happen. Drill or not, that is a deterministic stop at the gap open —
+        // never an ambiguity (header 2b).
+        if (i > triggerIndex) {
+            const se = stopExit(bar, signal.direction, levels, risk, true);
+            if (se.gap) {
+                return {
+                    status: 'lost',
+                    grossR: se.grossR,
+                    feeR,
+                    outcomeR: se.grossR - feeR,
+                    usedBarTimes,
+                    path: 'bar',
+                    ambiguous: false,
+                    triggeredAt: trigger.time,
+                    exitAt: bar.time,
+                    exitPrice: se.exitPrice,
+                    entryOpenR,
+                    exitOpenR: (signal.direction === 'long'
+                        ? bar.open - signal.entry
+                        : signal.entry - bar.open) / risk,
+                    gapAdjusted: true,
+                };
+            }
         }
 
         // Both levels inside one coarse bar: try to order them on 1m data.
@@ -203,6 +285,26 @@ export const resolveSignal = (
         if (minutes) {
             path = '1m';
             for (const m of minutes) {
+                // The gap rule at minute granularity (post-trigger bars): a
+                // minute that opened beyond the stop fired there first.
+                if (i > triggerIndex) {
+                    const mse = stopExit(m, signal.direction, levels, risk, true);
+                    if (mse.gap) {
+                        return {
+                            status: 'lost',
+                            grossR: mse.grossR,
+                            feeR,
+                            outcomeR: mse.grossR - feeR,
+                            usedBarTimes,
+                            path,
+                            ambiguous: false,
+                            triggeredAt: trigger.time,
+                            exitAt: bar.time,
+                            exitPrice: mse.exitPrice,
+                            gapAdjusted: true,
+                        };
+                    }
+                }
                 const mSide = sideOf(m, signal.direction, levels);
                 if (mSide === 'none' || mSide === 'both') {
                     if (mSide === 'both') break; // still unknowable, stop-first
@@ -222,6 +324,10 @@ export const resolveSignal = (
                     triggeredAt: trigger.time,
                     exitAt: bar.time,
                     exitPrice,
+                    entryOpenR,
+                    exitOpenR: (signal.direction === 'long'
+                        ? m.open - signal.entry
+                        : signal.entry - m.open) / risk,
                 };
             }
         }
@@ -236,6 +342,10 @@ export const resolveSignal = (
             triggeredAt: trigger.time,
             exitAt: bar.time,
             exitPrice: signal.stop,
+            entryOpenR,
+            exitOpenR: (signal.direction === 'long'
+                ? bar.open - signal.entry
+                : signal.entry - bar.open) / risk,
         };
     }
 
@@ -257,6 +367,10 @@ export const resolveSignal = (
         triggeredAt: trigger.time,
         exitAt: last.time,
         exitPrice: last.close,
+        entryOpenR,
+        exitOpenR: (signal.direction === 'long'
+            ? last.open - signal.entry
+            : signal.entry - last.open) / risk,
     };
 };
 

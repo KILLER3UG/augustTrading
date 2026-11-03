@@ -3,10 +3,14 @@
  *
  * It lives beside the content, runs the full height of the window and owns
  * every route that is not a conversation: the Analyze ⇄ Agents mode switch,
- * New chat, Approvals, Search, the workspace's conversations, Journal,
- * Learning, Customize and the account. The old top-bar tab strip is gone, so
- * the rail is the only place navigation is repeated; the collapsed fallback
- * still rides the content bar (see `shared/Header` and `AgentsView`).
+ * New chat, Search, the WORKSPACES (one per profile — the active one expanded
+ * over its conversations, the rest a click to switch), the Add-workspace row,
+ * Journal, Learning, Skills and the account. The old top-bar tab strip is
+ * gone, so the rail is the only place navigation is repeated; the collapsed
+ * fallback still rides the content bar (see `shared/Header` and `AgentsView`).
+ *
+ * The Approvals row died with the Approvals tab (2026-11-03): its queues
+ * apply themselves, so a row with nothing behind it was the O-80 lie.
  *
  * The Agents surface keeps its own richer middle (agents, rooms, goals) but
  * renders the same mode switch at the top and the same utility group above the
@@ -15,7 +19,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
     ActivityIcon, BookOpen, ChevronDownIcon, FolderIcon, GraduationCap,
-    Inbox, LayersIcon, MessageSquareIcon, PanelLeftClose, Plus, Search,
+    LayersIcon, MessageSquareIcon, PanelLeftClose, Plus, Search,
 } from '../shared/Icons';
 import { AccountRow } from './shellChrome';
 import type { AppSurface } from '../../hooks/useSurface';
@@ -77,14 +81,16 @@ export const ShellModeSwitch: React.FC<{
 );
 
 /** Journal and Learning are the records half of the workspace: quiet rows at
- *  the foot of the rail, where the reference puts Sites. Customize rides with
- *  them so the Learning surface's Skills tab keeps its one direct route. */
+ *  the foot of the rail, where the reference puts Sites. The Skills row is the
+ *  Learning surface's Skills tab direct route — named for WHERE it lands
+ *  (owner, 2026-11-03: a row labelled "Customize" that renders Learning →
+ *  Skills promised a render it does not have; the label names the destination). */
 export const ShellUtility: React.FC<{
     surface: AppSurface;
     onSelect: (surface: AppSurface) => void;
-    onOpenCustomize?: () => void;
+    onOpenSkills?: () => void;
     badges?: Partial<Record<AppSurface, NavBadge>>;
-}> = ({ surface, onSelect, onOpenCustomize, badges }) => {
+}> = ({ surface, onSelect, onOpenSkills, badges }) => {
     const items = [
         { id: 'journal' as const, label: 'Journal', shortcut: 'Alt+2', Icon: BookOpen },
         { id: 'learn' as const, label: 'Learning', shortcut: 'Alt+5', Icon: GraduationCap },
@@ -120,17 +126,17 @@ export const ShellUtility: React.FC<{
                     </button>
                 );
             })}
-            {onOpenCustomize && (
+            {onOpenSkills && (
                 <button
                     type="button"
-                    onClick={onOpenCustomize}
-                    aria-label="Customize, shortcut Alt+3"
-                    title="Customize · Alt+3"
+                    onClick={onOpenSkills}
+                    aria-label="Skills, shortcut Alt+3"
+                    title="Skills · Alt+3"
                     data-testid="nav-customize"
                     className={rowClass(false)}
                 >
                     <LayersIcon className="h-4 w-4 shrink-0 text-zinc-500" aria-hidden="true" />
-                    <span className="flex-1 truncate">Customize</span>
+                    <span className="flex-1 truncate">Skills</span>
                 </button>
             )}
         </nav>
@@ -155,15 +161,20 @@ interface ShellRailProps {
     surface: AppSurface;
     onSelectSurface: (surface: AppSurface) => void;
     onNewChat: () => void;
-    onOpenApprovals: () => void;
-    approvalsCount: number;
     onOpenSearch: () => void;
+    /** Every profile, rendered as a workspace. The ACTIVE one expands over
+     *  its conversations; the rest are a click to switch. */
+    workspaces: Array<{ name: string; active: boolean }>;
+    onSwitchWorkspace: (name: string) => void;
+    /** Opens the profile modal — the ONE creator, reused, so the rail never
+     *  grows a second creation form. */
+    onAddWorkspace: () => void;
     conversations: Conversation[];
     activeConversationId: string | null;
     onOpenConversation: (id: string) => void;
     onDeleteConversation: (id: string) => void;
     onClearConversation: (id: string) => void;
-    onOpenCustomize: () => void;
+    onOpenSkills: () => void;
     activeUsername: string | null;
     onOpenSettings: () => void;
     /** The dragged width, shared with the Agents mode's column. */
@@ -182,10 +193,25 @@ interface ShellRailProps {
 const conversationTitle = (conversation: Conversation): string =>
     conversation.title?.trim() || 'New chat';
 
+/** The reference's right-aligned age column: `now`, `5m`, `3h`, `48d`. A
+ *  conversation row is a thing you half-remember, and "when" is the half that
+ *  tells two similar titles apart. Days for anything older than a day — the
+ *  reference never prints hours beside a date. */
+const ageLabel = (timestamp: number): string => {
+    const ms = Date.now() - (Number.isFinite(timestamp) ? timestamp : Date.now());
+    if (ms < 60_000) return 'now';
+    const minutes = Math.floor(ms / 60_000);
+    if (minutes < 60) return `${minutes}m`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours}h`;
+    return `${Math.floor(hours / 24)}d`;
+};
+
 const ShellRail: React.FC<ShellRailProps> = ({
-    surface, onSelectSurface, onNewChat, onOpenApprovals, approvalsCount,
-    onOpenSearch, conversations, activeConversationId, onOpenConversation,
-    onDeleteConversation, onClearConversation, onOpenCustomize,
+    surface, onSelectSurface, onNewChat,
+    onOpenSearch, workspaces, onSwitchWorkspace, onAddWorkspace,
+    conversations, activeConversationId, onOpenConversation,
+    onDeleteConversation, onClearConversation, onOpenSkills,
     activeUsername, onOpenSettings,
     width, isResizing, onResizeStart, onResizeReset, onCollapse,
     overlay = false, onCloseOverlay,
@@ -263,25 +289,6 @@ const ShellRail: React.FC<ShellRailProps> = ({
                 </button>
                 <button
                     type="button"
-                    data-testid="shell-approvals"
-                    aria-label={approvalsCount > 0 ? `Approvals, ${approvalsCount} waiting` : 'Approvals'}
-                    title={approvalsCount > 0 ? `Approvals — ${approvalsCount} waiting` : 'Approvals'}
-                    onClick={onOpenApprovals}
-                    className={rowClass(false)}
-                >
-                    <Inbox className="h-4 w-4 shrink-0 text-zinc-500" aria-hidden="true" />
-                    <span className="flex-1 truncate">Approvals</span>
-                    {approvalsCount > 0 && (
-                        <span
-                            aria-hidden="true"
-                            className="flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-500/15 px-1 font-mono text-ui-2xs font-semibold text-amber-400"
-                        >
-                            {approvalsCount > 9 ? '9+' : approvalsCount}
-                        </span>
-                    )}
-                </button>
-                <button
-                    type="button"
                     data-testid="shell-search"
                     aria-label="Search conversations"
                     title="Search conversations"
@@ -293,96 +300,137 @@ const ShellRail: React.FC<ShellRailProps> = ({
                 </button>
             </div>
 
-            <div className="mt-3 px-2.5 text-ui-2xs font-semibold uppercase tracking-[0.14em] text-zinc-600">
-                Workspaces
-            </div>
-            <div className="mt-0.5">
-                <button
-                    type="button"
-                    onClick={() => setWorkspaceOpen(open => !open)}
-                    aria-expanded={workspaceOpen}
-                    aria-controls="shell-workspace-threads"
-                    title={workspaceOpen ? 'Collapse August Trading' : 'Expand August Trading'}
-                    className="flex w-full items-center gap-2 rounded-control px-2.5 py-2 text-left text-ui-caption text-zinc-300 transition-colors hover:bg-white/[0.04] hover:text-zinc-100"
-                >
-                    <FolderIcon className="h-4 w-4 shrink-0 text-zinc-500" aria-hidden="true" />
-                    <span className="flex-1 truncate">August Trading</span>
-                    <ChevronDownIcon className={`h-3 w-3 shrink-0 text-zinc-600 transition-transform duration-150 ${workspaceOpen ? '' : '-rotate-90'}`} aria-hidden="true" />
-                </button>
-            </div>
-
             <div
-                id="shell-workspace-threads"
-                className="min-h-0 flex-1 overflow-y-auto custom-scrollbar"
+                className="mt-3 min-h-0 flex-1 overflow-y-auto custom-scrollbar"
                 data-testid="shell-conversations"
             >
-                {workspaceOpen && (rows.length === 0 ? (
-                    <p className="px-2.5 py-3 text-ui-xs leading-relaxed text-zinc-600">
-                        No conversations yet. Everything you ask the desk lands here.
-                    </p>
-                ) : rows.map(conversation => {
-                    const selected = conversation.id === activeConversationId;
-                    const title = conversationTitle(conversation);
+                <div className="px-2.5 pb-1 text-ui-2xs font-semibold uppercase tracking-[0.14em] text-zinc-600">
+                    Workspaces
+                </div>
+                {workspaces.map(ws => {
+                    const isActive = ws.active;
                     return (
-                        <div key={conversation.id}>
-                            <div className={`group relative flex items-center rounded-control ${
-                                selected ? 'bg-white/[0.06] text-zinc-100' : 'text-zinc-500'
-                            }`}>
-                                <button
-                                    type="button"
-                                    onClick={() => onOpenConversation(conversation.id)}
-                                    title={title}
-                                    aria-current={selected ? 'page' : undefined}
-                                    className={`flex min-w-0 flex-1 items-center gap-2 py-1.5 pl-2.5 text-left text-ui-caption transition-colors hover:text-zinc-100 ${
-                                        selected ? 'pr-8' : 'pr-2.5'
-                                    }`}
-                                >
-                                    {selected && (
-                                        <MessageSquareIcon className="h-3.5 w-3.5 shrink-0 text-zinc-400" aria-hidden="true" />
-                                    )}
-                                    <span className="min-w-0 flex-1 truncate">{title}</span>
-                                </button>
-                                {selected && (
-                                    <button
-                                        type="button"
-                                        aria-label={`Conversation actions for ${title}`}
-                                        aria-expanded={menuFor === conversation.id}
-                                        title="Conversation actions"
-                                        onClick={() => setMenuFor(m => (m === conversation.id ? null : conversation.id))}
-                                        className="absolute right-1 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-control text-zinc-500 transition-colors hover:bg-white/[0.06] hover:text-zinc-200"
-                                    >
-                                        <span aria-hidden="true" className="text-ui-caption leading-none">⋯</span>
-                                    </button>
+                        <div key={ws.name} className="mb-0.5">
+                            <button
+                                type="button"
+                                onClick={() => (isActive
+                                    ? setWorkspaceOpen(open => !open)
+                                    : onSwitchWorkspace(ws.name))}
+                                aria-expanded={isActive ? workspaceOpen : undefined}
+                                aria-current={isActive ? 'true' : undefined}
+                                title={isActive
+                                    ? (workspaceOpen ? `Collapse ${ws.name}` : `Expand ${ws.name}`)
+                                    : `Switch to ${ws.name}`}
+                                data-testid={`shell-workspace-${ws.name}`}
+                                className="flex w-full items-center gap-2 rounded-control px-2.5 py-2 text-left text-ui-caption text-zinc-300 transition-colors hover:bg-white/[0.04] hover:text-zinc-100"
+                            >
+                                <FolderIcon className="h-4 w-4 shrink-0 text-zinc-500" aria-hidden="true" />
+                                <span className="flex-1 truncate">{ws.name}</span>
+                                {isActive && (
+                                    <ChevronDownIcon className={`h-3 w-3 shrink-0 text-zinc-600 transition-transform duration-150 ${workspaceOpen ? '' : '-rotate-90'}`} aria-hidden="true" />
                                 )}
-                            </div>
-                            {menuFor === conversation.id && (
-                                <div className="mb-1 flex items-center gap-1 pl-2.5">
-                                    <button
-                                        type="button"
-                                        onClick={() => { setMenuFor(null); onClearConversation(conversation.id); }}
-                                        className="rounded-control px-2 py-1 text-ui-xs text-zinc-500 transition-colors hover:bg-white/[0.05] hover:text-zinc-200"
-                                    >
-                                        Clear messages
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={() => { setMenuFor(null); onDeleteConversation(conversation.id); }}
-                                        className="rounded-control px-2 py-1 text-ui-xs text-rose-400/90 transition-colors hover:bg-rose-500/10 hover:text-rose-300"
-                                    >
-                                        Delete
-                                    </button>
+                            </button>
+                            {/* The active workspace nests ITS conversations under
+                                its own row — the reference's project tree. An
+                                inactive workspace shows nothing: its threads live
+                                in its own store and appear when it is switched
+                                to, not read behind its back. */}
+                            {isActive && workspaceOpen && (
+                                <div id="shell-workspace-threads" role="region" aria-label={`${ws.name} conversations`}>
+                                    {rows.length === 0 ? (
+                                        <p className="px-2.5 py-2 text-ui-xs leading-relaxed text-zinc-600">
+                                            No conversations yet. Everything you ask the desk lands here.
+                                        </p>
+                                    ) : rows.map(conversation => {
+                                        const selected = conversation.id === activeConversationId;
+                                        const title = conversationTitle(conversation);
+                                        return (
+                                            <div key={conversation.id}>
+                                                <div className={`group relative flex items-center rounded-control ${
+                                                    selected ? 'bg-white/[0.06] text-zinc-100' : 'text-zinc-500'
+                                                }`}>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => onOpenConversation(conversation.id)}
+                                                        title={title}
+                                                        aria-current={selected ? 'page' : undefined}
+                                                        data-testid="conversation-row"
+                                                        className={`flex min-w-0 flex-1 items-center gap-2 py-1.5 pl-6 text-left text-ui-caption transition-colors hover:text-zinc-100 ${
+                                                            selected ? 'pr-8' : 'pr-2.5'
+                                                        }`}
+                                                    >
+                                                        {selected && (
+                                                            <MessageSquareIcon className="h-3.5 w-3.5 shrink-0 text-zinc-400" aria-hidden="true" />
+                                                        )}
+                                                        <span className="min-w-0 flex-1 truncate">{title}</span>
+                                                        {/* The reference's age column. Muted and
+                                                            tabular, so a column of them reads as one
+                                                            measure instead of ragged text. */}
+                                                        <span
+                                                            className="shrink-0 tabular-nums text-ui-2xs text-zinc-600"
+                                                            data-testid="conversation-age"
+                                                            aria-hidden="true"
+                                                        >
+                                                            {ageLabel(conversation.timestamp)}
+                                                        </span>
+                                                    </button>
+                                                    {selected && (
+                                                        <button
+                                                            type="button"
+                                                            aria-label={`Conversation actions for ${title}`}
+                                                            aria-expanded={menuFor === conversation.id}
+                                                            title="Conversation actions"
+                                                            onClick={() => setMenuFor(m => (m === conversation.id ? null : conversation.id))}
+                                                            className="absolute right-1 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-control text-zinc-500 transition-colors hover:bg-white/[0.06] hover:text-zinc-200"
+                                                        >
+                                                            <span aria-hidden="true" className="text-ui-caption leading-none">⋯</span>
+                                                        </button>
+                                                    )}
+                                                </div>
+                                                {menuFor === conversation.id && (
+                                                    <div className="mb-1 flex items-center gap-1 pl-6">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => { setMenuFor(null); onClearConversation(conversation.id); }}
+                                                            className="rounded-control px-2 py-1 text-ui-xs text-zinc-500 transition-colors hover:bg-white/[0.05] hover:text-zinc-200"
+                                                        >
+                                                            Clear messages
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => { setMenuFor(null); onDeleteConversation(conversation.id); }}
+                                                            className="rounded-control px-2 py-1 text-ui-xs text-rose-400/90 transition-colors hover:bg-rose-500/10 hover:text-rose-300"
+                                                        >
+                                                            Delete
+                                                        </button>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        );
+                                    })}
                                 </div>
                             )}
                         </div>
                     );
-                }))}
+                })}
+                <button
+                    type="button"
+                    data-testid="shell-add-workspace"
+                    aria-label="Add workspace"
+                    title="Add workspace"
+                    onClick={onAddWorkspace}
+                    className="mt-1 flex w-full items-center gap-2 rounded-control px-2.5 py-2 text-left text-ui-caption text-zinc-500 transition-colors hover:bg-white/[0.04] hover:text-zinc-200"
+                >
+                    <Plus className="h-4 w-4 shrink-0 text-zinc-600" aria-hidden="true" />
+                    <span className="flex-1 truncate">Add workspace</span>
+                </button>
             </div>
 
             <div className="shrink-0 border-t border-white/[0.06] py-1.5">
                 <ShellUtility
                     surface={surface}
                     onSelect={onSelectSurface}
-                    onOpenCustomize={onOpenCustomize}
+                    onOpenSkills={onOpenSkills}
                 />
             </div>
             <AccountRow

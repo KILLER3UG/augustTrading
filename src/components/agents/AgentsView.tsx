@@ -37,7 +37,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowUp, ArrowUpDown, Bot, ChevronDown, Ellipsis, Inbox, MessageSquare, Pencil, PanelLeftClose, Paperclip, Pin, Plus, Search, StopIcon, Trash2, Users } from '../shared/Icons';
+import { ArrowUp, ArrowUpDown, Bot, ChevronDown, Ellipsis, MessageSquare, Pencil, PanelLeftClose, Paperclip, Pin, Plus, Search, StopIcon, Trash2, Users } from '../shared/Icons';
 import JumpToLatestFab, { JUMP_AWAY_PX } from '../shared/JumpToLatestFab';
 import { ModelFallbackBanner } from '../trade/panels/ChatComposer';
 import type { ProviderConfig } from '../../types/provider';
@@ -130,8 +130,6 @@ interface AgentsViewProps {
     analysisRunning?: boolean;
     /** App renders the existing room view; this surface only hosts it. */
     renderGroup?: (group: AgentGroup) => React.ReactNode;
-    /** Decisions waiting in the Coach inbox — counts the rail's hop pill. */
-    coachCount: number;
     workingBotId?: string | null;
     lastOpenedMap?: AgentThreadOpenedMap;
     /** botId → one-line "cannot do its job" hint (the rail's ⚠ badge). */
@@ -144,10 +142,7 @@ interface AgentsViewProps {
     botStats?: BotLearningStat[];
     /** Rename a bot in place (WS-6's row affordances). */
     onRenameBot?: (botId: string, name: string) => void;
-    /** Jump to the Coach inbox, which lives on the Learning surface. Without it
-     *  the rail shows no Coach pill — a shortcut to a thread this surface no
-     *  longer owns would be a dead end wearing a badge. */
-    onOpenCoach?: () => void;
+    /** The composer's model control — the dock's own `ModelChip`, built by the
     /** The composer's model control — the dock's own `ModelChip`, built by the
      *  host so this surface gets the identical panel (provider, model and the
      *  thinking tier in one place) instead of a plainer twin of it. It is a
@@ -173,7 +168,7 @@ interface AgentsViewProps {
      *  move the control that caused it. The old four-tab bar is gone at every
      *  width; the rail itself is the only navigation. */
     modeSwitch?: React.ReactNode;
-    /** Journal / Learning / Customize: the records half of the workspace,
+    /** Journal / Learning / Skills: the records half of the workspace,
      *  above the account exactly as the reference orders its utility group. */
     shellUtilities?: React.ReactNode;
     /** Bumped by the shell rail's Search row. The field is local to this
@@ -467,7 +462,7 @@ interface BotRow {
 
 const AgentsView: React.FC<AgentsViewProps> = ({
     username, bots, groups, messages, selection, onSelect, onNewBot, onNewGroup,
-    onSendBotTurn, onAnalyze, onLogProposedTrade, onAnalysisError, onStopRun, analysisRunning = false, renderGroup, coachCount, workingBotId, mailboxBusyBotIds,
+    onSendBotTurn, onAnalyze, onLogProposedTrade, onAnalysisError, onStopRun, analysisRunning = false, renderGroup, workingBotId, mailboxBusyBotIds,
     lastOpenedMap = {}, modelPicker, modelFallback = null, accountRow,
     railExpanded = true, onToggleRailExpanded, statusCluster,
     modeSwitch, shellUtilities,
@@ -478,7 +473,6 @@ const AgentsView: React.FC<AgentsViewProps> = ({
     attentionMap, onDeleteBot, onDeleteGroup, onEditGroup,
     botStats,
     onRenameBot,
-    onOpenCoach,
     conversations = [], activeConversationId = null, onLoadConversation, onDeleteConversation, onClearConversation, onNewChat,
 }) => {
     const [pins, setPins] = useState<string[]>(() => loadPins(username));
@@ -1007,10 +1001,9 @@ const AgentsView: React.FC<AgentsViewProps> = ({
                 {/* The reference's nav group: one-click verbs, not a menu. `New`
                     used to open a four-item menu whose first entry was the thing
                     everyone was reaching for, so asking for a new chat cost two
-                    clicks and a portal. The other three verbs each have a real
-                    home now — New agent and New room sit on their own section
-                    headers as `+`, Coach inbox is the row below — so nothing is
-                    lost, only the menu. */}
+                    clicks and a portal. The other verbs each have a real home
+                    now — New agent and New room sit on their own section headers
+                    as `+` — so nothing is lost, only the menu. */}
                 <div className="flex shrink-0 flex-col px-2 pb-1 pt-0.5">
                     <button type="button" data-testid="rail-new-chat" aria-label="New chat"
                         onClick={() => {
@@ -1029,22 +1022,6 @@ const AgentsView: React.FC<AgentsViewProps> = ({
                         <Plus className="h-4 w-4 shrink-0 text-zinc-400" aria-hidden="true" />
                         <span className="flex-1 truncate" title="New chat">New chat</span>
                     </button>
-                    {onOpenCoach && (
-                        /* A route, not a second counter. The queue's number
-                           rides the Learning tab that hosts it — this row used
-                           to carry `coachCount` (drafts + proposals) while the
-                           switch badge beside it showed `approvalsWaiting`
-                           (everything pending, permissions included), so one
-                           screen displayed two different figures for one
-                           inbox. */
-                        <button type="button" data-testid="rail-coach-inbox"
-                            onClick={() => onOpenCoach()}
-                            aria-label="Coach inbox"
-                            className="group flex w-full items-center gap-2.5 rounded-control px-2.5 py-2 text-left text-ui-caption text-zinc-400 transition-colors duration-[120ms] ease-[var(--ease-snappy)] hover:bg-white/[0.06] hover:text-zinc-100">
-                            <Inbox className="h-4 w-4 shrink-0 text-zinc-500" aria-hidden="true" />
-                            <span className="flex-1 truncate" title="Coach inbox">Coach inbox</span>
-                        </button>
-                    )}
                 </div>
 
                 {/* The column's two lists, split the way the reference splits

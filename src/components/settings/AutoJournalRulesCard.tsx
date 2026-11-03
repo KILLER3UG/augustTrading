@@ -17,7 +17,7 @@ import React, { useState } from 'react';
 import { Ban, Check, Undo2 } from '../shared/Icons';
 import {
     getAutoJournalRules, setAutoJournalRule, type AutoJournalRule,
-} from '../../utils/approvalInbox';
+} from '../../utils/autoJournalRules';
 import { EmptyState } from '../ui/EmptyState';
 
 interface AutoJournalRulesCardProps {

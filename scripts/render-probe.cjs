@@ -165,10 +165,27 @@ async function waitSendable(page, ms) {
 const measureOverflow = async (page) => page.evaluate(() => {
     const vw = window.innerWidth;
     const worst = [];
+    const isFixed = (el) => {
+        let n = el;
+        while (n && n !== document.body) {
+            if (window.getComputedStyle(n).position === 'fixed') return true;
+            n = n.parentElement;
+        }
+        return false;
+    };
     for (const el of document.querySelectorAll('body *')) {
         const r = el.getBoundingClientRect();
         if (r.width === 0 || r.height === 0) continue;
         if (r.right - vw > 2) {
+            // A position:fixed element can NEVER create document scroll
+            // overflow — it is out of flow, and the app's drawers park
+            // off-screen by design (`translate-x-full` when closed, e.g. the
+            // strategy search). The same holds for everything INSIDE such a
+            // drawer: its children inherit the off-screen placement without
+            // being fixed themselves. Flagging either is the checker
+            // measuring the wrong thing; document.scrollWidth below is the
+            // binding signal.
+            if (isFixed(el)) continue;
             worst.push({ over: Math.round(r.right - vw), tag: el.tagName, tid: el.getAttribute('data-testid') || '' });
         }
     }
@@ -830,18 +847,48 @@ async function main() {
         check('a tool round is projected as a tool line, not only as prose',
             linesAfter > linesBefore, `${linesBefore} tool line(s) before, ${linesAfter} after`);
         // The row is labelled in the app's own voice, never by the wire name:
-        // `Skill draft proposed — <the title the model asked for>`. Asserting
+        // `Skill draft saved — <the title the model asked for>`. Asserting
         // `propose_skill` here would pin the identifier the UI deliberately
         // hides, so the check is on the verb the harness renders PLUS the title
         // carried in the tool's own arguments — which proves the call was
-        // identified by content, not by a generic "tool used" line.
-        const namesTheCall = (t) => /skill draft proposed/i.test(t) && /Session-open fade short/.test(t);
+        // identified by content, not by a generic "tool used" line. The verb is
+        // SAVED since the auto-apply ruling (2026-11-03): a draft that passed
+        // the gates is no longer waiting for a human, and the row must not say
+        // it is.
+        const namesTheCall = (t) => /skill draft saved/i.test(t) && /Session-open fade short/.test(t);
         const firstText = await toolLineText();
         check('the tool line names the call the model actually made',
             namesTheCall(firstText), `rendered: ${firstText || '(none)'}`);
         const ledgerAfter = await usageBytes();
         check('the settled turn grew the usage ledger the Learning panel reads',
             ledgerAfter > ledgerBefore, `ledger bytes ${ledgerBefore} -> ${ledgerAfter}`);
+
+        // ── The rail's workspace tree, with the reference's age column ─────
+        // A conversation row is grouped under its workspace and carries a
+        // right-aligned age (`now`, `5m`, `3h`, `48d`). The Add-workspace row
+        // is the one creator. Counted, not sampled: every row has an age, and
+        // no age renders as an empty chip.
+        const railShape = await page.evaluate(() => {
+            const rows = [...document.querySelectorAll('[data-testid="conversation-row"]')];
+            const ages = [...document.querySelectorAll('[data-testid="conversation-age"]')]
+                .map(a => (a.textContent || '').trim());
+            return {
+                rows: rows.length,
+                ages: ages.length,
+                badAges: ages.filter(t => !/^(now|\d+[mhd])$/.test(t)),
+                add: !!document.querySelector('[data-testid="shell-add-workspace"]'),
+                workspaces: document.querySelectorAll('[data-testid^="shell-workspace-"]').length,
+                nested: !!document.querySelector('#shell-workspace-threads'),
+            };
+        });
+        check('the rail nests conversations under a workspace, each with the reference’s age column',
+            railShape.rows >= 1
+            && railShape.ages === railShape.rows
+            && railShape.badAges.length === 0
+            && railShape.add
+            && railShape.workspaces >= 1
+            && railShape.nested,
+            JSON.stringify(railShape));
 
         // The chat store is debounced by 1.5s. The reload used to happen at
         // exactly that boundary, so a slow frame could lose the write and the
@@ -1439,6 +1486,34 @@ async function main() {
         check('the thinking line expands its trace',
             expandedThinking === true, `${expandedThinking}`);
 
+        // The owner's reference draws NO box and NO rules around a thinking
+        // trace: the summary is a bare line and the trace is a flat block.
+        // Computed styles, because a 1px transparent border still costs a box
+        // and an animation can paint a border colour no class shows.
+        const thinkingFrame = await page.evaluate(() => {
+            const summary = [...document.querySelectorAll('[data-testid="agent-message"] summary')]
+                .find(el => /Thinking complete/.test(el.textContent || ''));
+            const details = summary?.parentElement;
+            const body = details?.querySelector('.reasoning-row-body');
+            if (!details || !body) return null;
+            const cs = window.getComputedStyle(details);
+            const bs = window.getComputedStyle(body);
+            const px = (v) => parseFloat(v) || 0;
+            return {
+                border: [cs.borderTopWidth, cs.borderRightWidth, cs.borderBottomWidth, cs.borderLeftWidth].map(px),
+                background: cs.backgroundColor,
+                bodyTop: px(bs.borderTopWidth),
+                bodyLeft: px(bs.borderLeftWidth),
+            };
+        });
+        check('an expanded thinking trace draws no box, no fill and no rules',
+            !!thinkingFrame
+            && thinkingFrame.border.every(w => w === 0)
+            && thinkingFrame.bodyTop === 0
+            && thinkingFrame.bodyLeft === 0
+            && (thinkingFrame.background === 'rgba(0, 0, 0, 0)' || thinkingFrame.background === 'transparent'),
+            JSON.stringify(thinkingFrame));
+
         // ── Every nav surface must actually mount something ────────────
         // The four nav surfaces are separate lazy trees; a blank one is
         // the same class of defect this probe was written for, and no jsdom
@@ -1474,6 +1549,21 @@ async function main() {
             await page.evaluate(() => {
                 const backdrop = [...document.querySelectorAll('[data-testid="rail-backdrop"], [data-testid="chat-history-backdrop"]')];
                 backdrop.forEach(b => b.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+                // Escape does not reach every dialog: a drawer whose keydown
+                // handling needs focus inside it stayed open after the press
+                // above, and every later press on that surface was then judged
+                // against an already-open overlay. Dialogs carry their own
+                // close controls — use them.
+                const closers = [...document.querySelectorAll(
+                    '[role="dialog"] [aria-label*="close" i], [role="dialog"] [aria-label*="Close" i], '
+                    // The Activity drawer is a fixed aside, not a role=dialog:
+                    // its own close control is reachable ONLY by its testid. A
+                    // dismissal that skipped it left the drawer open, so every
+                    // later press on the surface was judged against an
+                    // already-open overlay and read as inert.
+                    + '[data-testid="activity-drawer"] [aria-label*="close" i]',
+                )];
+                closers.forEach(b => { try { b.click(); } catch { /* detached */ } });
             });
             await sleep(250);
         };
@@ -2884,12 +2974,36 @@ async function main() {
                         ctx: `${btn.tagName.toLowerCase()}${btn.type ? `[type=${btn.type}]` : ''}`
                             + ` aria-pressed=${btn.getAttribute('aria-pressed')}`
                             + ` aria-selected=${btn.getAttribute('aria-selected')}`
+                            + ` overlayAtPress=${before.overlay}`
                             + ` class="${btn.className.slice(0, 48)}"`,
                     };
                 }, [...tried]);
                 if (!picked) break;         // nothing left untried on this surface
                 tried.add(picked.name);
-                await sleep(1000);
+                console.log(`SWEEP ${label}: press "${picked.name}" overlayAtPress=${picked.ctx.match(/overlayAtPress=(\w+)/)?.[1]}`);
+                // Poll for the change instead of sleeping a fixed second: a
+                // control whose first press loads a lazy overlay (the Skills
+                // tab's Strategies → StrategySearch chunk) can legitimately
+                // take longer than 1s to move ANY measured thing — the first
+                // such press also pays for the learning modules the auto-apply
+                // sweep imports — and a fixed sleep judged it inert while the
+                // chunk was still in flight.
+                let moved = false;
+                const settleDeadline = Date.now() + 7000;
+                while (Date.now() < settleDeadline) {
+                    await sleep(400);
+                    moved = await page.evaluate((p) => {
+                        const main = document.querySelector('main') || document.body;
+                        const overlay = !!document.querySelector(
+                            '[role="dialog"], [role="alertdialog"], [data-testid="activity-drawer"]');
+                        return (main.innerText || '').trim() !== p.before.text
+                            || main.querySelectorAll('input, textarea, [contenteditable="true"]').length !== p.before.fields
+                            || window.location.hash !== p.before.hash
+                            || (overlay && !p.before.overlay);
+                    }, picked);
+                    if (moved) break;
+                }
+                if (!moved) await sleep(600); // one last frame before the verdict
                 const after = await page.evaluate((p) => {
                     const main = document.querySelector('main') || document.body;
                     const now = {
@@ -2928,7 +3042,29 @@ async function main() {
                     const viaBrowserChrome = /export|import|download|copy|save|print/i
                         .test(picked.name);
                     if (viaBrowserChrome) unverifiable.push(picked.name);
-                    else inert.push(`${picked.name} ${picked.ctx}`);
+                    else {
+                        // A targeted trace for the one press whose target mounts
+                        // lazily OUTSIDE main: was the drawer there, hidden, or
+                        // never asked to open?
+                        const trace = /strateg/i.test(picked.name)
+                            ? await page.evaluate(() => {
+                                const drawer = document.querySelector('[aria-label="Playbook & Strategy Search"]');
+                                return {
+                                    drawerMounted: !!drawer,
+                                    drawerHidden: drawer ? drawer.getAttribute('aria-hidden') : null,
+                                    dialogNow: !!document.querySelector('[role="dialog"]'),
+                                    openDialogs: [...document.querySelectorAll('[role="dialog"]')]
+                                        .map(d => d.getAttribute('aria-label') || d.textContent?.slice(0, 40) || 'unlabelled'),
+                                    activeTab: document.querySelector('[aria-current="page"]')?.textContent
+                                        || [...document.querySelectorAll('[data-testid^="learn-tab-"]')]
+                                            .find(b => b.className.includes('bg-zinc-800'))?.textContent
+                                        || 'n/a',
+                                };
+                            })
+                            : null;
+                        console.log(`TRACE inert press "${picked.name}": ${JSON.stringify(trace)}`);
+                        inert.push(`${picked.name} ${picked.ctx}`);
+                    }
                 }
                 await dismissOverlays();
             }
@@ -2945,9 +3081,11 @@ async function main() {
         // Learn is tabbed three ways. Sweeping only the default tab left the
         // others unjudged — the gate could not see a dead control inside Memory
         // or Health. 18 rounds, because Health alone stacks six panels now that
-        // System's telemetry and the supervisor's log fold into it.
+        // System's telemetry and the supervisor's log fold into it. The
+        // Approvals tab is gone (owner 2026-11-03): its queues apply themselves,
+        // so the sweep names the three tabs that exist.
         await sweepSurface('Learning', 18, [
-            'learn-tab-coach', 'learn-tab-memory', 'learn-tab-health',
+            'learn-tab-skills', 'learn-tab-memory', 'learn-tab-health',
         ]);
         // ── The skill viewer round trip (gap 1) ──────────────────────────
         // The sweep presses a catalog row and credits it if the surface moved.
@@ -3471,6 +3609,43 @@ async function main() {
             tabbedState.focused && tabbedState.nav === 'keyboard' && tabbedState.outline === true,
             JSON.stringify(tabbedState));
 
+        // ── An attached image mounts NOW, in its loading state ────────────
+        // The old path appended the chip only after FileReader.onload, so a
+        // picker click showed NOTHING for the length of the read — a dead
+        // affordance. The chip must exist from the change event, pulsing,
+        // and fill in place. A 4 MB buffer keeps the read observably pending,
+        // so "it mounted before the decode landed" is measurable rather than
+        // a race the probe wins by luck.
+        const attachInput = page.locator('input[type="file"]').first();
+        await attachInput.setInputFiles({
+            name: 'probe-attach.png',
+            mimeType: 'image/png',
+            buffer: Buffer.alloc(4 * 1024 * 1024, 0x89),
+        });
+        const mounting = await page.evaluate(() => {
+            const chip = document.querySelector('[data-testid="chat-attachment"]');
+            return chip ? {
+                loading: chip.getAttribute('data-attachment-loading'),
+                pulse: !!chip.querySelector('.animate-pulse'),
+            } : null;
+        });
+        check('an attached image mounts its chip before the decode lands',
+            !!mounting && mounting.loading === 'true' && mounting.pulse === true,
+            JSON.stringify(mounting));
+        const attachFilled = await page.waitForFunction(() => {
+            const chip = document.querySelector('[data-testid="chat-attachment"]');
+            return !!chip
+                && chip.getAttribute('data-attachment-loading') === 'false'
+                && !!chip.querySelector('img');
+        }, null, { timeout: 15000 }).then(() => true).catch(() => false);
+        check('the chip fills in place with the decoded thumbnail', attachFilled);
+        await page.evaluate(() => {
+            document.querySelector('[data-testid="chat-attachment"] button')?.click();
+        });
+        const attachRemoved = await page.evaluate(() =>
+            !document.querySelector('[data-testid="chat-attachment"]'));
+        check('the chip’s Remove control takes it away', attachRemoved);
+
         // ── The composer's height follows the draft, not a fixed slab ──────
         // The old field reserved two lines at rest (56px) and could not grow
         // past 128px, so a one-line question sat in a tall empty card and a
@@ -3686,7 +3861,7 @@ async function main() {
     }
     console.log('\nRENDER PROBE OK — every exchange renders and keeps the earlier rows in both'
         + ' conversation surfaces, settled verdicts and malformed persisted audit data render without'
-        + ' dropping a row, all four nav surfaces mount, the approvals inbox and the desk pane keep the'
+        + ' dropping a row, all four nav surfaces mount, the desk pane keeps the'
         + ' trader’s own rows, Settings → Data can back up, export and import a journal file, the health'
         + ' tab shows the idle sweep and the notebook budget, and the run produced zero pageerrors.');
 }

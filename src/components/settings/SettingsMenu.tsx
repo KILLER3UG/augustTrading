@@ -11,7 +11,6 @@ import { EmptyState } from '../ui/EmptyState';
 import {AISettingsIcon, HistoryIcon, SettingsIcon, CodeIcon, SearchIcon, CloseIcon, User, FileText, Brain, BookOpen, Database, Search, ChevronRight} from '../shared/Icons';
 import { getIdleMotionEnabled, subscribeIdleMotion } from '../../services/desk/idleMotion';
 import { loadForgedTools } from '../../services/tools/toolForge';
-import { listAmendments } from '../../services/learning/memoryAmendments';
 import { getHarnessSettings } from '../../utils/harnessSettings';
 import { isProviderReady } from '../../utils/providerUtils';
 import type { LearnTab } from '../learn/LearnView';
@@ -196,7 +195,7 @@ const NAV_GROUPS: NavGroup[] = [
         entries: [
             // Skills left this dialog for the Learning surface's own tab, so the
             // library and the notebook sit together instead of one being a
-            // settings pane. The rail's Customize row and Alt+3 land there.
+            // settings pane. The rail's Skills row and Alt+3 land there.
             { id: 'memory', label: 'Memory', icon: <Brain className={NAV_ICON} />, keywords: 'notebook amendment supervisor profile memory files global' },
             { id: 'strategies', label: 'Playbooks', icon: <BookOpen className={NAV_ICON} />, keywords: 'strategy book pdf upload studio families import' },
         ],
@@ -238,34 +237,15 @@ const SettingsMenu: React.FC<SettingsMenuProps> = (props) => {
     const [activeInstructionTab, setActiveInstructionTab] = useState<InstructionTab>('general');
     const [isDirty, setIsDirty] = useState(false);
     const [navQuery, setNavQuery] = useState('');
-    // The notebook amendments waiting for a human decision. The forged-tool count
-    // used to sit here too, badging the Skills tab; the queue moved to the
-    // Learning surface with the library, and a badge for a tab that is no longer
-    // in this dialog is just a number chasing nothing.
-    const [pendingAmendments, setPendingAmendments] = useState(() => listAmendments('pending').length);
-    useEffect(() => {
-        const sync = (): void => {
-            setPendingAmendments(listAmendments('pending').length);
-        };
-        sync();
-        // Proposals arrive via custom events; poll as a cheap fallback
-        // (the panels also self-refresh on the same cadence).
-        const t = window.setInterval(sync, 5000);
-        window.addEventListener('august:forged-proposal', sync);
-        window.addEventListener('august:memory-amendment', sync);
-        return () => {
-            window.clearInterval(t);
-            window.removeEventListener('august:forged-proposal', sync);
-            window.removeEventListener('august:memory-amendment', sync);
-        };
-    }, []);
+    // No pending-amendment count: `amend_memory` applies directly (owner
+    // ruling 2026-11-03), so a number here would have nothing to open — the
+    // exact "count chasing nothing" this menu deleted once already.
     const navQ = navQuery.trim().toLowerCase();
     const navMatches = (entry: NavEntry): boolean =>
         !navQ
         || entry.label.toLowerCase().includes(navQ)
         || entry.keywords.includes(navQ);
     const navBadge = (id: SettingsTab): string | undefined => {
-        if (id === 'memory') return pendingAmendments > 0 ? String(pendingAmendments) : undefined;
         if (id === 'journal') return props.loggedTrades && props.loggedTrades.length > 0 ? String(props.loggedTrades.length) : undefined;
         return undefined;
     };

@@ -89,12 +89,9 @@ interface TradeViewProps {
      *  stopped. Wired to the pipeline's own cancel; absent ⇒ Stop keeps its old
      *  chat-only meaning. */
     onStopRun?: () => void;
-    /** Create a group room, and open the Coach inbox — the two Chat-rail
-     *  actions the dock was missing. Forwarded to `TradeChatPanel`; App owns
-     *  both, the same handlers the Chat rail gets. */
+    /** Create a group room — the Chat-rail action the dock was missing.
+     *  Forwarded to `TradeChatPanel`; App owns the handler. */
     onNewGroup?: () => void;
-    onOpenCoach?: () => void;
-    coachCount?: number;
     /** A bot's existing conversation, so a bot opened in the dock inherits it. */
     botThreadRows?: Message[];
     onBotTurnCommit?: (bot: AgentBot, prompt: string, answer?: string, workedMs?: number, effort?: ReasoningEffort) => void;
@@ -332,7 +329,7 @@ export const useTickFlash = (price: number | undefined): { cls: string; seq: num
 
 
 const TradeView: React.FC<TradeViewProps> = ({
-    memoryEnabled, strategiesEnabled, providers, selectedChatModel, onSelectChatModel, onRefreshModels, verdict, bots = [], trades = [], botSessionRequest, groupSessionRequest, onRunAnalysis, onAnalysisError, onStopRun, coachCount, botThreadRows, onBotTurnCommit, onSoloTurnCommit, onSyncConversation, conversationRows, onOpenCoach, onNewGroup, getAnalysisMessage, onLogProposedTrade, renderGroupSurface, groups = [], registerScrollToMessage, sidebarOpen = true, onToggleSidebar, modeRequest, activeUsername, onTradeModeChange, onOpenChat, onToggleWatch, onOpenWatchList, watchOpenCount = 0, watchOpenR, pinnedMessageIds }) => {
+    memoryEnabled, strategiesEnabled, providers, selectedChatModel, onSelectChatModel, onRefreshModels, verdict, bots = [], trades = [], botSessionRequest, groupSessionRequest, onRunAnalysis, onAnalysisError, onStopRun, botThreadRows, onBotTurnCommit, onSoloTurnCommit, onSyncConversation, conversationRows, onNewGroup, getAnalysisMessage, onLogProposedTrade, renderGroupSurface, groups = [], registerScrollToMessage, sidebarOpen = true, onToggleSidebar, modeRequest, activeUsername, onTradeModeChange, onOpenChat, onToggleWatch, onOpenWatchList, watchOpenCount = 0, watchOpenR, pinnedMessageIds }) => {
     // The chart opens on the coin the SHARED chat session carries. Adopting only
     // from an effect is not enough: the dock mounts in the same commit, a child's
     // effect runs before its parent's, and the dock can re-bind the active session
@@ -1181,8 +1178,6 @@ const TradeView: React.FC<TradeViewProps> = ({
                         expanded={dockExpanded}
                         onToggleExpanded={toggleDockExpanded}
                         onNewGroup={onNewGroup}
-                        onOpenCoach={onOpenCoach}
-                        coachCount={coachCount}
                         botThreadRows={botThreadRows}
                         onBotTurnCommit={onBotTurnCommit}
                         onSoloTurnCommit={onSoloTurnCommit}

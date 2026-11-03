@@ -4,7 +4,6 @@ import {
     Ban,
     Check,
     Pause,
-    Plus,
     PowerOff,
     RefreshCw,
     RotateCcw,
@@ -293,8 +292,6 @@ const describeReview = (report: SkillReviewReport): string => {
 export interface SkillsCatalogProps {
     /** Refresh — the gear routes to Settings → Skills. */
     onOpenSettings?: () => void;
-    /** Add — opens the real skill-draft path in the Coach inbox. */
-    onAddSkill?: () => void;
     /** Read — opens this skill's rendered record in the viewer panel. The
      *  browser's whole job is to make a row readable without leaving the
      *  surface; without this the catalog is a list of file names. */
@@ -395,7 +392,7 @@ const CardGrid: React.FC<{
     </ul>
 );
 
-const SkillsCatalog: React.FC<SkillsCatalogProps> = ({ onOpenSettings, onOpenSkill, onAddSkill }) => {
+const SkillsCatalog: React.FC<SkillsCatalogProps> = ({ onOpenSettings, onOpenSkill }) => {
     const [skills, setSkills] = useState<CatalogSkill[] | null>(null);
     const [query, setQuery] = useState('');
     const [collection, setCollection] = useState<string>('all');
@@ -602,13 +599,6 @@ const SkillsCatalog: React.FC<SkillsCatalogProps> = ({ onOpenSettings, onOpenSki
                         <button type="button" onClick={onOpenSettings} aria-label="Skill settings" title="Skill settings"
                             className="flex h-8 w-8 hit-target items-center justify-center rounded-control text-zinc-500 transition-colors hover:bg-white/[0.06] hover:text-zinc-200 focus:outline-none focus-visible:ring-1 focus-visible:ring-zinc-500">
                             <Settings className="h-3.5 w-3.5" aria-hidden="true" />
-                        </button>
-                    )}
-                    {onAddSkill && (
-                        <button type="button" onClick={onAddSkill} title="Add a skill — the draft is written in the Approvals inbox"
-                            className="flex h-8 items-center gap-1 rounded-full bg-zinc-100 px-3 text-ui-dense font-semibold text-zinc-950 transition-opacity hover:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-zinc-100">
-                            <Plus className="h-3.5 w-3.5" aria-hidden="true" />
-                            Add
                         </button>
                     )}
                 </div>

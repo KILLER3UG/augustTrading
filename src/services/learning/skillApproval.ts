@@ -20,7 +20,7 @@
  */
 
 import { activateSkillForTrigger, ingestCraftedSkill, ingestCraftedSkillFromDraft, isApprovedSkill, listSkills, type SkillIngestResult } from './SkillMemoryService';
-import { takeSkillDraft, type SkillDraft } from '../../utils/skillDrafts';
+import { listSkillDrafts, markSkillDraftFailed, SKILL_DRAFT_MAX_ATTEMPTS, takeSkillDraft, type SkillDraft } from '../../utils/skillDrafts';
 import type { LoggedTrade } from '../../types';
 
 export type SkillApprovalResult =
@@ -56,6 +56,11 @@ export const approveSkillDraft = async (
     draft: SkillDraft,
     username: string,
     trades: LoggedTrade[] = [],
+    /** WHOSE decision this write records. 'human' — the button press — and
+     *  'auto' — the owner-ruled auto-apply — are both approval facts;
+     *  `isApprovedSkill` treats them the same because the ruling made them
+     *  the same. */
+    approvedBy: 'human' | 'auto' = 'human',
 ): Promise<SkillApprovalResult> => {
     const user = username || 'default';
     const trigger = draft.crafted.when;
@@ -65,15 +70,14 @@ export const approveSkillDraft = async (
     let declined: 'no-skills-folder' | 'over-hard-cap' | null = null;
     let detail: string | undefined;
     try {
-        // P0-1: a human pressing Save IS the approval fact, regardless of
-        // which ingest path carries the evidence. The trade-backed writer
-        // previously built its SkillMeta with no `approvedBy`/`prior`, so a
-        // post-mortem Save produced a skill that failed `isApprovedSkill`
-        // and silently never injected — while the card read "Active".
-        // Both branches now stamp 'human' so the gate sees the same fact.
-        if (trade) await ingestCraftedSkill(trade, draft.crafted, user, 'human');
+        // P0-1: the approval fact rides the WRITE regardless of which ingest
+        // path carries the evidence. The trade-backed writer previously built
+        // its SkillMeta with no `approvedBy`/`prior`, so a post-mortem Save
+        // produced a skill that failed `isApprovedSkill` and silently never
+        // injected — while the card read "Active".
+        if (trade) await ingestCraftedSkill(trade, draft.crafted, user, approvedBy);
         else {
-            const r = await ingestCraftedSkillFromDraft(draft.crafted, draft.coin, user, undefined, 'human');
+            const r = await ingestCraftedSkillFromDraft(draft.crafted, draft.coin, user, undefined, approvedBy);
             // The ingest now says WHY it wrote nothing. The read-back below is
             // still the authority on success, but a named cause beats a generic
             // one in the message the human reads.
@@ -154,4 +158,50 @@ export const skillApprovalToast = (
         title: 'Not saved — still in your inbox',
         body: result.error ?? `${name}: the skill library did not accept this trigger`,
     };
+};
+
+// ─── AUTO-APPLY (owner ruling, 2026-11-03) ──────────────────────────────────
+// The approval inbox is gone: a draft applies ITSELF through the same
+// deterministic gates a button press ran — duplicates, malformed clauses, body
+// caps and tombstones still refuse; what changed is WHOSE consent the write
+// records. 'auto' is an approval fact because the owner made it one. A draft
+// the library refuses stays in the store with an attempts counter and stops
+// being retried at SKILL_DRAFT_MAX_ATTEMPTS — a budget, so a permanently
+// refusable draft cannot burn a write on every sweep forever.
+
+export interface SkillDraftAutoApplyResult {
+    applied: number;
+    duplicates: number;
+    refused: number;
+    /** Drafts that hit the retry budget and are no longer attempted. */
+    exhausted: number;
+    /** One line per refusal, for the log the Health tab can point at. */
+    failures: string[];
+}
+
+export const autoApplyPendingSkillDrafts = async (
+    username: string,
+    trades: LoggedTrade[] = [],
+): Promise<SkillDraftAutoApplyResult> => {
+    const out: SkillDraftAutoApplyResult = { applied: 0, duplicates: 0, refused: 0, exhausted: 0, failures: [] };
+    const user = username || 'default';
+    for (const draft of listSkillDrafts(user)) {
+        if ((draft.attempts ?? 0) >= SKILL_DRAFT_MAX_ATTEMPTS) {
+            out.exhausted += 1;
+            continue;
+        }
+        const result = await approveSkillDraft(draft, user, trades, 'auto');
+        if (result.created) {
+            out.applied += 1;
+        } else if (result.reason === 'duplicate') {
+            out.duplicates += 1;
+        } else {
+            out.refused += 1;
+            out.failures.push(`${draft.crafted.name || draft.id}: ${result.reason}${result.error ? ` — ${result.error}` : ''}`);
+            // A refused write left the draft in the store (the read-back
+            // discipline); count the attempt so the budget binds.
+            markSkillDraftFailed(draft.id, user);
+        }
+    }
+    return out;
 };

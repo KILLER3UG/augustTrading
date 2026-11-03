@@ -6,7 +6,8 @@
 // Areas, each opening its own page. The notebook stays one row away.
 import React, { useState } from 'react';
 import ProfileMemoryCard from '../ProfileMemoryCard';
-import { SettingsPageHeader } from './shared';
+import AmendmentsInbox from '../../learn/AmendmentsInbox';
+import { SettingsGroup, SettingsPageHeader } from './shared';
 import type { SettingsTabProps } from './types';
 
 /** `SettingsTabProps`, narrowed to what this tab reads. An alias rather than an
@@ -37,6 +38,21 @@ const MemoryTab: React.FC<{ tab: MemoryTabProps }> = ({ tab: props }) => {
                     onOpenNotebook={onOpenLearn ? () => onOpenLearn('memory') : undefined}
                     onDetailOpenChange={setDetailOpen}
                 />
+                {/* The corrections log lives with the notebook it edits (owner
+                    ruling 2026-11-03: no Approvals tab). Model amendments apply
+                    themselves; this keeps the before/after and the ONE Undo.
+                    A pending row exists only when the supervisor or a
+                    trader-requested edit deferred one to a human. */}
+                <div className="mt-7">
+                    <SettingsGroup
+                        title="Corrections"
+                        description="Notes the desk changed with amend_memory. Applied directly — the before and after are kept here so a correction can be undone."
+                    >
+                        <div className="py-3">
+                            <AmendmentsInbox />
+                        </div>
+                    </SettingsGroup>
+                </div>
             </div>
         </div>
     );

@@ -69,18 +69,20 @@ not a per-turn mode. Journal, Learning and Customize sit at its foot.
 
 Tabs in the loop's own order:
 
-1. **Approvals** — everything waiting on a human: action permissions, skill drafts, proposals,
-   memory amendments. The default tab. A **tentative** post-mortem skill does not wait here — it
-   injects as labelled context and can be edited or retired in Skills.
-2. **Skills** — the library the desk learns from; moved here from Settings so the library and the
+1. **Skills** — the library the desk learns from; moved here from Settings so the library and the
    notebook sit together. Skills earned from three independent tracked outcomes carry a
    **tentative · context only** mark: they inform a read, never veto or cap confidence, and
    auto-demote under 40% after five outcomes. The global switch is Settings → tentative skills.
-3. **Memory** — the notebook browser, including per-topic detail docks.
-4. **Health** — whether the notebook is sound: memory health, pressure, versions, diagnostics.
+   Drafts apply themselves through the deterministic gates (owner ruling, 2026-11-03) — there is
+   no approval inbox between a gated draft and the library, and every skill file follows one
+   format (the boot pass repairs legacy files).
+2. **Memory** — the notebook browser, including per-topic detail docks.
+3. **Health** — whether the notebook is sound: memory health, pressure, versions, diagnostics —
+   including any skill file that still does not follow the one format.
 
 Never: the playbook library. Playbook Studio is the one owner of that table and lives under
-Settings → Playbooks.
+Settings → Playbooks. Never: an Approvals tab — its queues apply themselves, and the memory
+corrections log (with its one Undo) lives in Settings → Memory.
 
 ## Settings (overlay)
 
@@ -98,8 +100,10 @@ the trader's journal in bulk; treat it accordingly.
 
 - **One full-height left rail** on every surface (owner ruling, 2026-11-02). At its top: the
   Analyze ⇄ Agents **mode switch** — two modes of one desk, not two products. Then New chat,
-  Approvals and Search; the August Trading workspace with its conversations nested as plain rows;
-  and, at its foot, Journal / Learning / Customize above the account.
+  Search; the **Workspaces** list (one per profile, the active one expanded over its conversations
+  as plain rows with a right-aligned age column, the rest a click to switch) and an
+  **Add workspace** row that opens the one profile creator; and, at its foot, Journal / Learning /
+  Skills above the account.
 - On the **Agents** surface the same mode switch and utility rows live in `AgentsView`'s richer
   sidebar (bots, rooms, goals, conversations). A mode hop moves the content and not the chrome.
 - The **content bar** carries the A-mark, the active conversation or record name, the instrument

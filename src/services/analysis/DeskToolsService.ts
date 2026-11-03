@@ -49,6 +49,7 @@ import { getSessionContext } from '../infrastructure/SessionService';
 import { handleRecallTool } from '../learning/MemoryRetrievalService';
 import { formatFormingCandleLine, formatLiveMarkStamp, type FormingCandle } from '../trade/tradeChatContext';
 import { computeSetupClusterStats } from '../learning/EvidencePackService';
+import type { DiagnosisBrief } from '../tracking/diagnosisSkillCluster';
 import {
     RECEIPT_CHARS,
     clearToolArtifacts,
@@ -103,7 +104,7 @@ export const toolActionFromResult = (name: string, ok: boolean, content: string,
             verb = 'proposed';
         } else if (name === 'amend_memory') {
             label = `notebook/${parsed.file ?? parsed.id ?? 'amendment'}`;
-            review = 'Learning → Approvals (log · Undo available)';
+            review = 'Settings → Memory (log · Undo available)';
             verb = 'amended';
         } else if (name === 'propose_skill') {
             label = String(parsed.skill ?? 'skill');
@@ -254,9 +255,9 @@ const SLOW_CALL_NOTICE_MS = 2_000;
  * 8192 is `TASK_BUDGETS.chat`: the same room the final answer gets, because a
  * thinking model needs the room to think AND emit. Still clamped by the
  * caller's own budget, so a 400-token clarification turn stays 400. The back
- * half of the fix is `thinkingRepairSent` in the loop: when even this runs out,
- * the round is re-asked with the thinking stepped down rather than returned as
- * nothing.
+ * half of the fix is the empty-round repair in the loop (`thinkingRepairs`):
+ * when even this runs out, the round is re-asked with doubled room, and then
+ * with the thinking channel and the tools removed — never returned as nothing.
  */
 export const DESK_ROUND_MAX_TOKENS = 8192;
 
@@ -1908,7 +1909,14 @@ export const DESK_TOOL_DEFINITIONS: DeskToolDefinition[] = [
         function: {
             name: 'emit_signal',
             description:
-                'Emit a SIGNAL: a direction, entry, stop, target and expiry that the harness records and later settles against the tape (OKX candles with a Binance cross-check). Use this when you have an actionable call worth grading — every emission is scored on outcome R after fees, so emit on a real read, not on every chart. This places no trade and creates no journal row; the trader sees it in Journal → Signals.',
+                'Emit a SIGNAL: a direction, entry, stop, target and expiry the harness records and later settles against the tape (OKX candles with a Binance cross-check). This places no trade and creates no journal row; the trader sees it in Journal → Signals.\n\n'
+                + 'Emit checklist — every item must come from the packet or a tool result, never from memory:\n'
+                + '1. STRUCTURE: which timeframe leads, and whether the higher timeframes agree or contradict.\n'
+                + '2. LEVELS: the exact entry, the invalidation (stop) and the target — prices that exist on the chart you were shown.\n'
+                + '3. DERIVATIVES: whether funding and open interest support or oppose the direction.\n'
+                + '4. SESSION/CATALYST: what can move price inside the expiry before it is out of date.\n\n'
+                + 'Signal rules: emit LONG when structure, the nearest level and derivatives agree upward and the target is at least 1R past the stop; emit SHORT on the mirror; emit NOTHING when the read rests on an absent fact — a missing packet, a stale price, a level you invented. "No signal" is a decision, not a failure.\n\n'
+                + 'Conviction: rate the EVIDENCE you were shown on the rubric in the conviction parameter — never the outcome you hope for. If you cannot name which rubric level the evidence reaches, do not emit.',
             parameters: {
                 type: 'object',
                 properties: {
@@ -1920,6 +1928,16 @@ export const DESK_TOOL_DEFINITIONS: DeskToolDefinition[] = [
                     expiresInMinutes: { type: 'number', description: 'How long the call stays live: 15-1440 minutes.' },
                     thesis: { type: 'string', description: 'One sentence on what the call rests on.' },
                     evidence: { type: 'array', items: { type: 'string' }, description: 'The readings, levels or tool results behind it (1-8).' },
+                    conviction: {
+                        type: 'integer',
+                        enum: [1, 2, 3, 4],
+                        description: 'How strong the EVIDENCE is, on this rubric: '
+                            + '1 = one timeframe leans, the levels are untested and the derivatives read is neutral or absent; '
+                            + '2 = structure and one confirming level agree, derivatives neutral; '
+                            + '3 = structure, levels and derivatives all agree and no higher timeframe opposes; '
+                            + '4 = the whole checklist agrees AND the invalidation is a defined, near level — the call is falsifiable within the expiry. '
+                            + 'Rate the evidence, never your confidence in the outcome.',
+                    },
                 },
                 required: ['direction', 'entry', 'stop', 'target', 'expiresInMinutes', 'thesis', 'evidence'],
                 additionalProperties: false,
@@ -3223,7 +3241,7 @@ ${hitContent}`, ...resolvedSymbolField(call, fallback) };
                         id: applied.amendment.id,
                         file: target.name,
                         version: after?.updatedAt ?? target.updatedAt,
-                        note: 'Applied directly. Learning → Approvals keeps the before/after and Undo. Do not narrate this write in your reply.',
+                        note: 'Applied directly. Settings → Memory keeps the before/after and Undo. Do not narrate this write in your reply.',
                     });
                 } catch (err) {
                     return rejectedResult(call, `amend_memory rejected: ${err instanceof Error ? err.message : String(err)}`);
@@ -3390,7 +3408,7 @@ ${hitContent}`, ...resolvedSymbolField(call, fallback) };
                 // The harness's own call, recorded on the trader's ledger. The
                 // shadow gate and the evidence check never block this write.
                 try {
-                    const { emitSignal, signalScorecard } = await import('../signals/signalService');
+                    const { emitSignal, signalScorecard, signalCalibrationFor } = await import('../signals/signalService');
                     const outcome = emitSignal(call.arguments, {
                         defaultSymbol: context.defaultSymbol ?? fallback,
                         markAtEmit: (context.getLiveMarkPrice?.() ?? context.liveMarkPrice) ?? null,
@@ -3402,7 +3420,29 @@ ${hitContent}`, ...resolvedSymbolField(call, fallback) };
                         return rejectedResult(call, `emit_signal rejected: ${outcome.error}`);
                     }
                     const s = outcome.signal;
-                    const risk = Math.abs(s.entry - s.stop);
+                    // E3: the receipt's R:R is the CANONICAL number —
+                    // utils/riskReward owns the arithmetic, so the receipt and
+                    // the card can never quote two different ratios.
+                    const { plannedRiskReward } = await import('../../utils/riskReward');
+                    const rr = plannedRiskReward({ entry: s.entry, stopLoss: s.stop, takeProfits: [s.target] });
+                    // E7: the coin's last stored diagnosis, forward-fed as
+                    // REFERENCE for this read. Absent is absent — a read
+                    // failure here never fabricates a lesson.
+                    let previousDiagnosis: DiagnosisBrief | null = null;
+                    try {
+                        const { getActiveUsername } = await import('../../utils/activeUser');
+                        const user = getActiveUsername();
+                        const [{ readDiagnoses, readTrackedPositions }, { latestDiagnosisBrief }] = await Promise.all([
+                            import('../tracking/positionStore'),
+                            import('../tracking/diagnosisSkillCluster'),
+                        ]);
+                        const [diagRead, posRead] = await Promise.all([readDiagnoses(user), readTrackedPositions(user)]);
+                        previousDiagnosis = diagRead.ok && posRead.ok
+                            ? latestDiagnosisBrief(diagRead.value, posRead.value, s.coin)
+                            : null;
+                    } catch {
+                        previousDiagnosis = null;
+                    }
                     return {
                         toolCallId: call.id,
                         name: call.name,
@@ -3415,13 +3455,19 @@ ${hitContent}`, ...resolvedSymbolField(call, fallback) };
                             entry: s.entry,
                             stop: s.stop,
                             target: s.target,
-                            rr: risk > 0 ? Number((Math.abs(s.target - s.entry) / risk).toFixed(2)) : null,
+                            rr: rr > 0 ? Number(rr.toFixed(2)) : null,
                             expiresAt: new Date(s.expiresAt).toISOString(),
                             promptVersion: s.promptVersion,
+                            ...(s.conviction !== undefined ? { conviction: s.conviction } : {}),
                             // The feedback leg: this coin's resolved calls vs
                             // the same-levels base rate. `thin` is not an edge.
                             scorecard: signalScorecard(s.coin),
-                            note: 'Recorded in Journal → Signals. It settles itself against the tape after expiry; do not call it a trade and do not promise an outcome. If scorecard.thin is true, the sample is too small to read — say that instead of claiming an edge.',
+                            // Whether the model's own 1-4 conviction has ever
+                            // tracked outcomes — `insufficient` until it can
+                            // honestly say otherwise.
+                            calibration: signalCalibrationFor(s.coin),
+                            ...(previousDiagnosis ? { previousDiagnosis } : {}),
+                            note: 'Recorded in Journal → Signals. It settles itself against the tape after expiry; do not call it a trade and do not promise an outcome. If scorecard.thin is true, the sample is too small to read — say that instead of claiming an edge. previousDiagnosis, when present, is this coin\'s last tracked post-mortem — reference only: adopt it, improve it, or reject it in your own read.',
                         }),
                         symbol: s.coin,
                     };
@@ -3897,9 +3943,11 @@ ${body}`);
                 break;
             }
             case 'propose_skill': {
-                // A model-authored skill proposal. PENDING draft only — the
-                // human approves it in the Coach inbox (same surface as the
-                // post-mortem crafts); the skill library is untouched until then.
+                // A model-authored skill proposal. The deterministic gates
+                // (duplicates, malformed clauses, body caps, tombstones) run on
+                // the way in; a draft that passes applies ITSELF through the
+                // heartbeat's auto-apply (owner ruling 2026-11-03: no approval
+                // inbox). The gates, not a click, decide.
                 try {
                     const { parseCraftedSkill } = await import('../../schemas/learning');
                     const { getActiveUsername } = await import('../../utils/activeUser');
@@ -3929,7 +3977,7 @@ ${body}`);
                         // Required by the tool schema and, until this read, never
                         // seen again: the human was asked to approve a rule whose
                         // stated evidence the tool had thrown away. It rides on
-                        // the draft, the Coach card and the skill file.
+                        // the draft and the skill file.
                         reason: asString(call.arguments.reason) || undefined,
                         timeframe: asString(call.arguments.timeframe) || undefined,
                     });
@@ -4051,8 +4099,8 @@ ${body}`);
                 break;
             }
             case 'revise_skill': {
-                // Revision proposals ride the learning queue (Settings →
-                // Skills / Coach inbox review). Nothing is applied here.
+                // Revision proposals ride the learning queue, which applies
+                // the applyable ones on the heartbeat. Nothing is written here.
                 try {
                     const { listSkills } = await import('../learning/SkillMemoryService');
                     const { getActiveUsername } = await import('../../utils/activeUser');
@@ -4836,6 +4884,13 @@ export interface DeskToolLoopResult {
      *  one more (streamed) turn. False when the last round answered with
      *  no tool calls (that answer IS the reply — do not re-ask). */
     endedWithToolCalls: boolean;
+    /** True when the loop hit the token ceiling mid-turn AND recovered — a
+     *  thinking-cut re-ask or a partial-text continuation came back clean and
+     *  whole. The caller then suppresses the "PROVIDER STOPPED EARLY" notice:
+     *  the tally counts the truncated call, but the answer the trader is
+     *  reading is not cut off, and a warning about a wound that was treated
+     *  is noise, not honesty. */
+    recoveredFromTruncation?: boolean;
     /** Skill bodies the seat read this turn, so the caller's continuation can
      *  restore any compaction removes from its own request. */
     loadedSkills?: ReadonlyMap<string, string>;
@@ -5074,11 +5129,47 @@ export async function runDeskToolLoop(params: {
     const turnStartedAt = Date.now();
     const callHistory: string[] = [];
     let wrapUpSent = false;
-    /** A round that was cut off by its own thinking has been re-asked once, at a
-     *  lower tier. One, because a second is a retry of the same failure. */
-    let thinkingRepairSent = false;
+    /** How many times an empty round has been re-asked.
+     *
+     *  A round that ended with no call and no word has three shapes: its
+     *  thinking ran out of room (truncated), the provider sent no stop signal,
+     *  or the route put everything in the reasoning channel and stopped clean.
+     *  All three are the same defect to the trader — an empty answer — so all
+     *  three are re-asked.
+     *
+     *  Two repairs, because they are DIFFERENT tries: the first steps the tier
+     *  down and doubles the room; the second removes the thinking channel
+     *  ('off') and takes the tools away, so the round can only produce words.
+     *  A third would be a retry of the same failure. */
+    const MAX_THINKING_REPAIRS = 2;
+    let thinkingRepairs = 0;
     /** The tier the NEXT round asks for, after a thinking-cut repair. */
     let repairEffort: ReasoningEffort | undefined;
+    /** The output ceiling for the NEXT round, after a thinking-cut repair.
+     *  Thinking and the answer share one max_tokens budget, so a round that
+     *  died thinking died for lack of ROOM as much as for lack of a lower
+     *  tier — the repair doubles the room as well as stepping the tier down.
+     *  It must be able to EXCEED the caller's budget: a 400-token
+     *  clarification cannot recover by being re-asked at 400 tokens, which is
+     *  what the old Math.min clamp did. Stays for the turn, like the tier. */
+    let repairMaxTokens: number | undefined;
+    /** The last repair asks for the ANSWER ONLY: tools omitted, tool choice
+     *  'none'. Once the room has been doubled and the tier has fallen, the
+     *  only channel left to remove is the one that produced no words. */
+    let forceAnswerRound = false;
+    /** Set when a repair or continuation is sent; consumed at the clean
+     *  return, so a recovered run can tell its caller to skip the notice. */
+    let recoveryPending = false;
+    /** A round that streamed WORDS and hit the token ceiling is continued once:
+     *  the partial text is pushed back as the assistant's own message and the
+     *  seat finishes its sentence. One, because a second continuation is a
+     *  retry of the same failure — after that the answer ships with the
+     *  caller's truncation notice instead. */
+    let continuationSent = false;
+    /** The partial text a continuation must prepend, consumed by the round
+     *  immediately after it was sent. */
+    let continuationPrefix = '';
+    let continuationRoundIndex = -1;
     for (let round = 0; round < MAX_DESK_TOOL_ROUNDS; round++) {
         const forgedDefs = confirmedForgedToolDefinitions();
         const deskDefs = canLoadTools
@@ -5105,13 +5196,24 @@ export async function runDeskToolLoop(params: {
         }
         const roundOptions: import('../providers/GenericProviderService').ChatRequestOptions = {
             ...options,
-            tools: effectiveTools,
+            // An answer-only repair takes the tools away: a route that spent
+            // two rounds thinking and produced nothing must not be handed a
+            // third way to spend the round on a lookup.
+            tools: forceAnswerRound ? undefined : effectiveTools,
             // The FIRST round can force a tool call so a seat never argues
             // from zero data; later rounds stay 'auto' (the seat may stop).
-            toolChoice: nativeTools
-                ? (round === 0 && requireFirstToolRound && effectiveTools?.length ? 'required' : 'auto')
-                : undefined,
-            maxTokens: Math.min(options?.maxTokens ?? DESK_ROUND_MAX_TOKENS, DESK_ROUND_MAX_TOKENS),
+            toolChoice: forceAnswerRound
+                ? 'none'
+                : nativeTools
+                    ? (round === 0 && requireFirstToolRound && effectiveTools?.length ? 'required' : 'auto')
+                    : undefined,
+            // A repair may EXCEED the caller's budget — `Math.min` here was
+            // the front half of the empty-thinking bug: a 400-token
+            // clarification was re-asked at 400 tokens, where the thinking
+            // that starved it the first time starved it again.
+            maxTokens: repairMaxTokens
+                ? Math.max(repairMaxTokens, Math.min(options?.maxTokens ?? DESK_ROUND_MAX_TOKENS, DESK_ROUND_MAX_TOKENS))
+                : Math.min(options?.maxTokens ?? DESK_ROUND_MAX_TOKENS, DESK_ROUND_MAX_TOKENS),
             // Only a repaired round overrides; otherwise the caller's tier rides
             // the wire exactly as it was set.
             ...(repairEffort ? { reasoningEffort: repairEffort } : {}),
@@ -5138,6 +5240,17 @@ export async function runDeskToolLoop(params: {
             : await sendTurn(config, outboundMessages, turnOptions);
         reasoning = [reasoning, turn.reasoning].filter(Boolean).join('\n');
         finalText = turn.text || '';
+        // The round right after a continuation request carries the seat's
+        // FINISHED sentence; the partial it continues lives only here, so the
+        // answer the loop returns (and the row the trader reads) is the whole
+        // text, not the second half. Consumed once — a later round's text is
+        // its own, never a second splice.
+        if (continuationPrefix) {
+            if (round === continuationRoundIndex && finalText) {
+                finalText = continuationPrefix + finalText;
+            }
+            continuationPrefix = '';
+        }
 
         let calls = turn.toolCalls.length
             ? turn.toolCalls.map(c => ({
@@ -5162,6 +5275,10 @@ export async function runDeskToolLoop(params: {
                     ? 'tool syntax · cut off mid-call — asking for a shorter one'
                     : 'tool syntax · malformed call — self-healing');
                 onStreamReset?.();
+                // A repaired syntax round is a recovered run too: the wire
+                // counted whatever it sent, and a notice about a wound that was
+                // treated is noise over the whole answer.
+                recoveryPending = true;
                 messages.push({ role: 'assistant', content: finalText.slice(0, 2000) });
                 messages.push({
                     role: 'user',
@@ -5182,37 +5299,94 @@ export async function runDeskToolLoop(params: {
                 });
                 continue;
             }
-            // A THINKING-CUT ROUND: no call, no word, and the wire says the
-            // message stopped at its own token ceiling. This is what a
-            // reasoning route looks like when the chain of thought eats the
-            // round budget — the seat is not finished thinking, it is out of
-            // room. Returning here would end the turn with an empty answer, and
-            // an empty answer reads to the trader as the app having failed to
-            // reply, so the round is re-asked ONCE with the thinking stepped
-            // down a tier and the reply asked for in words.
+            // AN EMPTY ROUND: no call, no word. Three wires produce it — the
+            // message stopped at its own token ceiling, the gateway sent no
+            // stop signal at all, or the route put everything in the reasoning
+            // channel and stopped clean. The trader sees the same thing for
+            // all three: an answer that never arrived. Returning here is how
+            // this bug reached the transcript; the round is re-asked instead.
             //
-            // `finishReason === 'unknown'` counts too: a gateway that sends no
-            // stop signal has not said it finished, and treating silence as a
-            // clean finish is how this bug hid. The step-down stays for the rest
-            // of the turn — the tier that just failed is not the tier to climb
-            // back into.
+            // The first re-ask doubles the room (the old Math.min clamp made
+            // that a no-op for a caller with a small budget) and steps the
+            // tier down. The second removes the thinking channel and the
+            // tools, so the round can only produce words. Silent on purpose:
+            // the trader does not need to watch the harness treat a wound it
+            // has already healed.
+            const spokeOnlyInReasoning = !!(turn.reasoning ?? '').trim() && turn.finishReason === 'stop';
+            const emptyRound = !finalText.trim() && (
+                turn.truncated
+                || turn.finishReason === 'unknown'
+                || spokeOnlyInReasoning
+            );
             if (
-                !finalText.trim()
-                && (turn.truncated || turn.finishReason === 'unknown')
-                && !thinkingRepairSent
+                emptyRound
+                && thinkingRepairs < MAX_THINKING_REPAIRS
                 && round < MAX_DESK_TOOL_ROUNDS - 1
                 && !options?.signal?.aborted
             ) {
-                thinkingRepairSent = true;
-                repairEffort = stepEffortDown(options?.reasoningEffort ?? 'high');
+                const thisRoundBudget = outbound.maxTokens;
+                thinkingRepairs += 1;
+                recoveryPending = true;
                 onStreamReset?.();
-                onToolEvent?.(`thinking hit the round's token ceiling with nothing to show · re-asking at ${repairEffort}`);
+                if (thinkingRepairs === 1) {
+                    repairEffort = stepEffortDown(options?.reasoningEffort ?? 'high');
+                    repairMaxTokens = Math.max(thisRoundBudget * 2, DESK_ROUND_MAX_TOKENS);
+                    messages.push({
+                        role: 'user',
+                        content: harnessTurn(
+                            'YOUR LAST MESSAGE WAS CUT OFF before you finished thinking, so nothing arrived. '
+                            + 'Do not re-reason from the start. Emit ONE tool call with the fewest arguments, '
+                            + 'or write the reply you already have and say what you did not look up.',
+                        ),
+                    });
+                } else {
+                    repairEffort = 'off';
+                    forceAnswerRound = true;
+                    messages.push({
+                        role: 'user',
+                        content: harnessTurn(
+                            'Two attempts produced no visible answer. Answer IN WORDS now, without thinking and '
+                            + 'without calling a tool. If the data you need is missing, say which fact is missing '
+                            + 'and answer with what you do have.',
+                        ),
+                    });
+                }
+                continue;
+            }
+            // A PARTIAL-TEXT TRUNCATION: the round streamed words AND hit the
+            // token ceiling — or stopped "clean" with a code fence still open,
+            // which is the same incompleteness wearing a stop signal. Returning
+            // here ships a half answer; ONE bounded continuation hands the
+            // partial back and asks the seat to finish its own sentence.
+            // Deliberately after the two repairs above: a cut-off tool CALL has
+            // its own repair, and an empty round has the thinking one.
+            const unclosedFence = ((finalText.match(/```/g) ?? []).length % 2) === 1;
+            const partialTruncated = turn.truncated
+                || (turn.finishReason === 'stop' && unclosedFence);
+            if (
+                finalText.trim()
+                && partialTruncated
+                && !continuationSent
+                && round < MAX_DESK_TOOL_ROUNDS - 1
+                && !options?.signal?.aborted
+            ) {
+                continuationSent = true;
+                continuationPrefix = finalText;
+                continuationRoundIndex = round + 1;
+                recoveryPending = true;
+                // The continuation gets the room the truncated attempt lacked —
+                // otherwise it writes the same answer into the same ceiling.
+                repairMaxTokens = Math.max(repairMaxTokens ?? 0, outbound.maxTokens * 2);
+                // No onStreamReset: the painted bubble keeps the partial and the
+                // continuation's deltas flow after it, so the trader watches one
+                // answer finish instead of watching its first half vanish.
+                messages.push({ role: 'assistant', content: finalText });
                 messages.push({
                     role: 'user',
                     content: harnessTurn(
-                        'YOUR LAST MESSAGE WAS CUT OFF before you finished thinking, so nothing arrived. '
-                        + 'Do not re-reason from the start. Emit ONE tool call with the fewest arguments, '
-                        + 'or write the reply you already have and say what you did not look up.',
+                        'YOUR LAST MESSAGE WAS CUT OFF at the token ceiling mid-sentence. '
+                        + 'Continue it from exactly where it stopped — do not restate what is already there, '
+                        + 'do not start over, and do not re-run a lookup you already made. Finish the answer.',
                     ),
                 });
                 continue;
@@ -5225,6 +5399,10 @@ export async function runDeskToolLoop(params: {
                 // Wipe the bubble so raw markup never stands as the answer.
                 onStreamReset?.();
             }
+            const recovered = recoveryPending
+                && !partialTruncated
+                && turn.finishReason === 'stop'
+                && !!finalText.trim();
             return {
                 messages,
                 finalText: strippedFinal.trim()
@@ -5235,6 +5413,7 @@ export async function runDeskToolLoop(params: {
                 reasoning,
                 usedTools,
                 endedWithToolCalls: false,
+                ...(recovered ? { recoveredFromTruncation: true } : {}),
                 loadedSkills: skillBodiesThisTurn,
                 ...(paintedMarkup ? { repaintFinal: true } : {}),
             };
@@ -5609,6 +5788,11 @@ export interface StreamWithDeskToolsOptions extends ChatRequestOptions {
     onToolProgress?: (line: string) => void;
     /** Same contract as the loop options: the model's tool NAME per call. */
     onToolCall?: (name: string) => void;
+    /** Fires once when the loop settles, with the turn-level facts a
+     *  streaming generator cannot return (its yield type is text). The caller
+     *  reads `recoveredFromTruncation` to know a ceiling-hit was REPAIRED —
+     *  the "PROVIDER STOPPED EARLY" notice must not fire over a whole answer. */
+    onLoopMeta?: (meta: { recoveredFromTruncation: boolean }) => void;
     /** See the main options interface — same contract, so a payload can be
      *  persisted from the streaming loop too. */
     onToolPayload?: (payload: ToolPayload) => void;
@@ -5977,6 +6161,7 @@ export async function* streamChatWithDeskTools(
     // `artifactOwner` so a concurrent turn's artifacts survive.
     void loopPromise.finally(() => clearToolArtifacts(artifactOwner)).catch(() => { /* `loop` below rethrows the real error */ });
     const loop = await loopPromise; // propagates the loop's error, if any
+    options?.onLoopMeta?.({ recoveredFromTruncation: !!loop.recoveredFromTruncation });
 
     if (loop.usedTools.length === 0 && loop.finalText.trim() && !streamedLive) {
         yield loop.finalText;

@@ -28,7 +28,6 @@ import { latestChartVerdict } from './services/trade/chartData';
 import { useToastActions } from './components/shared/Toast';
 import { FORGED_PROPOSAL_EVENT } from './services/tools/toolForge';
 import { AMENDMENT_EVENT } from './services/learning/memoryAmendments';
-import { countPendingEverything } from './services/learning/memoryHealth';
 import { loadBotLearningStats } from './services/agents/botLearning';
 import { useConfirmDialog } from './components/shared/ConfirmDialog';
 import { Header } from './components/shared/Header';
@@ -46,7 +45,6 @@ import { ChevronDownIcon, CloseIcon } from './components/shared/Icons';
 const StrategySearch = React.lazy(() => import('./components/shared/StrategySearch'));
 const UserProfileManager = React.lazy(() => import('./components/settings/UserProfileManager'));
 const WatchListPanel = React.lazy(() => import('./components/analysis/WatchListPanel'));
-const ActionApprovalsPanel = React.lazy(() => import('./components/learn/ActionApprovals'));
 const JobsDrawer = React.lazy(() => import('./components/settings/JobsDrawer'));
 import { AskUserInputCard } from './components/shared/AskUserInputCard';
 const SettingsMenu = React.lazy(() => import('./components/settings/SettingsMenu'));
@@ -62,7 +60,6 @@ const TradeView = React.lazy(() => import('./components/trade/TradeView'));
 const NewBotDialog = React.lazy(() => import('./components/chat/NewBotDialog'));
 const NewGroupDialog = React.lazy(() => import('./components/chat/NewGroupDialog'));
 const GroupChatView = React.lazy(() => import('./components/chat/GroupChatView'));
-const CoachThreadPanel = React.lazy(() => import('./components/chat/CoachThreadPanel'));
 const LearnView = React.lazy(() => import('./components/learn/LearnView'));
 import type { LearnTab } from './components/learn/LearnView';
 import SkillsLibrary from './components/skills/SkillsLibrary';
@@ -73,7 +70,6 @@ import { nextEffortTier } from './components/shared/effortScale';
 import { DEFAULT_FRAMEWORKS } from './constants/models';
 import { computeChatModelFallback, isProviderReady } from './utils/providerUtils';
 import { defaultLeverage, createNewConversation, findReusableEmptyConversation } from './utils/conversationUtils';
-import { collectApprovalItems, setAutoJournalRule, type ApprovalItem } from './utils/approvalInbox';
 import { type ThreadSelection, threadForProvider } from './utils/agentThreads';
 import {
     updateBot, 
@@ -85,9 +81,6 @@ import { useBotMailbox, type UseBotMailboxResult } from './hooks/useBotMailbox';
 import { buildBotSystemPrompt } from './services/agents/botMailbox';
 import { classifyBotAttention } from './services/agents/botAttention';
 import { readBotSystemMarkdown, readBotMemoryMarkdown } from './services/bots/BotMemoryService';
-import { takeSkillDraft, tombstoneSkillDraftKey, draftTriggerKey, listSkillDrafts, type SkillDraft } from './utils/skillDrafts';
-import { listLearningProposals } from './utils/learningQueue';
-import { approveSkillDraft, skillApprovalToast } from './services/learning/skillApproval';
 import useNetworkStatus from './hooks/useNetworkStatus';
 import { useSupervisorBootstrap } from './hooks/useSupervisorBootstrap';
 import { useLearningHeartbeat } from './hooks/useLearningHeartbeat';
@@ -474,10 +467,11 @@ const App: React.FC = () => {
         return () => clearTimeout(t);
     }, [surface]);
 
-    /** The Customize rail row's destination: the skill library, which is a tab of
-     *  the Learning surface now. It used to open Settings → Skills, and before
-     *  that a rail surface — three homes for one library. */
-    const openCustomize = useCallback((): void => {
+    /** The rail's Skills row / Alt+3: the skill library, which is the Learning
+     *  surface's Skills tab. It used to be labelled "Customize" and render the
+     *  Learning tab itself (owner: two labels, one render); the label now names
+     *  where it lands. */
+    const openSkills = useCallback((): void => {
         setLearnTab('skills');
         handleSurfaceSelect('learn');
     }, [handleSurfaceSelect, setLearnTab]);
@@ -721,8 +715,8 @@ const App: React.FC = () => {
 
     // Chart AI dock routing (the Agents surface is gone — roster clicks open
     // sessions inside the trade surface instead). Nonce-keyed so re-clicking
-    // the same bot/group re-fires the open effect. The Coach inbox is not
-    // routed here any more: it is a Learning tab.
+    // the same bot/group re-fires the open effect. There is no Coach inbox to
+    // route: its queues apply themselves (owner ruling, 2026-11-03).
     const [tradeBotRequest, setTradeBotRequest] = useState<{ botId: string; nonce: number } | null>(null);
     const [tradeGroupRequest, setTradeGroupRequest] = useState<{ groupId: string; nonce: number } | null>(null);
 
@@ -1333,7 +1327,7 @@ const App: React.FC = () => {
             // A key that goes silently missing is the worse outcome.
             if (e.altKey && !e.ctrlKey && !e.metaKey && e.key === '3') {
                 e.preventDefault();
-                openCustomize();
+                openSkills();
             }
             // Alt+6 takes the Agents surface's question to the chart. Scoped to
             // that surface: on any other one the chord would move something the
@@ -1913,46 +1907,12 @@ const App: React.FC = () => {
     });
     resetAppStateRef.current = userProfileResetAppState;
 
-    const [skillDraftNonce, setSkillDraftNonce] = useState(0);
     /** Bumped on any notebook write — the Agents rail's per-bot learning stats
      *  read the notebook, so they refresh with it rather than every price tick. */
     const [memoryNonce, setMemoryNonce] = useState(0);
-    useEffect(() => {
-        const bump = (): void => setSkillDraftNonce(n => n + 1);
-        window.addEventListener('august-skill-drafts', bump);
-        return () => window.removeEventListener('august-skill-drafts', bump);
-    }, []);
-    const approvalItems = useMemo(
-        () => collectApprovalItems(messages, autopilotResolutions, activeUsername || undefined),
-        [messages, autopilotResolutions, skillDraftNonce, activeUsername],
-    );
-    // ─── Coach thread ───────────────────────────────────────────────
-    // The learning loop's inbox as a conversation: pending skill drafts +
-    // queue proposals. The badge counts both; the panel refreshes itself on
-    // the same window events, so App only needs the count + selection.
-    const [learningQueueNonce, setLearningQueueNonce] = useState(0);
-    useEffect(() => {
-        const bump = (): void => setLearningQueueNonce(n => n + 1);
-        window.addEventListener('august-learning-queue', bump);
-        return () => window.removeEventListener('august-learning-queue', bump);
-    }, []);
-    const coachCount = useMemo(
-        () => approvalItems.filter(i => i.kind === 'skill').length
-            + listLearningProposals(activeUsername || undefined).length,
-        [approvalItems, learningQueueNonce, activeUsername],
-    );
     // Per-bot learning stats for the Agents rail (WS-3.4). Walks the notebook,
     // so it is keyed to notebook writes and the roster — not to price ticks.
     const botStats = useMemo(() => loadBotLearningStats(), [bots, memoryNonce]);
-    // One number for one meaning: the union of every queue the Learning surface
-    // hosts — the notebook's pending drafts, proposals and amendments, plus the
-    // permissions the harness is asking for. A skill draft appears in
-    // approvalItems too, so it is counted once, from the store — not twice
-    // because two surfaces happened to list it.
-    const approvalsWaiting = useMemo(() => {
-        const permissions = approvalItems.filter(i => i.kind !== 'skill').length;
-        return countPendingEverything(activeUsername || 'default') + permissions;
-    }, [approvalItems, activeUsername, skillDraftNonce, learningQueueNonce, memoryNonce]);
     // Surface-menu badges. Memoized because App re-renders on every price tick
     // and both Header and the shell rail are React.memo'd — a fresh object
     // literal would invalidate the memo once a second for nothing.
@@ -1972,19 +1932,11 @@ const App: React.FC = () => {
                     : 'generating insights',
             };
         }
-        // The number rides the surface that HOLDS the queues. It used to sit on a
-        // separate Approvals row in the rail — one destination, two rows, the same
-        // count twice on one screen. The Chat sidebar does carry a "Coach inbox"
-        // row now, because the menu that was its only entry point was removed, but
-        // it is a route with no number: this badge stays the single figure.
-        if (approvalsWaiting > 0) {
-            next.learn = {
-                count: approvalsWaiting,
-                detail: `${approvalsWaiting} decision${approvalsWaiting === 1 ? '' : 's'} waiting`,
-            };
-        }
+        // The Learning badge died with the Approvals tab (2026-11-03): its
+        // queues apply themselves, so a waiting count has no destination —
+        // and a count that opens onto nothing is the O-80 lie.
         return next;
-    }, [workingBotId, dmWorkingBotId, isInsightGenerating, insightProgress, activeUsername, skillDraftNonce, learningQueueNonce, approvalsWaiting]);
+    }, [workingBotId, dmWorkingBotId, isInsightGenerating, insightProgress]);
     const selectTeamThread = useCallback(() => setActiveThread({ kind: 'team' }), []);
     // One shell rail, two modes. A conversation row, New chat and Search all
     // land on the desk's focused form (Agents); the dock is the same thread
@@ -2005,22 +1957,6 @@ const App: React.FC = () => {
         setSurface('agents');
     }, [setSurface]);
     const consumeAgentsSearchRequest = useCallback(() => setAgentsSearchRequest(0), []);
-    const coachAllowDraft = useCallback((draft: SkillDraft): void => {
-        void approveSkillDraft(draft, activeUsername || 'default', loggedTradesRef.current)
-            .then(r => { const t = skillApprovalToast(r, draft.crafted.name); toast[t.kind](t.title, t.body); });
-    }, [activeUsername]);
-    const coachDenyDraft = useCallback((draft: SkillDraft): void => {
-        const taken = takeSkillDraft(draft.id, activeUsername || undefined);
-        if (!taken) {
-            toast.warning('Draft not discarded', 'It is still in your inbox — retry, or approve it there.');
-            return;
-        }
-        tombstoneSkillDraftKey(
-            draftTriggerKey(draft.coin, draft.crafted),
-            activeUsername || undefined,
-        );
-        toast.success('Skill discarded', 'Similar suggestions paused for 7 days');
-    }, [activeUsername]);
     // Roster clicks route into the Chart AI dock (the Agents surface is gone).
     // Declared after the thread selectors above so their useCallback
     // identities exist at first read.
@@ -2034,19 +1970,6 @@ const App: React.FC = () => {
         setTradeGroupRequest({ groupId: id, nonce: Date.now() });
         setSurface('trade');
     }, [selectGroupThread, setSurface]);
-    /** The Coach inbox merged into the Learning surface, so a coach hop names the
-     *  tab rather than opening a dock session. */
-    const renderCoachInbox = useCallback(() => (
-        <React.Suspense fallback={null}>
-            <CoachThreadPanel onAllowDraft={coachAllowDraft} onDenyDraft={coachDenyDraft} />
-        </React.Suspense>
-    ), [coachAllowDraft, coachDenyDraft]);
-    /** The one inbox. The nav rail's Approvals row and every "open the Coach"
-     *  affordance land here, so a decision has exactly one address. */
-    const openApprovalsInLearn = useCallback(() => {
-        setLearnTab('coach');
-        setSurface('learn');
-    }, [setSurface]);
     // Skill-citation chip tap: open Settings → Skills so the
     // Skill-citation chip tap: open the Strategy Studio surface so it mounts
     // and consumes the pending slug (Studio listens for the same event when
@@ -2054,13 +1977,13 @@ const App: React.FC = () => {
     useEffect(() => {
         const onOpenSkill = (): void => {
             // The library is the Learning surface's Skills tab, so this lands
-            // there — the same destination as the Customize row and Alt+3, not a
-            // third one.
-            openCustomize();
+            // there — the same destination as the rail's Skills row and Alt+3,
+            // not a third one.
+            openSkills();
         };
         window.addEventListener('august:open-skill', onOpenSkill);
         return () => window.removeEventListener('august:open-skill', onOpenSkill);
-    }, [openCustomize]);
+    }, [openSkills]);
 
     // "Try in chat" from the Studio or the learning queue: the dock reads the
     // hand-off itself (see skillDeepLink), but on Learning nothing would show the
@@ -2188,75 +2111,6 @@ const App: React.FC = () => {
 
 
 
-    /** Shared approval handlers — the Inbox modal AND the
-     *  inline cards in the chat flow both route through these. */
-    const approvalHandlers = useMemo(() => ({
-        allow: (item: ApprovalItem): void => {
-            if (item.kind === 'skill') {
-                // Read the draft WITHOUT consuming it: the old path took it off
-                // the queue first, so a write that silently declined destroyed
-                // the trader's only copy and still said "Skill saved".
-                const draft = listSkillDrafts(activeUsername || undefined)
-                    .find(d => d.id === item.id);
-                if (!draft) return;
-                void approveSkillDraft(draft, activeUsername || 'default', loggedTrades)
-                    .then(r => { const t = skillApprovalToast(r, draft.crafted.name); toast[t.kind](t.title, t.body); });
-                return;
-            }
-            handleConfirmAutopilot(item.messageId);
-        },
-        deny: (item: ApprovalItem): void => {
-            if (item.kind === 'skill') {
-                const draft = takeSkillDraft(item.id, activeUsername || undefined);
-                if (draft) {
-                    tombstoneSkillDraftKey(
-                        draftTriggerKey(draft.coin, draft.crafted),
-                        activeUsername || undefined,
-                    );
-                    toast.success('Skill discarded', 'Similar suggestions paused for 7 days');
-                } else {
-                    toast.warning('Draft not discarded', 'It is still in your inbox — retry, or approve it there.');
-                }
-                return;
-            }
-            handleDismissAutopilot(item.messageId);
-        },
-        always: (item: ApprovalItem): void => {
-            if (item.coin) setAutoJournalRule(item.coin, 'always', activeUsername || undefined);
-            handleConfirmAutopilot(item.messageId);
-        },
-        never: (item: ApprovalItem): void => {
-            if (item.coin) setAutoJournalRule(item.coin, 'deny', activeUsername || undefined);
-            handleDismissAutopilot(item.messageId);
-        },
-    }), [activeUsername, loggedTrades, handleConfirmAutopilot, handleDismissAutopilot, toast]);
-
-    const renderActionApprovals = useCallback(() => (
-        <React.Suspense fallback={null}>
-            <ActionApprovalsPanel
-                items={approvalItems}
-                onAllow={approvalHandlers.allow}
-                onDeny={approvalHandlers.deny}
-                onAlways={approvalHandlers.always}
-                onNever={approvalHandlers.never}
-                onOpen={(item) => {
-                    // The dock owns the only transcript scroller, and it
-                    // registers its bridge on mount — so from another surface
-                    // this parks the row and locates it once the dock has
-                    // mounted; calling the bridge there would be a null deref
-                    // that silently scrolls nothing.
-                    const dockIsMounted = surface === 'trade';
-                    setSurface('trade');
-                    if (dockIsMounted) handleLocateMessage(item.messageId);
-                    else pendingLocateRef.current = item.messageId;
-                }}
-            />
-        </React.Suspense>
-    ), [approvalItems, approvalHandlers, surface, handleLocateMessage, setSurface]);
-
-
-
-
     // The title bar's status cluster, built ONCE. Every surface now has exactly
     // one bar: Analyze/Journal/Learning get the band — moved INSIDE the content
     // column so the sidebar runs the full height, the reference's silhouette —
@@ -2285,11 +2139,11 @@ const App: React.FC = () => {
             <ShellUtility
                 surface={surface}
                 onSelect={handleSurfaceSelect}
-                onOpenCustomize={openCustomize}
+                onOpenSkills={openSkills}
                 badges={navBadges}
             />
         ),
-        [surface, handleSurfaceSelect, openCustomize, navBadges],
+        [surface, handleSurfaceSelect, openSkills, navBadges],
     );
     /** What the content bar is about. The rail names the workspace; this names
      *  the thing being worked on. */
@@ -2482,15 +2336,24 @@ const App: React.FC = () => {
                         surface={surface}
                         onSelectSurface={handleSurfaceSelect}
                         onNewChat={startDeskChat}
-                        onOpenApprovals={openApprovalsInLearn}
-                        approvalsCount={approvalsWaiting}
                         onOpenSearch={requestDeskSearch}
+                        // Every profile is a workspace. The active one is first
+                        // and expanded; the rest are a click to switch. The
+                        // merged set guarantees the CURRENT profile always has
+                        // a row, even on a profile whose name has not landed
+                        // in the store list yet.
+                        workspaces={[...new Set([
+                            activeUsername || 'default',
+                            ...existingUsernames,
+                        ])].map(name => ({ name, active: name === (activeUsername || 'default') }))}
+                        onSwitchWorkspace={(name) => { void loadUserData(name); }}
+                        onAddWorkspace={() => setIsUserModalOpen(true)}
                         conversations={conversationHistory}
                         activeConversationId={activeConversationId}
                         onOpenConversation={openDeskConversation}
                         onDeleteConversation={handleDeleteConversationFromSidebar}
                         onClearConversation={(id) => { void handleClearChat(id); }}
-                        onOpenCustomize={openCustomize}
+                        onOpenSkills={openSkills}
                         activeUsername={activeUsername}
                         onOpenSettings={() => setIsSettingsMenuVisible(true)}
                         width={railResize.width}
@@ -2549,18 +2412,16 @@ const App: React.FC = () => {
                                     activeUsername={activeUsername ?? undefined}
                                     onTradeModeChange={(m) => { lastRequestedTradeModeRef.current = m; }}
                                     onOpenChat={() => handleSurfaceSelect('agents')}
-                                    /* The same two handlers the Chat rail gets, so
-                                       the dock is the Chat's compact form rather
-                                       than a reduced one: it can open a room and
-                                       the Coach inbox, not just list rooms. */
+                                    /* The same handlers the Chat rail gets, so the
+                                       dock is the Chat's compact form rather than
+                                       a reduced one: it can open a room, not just
+                                       list rooms. */
                                     botThreadRows={tradeBotThread}
                                     onBotTurnCommit={commitDockBotTurn}
                                     onSoloTurnCommit={commitSoloChatTurn}
                                     onSyncConversation={ensureDockTurnConversation}
                                     conversationRows={messages}
                                     onNewGroup={() => setIsNewGroupOpen(true)}
-                                    onOpenCoach={openApprovalsInLearn}
-                                    coachCount={coachCount}
                                     verdict={chartVerdict}
                                     bots={bots}
                                     trades={loggedTrades}
@@ -2614,7 +2475,6 @@ const App: React.FC = () => {
                                     setIsGlobalMemoryEnabled={setIsGlobalMemoryEnabled}
                                     initialTab={learnTab}
                                     onInitialTabConsumed={learnTabConsumed}
-                                    renderCoach={renderCoachInbox}
                                     renderSkills={() => (
                                         // Rendered lazily from the tab, not built
                                         // as a node up top: the Studio reads the
@@ -2632,17 +2492,13 @@ const App: React.FC = () => {
                                             </React.Suspense>
                                         )} />
                                     )}
-                                    renderActionApprovals={renderActionApprovals}
-                                    coachCount={coachCount}
                                     reviewSummary={finalTradeSummary}
                                     reviewLoading={isLoading}
                                     onRegenerateReview={handleRegenerateFinalSummary}
-                                    // The catalog's Add hands off to the Coach inbox, which owns
-                                    // the draft path. `onOpenSkillsSettings` stays unwired on
+                                    // `onOpenSkillsSettings` stays unwired on
                                     // purpose: Settings → Skills is "Tool approvals", so a gear
                                     // labelled "Skill settings" there would be an affordance lie,
                                     // and SkillsCatalog hides a control it has no handler for.
-                                    onAddSkill={openApprovalsInLearn}
                                 />
                             </React.Suspense>
                         )}
@@ -2669,7 +2525,6 @@ const App: React.FC = () => {
                                     onStopRun={handleStopAgentsRun}
                                     analysisRunning={isAnalysisInProgress}
                                     renderGroup={g => renderGroupSurface(g.id)}
-                                    coachCount={coachCount}
                                     workingBotId={workingBotId ?? dmWorkingBotId}
                                     mailboxBusyBotIds={mailbox.dmBusyBotIds}
                                     lastOpenedMap={threadOpenedMap}
@@ -2677,7 +2532,6 @@ const App: React.FC = () => {
                                     botStats={botStats}
                                     onDeleteBot={deleteBot}
                                     onRenameBot={(botId, name) => updateBot(botId, { name })}
-                                    onOpenCoach={openApprovalsInLearn}
                                     onDeleteGroup={deleteGroup}
                                     onEditGroup={groupId => {
                                         const target = groups.find(g => g.id === groupId);
@@ -2717,13 +2571,13 @@ const App: React.FC = () => {
                                        the top of the column at every width, the
                                        four-destination switch only comes back when
                                        the column is put away (the title bar then
-                                       has to carry it), and Journal/Learning/
-                                       Customize sit above the account. */
+                                       has to carry it), and Journal / Learning /
+                                       Skills sit above the account. */
                                     modeSwitch={shellModeSwitch}
                                     shellUtilities={<ShellUtility
                                         surface={surface}
                                         onSelect={handleSurfaceSelect}
-                                        onOpenCustomize={openCustomize}
+                                        onOpenSkills={openSkills}
                                         badges={navBadges}
                                     />}
                                     searchRequestNonce={agentsSearchRequest}
@@ -2796,7 +2650,7 @@ const App: React.FC = () => {
             {/* The Strategy Studio is no longer a surface and no longer a
                 SETTINGS tab either: it is mounted by the Learning surface's
                 Skills tab (see `renderSkills` on LearnView above), reached from
-                the sidebar's Customize row or Alt+3. No overlay state to manage
+                the sidebar's Skills row or Alt+3. No overlay state to manage
                 either way. */}
 
         </div>

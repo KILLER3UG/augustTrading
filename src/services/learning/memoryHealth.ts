@@ -36,6 +36,7 @@ import { listSkillDrafts, listWorthGateAttempts } from '../../utils/skillDrafts'
 import { listLearningProposals } from '../../utils/learningQueue';
 import { listAmendments } from './memoryAmendments';
 import { loadForgedTools } from '../tools/toolForge';
+import { skillFormatIssues } from '../../utils/skillFrontmatter';
 import { countPendingSupervision } from './skillSupervisor';
 import { loadHygieneLog, type HygieneLine } from './memoryHygiene';
 import { loadBotLearningStats, type BotLearningStat } from '../agents/botLearning';
@@ -137,6 +138,15 @@ export interface MemoryHealthReport {
      *  cannot, so they are visible rather than silent. The throttle lifts by
      *  itself when the cluster gains a trade the gate has not judged. */
     gateThrottled: Array<{ key: string; attempts: number; lastAt: string }>;
+    /** The ONE-format audit (2026-11-03): every skill file in the library —
+     *  existing, imported, hand-edited — checked against slug name + `when` +
+     *  description + body-in-caps. Conforming is the expected state; the
+     *  issues name what to fix, file by file. */
+    skillFormat: {
+        checked: number;
+        conforming: number;
+        issues: Array<{ file: string; problems: string[] }>;
+    };
     /** One-line entries the weekly hygiene pass writes; newest first. */
     hygiene: HygieneLine[];
     /** Plain-English problems worth showing the user, empty when healthy. */
@@ -340,6 +350,30 @@ export const buildMemoryHealthReport = async (username: string): Promise<MemoryH
     if (ghostSkills > 0) {
         flags.push(`${ghostSkills} skill file${ghostSkills === 1 ? '' : 's'} could not be parsed — ${ghostSkills === 1 ? 'it is' : 'they are'} in the notebook and in every backup, but in no list.`);
     }
+    // The ONE-format gate over the whole library, including the files that
+    // predate it. The new-skill gates keep the shape on the way in; this is
+    // what keeps "every skill in the skills folder follows the same format"
+    // a checked claim instead of a hope.
+    const skillFormatReport = {
+        checked: skillFiles.length,
+        conforming: 0,
+        issues: skillFiles
+            .map(f => {
+                const meta = parseSkillMarkdown(f.content);
+                return {
+                    file: f.name,
+                    problems: skillFormatIssues({
+                        fileName: f.name,
+                        ...(meta ?? {}),
+                    }),
+                };
+            })
+            .filter(r => r.problems.length > 0),
+    };
+    skillFormatReport.conforming = skillFormatReport.checked - skillFormatReport.issues.length;
+    if (skillFormatReport.issues.length > 0) {
+        flags.push(`${skillFormatReport.issues.length} skill file${skillFormatReport.issues.length === 1 ? ' does' : 's do'} not follow the one skill format (slug name, one \`when\` trigger, description, procedure body) — the file-by-file list is in the Health report.`);
+    }
     if (queues.needsRewrite > 0) {
         flags.push(`${queues.needsRewrite} proposal${queues.needsRewrite === 1 ? '' : 's'} need a rewritten clause before anything can act on them.`);
     }
@@ -378,6 +412,7 @@ export const buildMemoryHealthReport = async (username: string): Promise<MemoryH
         generatedAt: Date.now(),
         folders: [...byFolder.values()].sort((a, b) => b.files - a.files),
         skills,
+        skillFormat: skillFormatReport,
         notebook: {
             files: files.length,
             enabled: files.filter(f => f.enabled).length,

@@ -53,8 +53,10 @@
  * evidence it never earned. Everything else (writing a real trigger for a
  * dormant skill, shortening a clipped body) needs a model and is stage 2.
  *
- * Both halves go through the existing human approval queue
- * (`utils/learningQueue.ts` → `components/learn/ActionApprovals.tsx`).
+ * Both halves are QUEUED rather than applied in place
+ * (`utils/learningQueue.ts`); the learning heartbeat applies the applyable
+ * ones automatically (owner ruling 2026-11-03: no approval inbox), and a row
+ * whose write is refused keeps its attempt budget.
  */
 
 import { getMemoryFiles } from './MemoryFilesService';

@@ -37,7 +37,10 @@ import {
 } from './signalMarketData';
 import { getActiveUsername } from '../../utils/activeUser';
 import { DESK_TOOL_NAMES } from '../../utils/toolKinds';
+import { parseConviction } from '../../utils/convictionScale';
 import { baseRateFor, scoreSignals, type SignalScorecard } from './signalAccuracy';
+import { momentumBaselineFor } from './baselineLane';
+import { calibrationVerdict, type CalibrationVerdict } from './signalCalibration';
 
 /** Bump when the emit_signal description or parameter semantics change. The
  *  value is stored on every emission, so a later accuracy comparison can tell
@@ -69,6 +72,11 @@ export interface EmitSignalInput {
     expiresInMinutes?: unknown;
     thesis?: unknown;
     evidence?: unknown;
+    /** The model's self-reported evidence conviction, 1-4 (the written
+     *  rubric in the tool description). Optional; a PROVIDED-but-invalid
+     *  value refuses rather than clamping, so the calibration ledger never
+     *  grades a number the model did not mean. */
+    conviction?: unknown;
 }
 
 export interface EmitSignalContext {
@@ -118,6 +126,12 @@ export const emitSignal = (input: EmitSignalInput, context: EmitSignalContext = 
         .slice(0, 8)
         .map(e => (e.length > 120 ? `${e.slice(0, 117)}…` : e));
     if (refs.length === 0) return { ok: false, error: 'evidence is required — name the readings or levels the call rests on' };
+    const conviction = input.conviction === undefined || input.conviction === null
+        ? null
+        : parseConviction(input.conviction);
+    if (conviction === null && input.conviction !== undefined && input.conviction !== null) {
+        return { ok: false, error: 'conviction must be an integer 1-4, rated against the rubric in the tool description' };
+    }
 
     const now = Date.now();
     const user = context.user ?? getActiveUsername();
@@ -155,6 +169,7 @@ export const emitSignal = (input: EmitSignalInput, context: EmitSignalContext = 
         evidenceRefs: refs,
         dataHash: fnv1a(tape),
         ...(mark !== undefined ? { markAtEmit: mark } : {}),
+        ...(conviction !== null ? { conviction } : {}),
         provider: context.provider || 'unknown',
         model: context.model || 'unknown',
         promptVersion: EMIT_SIGNAL_PROMPT_VERSION,
@@ -225,6 +240,12 @@ export interface SettleOutcome {
 export const signalScorecard = (coin?: string, user: string = getActiveUsername()): SignalScorecard =>
     scoreSignals(readSignals(user).filter(r => !coin || r.signal.coin === coin));
 
+/** Does the self-reported conviction mean anything yet? The receipt carries
+ *  the verdict so the next call is made knowing whether its own 1-4 has ever
+ *  tracked the outcome. `insufficient` is the honest default. */
+export const signalCalibrationFor = (coin?: string, user: string = getActiveUsername()): CalibrationVerdict =>
+    calibrationVerdict(readSignals(user).filter(r => !coin || r.signal.coin === coin));
+
 let lastSettleAttempt = 0;
 
 /**
@@ -294,8 +315,16 @@ export const settleDueSignals = async (
             : 'unavailable';
         // The baseline is computed where the tape already is. A resolution
         // written before this fold shipped simply has no `base` — the feed
-        // says "no baseline", never 0.
-        const base = baseRateFor(signal, primary) ?? undefined;
+        // says "no baseline", never 0. The fixed mechanical rule (N6) rides
+        // the same object: "does the harness beat a rule with no model at
+        // all" is answered on the same bars, by the same resolver.
+        const baseRate = baseRateFor(signal, primary);
+        const lane = momentumBaselineFor(primary);
+        const base = baseRate
+            ? (lane && lane.hitRate !== null
+                ? { ...baseRate, ruleHitRate: lane.hitRate, ruleFills: lane.fills }
+                : baseRate)
+            : undefined;
         const resolution: SignalResolution = {
             ...draft,
             at: Date.now(),

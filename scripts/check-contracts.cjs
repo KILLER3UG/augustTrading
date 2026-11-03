@@ -65,6 +65,22 @@
  *  30. tentative skills — three independent outcomes are required, the
  *      auto-demotion floor is real, and the skills index labels + caps the
  *      tentative channel without letting it enforce
+ *  31. the tape's shape — an OHLC-incoherent candle is dropped and named at
+ *      every ingestion path (chart tape and signal tape alike)
+ *  32. the truncated desk answer — continued once from its own partial text,
+ *      an unclosed fence counted as truncation, and never twice
+ *  33. the accuracy floor — a Wilson interval on the hit rate, slugging in
+ *      net R that refuses a one-sided sample, the candle-aligned cache TTL,
+ *      and the warmup discipline of the recursive indicators
+ *  34. the family cooldown (a refuted setup stops digging under a healthy
+ *      book), the conviction rubric (1-4, refused-not-clamped), the
+ *      calibration verdict (rank IC that refuses to speak early), the fixed
+ *      rule lane graded by the same resolver, and the resolver's prefix
+ *      stability plus its fill-realism measurements
+ *  35. the one skill format audited over the WHOLE library, the owner-ruled
+ *      auto-apply (drafts stamp 'auto', refusal budget, the draft-event
+ *      choke point), and the approvals UI gone end to end with amend_memory
+ *      confirmed direct-write
  *
  * Plain node, no vitest, no jsdom, no network: each module is bundled from
  * TypeScript with esbuild (already a vite dependency) into a temp file and
@@ -1023,6 +1039,70 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
         loss && loss.status === 'lost' && loss.grossR === -1
         && Math.abs(loss.outcomeR + 1.14) < 1e-9);
 
+    // ── the gap rule: a bar that OPENED beyond the stop fills at the open ──
+    const gapLoss = rv.resolveSignal(base, [
+        bar(0, 101, 101, 100, 100.4),
+        bar(1, 100.4, 100.6, 99.4, 99.8),
+        bar(2, 98, 98.5, 97, 97.5),
+    ], [], T0 + 3 * BAR);
+    ok('signal: a stop bar that OPENED below the stop fills at the open — worse than −1R',
+        gapLoss && gapLoss.status === 'lost'
+        && gapLoss.exitPrice === 98
+        && Math.abs(gapLoss.grossR - (98 - 100) / 1) < 1e-9
+        && gapLoss.gapAdjusted === true && gapLoss.ambiguous === false,
+        JSON.stringify(gapLoss));
+
+    const shortBase = { direction: 'short', entry: 100, stop: 101, target: 97, emittedAt: T0, expiresAt: T0 + 3 * BAR };
+    const shortGap = rv.resolveSignal(shortBase, [
+        bar(0, 99.5, 100.4, 99, 100.2),
+        bar(1, 101.8, 102, 101.5, 101.6),
+    ], [], T0 + 3 * BAR);
+    ok('signal: a short stop bar that OPENED above the stop fills at the open',
+        shortGap && shortGap.status === 'lost' && shortGap.exitPrice === 101.8
+        && Math.abs(shortGap.grossR - (100 - 101.8) / 1) < 1e-9 && shortGap.gapAdjusted === true,
+        JSON.stringify(shortGap));
+
+    // A both-levels bar whose open is already beyond the stop ordered itself
+    // at its first tick — a deterministic stop at the gap open, not an
+    // ambiguity (the drill never gets to invent a target-first reading).
+    const gapOrdered = rv.resolveSignal(base, [
+        bar(0, 101, 101, 100, 102),
+        bar(1, 96, 104, 95.5, 100),
+    ], [], T0 + 3 * BAR);
+    ok('signal: a bar that opened beyond the stop settles stop-at-the-open, NOT ambiguous',
+        gapOrdered && gapOrdered.status === 'lost' && gapOrdered.ambiguous === false
+        && gapOrdered.exitPrice === 96 && gapOrdered.gapAdjusted === true,
+        JSON.stringify(gapOrdered));
+
+    // The trigger bar keeps the stop-price convention: entry limit and stop
+    // fire around the same tick, and the birth-tick order is unknowable.
+    const triggerGap = rv.resolveSignal(base, [
+        bar(0, 96, 104, 95.5, 100),
+    ], [], T0 + 3 * BAR);
+    ok('signal: on the trigger bar itself the stop fills at the stop price, never the gap open',
+        triggerGap && triggerGap.status === 'lost' && triggerGap.exitPrice === 99
+        && triggerGap.grossR === -1 && triggerGap.ambiguous === true && !triggerGap.gapAdjusted,
+        JSON.stringify(triggerGap));
+
+    // And the gap rule holds inside the 1m drill: a minute that opened beyond
+    // the stop fills at that minute's open, not at the stop price.
+    const gapMinutes = [
+        { time: T0 + BAR, open: 100.5, high: 100.8, low: 100.2, close: 100.4 },
+        { time: T0 + BAR + 60000, open: 100.4, high: 100.5, low: 99.5, close: 99.8 },
+        { time: T0 + BAR + 120000, open: 96.5, high: 96.8, low: 96, close: 96.2 },
+        { time: T0 + BAR + 180000, open: 96.2, high: 96.6, low: 96, close: 96.4 },
+        { time: T0 + BAR + 240000, open: 96.4, high: 103.5, low: 96.2, close: 103 },
+    ];
+    const drilledGap = rv.resolveSignal(base, [
+        bar(0, 101, 101, 100, 102),
+        bar(1, 100.6, 103.4, 96, 100),
+    ], gapMinutes, T0 + 3 * BAR);
+    ok('signal: a 1m bar that opened below the stop fills at that open — stop at 96.5, not 99',
+        drilledGap && drilledGap.status === 'lost' && drilledGap.path === '1m'
+        && drilledGap.exitPrice === 96.5 && drilledGap.gapAdjusted === true
+        && Math.abs(drilledGap.grossR - (96.5 - 100) / 1) < 1e-9,
+        JSON.stringify(drilledGap));
+
     const bothNoDrill = rv.resolveSignal(base, [
         bar(0, 101, 101, 100, 102),
         bar(1, 102, 104, 98, 100),
@@ -1698,8 +1778,13 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
     const cool = prot.signalProtectionVerdict(losing, { coin: 'BTC', direction: 'long', now });
     ok('protections: three straight losses cooldown the seat',
         cool.blocked && cool.rule === 'cooldown', JSON.stringify(cool));
-    ok('protections: the cooldown expires',
-        !prot.signalProtectionVerdict(losing, { coin: 'BTC', direction: 'long', now: now + 7 * 3600_000 }).blocked);
+    // The global 6h cooldown expires at +5h, but the family rule (three
+    // same-coin+direction stopouts, 12h) is still live at +7h — and the SAME
+    // fixture is three BTC-long stopouts. Both are the designed behavior.
+    const afterGlobal = prot.signalProtectionVerdict(losing, { coin: 'BTC', direction: 'long', now: now + 7 * 3600_000 });
+    ok('protections: the global cooldown expires; the family cooldown keeps a refuted family parked',
+        afterGlobal.blocked && afterGlobal.rule === 'family-cooldown'
+        && !prot.signalProtectionVerdict(losing, { coin: 'BTC', direction: 'long', now: now + 13 * 3600_000 }).blocked);
     const dd = [-3, -3, 1, -1, -1, 0.5, -1, -1].map((r, i) => h(r, now - (8 - i) * 60_000));
     const ddv = prot.signalProtectionVerdict(dd, { coin: 'BTC', direction: 'long', now });
     ok('protections: a −7.5R window trips the drawdown breaker',
@@ -2649,11 +2734,499 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
         /offered <= currentTradeCount/.test(integrity));
 }
 
+// ─── 31. the tape's shape — incoherent candles are dropped and named ───────
+// A candle that violates its own OHLC is a broken row, not a quieter market.
+// Before this gate a `high < low` row from any mirror could reach the chart,
+// the indicators and the signal resolver as ordinary data.
+(() => {
+    const cs = loadModule('src/utils/candleShape.ts');
+    const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+    ok('candles: high<low, a body outside the wicks, non-finite and non-positive rows are all incoherent',
+        !cs.isCoherentCandle({ time: 1, open: 10, high: 9, low: 11, close: 10 })
+        && !cs.isCoherentCandle({ time: 1, open: 10, high: 12, low: 9, close: 13 })
+        && !cs.isCoherentCandle({ time: 1, open: 13, high: 12, low: 9, close: 10 })
+        && !cs.isCoherentCandle({ time: NaN, open: 10, high: 11, low: 9, close: 10 })
+        && !cs.isCoherentCandle({ time: 1, open: 0, high: 11, low: 9, close: 10 })
+        && cs.isCoherentCandle({ time: 1, open: 10, high: 11, low: 9, close: 10.5 }));
+    const { kept, dropped } = cs.coerceCandles([
+        { time: 1, open: 10, high: 11, low: 9, close: 10.5 },
+        { time: 2, open: 10, high: 9, low: 11, close: 10 },
+    ]);
+    ok('candles: coercion splits a payload into kept rows and a NAMED dropped count',
+        kept.length === 1 && kept[0].time === 1 && dropped === 1);
+    ok('candles: both ingestion paths run the shared shape rule',
+        /coerceCandles\(klines\)/.test(read('src/services/analysis/KlineService.ts'))
+        && /coerceCandles\(out\)/.test(read('src/services/signals/signalMarketData.ts'))
+        && /coerceCandles\(rows\)/.test(read('src/services/signals/signalMarketData.ts')));
+})();
+
+// ─── 32. one bounded continuation for a truncated desk answer ──────────────
+// A round that streamed words and hit the token ceiling used to ship as a
+// half answer with a notice. Now it is continued ONCE — the partial goes back
+// as the assistant's own message, and the loop returns the whole text. A
+// clean stop with a code fence still open is the same incompleteness. These
+// checks are async; the report below waits for them.
+const asyncChecks = (async () => {
+    const desk = loadModule('src/services/analysis/DeskToolsService.ts');
+    const partial = 'The tape is coiling under 100k:\n\n```json\n{"bias": "long"';
+    const completion = ',\n  "invalidation": "a 5m close above 101k"}\n```';
+    let round = 0;
+    let lastMessages = null;
+    const out = await desk.runDeskToolLoop({
+        config: { apiFormat: 'messages' },
+        messages: [{ role: 'user', content: 'read the tape' }],
+        sendTurn: async (_cfg, msgs) => {
+            round += 1;
+            lastMessages = msgs;
+            if (round === 1) return { text: partial, reasoning: '', toolCalls: [], finishReason: 'length', truncated: true };
+            return { text: completion, reasoning: '', toolCalls: [], finishReason: 'stop', truncated: false };
+        },
+    });
+    ok('desk turn: a truncated answer is continued once and the loop returns the WHOLE text',
+        round === 2 && out.finalText === partial + completion,
+        JSON.stringify({ round, len: (out.finalText || '').length }));
+    ok('desk turn: the continuation hands the partial back as the assistant\'s own message',
+        lastMessages.some(m => m.role === 'assistant' && m.content === partial)
+        && lastMessages.some(m => m.role === 'user' && /CUT OFF/.test(String(m.content))));
+
+    let fenceRounds = 0;
+    const fenceOut = await desk.runDeskToolLoop({
+        config: { apiFormat: 'messages' },
+        messages: [{ role: 'user', content: 'read the tape' }],
+        sendTurn: async () => {
+            fenceRounds += 1;
+            if (fenceRounds === 1) return { text: '```json\n{"a": 1', reasoning: '', toolCalls: [], finishReason: 'stop', truncated: false };
+            return { text: '\n```', reasoning: '', toolCalls: [], finishReason: 'stop', truncated: false };
+        },
+    });
+    ok('desk turn: an unclosed code fence with a clean stop is continued, not shipped',
+        fenceRounds === 2 && fenceOut.finalText === '```json\n{"a": 1\n```',
+        JSON.stringify({ fenceRounds, text: fenceOut.finalText }));
+
+    let alwaysRounds = 0;
+    const alwaysOut = await desk.runDeskToolLoop({
+        config: { apiFormat: 'messages' },
+        messages: [{ role: 'user', content: 'read the tape' }],
+        sendTurn: async () => {
+            alwaysRounds += 1;
+            return { text: `partial ${alwaysRounds} `, reasoning: '', toolCalls: [], finishReason: 'length', truncated: true };
+        },
+    });
+    ok('desk turn: a second truncation is NOT a second continuation — it ships as-is',
+        alwaysRounds === 2 && alwaysOut.finalText === 'partial 1 partial 2',
+        JSON.stringify({ alwaysRounds, text: alwaysOut.finalText }));
+
+    let doneRounds = 0;
+    await desk.runDeskToolLoop({
+        config: { apiFormat: 'messages' },
+        messages: [{ role: 'user', content: 'read the tape' }],
+        sendTurn: async () => {
+            doneRounds += 1;
+            return { text: 'complete answer', reasoning: '', toolCalls: [], finishReason: 'stop', truncated: false };
+        },
+    });
+    ok('desk turn: a complete answer ships without a continuation round', doneRounds === 1);
+
+    // ── The empty round is REPAIRED, silently ──────────────────────────────
+    // Owner report (2026-11-03): "thinking hit the round's token ceiling with
+    // nothing to show". The old repair could not exceed the caller's budget
+    // (Math.min clamped it), so a 400-token clarification was re-asked at 400
+    // tokens and failed the same way. And the repair itself was painted as a
+    // tool line, so the trader watched the harness describe its own wound.
+    let thinkRounds = 0;
+    const thinkEvents = [];
+    const thinkBudgets = [];
+    const thinkOut = await desk.runDeskToolLoop({
+        config: { apiFormat: 'messages' },
+        messages: [{ role: 'user', content: 'read the tape' }],
+        options: { maxTokens: 400 },
+        onToolEvent: line => thinkEvents.push(line),
+        sendTurn: async (_cfg, _msgs, options) => {
+            thinkRounds += 1;
+            thinkBudgets.push(options?.maxTokens);
+            if (thinkRounds === 1) return { text: '', reasoning: 'thinking, and thinking…', toolCalls: [], finishReason: 'length', truncated: true };
+            return { text: 'The tape is long above 101k.', reasoning: '', toolCalls: [], finishReason: 'stop', truncated: false };
+        },
+    });
+    ok('desk turn: an empty thinking round is re-asked and the answer arrives',
+        thinkRounds === 2 && thinkOut.finalText === 'The tape is long above 101k.'
+        && thinkOut.recoveredFromTruncation === true,
+        JSON.stringify({ thinkRounds, text: thinkOut.finalText, recovered: thinkOut.recoveredFromTruncation }));
+    ok('desk turn: the repair can EXCEED a small caller budget — the Math.min clamp was the bug',
+        thinkBudgets.length === 2 && thinkBudgets[1] > thinkBudgets[0] && thinkBudgets[1] >= desk.DESK_ROUND_MAX_TOKENS,
+        JSON.stringify(thinkBudgets));
+    ok('desk turn: the repair is SILENT — no tool line names the token ceiling',
+        thinkEvents.length === 0 && !thinkEvents.some(l => /token ceiling|STOPPED EARLY|nothing to show/i.test(l)));
+
+    let secondRounds = 0;
+    const secondOptions = [];
+    const secondOut = await desk.runDeskToolLoop({
+        config: { apiFormat: 'chat_completions' },
+        messages: [{ role: 'user', content: 'read the tape' }],
+        sendTurn: async (_cfg, _msgs, options) => {
+            secondRounds += 1;
+            secondOptions.push({
+                effort: options?.reasoningEffort,
+                tools: options?.tools ? options.tools.length : 0,
+                choice: options?.toolChoice,
+                maxTokens: options?.maxTokens,
+            });
+            if (secondRounds <= 2) return { text: '', reasoning: 'still thinking…', toolCalls: [], finishReason: 'length', truncated: true };
+            return { text: 'Here is the answer.', reasoning: '', toolCalls: [], finishReason: 'stop', truncated: false };
+        },
+    });
+    ok('desk turn: a second empty round removes BOTH the thinking tier and the tools',
+        secondRounds === 3
+        && secondOptions[2].effort === 'off'
+        && secondOptions[2].tools === 0
+        && secondOptions[2].choice === 'none'
+        && secondOut.recoveredFromTruncation === true,
+        JSON.stringify(secondOptions[2]));
+    ok('desk turn: the second repair does not shrink the doubled room',
+        secondOptions[2].maxTokens >= secondOptions[1].maxTokens,
+        JSON.stringify(secondOptions.map(o => o.maxTokens)));
+
+    let reasoningOnlyRounds = 0;
+    const reasoningOnlyOut = await desk.runDeskToolLoop({
+        config: { apiFormat: 'messages' },
+        messages: [{ role: 'user', content: 'read the tape' }],
+        sendTurn: async () => {
+            reasoningOnlyRounds += 1;
+            if (reasoningOnlyRounds === 1) return { text: '', reasoning: 'a full chain of thought, no answer', toolCalls: [], finishReason: 'stop', truncated: false };
+            return { text: 'The answer, in words.', reasoning: '', toolCalls: [], finishReason: 'stop', truncated: false };
+        },
+    });
+    ok('desk turn: reasoning with a clean stop and NO answer is repaired too — not a silent empty row',
+        reasoningOnlyRounds === 2 && reasoningOnlyOut.finalText === 'The answer, in words.');
+
+    let syntaxRounds = 0;
+    const syntaxOut = await desk.runDeskToolLoop({
+        config: { apiFormat: 'messages' },
+        messages: [{ role: 'user', content: 'read the tape' }],
+        sendTurn: async () => {
+            syntaxRounds += 1;
+            if (syntaxRounds === 1) return { text: '<tool_call><function=get_price_snapshot>', reasoning: '', toolCalls: [], finishReason: 'length', truncated: true };
+            return { text: 'Long above 101k.', reasoning: '', toolCalls: [], finishReason: 'stop', truncated: false };
+        },
+    });
+    ok('desk turn: a repaired malformed call also counts as recovered — no notice over a whole answer',
+        syntaxRounds === 2 && syntaxOut.recoveredFromTruncation === true && syntaxOut.finalText === 'Long above 101k.',
+        JSON.stringify({ syntaxRounds, recovered: syntaxOut.recoveredFromTruncation, text: syntaxOut.finalText }));
+    const readTurn = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+    ok('desk turn: both chat surfaces suppress the truncation notice when the run recovered',
+        /recoveredFromTruncation \? '' : truncationNotice/.test(readTurn('src/services/trade/chatTurnRunner.ts'))
+        && /recoveredFromTruncation \? '' : truncationNotice/.test(readTurn('src/services/trade/chatSurfaceTurn.ts')));
+})();
+
+// ─── 33. the accuracy floor, the candle-aligned cache, the warmup discipline ──
+// A hit rate without an interval, a slugging without a loss side, a cache
+// whose freshness ignores the bar boundary, and recursive indicators whose
+// warmup nobody declared — each is a number that looks like data. These pin
+// the honest versions.
+(() => {
+    const acc = loadModule('src/services/signals/signalAccuracy.ts');
+    const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+    ok('accuracy: the Wilson interval brackets the hit rate, stays in [0,1], and shrinks as n grows',
+        (() => {
+            const a = acc.wilsonInterval95(5, 10);
+            const b = acc.wilsonInterval95(50, 100);
+            return !!a && !!b && a.low < 0.5 && a.high > 0.5
+                && a.low >= 0 && a.high <= 1
+                && (a.high - a.low) > (b.high - b.low);
+        })());
+    ok('accuracy: 0/10 is an interval [0, ~0.28], never a zero-width 0%',
+        (() => {
+            const ci = acc.wilsonInterval95(0, 10);
+            return ci !== null && ci.low === 0 && Math.abs(ci.high - 0.2776) < 1e-3;
+        })());
+    ok('accuracy: wins>n and an empty sample refuse, they do not fabricate an interval',
+        acc.wilsonInterval95(11, 10) === null && acc.wilsonInterval95(0, 0) === null);
+
+    const row = (id, status, outcomeR, ambiguous = false) => ({
+        signal: { id, emittedAt: 1, expiresAt: 2, direction: 'long', entry: 1, stop: 0.9, target: 1.2, coin: 'X', evidenceRefs: [], dataHash: '', provider: '', model: '', promptVersion: '', source: 'signal', thesis: '' },
+        status, resolution: outcomeR === null ? undefined : { outcomeR, ambiguous },
+    });
+    const card = acc.scoreSignals([row('a', 'won', 2), row('b', 'won', 2), row('c', 'lost', -1)]);
+    ok('accuracy: slugging is avg win over avg loss in NET R — 2R wins vs 1R losses read 2×',
+        card.slugging !== null && Math.abs(card.slugging - 2) < 1e-9, JSON.stringify(card.slugging));
+    ok('accuracy: the scorecard carries the interval and it brackets its own hit rate',
+        card.hitCi !== null && card.hitRate !== null
+        && card.hitCi.low < card.hitRate && card.hitCi.high > card.hitRate,
+        JSON.stringify(card.hitCi));
+    ok('accuracy: a one-sided sample has no slugging — not an infinite one',
+        acc.scoreSignals([row('a', 'won', 2), row('b', 'won', 3)]).slugging === null);
+    ok('accuracy: the feed renders the scorecard\'s own slugging and interval',
+        /scorecard\.slugging/.test(read('src/components/journal/SignalFeed.tsx'))
+        && /scorecard\.hitCi/.test(read('src/components/journal/SignalFeed.tsx')));
+
+    const ks = loadModule('src/services/analysis/KlineService.ts');
+    const T = 3_120_000; // 52 minutes into an arbitrary epoch
+    ok('cache: a 5m series is fresh until its own bar closes — 180s left reads 180s, a just-opened bar reads the cap',
+        ks.candleAlignedTtlMs('5m', T) === 180_000
+        && ks.candleAlignedTtlMs('5m', 3_000_000) === 300_000);
+    ok('cache: slower or unknown intervals keep the flat bound, and a bar about to print its close gets the floor',
+        ks.candleAlignedTtlMs('4h', T) === 30_000
+        && ks.candleAlignedTtlMs('2h', T) === 30_000
+        && ks.candleAlignedTtlMs('5m', 5 * 60_000 - 2_000) === 5_000);
+
+    const ta = loadModule('src/services/analysis/taLibrary.ts');
+    const tail = Array.from({ length: 40 }, (_, i) => 100 + Math.sin(i / 3) * 5 + i * 0.1);
+    const padded = [...Array.from({ length: 240 }, (_, i) => 90 + Math.cos(i / 4)), ...tail];
+    ok('warmup: a windowed average is history-independent at the same timestamp',
+        Math.abs(ta.smaOf(tail, 20).slice(-1)[0] - ta.smaOf(padded, 20).slice(-1)[0]) < 1e-9);
+    ok('warmup: the EMA family IS warmup-sensitive — recursive values drift with history length',
+        Math.abs(ta.emaOf(tail, 20).slice(-1)[0] - ta.emaOf(padded, 20).slice(-1)[0]) > 0.05);
+    ok('warmup: Wilder RMA carries the same sensitivity',
+        Math.abs(ta.rmaOf(tail, 14).slice(-1)[0] - ta.rmaOf(padded, 14).slice(-1)[0]) > 0.01);
+    ok('warmup: every packet timeframe fetches the SAME window (300), which is what keeps recursive values comparable run to run',
+        (read('src/services/analysis/MarketDataService.ts')
+            .match(/fetchFuturesOHLCV\(normalizedSymbol, '(?:15m|1h|4h|1d)', 300\)/g) || []).length === 4);
+    ok('candles: the packet discloses that per-TF reads include the forming candle',
+        /forming candle as of this packet/.test(read('src/services/analysis/HybridIntelligenceService.ts')));
+})();
+
+// ─── 34. the family cooldown, the conviction rubric, calibration, the rule lane ──
+// A refuted setup must not dig under a healthy book; a conviction number must
+// arrive against a written rubric or not at all; the calibration verdict must
+// refuse to speak before its sample; and the harness must be graded against a
+// fixed mechanical rule, not only against a random-entry baseline.
+(() => {
+    const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+    const prot = loadModule('src/services/signals/signalProtections.ts');
+    const h = (coin, direction, outcomeR, settledAt) => ({ coin, direction, outcomeR, settledAt });
+    const now = 40 * 60 * 60_000;
+    const stopouts = [-1, -1.2, -1.5].map((r, i) => h('ETH', 'long', r, now - (6 - i) * 3600_000));
+    const interleaved = [
+        ...stopouts,
+        h('BTC', 'long', 2, now - 4 * 3600_000),
+        h('SOL', 'short', 2, now - 3 * 3600_000),
+        h('BTC', 'long', -1, now - 2 * 3600_000),
+    ];
+    const fam = prot.signalProtectionVerdict(interleaved, { coin: 'ETH', direction: 'long', now });
+    ok('protections: three same-family stopouts cool THAT family down even while the rest of the book wins',
+        fam.blocked && fam.rule === 'family-cooldown', JSON.stringify(fam));
+    ok('protections: the family cooldown never touches another family',
+        !prot.signalProtectionVerdict(interleaved, { coin: 'BTC', direction: 'long', now }).blocked
+        && !prot.signalProtectionVerdict(interleaved, { coin: 'ETH', direction: 'short', now }).blocked);
+    ok('protections: the family cooldown expires once its window passes',
+        !prot.signalProtectionVerdict(interleaved, { coin: 'ETH', direction: 'long', now: now + 13 * 3600_000 }).blocked);
+    ok('protections: a win on the family resets its stopout streak',
+        !prot.signalProtectionVerdict([...interleaved, h('ETH', 'long', 1.5, now - 30 * 60_000)],
+            { coin: 'ETH', direction: 'long', now }).blocked);
+    ok('protections: a gap-stop (worse than −1R) is still a stopout for the family rule',
+        prot.signalProtectionVerdict([
+            h('ETH', 'long', -1.8, now - 3 * 3600_000),
+            h('ETH', 'long', -2.4, now - 2 * 3600_000),
+            h('ETH', 'long', -1.05, now - 3600_000),
+            h('BTC', 'long', 2, now - 30 * 60_000),
+        ], { coin: 'ETH', direction: 'long', now }).rule === 'family-cooldown');
+
+    const conv = loadModule('src/utils/convictionScale.ts');
+    ok('conviction: 1-4 parses, everything else refuses — a provided-but-invalid value is never clamped',
+        conv.parseConviction(3) === 3 && conv.parseConviction('4') === 4
+        && conv.parseConviction(0) === null && conv.parseConviction(5) === null
+        && conv.parseConviction(2.5) === null && conv.parseConviction('strong') === null);
+    ok('conviction: the four rubric levels are written and named in the tool description',
+        [1, 2, 3, 4].every(l => typeof conv.CONVICTION_RUBRIC[l] === 'string' && conv.CONVICTION_RUBRIC[l].length > 20)
+        && /rate the EVIDENCE/i.test(read('src/services/analysis/DeskToolsService.ts'))
+        && /How strong the EVIDENCE is, on this rubric/.test(read('src/services/analysis/DeskToolsService.ts')));
+    ok('conviction: a provided-but-invalid conviction refuses the emission instead of clamping',
+        /conviction must be an integer 1-4/.test(read('src/services/signals/signalService.ts')));
+
+    const cal = loadModule('src/services/signals/signalCalibration.ts');
+    const up = Array.from({ length: 14 }, (_, i) => ({ x: i + 1, y: i * 0.5 }));
+    ok('calibration: a perfectly monotonic conviction→outcome pair reads rank IC 1, its mirror −1',
+        Math.abs(cal.spearmanRankIC(up) - 1) < 1e-9
+        && Math.abs(cal.spearmanRankIC(up.map(p => ({ x: p.x, y: -p.y }))) + 1) < 1e-9);
+    ok('calibration: a constant side has no correlation — null, never 0',
+        cal.spearmanRankIC([{ x: 2, y: 1 }, { x: 2, y: 2 }, { x: 2, y: 3 }]) === null);
+    ok('calibration: under the sample floor the verdict says insufficient, not flat',
+        cal.calibrationVerdict([]).verdict === 'insufficient');
+    ok('calibration: the thresholds are named constants, not magic numbers in a branch',
+        typeof cal.MIN_CALIBRATION_SAMPLE === 'number' && typeof cal.CALIBRATION_IC_THRESHOLD === 'number');
+
+    const lane = loadModule('src/services/signals/baselineLane.ts');
+    // Flat through the SMA warmup, then a clean rise: the close has to CROSS
+    // above its average, so the lane's own entry rule is what's being graded.
+    const trend = Array.from({ length: 300 }, (_, i) => {
+        const base = i < 30 ? 100 : 100 + (i - 30) * 0.5;
+        return { time: i * 300_000, open: base, high: base + 1, low: base - 0.2, close: base + 0.4 };
+    });
+    const laneTrend = lane.momentumBaselineFor(trend);
+    ok('baseline: on a clean uptrend the fixed rule crosses once, fills once and wins',
+        laneTrend !== null && laneTrend.signals === 1 && laneTrend.fills === 1 && laneTrend.hitRate === 1,
+        JSON.stringify(laneTrend));
+    const chop = Array.from({ length: 300 }, (_, i) => {
+        const base = 100 + Math.sin(i / 6) * 3 + Math.cos(i / 17) * 4;
+        return { time: i * 300_000, open: base, high: base + 0.8, low: base - 0.8, close: base + 0.1 };
+    });
+    const laneChop = lane.momentumBaselineFor(chop);
+    ok('baseline: a choppy tape produces multiple crossings and an honest, non-fabricated rate',
+        laneChop !== null && laneChop.fills >= 3 && laneChop.hitRate !== null && laneChop.expectancyR !== null,
+        JSON.stringify(laneChop && { signals: laneChop.signals, fills: laneChop.fills, hitRate: laneChop.hitRate }));
+    ok('baseline: a tape too short to warm the SMA is not a sample — null, never an empty 0%',
+        lane.momentumBaselineFor(trend.slice(0, 30)) === null);
+    ok('baseline: the rule is a named constant, not a tunable',
+        typeof lane.BASELINE_RULE === 'string' && lane.BASELINE_STOP_PCT === 0.01 && lane.BASELINE_REWARD_PCT === 0.02);
+    ok('baseline: the settle pass rides the rule lane onto the stored base rate',
+        /momentumBaselineFor\(primary\)/.test(read('src/services/signals/signalService.ts')));
+
+    // N5: the resolver is PREFIX-STABLE — a tape truncated at the deciding bar
+    // re-resolves to the identical outcome. This is the falsifiable form of
+    // "no lookahead": if any code path read a later bar, the truncated run
+    // would disagree with the full one.
+    const rv = loadModule('src/services/signals/signalResolver.ts');
+    const T0b = 5_000_000_000_000;
+    const BARb = rv.SIGNAL_BAR_MS;
+    const tape2 = [
+        { time: T0b, open: 101, high: 101, low: 100, close: 100.5 },
+        { time: T0b + BARb, open: 100.5, high: 100.8, low: 97.5, close: 98 },
+        { time: T0b + 2 * BARb, open: 98, high: 106, low: 97, close: 105 },
+        { time: T0b + 3 * BARb, open: 105, high: 107, low: 104, close: 106 },
+    ];
+    const baseB = { direction: 'long', entry: 100, stop: 99, target: 103, emittedAt: T0b, expiresAt: T0b + 3 * BARb };
+    const full = rv.resolveSignal(baseB, tape2, [], T0b + 3 * BARb);
+    const truncated = rv.resolveSignal(baseB, tape2.slice(0, 2), [], T0b + 3 * BARb);
+    ok('resolver: prefix stability — a tape cut at the deciding bar resolves the identical outcome',
+        full !== null && truncated !== null
+        && full.status === truncated.status
+        && full.exitAt === truncated.exitAt
+        && Math.abs(full.grossR - truncated.grossR) < 1e-12
+        && full.ambiguous === truncated.ambiguous,
+        JSON.stringify({ full: full && full.status, truncated: truncated && truncated.status }));
+    ok('resolver: every filled outcome carries the fill-realism measurement',
+        full !== null && typeof full.entryOpenR === 'number'
+        && Math.abs(full.entryOpenR - (101 - 100) / 1) < 1e-12);
+    ok('resolver: the exit-bar measure is on the resolution too',
+        full !== null && typeof full.exitOpenR === 'number');
+})();
+
+// ─── 35. the one skill format, the auto-apply, and the gone approvals ──────
+// Owner ruling 2026-11-03: every skill file follows ONE format (checked over
+// the EXISTING library too, not only at authoring), drafts apply themselves
+// through the deterministic gates, and the approval UI is gone. These pin the
+// gates that replaced the clicks.
+(() => {
+    const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+    const sf = loadModule('src/utils/skillFrontmatter.ts');
+    ok('skill format: a conforming file raises no issue',
+        sf.skillFormatIssues({
+            fileName: 'fade-1600.md',
+            when: 'When price fades a 1600 level into the PHT afternoon',
+            description: 'Use when the desk fades a round level late in the session.',
+            body: '1. Wait for the rejection wick.\n2. Enter under the wick.\n3. Stop beyond the level.',
+        }).length === 0);
+    ok('skill format: a missing trigger, description or body is named, never guessed',
+        (() => {
+            const issues = sf.skillFormatIssues({ fileName: 'no-trigger.md' });
+            return issues.length === 3 && issues.some(i => /when/.test(i))
+                && issues.some(i => /description/.test(i)) && issues.some(i => /body/.test(i));
+        })());
+    ok('skill format: a non-slug file name and an over-cap body are issues',
+        sf.skillFormatIssues({
+            fileName: 'My Skill.MD',
+            when: 'x', description: 'y', body: 'z',
+        }).some(i => /slug/.test(i))
+        && sf.skillFormatIssues({
+            fileName: 'big.md', when: 'x', description: 'y',
+            body: 'a'.repeat(100_001),
+        }).some(i => /hard cap/.test(i)));
+    ok('skill format: the Health report audits the whole library and flags what fails',
+        /skillFormatIssues\(\{/.test(read('src/services/learning/memoryHealth.ts'))
+        && /not follow the one skill format/.test(read('src/services/learning/memoryHealth.ts')));
+
+    // The gate REPAIRS the files that predate the format, instead of only
+    // reporting them. The derivation is pure, so it is pinned here.
+    ok('skill format: the missing face is derived from the file’s own words',
+        sf.deriveSkillFace({
+            body: '**When:** price rejects the 1600 level\n\n1. Enter under the wick.',
+        }).when === 'price rejects the 1600 level'
+        && /^Use this skill whenever price rejects the 1600 level\.$/.test(
+            sf.deriveSkillFace({ when: 'price rejects the 1600 level' }).description || '')
+        && sf.deriveSkillFace({
+            description: 'Use this skill whenever price fades a 1600 level. Do NOT use for news.',
+        }).when === 'price fades a 1600 level');
+    ok('skill format: a file that states nothing is not given an invented trigger or description',
+        Object.keys(sf.deriveSkillFace({})).length === 0
+        && Object.keys(sf.deriveSkillFace({ body: '   ' })).length === 0);
+    const hs = read('src/hooks/useLearningHeartbeat.ts');
+    const skillSvc = read('src/services/learning/SkillMemoryService.ts');
+    ok('skill format: the boot pass repairs the EXISTING library through the one serializer, under the write lock',
+        /repairSkillFileFormats\(username\)/.test(hs)
+        && /repairSkillFileFormats = \(username: string\): Promise<SkillFormatRepairResult>/.test(skillSvc)
+        && /withNotebookWriteLock/.test(skillSvc.slice(skillSvc.indexOf('repairSkillFileFormats ='), skillSvc.indexOf('repairSkillFileFormats =') + 300))
+        && /serializeSkill\(next, titleFromMeta\(next\)\)/.test(skillSvc));
+    const sm = loadModule('src/services/learning/SkillMemoryService.ts');
+    const fixture = [
+        '---',
+        'name: "Fade 1600"',
+        'description: "Use this skill whenever price fades a 1600 level."',
+        'when: "price fades a 1600 level late in the session"',
+        'kind: "repeat"',
+        '---',
+        '',
+        '**When:** price fades a 1600 level late in the session',
+        '',
+        '1. Wait for the rejection wick.',
+        '2. Enter under the wick.',
+        '',
+    ].join('\n');
+    const fixtureMeta = sm.parseSkillMarkdown(fixture);
+    const rewritten = fixtureMeta ? sm.serializeSkill(fixtureMeta, 'Fade 1600') : '';
+    const reparsed = sm.parseSkillMarkdown(rewritten);
+    ok('skill format: the serializer’s OWN output conforms — the gate is calibrated on gold output',
+        !!fixtureMeta && !!reparsed
+        && sf.skillFormatIssues({ fileName: 'fade-1600.md', ...reparsed }).length === 0,
+        JSON.stringify(reparsed && sf.skillFormatIssues({ fileName: 'fade-1600.md', ...reparsed })));
+
+    const ap = loadModule('src/services/learning/skillApproval.ts');
+    ok('auto-apply: an empty store applies nothing, without error',
+        ap.autoApplyPendingSkillDrafts !== undefined);
+    ok('auto-apply: a refused draft counts its attempts and stops at the budget',
+        /attempts.*SKILL_DRAFT_MAX_ATTEMPTS|SKILL_DRAFT_MAX_ATTEMPTS.*attempts/.test(
+            read('src/services/learning/skillApproval.ts').replace(/\s+/g, ' '))
+        && /markSkillDraftFailed\(draft\.id/.test(read('src/services/learning/skillApproval.ts')));
+    ok('auto-apply: the draft-write event is the one trigger the heartbeat needs',
+        /addEventListener\('august-skill-drafts', autoApply\)/.test(read('src/hooks/useLearningHeartbeat.ts')));
+    ok('auto-apply: the write records WHO decided — the auto path stamps auto, not human',
+        /'human' \| 'auto'/.test(read('src/services/learning/skillApproval.ts'))
+        && /approvedBy === 'auto'\) return true/.test(read('src/services/learning/SkillMemoryService.ts')));
+
+    // The approvals UI is GONE, and nothing may pretend it is still there.
+    const learn = read('src/components/learn/LearnView.tsx');
+    ok('approvals: the Learning surface has no coach tab and no approvals branch',
+        !/id: 'coach'/.test(learn) && !/tab === 'coach'/.test(learn) && !/AmendmentsInbox/.test(learn));
+    ok('approvals: the corrections log — and its one Undo — moved to Settings → Memory',
+        /AmendmentsInbox/.test(read('src/components/settings/tabs/MemoryTab.tsx'))
+        && /undoAmendment/.test(read('src/components/learn/AmendmentsInbox.tsx')));
+    ok('approvals: the dead components are DELETED, not orphaned',
+        !fs.existsSync(path.join(ROOT, 'src/components/learn/ActionApprovals.tsx'))
+        && !fs.existsSync(path.join(ROOT, 'src/components/chat/CoachThreadPanel.tsx'))
+        && !fs.existsSync(path.join(ROOT, 'src/utils/approvalInbox.ts'))
+        && /autoJournalPolicyFor/.test(read('src/utils/autoJournalRules.ts')));
+    ok('approvals: the rail row and both coach hops are removed, not orphaned',
+        !/shell-approvals/.test(read('src/components/shell/ShellRail.tsx'))
+        && !/onOpenCoach/.test(read('src/components/agents/AgentsView.tsx'))
+        && !/onOpenCoach/.test(read('src/components/trade/TradeView.tsx'))
+        && !/onOpenCoach/.test(read('src/App.tsx')));
+    ok('amend_memory: the tool writes DIRECTLY (applyAmendmentNow) — no approval gate to remove',
+        /applyAmendmentNow/.test(read('src/services/analysis/DeskToolsService.ts'))
+        && /no human approval gate on memory writes/.test(read('src/services/learning/memoryAmendments.ts')));
+})();
+
 // ─── report ────────────────────────────────────────────────────────────────
-console.log(`contracts: ${passed} passed, ${failures.length} failed`);
-for (const f of failures) console.log(`  FAIL ${f}`);
-if (failures.length) {
-    console.error('CONTRACT CHECK FAIL — a pinned contract broke; fix the module, not this file.');
-    process.exit(1);
-}
-console.log('CONTRACT CHECK OK — risk/reward math, retry classification, harness marks, notebook pressure, tool-pair compaction, AI-boundary coercion, the skill/memory authoring screens, the shared index budget, both policy tables (self-modification, goal tool narrowing), the desk tool budget, the kline row\'s PHT unit, the desk digest units, the skill outcome correction, the startup call gates, the insight store pin, the signal loop (resolver order, costs, ledger, venue data), the chart tape study, the signal accuracy fold, the skill format, the journal-rules store, the post-mortem clause, the memory page export, the tracked position (signal adoption, ledger-wins resolution, exit order, gaps, excursions, capped path, independence, diagnosis queue), journal tracking (pending registration, settlement payload, plan-preserving merge, orphan handling), the post-mortem diagnosis (authoritative outcome, packet facts/absences, refusal audit, journal-note parse) and the tentative skill path (three independent outcomes, the auto-demotion floor, the labelled + capped index) all hold.');
+const finishReport = () => {
+    console.log(`contracts: ${passed} passed, ${failures.length} failed`);
+    for (const f of failures) console.log(`  FAIL ${f}`);
+    if (failures.length) {
+        console.error('CONTRACT CHECK FAIL — a pinned contract broke; fix the module, not this file.');
+        process.exit(1);
+    }
+    console.log('CONTRACT CHECK OK — risk/reward math, retry classification, harness marks, notebook pressure, tool-pair compaction, AI-boundary coercion, the skill/memory authoring screens, the shared index budget, both policy tables (self-modification, goal tool narrowing), the desk tool budget, the kline row\'s PHT unit, the desk digest units, the skill outcome correction, the startup call gates, the insight store pin, the signal loop (resolver order, costs, gap fills, ledger, venue data), the chart tape study, the signal accuracy fold, the one skill format (audited, derived and boot-repaired), the journal-rules store, the post-mortem clause, the memory page export, the tracked position (signal adoption, ledger-wins resolution, exit order, gaps, excursions, capped path, independence, diagnosis queue), journal tracking (pending registration, settlement payload, plan-preserving merge, orphan handling), the post-mortem diagnosis (authoritative outcome, packet facts/absences, refusal audit, journal-note parse), the tentative skill path (three independent outcomes, the auto-demotion floor, the labelled + capped index), the candle shape gate, the truncated-answer continuation and the silent empty-round repair (budget can exceed a small caller ceiling, the second try drops thinking and tools, no notice over a recovered run) all hold.');
+};
+// The async blocks above settle in microtasks; the report waits for them so
+// their pass/fail counts land in this summary. A throw becomes a failure —
+// a crashed check must never print as a green one.
+Promise.resolve(asyncChecks)
+    .catch(e => { failures.push(`async checks threw: ${e instanceof Error ? e.message : String(e)}`); })
+    .then(finishReport);

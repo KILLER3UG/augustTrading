@@ -765,8 +765,9 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
         });
         // A cut-off answer is said on the row it belongs to: the seat's text
         // may end mid-sentence, and the trader must be able to tell that from
-        // an answer that simply finished.
-        const cutOff = truncationNotice(summary);
+        // an answer that simply finished. A RECOVERED run is exempt — the
+        // loop repaired the ceiling-hit and returned a whole answer.
+        const cutOff = outcome.recoveredFromTruncation ? '' : truncationNotice(summary);
         patch(e => settleDockEntry({
             ...e,
             workedMs: outcome.workedMs,

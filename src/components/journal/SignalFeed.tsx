@@ -19,7 +19,7 @@ import { readSignals } from '../../services/signals/signalLedger';
 import { readTrackedPositions } from '../../services/tracking/positionStore';
 import { settleDueSignals } from '../../services/signals/signalService';
 import { summariseSignals, SIGNAL_SLIPPAGE_RATE, SIGNAL_TAKER_FEE_RATE } from '../../services/signals/signalResolver';
-import { MIN_ACCURACY_FILLS } from '../../services/signals/signalAccuracy';
+import { MIN_ACCURACY_FILLS, scoreSignals } from '../../services/signals/signalAccuracy';
 import { getActiveUsername } from '../../utils/activeUser';
 import { phtStamp } from '../../utils/timezone';
 import { excursionR, signedR, trackedPrice, TRACKED_STATUS_WORD } from '../../utils/trackingLabels';
@@ -341,6 +341,18 @@ const SignalFeed: React.FC<SignalFeedProps> = ({ user }) => {
     }, [activeUser, load, loadTracked]);
 
     const summary = useMemo(() => summariseSignals(rows), [rows]);
+    // The scorecard is the receipt's math; the feed renders the same object so
+    // the two can never disagree about slugging or the hit-rate interval.
+    const scorecard = useMemo(() => scoreSignals(rows), [rows]);
+    // N6: the fixed mechanical rule's hit rate, averaged over the resolutions
+    // that carry one — "does the harness beat a rule with no model at all",
+    // resolved on the same tape by the same resolver as the base rate itself.
+    const ruleBaseline = useMemo(() => {
+        const rates = rows
+            .map(r => r.resolution?.base?.ruleHitRate)
+            .filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
+        return rates.length === 0 ? null : rates.reduce((a, b) => a + b, 0) / rates.length;
+    }, [rows]);
     const fills = summary.won + summary.lost + summary.expired;
     const costPct = ((SIGNAL_TAKER_FEE_RATE + SIGNAL_SLIPPAGE_RATE) * 2 * 100).toFixed(2);
 
@@ -368,11 +380,14 @@ const SignalFeed: React.FC<SignalFeedProps> = ({ user }) => {
                 </div>
 
                 {summary.emitted > 0 && (
-                    <section className="grid grid-cols-2 gap-x-6 gap-y-5 border-y border-white/[0.06] py-5 sm:grid-cols-3 lg:grid-cols-6">
+                    <section className="grid grid-cols-2 gap-x-6 gap-y-5 border-y border-white/[0.06] py-5 sm:grid-cols-3 lg:grid-cols-7">
                         <Stat
                             label="Hit rate"
                             value={pct(summary.hitRate)}
-                            sub={`${summary.won}W / ${summary.lost}L / ${summary.expired} expired of ${summary.won + summary.lost + summary.expired} fills`}
+                            sub={`${summary.won}W / ${summary.lost}L / ${summary.expired} expired of ${summary.won + summary.lost + summary.expired} fills`
+                                + (scorecard.hitCi
+                                    ? ` · 95% CI ${(scorecard.hitCi.low * 100).toFixed(0)}–${(scorecard.hitCi.high * 100).toFixed(0)}%`
+                                    : '')}
                         />
                         <Stat
                             label="Expectancy"
@@ -386,7 +401,15 @@ const SignalFeed: React.FC<SignalFeedProps> = ({ user }) => {
                                 : `${pct(summary.hitRate)} vs ${pct(summary.baseRate)}`}
                             sub={summary.lift === null
                                 ? 'no same-levels baseline yet'
-                                : `lift ${summary.lift >= 0 ? '+' : ''}${(summary.lift * 100).toFixed(1)} pts · N=${fills}${fills < MIN_ACCURACY_FILLS ? ' · thin' : ''}`}
+                                : `lift ${summary.lift >= 0 ? '+' : ''}${(summary.lift * 100).toFixed(1)} pts · N=${fills}${fills < MIN_ACCURACY_FILLS ? ' · thin' : ''}`
+                                    + (ruleBaseline === null ? '' : ` · rule ${pct(ruleBaseline)}`)}
+                        />
+                        <Stat
+                            label="Slugging"
+                            value={scorecard.slugging === null ? '—' : `${scorecard.slugging.toFixed(2)}×`}
+                            sub={scorecard.slugging === null
+                                ? 'needs wins and losses'
+                                : 'avg win ÷ avg loss, net R'}
                         />
                         <Stat
                             label="Ambiguity"

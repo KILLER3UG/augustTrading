@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import { Conversation, Message, TradeOutcome } from '../types';
 import { OutcomeAutopilotService, AutopilotResolution } from '../services/ui/OutcomeAutopilotService';
 import { appendWatchEpisode } from '../utils/watchList';
-import { autoJournalPolicyFor } from '../utils/approvalInbox';
+import { autoJournalPolicyFor } from '../utils/autoJournalRules';
 import { settlementActionFor, SETTLEMENT_UNDO_MS } from '../utils/outcomeSettlement';
 import { getHarnessSettings } from '../utils/harnessSettings';
 import { describeWatchTick } from '../utils/watchTicks';

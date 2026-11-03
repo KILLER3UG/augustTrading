@@ -6,6 +6,7 @@ import { copyText } from '../../utils/clipboard';
 import { subscribeSharedTicker } from '../../hooks/useSharedTicker';
 import { useLetterReveal } from '../../hooks/useLetterReveal';
 import Disclosure from './Disclosure';
+import MarkdownContent from './MarkdownContent';
 
 export interface ReasoningRowProps {
     /** Full thinking / chain-of-thought text. */
@@ -167,9 +168,19 @@ const ReasoningRow: React.FC<ReasoningRowProps> = ({
             )}
         >
             <div className="relative pr-8">
-                <div className={`whitespace-pre-wrap break-words text-ui-caption leading-[1.75] text-zinc-500 ${running && open ? 'stream-typing' : ''}`}>
-                    {visibleTrace}
-                </div>
+                {running && open ? (
+                    // While the trace is being WATCHED it types raw: a markdown
+                    // re-parse per revealed letter is expensive and flickers,
+                    // and the reveal caret belongs to plain text.
+                    <div className={`whitespace-pre-wrap break-words text-ui-caption leading-[1.75] text-zinc-500 stream-typing`}>
+                        {visibleTrace}
+                    </div>
+                ) : (
+                    // Settled (or expanded-before-running) traces read as
+                    // proper formatted text — paragraphs, lists, rules — the
+                    // same pipeline the answer uses, at the trace's muted tone.
+                    <MarkdownContent content={visibleTrace} className="text-ui-caption leading-[1.75] text-zinc-500 [&_hr]:border-zinc-800 [&_strong]:text-zinc-400 [&_a]:text-cyan-300" />
+                )}
                 <button
                     type="button"
                     onClick={onCopy}

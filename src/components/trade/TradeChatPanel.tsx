@@ -205,12 +205,6 @@ interface TradeChatPanelProps {
      *  both, and the dock is meant to be its compact form, not a
      *  second-class one. */
     onNewGroup?: () => void;
-    /** Jump to the Coach inbox (Learning → Coach), the same destination
-     *  the Chat rail's Coach pill uses. Absent ⇒ the row is not rendered,
-     *  so the dock never shows a control it cannot honor. */
-    onOpenCoach?: () => void;
-    /** Decisions waiting in the Coach inbox, for the pill count. */
-    coachCount?: number;
     /** The canonical conversation for the bot this session is bound to,
      *  as rows. LIVE, not a snapshot: App recomputes it whenever
      *  `messages` changes, so a turn said in the Agents surface appears in an
@@ -312,7 +306,7 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
     renderGroupSurface, groups = [],
     registerScrollToMessage,
     onToggleCollapsed, expanded, onToggleExpanded, onOpenChat,
-    onNewGroup, onOpenCoach, coachCount = 0, botThreadRows, conversationRows, onBotTurnCommit,
+    onNewGroup, botThreadRows, conversationRows, onBotTurnCommit,
     onSoloTurnCommit,
     onSyncConversation,
     onToggleWatch, pinnedMessageIds,
@@ -1107,18 +1101,6 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
                                             data-testid="new-group-option"
                                             className="block w-full rounded-control px-2 py-1.5 text-left text-ui-dense text-zinc-300 hover:bg-white/[0.06]">
                                             New room <span className="text-zinc-600">· create a group</span>
-                                        </button>
-                                    )}
-                                    {onOpenCoach && (
-                                        <button type="button" onClick={() => { setShowNewMenu(false); onOpenCoach(); }}
-                                            data-testid="dock-coach-option"
-                                            className="block w-full rounded-control px-2 py-1.5 text-left text-ui-dense text-zinc-300 hover:bg-white/[0.06]">
-                                            Coach inbox
-                                            {coachCount > 0 && (
-                                                <span className="ml-1 rounded-full bg-amber-500/20 px-1.5 text-ui-2xs tabular-nums text-amber-300">
-                                                    {coachCount}
-                                                </span>
-                                            )}
                                         </button>
                                     )}
                                     {renderGroupSurface && groups.length > 0 && groups.slice(0, 6).map(g => (

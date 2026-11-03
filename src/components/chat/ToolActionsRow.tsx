@@ -41,19 +41,19 @@ const actionLabel = (tool: string, items: ToolAction[]): string => {
     const plural = n === 1 ? '' : 's';
     switch (tool) {
         case 'amend_memory':
-            return `Memory amendment${plural} proposed — review in Settings → Memory`;
+            return `Memory amendment${plural} applied — the before/after and Undo are in Settings → Memory`;
         case 'forge_tool':
             return `Desk tool${plural} proposed — review in Settings → AI Models`;
         case 'skill_draft':
-            return `Skill draft${plural} queued — review with the Coach`;
+            return `Skill draft${plural} saved — applies itself if it passes the gates (Learning → Skills)`;
         case 'skill_ingest':
             return n === 1
                 ? `Skill created from evidence — ${items[0].label}`
                 : `${n} skills created from evidence`;
         case 'propose_skill':
             return n === 1
-                ? `Skill draft proposed — ${items[0].label} (review with the Coach)`
-                : `${n} skill drafts proposed — review with the Coach`;
+                ? `Skill draft saved — ${items[0].label} (applies when it passes the gates)`
+                : `${n} skill drafts saved — they apply when they pass the gates`;
         case 'propose_strategy':
             // Without this the row falls through to "Ran <slug>" and the trader
             // reads a plan awaiting their review as something already done.
@@ -62,8 +62,8 @@ const actionLabel = (tool: string, items: ToolAction[]): string => {
                 : `${n} strategy plans proposed — drafts, not active until you activate them`;
         case 'revise_skill':
             return n === 1
-                ? `Skill revision proposed — ${items[0].label} (review in Settings → Skills)`
-                : `${n} skill revisions proposed — review in Settings → Skills`;
+                ? `Skill revision proposed — ${items[0].label} (Learning → Skills)`
+                : `${n} skill revisions proposed — Learning → Skills`;
         case 'remember':
             return n === 1
                 ? `Memory saved — ${(items[0].label.split('/')[1] ?? items[0].label)}`

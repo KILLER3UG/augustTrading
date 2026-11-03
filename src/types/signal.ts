@@ -47,6 +47,11 @@ export interface SignalRecord extends SignalLevels {
     promptVersion: string;
     source: 'signal';
     thesis: string;
+    /** The model's own evidence-anchored conviction (1-4, the written rubric
+     *  in the tool description), when it self-reported one. Calibration reads
+     *  this against outcomeR; absent on rows emitted before the field shipped.
+     *  It is a self-report, never a gate. */
+    conviction?: number;
 }
 
 /** The programmatic gate, run in SHADOW: it never refuses an emission, it
@@ -78,13 +83,20 @@ export interface SignalBaseRate {
     horizonBars: number;
     riskPct: number;
     rewardPct: number;
+    /** The same tape under a FIXED mechanical rule (SMA20 cross long, the
+     *  bracket geometry below), resolved by the same resolver — the
+     *  "does the harness beat a fixed rule" baseline (O-08). Absent when the
+     *  tape was too short to sample. */
+    ruleHitRate?: number;
+    ruleFills?: number;
 }
 
 export interface SignalResolution {
     status: Exclude<SignalStatus, 'open'>;
     at: number;
-    /** Signed R before costs: +R:R on a win, −1 on a stop, the mark's signed
-     *  distance on an expiry. */
+    /** Signed R before costs: +R:R on a win, −1 on a stop-price fill, LESS
+     *  than −1 when the exit bar opened beyond the stop (the gap rule), and
+     *  the mark's signed distance on an expiry. */
     grossR: number;
     /** Round-trip cost in R (taker fee + assumed slippage, both sides). */
     feeR: number;
@@ -99,6 +111,18 @@ export interface SignalResolution {
     triggeredAt?: number;
     exitAt?: number;
     exitPrice?: number;
+    /** The exit bar OPENED beyond the stop, so the fill is the open — the stop
+     *  price was never printed. The loss exceeds 1R by the gap. Absent when
+     *  the exit filled at the stop or the target. */
+    gapAdjusted?: boolean;
+    /** Signed R between the trigger bar's OPEN and the assumed entry fill —
+     *  how far a real limit fill could have differed from the assumed one
+     *  (favorable when the bar gapped through the level in the fill's favor).
+     *  Measured on every filled outcome; the fill-realism aggregate reads it. */
+    entryOpenR?: number;
+    /** The same measure on the exit bar: signed R at the exit bar's OPEN
+     *  instead of the assumed exit price. Absent on `never_triggered`. */
+    exitOpenR?: number;
     /** OKX (primary) vs Binance (cross-check) over the bars that decided this
      *  resolution. `unavailable` means the cross-check could not run — it is
      *  not agreement. */

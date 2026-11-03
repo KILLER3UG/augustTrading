@@ -17,7 +17,7 @@
  * combination without a timer, a provider, or a mounted component.
  */
 
-import type { AutoJournalPolicy } from './approvalInbox';
+import type { AutoJournalPolicy } from './autoJournalRules';
 
 export type OutcomeSettlement = 'automatic' | 'confirm' | 'shadow';
 

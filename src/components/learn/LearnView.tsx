@@ -2,14 +2,17 @@
  * Learning — one surface for everything the system knows and how it decided that
  * (WS-5.1).
  *
- * Before this, the learning UI was scattered across nine components in three
- * places: the queue in the Studio, the notebook in Settings, the supervisor in
- * the Chart AI dock, the graveyard nowhere reachable, and the Coach inbox on a
- * Chat | Coach switch inside the dock. The information architecture here is the
- * loop's own order:
+ * The information architecture is the loop's own order:
  *
- *   Approvals → Skills → Memory → Health
- *   what it's deciding   where it lives   whether it's sound   your call
+ *   Skills → Memory → Health
+ *   where it lives   what it reads   whether it's sound
+ *
+ * The APPROVALS tab (the old Coach tab) was removed by owner ruling
+ * (2026-11-03): the queues it hosted apply themselves now — skill drafts run
+ * the deterministic gates and land in the library (skillApproval's auto-apply,
+ * driven by the draft-write event), and memory corrections have been direct
+ * writes since 2026-10-29. There is nothing left to click, so there is no
+ * tab to click it in.
  *
  * The playbook LIBRARY is deliberately not a tab here: StrategyStudio is the
  * one owner of that table, it has its own surface (Alt+3), and mounting it a
@@ -19,11 +22,10 @@
  */
 
 import React, { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
-import { BookOpen, ClipboardCheck, Gauge, Layers } from '../shared/Icons';
+import { BookOpen, Gauge, Layers } from '../shared/Icons';
 import type { LoggedTrade } from '../../types';
 import type { ProviderConfig } from '../../types/provider';
 import SupervisorStream from './SupervisorStream';
-import AmendmentsInbox from './AmendmentsInbox';
 import MemoryHealthCard from './MemoryHealthCard';
 import PatternMemoryCard from './PatternMemoryCard';
 import SkillsCatalog from './SkillsCatalog';
@@ -44,7 +46,7 @@ const SessionUsagePanel = lazy(() => import('../settings/SessionUsagePanel'));
 const DiagnosticsPanel = lazy(() =>
     import('../settings/DiagnosticsPanel').then(m => ({ default: m.DiagnosticsPanel })));
 
-type LearnTab = 'coach' | 'skills' | 'memory' | 'health';
+type LearnTab = 'skills' | 'memory' | 'health';
 
 export type { LearnTab };
 
@@ -58,12 +60,10 @@ const SKILL_VIEWER_DOCK = 'skill-viewer';
 const MEMORY_TOPIC_DOCK = 'memory-topic';
 
 const TABS: Array<{ id: LearnTab; label: string; Icon: React.FC<{ className?: string }> }> = [
-    // Named for the decision it holds, not the persona that explains it. It
-    // holds ALL of them now — action permissions, skill drafts, proposals,
-    // memory amendments — which is why it leads the row and is the default tab.
-    { id: 'coach', label: 'Approvals', Icon: ClipboardCheck },
     // The library the desk learns FROM, moved here from Settings — one view for
     // everything the app believes, rather than a tab in a dialog about the app.
+    // Leads the row since the Approvals tab's removal (2026-11-03): skills are
+    // what this surface is for.
     { id: 'skills', label: 'Skills', Icon: Layers },
     { id: 'memory', label: 'Memory', Icon: BookOpen },
     { id: 'health', label: 'Health', Icon: Gauge },
@@ -91,24 +91,10 @@ interface LearnViewProps {
      *  own last tab instead of re-firing a stale link. */
     initialTab?: LearnTab | null;
     onInitialTabConsumed?: () => void;
-    /** The Coach inbox — the learning loop's decision queue, merged in from the
-     *  Chart AI dock. App renders the panel (it owns the allow/deny handlers);
-     *  this surface only hosts the slot, and shows no Coach tab at all without
-     *  it. */
-    renderCoach?: () => React.ReactNode;
     /** The skill library (Studio + trade plans + forged tools). Handed in as a
      *  node because the Studio reads the live regime and owns the strategy
-     *  search, neither of which this surface has — the same reason the Coach
-     *  slot is a node. */
+     *  search, neither of which this surface has. */
     renderSkills?: () => React.ReactNode;
-    /** The autopilot's pending permission requests (log / replace / re-validate a
-     *  trade). These used to live in a drawer the nav rail opened, which made two
-     *  approval surfaces for two kinds of decision; they are handed in here so a
-     *  press that changes what the app does sits beside the presses that change
-     *  what it believes. */
-    renderActionApprovals?: () => React.ReactNode;
-    /** Decisions waiting, shown as the Coach tab's badge. */
-    coachCount?: number;
     /** The journal review's pattern synthesis — moved out of the Journal's
      *  trade log (2026-10-07). App supplies the review text, its loading flag
      *  and the regenerate handler; without them the card still reads the
@@ -116,11 +102,6 @@ interface LearnViewProps {
     reviewSummary?: string | null;
     reviewLoading?: boolean;
     onRegenerateReview?: () => void;
-    /** Opens the skill-DRAFT path in the Approvals inbox. Routed rather than
-     *  reimplemented: a second approval surface is the exact IA defect the
-     *  2026-10-07 audit named, and `probe-skill-approval.cjs` drives the
-     *  existing one byte-for-byte. */
-    onAddSkill?: () => void;
     /** Settings → Skills, for the catalog's gear. */
     onOpenSkillsSettings?: () => void;
 }
@@ -128,16 +109,15 @@ interface LearnViewProps {
 const LearnView: React.FC<LearnViewProps> = ({
     username, trades, isGlobalMemoryEnabled, setIsGlobalMemoryEnabled,
     memoryConfig = null, initialTab, onInitialTabConsumed,
-    renderCoach, renderSkills, renderActionApprovals, coachCount = 0,
-    reviewSummary = null, reviewLoading = false, onRegenerateReview,
-    onAddSkill, onOpenSkillsSettings,
+    renderSkills, reviewSummary = null, reviewLoading = false, onRegenerateReview,
+    onOpenSkillsSettings,
 }) => {
     const [tab, setTab] = useState<LearnTab>(() => {
         const saved = typeof localStorage !== 'undefined' ? localStorage.getItem(TAB_KEY) : null;
-        // A pending decision is the reason to open this surface, so the tab that
-        // holds them is the default — and a stored id from before the merge
-        // ('queue', 'system') falls through the TABS check to here.
-        return TABS.some(t => t.id === saved) ? (saved as LearnTab) : 'coach';
+        // Skills is the surface's reason to exist — and a stored id from before
+        // the Approvals removal ('coach', or the older 'queue'/'system') falls
+        // through the TABS check to here.
+        return TABS.some(t => t.id === saved) ? (saved as LearnTab) : 'skills';
     });
 
     useEffect(() => {
@@ -199,9 +179,6 @@ const LearnView: React.FC<LearnViewProps> = ({
                     return (
                         <button key={id} type="button" onClick={() => setTab(id)}
                             aria-current={active ? 'true' : undefined} data-testid={`learn-tab-${id}`}
-                            aria-label={id === 'coach' && coachCount > 0
-                                ? `${label} — ${coachCount} awaiting your decision` : undefined}
-                            title={id === 'coach' && coachCount > 0 ? `${coachCount} awaiting your decision` : undefined}
                             className={`flex items-center gap-1.5 rounded-control px-3 py-1.5 text-ui-sm font-medium transition-colors duration-[120ms] ease-[var(--ease-snappy)] ${
                                 active
                                     ? 'bg-zinc-800 text-zinc-100 ring-1 ring-white/[0.06]'
@@ -209,13 +186,6 @@ const LearnView: React.FC<LearnViewProps> = ({
                             }`}>
                             <Icon className="h-3.5 w-3.5" aria-hidden="true" />
                             {label}
-                            {/* No count chip here. The Learning rail row already
-                                carries the same number, and once you are inside
-                                this surface the drafts are the list on screen —
-                                so the tab was printing a second "12" for the
-                                thing you had just navigated to read. The `title`
-                                above keeps the count where it is useful: on
-                                hover, in words. */}
                         </button>
                     );
                 })}
@@ -226,24 +196,6 @@ const LearnView: React.FC<LearnViewProps> = ({
                 closed one taking a column of width. */}
             <div className="relative flex min-h-0 flex-1">
                 <div className="min-h-0 flex-1 overflow-y-auto custom-scrollbar">
-                {/* Approvals — every decision waiting on you, in one column,
-                    ordered by what a press costs: first a live action the
-                    autopilot wants permission to take, then the skill drafts
-                    and proposals that change what the harness believes, then
-                    the memory amendments. Nothing else in the app can change a
-                    belief, which is the point of putting them on one screen. */}
-                {tab === 'coach' && (
-                    <div className="mx-auto flex w-full max-w-3xl flex-col gap-3 p-3">
-                        {renderActionApprovals
-                            ? <div data-testid="learn-actions">{renderActionApprovals()}</div>
-                            : null}
-                        {renderCoach
-                            ? <div data-testid="learn-coach">{renderCoach()}</div>
-                            : null}
-                        <AmendmentsInbox />
-                    </div>
-                )}
-
                 {tab === 'skills' && (
                     <div className="min-h-0 flex-1" data-testid="learn-skills">
                         {renderSkills ? renderSkills() : null}
@@ -266,7 +218,6 @@ const LearnView: React.FC<LearnViewProps> = ({
                                 file manager follow. */}
                             <MemoryTopicsCard onOpenTopic={openMemoryTopic} />
                             <SkillsCatalog
-                            onAddSkill={onAddSkill}
                             onOpenSettings={onOpenSkillsSettings}
                             onOpenSkill={openSkillViewer}
                         />

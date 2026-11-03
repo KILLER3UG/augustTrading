@@ -2815,3 +2815,47 @@ installer bundle exactly as before.
 point the installer at an arbitrary repository; `npm install` still runs that repository's scripts.
 Once built, model-edited code runs with the app's privileges — this is the Hermes trade the owner
 asked for, which is why it is opt-in and sandboxed to the checkout.
+
+## 59. An empty round is repaired silently, and the learning surface stops asking (2026-11-03)
+
+**Owner report.** The transcript showed `thinking hit the round's token ceiling with nothing to
+show` and `THE PROVIDER STOPPED EARLY`; the thinking block still drew a box; the Learning surface
+had an Approvals tab (the old Coach) with nothing to decide; every skill file was expected to
+follow one format; the rail's Customize row rendered the Learning tab; and an attached image
+appeared only after its decode finished.
+
+**What landed.**
+- **The empty round cannot end the turn.** A round with no call and no word is re-asked SILENTLY.
+  The first repair doubles the room and steps the effort down — and it may EXCEED the caller's
+  budget, which the old `Math.min` clamp forbade (a 400-token clarification was re-asked at 400
+  tokens). The second repair removes the thinking channel (`off`) and the tools (`toolChoice:
+  'none'`) so the round can only produce words. Reasoning-with-a-clean-stop counts as empty. A
+  partial text continuation also gets the doubled room. No tool line announces either repair, and
+  a recovered run still suppresses the truncation notice.
+- **Thinking draws no frame.** `.thinking-row` is `border: 0`, transparent, `animation: none` — the
+  last part matters because the running border-colour animation beats a normal declaration. The
+  trace body has no top/left rule; settled traces render through `MarkdownContent` (paragraphs,
+  lists, emphasis) at the trace's muted tone.
+- **One skill format, repaired.** `skillFormatIssues` audits every file (slug name, `when`,
+  `description`, non-empty body, hard cap); `deriveSkillFace` derives the missing face from the
+  file's own words; `repairSkillFileFormats` runs at boot and rewrites a non-conforming file
+  through the ONE serializer, refusing ghosts, underivable files, and rewrites that do not reduce
+  the issue count. The Health tab still lists whatever remains.
+- **No approvals, no coach.** The Learning tab row is Skills → Memory → Health; skill drafts
+  auto-apply through the existing deterministic gates with an attempt budget; the memory
+  corrections log (and its one Undo) moved to Settings → Memory; `ActionApprovals`,
+  `CoachThreadPanel` and `utils/approvalInbox.ts` (renamed `autoJournalRules`) are deleted.
+  `amend_memory` was already a direct write; its tool copy now names the new home.
+- **Rail.** Workspaces group the profile list (active one expanded over its conversations), rows
+  carry the reference's right-aligned age (`now`, `5m`, `3h`, `48d`), and Add workspace opens the
+  ONE profile creator. The old Customize row is now **Skills** and lands on Learning → Skills —
+  label and destination agree.
+- **Attach.** The chip mounts on the change event in its loading state (a pulsing thumbnail) and
+  fills in place when the read lands; the send path filters unloaded chips.
+
+**Verification.** `typecheck`; `check:contracts` **486** (silent empty-round repair, budget
+exceeding the caller's ceiling, second-try tool/thinking removal, reasoning-only stop, serializer
+gold output, face derivation, boot repair); `lint` 0 errors; `check:docs`; `check:boundaries`;
+`render-probe` **194 checks**, including computed styles proving the trace has zero border, no
+fill and no rules, a 4 MB attachment observed loading before its decode, and the rail's nested
+conversation age column — zero pageerrors.

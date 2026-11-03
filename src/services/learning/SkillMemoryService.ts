@@ -31,7 +31,7 @@ import { netRiskReward, stopDistancePercent } from '../../utils/netRiskReward';
 import { parsePrice } from '../../utils/analysisUtils';
 import { formatCraftedSkillBody, refineSkillFromLosses } from './SkillCraftService';
 import { recordLearningRulesFromPostMortem } from './learningRules';
-import { captureUnknownFrontmatter, declaredCompatibility, hasUseWhenTrigger, skillBodyCaps, skillRunsHere, type SkillRuntime } from '../../utils/skillFrontmatter';
+import { captureUnknownFrontmatter, declaredCompatibility, deriveSkillFace, hasUseWhenTrigger, skillBodyCaps, skillFormatIssues, skillRunsHere, type SkillRuntime } from '../../utils/skillFrontmatter';
 import { applyOutcomeCorrection, type CorrectionOutcome } from '../../utils/skillLedgerCorrection';
 import { DESK_TOOL_NAMES } from '../../utils/toolKinds';
 import {
@@ -391,7 +391,7 @@ export interface SkillMeta {
      *  - `'starter-library'`  — not stored. A `prior: 'book'` row is approved while
      *    the explicit Settings toggle is on; it is vetted literature, not model
      *    output, and the toggle is the single thing that says so. */
-    approvedBy?: 'supervisor' | 'human' | 'grandfathered' | 'tentative';
+    approvedBy?: 'supervisor' | 'human' | 'grandfathered' | 'tentative' | 'auto';
     /** Why a tentative skill stopped injecting (auto-demotion). One line,
      *  written beside `suspendedAt`; the skill stays readable and editable. */
     demotion?: string;
@@ -549,6 +549,75 @@ export const isSkillFile = (file: MemoryFile): boolean =>
 
 export const listSkillSlugs = (): string[] =>
     getMemoryFiles().files.filter(isSkillFile).map(f => f.name.replace(/\.md$/i, ''));
+
+/**
+ * THE ONE-FORMAT GATE, REPAIRING — not just reporting.
+ *
+ * `skillFormatIssues` audits; the Health tab shows what it found. This pass is
+ * what makes "every skill in the skills folder follows the same format"
+ * true for the files that were written BEFORE the format existed. It walks
+ * the live library, derives the missing `when` / `description` from the file's
+ * own words (`deriveSkillFace`), and rewrites the file through the ONE
+ * serializer — which preserves third-party frontmatter and the ledger face.
+ *
+ * Three refusals, deliberately:
+ *  · a file that does not parse is a GHOST, and reconstruction is a different
+ *    repair (skillReview) — counted, never guessed at here;
+ *  · a file with nothing to derive from is counted and left alone;
+ *  · a rewrite that would not REDUCE the issue count is not written at all —
+ *    churning bytes for no conformance is a diff a trader cannot explain.
+ *
+ * Idempotent: a conforming file is never touched. Returns the count it
+ * checked, so "0 repaired" is a claim about a population, not a silence.
+ */
+export interface SkillFormatRepairResult {
+    checked: number;
+    repaired: number;
+    /** Files that still do not conform after the pass (ghosts + underivable). */
+    remaining: number;
+    /** File names that were rewritten — one line each in the boot log. */
+    changed: string[];
+}
+
+export const repairSkillFileFormats = (username: string): Promise<SkillFormatRepairResult> =>
+    withNotebookWriteLock(async () => {
+    const files = getMemoryFiles().files.filter(isSkillFile);
+    const out: SkillFormatRepairResult = { checked: files.length, repaired: 0, remaining: 0, changed: [] };
+    for (const file of files) {
+        const meta = parseSkillMarkdown(file.content);
+        if (!meta) {
+            out.remaining += 1;
+            continue;
+        }
+        const issues = skillFormatIssues({ fileName: file.name, ...meta });
+        if (issues.length === 0) continue;
+        const derived = deriveSkillFace({ when: meta.when, description: meta.description, body: meta.body });
+        const next: SkillMeta = {
+            ...meta,
+            ...(meta.when ? {} : derived.when ? { when: derived.when } : {}),
+            ...(meta.description ? {} : derived.description ? { description: derived.description } : {}),
+        };
+        if ((!meta.when && !next.when) || (!meta.description && !next.description)) {
+            out.remaining += 1;
+            continue;
+        }
+        const content = serializeSkill(next, titleFromMeta(next));
+        const reparsed = parseSkillMarkdown(content);
+        const after = reparsed ? skillFormatIssues({ fileName: file.name, ...reparsed }) : ['unparseable'];
+        if (after.length >= issues.length) {
+            out.remaining += 1;
+            continue;
+        }
+        try {
+            await updateMemoryFileUnlocked(file.id, { content }, username);
+            out.repaired += 1;
+            out.changed.push(file.name);
+        } catch {
+            out.remaining += 1;
+        }
+    }
+    return out;
+    });
 
 /**
  * The one marker that splits a skill file into its two faces.
@@ -723,6 +792,7 @@ export function parseSkillMarkdown(content: string): SkillMeta | null {
                 body: typeof parsed.body === 'string' ? parsed.body : undefined,
                 approvedBy: parsed.approvedBy === 'human' || parsed.approvedBy === 'grandfathered'
                     || parsed.approvedBy === 'supervisor' || parsed.approvedBy === 'tentative'
+                    || parsed.approvedBy === 'auto'
                     ? parsed.approvedBy : undefined,
                 approvedAt: typeof parsed.approvedAt === 'string' ? parsed.approvedAt : undefined,
             };
@@ -799,7 +869,8 @@ export function parseSkillMarkdown(content: string): SkillMeta | null {
         approvedBy: pick('approvedBy') === 'supervisor'
             ? 'supervisor' : pick('approvedBy') === 'human'
                 ? 'human' : pick('approvedBy') === 'grandfathered'
-                    ? 'grandfathered' : pick('approvedBy') === 'tentative' ? 'tentative' : undefined,
+                    ? 'grandfathered' : pick('approvedBy') === 'tentative'
+                        ? 'tentative' : pick('approvedBy') === 'auto' ? 'auto' : undefined,
         approvedAt: pick('approvedAt') || undefined,
         demotion: pick('demotion')?.slice(0, 400),
         originBotId: pick('originBotId')?.slice(0, 40),
@@ -1071,6 +1142,11 @@ export const skillEnabledFlag = (meta: SkillMeta): boolean =>
  */
 export const isApprovedSkill = (meta: Pick<SkillMeta, 'approvedBy' | 'prior'>): boolean => {
     if (meta.approvedBy === 'human' || meta.approvedBy === 'grandfathered') return true;
+    // 'auto' — the owner's ruling of 2026-11-03: the approval inbox is gone and
+    // drafts apply themselves. The deterministic gates (duplicates, malformed
+    // clauses, body caps, tombstones) are the quality bar; the human click is
+    // no longer the approval fact, so the stamp the auto path writes IS one.
+    if (meta.approvedBy === 'auto') return true;
     // The starter library is vetted literature, not model output: one explicit
     // Settings toggle approves the whole shelf, and it is ON by default so the app
     // keeps the behaviour the books were shipped for.
@@ -3118,9 +3194,10 @@ const ingestCraftedSkillUnlocked = async (
     username: string,
     /** P0-1: who approved this write. A human pressing Save on a post-mortem
      *  draft IS consent — without this the trade-backed skill fails
-     *  `isApprovedSkill` and silently never injects. Auto-ingest callers omit
-     *  it and stay fail-closed, as before. */
-    approvedBy?: 'human',
+     *  `isApprovedSkill` and silently never injects. The auto-apply path
+     *  passes 'auto' (the owner's 2026-11-03 ruling), which the gate treats
+     *  as the same fact; callers that omit it stay fail-closed, as before. */
+    approvedBy?: 'human' | 'auto',
 ): Promise<void> => {
     if (trade.outcome !== TradeOutcome.WIN && trade.outcome !== TradeOutcome.LOSS) return;
     if (!tradeAdmitsTechnicalStrategyRule(trade)) return;
@@ -3254,7 +3331,7 @@ export const ingestCraftedSkill = (
     trade: LoggedTrade,
     crafted: CraftedSkill,
     username: string,
-    approvedBy?: 'human',
+    approvedBy?: 'human' | 'auto',
 ): Promise<void> =>
     withNotebookWriteLock(() => ingestCraftedSkillUnlocked(trade, crafted, username, approvedBy));
 
@@ -3287,8 +3364,9 @@ const ingestCraftedSkillFromDraftUnlocked = async (
     /** The approver's one-line reason (the supervisor's verdict). Persisted
      *  onto the skill — see SkillMeta.whyAccepted. */
     whyAccepted?: string,
-    /** Who approved it — see SkillMeta.approvedBy. */
-    approvedBy?: 'supervisor' | 'human',
+    /** Who approved it — see SkillMeta.approvedBy. 'auto' is the owner-ruled
+     *  auto-apply path's stamp (2026-11-03). */
+    approvedBy?: 'supervisor' | 'human' | 'auto',
 ): Promise<SkillIngestResult> => {
     await ensureHarnessFoldersUnlocked(username);
     const folder = getMemoryFiles().folders.find(f => f.name === 'skills');
@@ -3360,7 +3438,7 @@ export const ingestCraftedSkillFromDraft = (
     coin: string | undefined,
     username: string,
     whyAccepted?: string,
-    approvedBy?: 'supervisor' | 'human',
+    approvedBy?: 'supervisor' | 'human' | 'auto',
 ): Promise<SkillIngestResult> =>
     withNotebookWriteLock(() => ingestCraftedSkillFromDraftUnlocked(crafted, coin, username, whyAccepted, approvedBy));
 

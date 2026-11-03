@@ -6,7 +6,17 @@ export interface SkillDraft {
     coin?: string;
     crafted: CraftedSkill;
     createdAt: string;
+    /** How many times the AUTO-APPLY path tried and failed to land this draft
+     *  (owner ruling 2026-11-03: no approval inbox). The deterministic gates
+     *  refuse for named reasons — no skills folder, over the hard cap — and a
+     *  draft that keeps failing would be retried on every sweep forever
+     *  without a budget. At SKILL_DRAFT_MAX_ATTEMPTS it stops being attempted
+     *  and stays in the store as history. */
+    attempts?: number;
 }
+
+/** The auto-apply retry budget for one draft. */
+export const SKILL_DRAFT_MAX_ATTEMPTS = 3;
 
 const KEY_PREFIX = 'skill_drafts_v1';
 const LEGACY_KEY = KEY_PREFIX;
@@ -48,11 +58,15 @@ const read = (username?: string): SkillDraft[] => {
 
 /** True only when the bytes are on disk. A caller is about to tell a human
  *  "your proposal is in the inbox"; that claim needs the store's agreement, not
- *  the absence of a throw. */
-const write = (drafts: SkillDraft[], username?: string): boolean => {
+ *  the absence of a throw. `dispatch` announces the write to the auto-apply
+ *  sweep — a NEW draft wants that; a failure-bookkeeping write must NOT, or
+ *  the refusal re-fires the sweep that refused it and burns the retry budget
+ *  against itself (measured in probe case 4: attempts hit the cap in one
+ *  burst). */
+const write = (drafts: SkillDraft[], username?: string, dispatch = true): boolean => {
     try {
         localStorage.setItem(storageKey(username), JSON.stringify(drafts.slice(-20)));
-        if (typeof window !== 'undefined') window.dispatchEvent(new Event('august-skill-drafts'));
+        if (dispatch && typeof window !== 'undefined') window.dispatchEvent(new Event('august-skill-drafts'));
         return true;
     } catch {
         return false;
@@ -91,6 +105,20 @@ export const takeSkillDraft = (id: string, username?: string): SkillDraft | null
     // same draft twice (the 2026-10-27 audit S-6).
     if (!write(drafts.filter(d => d.id !== id), username)) return null;
     return listSkillDrafts(username).some(d => d.id === id) ? null : hit;
+};
+
+/** Count one failed auto-apply attempt against a draft that REMAINS in the
+ *  store. Read-back discipline as everywhere else here: the increment is only
+ *  real when the store says so. The write is SILENT — this is bookkeeping on a
+ *  draft the sweep just refused, not a new draft arriving, and re-firing the
+ *  sweep would retry the refusal against its own budget. */
+export const markSkillDraftFailed = (id: string, username?: string): SkillDraft | null => {
+    const drafts = listSkillDrafts(username);
+    const hit = drafts.find(d => d.id === id);
+    if (!hit) return null;
+    const bumped = { ...hit, attempts: (hit.attempts ?? 0) + 1 };
+    if (!write(drafts.map(d => (d.id === id ? bumped : d)), username, false)) return null;
+    return listSkillDrafts(username).some(d => d.id === id && d.attempts === bumped.attempts) ? bumped : null;
 };
 
 // ─── Rejection tombstones ───────────────────────────────────────────────────

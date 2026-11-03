@@ -160,6 +160,54 @@ export const dismissLearningProposal = (id: string, username?: string): void => 
     write(listLearningProposals(username).filter(p => p.id !== id), username);
 };
 
+// ─── AUTO-APPLY refusal budget (owner ruling 2026-11-03) ────────────────────
+// The approval surfaces are gone, so applyable proposals are applied by the
+// learning heartbeat's sweep. A proposal the applier REFUSES (below-bar, no
+// target, a failed write) would otherwise be retried on every sweep forever —
+// the same failure shape the draft path solved with an attempts counter. The
+// ledger is capped like every other queue here, and an APPLIED proposal's
+// entry is cleared rather than carried.
+export const PROPOSAL_AUTO_MAX_ATTEMPTS = 3;
+
+const autoRefusalKey = (username?: string): string =>
+    `${KEY_PREFIX}_autoref:${(username || 'default').trim() || 'default'}`;
+
+const readAutoRefusals = (username?: string): Record<string, number> => {
+    try {
+        const parsed = JSON.parse(localStorage.getItem(autoRefusalKey(username)) || '{}');
+        return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch {
+        return {};
+    }
+};
+
+/** How many times the auto-apply has tried and failed to apply this proposal. */
+export const proposalAutoAttempts = (id: string, username?: string): number =>
+    typeof localStorage === 'undefined' ? 0 : (readAutoRefusals(username)[id] ?? 0);
+
+/** Count one refused auto-apply attempt against a proposal that stays queued. */
+export const markProposalAutoRefused = (id: string, username?: string): void => {
+    if (typeof localStorage === 'undefined' || !id) return;
+    const next = readAutoRefusals(username);
+    next[id] = (next[id] ?? 0) + 1;
+    try {
+        localStorage.setItem(autoRefusalKey(username), JSON.stringify(Object.fromEntries(
+            Object.entries(next).slice(-50),
+        )));
+    } catch { /* ignore */ }
+};
+
+/** Clear the budget entry once a proposal applied — it is history, not debt. */
+export const clearProposalAutoRefusal = (id: string, username?: string): void => {
+    if (typeof localStorage === 'undefined' || !id) return;
+    const next = readAutoRefusals(username);
+    if (!(id in next)) return;
+    delete next[id];
+    try {
+        localStorage.setItem(autoRefusalKey(username), JSON.stringify(next));
+    } catch { /* ignore */ }
+};
+
 // ─── The single applier ─────────────────────────────────────────────────────
 // Both approval surfaces (the Coach thread and the Skills queue strip) used to
 // hand-roll the same three steps: run the kind dispatcher, drain the row on

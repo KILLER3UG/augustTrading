@@ -87,17 +87,13 @@ export interface ToolTurnOutcome {
      *  carried out of the executor has to be re-derived by every writer —
      *  which is how two rows end up claiming different tiers for one turn. */
     effort: ReasoningEffort;
-    /** What the wire was actually asked, one entry per call the turn made.
-     *
-     *  The transport ALREADY emits these — `onWireAudit` fires on every
-     *  request with the capability route it applied and, when it applied
-     *  none, WHY. Nothing collected them, so the answer's row could not say
-     *  why a turn came back with no trace. They ride out here, on the one
-     *  return every path shares, for the same reason the effort does: a fact
-     *  that is not carried out of the executor has to be re-derived by every
-     *  writer — which is how two rows end up claiming different things for
-     *  one turn. */
     wireAudit?: WireAuditEntry[];
+    /** The turn hit the token ceiling AND recovered — a thinking-cut re-ask
+     *  or a partial-text continuation came back clean. The caller suppresses
+     *  the "PROVIDER STOPPED EARLY" notice: the tally counted the truncated
+     *  call, but the answer on the row is whole, and warning about a treated
+     *  wound is noise. */
+    recoveredFromTruncation?: boolean;
 }
 
 export interface ToolTurnRequest {
@@ -178,6 +174,9 @@ const runToolTurnInner = async (req: ToolTurnRequest): Promise<InnerOutcome> => 
     const { events, signal, startedAt } = req;
     let raw = '';
     let reasoning = '';
+    // The loop reports turn-level facts a text stream cannot carry (the
+    // generator yields deltas); the recovered flag rides this callback.
+    let recoveredFromTruncation = false;
     const visible = (text: string): string => (req.keepTextHidden && req.keepTextHidden(raw) ? '' : text);
 
     const stream = streamChatWithDeskTools(req.config, req.messages, {
@@ -202,6 +201,7 @@ const runToolTurnInner = async (req: ToolTurnRequest): Promise<InnerOutcome> => 
         onToolCall: name => events.addToolCall?.(name),
         onToolPayload: payload => events.attachPayload(payload),
         onToolAction: action => events.addAction(action),
+        onLoopMeta: meta => { recoveredFromTruncation = meta.recoveredFromTruncation; },
     });
 
     for await (const delta of stream) {
@@ -246,6 +246,7 @@ const runToolTurnInner = async (req: ToolTurnRequest): Promise<InnerOutcome> => 
             leaked: false,
             interrupted: false,
             workedMs,
+            ...(recoveredFromTruncation ? { recoveredFromTruncation: true } : {}),
             ...(toolsOff && attemptedProtocol
                 ? { notice: offNotice }
                 : echoNotice ? { notice: echoNotice } : {}),
@@ -261,6 +262,7 @@ const runToolTurnInner = async (req: ToolTurnRequest): Promise<InnerOutcome> => 
         leaked,
         interrupted: false,
         workedMs,
+        ...(recoveredFromTruncation ? { recoveredFromTruncation: true } : {}),
         ...(toolsOff && attemptedProtocol ? { notice: offNotice } : {}),
     };
 };

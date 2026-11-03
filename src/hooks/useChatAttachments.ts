@@ -16,8 +16,14 @@ export interface Attachment {
     id: string;
     kind: 'image' | 'file';
     name: string;
-    /** data URL for images, text for everything else — same as the dock. */
+    /** data URL for images, text for everything else — same as the dock.
+     *  Empty while `loading` (the read has not landed yet). */
     payload: string;
+    /** The file is still being read. The chip mounts IMMEDIATELY with this
+     *  set — a picker click that shows nothing until the decode finishes
+     *  reads as a dead control — and clears when the payload lands or the
+     *  chip is removed on failure. A loading chip never rides a send. */
+    loading?: boolean;
 }
 
 /** What the analysis pipeline takes for a vision run. */
@@ -48,18 +54,29 @@ export const useChatAttachments = (): {
     const attachFiles = useCallback((files: FileList | null): void => {
         if (!files) return;
         Array.from(files).slice(0, MAX_ATTACHMENTS - attachments.length).forEach(file => {
+            const kind: Attachment['kind'] = file.type.startsWith('image/') ? 'image' : 'file';
+            const id = newId('at');
+            // The chip mounts NOW, in its loading state; the payload fills in
+            // when the read lands. A click that shows nothing until the decode
+            // finishes is a dead affordance, and a dead one is a lie.
+            setAttachments(prev => (prev.length >= MAX_ATTACHMENTS
+                ? prev
+                : [...prev, { id, kind, name: file.name, payload: '', loading: true }]));
             const reader = new FileReader();
             reader.onload = () => {
                 const payload = String(reader.result ?? '');
-                if (!payload) return;
-                setAttachments(prev => (prev.length >= MAX_ATTACHMENTS
-                    ? prev
-                    : [...prev, {
-                        id: newId('at'),
-                        kind: file.type.startsWith('image/') ? 'image' : 'file',
-                        name: file.name,
-                        payload,
-                    }]));
+                if (!payload) {
+                    setAttachments(prev => prev.filter(a => a.id !== id));
+                    return;
+                }
+                setAttachments(prev => prev.map(a => (a.id === id
+                    ? { ...a, payload, loading: false }
+                    : a)));
+            };
+            reader.onerror = () => {
+                // A failed read removes its chip — a stuck spinner on a file
+                // that will never arrive is worse than no chip at all.
+                setAttachments(prev => prev.filter(a => a.id !== id));
             };
             if (file.type.startsWith('image/')) reader.readAsDataURL(file);
             else reader.readAsText(file);
@@ -90,7 +107,7 @@ export const useChatAttachments = (): {
     }, []);
 
     const images = useCallback((): PipelineImage[] => attachments
-        .filter(a => a.kind === 'image')
+        .filter(a => a.kind === 'image' && !a.loading && a.payload)
         .map(a => ({ name: a.name, dataURL: a.payload })), [attachments]);
 
     return { attachments, fileInputRef, attachFiles, add, remove, clear, openPicker, images };
