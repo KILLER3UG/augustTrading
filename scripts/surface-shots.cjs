@@ -334,7 +334,11 @@ async function main() {
         await page.keyboard.press('Escape');
         how = await press('[data-testid="rail-collapse"]', 900);
         await shoot('ui-chat-collapsed', how);
-        await press('[data-testid="nav-rail-toggle-header"]', 900);
+        // `rail-collapse` toggles the Agents COLUMN (onToggleColumn), so the
+        // Chats icon is the control that brings it back. `nav-rail-toggle-header`
+        // belongs to the whole-rail toggle and only exists while the rail is
+        // away — pressing it here used to collapse the rail by accident.
+        await press('[data-testid="shell-column-toggle"]', 900);
 
         await page.setViewportSize({ width: 430, height: 860 });
         await sleep(1200);

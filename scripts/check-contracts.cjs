@@ -3247,7 +3247,7 @@ const asyncChecks = (async () => {
         "the mock's Chat surface is a centred thread with the column as a peek");
     ok('shell: an icon rail beside a conversation column',
         /data-testid="shell-surface-rail"/.test(read('src/components/shell/ShellRail.tsx'))
-            && /shell-rail-collapse/.test(read('src/components/shell/ShellRail.tsx'))
+            && /shell-column-toggle/.test(read('src/components/shell/ShellRail.tsx'))
             && /shell-rail-resize/.test(read('src/components/shell/ShellRail.tsx')),
         'one flat column of text rows is the shape the mock removes');
     ok('shell: the column has no Search row and no mode switch (the rail owns both)',
@@ -3317,6 +3317,163 @@ const asyncChecks = (async () => {
             && /data-testid="composer-full-analysis"/.test(composer)
             && composer.indexOf('composer-scan-skills') > composer.indexOf('attach-menu'),
         'a chip removed without a new door deletes the action');
+})();
+
+// ─── 33. market discovery: one ranking, two doors, one chart writer ───────
+// A "best setups" answer and the screener table must name the SAME best coin:
+// the score is pure logic below the render, so it is pinned here rather than
+// inferred from a screen. The two desk tools and the ONE session writer are
+// pinned in the same pass — a tool that exists but is not offered on the first
+// round, or a switch that writes a second store, is invisible to a browser.
+(() => {
+    const bs = loadModule('src/services/trade/bestSetups.ts');
+    const row = (over = {}) => ({
+        symbol: 'ETHUSDT', baseAsset: 'ETH', price: 3000, change24h: 2,
+        quoteVolume: 1e9, rsi14: 55, regime: 'up', edge: '7W/5L',
+        setups: [
+            { title: 'Range breakout', side: 'long', barsAgo: 0 },
+            { title: 'Trend pullback', side: 'long', barsAgo: 1 },
+        ],
+        ...over,
+    });
+
+    const full = bs.bestSetupScore(row());
+    // 2 long setups (+6) + agreeing up regime (+3) + current-bar trigger (+2)
+    // + unstretched RSI (+1) + the trader's 7W/5L (+1) = 13.
+    ok('best setups: every point is a measured, printed term',
+        full.direction === 'long' && full.score === 13 && full.reasons.length >= 5
+        && full.reasons.some(r => r.includes('+6'))
+        && full.reasons.some(r => r.includes('+3'))
+        && full.reasons.some(r => r.includes('+2')),
+        JSON.stringify(full));
+    ok('best setups: a "watch" detector is NOT a trade candidate',
+        bs.bestSetupScore(row({ setups: [{ title: 'Inside bar', side: 'watch' }] })).direction === null);
+    ok('best setups: an opposing regime costs, and a missing RSI costs nothing',
+        bs.bestSetupScore(row({
+            regime: 'down', rsi14: null, edge: '',
+            setups: [{ title: 'Range breakout', side: 'long', barsAgo: 3 }],
+        })).score === 1);
+    const mixed = bs.bestSetupScore(row({
+        regime: 'range', edge: '', rsi14: 50,
+        setups: [{ title: 'Breakout', side: 'long' }, { title: 'Failed break', side: 'short' }],
+    }));
+    ok('best setups: live long AND short setups are penalised, not double counted',
+        mixed.score === 2 && mixed.reasons.some(r => /both long and short/.test(r)),
+        JSON.stringify(mixed));
+    const tied = bs.rankBestSetups([
+        row({ symbol: 'AAAUSDT', quoteVolume: 1e6 }),
+        row({ symbol: 'BBBUSDT', quoteVolume: 2e6 }),
+    ], { minScore: 0 });
+    ok('best setups: equal scores break by liquidity, so two runs print one order',
+        tied.ranked.length === 2 && tied.ranked[0].symbol === 'BBBUSDT'
+        && tied.withSetups === 2 && tied.eligible === 2);
+    const quiet = bs.rankBestSetups([row()], { minScore: 30 });
+    ok('best setups: a quiet market refuses to promote the least-bad row',
+        quiet.ranked.length === 0 && quiet.withSetups === 1 && quiet.eligible === 0
+        && /NO BEST SETUP CLEARED THE BAR/.test(bs.bestSetupsToMarkdown(quiet, { top: 60, interval: '15m', minScore: 30 })));
+    ok('best setups: the digest prints the formula and the chart-switch next step',
+        /switch_chart_symbol/.test(bs.bestSetupsToMarkdown(tied, { top: 60, interval: '15m', minScore: 0 }))
+        && /NOT a probability/.test(bs.bestSetupsToMarkdown(tied, { top: 60, interval: '15m', minScore: 0 })));
+
+    const desk = loadModule('src/services/analysis/DeskToolsService.ts');
+    const names = desk.DESK_TOOL_DEFINITIONS.map(d => d.function.name);
+    ok('discovery: both tools have real schemas on the wire',
+        names.includes('find_best_setups') && names.includes('switch_chart_symbol'));
+    ok('discovery: both are on the FIRST round, not one load_tools call away',
+        desk.INITIAL_DESK_TOOL_NAMES.includes('find_best_setups')
+        && desk.INITIAL_DESK_TOOL_NAMES.includes('switch_chart_symbol'));
+    ok('discovery: a chart switch is a write and must never replay from cache',
+        desk.isRepeatGatedTool('switch_chart_symbol') === false
+        && desk.isRepeatGatedTool('find_best_setups') === true);
+    ok('discovery: the transcript prints words, never tool identifiers',
+        desk.toolLabel('find_best_setups') === 'best setups'
+        && desk.toolLabel('switch_chart_symbol') === 'chart switch');
+    ok('discovery: the mandate names the workflow only on seats that can run it',
+        desk.deskToolsMandateFor(['find_best_setups', 'switch_chart_symbol']).includes('MARKET DISCOVERY')
+        && !desk.deskToolsMandateFor(['get_market_packet']).includes('MARKET DISCOVERY'));
+    ok('discovery: the tool description carries the ONE score formula',
+        desk.DESK_TOOL_DEFINITIONS.find(d => d.function.name === 'find_best_setups')
+            .function.description.includes(bs.SCORE_FORMULA));
+
+    const tk = loadModule('src/utils/toolKinds.ts');
+    ok('discovery: the vocabulary names both tools and their kinds in the same change',
+        tk.DESK_TOOL_NAMES.includes('find_best_setups')
+        && tk.DESK_TOOL_NAMES.includes('switch_chart_symbol')
+        && tk.toolKindOf('best setups').kind === 'compute'
+        && tk.toolKindOf('chart switch').kind === 'draw');
+
+    // The WRITE itself, not just its shape: a switch must land on the row
+    // every surface subscribes to, and a repeat must be a no-op rather than
+    // a second store emit. chatStore schedules its persist through `window`,
+    // so the shim is scoped to this one synchronous check.
+    const mem = new Map();
+    global.localStorage = {
+        getItem: k => (mem.has(k) ? mem.get(k) : null),
+        setItem: (k, v) => mem.set(k, String(v)),
+        removeItem: k => mem.delete(k),
+    };
+    // A no-op timer: this check is about the in-memory row, and a real
+    // deferred persist would fire after the shim is gone and print a false
+    // "transcript NOT persisted" error at the end of the gate.
+    global.window = {
+        setTimeout: () => 0, clearTimeout() {}, addEventListener() {}, removeEventListener() {},
+        localStorage: global.localStorage,
+    };
+    try {
+        const store = loadModule('src/services/trade/chatStore.ts');
+        store.setActiveSymbol('ETHUSDT');
+        ok('chart switch: the one writer moves the ACTIVE session row',
+            store.getActiveSession()?.symbol === 'ETHUSDT');
+        ok('chart switch: switching to the same coin reports the current symbol',
+            store.setActiveSymbol('ETHUSDT') === 'ETHUSDT'
+            && store.setActiveSymbol('SOLUSDT') === 'ETHUSDT'
+            && store.getActiveSession()?.symbol === 'SOLUSDT');
+    } finally {
+        delete global.window;
+        delete global.localStorage;
+    }
+
+    const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+    const picker = read('src/components/trade/SymbolPicker.tsx');
+    const trade = read('src/components/trade/TradeView.tsx');
+    const rail = read('src/components/shell/ShellRail.tsx');
+    ok('screener: the symbol picker foot is the door to the mounted panel',
+        /screener-trigger/.test(picker) && /onOpenScreener=\{/.test(trade)
+        && /<ScreenerPanel open=\{screenerOpen\}/.test(trade)
+        && /screener-best-trigger/.test(read('src/components/trade/ScreenerPanel.tsx')));
+    const toggle = read('src/components/shell/SidebarToggle.tsx');
+    const header = read('src/components/shared/Header.tsx');
+    const agentsView = read('src/components/agents/AgentsView.tsx');
+    ok('shell: ONE top-bar toggle owns the whole rail, on the TITLE row',
+        /shell-rail-collapse/.test(toggle) && /nav-rail-toggle-header/.test(toggle)
+        && /aria-keyshortcuts/.test(toggle) && /aria-pressed=\{expanded\}/.test(toggle)
+        && /aria-label="Toggle sidebar"/.test(toggle)
+        && /<SidebarToggle expanded=\{navRailExpanded\}/.test(header)
+        && header.indexOf('<SidebarToggle') < header.indexOf('header-surface-label')
+        && /<SidebarToggle expanded=\{sidebarExpanded\}/.test(agentsView)
+        && /onToggleNavRail=\{toggleNavRail\}/.test(read('src/App.tsx'))
+        && !/shell-rail-collapse/.test(rail)
+        && /shell-column-toggle/.test(rail)
+        && /Hide conversation · Ctrl\+B/.test(toggle)
+        && /Show conversation · Ctrl\+B/.test(toggle),
+        'a collapsed rail is 0px: its control cannot live inside it');
+    ok('conversations: the Chats icon is Agents-only and hiding moved to RECENT',
+        /\{onToggleColumn && \(/.test(rail)
+        && /conversation-hide/.test(read('src/components/shell/ConversationGroups.tsx'))
+        && /onHideConversation=\{onCollapse\}/.test(rail)
+        && /onHideConversation=\{onToggleRailExpanded\}/.test(agentsView),
+        'one column toggle on Analyze duplicated the whole-rail collapse');
+    ok('new chat: the ⌘K keycap is gone, the Ctrl/Cmd+K chord still works',
+        !/<kbd/.test(read('src/components/shell/ConversationGroups.tsx'))
+        && /New chat · Ctrl\+K/.test(read('src/components/shell/ConversationGroups.tsx'))
+        && /keydown/.test(read('src/App.tsx')));
+    ok('chart switch: the picker and the desk tool use the ONE session writer',
+        /chatStore\.setActiveSymbol\(next\)/.test(trade)
+        && /export const setActiveSymbol/.test(read('src/services/trade/chatStore.ts'))
+        && /setActiveSymbol\(next\)/.test(read('src/services/analysis/DeskToolsService.ts')));
+    ok('chart switch: a detached evaluator may not move the trader\'s chart',
+        /'switch_chart_symbol'/.test(read('src/services/trade/unattendedTools.ts'))
+        && /'switch_chart_symbol'/.test(read('src/services/trade/chatSurfaceTurn.ts')));
 })();
 
 // ─── report ────────────────────────────────────────────────────────────────

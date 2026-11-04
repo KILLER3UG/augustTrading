@@ -1522,7 +1522,10 @@ async function main() {
          *  opens it first through the rail's Chats icon. Idempotent. */
         const openChatColumn = async () => {
             await page.evaluate(() => {
-                const t = document.querySelector('[data-testid="shell-rail-collapse"]');
+                // The Chats/column toggle, NOT `shell-rail-collapse`: that one
+                // now puts the WHOLE rail away on every surface. Only the
+                // column toggle carries the pressed state a peek needs.
+                const t = document.querySelector('[data-testid="shell-column-toggle"]');
                 if (t && t.getAttribute('aria-pressed') === 'false') t.click();
             });
             await sleep(400);
@@ -2004,6 +2007,27 @@ async function main() {
             const railReset = await railBox();
             check('double-click restores the rail width',
                 railReset === railBefore, `${railWide} -> ${railReset} (want ${railBefore})`);
+            // The collapse control belongs on the TITLE row, not at the rail's
+            // foot: a put-away rail is 0px and has no edge left to click.
+            const placed = await page.evaluate(() => {
+                const b = document.querySelector('[data-testid="shell-rail-collapse"]');
+                const label = document.querySelector('[data-testid="header-surface-label"]');
+                const head = document.querySelector('main header');
+                if (!b || !label || !head) return null;
+                const br = b.getBoundingClientRect();
+                const lr = label.getBoundingClientRect();
+                return {
+                    inContentBar: head.contains(b),
+                    sameRow: Math.abs((br.top + br.height / 2) - (lr.top + lr.height / 2)) < 12,
+                    leftOfTitle: br.right <= lr.left + 4,
+                    label: (label.textContent || '').trim(),
+                    railHasControl: !!document.querySelector('[data-testid="shell-rail"] [data-testid="shell-rail-collapse"]'),
+                };
+            });
+            check('the collapse control sits on the Chart AI title row, outside the rail',
+                !!placed && placed.inContentBar && placed.sameRow && placed.leftOfTitle
+                    && placed.label === 'Chart AI' && !placed.railHasControl,
+                JSON.stringify(placed));
             const railCollapsed = await page.evaluate(() => {
                 const b = document.querySelector('[data-testid="shell-rail-collapse"]');
                 if (!b) return 'no control';
@@ -2048,6 +2072,37 @@ async function main() {
             const railBack = await railBox();
             check('the content bar brings the rail back at its stored width',
                 railRevived && railBack === railBefore, `${railBack}px (want ${railBefore})`);
+
+            // The duplicate Chats icon is gone on Analyze; hiding the
+            // conversation column moved to an icon after the RECENT heading.
+            // Prove the new icon actually puts the rail away and that the
+            // title-row expand button is still the way back.
+            const recent = await page.evaluate(() => {
+                const rail = document.querySelector('[data-testid="shell-rail"]');
+                const btn = document.querySelector('[data-testid="conversation-hide"]');
+                return {
+                    chatsIcon: !!document.querySelector('[data-testid="shell-column-toggle"]'),
+                    inRail: !!btn && !!rail && rail.contains(btn),
+                };
+            });
+            check('the RECENT hide icon replaces the Chats icon on Analyze',
+                !recent.chatsIcon && recent.inRail, JSON.stringify(recent));
+            const hidePressed = await page.evaluate(() => {
+                const b = document.querySelector('[data-testid="conversation-hide"]');
+                if (!b) return false;
+                b.click();
+                return true;
+            });
+            await sleep(450);
+            const hiddenByRecent = await page.evaluate(() => ({
+                rail: !!document.querySelector('[data-testid="shell-rail"]'),
+                expand: !!document.querySelector('[data-testid="nav-rail-toggle-header"]'),
+            }));
+            check('the RECENT icon closes the conversation sidebar and leaves a way back',
+                hidePressed && !hiddenByRecent.rail && hiddenByRecent.expand,
+                JSON.stringify(hiddenByRecent));
+            await page.evaluate(() => document.querySelector('[data-testid="nav-rail-toggle-header"]')?.click());
+            await sleep(500);
 
             // Ctrl/Cmd+B belongs to the one column that still collapses: the
             // Chat sidebar. The rail is gone, so press it where a column exists —
@@ -2103,7 +2158,9 @@ async function main() {
             // The Chat column is a PEEK (mock v3): the rail's Chats icon owns it.
             const chatToggle = async () => {
                 await page.evaluate(() => {
-                    document.querySelector('[data-testid="shell-rail-collapse"]')?.click();
+                    // Hiding the conversation column must leave the icon rail
+                    // standing; `shell-rail-collapse` is the whole-rail control.
+                    document.querySelector('[data-testid="shell-column-toggle"]')?.click();
                 });
                 await sleep(450);
             };
@@ -3495,6 +3552,52 @@ async function main() {
         // exports". Sweep both views at the generic cap; the sweep's per-view
         // budget splits it, so neither tab can hide behind the other.
         await sweepSurface('Journal', 12, ['journal-tab-analytics']);
+
+        // ── The screener's door ───────────────────────────────────────────
+        // The full-screen panel is MOUNTED on Analyze, so a foot that renders
+        // no screener button leaves a whole market-wide surface unreachable
+        // while every other gate stays green. Assert the door, the panel and
+        // that it portals outside <main> (the overlay doctrine). The scan may
+        // find no feed in a probe; the panel must still mount and be closable.
+        {
+            const landed = await navTo('Analyze');
+            const onTrade = await page.locator('[data-testid="trade-view"]')
+                .waitFor({ timeout: 12000 }).then(() => true).catch(() => false);
+            await sleep(700);
+            const openedPicker = await page.evaluate(() => {
+                const trigger = document.querySelector('[data-testid="symbol-picker-trigger"]');
+                if (!trigger) return 'no picker';
+                trigger.click();
+                return 'opened';
+            });
+            await sleep(250);
+            const pressed = await page.evaluate(() => {
+                const b = document.querySelector('[data-testid="screener-trigger"]');
+                if (!b) return 'no screener door';
+                b.click();
+                return 'clicked';
+            });
+            await sleep(450);
+            const panel = await page.evaluate(() => {
+                const el = document.querySelector('[data-testid="screener-panel"]');
+                const main = document.querySelector('main');
+                return {
+                    mounted: !!el,
+                    outsideMain: !!el && !!main && !main.contains(el),
+                    bestSetups: !!document.querySelector('[data-testid="screener-best-trigger"]'),
+                };
+            });
+            check('the symbol picker foot opens the screener outside <main>',
+                openedPicker === 'opened' && pressed === 'clicked'
+                    && panel.mounted && panel.outsideMain,
+                `${landed}/${onTrade} / ${openedPicker} / ${pressed} / ${JSON.stringify(panel)}`);
+            check('the screener offers the best-setups ranking',
+                panel.bestSetups, `bestSetups=${panel.bestSetups}`);
+            await page.evaluate(() => {
+                document.querySelector('[data-testid="screener-panel"] [aria-label="Close screener"]')?.click();
+            });
+            await sleep(250);
+        }
 
         // ── The instrument picker, and the claim it makes ────────────────
         // A coin/timeframe control is only worth having if it MOVES THE CHART.
