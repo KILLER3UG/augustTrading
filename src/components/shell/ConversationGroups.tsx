@@ -14,6 +14,21 @@
 import React, { useMemo, useState } from 'react';
 import type { Conversation } from '../../types';
 import { conversationTitle } from '../../utils/conversationTitle';
+import { signalIdFromActions, signalRowById } from '../trade/SignalCard';
+
+/** The side of the thread's latest signal — the mock's `Long` tag. Read from
+ *  the ledger's own id on the turn's actions, never guessed from prose; a
+ *  thread that emitted nothing shows no tag. */
+const conversationSide = (conversation: Conversation): 'Long' | 'Short' | null => {
+    for (let i = conversation.messages.length - 1; i >= 0; i -= 1) {
+        const id = signalIdFromActions(conversation.messages[i].toolActions);
+        if (!id) continue;
+        const direction = signalRowById(id)?.signal.direction;
+        if (direction === 'long') return 'Long';
+        if (direction === 'short') return 'Short';
+    }
+    return null;
+};
 
 /** The ONE age formatter for conversation rows. `now`, `5m`, `3h`, `48d`. */
 export const workspaceAgeLabel = (timestamp: number): string => {
@@ -52,6 +67,7 @@ const ConversationRow: React.FC<{
 }> = ({ conversation, selected, running, onOpen, onDelete, onClear }) => {
     const [menuOpen, setMenuOpen] = useState(false);
     const title = conversationTitle(conversation);
+    const side = conversationSide(conversation);
     return (
         <div className={`group relative flex items-center rounded-control ${
             selected ? 'bg-white/[0.06] text-zinc-100' : 'text-zinc-500'
@@ -72,6 +88,12 @@ const ConversationRow: React.FC<{
                     className={`h-1.5 w-1.5 shrink-0 rounded-full ${running ? 'animate-pulse bg-amber-400' : selected ? 'bg-zinc-100' : 'border border-zinc-600/60'}`}
                 />
                 <span className="min-w-0 flex-1 truncate">{title}</span>
+                {side && (
+                    <span data-testid="conversation-side"
+                        className={`shrink-0 text-[11px] font-semibold ${side === 'Long' ? 'text-emerald-400' : 'text-rose-400'}`}>
+                        {side}
+                    </span>
+                )}
                 <span
                     className="shrink-0 font-mono tabular-nums text-ui-2xs text-zinc-600"
                     data-testid="conversation-age"

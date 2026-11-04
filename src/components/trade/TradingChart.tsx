@@ -336,8 +336,10 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                 attributionLogo: false,
             },
             grid: {
-                vertLines: { color: 'rgba(255,255,255,0.04)' },
-                horzLines: { color: 'rgba(255,255,255,0.04)' },
+                // Fainter than v2 (mock v3): the tape is the drawing, the grid
+                // is the paper it is drawn on.
+                vertLines: { color: 'rgba(255,255,255,0.025)' },
+                horzLines: { color: 'rgba(255,255,255,0.025)' },
             },
             rightPriceScale: { borderColor: 'rgba(255,255,255,0.08)' },
             timeScale: {

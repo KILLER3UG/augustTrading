@@ -111,7 +111,7 @@ import type { SoloTurnRow } from './services/trade/chatTurnMirror';
 // a rename that a future reader should undo.
 import { AccountRow, NAV_RAIL_AUTO_COLLAPSE_PX, NAV_RAIL_EXPANDED_PX } from './components/shell/shellChrome';
 import ShellRail, {
-    DeskInstrument, type NavBadge,
+    DeskInstrument,
 } from './components/shell/ShellRail';
 // The Journal pulls recharts + react-virtuoso into its chunk — statically
 // importing it put both on the startup path for a surface most users open
@@ -230,7 +230,7 @@ const App: React.FC = () => {
         isHybridLoading, setIsHybridLoading,
         isAnalysisInProgress, setIsAnalysisInProgress,
         isSummaryInProgress, setIsSummaryInProgress,
-        isInsightGenerating, setIsInsightGenerating,
+        setIsInsightGenerating,
         isAutoCapturing, setIsAutoCapturing,
         isEntryNotHitCapturing, setIsEntryNotHitCapturing,
         isAutoCaptureBusy, setIsAutoCaptureBusy,
@@ -1924,35 +1924,12 @@ const App: React.FC = () => {
     // Per-bot learning stats for the Agents rail (WS-3.4). Walks the notebook,
     // so it is keyed to notebook writes and the roster — not to price ticks.
     const botStats = useMemo(() => loadBotLearningStats(), [bots, memoryNonce]);
-    // Surface-menu badges. Memoized because App re-renders on every price tick
-    // and both Header and the shell rail are React.memo'd — a fresh object
-    // literal would invalidate the memo once a second for nothing.
-    const navBadges = useMemo<Partial<Record<AppSurface, NavBadge>>>(() => {
-        const next: Partial<Record<AppSurface, NavBadge>> = {};
-        // The group runner owns the working pulse; a draining DM queue counts
-        // too (the roster rail already read it this way — the rail didn't).
-        const working = workingBotId ?? dmWorkingBotId;
-        if (working) {
-            next.agents = { active: true, detail: 'a bot is working' };
-        }
-        if (isInsightGenerating) {
-            next.journal = {
-                active: true,
-                detail: insightProgress
-                    ? `summarizing ${insightProgress.done}/${insightProgress.total} trades`
-                    : 'generating insights',
-            };
-        }
-        // The Learning badge died with the Approvals tab (2026-11-03): its
-        // queues apply themselves, so a waiting count has no destination —
-        // and a count that opens onto nothing is the O-80 lie.
-        return next;
-    }, [workingBotId, dmWorkingBotId, isInsightGenerating, insightProgress]);
     const selectTeamThread = useCallback(() => setActiveThread({ kind: 'team' }), []);
-    // One shell rail, two modes. A conversation row, New chat and Search all
-    // land on the desk's focused form (Agents); the dock is the same thread
-    // with the chart beside it, reached by the mode switch.
-    const [agentsSearchRequest, setAgentsSearchRequest] = useState(0);
+    // The Chat surface is a CENTRED thread in the mock: its conversation column
+    // starts closed and the rail's Chats icon opens it. Session state, not a
+    // stored preference — the column is a peek, not a layout.
+    const [agentsColumnOpen, setAgentsColumnOpen] = useState(false);
+    const toggleAgentsColumn = useCallback(() => setAgentsColumnOpen(v => !v), []);
     const openDeskConversation = useCallback((id: string) => {
         handleLoadConversation(id);
         selectTeamThread();
@@ -1976,11 +1953,6 @@ const App: React.FC = () => {
         document.addEventListener('keydown', onKey);
         return () => document.removeEventListener('keydown', onKey);
     }, [startDeskChat]);
-    const requestDeskSearch = useCallback(() => {
-        setAgentsSearchRequest(n => n + 1);
-        setSurface('agents');
-    }, [setSurface]);
-    const consumeAgentsSearchRequest = useCallback(() => setAgentsSearchRequest(0), []);
     // Roster clicks route into the Chart AI dock (the Agents surface is gone).
     // Declared after the thread selectors above so their useCallback
     // identities exist at first read.
@@ -2350,6 +2322,8 @@ const App: React.FC = () => {
                         onOpenSkills={openSkills}
                         activeUsername={activeUsername}
                         onOpenSettings={() => setIsSettingsMenuVisible(true)}
+                        onToggleColumn={surface === 'agents' ? toggleAgentsColumn : undefined}
+                        columnOpen={surface === 'agents' ? agentsColumnOpen : true}
                         width={railResize.width}
                         isResizing={railResize.isResizing}
                         onResizeStart={railResize.startResize}
@@ -2546,8 +2520,12 @@ const App: React.FC = () => {
                                             showEffort={showEffort} />
                                     )}
                                     modelFallback={chatModelFallback.notice}
-                                    railExpanded={isNavRailOpen}
+                                    railExpanded={surface === 'agents' ? (isNavRailOpen && agentsColumnOpen) : isNavRailOpen}
+                                    /* The content bar's expand control opens the RAIL (it is
+                                       the only way back at phone width); the column's own
+                                       put-away is a separate callback. */
                                     onToggleRailExpanded={toggleNavRail}
+                                    onToggleColumn={toggleAgentsColumn}
                                     railWidth={railResize.width}
                                     railIsResizing={railResize.isResizing}
                                     onRailResizeStart={railResize.startResize}
@@ -2565,8 +2543,6 @@ const App: React.FC = () => {
                                        has to carry it), and Journal / Learning /
                                        Skills sit above the account. */
 
-                                    searchRequestNonce={agentsSearchRequest}
-                                    onSearchRequestConsumed={consumeAgentsSearchRequest}
                                     accountRow={(
                                         <AccountRow
                                             expanded

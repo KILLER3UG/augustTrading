@@ -13,7 +13,7 @@
 import React, { useState } from 'react';
 import {
     Eraser, Eye, EyeOff, Minus, MousePointer2, Palette, Pencil, Square,
-    Trash2, Type, Undo2,
+    Trash2, Type, Undo2, MoreHorizontal,
 } from '../shared/Icons';
 import { DRAW_COLORS, type DrawTool } from '../../services/trade/chartDrawings';
 
@@ -110,6 +110,9 @@ export const ChartToolRail: React.FC<ChartToolRailProps> = ({
     tool, onSelectTool, color, onColorChange, canUndo, onUndo, onClear, hidden, onToggleHidden,
 }) => {
     const [trendFlyout, setTrendFlyout] = useState(false);
+    // The mock's resting rail is four tools (cursor, trend, horizontal, zone);
+    // the rest are real and stay, one caret away.
+    const [moreFlyout, setMoreFlyout] = useState(false);
     const [paletteOpen, setPaletteOpen] = useState(false);
     const pick = (t: DrawTool): void => {
         setTrendFlyout(false);
@@ -178,19 +181,36 @@ export const ChartToolRail: React.FC<ChartToolRailProps> = ({
             <RailButton title="Zone — click corner to corner" active={tool === 'rect'} onClick={() => pick('rect')}>
                 <Square className="h-4 w-4" aria-hidden="true" />
             </RailButton>
-            <RailButton title="Fib retracement — click swing low, click swing high" active={tool === 'fib'} onClick={() => pick('fib')}>
-                <FibIcon className="h-4 w-4" aria-hidden="true" />
-            </RailButton>
-            <RailButton title="Text note — click a spot, type the note" active={tool === 'text'} onClick={() => pick('text')}>
-                <Type className="h-4 w-4" aria-hidden="true" />
-            </RailButton>
-            <RailButton title="Freehand — drag to draw" active={tool === 'brush'} onClick={() => pick('brush')}>
-                <Pencil className="h-4 w-4" aria-hidden="true" />
-            </RailButton>
+            <div className="relative">
+                <RailButton
+                    title="More tools — fib, text, freehand, eraser"
+                    active={['fib', 'text', 'brush', 'erase'].includes(tool)}
+                    onClick={() => setMoreFlyout(v => !v)}
+                >
+                    <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
+                </RailButton>
+                {moreFlyout && (
+                    <>
+                        <div className="fixed inset-0 z-30" aria-hidden onClick={() => setMoreFlyout(false)} />
+                        <div className="absolute left-9 top-0 z-40 flex flex-col gap-0.5 rounded-bubble border border-white/10 bg-zinc-900 p-1 shadow-xl" data-testid="more-tools-flyout">
+                            <RailButton title="Fib retracement — click swing low, click swing high" active={tool === 'fib'} onClick={() => pick('fib')}>
+                                <FibIcon className="h-4 w-4" aria-hidden="true" />
+                            </RailButton>
+                            <RailButton title="Text note — click a spot, type the note" active={tool === 'text'} onClick={() => pick('text')}>
+                                <Type className="h-4 w-4" aria-hidden="true" />
+                            </RailButton>
+                            <RailButton title="Freehand — drag to draw" active={tool === 'brush'} onClick={() => pick('brush')}>
+                                <Pencil className="h-4 w-4" aria-hidden="true" />
+                            </RailButton>
+                            <RailButton title="Eraser — click a shape to remove it" active={tool === 'erase'} onClick={() => pick('erase')}>
+                                <Eraser className="h-4 w-4" aria-hidden="true" />
+                            </RailButton>
+                            <div className="my-0.5 h-px bg-white/[0.07]" />
+                        </div>
+                    </>
+                )}
+            </div>
             <RailSep />
-            <RailButton title="Eraser — click a shape to remove it" active={tool === 'erase'} onClick={() => pick('erase')}>
-                <Eraser className="h-4 w-4" aria-hidden="true" />
-            </RailButton>
             <span className="flex-1" aria-hidden />
             <RailButton
                 title={hidden ? 'Show all drawings' : 'Hide all drawings'}

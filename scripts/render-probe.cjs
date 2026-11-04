@@ -1517,8 +1517,19 @@ async function main() {
         /** The Agents surface reopens on its rail, not on an open thread, so a
          *  reload that leaves the desk unselected reads as an empty conversation.
          *  Click the desk row itself rather than assuming the selection stuck. */
+        /** The Chat column starts CLOSED (mock v3 — the thread is centred and
+         *  the column is a peek), so anything that reaches for a roster row
+         *  opens it first through the rail's Chats icon. Idempotent. */
+        const openChatColumn = async () => {
+            await page.evaluate(() => {
+                const t = document.querySelector('[data-testid="shell-rail-collapse"]');
+                if (t && t.getAttribute('aria-pressed') === 'false') t.click();
+            });
+            await sleep(400);
+        };
         const openDeskThread = async () => {
             await openAgents();
+            await openChatColumn();
             const desk = page.locator('main, aside, nav')
                 .getByText('Chart AI', { exact: true }).first();
             if (await desk.count()) {
@@ -2085,30 +2096,27 @@ async function main() {
                 };
                 return {
                     hidden: el ? el.className.split(/\s+/).includes('md:hidden') : null,
-                    headerToggle: !!document.querySelector('[data-testid="nav-rail-toggle-header"]'),
                     switches: [...document.querySelectorAll('[data-testid^="surface-switch-"]')]
                         .filter(visible).length,
                 };
             });
-            await page.keyboard.press('Control+b');
-            await sleep(600);
+            // The Chat column is a PEEK (mock v3): the rail's Chats icon owns it.
+            const chatToggle = async () => {
+                await page.evaluate(() => {
+                    document.querySelector('[data-testid="shell-rail-collapse"]')?.click();
+                });
+                await sleep(450);
+            };
+            await openChatColumn();
+            await chatToggle();
             const collapsed = await away();
-            check('Ctrl+B puts the conversation column away and brings no tabs back',
-                collapsed.hidden === true && collapsed.switches === 0,
+            // The rail PERSISTS when the column hides (mock v3): the icon strip
+            // is chrome, the column is the peek. Four surface switches stay.
+            check('the Chats icon puts the conversation column away and the rail stays',
+                collapsed.hidden === true && collapsed.switches === 4,
                 `md:hidden=${collapsed.hidden} visibleTabs=${collapsed.switches}`);
-            check('the title bar carries the expand button exactly while the column is away',
-                collapsed.headerToggle, 'nav-rail-toggle-header');
-            const revived = await page.evaluate(() => {
-                const t = document.querySelector('[data-testid="nav-rail-toggle-header"]');
-                if (!t) return false;
-                t.click();
-                return true;
-            });
-            await sleep(600);
+            await chatToggle();
             const backAgain = await away();
-            // The rail COMPONENT was deleted 2026-10-28; the width it defined is
-            // still the sidebar's, and lives in the module that kept the live
-            // pieces (components/shell/shellChrome.tsx).
             const navRailSrc = require('fs').readFileSync(
                 path.join(ROOT, 'src', 'components', 'shell', 'shellChrome.tsx'), 'utf8');
             const navRailExpandedPx = Number((navRailSrc.match(/NAV_RAIL_EXPANDED_PX = (\d+)/) || [])[1]) || 240;
@@ -2116,13 +2124,9 @@ async function main() {
                 const el = document.querySelector('[data-testid="agents-rail"]');
                 return el ? Math.round(el.getBoundingClientRect().width) : -1;
             });
-            check('the title bar toggle brings the column back at the shell width',
-                revived && backAgain.hidden === false && colWidth === navRailExpandedPx,
+            check('the Chats icon brings the column back at the shell width',
+                backAgain.hidden === false && colWidth === navRailExpandedPx,
                 `${colWidth}px, md:hidden=${backAgain.hidden} (want ${navRailExpandedPx})`);
-            await page.keyboard.press('Control+b');
-            await sleep(500);
-            await page.evaluate(() => document.querySelector('[data-testid="nav-rail-toggle-header"]')?.click());
-            await sleep(500);
             // Leave the run on a known surface before the sweep.
             await navTo('Analyze');
             await sleep(400);
@@ -2555,6 +2559,7 @@ async function main() {
                 const visible = await page.locator('[data-testid="agents-view"]').count();
                 return visible > 0 ? true : null;
             }, 8000);
+            await openChatColumn();
             // The bot row click: the thread must be OPEN before asserting on its
             // contents, and the button may not be there yet on a slow render.
             // The roster is in the same scroll as the conversations now (the

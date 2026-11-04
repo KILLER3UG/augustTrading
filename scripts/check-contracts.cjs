@@ -3227,6 +3227,24 @@ const asyncChecks = (async () => {
     // The mock's shell is an icon RAIL plus a conversation COLUMN: the rail
     // owns surfaces, the column owns the record. Folding them into one column
     // (mode switch + rows) was the v2 shape the mock deletes.
+    // The rest of the mock's details: four resting tools, four level lines, a
+    // Long/Short tag read from the ledger, and a Chat surface whose column
+    // starts closed (centred thread).
+    ok('chart: the resting tool rail is four tools; the rest stay one caret away',
+        /data-testid="more-tools-flyout"/.test(read('src/components/trade/ChartToolRail.tsx'))
+            && (read('src/components/trade/ChartToolRail.tsx').match(/<RailButton title=/g) || []).length >= 4,
+        'a rail of ten icons is the density the mock removes');
+    ok('chart: a verdict draws at most four level lines',
+        /\.slice\(0, 2\)/.test(read('src/services/trade/chartData.ts')),
+        'five labelled lines turned the tape into a ladder');
+    ok('sidebar: the Long/Short tag comes from the ledger, not from prose',
+        /signalRowById/.test(read('src/components/shell/ConversationGroups.tsx'))
+            && /conversationSide/.test(read('src/components/shell/ConversationGroups.tsx')),
+        'a guessed side is a fabricated claim');
+    ok('chat: the conversation column starts closed and the rail toggles it',
+        /agentsColumnOpen/.test(app) && /onToggleColumn=/.test(app)
+            && /onToggleColumn\?: \(\) => void/.test(read('src/components/shell/ShellRail.tsx')),
+        "the mock's Chat surface is a centred thread with the column as a peek");
     ok('shell: an icon rail beside a conversation column',
         /data-testid="shell-surface-rail"/.test(read('src/components/shell/ShellRail.tsx'))
             && /shell-rail-collapse/.test(read('src/components/shell/ShellRail.tsx'))

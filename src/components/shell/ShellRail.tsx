@@ -123,6 +123,11 @@ interface ShellRailProps {
     activeUsername: string | null;
     onOpenSettings: () => void;
     onOpenActivity?: () => void;
+    /** The rail's Chats icon. On the surfaces whose column IS the rail it
+     *  collapses the rail (default); on Agents the column is the surface's own
+     *  and starts closed, so the icon toggles THAT. */
+    onToggleColumn?: () => void;
+    columnOpen?: boolean;
     /** The dragged width, shared with the Agents mode's column. */
     width: number;
     isResizing: boolean;
@@ -141,7 +146,7 @@ const ShellRail: React.FC<ShellRailProps> = ({
     workspaces, onSwitchWorkspace, onAddWorkspace,
     conversations, activeConversationId, onOpenConversation,
     onDeleteConversation, onClearConversation,
-    activeUsername, onOpenSettings, onOpenActivity,
+    activeUsername, onOpenSettings, onOpenActivity, onToggleColumn, columnOpen = true,
     width, isResizing, onResizeStart, onResizeReset, onCollapse,
     overlay = false, onCloseOverlay,
 }) => {
@@ -191,8 +196,9 @@ const ShellRail: React.FC<ShellRailProps> = ({
                         current={surface === 'agents'} onClick={() => onSelectSurface('agents')}>
                         <MessageSquareIcon className="h-[18px] w-[18px]" aria-hidden="true" />
                     </RailIcon>
-                    <RailIcon label="Hide conversations"
-                        testId="shell-rail-collapse" pressed onClick={onCollapse}>
+                    <RailIcon label={columnOpen ? 'Hide conversations' : 'Show conversations'}
+                        testId="shell-rail-collapse" pressed={columnOpen}
+                        onClick={onToggleColumn ?? onCollapse}>
                         <HistoryIcon className="h-[18px] w-[18px]" aria-hidden="true" />
                     </RailIcon>
                     <span aria-hidden="true" className="flex-1" />

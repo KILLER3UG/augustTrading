@@ -164,10 +164,8 @@ interface AgentsViewProps {
      *  of the window, so this surface renders NO global band, and the controls
      *  that used to live in it need a home in the one title bar this surface
      *  has. Same component the other surfaces' band uses — not a copy. */
-    /** Bumped by the shell rail's Search row. The field is local to this
-     *  surface, so the request arrives as a token and is consumed once. */
-    searchRequestNonce?: number;
-    onSearchRequestConsumed?: () => void;
+    /** The column's own put-away (the rail's Chats icon drives the same one). */
+    onToggleColumn?: () => void;
     /** The SAME left-column state every other surface drives, handed in rather
      *  than re-derived per profile. This surface used to keep its own collapse
      *  key and its own width, so the Chat ⇄ Chart AI hop restacked the shell:
@@ -451,10 +449,9 @@ const AgentsView: React.FC<AgentsViewProps> = ({
     username, bots, groups, messages, selection, onSelect, onNewBot, onNewGroup,
     onSendBotTurn, onAnalyze, onLogProposedTrade, onAnalysisError, onStopRun, analysisRunning = false, renderGroup, workingBotId, mailboxBusyBotIds,
     lastOpenedMap = {}, modelPicker, modelFallback = null, accountRow,
-    railExpanded = true, onToggleRailExpanded,
+    railExpanded = true, onToggleRailExpanded, onToggleColumn,
     railWidth = NAV_RAIL_EXPANDED_PX, railIsResizing = false,
     onRailResizeStart, onRailResizeReset,
-    searchRequestNonce = 0, onSearchRequestConsumed,
     onRevertTo, onEditPromptMessage, onStepVersion, parkedCount = 0, onRestoreParked,
     attentionMap, onDeleteBot, onDeleteGroup, onEditGroup,
     botStats,
@@ -614,12 +611,6 @@ const AgentsView: React.FC<AgentsViewProps> = ({
     // The shell rail's Search row lands here. The request is a token rather
     // than a boolean so two presses in a row both open the field; App clears
     // it once consumed, which is why a later remount does not replay it.
-    useEffect(() => {
-        if (!searchRequestNonce) return;
-        setRailOpen(true);
-        setSearchFocusNonce(n => n + 1);
-        onSearchRequestConsumed?.();
-    }, [searchRequestNonce, onSearchRequestConsumed]);
 
     const statFor = useCallback((botId: string): BotLearningStat | undefined =>
         botStats?.find(s => s.id === botId), [botStats]);
@@ -955,7 +946,7 @@ const AgentsView: React.FC<AgentsViewProps> = ({
                     left here is the column's own put-away, on the right edge. */}
                 {onToggleRailExpanded && (
                     <div className="flex shrink-0 items-center justify-end gap-2 px-2 pb-1 pt-2">
-                        <button type="button" onClick={onToggleRailExpanded} data-testid="rail-collapse"
+                        <button type="button" onClick={onToggleColumn ?? onToggleRailExpanded} data-testid="rail-collapse"
                             aria-label="Collapse conversations" title="Collapse the conversation rail"
                             className="hidden shrink-0 rounded-control p-1.5 text-zinc-500 transition-colors hover:bg-white/[0.06] hover:text-zinc-200 md:block">
                             <PanelLeftClose className="h-3.5 w-3.5" aria-hidden="true" />
