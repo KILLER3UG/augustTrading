@@ -2112,8 +2112,8 @@ const App: React.FC = () => {
     // column so the sidebar runs the full height, the reference's silhouette —
     // and the Agents surface keeps its own header row, which is why this travels
     // as a node rather than markup only `shared/Header` can reach. The collapsed
-    // rail's expand button is deliberately NOT a node: each bar renders
-    // `NavExpandButton` from the callbacks it already holds, because an
+    // rail's toggle is deliberately NOT a node: each bar renders
+    // `SidebarToggle` from the callbacks it already holds, because an
     // interactive-root element parked in a local variable gets attributed to
     // whichever component holds it, and `App` is not a button wrapper.
     /** What the content bar is about. The rail names the workspace; this names
@@ -2352,7 +2352,8 @@ const App: React.FC = () => {
                             hasVisionData={currentVisionData.length > 0}
                             title={shellTitle}
                             context={shellContext}
-                            onExpandNavRail={isNavRailOpen ? undefined : toggleNavRail}
+                            onToggleNavRail={toggleNavRail}
+                            navRailExpanded={isNavRailOpen}
                         />
                     )}
 
@@ -2521,9 +2522,12 @@ const App: React.FC = () => {
                                     )}
                                     modelFallback={chatModelFallback.notice}
                                     railExpanded={surface === 'agents' ? (isNavRailOpen && agentsColumnOpen) : isNavRailOpen}
-                                    /* The content bar's expand control opens the RAIL (it is
-                                       the only way back at phone width); the column's own
-                                       put-away is a separate callback. */
+                                    /* Whole-rail state, separate from the Agents
+                                       COLUMN state above: the top-bar toggle is
+                                       about the rail, on every surface. */
+                                    sidebarExpanded={isNavRailOpen}
+                                    /* The content bar's toggle opens/closes the RAIL;
+                                       the column's own put-away is a separate callback. */
                                     onToggleRailExpanded={toggleNavRail}
                                     onToggleColumn={toggleAgentsColumn}
                                     railWidth={railResize.width}

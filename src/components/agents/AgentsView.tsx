@@ -73,7 +73,7 @@ import StatusPill from '../ui/StatusPill';
 // sidebar and the rail are ONE shell, and two numbers is how the hop started
 // jumping between them.
 import { NAV_RAIL_EXPANDED_PX } from '../shell/shellChrome';
-import NavExpandButton from '../shell/NavExpandButton';
+import SidebarToggle from '../shell/SidebarToggle';
 import { ConversationGroups } from '../shell/ConversationGroups';
 import { conversationTitle } from '../../utils/conversationTitle';
 import InlineVerdict from '../analysis/InlineVerdict';
@@ -174,6 +174,10 @@ interface AgentsViewProps {
      *  changes only what the column lists — which is what the reference does
      *  between its chat and code modes. */
     railExpanded?: boolean;
+    /** The WHOLE navigation rail's state. `railExpanded` above folds this
+     *  surface's own column into it; the title-row toggle is about the rail
+     *  alone, so it needs the un-folded value. */
+    sidebarExpanded?: boolean;
     onToggleRailExpanded?: () => void;
     /** The dragged rail width, owned by App so the shell rail and this column
      *  agree across the Analyze ⇄ Agents hop. */
@@ -449,7 +453,7 @@ const AgentsView: React.FC<AgentsViewProps> = ({
     username, bots, groups, messages, selection, onSelect, onNewBot, onNewGroup,
     onSendBotTurn, onAnalyze, onLogProposedTrade, onAnalysisError, onStopRun, analysisRunning = false, renderGroup, workingBotId, mailboxBusyBotIds,
     lastOpenedMap = {}, modelPicker, modelFallback = null, accountRow,
-    railExpanded = true, onToggleRailExpanded, onToggleColumn,
+    railExpanded = true, sidebarExpanded = true, onToggleRailExpanded, onToggleColumn,
     railWidth = NAV_RAIL_EXPANDED_PX, railIsResizing = false,
     onRailResizeStart, onRailResizeReset,
     onRevertTo, onEditPromptMessage, onStepVersion, parkedCount = 0, onRestoreParked,
@@ -1027,6 +1031,7 @@ const AgentsView: React.FC<AgentsViewProps> = ({
                     onOpenConversation={id => onLoadConversation?.(id)}
                     onDeleteConversation={id => onDeleteConversation?.(id)}
                     onClearConversation={id => onClearConversation?.(id)}
+                    onHideConversation={onToggleRailExpanded}
                 />
 
                 <div id="rail-list-panel" role="tabpanel" aria-label="Conversations and agents"
@@ -1213,19 +1218,16 @@ const AgentsView: React.FC<AgentsViewProps> = ({
                             data-testid="chat-header"
                             className="flex shrink-0 items-center gap-3 border-b border-white/[0.06] bg-zinc-900/25 px-4 py-2"
                         >
-                            {/* The shell's collapsed-rail button, rendered from
-                                the SAME state the column hides under. This
-                                surface has no global band now, so without it a
-                                put-away rail could only be restored by Alt+1..5. */}
-                            {!railExpanded && onToggleRailExpanded && (
-                                /* md+ only. Below md this surface already has its
-                                   own drawer opener (`rail-open`), and `railExpanded`
-                                   reads false at narrow widths by design — so
-                                   rendering the shell's column-expand button here
-                                   gave a phone two controls that both claim to
-                                   open the sidebar and do different things. */
+                            {/* The shell's ONE rail toggle, on the title row
+                                like every other surface. It follows the WHOLE
+                                rail's state, not this column's `railExpanded`,
+                                so a collapsed rail always has a way back.
+                                md+ only: below md this surface has its own
+                                drawer opener (`rail-open`), and a second
+                                sidebar control would do something different. */}
+                            {onToggleRailExpanded && (
                                 <span className="hidden md:flex">
-                                    <NavExpandButton onExpand={onToggleRailExpanded} />
+                                    <SidebarToggle expanded={sidebarExpanded} onToggle={onToggleRailExpanded} />
                                 </span>
                             )}
                             <div className="flex min-w-0 flex-1 items-center gap-2">

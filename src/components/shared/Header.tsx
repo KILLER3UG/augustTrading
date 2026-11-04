@@ -1,7 +1,7 @@
 import React, { memo, useState, useEffect, useRef } from 'react';
 import { UpdateButton } from './UpdateButton';
 import { ActivityIcon, AlertTriangleIcon } from './Icons';
-import NavExpandButton from '../shell/NavExpandButton';
+import SidebarToggle from '../shell/SidebarToggle';
 import { getSessionContext, getAllSessionsStatus, SessionContext, SessionStatus } from '../../services/infrastructure/SessionService';
 import { baseOf } from '../../utils/symbol';
 
@@ -26,11 +26,11 @@ interface HeaderProps {
     onOpenLiveMarket?: () => void;
     onOpenVisionData?: () => void;
     hasVisionData?: boolean;
-    /** Present only while the NavRail is hidden (D2 amendment): the collapsed
-     *  rail is 0px, so the expand affordance moves here. The DSH pattern —
-     *  the hidden sidebar's expand button also carries the update-status dot,
-     *  so the one quiet status carrier stays visible in the resting view. */
-    onExpandNavRail?: () => void;
+    /** The content bar's ONE rail control. It is present on EVERY surface:
+     *  while the rail is open it collapses it; while the rail is away it is
+     *  the only way back (a collapsed rail is 0px and has no edge to click). */
+    onToggleNavRail?: () => void;
+    navRailExpanded?: boolean;
     /** What the content column is about: the conversation's name on Analyze, or
      *  the record surface's name. The rail carries the workspace, so the bar
      *  carries the thing being worked on. */
@@ -49,7 +49,8 @@ export const Header: React.FC<HeaderProps> = memo(({
     onOpenLiveMarket,
     onOpenVisionData,
     hasVisionData = false,
-    onExpandNavRail,
+    onToggleNavRail,
+    navRailExpanded = true,
     title,
     context,
 }) => {
@@ -145,17 +146,18 @@ export const Header: React.FC<HeaderProps> = memo(({
         <header className="sticky top-0 z-20 flex-shrink-0 border-b border-white/[0.06] bg-zinc-950/90 backdrop-blur px-3 sm:px-5 pt-[calc(env(safe-area-inset-top,0px)+0px)]">
             <div className="flex h-14 items-stretch justify-between gap-3">
                 <div className="flex min-w-0 items-stretch gap-2 sm:gap-4">
-                    {onExpandNavRail && (
+                    {onToggleNavRail && (
                         <div className="flex items-center">
-                            <NavExpandButton onExpand={onExpandNavRail} />
+                            <SidebarToggle expanded={navRailExpanded} onToggle={onToggleNavRail} />
                         </div>
                     )}
                     {/* No brand mark in the bar: the mock's content bar is the
                         title, the context and one live dot — the window title
                         already says August. */}
                     {/* The content title. Navigation is not here at any width:
-                        the rail carries it, and when the rail is away the
-                        expand button beside this title is the only way back. */}
+                        the rail carries it. The toggle beside this title only
+                        puts that rail away and brings it back — it is the one
+                        control for the sidebar, on the title row. */}
                     <div className="flex min-w-0 items-center gap-2">
                         <span
                             data-testid="header-surface-label"

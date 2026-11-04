@@ -22,7 +22,7 @@
 import React, { useRef } from 'react';
 import {
     ActivityIcon, BookOpen, GraduationCap,
-    LayersIcon, MessageSquareIcon,
+    MessageSquareIcon,
     HistoryIcon,
 } from '../shared/Icons';
 import { AccountRow } from './shellChrome';
@@ -40,13 +40,6 @@ export interface NavBadge {
     /** Sentence completing "Learning — …" for screen readers and the tooltip. */
     detail: string;
 }
-
-/** The two modes of the one desk. Analyze keeps the chart beside the desk;
- *  Agents is the same thread with the chart put away. */
-const MODE_ITEMS = [
-    { id: 'trade' as const, label: 'Analyze', shortcut: 'Alt+1', detail: 'chart and desk', Icon: ActivityIcon },
-    { id: 'agents' as const, label: 'Agents', shortcut: 'Alt+4', detail: 'focused chat', Icon: MessageSquareIcon },
-];
 
 const RAIL_W = 48;
 
@@ -78,12 +71,6 @@ const RailIcon: React.FC<{
         {children}
     </button>
 );
-
-const rowClass = (current: boolean): string =>
-    `flex w-full items-center gap-2.5 rounded-control px-2.5 py-2 text-left text-ui-caption transition-colors duration-150 ease-[var(--ease-snappy)] ${
-        current ? 'bg-white/[0.06] text-zinc-100' : 'text-zinc-400 hover:bg-white/[0.05] hover:text-zinc-100'
-    }`;
-
 
 /** Journal and Learning are the records half of the workspace: quiet rows at
  *  the foot of the rail, where the reference puts Sites. The Skills row is the
@@ -179,10 +166,14 @@ const ShellRail: React.FC<ShellRailProps> = ({
                         : 'relative shrink-0'
                 } ${isResizing ? '' : 'transition-[width] duration-150 ease-[var(--ease-snappy)]'}`}
             >
-                {/* The mock's icon rail: the two desk modes, the conversation
-                    column's toggle, and the records at its foot. Nothing else —
-                    the list column carries New chat, Pinned, Recent and the
-                    account, exactly as design/mock-redesign-v3 draws it. */}
+                {/* The icon rail: the two desk modes and the records at its
+                    foot. The old "Hide conversations" (Chats) icon is GONE on
+                    the surfaces whose column IS the rail — it collapsed the
+                    whole rail and so duplicated the title-row toggle. It stays
+                    on Agents ONLY, where it opens that surface's own column
+                    (which starts closed and has no other opener). Hiding the
+                    conversation list from the rail itself is now the icon
+                    after the RECENT heading in `ConversationGroups`. */}
                 <nav
                     aria-label="Surfaces"
                     data-testid="shell-surface-rail"
@@ -196,11 +187,13 @@ const ShellRail: React.FC<ShellRailProps> = ({
                         current={surface === 'agents'} onClick={() => onSelectSurface('agents')}>
                         <MessageSquareIcon className="h-[18px] w-[18px]" aria-hidden="true" />
                     </RailIcon>
-                    <RailIcon label={columnOpen ? 'Hide conversations' : 'Show conversations'}
-                        testId="shell-rail-collapse" pressed={columnOpen}
-                        onClick={onToggleColumn ?? onCollapse}>
-                        <HistoryIcon className="h-[18px] w-[18px]" aria-hidden="true" />
-                    </RailIcon>
+                    {onToggleColumn && (
+                        <RailIcon label={columnOpen ? 'Hide conversations' : 'Show conversations'}
+                            testId="shell-column-toggle" pressed={columnOpen}
+                            onClick={onToggleColumn}>
+                            <HistoryIcon className="h-[18px] w-[18px]" aria-hidden="true" />
+                        </RailIcon>
+                    )}
                     <span aria-hidden="true" className="flex-1" />
                     <RailIcon label="Journal · Alt+2" testId="surface-switch-journal"
                         current={surface === 'journal'} onClick={() => onSelectSurface('journal')}>
@@ -210,6 +203,10 @@ const ShellRail: React.FC<ShellRailProps> = ({
                         current={surface === 'learn'} onClick={() => onSelectSurface('learn')}>
                         <GraduationCap className="h-[18px] w-[18px]" aria-hidden="true" />
                     </RailIcon>
+                    {/* No collapse control here. The whole rail's one toggle
+                        lives on the content bar's TITLE row (`SidebarToggle`),
+                        where it stays reachable after the rail is put away —
+                        a 0px rail has no edge to click. */}
                     <button
                         type="button"
                         data-testid="shell-account"
@@ -230,6 +227,7 @@ const ShellRail: React.FC<ShellRailProps> = ({
                         onOpenConversation={onOpenConversation}
                         onDeleteConversation={onDeleteConversation}
                         onClearConversation={onClearConversation}
+                        onHideConversation={onCollapse}
                     />
                     <AccountRow
                         expanded

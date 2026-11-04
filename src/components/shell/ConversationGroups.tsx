@@ -12,6 +12,7 @@
  */
 
 import React, { useMemo, useState } from 'react';
+import { PanelLeftClose } from '../shared/Icons';
 import type { Conversation } from '../../types';
 import { conversationTitle } from '../../utils/conversationTitle';
 import { signalIdFromActions, signalRowById } from '../trade/SignalCard';
@@ -55,6 +56,9 @@ export interface ConversationGroupsProps {
     /** Pinned conversation ids — the Pinned group renders only when > 0. */
     pinnedIds?: ReadonlySet<string>;
     onOpenSearch?: () => void;
+    /** Put the conversation sidebar away. Lives on the RECENT heading so the
+     *  icon rail no longer needs a second "hide conversations" control. */
+    onHideConversation?: () => void;
 }
 
 const ConversationRow: React.FC<{
@@ -139,6 +143,7 @@ const ConversationRow: React.FC<{
 export const ConversationGroups: React.FC<ConversationGroupsProps> = ({
     conversations, activeConversationId, onNewChat, onOpenConversation,
     onDeleteConversation, onClearConversation, runningAgentIds, pinnedIds,
+    onHideConversation,
 }) => {
     // A conversation with no messages is a placeholder, not a record: it is
     // hidden unless it is the one on screen (a fresh New chat stays visible).
@@ -171,7 +176,6 @@ export const ConversationGroups: React.FC<ConversationGroupsProps> = ({
                 >
                     <span className="text-ui-base leading-none" aria-hidden="true">+</span>
                     <span className="flex-1 truncate">New chat</span>
-                    <kbd className="shrink-0 rounded border border-zinc-700/60 px-1 font-mono text-ui-2xs text-zinc-600" aria-hidden="true">⌘K</kbd>
                 </button>
             </div>
 
@@ -193,7 +197,27 @@ export const ConversationGroups: React.FC<ConversationGroupsProps> = ({
                     </div>
                 )}
                 <div className="mb-2">
-                    <div className="px-2.5 pb-1 text-ui-2xs font-semibold uppercase tracking-[0.14em] text-zinc-600">Recent</div>
+                    <div className="flex items-center justify-between gap-2 px-2.5 pb-1">
+                        <span className="text-ui-2xs font-semibold uppercase tracking-[0.14em] text-zinc-600">Recent</span>
+                        {onHideConversation && (
+                            // `aria-expanded="true"`: the list this button
+                            // closes IS expanded right now. Besides being the
+                            // honest state, it keeps the inert-control sweep
+                            // from pressing a one-way hide button and leaving
+                            // the rest of the run with no sidebar.
+                            <button
+                                type="button"
+                                data-testid="conversation-hide"
+                                aria-label="Hide conversation"
+                                aria-expanded="true"
+                                title="Hide conversation · Ctrl+B"
+                                onClick={onHideConversation}
+                                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-control p-1 text-zinc-600 transition-colors hover:bg-white/[0.06] hover:text-zinc-200"
+                            >
+                                <PanelLeftClose className="h-3.5 w-3.5" aria-hidden="true" />
+                            </button>
+                        )}
+                    </div>
                     {recent.length === 0 && pinned.length === 0 ? (
                         <p className="px-2.5 py-2 text-ui-xs leading-relaxed text-zinc-600">
                             No conversations yet. Everything you ask the desk lands here.

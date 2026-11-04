@@ -20,7 +20,7 @@ its icon kept their meaning; only the destination changed.
 
 Anatomy, top to bottom:
 
-- **Chart head** — one quiet line: `SymbolPicker`, hero price (`text-ui-price` mono tabular-nums), change, funding + countdown, feed dot. No metrics band and no tool buttons: the **market screener** and **pinned signals** live in the symbol picker's foot, where a trader already goes to change instruments. `src/components/trade/TradeView.tsx` › `TradeView`
+- **Chart head** — one quiet line: `SymbolPicker`, hero price (`text-ui-price` mono tabular-nums), change, funding + countdown, feed dot. No metrics band and no tool buttons: the **market screener** and **pinned signals** live in the symbol picker's foot, where a trader already goes to change instruments (`src/components/trade/SymbolPicker.tsx` › `SymbolPicker`). The screener's **Best setups** sort ranks by the same confluence score the desk's `find_best_setups` tool prints, so the table and the model name the same best coins (`src/services/trade/bestSetups.ts` › `rankBestSetups`). `src/components/trade/TradeView.tsx` › `TradeView`
 - **Crosshair readout** — the 24h high/low/volume/OI/oracle fields the band held appear ONLY while the pointer is over the plot, then leave with it; the grid is fainter than v2's and a verdict draws at most four lines (entry, stop, two targets). `src/components/trade/TradingChart.tsx` › `TradingChart`
 - **Drawing tools** — the resting rail is four tools (cursor, trend, horizontal, zone); fib, text, freehand and eraser live behind one caret. `src/components/trade/ChartToolRail.tsx` › `ChartToolRail`
 - **Composer** — the box is `+` / model / send. The two prompt actions ride the `+` menu ("Study the chart → skills", "Full analysis") instead of chips on the row.
@@ -107,26 +107,36 @@ the trader's journal in bulk; treat it accordingly.
 
 ## The shell
 
-- **One full-height rail, two columns** (mock v3): a 48px icon strip — Analyze, Agents, the
-  conversation column's toggle, then Journal, Learning and the account — beside the conversation
-  column: **New chat (Ctrl K)**, **Pinned**, **Recent** (a row shows the side of the thread's latest
+- **One full-height rail, two columns** (mock v3): a 48px icon strip — Analyze, Agents, then
+  Journal, Learning and the account — beside the conversation column: **New chat** (Ctrl/Cmd+K
+  still works, but no keycap badge is printed), **Pinned**, **Recent** (a small hide icon sits
+  after the heading; a row shows the side of the thread's latest
   signal — `Long`/`Short` — read from the ledger), and the account row
   (`name · Signed in · local-first`) at its foot. No Search row and no mode switch in the column:
   the rail owns the surfaces, the column owns the record, and the desk's search lives in the
   Agents column's own field.
 - On the **Agents** surface the thread is CENTRED and the column starts closed — the rail's Chats
-  icon opens `AgentsView`'s own column (conversations above the roster). Its Chats | Bots tab strip
-  is DELETED: one scroll of sections.
-- The **content bar** is the title, the instrument context and one muted **Live** pill (its
-  popover still carries sessions, market conditions, Live market and Vision data). No brand mark,
-  no save tick, no Activity pill. `AgentsView`'s own bar IS that bar — no second header stacks
-  above it.
+  icon (the ONLY surface that still shows it) opens `AgentsView`'s own column (conversations above
+  the roster). Its Chats | Bots tab strip is DELETED: one scroll of sections.
+- The **content bar** is the hide-conversation toggle, the title, the instrument context and one
+  muted **Live** pill (its popover still carries sessions, market conditions, Live market and
+  Vision data). No brand mark, no save tick, no Activity pill. `AgentsView`'s own bar IS that bar
+  — no second header stacks above it.
 - The rail is 240px by default and drags from its right edge (200–360px; the width persists and
-  double-click restores 240). Its top-right control puts it away; collapsed it leaves the layout,
-  and the content bar's expand button is the ONLY way back — navigation never rides the content
-  bar. Below 1024px it is a drawer over the content instead of a column — opening it never
+  double-click restores 240). The content bar's toggle puts it away; collapsed it leaves the
+  layout, and that same toggle is the ONLY way back — navigation never rides the content bar.
+  Below 1024px it is a drawer over the content instead of a column — opening it never
   squeezes the chart to a sliver — and the drawer's own mode switch and utility rows carry every
   route. The old four-tab bar is deleted, not hidden.
+- **Hide conversation** — there is ONE action: putting the whole sidebar away. It has two doors
+  that do the same thing, because a collapsed rail is 0px and needs a way back. The title-row
+  toggle left of "Chart AI" is labelled **Hide conversation** (Ctrl/Cmd+B) and flips to **Show
+  conversation** while the rail is away; it stays on screen precisely because the rail has no
+  edge to click. Inside the list, a small icon **after the RECENT heading** hides the conversation
+  column. The old Chats "Hide conversations" icon was removed from the icon rail on every surface
+  except Agents, where it is still the only control that reopens that surface's own column.
+  `src/components/shell/SidebarToggle.tsx` › `SidebarToggle` ·
+  `src/components/shell/ConversationGroups.tsx` › `ConversationGroups`
 - Electron's floor is 800px wide. A layout that only breaks below 1024 is a bug.
 - Heavy surfaces are `React.lazy` with `SurfaceSkeleton`, never `fallback={null}`.
 - Overlays mount **outside** `<main>`. A probe that measures `<main>` after opening one re-reports
