@@ -33,7 +33,7 @@ import { runWeeklyRollupIfDue } from '../services/learning/weeklyRollup';
 import { runWeeklyReviewIfDue } from '../services/learning/weeklyReview';
 import { runMonthlyReportIfDue } from '../services/learning/monthlyReport';
 import { runMemoryHygieneIfDue } from '../services/learning/memoryHygiene';
-import { settleDueSignals } from '../services/signals/signalService';
+import { settleDueSignals, settleRefusedSignals } from '../services/signals/signalService';
 import { autoApplyPendingSkillDrafts } from '../services/learning/skillApproval';
 import { repairSkillFileFormats } from '../services/learning/SkillMemoryService';
 import {
@@ -70,6 +70,14 @@ export const useLearningHeartbeat = (activeUsername: string | null, trades: Logg
         void settleDueSignals(username)
             .then(out => { if (out.resolved > 0) console.log('[SignalSettle] boot pass settled', out.resolved); })
             .catch(e => console.warn('[SignalSettle] boot pass failed:', e instanceof Error ? e.message : e));
+
+        // The refusal shadow bookkeeping rides the same boot pass: blocked
+        // emissions grade against the tape with the same resolver, oldest
+        // first, capped lower than real signals. Nothing renders from it yet —
+        // the feed reads the folded refusals directly.
+        void settleRefusedSignals(username)
+            .then(out => { if (out.resolved > 0) console.log('[SignalSettle] refusal pass graded', out.resolved); })
+            .catch(e => console.warn('[SignalSettle] refusal pass failed:', e instanceof Error ? e.message : e));
 
         // AUTO-APPLY (owner ruling 2026-11-03): the approval inbox is gone.
         // Every draft source funnels through queueSkillDraft, whose write fires

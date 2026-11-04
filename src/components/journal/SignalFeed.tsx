@@ -15,9 +15,9 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import type { SignalRow, SignalStatus, SignalSummary } from '../../types/signal';
 import type { TrackedPosition } from '../../types/tracking';
-import { readSignals } from '../../services/signals/signalLedger';
+import { foldRefusals, readSignalEvents, readSignals, type SignalRefusalRow } from '../../services/signals/signalLedger';
 import { readTrackedPositions } from '../../services/tracking/positionStore';
-import { settleDueSignals } from '../../services/signals/signalService';
+import { settleDueSignals, settleRefusedSignals } from '../../services/signals/signalService';
 import { summariseSignals, SIGNAL_SLIPPAGE_RATE, SIGNAL_TAKER_FEE_RATE } from '../../services/signals/signalResolver';
 import { MIN_ACCURACY_FILLS, scoreSignals } from '../../services/signals/signalAccuracy';
 import { getActiveUsername } from '../../utils/activeUser';
@@ -282,12 +282,16 @@ const SignalTableRow: React.FC<{ row: SignalRow; tracked?: TrackedPosition }> = 
 const SignalFeed: React.FC<SignalFeedProps> = ({ user }) => {
     const activeUser = user ?? getActiveUsername();
     const [rows, setRows] = useState<SignalRow[]>(() => readSignals(activeUser));
+    const [refusals, setRefusals] = useState<SignalRefusalRow[]>(() => foldRefusals(readSignalEvents(activeUser)));
     const [settling, setSettling] = useState(false);
     const [note, setNote] = useState<string | null>(null);
     const [trackedBySignal, setTrackedBySignal] = useState<Record<string, TrackedPosition>>({});
     const [trackedError, setTrackedError] = useState<string | null>(null);
 
-    const load = useCallback(() => setRows(readSignals(activeUser)), [activeUser]);
+    const load = useCallback(() => {
+        setRows(readSignals(activeUser));
+        setRefusals(foldRefusals(readSignalEvents(activeUser)));
+    }, [activeUser]);
 
     const loadTracked = useCallback(async () => {
         try {
@@ -337,6 +341,11 @@ const SignalFeed: React.FC<SignalFeedProps> = ({ user }) => {
                 setNote(out.resolved > 0 ? `Settled ${out.resolved} signal${out.resolved === 1 ? '' : 's'}.` : 'No signal was ready to settle.');
             })
             .catch(() => setNote('Settlement could not reach the tape; nothing was written.'))
+            // The refusal bookkeeping grades on the same refresh, after the
+            // real signals — it is a shadow ledger, never the headline.
+            .then(() => settleRefusedSignals(activeUser))
+            .then(() => { load(); })
+            .catch(() => { /* refusal grading is best-effort */ })
             .finally(() => setSettling(false));
     }, [activeUser, load, loadTracked]);
 
@@ -426,6 +435,19 @@ const SignalFeed: React.FC<SignalFeedProps> = ({ user }) => {
                 )}
 
                 {note && <p className="text-ui-dense text-zinc-500" data-testid="signal-note">{note}</p>}
+                {refusals.length > 0 && (
+                    <p className="text-ui-dense text-zinc-500" data-testid="signal-refusals">
+                        {refusals.length} blocked emission{refusals.length === 1 ? '' : 's'} by the stop-digging protections
+                        {(() => {
+                            const graded = refusals.filter(r => r.resolution);
+                            if (graded.length === 0) return ' — none graded yet.';
+                            const wins = graded.filter(r => r.resolution?.outcome === 'would_win').length;
+                            const losses = graded.filter(r => r.resolution?.outcome === 'would_lose').length;
+                            return ` — ${graded.length} graded: ${wins} would-win, ${losses} would-lose`
+                                + ` (net ${graded.reduce((a, r) => a + (r.resolution?.outcomeR ?? 0), 0).toFixed(2)}R the rules kept off the ledger).`;
+                        })()}
+                    </p>
+                )}
                 {settling && <p className="text-ui-dense text-zinc-500">Reading closed OKX candles (Binance cross-check)…</p>}
                 {trackedError && (
                     <p className="text-ui-dense text-amber-300/80">Tracker state could not be read: {trackedError}. Settlement is unaffected.</p>

@@ -3561,6 +3561,61 @@ const asyncChecks = (async () => {
         })());
 })();
 
+// ─── 42. the refusal ledger — blocked emissions are recorded and gradeable ──
+// A protection that refuses an emission used to leave NO row: "stop digging"
+// could block winners forever and nothing could ever prove it. The refusal
+// now carries the full refused geometry and the SAME resolver grades it.
+(() => {
+    global.localStorage = {
+        store: {},
+        getItem(k) { return Object.prototype.hasOwnProperty.call(this.store, k) ? this.store[k] : null; },
+        setItem(k, v) { this.store[k] = String(v); },
+        removeItem(k) { delete this.store[k]; },
+        clear() { this.store = {}; },
+    };
+    localStorage.setItem('last_active_user', 'refusal-user');
+    const ledger = loadModule('src/services/signals/signalLedger.ts');
+    const base = {
+        entry: 100, stop: 98, target: 104,
+        emittedAt: 1000, expiresAt: 2000,
+        rule: 'family-cooldown', reason: '2 stopouts on this family in the window',
+    };
+    const refuse = (id, over = {}) => ({
+        v: 1, type: 'refuse', at: 1000, id, refusal: { ...base, id, coin: 'BTCUSDT', direction: 'long', ...over },
+    });
+    ok('refusal ledger: a refusal folds to an OPEN row with its own geometry',
+        (() => {
+            const rows = ledger.foldRefusals([refuse('r1')]);
+            return rows.length === 1 && rows[0].status === 'open' && rows[0].refusal.rule === 'family-cooldown';
+        })());
+    ok('refusal ledger: the SIGNAL fold never sees a refusal — the tracker cannot adopt one',
+        ledger.foldSignals([refuse('r1')]).length === 0);
+    ok('refusal ledger: a second refuse with the same id is refused (history is not rewritten)',
+        (() => {
+            const first = ledger.appendSignalEvent(refuse('r1'));
+            const second = ledger.appendSignalEvent(refuse('r1'));
+            return first.ok && !second.ok;
+        })());
+    ok('refusal ledger: one resolution per refusal, and the fold carries it',
+        (() => {
+            const res = { v: 1, type: 'refuse_resolve', at: 9000, id: 'r1', refusalResolution: { at: 9000, outcome: 'would_win', grossR: 2, outcomeR: 1.9, rule: 'family-cooldown' } };
+            const w = ledger.appendSignalEvent(res);
+            const rows = ledger.foldRefusals(ledger.readSignalEvents());
+            return w.ok && rows[0].status === 'would_win' && rows[0].resolution.outcomeR === 1.9
+                && !ledger.appendSignalEvent(res).ok;
+        })());
+    ok('refusal ledger: refusals cap SEPARATELY — a chatty rule cannot push real signals out',
+        (() => {
+            const events = [{ v: 1, type: 'emit', at: 500, id: 'sig-1', signal: { ...base, id: 'sig-1', coin: 'ETHUSDT', direction: 'long', evidenceRefs: [], dataHash: 'x', provider: 'p', model: 'm', promptVersion: 'v', source: 'signal', thesis: 't' } }];
+            for (let i = 0; i < ledger.MAX_REFUSALS + 5; i++) events.push(refuse(`r-cap-${i}`, { emittedAt: 1000 + i }));
+            const pruned = ledger.pruneLedgerEvents(events);
+            const emits = pruned.filter(e => e.type === 'emit').length;
+            const refuses = pruned.filter(e => e.type === 'refuse').length;
+            return emits === 1 && refuses === ledger.MAX_REFUSALS;
+        })());
+    delete global.localStorage;
+})();
+
 // ─── report ────────────────────────────────────────────────────────────────
 const finishReport = () => {
     console.log(`contracts: ${passed} passed, ${failures.length} failed`);

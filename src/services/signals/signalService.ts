@@ -21,11 +21,13 @@ import type {
     SignalGateShadow,
     SignalGroundingShadow,
     SignalRecord,
+    SignalRefusalRecord,
+    SignalRefusalResolution,
     SignalResolution,
 } from '../../types/signal';
 import type { SignalCandle } from './signalResolver';
 import { bracketError, resolveSignal, SIGNAL_BAR_MS } from './signalResolver';
-import { appendSignalEvent, readSignals, recordSignalResolution } from './signalLedger';
+import { appendSignalEvent, foldRefusals, readSignalEvents, readSignals, recordSignalResolution } from './signalLedger';
 import { openSignalsOldestFirst } from './signalOrder';
 import { signalProtectionVerdict } from './signalProtections';
 import {
@@ -136,6 +138,9 @@ export const emitSignal = (input: EmitSignalInput, context: EmitSignalContext = 
 
     const now = Date.now();
     const user = context.user ?? getActiveUsername();
+    const mark = typeof context.markAtEmit === 'number' && Number.isFinite(context.markAtEmit)
+        ? context.markAtEmit
+        : undefined;
     // Protections read SETTLED signals only: a losing streak, a drawdown or a
     // window that is not paying for its costs stops the next call from being
     // written at all. Refusing here keeps the ledger honest — no row for a
@@ -149,10 +154,31 @@ export const emitSignal = (input: EmitSignalInput, context: EmitSignalContext = 
         })),
         { coin, direction: rawDirection, now },
     );
-    if (protection.blocked) return { ok: false, error: protection.reason ?? 'signal blocked by a protection' };
-    const mark = typeof context.markAtEmit === 'number' && Number.isFinite(context.markAtEmit)
-        ? context.markAtEmit
-        : undefined;
+    if (protection.blocked) {
+        // The refusal is RECORDED with the full refused geometry (the same
+        // fields an emit would have written), so the protections themselves
+        // become falsifiable: settleRefusedSignals grades what the rules
+        // blocked with the same resolver, and the feed can say whether
+        // "stop digging" is blocking winners. A failed append never changes
+        // the rejection — the trader's answer stays the refusal.
+        const refusedAt = now;
+        const refusalId = `refuse-${refusedAt}-${Math.random().toString(36).slice(2, 8)}`;
+        const refusal: SignalRefusalRecord = {
+            id: refusalId,
+            coin,
+            direction: rawDirection,
+            ...levels,
+            emittedAt: refusedAt,
+            expiresAt: refusedAt + minutes * 60_000,
+            rule: protection.rule ?? 'unknown',
+            reason: protection.reason ?? 'signal blocked by a protection',
+            ...(conviction !== null ? { conviction } : {}),
+            ...(mark !== undefined ? { markAtEmit: mark } : {}),
+        };
+        const refusalWrite = appendSignalEvent({ v: 1, type: 'refuse', at: refusedAt, id: refusalId, refusal }, user);
+        if (!refusalWrite.ok) console.warn('[SignalService] refusal record not saved:', refusalWrite.error);
+        return { ok: false, error: protection.reason ?? 'signal blocked by a protection' };
+    }
     const forming = context.formingCandle;
     const tape = [
         coin,
@@ -340,6 +366,102 @@ export const settleDueSignals = async (
         const wrote = recordSignalResolution(signal.id, resolution, user);
         if (wrote.ok) out.resolved += 1;
         else out.skipped.push({ id: signal.id, reason: wrote.error ?? 'the ledger refused the resolution' });
+    }
+    return out;
+};
+
+/** How many blocked emissions one refusal pass grades. Refusals are a
+ *  shadow bookkeeping — the real signals always settle first (the boot pass
+ *  and the feed both call settleDueSignals before this). */
+export const MAX_REFUSAL_SETTLE_PER_RUN = 2;
+
+/**
+ * Grade blocked emissions. A protection refusal recorded by `emitSignal`
+ * carries the FULL refused geometry, so the same resolver — same tape
+ * discipline, same stop-first ambiguity rule, same gap honesty — answers
+ * what the blocked call WOULD have done. Unresolved refusals are graded
+ * oldest-first; a refusal whose tape is unreachable stays open (an
+ * ungradeable refusal is never read as a would-lose). The scorecard and the
+ * tracker never see these rows: they measure the harness's calls, not the
+ * calls it was not allowed to make.
+ */
+export const settleRefusedSignals = async (
+    user: string = getActiveUsername(),
+): Promise<{ attempted: number; resolved: number; skipped: { id: string; reason: string }[] }> => {
+    const rows = foldRefusals(readSignalEvents(user))
+        .filter(r => r.status === 'open')
+        .sort((a, b) => a.refusal.emittedAt - b.refusal.emittedAt)
+        .slice(0, MAX_REFUSAL_SETTLE_PER_RUN);
+    const out: { attempted: number; resolved: number; skipped: { id: string; reason: string }[] } = {
+        attempted: rows.length,
+        resolved: 0,
+        skipped: [],
+    };
+    const now = Date.now();
+    for (const row of rows) {
+        const refusal = row.refusal;
+        // The synthetic record the resolver reads: the refusal's own geometry
+        // and identity, with placeholder provenance (this call never had a
+        // provider — the deterministic protections wrote it).
+        const synthetic: SignalRecord = {
+            id: refusal.id,
+            coin: refusal.coin,
+            direction: refusal.direction,
+            entry: refusal.entry,
+            stop: refusal.stop,
+            target: refusal.target,
+            emittedAt: refusal.emittedAt,
+            expiresAt: refusal.expiresAt,
+            evidenceRefs: [],
+            dataHash: 'protection-refusal',
+            provider: 'protections',
+            model: 'none',
+            promptVersion: 'none',
+            source: 'signal',
+            thesis: `refused by ${refusal.rule}: ${refusal.reason}`,
+        };
+        const instId = okxInstId(refusal.coin);
+        let primary: SignalCandle[] | null = null;
+        let primarySource: 'okx' | 'binance' = 'okx';
+        if (instId) {
+            const okx = await fetchOkxCandles(instId, '5m', 300);
+            if (okx.ok && tapeCoversEmission(okx.candles, refusal.emittedAt)) primary = okx.candles;
+        }
+        if (!primary) {
+            const binance = await fetchBinanceCandles(refusal.coin, '5m', 300);
+            if (binance && tapeCoversEmission(binance, refusal.emittedAt)) {
+                primary = binance;
+                primarySource = 'binance';
+            }
+        }
+        if (!primary) {
+            out.skipped.push({ id: refusal.id, reason: 'the tape does not reach back to this emission' });
+            continue;
+        }
+        const resolved = resolveSignal(synthetic, primary, [], now);
+        if (!resolved) {
+            out.skipped.push({ id: refusal.id, reason: 'still inside its window' });
+            continue;
+        }
+        const outcomeMap = {
+            won: 'would_win',
+            lost: 'would_lose',
+            expired: 'would_expire',
+            never_triggered: 'never_triggered',
+        } as const;
+        const refusalResolution: SignalRefusalResolution = {
+            at: Date.now(),
+            outcome: outcomeMap[resolved.status],
+            grossR: resolved.grossR,
+            outcomeR: resolved.outcomeR,
+            rule: refusal.rule,
+        };
+        const wrote = appendSignalEvent(
+            { v: 1, type: 'refuse_resolve', at: refusalResolution.at, id: refusal.id, refusalResolution },
+            user,
+        );
+        if (wrote.ok) out.resolved += 1;
+        else out.skipped.push({ id: refusal.id, reason: wrote.error ?? 'the ledger refused the resolution' });
     }
     return out;
 };

@@ -141,7 +141,48 @@ export type SignalEvent =
     | { v: 1; type: 'emit'; at: number; id: string; signal: SignalRecord }
     | { v: 1; type: 'gate'; at: number; id: string; gate: SignalGateShadow }
     | { v: 1; type: 'ground'; at: number; id: string; grounding: SignalGroundingShadow }
-    | { v: 1; type: 'resolve'; at: number; id: string; resolution: SignalResolution };
+    | { v: 1; type: 'resolve'; at: number; id: string; resolution: SignalResolution }
+    | { v: 1; type: 'refuse'; at: number; id: string; refusal: SignalRefusalRecord }
+    | { v: 1; type: 'refuse_resolve'; at: number; id: string; refusalResolution: SignalRefusalResolution };
+
+/** A PROTECTION refusal: the desk tried to emit a signal and one of the four
+ *  deterministic "stop digging" rules refused the write. The refusal is
+ *  recorded with the FULL refused geometry so the same resolver can later
+ *  grade what the protections blocked — a rule that never gets measured could
+ *  block winners forever, and a trader can only trust a refusal they can
+ *  audit. It is NOT a signal: it never enters the ledger's signal list, the
+ *  tracker never adopts it, and the scorecard never counts it. */
+export interface SignalRefusalRecord extends SignalLevels {
+    id: string;
+    coin: string;
+    direction: SignalDirection;
+    emittedAt: number;
+    expiresAt: number;
+    /** The protection that refused, as its module names it
+     *  (`cooldown` | `family-cooldown` | `drawdown` | `low-profit`). */
+    rule: string;
+    /** The exact reason the emit path returned to the model. */
+    reason: string;
+    /** The model's self-reported conviction on the refused call, when it gave
+     *  one — the calibration of "the desk wanted to speak but was stopped". */
+    conviction?: number;
+    markAtEmit?: number;
+}
+
+/** What the refused call would have done, resolved by the same resolver on
+ *  the same tape discipline as a real signal. */
+export type SignalRefusalOutcome = 'would_win' | 'would_lose' | 'would_expire' | 'never_triggered' | 'ungradeable';
+
+export interface SignalRefusalResolution {
+    at: number;
+    outcome: SignalRefusalOutcome;
+    /** The refused call's would-be signed R after costs (0 on
+     *  never_triggered / ungradeable). A refusal that blocked a +2R call is
+     *  visible as exactly that. */
+    grossR: number;
+    outcomeR: number;
+    rule: string;
+}
 
 /** One signal folded from its events. `gate`/`grounding` are absent until the
  *  shadow checks land; `resolution` is absent while the signal is open. */

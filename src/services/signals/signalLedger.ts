@@ -19,11 +19,14 @@
  * budget and the shared 5 MiB origin quota.
  */
 
-import type { SignalEvent, SignalRow, SignalResolution } from '../../types/signal';
+import type {
+    SignalEvent, SignalRefusalRecord, SignalRefusalResolution, SignalRow, SignalResolution,
+} from '../../types/signal';
 import { getActiveUsername } from '../../utils/activeUser';
 
 export const SIGNAL_LEDGER_KEY = 'signal_ledger_v1';
 export const MAX_SIGNALS = 150;
+export const MAX_REFUSALS = 100;
 export const LEDGER_BYTE_CAP = 200 * 1024;
 
 export const signalLedgerKey = (user: string = getActiveUsername()): string =>
@@ -32,10 +35,18 @@ export const signalLedgerKey = (user: string = getActiveUsername()): string =>
 const isEvent = (value: unknown): value is SignalEvent => {
     if (!value || typeof value !== 'object') return false;
     const e = value as Partial<SignalEvent>;
-    return e.v === 1
-        && typeof e.id === 'string' && e.id.length > 0
-        && typeof e.at === 'number'
-        && (e.type === 'emit' || e.type === 'gate' || e.type === 'ground' || e.type === 'resolve');
+    if (e.v !== 1
+        || typeof e.id !== 'string' || e.id.length === 0
+        || typeof e.at !== 'number') return false;
+    switch (e.type) {
+        case 'emit': return !!e.signal;
+        case 'resolve': return !!e.resolution;
+        case 'gate': return !!e.gate;
+        case 'ground': return !!e.grounding;
+        case 'refuse': return !!e.refusal;
+        case 'refuse_resolve': return !!e.refusalResolution;
+        default: return false;
+    }
 };
 
 export const readSignalEvents = (user: string = getActiveUsername()): SignalEvent[] => {
@@ -54,23 +65,43 @@ export const readSignalEvents = (user: string = getActiveUsername()): SignalEven
     }
 };
 
-/** Drop whole signals, oldest first, until the count and byte caps hold. */
+/** Drop whole signals — and whole refusals, as one unit each — oldest first,
+ *  until the count and byte caps hold. Refusals carry their OWN count cap, and
+ *  the prune empties the pool that is OVER ITS OWN cap: an oldest-overall
+ *  order would let a chatty protection rule evict a real signal that happens
+ *  to be older than the oldest refusal. Only the byte cap prunes oldest
+ *  overall, because bytes do not belong to either pool. */
 export const pruneLedgerEvents = (events: readonly SignalEvent[], byteCap: number = LEDGER_BYTE_CAP): SignalEvent[] => {
     let kept = [...events];
     const idsInOrder = (): string[] => {
         const seen = new Map<string, number>();
         for (const e of kept) {
-            if (!seen.has(e.id)) seen.set(e.id, e.type === 'emit' && e.signal ? e.signal.emittedAt : e.at);
+            if (!seen.has(e.id)) {
+                seen.set(e.id, e.type === 'emit' && e.signal
+                    ? e.signal.emittedAt
+                    : e.type === 'refuse' && e.refusal ? e.refusal.emittedAt : e.at);
+            }
         }
         return [...seen.entries()].sort((a, b) => a[1] - b[1]).map(([id]) => id);
     };
-    const overCap = (): boolean => {
-        const ids = new Set(kept.map(e => e.id));
-        return ids.size > MAX_SIGNALS || JSON.stringify(kept).length > byteCap;
+    const counts = (): { signals: number; refusals: number; bytes: number } => {
+        let signals = 0;
+        let refusals = 0;
+        for (const e of kept) {
+            if (e.type === 'emit') signals += 1;
+            else if (e.type === 'refuse') refusals += 1;
+        }
+        return { signals, refusals, bytes: JSON.stringify(kept).length };
     };
-    while (kept.length > 0 && overCap()) {
-        const oldest = idsInOrder()[0];
-        kept = kept.filter(e => e.id !== oldest);
+    while (kept.length > 0) {
+        const { signals, refusals, bytes } = counts();
+        if (signals <= MAX_SIGNALS && refusals <= MAX_REFUSALS && bytes <= byteCap) break;
+        const ids = idsInOrder();
+        const isRefusalId = (id: string): boolean => kept.some(e => e.id === id && e.type === 'refuse');
+        // Prune the pool that is over its own cap; when only the byte cap
+        // binds (or both are), fall through to the oldest unit overall.
+        const target = ids.find(id => (isRefusalId(id) ? refusals > MAX_REFUSALS : signals > MAX_SIGNALS)) ?? ids[0];
+        kept = kept.filter(e => e.id !== target);
     }
     return kept;
 };
@@ -97,6 +128,12 @@ export const appendSignalEvent = (event: SignalEvent, user: string = getActiveUs
     }
     if ((event.type === 'gate' || event.type === 'ground') && mine.some(e => e.type === event.type)) {
         return { ok: false, error: `this signal already has a ${event.type} event` };
+    }
+    if (event.type === 'refuse' && mine.some(e => e.type === 'refuse')) {
+        return { ok: false, error: 'a refusal with this id already exists' };
+    }
+    if (event.type === 'refuse_resolve' && mine.some(e => e.type === 'refuse_resolve')) {
+        return { ok: false, error: 'this refusal is already resolved' };
     }
     const next = pruneLedgerEvents([...events, event]);
     try {
@@ -130,6 +167,35 @@ export const foldSignals = (events: readonly SignalEvent[]): SignalRow[] => {
         }
     }
     return [...byId.values()].sort((a, b) => b.signal.emittedAt - a.signal.emittedAt);
+};
+
+/** One refusal folded from its events. A refusal is NOT a SignalRow: it never
+ *  enters `readSignals`, so the tracker, the scorecard and the protections
+ *  cannot mistake a blocked call for a live one. */
+export interface SignalRefusalRow {
+    refusal: SignalRefusalRecord;
+    resolution?: SignalRefusalResolution;
+    /** 'open' while ungraded; the resolution's outcome once graded. */
+    status: 'open' | SignalRefusalResolution['outcome'];
+}
+
+export const foldRefusals = (events: readonly SignalEvent[]): SignalRefusalRow[] => {
+    const byId = new Map<string, SignalRefusalRow>();
+    for (const event of events) {
+        if (event.type !== 'refuse' || !event.refusal) continue;
+        byId.set(event.id, { refusal: event.refusal, status: 'open' });
+    }
+    for (const event of events) {
+        const row = byId.get(event.id);
+        if (!row) continue;
+        if (event.type === 'refuse_resolve' && event.refusalResolution) {
+            row.resolution = event.refusalResolution;
+            row.status = event.refusalResolution.outcome;
+        }
+    }
+    return [...byId.values()]
+        .filter((r): r is SignalRefusalRow & { refusal: SignalRefusalRecord } => !!r.refusal)
+        .sort((a, b) => b.refusal.emittedAt - a.refusal.emittedAt);
 };
 
 export const readSignals = (user: string = getActiveUsername()): SignalRow[] =>
