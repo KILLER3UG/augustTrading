@@ -114,10 +114,11 @@ const LearnView: React.FC<LearnViewProps> = ({
 }) => {
     const [tab, setTab] = useState<LearnTab>(() => {
         const saved = typeof localStorage !== 'undefined' ? localStorage.getItem(TAB_KEY) : null;
-        // Skills is the surface's reason to exist — and a stored id from before
-        // the Approvals removal ('coach', or the older 'queue'/'system') falls
-        // through the TABS check to here.
-        return TABS.some(t => t.id === saved) ? (saved as LearnTab) : 'skills';
+        // The notebook is this surface's own screen: Skills is a destination of
+        // its own (the rail's Skills row), so defaulting here would make the two
+        // rows render one view. A stored id from before the Approvals removal
+        // ('coach', or the older 'queue'/'system') falls through to here too.
+        return TABS.some(t => t.id === saved) ? (saved as LearnTab) : 'memory';
     });
 
     useEffect(() => {

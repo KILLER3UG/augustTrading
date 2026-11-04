@@ -20,6 +20,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { deriveChartLines, formatDist, KEY_LEVEL_COLORS, type MessageLevelLines, type ModelKeyLevel } from '../../services/trade/keyLevels';
 import { fmtPrice } from '../../utils/formatters';
+import Disclosure from '../shared/Disclosure';
 
 interface KeyLevelsCardProps {
     levels: ModelKeyLevel[];
@@ -119,14 +120,19 @@ const KeyLevelsCard: React.FC<KeyLevelsCardProps> = ({ levels, symbol, messageId
     const drawnCount = levels.length - lines.filter(l => l.state === 'hidden').length;
 
     return (
-        <div className="mt-2 overflow-hidden rounded-control border border-white/[0.04] bg-white/[0.015]" data-testid="key-levels-card"
+        <Disclosure
+            summary={`Key levels · ${levels.length}`}
+            label={`Key levels, ${levels.length} levels, disclosure`}
+            testId="key-levels-disclosure"
+            className="mt-2 overflow-hidden rounded-control border border-white/[0.04] bg-white/[0.015]"
+            summaryClassName="flex items-center justify-between px-3 py-2 text-ui-xs font-bold uppercase tracking-[0.09em] text-zinc-400"
+            bodyClassName=""
+        >
+        <div className="overflow-hidden" data-testid="key-levels-card"
             onMouseLeave={() => setHoverId(null)}>
-            <div className="flex items-center justify-between px-3 py-2">
-                <span className="text-ui-xs font-bold uppercase tracking-[0.09em] text-zinc-400">
-                    Key Levels <span className="font-mono text-zinc-500 normal-case tracking-normal">({levels.length})</span>
-                </span>
+            <div className="flex items-center justify-end px-3 py-1.5">
                 <label
-                    className="relative flex cursor-pointer items-center gap-1.5 text-ui-xs font-semibold text-zinc-500 transition-colors hover:text-zinc-300"
+                    className="relative flex min-h-6 cursor-pointer items-center gap-1.5 py-0.5 text-ui-xs font-semibold text-zinc-500 transition-colors hover:text-zinc-300"
                     title={allOn ? 'Hide the other levels — pinned lines stay' : 'Draw every level on the chart'}
                 >
                     {/* The input covers the label instead of being `sr-only`.
@@ -187,6 +193,7 @@ const KeyLevelsCard: React.FC<KeyLevelsCardProps> = ({ levels, symbol, messageId
                 {drawing && <span className="ml-2 text-emerald-400">· {drawnCount} drawn</span>}
             </div>
         </div>
+        </Disclosure>
     );
 };
 

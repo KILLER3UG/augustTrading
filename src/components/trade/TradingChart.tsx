@@ -54,6 +54,7 @@ import {
     type ChartInterval,
 } from '../../utils/chartIntervals';
 import { chartColor } from '../../utils/themeColors';
+import { fmtPrice as fmtPriceForChart, fmtUsd as fmtUsdForChart } from '../../utils/formatters';
 import { TradeAnalysis } from '../../types';
 import { ChartToolRail, CHART_RAIL_WIDTH } from './ChartToolRail';
 import { shapeGeometry } from './drawingGeometry';
@@ -206,6 +207,16 @@ interface TradingChartProps {
      *  Stamped with the symbol it was drawn for, so a BTC card never paints
      *  on an ETH chart. */
     chatLevels?: MessageLevelLines | null;
+    /** Chart-head OHLC/V/OI row data — the fields the removed metrics band
+     *  carried (24h high/low/volume/OI/oracle), rendered as the readout row. */
+    ohlcvRow?: {
+        high24h?: number | null;
+        low24h?: number | null;
+        volume24h?: number | null;
+        oiValue?: number | null;
+        oracle?: number | null;
+        changePct?: number | null;
+    } | null;
 }
 
 const sma = (closes: number[], period: number): (number | null)[] => closes.map((_, i) => {
@@ -225,7 +236,7 @@ const distToSegment = (px: number, py: number, ax: number, ay: number, bx: numbe
     return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
 };
 
-const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onIntervalChange, sessionId, verdict, showSma = false, live = false, liveKline, lastPrice, markPrice, chartHandle, onDrawingsChange, modelDrawings, onRemoveModelShape, chatLevels }) => {
+const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onIntervalChange, sessionId, verdict, showSma = false, live = false, liveKline, lastPrice, markPrice, chartHandle, onDrawingsChange, modelDrawings, onRemoveModelShape, chatLevels, ohlcvRow }) => {
     const hostRef = useRef<HTMLDivElement | null>(null);
     const chartRef = useRef<IChartApi | null>(null);
     const candlesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
@@ -1132,10 +1143,22 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                 </button>
                 {/* Drawing tools live in the TradingView-style LEFT RAIL over
                     the plot (ChartToolRail) — the top bar keeps timeframes. */}
-                <span className="ml-auto flex items-center gap-2 pr-1">
-                    <span className={`h-1.5 w-1.5 rounded-full ${status === 'live' ? 'bg-emerald-500' : status === 'loading' ? 'animate-pulse bg-cyan-400' : 'bg-rose-500'}`} aria-label={`chart ${status}`} />
-                </span>
-            </TimeframeBar>
+                    <span className="ml-auto flex items-center gap-2 pr-1">
+                        <span className={`h-1.5 w-1.5 rounded-full ${status === 'live' ? 'bg-emerald-500' : status === 'loading' ? 'animate-pulse bg-cyan-400' : 'bg-rose-500'}`} aria-label={`chart ${status}`} />
+                    </span>
+                </TimeframeBar>
+                {/* Chart-head readout row: 24h high/low/volume/OI/oracle —
+                    the fields the removed metrics band carried, now one
+                    quiet line above the plot instead of a band of its own. */}
+                {ohlcvRow && (
+                    <div className="flex shrink-0 items-center gap-3 overflow-x-auto border-b border-white/[0.04] px-3 py-1 text-ui-dense text-zinc-500" data-testid="ohlcv-row">
+                        <span className="font-mono tabular-nums">H <span className="text-zinc-300">{ohlcvRow.high24h ? fmtPriceForChart(ohlcvRow.high24h) : '—'}</span></span>
+                        <span className="font-mono tabular-nums">L <span className="text-zinc-300">{ohlcvRow.low24h ? fmtPriceForChart(ohlcvRow.low24h) : '—'}</span></span>
+                        <span className="font-mono tabular-nums">Vol <span className="text-zinc-300">{ohlcvRow.volume24h ? fmtUsdForChart(ohlcvRow.volume24h) : '—'}</span></span>
+                        <span className="font-mono tabular-nums">OI <span className="text-zinc-300">{ohlcvRow.oiValue ? fmtUsdForChart(ohlcvRow.oiValue) : '—'}</span></span>
+                        <span className="font-mono tabular-nums">Oracle <span className="text-zinc-300">{ohlcvRow.oracle ? fmtPriceForChart(ohlcvRow.oracle) : '—'}</span></span>
+                    </div>
+                )}
             <div className="relative min-h-0 flex-1 bg-zinc-950">
                 {/* The verdict-overlay tag floats INSIDE the plot now — the
                     toolbar badge it replaced duplicated the symbol picker, the

@@ -17,7 +17,6 @@ import type { ProviderConfig } from '../../../types/provider';
 import type { Attachment } from '../../../hooks/useChatAttachments';
 import type { ReasoningEffort } from '../../../services/providers/reasoningControls';
 import { formatModelDisplayName } from '../../../utils/providerUtils';
-import { DISCLAIMER_SHORT } from '../../../constants/disclaimer';
 
 import ModelChip from '../../shared/ModelChip';
 import ChatAttachmentStrip from './ChatAttachmentStrip';
@@ -277,7 +276,7 @@ const ChatComposer: React.FC<ChatComposerProps> = ({
         {/* The footer row that used to hold the two chips is deleted with them;
             the disclaimer keeps its own line under the card. */}
         <p className="mt-1.5 px-2 text-ui-xs leading-relaxed text-zinc-600">
-            {DISCLAIMER_SHORT}
+            Analysis and journaling only — it never places or signs a trade.
         </p>
     </div>
     );

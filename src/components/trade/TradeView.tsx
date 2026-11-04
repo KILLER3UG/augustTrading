@@ -28,7 +28,7 @@ import { loadSessionModelDrawings, flushDrawings, type ChartDrawing } from '../.
 import { drawingsControl, capDrawings } from '../../services/trade/drawingsControl';
 import type { TradeProposal } from '../../services/trade/proposedTrade';
 import { getActiveUsername } from '../../utils/activeUser';
-import { fmtPercent, fmtPrice, fmtUsd } from '../../utils/formatters';
+import { fmtPercent, fmtPrice } from '../../utils/formatters';
 import * as levelWatch from '../../services/trade/levelWatchService';
 import type { WatchPlan } from '../../services/trade/tradePlanLevels';
 import * as watchService from '../../services/trade/watchService';
@@ -46,7 +46,6 @@ import OrderBookPanel from './OrderBookPanel';
 import TradeChatPanel, { ChartAiDockRail } from './TradeChatPanel';
 import RightPanel from '../shell/RightPanel';
 import { useRightPanel } from '../../hooks/useRightPanel';
-import { useColumnResize } from '../../hooks/useColumnResize';
 import type { PanelTurnContext } from './TradeChatPanel';
 import type { SoloTurnRow } from '../../services/trade/chatTurnMirror';
 import type { ReasoningEffort } from '../../types/provider';
@@ -181,26 +180,12 @@ interface StripData {
 const DOCK_WIDTH_KEY = 'trade_dock_width_v1';
 const DOCK_MIN = 300;
 const DOCK_MAX = 820;
-const DOCK_DEFAULT = 384;
+const DOCK_DEFAULT = 364;
 /** Registry id of the Chart AI dock inside the shared right-panel contract. */
 const DOCK_ID = 'chart-ai';
 
-/** Order-book column geometry. Same rule as the dock, mirrored: the book sits
- *  at the chart's RIGHT, so dragging its LEFT edge further left grows it. */
-const BOOK_WIDTH_KEY = 'trade_book_width_v1';
-const BOOK_MIN = 220;
-const BOOK_MAX = 420;
-const BOOK_DEFAULT = 300;
-
-/** The v2 instrument tape's reading: a 9px uppercase label over an 11px mono
- *  figure, hairline-divided from its neighbours. The design's tape cell —
- *  the quiet numbers a perp desk checks without leaving the chart. */
-const TapeItem: React.FC<{ label: string; value: string }> = ({ label, value }) => (
-    <div className="flex min-w-0 flex-col justify-center gap-0.5 px-3.5 first:pl-1">
-        <span className="whitespace-nowrap text-[9px] font-medium uppercase leading-none tracking-[0.07em] text-zinc-500">{label}</span>
-        <span className="truncate whitespace-nowrap font-mono text-[11px] font-medium leading-[1.5] tabular-nums text-zinc-300" title={value}>{value}</span>
-    </div>
-);
+/** Order-book drawer height when expanded (closed strip is 30px). */
+const BOOK_DRAWER_HEIGHT = 320;
 
 const fundingCountdown = (nextFundingTime: number, nowMs: number): string => {
     const left = nextFundingTime - nowMs;
@@ -380,17 +365,6 @@ const TradeView: React.FC<TradeViewProps> = ({
         legacyWidthKey: DOCK_WIDTH_KEY,
     });
     const { width: dockWidth } = rightPanel;
-    // The book is the other adjustable column on this surface. It uses the
-    // shared column contract for geometry only; its open/closed state stays
-    // App's (`sidebarOpen`), because the book column and the phone Book mode
-    // are two views of the same preference.
-    const bookResize = useColumnResize({
-        storageKey: BOOK_WIDTH_KEY,
-        defaultWidth: BOOK_DEFAULT,
-        minWidth: BOOK_MIN,
-        maxWidth: BOOK_MAX,
-        edge: 'left',
-    });
     const [dockCollapsed, setDockCollapsed] = useState(false);
     const [dockExpanded, setDockExpanded] = useState(false);
     const [screenerOpen, setScreenerOpen] = useState(false);
@@ -695,8 +669,19 @@ const TradeView: React.FC<TradeViewProps> = ({
     const fundingRate = feed.markIndex?.fundingRate ?? strip?.lastFundingRate;
     const nextFundingTime = feed.markIndex?.nextFundingTime ?? strip?.nextFundingTime;
     const changePct = feed.ticker?.changePercent24h ?? strip?.changePercent24h;
-    const quoteVolume = feed.ticker?.quoteVolume24h ?? strip?.volume24h;
     const lastPrice = feed.ticker?.lastPrice ?? markPrice;
+    // Order-book drawer: 30px strip closed by default, expands on demand.
+    const [bookOpen, setBookOpen] = useState(false);
+    // Chart-head OHLC/V/OI row data — the fields the removed metrics band
+    // carried, forwarded to TradingChart's crosshair readout row.
+    const ohlcvRow = useMemo(() => ({
+        high24h: strip && strip.high24h > 0 ? strip.high24h : null,
+        low24h: strip && strip.low24h > 0 ? strip.low24h : null,
+        volume24h: strip?.volume24h ?? null,
+        oiValue: strip?.oiValue ?? null,
+        oracle: indexPrice ?? null,
+        changePct: changePct ?? null,
+    }), [strip, indexPrice, changePct]);
     // What's drawn on the chart right now — forwarded to the chat so its
     // get_chart_view tool can tell the model what the user is looking at.
     // The walk is scoped to the coin on screen: a newer plan for another coin
@@ -893,20 +878,17 @@ const TradeView: React.FC<TradeViewProps> = ({
                 was the duplication the reference removes. */}
             <div className="flex shrink-0 items-center gap-2 border-b border-white/[0.06] bg-zinc-950 px-3 py-2 sm:px-4">
                 <div className="flex min-w-0 items-center gap-1.5">
-                    {/* The book column's own open/close control. It used to be
-                        the activity bar's active Trade icon; that icon now
-                        opens the surface menu, so the toggle moved to the row
-                        beside the panel it controls. */}
+                    {/* The book toggle now owns the drawer strip below. */}
                     {onToggleSidebar && (
                         <button
                             type="button"
-                            onClick={onToggleSidebar}
-                            aria-pressed={isBelowLg ? mode === 'book' : sidebarOpen}
+                            onClick={() => (isBelowLg ? pickMode('book') : setBookOpen(v => !v))}
+                            aria-expanded={isBelowLg ? mode === 'book' : bookOpen}
                             aria-label="Toggle order book"
                             title={isBelowLg ? 'Show the order book' : 'Show or hide the order book'}
                             data-testid="trade-book-toggle"
                             className={`hidden h-7 w-7 shrink-0 items-center justify-center rounded-control transition-colors duration-[120ms] ease-[var(--ease-snappy)] sm:flex ${
-                                (isBelowLg ? mode === 'book' : sidebarOpen)
+                                (isBelowLg ? mode === 'book' : bookOpen)
                                     ? 'bg-white/[0.08] text-zinc-100'
                                     : 'text-zinc-500 hover:bg-white/[0.05] hover:text-zinc-200'
                             }`}
@@ -924,38 +906,30 @@ const TradeView: React.FC<TradeViewProps> = ({
                         <div
                             key={tickFlash.seq}
                             data-testid="hero-price"
-                            className={`-mx-1 rounded-control px-1 font-mono text-ui-display font-medium tracking-[-0.035em] tabular-nums ${priceTone} ${tickFlash.cls}`.trim()}
+                            className={`-mx-1 rounded-control px-1 font-mono text-ui-price font-medium tracking-[-0.035em] tabular-nums ${priceTone} ${tickFlash.cls}`.trim()}
                         >
                             {Number.isFinite(markPrice) ? fmtPrice(markPrice!) : '—'}
                         </div>
                         {Number.isFinite(changePct) && (
                             <span
                                 title="24h change · MARK"
-                                className={`shrink-0 rounded-[5px] px-1.5 py-1 font-mono text-[11px] font-medium leading-none tabular-nums ${changeTone}`}
+                                className={`shrink-0 rounded-[5px] px-1.5 py-1 font-mono text-ui-dense font-medium leading-none tabular-nums ${changeTone}`}
                             >
                                 {changePct! >= 0 ? '+' : ''}{fmtPercent(changePct!, 2)}
                             </span>
                         )}
+                        {/* Funding rides the chart head — the quiet line, not a band. */}
+                        <span className="hidden shrink-0 items-baseline gap-1.5 sm:flex" data-testid="chart-head-funding">
+                            {Number.isFinite(fundingRate) ? (
+                                <FundingCountdown nextFundingTime={nextFundingTime ?? 0} fundingRate={fundingRate!} />
+                            ) : <span className="font-mono text-ui-dense text-zinc-300">—</span>}
+                        </span>
                     </div>
                 </div>
-                {/* The tape — the design's hairline-divided readings. Hidden
-                    below lg, where the surface shows one pane at a time. */}
-                <div
-                    data-testid="market-tape"
-                    className="ml-auto hidden min-w-0 items-stretch divide-x divide-white/[0.05] overflow-x-auto lg:flex"
-                >
-                    <TapeItem label="24h high" value={strip && strip.high24h > 0 ? fmtPrice(strip.high24h) : '—'} />
-                    <TapeItem label="24h low" value={strip && strip.low24h > 0 ? fmtPrice(strip.low24h) : '—'} />
-                    <TapeItem label="24h volume" value={Number.isFinite(quoteVolume) ? fmtUsd(quoteVolume!) : '—'} />
-                    <TapeItem label="Open interest" value={strip ? fmtUsd(strip.oiValue) : '—'} />
-                    <div className="flex w-[196px] shrink-0 flex-col justify-center gap-0.5 px-3.5">
-                        <span className="text-[9px] font-medium uppercase leading-none tracking-[0.07em] text-zinc-500">Funding · next in</span>
-                        {Number.isFinite(fundingRate)
-                            ? <FundingCountdown nextFundingTime={nextFundingTime ?? 0} fundingRate={fundingRate!} />
-                            : <span className="font-mono text-[11px] text-zinc-300">—</span>}
-                    </div>
-                    <TapeItem label="Oracle" value={Number.isFinite(indexPrice) ? fmtPrice(indexPrice!) : '—'} />
-                </div>
+                {/* The chart head is one quiet line: SymbolPicker, hero
+                    price, change, funding and the feed state. The 24h
+                    high/low/volume/OI/oracle fields moved to the chart's
+                    OHLC/V/OI readout row (TradingChart) — no metrics band. */}
                 <div className="flex shrink-0 items-center gap-0.5 pl-1">
                     <button
                         type="button"
@@ -1062,8 +1036,15 @@ const TradeView: React.FC<TradeViewProps> = ({
                     book, open/closed from the activity bar's active Trade
                     icon. Closed = the chart owns the whole middle. BELOW lg
                     it belongs to the Book mode instead: always mounted,
-                    hidden unless the Book tab is active (sidebarOpen doesn't
+                    hidden unless the Book tab is active (the Book mode owns it)
                     gate it there — the mode switcher owns phone/tablet). */}
+                {/* The chart COLUMN: the pane plus the order-book drawer, so
+                    the drawer sits UNDER the chart and gives up no horizontal
+                    space — as a row sibling it kept a 296px intrinsic column
+                    even when shut, which squeezed the chart to 138px at 1280.
+                    Below lg the wrapper is `contents`, so the panes stay the
+                    row's direct children and the mode switcher keeps working. */}
+                <div className={isBelowLg ? 'contents' : 'flex min-h-0 min-w-0 flex-1 flex-col'}>
                 <div
                     data-testid="trade-chart-pane"
                     className={isBelowLg
@@ -1080,6 +1061,7 @@ const TradeView: React.FC<TradeViewProps> = ({
                         markPrice={Number.isFinite(markPrice) ? markPrice : null}
                         chatLevels={chatLevels}
                         chartHandle={chartHandleRef}
+                        ohlcvRow={ohlcvRow}
                         onDrawingsChange={setChartDrawings}
                         modelDrawings={modelDrawings}
                         onRemoveModelShape={removeModelShape} />
@@ -1092,49 +1074,48 @@ const TradeView: React.FC<TradeViewProps> = ({
                            loses the border that framed it. */
                         className="absolute top-2 right-2 z-10 rounded-control bg-zinc-800/90 px-2 py-1" />
                 </div>
-                {/* The order book sits BETWEEN the chart and the AI dock, not
-                    to the chart's left. The chart is the primary object on this
-                    surface and the book is a column you read after it; that is
-                    also the order Binance, Bybit and Minara all use. Below lg
-                    the three panes stack with two `hidden`, so DOM order only
-                    matters at lg+ — where the book is now a right-hand column.
-                    `trade-sidebar` is a legacy testid name; renaming it is
-                    cosmetic churn against two test files and buys nothing, so
-                    it stays. */}
-                {/* The book is suppressed while the dock is expanded: the row is already
-                 *  chart + dock, and re-adding a fixed 300px column is what made the
-                 *  total exceed the row and clip the transcript. */}
-                {/* The book is DETAIL THE USER PULLS: `sidebarOpen` is their own
-                    persisted choice (Ctrl/Cmd+B and the activity bar own it).
-                    The row already gives way when the dock is expanded, which is
-                    the crowding fix that belongs here. */}
-                {((sidebarOpen && !dockExpanded) || isBelowLg) && (
+                {/* The order book is DETAIL THE USER PULLS: a 30px strip
+                    (name, live state, spread) closed by default, expanding
+                    on demand. Below lg the Book mode is a full-height pane. */}
+                {!isBelowLg && (
                     <div
                         data-testid="trade-sidebar"
-                        style={isBelowLg ? undefined : { width: bookResize.width }}
-                        className={isBelowLg
-                            ? (mode === 'book' ? 'min-h-0 w-full flex-1' : 'hidden')
-                            : `relative hidden shrink-0 md:block ${bookResize.isResizing ? '' : 'transition-[width] duration-[150ms] ease-[var(--ease-snappy)]'}`}
+                        data-book-open={bookOpen ? 'true' : 'false'}
+                        className="shrink-0 border-t border-white/[0.06]"
                     >
-                        {!isBelowLg && (
-                            <div
-                                role="separator"
-                                aria-orientation="vertical"
-                                aria-label="Resize order book"
-                                data-testid="trade-book-resize"
-                                onPointerDown={bookResize.startResize}
-                                onDoubleClick={bookResize.resetWidth}
-                                title="Drag to resize · double-click to reset"
-                                className={`absolute inset-y-0 left-0 z-20 flex w-1.5 cursor-col-resize touch-none items-center justify-center transition-colors ${
-                                    bookResize.isResizing ? 'text-zinc-300' : 'text-zinc-600 hover:text-zinc-300'
-                                }`}
-                            >
-                                <span aria-hidden="true" className="block h-8 w-px bg-white/15 opacity-60" />
+                        <button
+                            type="button"
+                            onClick={() => setBookOpen(v => !v)}
+                            aria-expanded={bookOpen}
+                            aria-label={bookOpen ? 'Collapse order book' : 'Expand order book'}
+                            data-testid="orderbook-drawer-strip"
+                            className="flex h-[30px] w-full items-center gap-2 px-3 text-ui-dense text-zinc-400 transition-colors hover:text-zinc-200"
+                        >
+                            <span className={`beacon ${feed.depthLive ? '' : 'is-quiet'}`.trim()} aria-hidden="true" />
+                            <span>Order book</span>
+                            <span className="font-mono tabular-nums text-zinc-500" data-testid="orderbook-drawer-spread">
+                                {feed.depth ? `${fmtPrice(feed.depth.bids[0]?.price ?? 0)} · ${fmtPrice(feed.depth.asks[0]?.price ?? 0)}` : '—'}
+                            </span>
+                            <span className="ml-auto text-zinc-500">{bookOpen ? '▾' : '▴'}</span>
+                        </button>
+                        {bookOpen && (
+                            <div style={{ height: BOOK_DRAWER_HEIGHT }} className="overflow-hidden">
+                                <OrderBookPanel bare symbol={symbol} live={feed.depthLive} liveDepth={feed.depth} />
                             </div>
                         )}
-                        <OrderBookPanel symbol={symbol} live={feed.depthLive} liveDepth={feed.depth} />
                     </div>
                 )}
+                {/* Below lg the book pane: full-height OrderBookPanel (bare
+                    mode = the bare ladder, no page chrome). */}
+                {isBelowLg && (
+                    <div
+                        data-testid="trade-sidebar"
+                        className={mode === 'book' ? 'min-h-0 w-full flex-1' : 'hidden'}
+                    >
+                        <OrderBookPanel bare symbol={symbol} live={feed.depthLive} liveDepth={feed.depth} />
+                    </div>
+                )}
+                </div>
                 {/* The Chart AI dock on the shared right-panel contract.
 
                     It supplies the WIDTH, the hide-vs-close behaviour, the drag
@@ -1168,7 +1149,7 @@ const TradeView: React.FC<TradeViewProps> = ({
                     testId="trade-dock"
                     className={isBelowLg
                         ? (mode === 'ai' ? 'min-h-0 w-full flex-1' : 'hidden')
-                        : `h-96 w-full shrink-0 lg:h-auto lg:w-[var(--panel-w)] lg:min-w-[300px] ${dockExpanded ? 'lg:!w-1/2 xl:!w-7/12' : ''}`}
+                        : `h-96 w-full shrink-0 lg:h-auto lg:w-[var(--panel-w)] lg:min-w-[300px] ${dockExpanded ? 'lg:!w-1/2 xl:!w-7/12 lg:!max-w-[calc(100%_-_420px)]' : ''}`}
                 >
                     <TradeChatPanel
                         {...dockProps}

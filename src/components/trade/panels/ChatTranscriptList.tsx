@@ -21,11 +21,32 @@ import VerdictAudit from '../../analysis/VerdictAudit';
 import InlineVerdict from '../../analysis/InlineVerdict';
 import MemoryProvenanceStrip from '../../chat/MemoryProvenanceStrip';
 import KeyLevelsCard from '../KeyLevelsCard';
+import SignalCard, { DeskScorecard, signalIdFromActions, signalRowById } from '../SignalCard';
+import Disclosure from '../../shared/Disclosure';
 import { proposalStateOf as sharedProposalStateOf, rememberProposalState } from '../../../services/trade/proposalDisposition';
-import { CopyChip, FadingText, PinChip, RetryChip, ThinkingTierChip } from '../../shared/chatChips';
+import { CopyChip, PinChip, RetryChip, ThinkingTierChip } from '../../shared/chatChips';
 import AnswerBody from '../../shared/AnswerBody';
 import ChatFailureRow from '../../shared/ChatFailureRow';
 import { BotFace } from '../../chat/BotFace';
+
+/** Prov line: short session id · model short · thinking tier · notebook
+ *  count · relative time. CODE-CALCULATED only — never "Mock" in real UI,
+ *  never invented numbers. */
+const provLine = (e: LiveEntry): string | null => {
+    const parts: string[] = [];
+    const sid = e.speaker?.split(':')[0]?.replace(/-/g, '').slice(0, 6);
+    if (sid && sid !== 'desk') parts.push(sid);
+    // Model short: seat label's second half ("provider:model") already in
+    // `speaker`; fall back to nothing rather than a fabricated name.
+    const model = e.speaker?.split(':')[1]?.split('/').pop()?.slice(0, 12);
+    if (model) parts.push(model);
+    if (e.effort) parts.push(String(e.effort));
+    if (e.at) {
+        const mins = Math.max(0, Math.round((Date.now() - e.at) / 60_000));
+        parts.push(mins < 1 ? 'now' : mins < 60 ? `${mins}m ago` : `${Math.round(mins / 60)}h ago`);
+    }
+    return parts.length > 0 ? parts.join(' · ') : null;
+};
 
 /** Per-entry disposition of a model proposal card ('logged' / 'dismissed')
  *  moved to `services/trade/proposalDisposition` when the Agents surface grew a
@@ -202,6 +223,21 @@ const ChatTranscriptList: React.FC<ChatTranscriptListProps> = ({
                                 />
                             </span>
                             <div className="min-w-0 flex-1 space-y-2">
+                            {/* Signal row: the ledger call, when this turn
+                                emitted one (signalIdFromActions reads the id
+                                from the emit_signal action). Never fabricated. */}
+                            {(() => {
+                                const sid = signalIdFromActions(e.actions);
+                                if (!sid) return null;
+                                const row = signalRowById(sid);
+                                if (!row) return null;
+                                return (
+                                    <SignalCard
+                                        signal={row.signal}
+                                        row={row}
+                                    />
+                                );
+                            })()}
                             <ChatWorkTimeline entry={e} />
                             {/* An interrupted run is a half-written answer with no
                                 way forward — say so IN FLOW, and offer the two
@@ -235,6 +271,8 @@ const ChatTranscriptList: React.FC<ChatTranscriptListProps> = ({
                                     ? <AnswerBody text={shownText} streaming={!!e.streaming} />
                                     : null}
                             </div>
+                            {/* Desk scorecard: the ledger's hit-rate vs base-rate. */}
+                            {!e.streaming && <DeskScorecard />}
                             {shownText && !e.streaming && (
                                 /* Always visible, matching ChatTranscriptRow's
                                     action row — the dock's chips used to be
@@ -273,13 +311,31 @@ const ChatTranscriptList: React.FC<ChatTranscriptListProps> = ({
                                     evidencePack={verdict.evidencePack}
                                     runContract={verdict.runContract} />
                             ) : (
-                                <VerdictAudit
-                                    analysis={verdict.analysis}
-                                    evidencePack={verdict.evidencePack}
-                                    runContract={verdict.runContract}
+                                <Disclosure
+                                    summary="Inspect evidence & gate"
+                                    label="Inspect evidence and gate"
+                                    testId="inspect-evidence-gate"
                                     className="mt-1.5"
-                                />
+                                    summaryClassName="flex cursor-pointer items-center gap-1.5 py-1 text-ui-sm font-semibold text-zinc-500 transition-colors hover:text-zinc-300"
+                                    bodyClassName="mt-1.5 border-t border-zinc-800/60 pt-1.5"
+                                >
+                                    <VerdictAudit
+                                        analysis={verdict.analysis}
+                                        evidencePack={verdict.evidencePack}
+                                        runContract={verdict.runContract}
+                                        className="mt-1"
+                                    />
+                                </Disclosure>
                             ))}
+                            {/* Prov line: code-calculated only — short session
+                                id · model short · thinking tier · notebook
+                                count · relative time. Never "Mock". */}
+                            {shownText && !e.streaming && (() => {
+                                const prov = provLine(e);
+                                return prov ? (
+                                    <p className="font-mono text-ui-2xs tabular-nums text-zinc-600" data-testid="prov-line">{prov}</p>
+                                ) : null;
+                            })()}
                             {aiLevels && aiLevels.levels.length > 0 && !e.streaming && (
                                 <KeyLevelsCard
                                     messageId={e.id}

@@ -400,6 +400,17 @@ const App: React.FC = () => {
         isWatchListVisible, setIsWatchListVisible,
         setLearnTab,
     });
+    /** Every route that lands on Learning lands on the NOTEBOOK; Skills keeps the
+     *  library (see `openSkills`). Both rows are in the rail, and while Learning
+     *  inherited LearnView's library default the two rows drew one screen — the
+     *  owner named that twice ("why the customize is the same render for learning
+     *  tab?", then "the learning tabs and the skills tabs render the same"), so
+     *  the landing tab is part of the ROUTE, not a leftover preference. Declared
+     *  here because the Alt+N chords below read it during the same render. */
+    const selectSurface = useCallback((next: AppSurface) => {
+        if (next === 'learn') setLearnTab('memory');
+        handleSurfaceSelect(next);
+    }, [handleSurfaceSelect, setLearnTab]);
     /** The Agents surface's switch: go and talk to the desk WITH the chart.
      *
      *  A route, not a mode. The Agents surface is the thread; the Chart AI
@@ -1316,7 +1327,7 @@ const App: React.FC = () => {
             };
             if (e.altKey && !e.ctrlKey && !e.metaKey && SURFACE_KEYS[e.key]) {
                 e.preventDefault();
-                handleSurfaceSelect(SURFACE_KEYS[e.key]);
+                selectSurface(SURFACE_KEYS[e.key]);
             }
             // Alt+3 is deliberately NOT deleted with the Skills surface: the
             // chord is muscle memory for "my skill library", and the library
@@ -1341,7 +1352,7 @@ const App: React.FC = () => {
         };
         document.addEventListener('keydown', onKey);
         return () => document.removeEventListener('keydown', onKey);
-    }, [handleSurfaceSelect, setIsSettingsMenuVisible, toggleNavRail, surface]);
+    }, [selectSurface, setIsSettingsMenuVisible, toggleNavRail, surface]);
 
 
 
@@ -2128,22 +2139,22 @@ const App: React.FC = () => {
                 surface={surface}
                 onSelect={(next) => {
                     if (next === 'trade' && surface === 'agents') { openChartAi(); return; }
-                    handleSurfaceSelect(next);
+                    selectSurface(next);
                 }}
             />
         ),
-        [surface, handleSurfaceSelect, openChartAi],
+        [surface, selectSurface, openChartAi],
     );
     const shellUtilities = useMemo(
         () => (
             <ShellUtility
                 surface={surface}
-                onSelect={handleSurfaceSelect}
+                onSelect={selectSurface}
                 onOpenSkills={openSkills}
                 badges={navBadges}
             />
         ),
-        [surface, handleSurfaceSelect, openSkills, navBadges],
+        [surface, selectSurface, openSkills, navBadges],
     );
     /** What the content bar is about. The rail names the workspace; this names
      *  the thing being worked on. */
@@ -2334,7 +2345,7 @@ const App: React.FC = () => {
                 {surface !== 'agents' && isNavRailOpen && (
                     <ShellRail
                         surface={surface}
-                        onSelectSurface={handleSurfaceSelect}
+                        onSelectSurface={selectSurface}
                         onNewChat={startDeskChat}
                         onOpenSearch={requestDeskSearch}
                         // Every profile is a workspace. The active one is first
@@ -2576,7 +2587,7 @@ const App: React.FC = () => {
                                     modeSwitch={shellModeSwitch}
                                     shellUtilities={<ShellUtility
                                         surface={surface}
-                                        onSelect={handleSurfaceSelect}
+                                        onSelect={selectSurface}
                                         onOpenSkills={openSkills}
                                         badges={navBadges}
                                     />}

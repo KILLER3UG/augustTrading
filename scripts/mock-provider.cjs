@@ -130,7 +130,18 @@ const replyTo = (body) => {
             ? (lastUser.content.find(p => p?.type === 'text')?.text ?? '')
             : '';
     const quoted = String(raw).replace(/\s+/g, ' ').trim().slice(0, 160);
-    return `MOCK REPLY for "${quoted}" — the desk is up, the feed is live, and this answer came from the local mock.`;
+    // The answer carries a CLOSED key-levels block so the transcript's
+    // disclosure path is exercised by the probe's default turn — the block is
+    // stripped from the rendered text by `parseKeyLevels`, exactly as a real
+    // answer's would be.
+    const levels = [
+        '```key-levels',
+        'entry | 78250 | break of the session high',
+        'stop | 77600 | below the shelf',
+        'target | 79250 | prior high',
+        '```',
+    ].join(String.fromCharCode(10));
+    return `MOCK REPLY for "${quoted}" — the desk is up, the feed is live, and this answer came from the local mock.` + String.fromCharCode(10, 10) + levels;
 };
 
 /** OPT-IN slow scenario, keyed on a marker in the REQUEST rather than an env

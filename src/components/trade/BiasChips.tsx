@@ -5,13 +5,7 @@
  * services/trade/regime — EMA/RSI/VWAP, pure + unit-tested), never model
  * prose; re-pulls on coin/timeframe change and every 60 s, and renders
  * NOTHING until both series arrive — a missing chip beats an invented one.
- *
- * 2026-10-04 restyle, against the Hermes capture ("flat, not boxed") and DSH's
- * StateDot vocabulary: three filled pills were the loudest chrome in the dock
- * and repeated on EVERY conversation. It is now ONE quiet meta line — the tone
- * lives on a 6px dot, the words are the same ink as the session title, and the
- * three facts are separated by middots instead of three rounded borders. The
- * data and its honesty are untouched; only the furniture changed.
+ * 6px dots, one line, honest failure (nothing until data).
  */
 
 import React, { useEffect, useState } from 'react';

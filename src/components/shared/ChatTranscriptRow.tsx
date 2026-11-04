@@ -21,7 +21,7 @@
  *    the capped, newline-joined LIVE feed: it is what a filling bubble shows,
  *    and it is the fallback for rows written before the trail existed.
  */
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { InterruptedRunNotice } from './InterruptedRunNotice';
 import ChatWorkTimeline, { type ChatWorkView } from '../trade/panels/ChatWorkTimeline';
 import { CopyChip, EditChip, FadingText, PinChip, RevertChip, RetryChip, SpeakChip, ThinkingTierChip, VersionStepper } from './chatChips';
@@ -29,6 +29,7 @@ import AnswerBody from './AnswerBody';
 import ChatFailureRow from './ChatFailureRow';
 import { BotFace } from '../chat/BotFace';
 import KeyLevelsCard from '../trade/KeyLevelsCard';
+import SignalCard, { signalIdFromActions, signalRowById } from '../trade/SignalCard';
 import { parseKeyLevels, type ModelKeyLevel } from '../../services/trade/keyLevels';
 import type { PromptEdit } from '../../utils/messageVersions';
 import type { TradeAnalysis } from '../../types';
@@ -241,8 +242,22 @@ const ChatTranscriptRow: React.FC<ChatTranscriptRowProps> = ({
                    mistakes the app's error for the seat's opinion. */
                 <ChatFailureRow error={row.error} />
             ) : (
-                <div className="w-full max-w-full space-y-2 text-ui-base leading-[1.7] text-zinc-200">
-                    <ChatWorkTimeline entry={work} />
+                    <div className="w-full max-w-full space-y-2 text-ui-base leading-[1.7] text-zinc-200">
+                        {/* Signal row: the ledger call, when this turn
+                            emitted one. Never fabricated. */}
+                        {(() => {
+                            const sid = signalIdFromActions(row.actions);
+                            if (!sid) return null;
+                            const ledgerRow = signalRowById(sid);
+                            if (!ledgerRow) return null;
+                            return (
+                                <SignalCard
+                                    signal={ledgerRow.signal}
+                                    row={ledgerRow}
+                                />
+                            );
+                        })()}
+                        <ChatWorkTimeline entry={work} />
                     {body.trim()
                         /* The answer takes the prose measure (`.chat-prose`,
                            42rem) and nothing else in this row does: the work

@@ -7,6 +7,10 @@
  * Three regions, mirroring the reference: a conversation rail, a main pane,
  * and one pill composer.
  *
+ * The rail is chat-only (mock-redesign-v3): it reuses `ConversationGroups`
+ * so its rows are byte-identical to ShellRail's. No Goals/Agents/Rooms
+ * groups on this surface — bots and rooms live on their own surfaces.
+ *
  * ⚠️ TWO STORES, ONE THREAD — this banner used to claim the opposite.
  *
  *  - this surface reads App's `messages` (useConversations) and slices it
@@ -30,14 +34,11 @@
  *    `handleSendMessage` — the real pipeline, so the desk tools and memory
  *    run exactly as they do from the dock, and the verdict
  *    comes back as an ordinary message in the same array.
- *
- * Rooms delegate to App's existing GroupChatView element rather than
- * reimplementing the round runner.
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowUp, ArrowUpDown, Bot, ChevronDown, Ellipsis, MessageSquare, Pencil, PanelLeftClose, Paperclip, Pin, Plus, Search, StopIcon, Trash2, Users } from '../shared/Icons';
+import { ArrowUp, Bot, ChevronDown, Ellipsis, MessageSquare, Pencil, PanelLeftClose, Paperclip, Pin, Plus, Search, StopIcon, Trash2, Users } from '../shared/Icons';
 import JumpToLatestFab, { JUMP_AWAY_PX } from '../shared/JumpToLatestFab';
 import { ModelFallbackBanner } from '../trade/panels/ChatComposer';
 import type { ProviderConfig } from '../../types/provider';
@@ -54,7 +55,6 @@ import TimeframeBar from '../trade/TimeframeBar';
 import type { ChartInterval } from '../../utils/chartIntervals';
 import { useSymbolUniverse } from '../../hooks/useSymbolUniverse';
 import { MENU_W, RowMenu, type RowMenuItem } from './RowMenu';
-import GoalRailPanel from './GoalRailPanel';
 import ActiveGoalChip from './ActiveGoalChip';
 import type { AgentBot, AgentGroup } from '../../services/agents/agentRoster';
 import { groupDisplayName } from '../../services/agents/agentRoster';
@@ -74,6 +74,7 @@ import StatusPill from '../ui/StatusPill';
 // jumping between them.
 import { NAV_RAIL_EXPANDED_PX } from '../shell/shellChrome';
 import NavExpandButton from '../shell/NavExpandButton';
+import { ConversationGroups } from '../shell/ConversationGroups';
 import InlineVerdict from '../analysis/InlineVerdict';
 import TradeProposalCard, { TradeProposalLoggedRow } from '../trade/panels/TradeProposalCard';
 import { proposalStateOf, rememberProposalState } from '../../services/trade/proposalDisposition';
@@ -251,12 +252,6 @@ const relTime = (iso: string | null | undefined): string => {
     const at = Date.parse(iso);
     if (!Number.isFinite(at)) return '';
     return durationLabel(Date.now() - at);
-};
-
-/** Elapsed since an epoch-ms stamp; '' for no stamp. */
-const relTimeMs = (ms: number): string => {
-    if (!ms) return '';
-    return durationLabel(Date.now() - ms);
 };
 
 /** Adapt a pipeline `Message` onto the shared row view, so this surface and
@@ -528,7 +523,9 @@ const AgentsView: React.FC<AgentsViewProps> = ({
     // Below md the rail is an overlay, not a column — at 320px a permanent
     // 42vw list left no readable transcript.
     const [railOpen, setRailOpen] = useState(false);
-    const [sortByName, setSortByName] = useState(false);
+    // The sort toggle lived on the tab row this column no longer has; the
+    // roster keeps its pinned-first order and its own inactive fold instead.
+
     // WS-6: the composer attaches images through the SAME reader the Trade dock
     // uses (hooks/useChatAttachments was lifted out of TradeChatPanel for this).
     const { attachments, fileInputRef, attachFiles, remove: removeAttachment, clear: clearAttachments, openPicker, images: attachedImages } = useChatAttachments();
@@ -694,13 +691,10 @@ const AgentsView: React.FC<AgentsViewProps> = ({
     // pinned ones, which was invisible while both lists shared one scroll; once
     // the roster became its own tab, pinning an agent deleted it from the tab
     // that is meant to hold the whole roster.
-    const listedBots = sortByName
-        ? [...botRows].sort((a, b) => a.bot.name.localeCompare(b.bot.name)) : botRows;
+    const listedBots = botRows;
     const activeBots = listedBots.filter(r => !attentionMap?.[r.bot.id]);
     const inactiveBots = listedBots.filter(r => !!attentionMap?.[r.bot.id]);
-    const listedGroups = sortByName
-        ? [...unpinnedGroups].sort((a, b) => groupDisplayName(a, bots).localeCompare(groupDisplayName(b, bots)))
-        : unpinnedGroups;
+    const listedGroups = unpinnedGroups;
     const deskMessages = useMemo(() => deskThread(messages, bots), [messages, bots]);
     const lastChartMessage = deskMessages[deskMessages.length - 1];
 
@@ -708,24 +702,8 @@ const AgentsView: React.FC<AgentsViewProps> = ({
     // The title is the first thing the trader said — the conversation has no
     // separate name field, and a preview IS its identity in every list that
     // shows one.
-    const conversationRows = useMemo(() => {
-        const rows = conversations.map(conv => {
-            const firstUser = (conv.messages || []).find(m => m.role === MessageRole.USER && m.text.trim());
-            const last = conv.messages?.[conv.messages.length - 1];
-            const lastMs = last?.createdAt ? Date.parse(last.createdAt) : NaN;
-            return {
-                id: conv.id,
-                title: firstUser ? firstUser.text : 'New conversation',
-                atMs: Number.isFinite(lastMs) ? lastMs : (conv.timestamp || 0),
-            };
-        }).filter(r => matches(r.title))
-            .sort((a, b) => b.atMs - a.atMs);
-        return rows;
-    }, [conversations, matches]);
-    const [showAllConversations, setShowAllConversations] = useState(false);
-    const visibleConversationRows = showAllConversations
-        ? conversationRows
-        : conversationRows.slice(0, 8);
+    // (conversationRows was the rail's filter — the rail now uses
+    // ConversationGroups, which sorts by timestamp itself.)
 
     const activeBot = selection.kind === 'bot' ? bots.find(b => b.id === selection.botId) ?? null : null;
     // The composer's own busy flag never sees a QUEUE-drained DM to this bot
@@ -931,7 +909,9 @@ const AgentsView: React.FC<AgentsViewProps> = ({
     // `goals` is the opposite case: a goal is work state this surface's turns
     // run inside, it has no other home, and the desk reshapes it mid-task — so
     // the list, the focus and the undo belong beside the threads.
-    const [railTab, setRailTab] = useState<'chats' | 'bots' | 'goals'>('chats');
+    // No tab strip (owner, 2026-11-03): one scroll of sections. The roster keeps
+    // its own folds — inactive agents and the search field — so the column stays
+    // navigable without a segmented control hiding half of it.
 
 
     // The mode switch lives in the column's header at every width, the drawer
@@ -1024,24 +1004,11 @@ const AgentsView: React.FC<AgentsViewProps> = ({
                     </button>
                 </div>
 
-                {/* The column's two lists, split the way the reference splits
-                    SESSIONS and BOTS. The search handle rides on this row rather
-                    than inside one section, because it filters both lists and
-                    lived in the bot header only by accident. */}
+                {/* One scroll of sections, the way the reference's column reads —
+                    the Chats | Bots strip is deleted, not hidden. The search handle
+                    sits on this slim row because it filters across the sections
+                    rather than one of them. */}
                 <div className="flex shrink-0 items-center gap-1 px-2 pb-1.5">
-                    <div role="tablist" aria-label="Sidebar lists" className="flex items-center gap-1">
-                        {([['chats', 'Chats'], ['bots', 'Bots'], ['goals', 'Goals']] as const).map(([id, label]) => (
-                            <button key={id} type="button" role="tab" data-testid={`rail-tab-${id}`}
-                                aria-selected={railTab === id}
-                                aria-controls="rail-list-panel"
-                                onClick={() => setRailTab(id)}
-                                className={`hit-target rounded-control px-2 py-1 text-ui-dense transition-colors duration-[120ms] ease-[var(--ease-snappy)] ${
-                                    railTab === id ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-500 hover:bg-white/[0.05] hover:text-zinc-200'
-                                }`}>
-                                {label}
-                            </button>
-                        ))}
-                    </div>
                     <button type="button" data-testid="rail-search-toggle" className="ml-auto shrink-0 rounded-control p-1.5 transition-colors hover:text-zinc-200"
                         onClick={() => setSearchOpen(v => !v)}
                         aria-expanded={searching} aria-controls="rail-search-field"
@@ -1049,15 +1016,42 @@ const AgentsView: React.FC<AgentsViewProps> = ({
                         title={searching ? 'Hide the search field' : 'Search conversations (/)'}>
                         <Search className={`h-3.5 w-3.5 ${searching ? 'text-zinc-200' : 'text-zinc-600'}`} aria-hidden="true" />
                     </button>
-                    {(activeBots.length > 1 || listedGroups.length > 1) && (
-                        <button type="button" data-testid="rail-sort" aria-label="Sort agents and rooms"
-                            onClick={() => setSortByName(v => !v)}
-                            title={sortByName ? 'Sorted by name — click for most recent' : 'Sorted by most recent — click for name'}
-                            className="hit-target shrink-0 rounded-control p-1.5 text-zinc-600 transition-colors hover:text-zinc-300">
-                            <ArrowUpDown className="h-3 w-3" aria-hidden="true" />
-                        </button>
-                    )}
                 </div>
+                {searching && (
+                    <div id="rail-search-field" className="relative mb-1.5 px-1">
+                        <input ref={searchRef} value={query}
+                            onChange={e => setQuery(e.target.value)}
+                            onKeyDown={e => {
+                                if (e.key !== 'Escape') return;
+                                // Hide ≠ close only applies to surfaces;
+                                // an empty field has nothing to keep.
+                                if (query) setQuery('');
+                                else setSearchOpen(false);
+                            }}
+                            placeholder="Search conversations..."
+                            aria-label="Search conversations" data-testid="rail-search"
+                            className="w-full rounded-control border border-zinc-800/80 bg-zinc-950/70 py-1.5 pl-3 pr-7 text-ui-dense text-zinc-200 outline-none placeholder:text-zinc-500 transition-colors focus:border-zinc-700 focus:bg-zinc-950" />
+                        {!query && (
+                            <kbd className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 rounded-control border border-zinc-800/80 bg-zinc-900/80 px-1 py-0.5 font-mono text-ui-xs leading-none text-zinc-500">
+                                /
+                            </kbd>
+                        )}
+                    </div>
+                )}
+                {/* Chat-only: the SAME ConversationGroups the shell rail renders,
+                    so rows are identical on both surfaces. Goals/Agents/Rooms
+                    groups are gone (mock-redesign-v3). */}
+                <ConversationGroups
+                    conversations={conversations}
+                    activeConversationId={activeConversationId}
+                    onNewChat={() => {
+                        onNewChat?.();
+                        selectThread({ kind: 'team' });
+                    }}
+                    onOpenConversation={id => onLoadConversation?.(id)}
+                    onDeleteConversation={id => onDeleteConversation?.(id)}
+                    onClearConversation={id => onClearConversation?.(id)}
+                />
 
                 <div id="rail-list-panel" role="tabpanel" aria-label="Conversations and agents"
                     className="min-h-0 flex-1 space-y-3 overflow-y-auto px-2 pb-3 custom-scrollbar">
@@ -1082,8 +1076,7 @@ const AgentsView: React.FC<AgentsViewProps> = ({
                             )}
                         </div>
                     )}
-                    {railTab === 'goals' && <GoalRailPanel username={username} />}
-                    {railTab === 'chats' && (<section data-testid="rail-pinned">
+                    <section data-testid="rail-pinned">
                         <h4 className="px-1 pb-1 text-ui-dense text-zinc-500">Pinned</h4>
                         {/* WS-6: the desk's own conversation is a first-class row,
                             not only the pane you fall back into. */}
@@ -1099,9 +1092,9 @@ const AgentsView: React.FC<AgentsViewProps> = ({
                                 actions={groupActions(g)}
                                 onClick={() => selectThread({ kind: 'group', groupId: g.id })} />
                         ))}
-                    </section>)}
+                    </section>
 
-                    {railTab === 'bots' && (<section>
+                    <section>
                         <div className="flex items-center gap-1 px-1 pb-1">
                             <h4 className="text-ui-dense text-zinc-500">
                                 Bots
@@ -1133,7 +1126,7 @@ const AgentsView: React.FC<AgentsViewProps> = ({
                                 {showInactive && inactiveBots.map(renderBotRow)}
                             </>
                         )}
-                    </section>)}
+                    </section>
 
                         {/* Rooms get their own header for the same reason the
                             reference's sidebar splits its lists: a bot row and a
@@ -1143,7 +1136,7 @@ const AgentsView: React.FC<AgentsViewProps> = ({
                             entry point left for making the FIRST room, and a
                             section that hides until it has something in it has
                             no place to put the control that creates one. */}
-                    {railTab === 'chats' && (<section data-testid="rail-rooms">
+                    <section data-testid="rail-rooms">
                             <div className="flex items-center gap-1 px-1 pb-1">
                                 <h4 className="text-ui-dense text-zinc-500">
                                     Rooms
@@ -1184,68 +1177,8 @@ const AgentsView: React.FC<AgentsViewProps> = ({
                                     No rooms yet. A room puts several agents on one thread.
                                 </p>
                             )}
-                    </section>)}
+                    </section>
 
-                    {railTab === 'chats' && onLoadConversation && (
-                        <section data-testid="rail-conversations">
-                            <h4 className="px-1 pb-1 text-ui-dense text-zinc-500">
-                                Conversations
-                            </h4>
-                            {visibleConversationRows.length === 0 ? (
-                                <p className="px-1 py-3 text-ui-dense leading-5 text-zinc-600">
-                                    No conversations yet. Everything you ask the desk lands here.
-                                </p>
-                            ) : (
-                                visibleConversationRows.map(r => {
-                                    const active = r.id === activeConversationId;
-                                    return (
-                                        <div key={r.id}
-                                            className={`group relative rounded-control ${active ? 'bg-zinc-800/70' : 'hover:bg-zinc-800/30'}`}>
-                                            <button type="button" data-testid="conversation-row"
-                                                onClick={() => onLoadConversation(r.id)}
-                                                className="flex w-full items-start gap-2 px-2 py-1.5 text-left">
-                                                <span className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center ${
-                                                    active ? 'text-zinc-300' : 'text-zinc-600'
-                                                }`}>
-                                                    <MessageSquare className="h-3.5 w-3.5" aria-hidden="true" />
-                                                </span>
-                                                <span className="min-w-0 flex-1">
-                                                    {/* The reference's chat titles are
-                                                        NOT bold — a list of them
-                                                        reads as a list, not as a
-                                                        set of headlines. */}
-                                                    <span className="block truncate text-ui-sm text-zinc-200" title={r.title}>{r.title}</span>
-                                                </span>
-                                                <span className="shrink-0 pt-0.5 font-mono text-ui-2xs text-zinc-600">
-                                                    {relTimeMs(r.atMs)}
-                                                </span>
-                                            </button>
-                                            {(onDeleteConversation || onClearConversation) && !active && (
-                                                <button type="button" data-testid="conversation-menu"
-                                                    aria-label="Conversation options"
-                                                    onPointerDown={e => e.stopPropagation()}
-                                                    onClick={e => {
-                                                        e.stopPropagation();
-                                                        const rect = e.currentTarget.getBoundingClientRect();
-                                                        setConvMenuAt(m => m?.id === r.id ? null : { id: r.id, x: rect.right - MENU_W, y: rect.bottom + 4 });
-                                                    }}
-                                                    className="absolute right-1.5 top-1.5 rounded-control p-0.5 text-zinc-600 opacity-0 transition-opacity hover:text-zinc-300 focus-visible:opacity-100 group-hover:opacity-100">
-                                                    <Ellipsis className="h-3 w-3" aria-hidden="true" />
-                                                </button>
-                                            )}
-                                        </div>
-                                    );
-                                })
-                            )}
-                            {conversationRows.length > 8 && (
-                                <button type="button" data-testid="conversations-show-more"
-                                    onClick={() => setShowAllConversations(v => !v)}
-                                    className="w-full px-1 py-1.5 text-left text-ui-dense text-zinc-600 transition-colors hover:text-zinc-300">
-                                    {showAllConversations ? 'Show less' : `Show all (${conversationRows.length})`}
-                                </button>
-                            )}
-                        </section>
-                    )}
                     {convMenuAt && createPortal(
                         <RowMenu
                             x={convMenuAt.x}

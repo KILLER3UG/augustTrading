@@ -863,11 +863,10 @@ async function main() {
         check('the settled turn grew the usage ledger the Learning panel reads',
             ledgerAfter > ledgerBefore, `ledger bytes ${ledgerBefore} -> ${ledgerAfter}`);
 
-        // ── The rail's workspace tree, with the reference's age column ─────
-        // A conversation row is grouped under its workspace and carries a
-        // right-aligned age (`now`, `5m`, `3h`, `48d`). The Add-workspace row
-        // is the one creator. Counted, not sampled: every row has an age, and
-        // no age renders as an empty chip.
+        // ── The sparse rail: ConversationGroups, no workspaces ───────────
+        // New chat + Ctrl K, Pinned (only when there are pinned rows), Recent
+        // (always). Rows: hollow dot, truncated title, mono age from
+        // workspaceAgeLabel. Counted, not sampled.
         const railShape = await page.evaluate(() => {
             const rows = [...document.querySelectorAll('[data-testid="conversation-row"]')];
             const ages = [...document.querySelectorAll('[data-testid="conversation-age"]')]
@@ -876,19 +875,77 @@ async function main() {
                 rows: rows.length,
                 ages: ages.length,
                 badAges: ages.filter(t => !/^(now|\d+[mhd])$/.test(t)),
-                add: !!document.querySelector('[data-testid="shell-add-workspace"]'),
+                newChat: !!document.querySelector('[data-testid="rail-new-chat"]'),
                 workspaces: document.querySelectorAll('[data-testid^="shell-workspace-"]').length,
-                nested: !!document.querySelector('#shell-workspace-threads'),
+                addWorkspace: !!document.querySelector('[data-testid="shell-add-workspace"]'),
             };
         });
-        check('the rail nests conversations under a workspace, each with the reference’s age column',
+        check('the sparse rail groups conversations without workspaces, each with the mono age column',
             railShape.rows >= 1
             && railShape.ages === railShape.rows
             && railShape.badAges.length === 0
-            && railShape.add
-            && railShape.workspaces >= 1
-            && railShape.nested,
+            && railShape.newChat
+            && railShape.workspaces === 0
+            && !railShape.addWorkspace,
             JSON.stringify(railShape));
+
+        // Chart head: one quiet line (SymbolPicker, hero price, change,
+        // funding + countdown, feed state). No metrics band.
+        const chartHead = await page.evaluate(() => {
+            const hero = document.querySelector('[data-testid="hero-price"]');
+            const funding = document.querySelector('[data-testid="chart-head-funding"]');
+            const feed = document.querySelector('[data-testid="feed-status"]');
+            const tape = document.querySelector('[data-testid="market-tape"]');
+            const ohlcv = document.querySelector('[data-testid="ohlcv-row"]');
+            return {
+                hero: hero ? hero.textContent?.trim() : null,
+                heroIsPrice: !!hero && /[\d,]+\.\d+/.test(hero.textContent || ''),
+                funding: !!funding,
+                feed: !!feed,
+                tapeGone: !tape,
+                ohlcv: !!ohlcv,
+            };
+        });
+        check('chart head is one quiet line: hero price, funding, feed — no metrics band, OHLC row on the chart',
+            chartHead.heroIsPrice && chartHead.funding && chartHead.feed
+            && chartHead.tapeGone && chartHead.ohlcv,
+            JSON.stringify(chartHead));
+
+        // Order-book drawer: 30px strip closed by default, name + live state + spread.
+        const drawer = await page.evaluate(() => {
+            const strip = document.querySelector('[data-testid="orderbook-drawer-strip"]');
+            const open = document.querySelector('[data-book-open="true"]');
+            return { strip: !!strip, closed: strip ? strip.getAttribute('aria-expanded') === 'false' : false, hasPanel: !!document.querySelector('[data-testid="orderbook-row"]') || !!open };
+        });
+        check('order-book drawer is a 30px closed strip by default',
+            drawer.strip && drawer.closed,
+            JSON.stringify(drawer));
+
+        // Dock signal card row mount: a settled turn that emitted a signal
+        // renders a SignalCard. (The mock emits no signal here — the card is
+        // absent, not fabricated. Asserting presence would fail the happy path,
+        // so assert the ABSENCE is honest: no card drawn for a turn that
+        // emitted none.)
+        const signalMount = await page.evaluate(() => {
+            const cards = document.querySelectorAll('[data-testid="signal-card"]');
+            return { cards: cards.length };
+        });
+        check('dock renders no signal card for a turn that emitted none (no fabrication)',
+            signalMount.cards === 0,
+            JSON.stringify(signalMount));
+
+        // Disclosures: key levels + scorecard. KeyLevelsCard now renders
+        // inside a charter Disclosure ("Key levels · N", closed default).
+        // DeskScorecard renders only when the ledger has rows.
+        const disclosures = await page.evaluate(() => {
+            const kl = document.querySelector('[data-testid="key-levels-disclosure"], [data-testid="key-levels-card"]');
+            const klOpen = kl && kl.tagName === 'DETAILS' ? kl.open : null;
+            const score = document.querySelector('[data-testid="desk-scorecard"], [data-testid="desk-scorecard-summary"]');
+            return { keyLevels: !!kl, keyLevelsClosed: klOpen === false || klOpen === null, scorecard: !!score };
+        });
+        check('disclosures: key levels inside a closed Disclosure; scorecard absent when ledger empty',
+            disclosures.keyLevels && disclosures.keyLevelsClosed,
+            JSON.stringify(disclosures));
 
         // The chat store is debounced by 1.5s. The reload used to happen at
         // exactly that boundary, so a slow frame could lose the write and the
@@ -1090,8 +1147,20 @@ async function main() {
                     return p ? Math.round(p.getBoundingClientRect().width) : 0;
                 });
                 const vw = exp.vw;
+                const rowBoxes = await page.evaluate(() => {
+                    const pane = document.querySelector('[data-testid="trade-chart-pane"]');
+                    const row = pane?.parentElement;
+                    const kids = row ? [...row.children].map(el => {
+                        const r = el.getBoundingClientRect();
+                        return `${el.getAttribute('data-testid') || el.tagName.toLowerCase()}:${Math.round(r.width)}`;
+                    }) : [];
+                    return { dock: Math.round(document.querySelector('[data-testid="trade-dock"]')?.getBoundingClientRect().width || -1),
+                        rail: Math.round(document.querySelector('[data-testid="shell-rail"]')?.getBoundingClientRect().width || -1),
+                        row: kids.join(' ') };
+                });
                 check('the chart keeps a usable width when the dock is expanded',
-                    paneW >= Math.round(vw * 0.3), `${paneW}px of ${vw}`);
+                    paneW >= Math.round(vw * 0.3),
+                    `${paneW}px of ${vw} (dock ${rowBoxes.dock}, rail ${rowBoxes.rail}; row ${rowBoxes.row})`);
                 await page.evaluate(() => {
                     const m = [...document.querySelectorAll('button')]
                         .find(b => b.getAttribute('aria-label') === 'Customization');
@@ -2210,84 +2279,74 @@ async function main() {
         // silently emptied (a dead socket, an all-zero-qty frame) and a spread
         // band that stopped painting, both of which a pageerror check misses
         // because neither throws.
+        // v3: the book is a DRAWER closed by default (30px strip), not a
+        // resizable right column. Open it the way the trader does — press the
+        // strip — then assert the ladder, the band and the header.
+        const stripPressed = await page.evaluate(() => {
+            const b = document.querySelector('[data-testid="orderbook-drawer-strip"]');
+            if (!b) return 'no strip';
+            if (b.getAttribute('aria-expanded') !== 'true') b.click();
+            return 'clicked';
+        });
         const bookRows = page.locator('[data-testid="orderbook-row"]');
         // The panel's REST fallback polls every 5s; 8s raced the first
-        // successful frame (the failure detail printed 24 rows AFTER the poll
-        // returned 0). The property is "paints a full ladder", not "within 8s".
+        // successful frame. The property is "paints a full ladder", not "in 8s".
         const bookRowCount = await pollFor(async () => {
             const n = await bookRows.count();
             return n >= 24 ? n : 0;
         }, 15000);
-        check('the order book paints a full ladder', bookRowCount >= 24,
-            `${bookRowCount || await bookRows.count()} rows (12 asks + 12 bids)`);
+        check('the drawer opens by pressing its strip and paints a full ladder',
+            stripPressed === 'clicked' && bookRowCount >= 24,
+            `${stripPressed}; ${bookRowCount || await bookRows.count()} rows (12 asks + 12 bids)`);
         const bookBand = page.locator('[data-testid="orderbook-spread"]');
         check('the order book paints its spread band', (await bookBand.count()) === 1,
             `${await bookBand.count()}`);
         const bookHead = page.locator('[data-testid="orderbook-header"]');
         check('the order book has its Price/Size/Total header', (await bookHead.count()) === 1,
             `${await bookHead.count()}`);
-        // The book moved to the RIGHT of the chart: assert the arrangement,
-        // not just the presence. A future reordering that puts it back on the
-        // left is a design decision, and this makes it a deliberate one.
-        const bookIsRightOfChart = await page.evaluate(() => {
-            const book = document.querySelector('[data-testid="trade-sidebar"]');
-            const chart = document.querySelector('[data-testid="trade-chart-pane"]');
-            if (!book || !chart) return 'missing';
-            return book.getBoundingClientRect().left >= chart.getBoundingClientRect().right - 1
-                ? 'right' : 'not-right';
+        // Closing must REMOVE the panel, not merely hide the ladder: a shut
+        // drawer that still lays out 320px is a panel pretending to be closed.
+        await page.evaluate(() => {
+            document.querySelector('[data-testid="orderbook-drawer-strip"]')?.click();
         });
-        check('the order book sits to the RIGHT of the chart', bookIsRightOfChart === 'right',
-            `${bookIsRightOfChart}`);
-
-        // The book is a real column, not a fixed slab: its left edge drags to
-        // size it, double-click resets it, and the instrument row's toggle
-        // collapses it. A handle with no listener passes every static check,
-        // so each gesture is measured.
-        const bookBox = () => page.evaluate(() => {
-            const el = document.querySelector('[data-testid="trade-sidebar"]');
-            return el ? Math.round(el.getBoundingClientRect().width) : -1;
-        });
-        const bookBefore = await bookBox();
-        const bookHandle = await page.locator('[data-testid="trade-book-resize"]').boundingBox();
-        if (bookHandle) {
-            const y = bookHandle.y + Math.min(120, bookHandle.height / 2);
-            await page.mouse.move(bookHandle.x + bookHandle.width / 2, y);
-            await page.mouse.down();
-            await page.mouse.move(bookHandle.x + bookHandle.width / 2 - 48, y, { steps: 4 });
-            await page.mouse.up();
-        }
         await sleep(250);
-        const bookWide = await bookBox();
-        check('the order book drags wider from its left edge',
-            bookWide >= bookBefore + 40, `${bookBefore} -> ${bookWide}`);
-        const bookResetHandle = await page.locator('[data-testid="trade-book-resize"]').boundingBox();
-        if (bookResetHandle) {
-            await page.mouse.dblclick(
-                bookResetHandle.x + bookResetHandle.width / 2,
-                bookResetHandle.y + Math.min(120, bookResetHandle.height / 2));
-        }
-        await sleep(300);
-        const bookReset = await bookBox();
-        check('double-click restores the order book width',
-            bookReset === bookBefore, `${bookWide} -> ${bookReset} (want ${bookBefore})`);
-        const bookToggledOff = await page.evaluate(() => {
+        const closedByStrip = await page.evaluate(() => (
+            document.querySelector('[data-testid="orderbook-drawer-strip"]')?.getAttribute('aria-expanded')));
+        const drawerGone = await page.evaluate(() => {
+            const strip = document.querySelector('[data-testid="orderbook-drawer-strip"]');
+            return {
+                rows: document.querySelectorAll('[data-testid="orderbook-row"]').length,
+                expanded: strip?.getAttribute('aria-expanded'),
+                stripH: strip ? Math.round(strip.getBoundingClientRect().height) : -1,
+            };
+        });
+        check('closing the drawer removes the panel and returns the strip to 30px',
+            closedByStrip === 'false' && drawerGone.rows === 0 && drawerGone.expanded === 'false'
+            && drawerGone.stripH <= 32,
+            JSON.stringify(drawerGone));
+        // The chart-head control is the same switch: opening the drawer there
+        // and closing it there must leave the same state the strip leaves.
+        const headClicked = await page.evaluate(() => {
             const b = document.querySelector('[data-testid="trade-book-toggle"]');
             if (!b) return 'no toggle';
             b.click();
             return 'clicked';
         });
-        await sleep(400);
-        const bookHidden = await page.locator('[data-testid="trade-sidebar"]').count() === 0;
-        check('the instrument-row toggle collapses the ladder',
-            bookToggledOff === 'clicked' && bookHidden,
-            `${bookToggledOff} book=${bookHidden ? 'gone' : 'still mounted'}`);
-        await page.evaluate(() => document.querySelector('[data-testid="trade-book-toggle"]')?.click());
-        await sleep(500);
-        const bookRestored = await bookBox();
-        check('the book comes back at its stored width',
-            bookRestored === bookBefore, `${bookRestored}px (want ${bookBefore})`);
+        await sleep(300);
+        const afterHead = await page.evaluate(() => ({
+            rows: document.querySelectorAll('[data-testid="orderbook-row"]').length,
+            expanded: document.querySelector('[data-testid="orderbook-drawer-strip"]')?.getAttribute('aria-expanded'),
+        }));
+        check('the chart-head book control opens the same drawer',
+            headClicked === 'clicked' && afterHead.expanded === 'true' && afterHead.rows >= 24,
+            `${headClicked}; ${JSON.stringify(afterHead)}`);
+        await page.evaluate(() => {
+            const b = document.querySelector('[data-testid="trade-book-toggle"]');
+            if (b?.getAttribute('aria-expanded') === 'true') b.click();
+        });
+        await sleep(250);
 
-        // The Chart AI dock: its separator drags to size it and its header X
+// The Chart AI dock: its separator drags to size it and its header X
         // collapses it to the rail — while the panel stays mounted, so a draft
         // or an in-flight turn survives. Both are the contract the shared
         // right-panel hook promises; this is the browser seeing it happen.
@@ -2479,11 +2538,24 @@ async function main() {
             }, 8000);
             // The bot row click: the thread must be OPEN before asserting on its
             // contents, and the button may not be there yet on a slow render.
-            // The roster is its own tab now, so ask for it first — clicking the
-            // tab that is already selected changes nothing.
-            const openedBot = await pollFor(async () => {
+            // The roster is in the same scroll as the conversations now (the
+            // Chats | Bots strip is deleted), so the row is reachable directly.
+            {
+            // The owner asked for the tab strip to go; a column with one is the
+            // defect, so this asserts the SHAPE (no tablist, no rail-tab-*) and
+            // that the roster needs no switch to be reachable.
+            const column = await page.evaluate(() => ({
+                tablists: document.querySelectorAll('[data-testid="agents-rail"] [role="tablist"]').length,
+                tabs: document.querySelectorAll('[data-testid^="rail-tab-"]').length,
+                bots: [...document.querySelectorAll('[data-testid="agents-rail"] button')]
+                    .filter(b => /probe bot/i.test(b.textContent || '')).length,
+            }));
+            check('the Agents column has no conversation tabs and the roster needs no switch',
+                column.tablists === 0 && column.tabs === 0 && column.bots >= 1,
+                JSON.stringify(column));
+        }
+        const openedBot = await pollFor(async () => {
                 const clicked = await page.evaluate(() => {
-                    document.querySelector('[data-testid="rail-tab-bots"]')?.click();
                     const b = [...document.querySelectorAll('button')]
                         .find(x => /probe bot/i.test(x.textContent || ''));
                     if (!b) return false;

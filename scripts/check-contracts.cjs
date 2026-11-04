@@ -3214,6 +3214,31 @@ const asyncChecks = (async () => {
         && /no human approval gate on memory writes/.test(read('src/services/learning/memoryAmendments.ts')));
 })();
 
+// ─── the v3 sidebar: one list, no tabs, two landings ───────────────────────
+// The owner asked for two things twice: "remove the conversation tabs in the
+// sidebar" and, before that, "the learning tabs and the skills tabs render the
+// same". Both are SHAPE claims, and both regressed once because a second control
+// or a shared default quietly put one screen behind two entries.
+(() => {
+    const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+    const app = read('src/App.tsx');
+    const agents = read('src/components/agents/AgentsView.tsx');
+
+    ok('the Agents column has no conversation tabs',
+        !/role="tablist"/.test(agents) && !/rail-tab-/.test(agents) && !/railTab/.test(agents),
+        'a segmented control hides half the column at rest; the reference is one scroll');
+    ok('one conversation list component, rendered by both columns',
+        (read('src/components/shell/ConversationGroups.tsx').match(/data-testid="conversation-row"/g) || []).length === 1
+            && /<ConversationGroups/.test(agents) && /<ConversationGroups/.test(read('src/components/shell/ShellRail.tsx')),
+        'two row implementations is how the two lists drift apart');
+    // Two rows, two screens. The landing tab belongs to the ROUTE.
+    ok('learning lands on the notebook, skills on the library',
+        /if \(next === 'learn'\) setLearnTab\('memory'\)/.test(app)
+            && /setLearnTab\('skills'\)/.test(app)
+            && /:\s*'memory';/.test(read('src/components/learn/LearnView.tsx')),
+        'both entries inheriting the library default renders one view twice');
+})();
+
 // ─── report ────────────────────────────────────────────────────────────────
 const finishReport = () => {
     console.log(`contracts: ${passed} passed, ${failures.length} failed`);

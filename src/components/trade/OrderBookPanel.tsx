@@ -30,6 +30,8 @@ interface OrderBookPanelProps {
      *  the 5s REST poll stops (it stays as the fallback). */
     live?: boolean;
     liveDepth?: LiveDepth | null;
+    /** Bare mode: the ladder only, no page chrome (drawer + Book mode). */
+    bare?: boolean;
 }
 
 const fmtQty = (n: number): string => n >= 1000 ? `${(n / 1000).toFixed(1)}K` : n.toFixed(n >= 10 ? 1 : 3);
@@ -101,7 +103,7 @@ const SkeletonRow: React.FC<{ side: 'bid' | 'ask' }> = ({ side }) => (
     </div>
 );
 
-const OrderBookPanel: React.FC<OrderBookPanelProps> = ({ symbol, live = false, liveDepth }) => {
+const OrderBookPanel: React.FC<OrderBookPanelProps> = ({ symbol, live = false, liveDepth, bare = false }) => {
     const [book, setBook] = useState<OrderBookData | null>(null);
     // The poll's failure is a STATE, not a silence: a swallowed catch left a
     // permanently failing book indistinguishable from a loading one.
@@ -181,7 +183,8 @@ const OrderBookPanel: React.FC<OrderBookPanelProps> = ({ symbol, live = false, l
            page, so it is separated from the chart by ONE HAIRLINE and carries
            no fill of its own. The old panel fill (zinc-900 at 40 %) was a
            second box down the middle of the surface. */
-        <div className="flex h-full min-h-0 flex-col border-l border-white/[0.06]">
+        <div className={`flex h-full min-h-0 flex-col ${bare ? '' : 'border-l border-white/[0.06]'}`}>
+            {!bare && (
             <div className="flex shrink-0 items-center justify-between border-b border-white/[0.04] px-3 py-2.5">
                 <h2 className="ui-kicker">Order Book</h2>
                 {/* The feed state is a WORD, not a figure, so it wears the
@@ -191,6 +194,7 @@ const OrderBookPanel: React.FC<OrderBookPanelProps> = ({ symbol, live = false, l
                     {usingLive ? 'live' : asksView.length || bidsView.length ? `${dominant}` : bookFailed ? 'offline' : book ? 'empty' : 'loading'}
                 </span>
             </div>
+            )}
             {/* Column headers share the rows' grid so all three columns align.
                 Labelled exactly like the metrics strip in TradeView (Stat's
                 label class) rather than inventing a new micro-type style —

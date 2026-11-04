@@ -20,17 +20,11 @@ its icon kept their meaning; only the destination changed.
 
 Anatomy, top to bottom:
 
-- **Market header** — identity + hero price with a 48-bar spark and feed state, then a quiet metrics
-  strip (Mark / Oracle / 24h / Volume / OI / Funding with a depleting-window bar).
-- **Chart** — full height, with TradingView-style drawing tools. A Chart AI levels card can push
-  key levels onto the canvas; those are transient, stamped with the coin they were drawn on, and
-  blanked on instrument switch.
-- **Order book** — the ladder, collapsible from the instrument row. Its left edge drags to size
-  the column (220–420px; the width persists and double-click restores 300).
-- **Chart AI dock** — drag-resizable at its separator (300–820px, persisted; double-click
-  resets), collapsible to a rail that keeps the panel mounted, expandable over the chart. Below
-  the `lg` breakpoint the three panes flatten into an explicit **Chart | AI | Book** switcher,
-  one full-height pane at a time, persisted per user.
+- **Chart head** — one quiet line: `SymbolPicker`, hero price (`text-ui-price` mono tabular-nums), change pill, funding + countdown, feed state, timeframe control. No metrics band. `src/components/trade/TradeView.tsx` › `TradeView`
+- **OHLC/V/OI row** — the chart's crosshair readout row carries the 24h high/low/volume/OI/oracle fields the removed band held. `src/components/trade/TradingChart.tsx` › `TradingChart`
+- **Order-book drawer** — 30px strip (name, live state, spread) closed by default, expands on demand. Analyze-only. Narrow (<1024) Book mode = full-height pane. `src/components/trade/TradeView.tsx` › `TradeView`
+- **Chart AI dock** — `useRightPanel` default 364px (min 300 / max 820), resize + collapse rail. Dock body order: BiasChips line, SignalCard, KeyLevels Disclosure, DeskScorecard, user bubble (max 80%), AnalyzedRow, AnswerBody (font-reading), MemoryProvenanceStrip, VerdictAudit gate behind "Inspect evidence & gate" Disclosure, prov line (code-calculated only). `src/components/trade/panels/ChatTranscriptList.tsx` › `ChatTranscriptList`
+- **Narrow <1024** — three-mode switcher **Chart | AI | Book**, one pane at a time.
 
 Live state: one websocket bundle per symbol drives strip + book + candles; REST polling takes over
 the moment the socket drops, and the chart's own stall watchdog re-syncs a quiet stream. Prices are
@@ -50,9 +44,16 @@ logged did not happen as far as the app is concerned.
 
 ## Agents (`agents`)
 
-Three regions: a full-height rail, a main pane, and one pill composer. The rail's top is the
+Three regions: a sparse rail, a main pane, and one pill composer. The rail's top is the
 **Analyze ⇄ Agents mode switch** — a route between the charted and focused forms of the same desk,
 not a per-turn mode. Journal, Learning and Customize sit at its foot.
+
+- **Conversation list** — `ConversationGroups`, the SAME component `ShellRail` renders: New chat + Ctrl K, Pinned (only when there are pinned rows), Recent (always). Rows: hollow dot (filled active, amber pulsing running), truncated title, mono age (`workspaceAgeLabel`). No Goals/Agents/Rooms groups — chat-only. `src/components/shell/ConversationGroups.tsx` › `ConversationGroups`
+- **Chat full view = AgentsView** — id stays `agents`, label is **Chat**. Greeting sparse. `ChatTranscriptRow` renders bubble/failure/AI with `BotFace` + `ChatWorkTimeline` + `AnswerBody` + `SignalCard` + KeyLevels + chatChips incl. `FeedbackChips`. Follow-up line renders ONLY if backed by a real computed suggestion; otherwise omitted. `src/components/shared/ChatTranscriptRow.tsx` › `ChatTranscriptRow`
+- **SignalCard** — shared by dock + Chat. Headline Direction + COIN, meta (R:R, interval, conviction), 4-row kv (Entry=info cyan, Stop=trade-down, Target=trade-up, Prob. w/ bar+base tick ONLY if `SignalRecord` carries `probability`/`baseRate`/`sampleN` — else omitted), Trigger/Invalidation, evidence, actions (Show on chart/Log plan/Copy), mono sigmeta (signalId·age·expiresAt countdown·venue). `signalIdFromActions` reads `ToolAction.signalId` for `emit_signal`. Ledger via `readSignals`/`summariseSignals` only — never fabricate probability/confidence. `src/components/trade/SignalCard.tsx` › `SignalCard`
+- **DeskScorecard** — Disclosure "Scorecard · X% vs Y% base (n=N[, thin])". `src/components/trade/SignalCard.tsx` › `DeskScorecard`
+- **BiasChips** — 6px dots, one line, honest failure (nothing until data). Mounted in AgentsView too. `src/components/trade/BiasChips.tsx` › `BiasChips`
+- **Composer** — box-only (no context/quick-action chips). Keeps `ChatAttachmentStrip`, `ModelFallbackBanner`, disclaimer verbatim "Analysis and journaling only — it never places or signs a trade." Textarea autosize 1-line. `src/components/trade/panels/ChatComposer.tsx` › `ChatComposer`
 
 - A send routes on **what is selected**, not on a send-mode switch (there is none inside the
   composer): a selected bot answers through the bot turn path; nothing selected hands the text to
@@ -66,6 +67,11 @@ not a per-turn mode. Journal, Learning and Customize sit at its foot.
   provider+model.
 
 ## Learning (`learn`)
+
+**Learning** lands on the notebook and **Skills** lands on the library. Both rows are in the rail,
+so the landing tab is part of the route (`App.tsx` › `App` `selectSurface`, `openSkills`): while
+Learning inherited the library default the two rows drew one screen, which the owner named twice.
+
 
 Tabs in the loop's own order:
 
@@ -98,14 +104,15 @@ the trader's journal in bulk; treat it accordingly.
 
 ## The shell
 
-- **One full-height left rail** on every surface (owner ruling, 2026-11-02). At its top: the
-  Analyze ⇄ Agents **mode switch** — two modes of one desk, not two products. Then New chat,
-  Search; the **Workspaces** list (one per profile, the active one expanded over its conversations
-  as plain rows with a right-aligned age column, the rest a click to switch) and an
-  **Add workspace** row that opens the one profile creator; and, at its foot, Journal / Learning /
-  Skills above the account.
-- On the **Agents** surface the same mode switch and utility rows live in `AgentsView`'s richer
-  sidebar (bots, rooms, goals, conversations). A mode hop moves the content and not the chrome.
+- **One full-height left rail** on every surface (owner ruling, 2026-11-02; one column, v3). At
+  its top the Analyze ⇄ Agents **mode switch** — two modes of one desk, not two products — then
+  New chat and Search, then the **conversation list**: Pinned ▾ and Recent ▾, each row a bullet,
+  the title and a right-aligned mono age, with Pin / Clear / Delete on the hover menu. At its foot,
+  Journal / Learning / Skills above the account. Workspace switching is a Settings → Accounts
+  concern in v3, not a list in the rail.
+- On the **Agents** surface the SAME mode switch and utility rows arrive as nodes, and the column
+  beside the thread renders the same `ConversationGroups` above the roster. Its Chats | Bots tab
+  strip is DELETED — one scroll of sections, so the roster needs no switch to be reachable.
 - The **content bar** carries the A-mark, the active conversation or record name, the instrument
   context, session state and Activity. `AgentsView`'s own bar IS that bar — no second header
   stacks above it.
