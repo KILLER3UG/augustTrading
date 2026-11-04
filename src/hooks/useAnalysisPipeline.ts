@@ -1050,6 +1050,21 @@ export function useAnalysisPipeline(params: UseAnalysisPipelineParams) {
             if (similarSetupsContext) contextParts.push(similarSetupsContext);
             if (learningInjection) contextParts.push(learningInjection);
             if (predicateGate?.note) contextParts.push(predicateGate.note);
+            // E7 extended: the coin's last stored post-mortem rides the
+            // context bundle (REFERENCE ONLY) — the lesson the loop already
+            // earned is visible to the ordinary answer, not only to the next
+            // emit_signal receipt. A failed store read costs the section,
+            // never the run.
+            if (detectedLearningCoin) {
+                try {
+                    const { diagnosisBriefBlock } = await import('../services/tracking/diagnosisSkillCluster');
+                    const briefCoin = /USDT?$/i.test(detectedLearningCoin)
+                        ? detectedLearningCoin.toUpperCase()
+                        : `${detectedLearningCoin.toUpperCase()}USDT`;
+                    const briefBlock = await diagnosisBriefBlock(briefCoin);
+                    if (briefBlock) contextParts.push(briefBlock);
+                } catch { /* the brief costs itself, never the run */ }
+            }
 
             // ========== GATE KEEPER: Two-Stage Gate Scan ==========
             // The authoritative symbol is the one detected at the top of the

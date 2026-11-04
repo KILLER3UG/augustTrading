@@ -211,3 +211,37 @@ export const latestDiagnosisBrief = (
         at: latest.createdAt,
     };
 };
+
+/** The prompt-facing block for an instrument's last stored diagnosis, or ''
+ *  when none is stored or the store is unreadable — the same posture as the
+ *  emit_signal receipt's `previousDiagnosis`, extended to the ordinary desk
+ *  read (the lesson the loop already earned must not be visible ONLY when
+ *  the seat happens to emit a signal). Refusals are skipped by
+ *  `latestDiagnosisBrief` (a "no lesson" is not a lesson); a read failure
+ *  costs the block, never the turn, and never fabricates one.
+ *
+ *  The framing is the receipt's own words — REFERENCE ONLY, adopt/improve/
+ *  reject — because a diagnosis that reads as a rule would be a second veto
+ *  path, and a tentative-skill rule must never veto or cap anything. */
+export const diagnosisBriefBlock = async (symbol: string): Promise<string> => {
+    const sym = (symbol || '').trim().toUpperCase();
+    if (!sym) return '';
+    try {
+        const { getActiveUsername } = await import('../../utils/activeUser');
+        const { readDiagnoses, readTrackedPositions } = await import('./positionStore');
+        const user = getActiveUsername();
+        const [diagRead, posRead] = await Promise.all([readDiagnoses(user), readTrackedPositions(user)]);
+        if (!diagRead.ok || !posRead.ok) return '';
+        const brief = latestDiagnosisBrief(diagRead.value, posRead.value, sym);
+        if (!brief) return '';
+        return [
+            `## Post-mortem context — the last recorded lesson on ${sym} (REFERENCE ONLY: adopt it, improve it, or reject it in your own read; never a rule, a veto or a confidence cap)`,
+            `- Outcome: ${brief.outcome} · diagnosed ${brief.at}`,
+            `- What changed: ${brief.primaryChange}`,
+            `- Lesson: ${brief.lesson}`,
+            brief.when ? `- Applies when: ${brief.when}` : '',
+        ].filter(Boolean).join('\n');
+    } catch {
+        return '';
+    }
+};

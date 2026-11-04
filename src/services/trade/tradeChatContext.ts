@@ -37,6 +37,11 @@ export interface TradeChatContextInput {
      *  updated live by the kline websocket). Stamped onto the packet so its
      *  REST-snapshot candle rows can't contradict what the user watches. */
     formingCandle?: FormingCandle | null;
+    /** The coin's last stored post-mortem, pre-rendered by
+     *  `diagnosisBriefBlock` (REFERENCE ONLY framing included). E7 extended
+     *  to the ordinary desk read: the loop's lesson rides the context, not
+     *  only the emit receipt. '' or undefined renders nothing. */
+    postMortemBrief?: string;
     /** The seat's context window, when the caller knows it. Sizing the packet
      *  budget against the REAL window is the point — a 1M-window seat and a
      *  32k one should not be sent the same packet. */
@@ -95,7 +100,7 @@ export const packetAgeNote = (fetchedAtMs: number, nowMs: number): string => {
     return `${mins}m ${ageSec % 60}s old — STALE: this snapshot predates the last ${mins} minute(s); call get_market_packet or get_chart_view for a newer read before you state a price`;
 };
 
-export const buildTradeChatContext = ({ symbol, interval, packetMarkdown, fetchedAtMs, drawingsDescription, onScreenDescription, plansDescription, liveMarkPrice, formingCandle, contextWindowTokens, nowMs }: TradeChatContextInput): string => {
+export const buildTradeChatContext = ({ symbol, interval, packetMarkdown, fetchedAtMs, drawingsDescription, onScreenDescription, plansDescription, postMortemBrief, liveMarkPrice, formingCandle, contextWindowTokens, nowMs }: TradeChatContextInput): string => {
     const when = phtFullStamp(fetchedAtMs);
     // A failed fetch is the app's OWN sentinel, not a parenthetical: the same
     // marker every other withheld read uses, so the seat cannot file an outage
@@ -133,6 +138,7 @@ export const buildTradeChatContext = ({ symbol, interval, packetMarkdown, fetche
         (onScreenDescription || '').trim(),
         '[PRICES — the packet is a REST snapshot (ticker/klines cached up to ~30s); the PRICE STAMP and the "Live mark" in [ON SCREEN] both come from the chart\'s markPrice@1s websocket and are the FRESHEST prices in this message. A gap between packet numbers and those is snapshot age or perp basis, NOT a fresh market move — never narrate a move from that gap alone; confirm with get_chart_view or get_price_snapshot first.]',
         (plansDescription || '').trim(),
+        (postMortemBrief || '').trim(),
         (drawingsDescription || '').trim(),
         'If you need data newer than this packet, CALL THE DESK TOOLS — get_chart_view (everything on screen: candles, timeframe, live mark, verdict levels, order book and the user\'s own drawings), get_all_timeframes (every timeframe at once: candles, structure, formations per TF + book/spread/funding/OI/liquidations), get_market_packet (the full hybrid pull: every timeframe, indicators, funding, OI, book walls, liquidations, session), scan_setups (the strategy-book scanner: live breakouts, pin bars, inside-bar resolutions, gaps, divergences, band plays, pullbacks and failed breaks with evidence + matching skills), or the granular ones (get_price_snapshot, get_order_book, get_liquidations, get_session_context) — never invent a number the packet lacks.',
         'You can also GROW with this desk: write_memory_note saves a durable lesson straight into the trader notebook, get_notebook_map shows what you already know before you write, propose_skill / revise_skill / amend_memory / forge_tool write directly — skill writes are CANDIDATES, and evidence (not a human approval) changes their status. Propose them when this session taught you something that will matter on the next chart. When the user asks you to LEARN THIS CHART, scan_chart_skills studies EVERY candle — the hour-by-hour movement table in PHT, the ≥10% up/down swing legs with the state that preceded them, regimes, gaps, and every book detector with historical win-rates — and creates pattern-first candidates directly; it is slow, so call it at most once per turn. And you can DRAW on this chart like the user does: mark_trade_levels lays an Entry/Stop/TP plan as labeled lines, draw_on_chart adds a trendline/ray/zone/fib/text, get_all_timeframes pulls every timeframe plus the book at once. The drawings block stamps when each shape was drawn and how far the mark has moved since — honour a "POSSIBLY STALE" flag by re-checking the level before you lean on it.',

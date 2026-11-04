@@ -600,9 +600,15 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
         // live mark HERE — the model sees how far price has moved since each
         // shape and knows which levels are still fresh vs gone stale.
         const drawingsDescription = describeDrawingsForModel(allDrawings, { priceNow: liveMarkPrice, nowMs: Date.now() });
+        // E7 extended: the coin's last stored post-mortem rides the context
+        // block, not only the emit_signal receipt — a lesson the loop already
+        // earned is invisible to an ordinary answer otherwise. A failed store
+        // read costs the section, never the turn.
+        const { diagnosisBriefBlock } = await import('../tracking/diagnosisSkillCluster');
+        const postMortemBrief = await diagnosisBriefBlock(symbol);
         const cached = packetCache.get(symbol);
         if (cached && Date.now() - cached.atMs < PACKET_CACHE_MS) {
-            return buildTradeChatContext({ symbol, interval, contextWindowTokens: provider?.contextWindowTokens, packetMarkdown: cached.markdown, fetchedAtMs: cached.atMs, drawingsDescription, onScreenDescription: onScreen, plansDescription: plansBlock, liveMarkPrice, formingCandle });
+            return buildTradeChatContext({ symbol, interval, contextWindowTokens: provider?.contextWindowTokens, packetMarkdown: cached.markdown, fetchedAtMs: cached.atMs, drawingsDescription, onScreenDescription: onScreen, plansDescription: plansBlock, postMortemBrief, liveMarkPrice, formingCandle });
         }
         try {
             const packet = await fetchHybridData(symbol);
@@ -610,9 +616,9 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
             const atMs = Date.now();
             setContextAt(atMs);
             packetCache.set(symbol, { markdown, atMs });
-            return buildTradeChatContext({ symbol, interval, contextWindowTokens: provider?.contextWindowTokens, packetMarkdown: markdown, fetchedAtMs: atMs, drawingsDescription, onScreenDescription: onScreen, plansDescription: plansBlock, liveMarkPrice, formingCandle });
+            return buildTradeChatContext({ symbol, interval, contextWindowTokens: provider?.contextWindowTokens, packetMarkdown: markdown, fetchedAtMs: atMs, drawingsDescription, onScreenDescription: onScreen, plansDescription: plansBlock, postMortemBrief, liveMarkPrice, formingCandle });
         } catch {
-            return buildTradeChatContext({ symbol, interval, contextWindowTokens: provider?.contextWindowTokens, packetMarkdown: '', fetchedAtMs: Date.now(), drawingsDescription, onScreenDescription: onScreen, plansDescription: plansBlock, liveMarkPrice, formingCandle });
+            return buildTradeChatContext({ symbol, interval, contextWindowTokens: provider?.contextWindowTokens, packetMarkdown: '', fetchedAtMs: Date.now(), drawingsDescription, onScreenDescription: onScreen, plansDescription: plansBlock, postMortemBrief, liveMarkPrice, formingCandle });
         }
     };
 
