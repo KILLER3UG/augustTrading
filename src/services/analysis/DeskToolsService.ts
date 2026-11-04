@@ -46,6 +46,7 @@ import {
     fetchAllFuturesSymbols,
     normalizeSymbol,
 } from './MarketDataService';
+import { candleAlignedTtlMs } from './KlineService';
 import { SCORE_FORMULA } from '../trade/bestSetups';
 import { getSessionContext } from '../infrastructure/SessionService';
 import { handleRecallTool } from '../learning/MemoryRetrievalService';
@@ -446,17 +447,17 @@ export const TOOL_CACHE_TTL_MS = 30_000;
  *  default budget WITH its continuation pointer, so a read-back never has to
  *  clip the body and can always say truthfully what remains. */
 export const READ_PAGE_CHARS = 2000;
-const toolCache = new Map<string, { at: number; content: string }>();
+const toolCache = new Map<string, { at: number; ttl: number; content: string }>();
 /** The TTL check only skipped STALE reads; it never removed them, so the Map
  *  grew unbounded over a long session (23 tools × symbols × arg variants).
  *  Cap it and drop the oldest-inserted keys when full. */
 const TOOL_CACHE_MAX = 200;
-const cacheTool = (key: string, content: string): void => {
+const cacheTool = (key: string, content: string, ttl: number = TOOL_CACHE_TTL_MS): void => {
     if (toolCache.size >= TOOL_CACHE_MAX && !toolCache.has(key)) {
         const oldest = toolCache.keys().next();
         if (!oldest.done) toolCache.delete(oldest.value);
     }
-    toolCache.set(key, { at: Date.now(), content });
+    toolCache.set(key, { at: Date.now(), ttl, content });
 };
 
 /** Machine-readable "the source failed" sentinel, and the clipping notes below,
@@ -475,8 +476,8 @@ const toolCacheKey = (call: DeskToolCall, scope?: string): string =>
  *  Without it the model has no way to tell "the market has not moved" from
  *  "the desk refused to look" — and a confirming tool call that returns the
  *  same numbers is the difference between evidence and an echo. */
-const cacheAgeNote = (ageMs: number): string =>
-    `[DESK CACHE — this payload was fetched ${Math.round(ageMs / 1000)}s ago and is being replayed for the ${TOOL_CACHE_TTL_MS / 1000}s window; the price stamp below (when present) is live.]`;
+const cacheAgeNote = (ageMs: number, ttlMs: number = TOOL_CACHE_TTL_MS): string =>
+    `[DESK CACHE — this payload was fetched ${Math.round(ageMs / 1000)}s ago and is being replayed for the ${Math.round(ttlMs / 1000)}s window; the price stamp below (when present) is live.]`;
 
 /** Steering line for a call this turn has already been answered. Deliberately
  *  NOT phrased as a failure: an `ok: false` here would read as "the desk is
@@ -529,6 +530,16 @@ const CACHEABLE_TOOLS = new Set([
 /** Tools whose cached body is stored PRE-STAMP and re-stamped on every call,
  *  so a hit replays the numbers but never a previous call's "this is now". */
 const STAMPED_TOOLS = new Set(['get_market_packet', 'get_all_timeframes']);
+
+/** Candle-aligned freshness for the KLINE-BACKED cache entries (the two
+ *  STAMPED tools — both carry 5m→1d series). The flat 30s window was honest
+ *  only by accident: the SHORTEST series inside the payload is the first to
+ *  go stale, so the window is the time remaining before the current 5m bar
+ *  closes (floored and capped exactly like KlineService's rule). A closed
+ *  bar never changes; a forming one stops being servable the moment its
+ *  close prints. Pure so check:contracts pins the bounds; the price stamp on
+ *  a hit stays live regardless, because the body is re-stamped per call. */
+export const klineBackedCacheTtlMs = (now: number): number => candleAlignedTtlMs('5m', now);
 
 const cacheableResult = (name: string): boolean =>
     CACHEABLE_TOOLS.has(name) || name.startsWith('custom_');
@@ -1952,7 +1963,7 @@ export const DESK_TOOL_DEFINITIONS: DeskToolDefinition[] = [
                         items: { type: 'number' },
                         description: '1–3 take-profit prices (absolute; above entry for long, below for short).',
                     },
-                    atr: { type: 'number', description: 'ATR in PRICE units (e.g. 2.5, not 2.5%). Default: 2× the entry→stop distance.' },
+                    atr: { type: 'number', description: 'ATR in PRICE units (e.g. 2.5, not 2.5%). Omit it and the app MEASURES ATR14 from the tape; a call that cannot be measured is refused, not simulated on an assumption. Supply it only to override the measurement (the receipt names a caller-supplied ATR).' },
                     symbol: { type: 'string', description: 'Perp symbol, e.g. ETHUSDT (default: the current chart symbol; label only).' },
                     timeframe: { type: 'string', description: 'Timeframe label, e.g. 1h (default: the chart\'s current interval).' },
                     num_simulations: { type: 'number', description: 'Simulation count, 100–5000 (default 1000).' },
@@ -2400,7 +2411,7 @@ Use them for: news/macro catalysts, funding/OI crowding, order-book walls, liqui
 The chart symbol is only the DEFAULT: the per-symbol market tools accept a \`symbol\` argument, so when the user asks about another coin ("what about eth, can we trade there?") pull that coin directly — get_market_packet or get_all_timeframes with symbol ETHUSDT gives the full multi-timeframe read without anyone switching charts. run_screener and find_best_setups are the exception: they scan the whole futures universe and take no symbol.
 Your own trading memory is one of these tools: the recall tool searches your notebook (doctrine, rules, similar past trades) - call it when prior experience with this setup could change your stance.
 ${shapeRule} The market packet you are shown carries code-calculated summaries, and its printed candle rows depend on the surface you were opened in: the full packet prints EIGHT rows per timeframe, the compact one (used by surfaces that ask for brevity) prints NONE and keeps only the summaries. Either way — eight printed rows are not a chart, and a shape described from them is invented, not read. If the rows are not in front of you, call ${groundingTool ?? 'nothing'}; if you have not, either call it or say "inferred from the rows shown" and give it no confidence. ${drawingRule}${levelRule}
-${has('run_monte_carlo') ? 'run_monte_carlo simulates a concrete plan: pass direction (long/short), entry, stop_loss, and take_profits (1–3 absolute prices). Optional atr is in price units; without it volatility is assumed from twice the stop distance, NOT fetched from the market. Optional timeframe is a label, num_simulations (100–5000) and max_steps (10–1000) control the run. For account drawdown estimates pass account_balance, position_size (margin in account currency), and leverage together. Report the simulation assumptions and timeout rate, not guaranteed or historical performance.' : ''}${selfModRule}${discoveryRule}Do not call tools you do not need. Prefer 0–2 calls. After tool results arrive, write your reply from the findings — no JSON, no restated tool schemas.
+${has('run_monte_carlo') ? 'run_monte_carlo simulates a concrete plan: pass direction (long/short), entry, stop_loss, and take_profits (1–3 absolute prices). Volatility is MEASURED from the tape (ATR14 at the requested timeframe) when you omit atr; the call is refused — never simulated on an assumption — when the tape cannot be measured, so pass atr explicitly only to override the measurement, and the receipt will say the number was caller-supplied. Optional timeframe is a label, num_simulations (100–5000) and max_steps (10–1000) control the run. For account drawdown estimates pass account_balance, position_size (margin in account currency), and leverage together. Report the simulation assumptions and timeout rate, not guaranteed or historical performance.' : ''}${selfModRule}${discoveryRule}Do not call tools you do not need. Prefer 0–2 calls. After tool results arrive, write your reply from the findings — no JSON, no restated tool schemas.
 `;
 };
 
@@ -2878,7 +2889,7 @@ const formatSpreadPct = (pct: number): string =>
  * liquidations). This is "everything the user can see and more" in one read.
  */
 async function runAllTimeframes(symbol: string, liveMark?: number | null): Promise<string> {
-    const { fetchKlines } = await import('./KlineService');
+    const { fetchKlinesTagged, spotMirrorSourceNote } = await import('./KlineService');
     const { calculateIndicators } = await import('./TechnicalAnalysisService');
     const { detectCandleFormations, describeMarketStructure } = await import('../trade/candleFormations');
 
@@ -2922,9 +2933,12 @@ async function runAllTimeframes(symbol: string, liveMark?: number | null): Promi
     }
 
     const tfBlocks: string[] = [];
+    const degradedTfs: string[] = [];
     for (const tf of ALL_TIMEFRAMES) {
         try {
-            const klines = await fetchKlines(symbol, tf, 60);
+            const tagged = await fetchKlinesTagged(symbol, tf, 60);
+            const klines = tagged.candles;
+            if (tagged.source === 'spot-mirror') degradedTfs.push(tf);
             if (klines.length === 0) {
                 tfBlocks.push(`## ${tf}\n(no candles returned — source failed, treat as UNKNOWN)`);
                 continue;
@@ -2947,6 +2961,12 @@ async function runAllTimeframes(symbol: string, liveMark?: number | null): Promi
         }
     }
 
+    // One degraded-source line for the whole compendium: a spot-mirror read
+    // feeding ANY timeframe must be named where the model reads the header,
+    // not buried per-block (open-items O-63).
+    if (degradedTfs.length > 0) {
+        head.push(spotMirrorSourceNote('spot-mirror')!.replace('CANDLE SOURCE: SPOT MIRROR', `CANDLE SOURCE: SPOT MIRROR for ${degradedTfs.join(', ')}`));
+    }
     return [...head, ...tfBlocks].join('\n\n');
 }
 
@@ -3195,14 +3215,14 @@ export async function executeDeskTool(
     const cacheKey = toolCacheKey(call, context.defaultSymbol || undefined);
     const cacheable = cacheableResult(call.name);
     const cached = cacheable ? toolCache.get(cacheKey) : undefined;
-    if (cached && Date.now() - cached.at < TOOL_CACHE_TTL_MS) {
+    if (cached && Date.now() - cached.at < cached.ttl) {
         // The cached packet body is PRE-STAMP: re-stamp with THIS call's
         // live mark / forming candle so a cache hit can never replay the
         // previous call's "this is now".
         const hitContent = STAMPED_TOOLS.has(call.name)
             ? cached.content + packetStamps(call, context)
             : cached.content;
-        return { toolCallId: call.id, name: call.name, ok: true, content: `${cacheAgeNote(Date.now() - cached.at)}
+        return { toolCallId: call.id, name: call.name, ok: true, content: `${cacheAgeNote(Date.now() - cached.at, cached.ttl)}
 ${hitContent}`, ...resolvedSymbolField(call, fallback) };
     }
     try {
@@ -4259,16 +4279,21 @@ ${body}`);
                 // 1-minute '1m', and disagreed with scan_setups (which never
                 // lowercased) about what the same session's interval meant.
                 const ivl = String(call.arguments.interval || context.chartInterval || '15m');
-                const { fetchKlines } = await import('./KlineService');
-                const [klines, mi, book] = await Promise.all([
-                    fetchKlines(sym, ivl, 60, { noCache: true }),
+                const { fetchKlinesTagged, spotMirrorSourceNote } = await import('./KlineService');
+                const [tagged, mi, book] = await Promise.all([
+                    fetchKlinesTagged(sym, ivl, 60, { noCache: true }),
                     fetchMarkIndex(sym),
                     fetchOrderBookDepth(sym).catch(() => null),
                 ]);
+                const klines = tagged.candles;
                 if (klines.length === 0) {
                     content = dataUnavailable('get_chart_view', `no candles returned for ${sym} ${ivl}`, 'The source failed; do not infer an empty chart');
                     break;
                 }
+                // O-63: a degraded read is named on the receipt, never served
+                // silently — the spot market's candles can deviate from the
+                // perp mark the trader watches.
+                const sourceNote = spotMirrorSourceNote(tagged.source);
                 const rows = klines.map(k =>
                     // PHT, like every other candle the model is shown — see
                 // klineRows. This row used to be UTC, which put the same
@@ -4309,6 +4334,7 @@ ${body}`);
                 content = [
                     `CHART VIEW — ${sym} · ${ivl} · last ${klines.length} candles (oldest→newest)`,
                     `Live mark price: ${markNow ?? 'unavailable'}`,
+                    ...(sourceNote ? [sourceNote] : []),
                     context.chartLevels && context.chartLevels.length > 0
                         ? `Levels drawn on the chart: ${context.chartLevels.map(l => `${l.label} ${l.price}`).join(' · ')}`
                         : 'No verdict levels are drawn on the chart right now.',
@@ -4413,12 +4439,14 @@ ${body}`);
                 // skill library so the model can cite the matching playbooks.
                 const sym = asSymbol(call.arguments.symbol, fallback);
                 const ivl = asString(call.arguments.interval) || context.chartInterval || '15m';
-                const { fetchKlines } = await import('./KlineService');
-                const klines = await fetchKlines(sym, ivl, 60);
+                const { fetchKlinesTagged, spotMirrorSourceNote } = await import('./KlineService');
+                const tagged = await fetchKlinesTagged(sym, ivl, 60);
+                const klines = tagged.candles;
                 if (klines.length < 25) {
                     content = dataUnavailable('scan_setups', `not enough candles returned for ${sym} ${ivl}`, 'The source failed; do not infer an empty tape');
                     break;
                 }
+                const scanSourceNote = spotMirrorSourceNote(tagged.source);
                 const { scanSetups } = await import('../trade/setupScan');
                 const setups = scanSetups(klines.map(k => ({ time: k.time, open: k.open, high: k.high, low: k.low, close: k.close, volume: k.volume })));
                 let skillIndex: Array<{ slug: string; status?: string; when?: string; enabled: boolean }> = [];
@@ -4446,6 +4474,7 @@ ${body}`);
                 }
                 content = [
                     `SETUP SCAN ${sym} ${ivl} — ${setups.length} live setup${setups.length === 1 ? '' : 's'} (trigger within the last 5 bars):`,
+                    ...(scanSourceNote ? [scanSourceNote] : []),
                     ...setups.map(s => {
                         const kw = s.keywords.map(k => k.toLowerCase());
                         const matched = skillIndex.filter(sk => {
@@ -4500,18 +4529,21 @@ ${body}`);
                 const ivl = asString(call.arguments.interval) || context.chartInterval || '15m';
                 const rawH = Number(call.arguments.horizon_bars);
                 const horizon = Math.min(Math.max(Number.isFinite(rawH) ? Math.round(rawH) : 24, 1), 96);
-                const { fetchKlines } = await import('./KlineService');
-                const klines = await fetchKlines(sym, ivl, 300);
+                const { fetchKlinesTagged, spotMirrorSourceNote } = await import('./KlineService');
+                const tagged = await fetchKlinesTagged(sym, ivl, 300);
+                const klines = tagged.candles;
                 if (klines.length === 0) {
                     content = dataUnavailable('project_future_price', `not enough candles returned for ${sym} ${ivl}`, 'The source failed; do not infer a flat market');
                     break;
                 }
                 const { projectPrices, projectionToMarkdown } = await import('../trade/priceProjection');
                 try {
+                    const projectionNote = spotMirrorSourceNote(tagged.source);
                     content = projectionToMarkdown(sym, ivl, projectPrices(
                         klines.map(k => ({ time: k.time, open: k.open, high: k.high, low: k.low, close: k.close })),
                         horizon,
                     ));
+                    if (projectionNote) content = `${projectionNote}\n\n${content}`;
                 } catch (err) {
                     content = dataUnavailable('project_future_price', `${err instanceof Error ? err.message : String(err)}`, 'The source failed; do not invent paths');
                 }
@@ -4647,10 +4679,38 @@ ${body}`);
                     return rejectedResult(call, `run_monte_carlo rejected: take_profits needs 1–3 positive, finite prices ${dirWord === 'Long' ? 'above' : 'below'} entry.`);
                 }
                 const tps = [...new Set(rawTps)].sort((a, b) => (dirWord === 'Long' ? a - b : b - a));
-                const stopDistance = Math.abs(entry - stopLoss);
-                const atr = call.arguments.atr === undefined ? 2 * stopDistance : numeric(call.arguments.atr);
-                if (!priceOk(atr) || !Number.isFinite(atr / entry)) {
+                // O-64: the simulation's volatility is MEASURED, not tied to
+                // the plan's own stop. The old `2 * stopDistance` default made
+                // volatility a function of the trader's stop choice — a wider
+                // stop assumed a wilder market — and the receipt then reported
+                // win rates off that circular number. With no atr supplied,
+                // the app measures ATR14 from the tape at the requested
+                // timeframe; when the tape cannot be measured the call is
+                // REFUSED with the named gap, never silently simulated.
+                const callerAtr = call.arguments.atr === undefined ? NaN : numeric(call.arguments.atr);
+                const callerAtrValid = priceOk(callerAtr) && Number.isFinite(callerAtr / entry);
+                if (call.arguments.atr !== undefined && !callerAtrValid) {
                     return rejectedResult(call, 'run_monte_carlo rejected: atr must be a positive finite value in price units.');
+                }
+                let atr: number;
+                let atrSource: 'caller' | 'measured';
+                if (callerAtrValid) {
+                    atr = callerAtr;
+                    atrSource = 'caller';
+                } else {
+                    const ivl = (asString(call.arguments.timeframe) || context.chartInterval || '1h').slice(0, 20);
+                    const sym = asSymbol(call.arguments.symbol, fallback);
+                    const { fetchKlinesTagged } = await import('./KlineService');
+                    const { calculateIndicators } = await import('./TechnicalAnalysisService');
+                    const tagged = await fetchKlinesTagged(sym, ivl, 120).catch(() => null);
+                    const measuredAtr = tagged && tagged.candles.length >= 30
+                        ? calculateIndicators(tagged.candles).atr
+                        : NaN;
+                    if (!priceOk(measuredAtr) || !Number.isFinite(measuredAtr / entry)) {
+                        return rejectedResult(call, `run_monte_carlo rejected: no atr supplied and ATR14 could not be measured from the tape for ${sym} ${ivl} (${tagged ? `${tagged.candles.length} candles` : 'fetch failed'}). Retry once; if it still fails, either supply atr explicitly — the receipt will name it as caller-supplied — or skip the simulation.`);
+                    }
+                    atr = measuredAtr;
+                    atrSource = 'measured';
                 }
                 const count = numeric(call.arguments.num_simulations ?? 1000);
                 const steps = numeric(call.arguments.max_steps ?? 100);
@@ -4695,7 +4755,7 @@ ${body}`);
                     atr,
                     timeframe: (asString(call.arguments.timeframe) || context.chartInterval || '1h').slice(0, 20),
                     maxSteps,
-                    estimatedAtr: call.arguments.atr === undefined,
+                    atrSource,
                 });
                 if (!ruinArgs && (priceOk(balRaw) || sizeRaw > 0 || levRaw > 0)) {
                     content += '\n(Ruin risk skipped: pass account_balance, position_size AND leverage together to run it.)';
@@ -4856,7 +4916,11 @@ ${body}`);
         // answer: the seat was told it failed, so a cache hit would replay
         // data from a call the transcript says never returned.
         if (cacheable && !isDataUnavailable(budgeted) && !context.signal?.aborted) {
-            cacheTool(cacheKey, budgeted);
+            // The kline-backed stamped tools ride the candle-aligned window:
+            // their payload is a 5m→1d series, and the honest bound is the
+            // time left before the shortest of those bars closes — not a
+            // flat 30s that can serve a just-closed bar its pre-close OHLC.
+            cacheTool(cacheKey, budgeted, STAMPED_TOOLS.has(call.name) ? klineBackedCacheTtlMs(Date.now()) : TOOL_CACHE_TTL_MS);
         }
         const contentOut = budgeted + tail;
         return { toolCallId: call.id, name: call.name, ok: true, content: contentOut, ...resolvedSymbolField(call, fallback) };

@@ -7,9 +7,12 @@
  * printed. Ingestion drops such rows and SAYS SO; it never silently passes
  * them downstream and never silently passes an empty series as data.
  *
- * Consumers: KlineService (the chart/desk tape) and signalMarketData (the
- * signal resolver's OKX/Binance tape). A second implementation of this rule
- * is how the chart and the ledger end up disagreeing about the same bar.
+ * Consumers: KlineService (the chart/desk tape), signalMarketData (the
+ * signal resolver's OKX/Binance tape), and MarketDataService (the packet's
+ * key-levels/indicator/outcome-verification fetches — the third path, gated
+ * at the shared `toKlines` boundary and both historical-window parsers).
+ * A second implementation of this rule is how the chart and the ledger end
+ * up disagreeing about the same bar.
  */
 
 export interface CandleShape {

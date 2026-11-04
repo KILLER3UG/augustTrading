@@ -67,6 +67,9 @@ interface ScreenerRowView {
     /** The shared confluence score, shown only when a setup is live. */
     score: number;
     edge: string;
+    /** This row's candles came from the SPOT mirror (futures feed failed for
+     *  the read) — marked on the row, never averaged in silently (O-63). */
+    degraded: boolean;
 }
 
 interface ScreenerRowViewProps extends ScreenerRowView {
@@ -81,7 +84,7 @@ interface ScreenerRowViewProps extends ScreenerRowView {
  *  the entire tbody). */
 const ScreenerRowView = React.memo<ScreenerRowViewProps>(({
     symbol, display, baseAsset, price, change24h, rsi14, regime,
-    setupCount, setupTitle, setupsTitle, score, edge, onSelect, onLearn,
+    setupCount, setupTitle, setupsTitle, score, edge, degraded, onSelect, onLearn,
 }) => (
     <tr
         data-testid={`screener-row-${symbol}`}
@@ -91,6 +94,14 @@ const ScreenerRowView = React.memo<ScreenerRowViewProps>(({
         <td className="px-4 py-1.5">
             <span className="font-mono font-bold text-zinc-100">{display}</span>
             <span className="ml-2 text-zinc-600">{baseAsset}</span>
+            {degraded && (
+                <span
+                    className="ml-1.5 rounded-control bg-amber-500/10 px-1 py-0.5 text-ui-2xs font-mono uppercase text-amber-300"
+                    title="Candles read from the SPOT mirror — the futures feed failed for this row; levels may deviate from the perp mark"
+                >
+                    spot
+                </span>
+            )}
             <button
                 type="button"
                 data-testid={`screener-learn-${symbol}`}
@@ -207,6 +218,7 @@ export const ScreenerPanel: React.FC<ScreenerPanelProps> = ({ open, onClose, onC
         setupsTitle: r.setups.map(s => `${s.title} (${s.side})`).join('; '),
         score: bestSetupScore(r).score,
         edge: r.edge || '',
+        degraded: r.degraded,
     })), [visible]);
 
     // Stable row callbacks: an inline arrow would be a new reference on every

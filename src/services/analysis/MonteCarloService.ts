@@ -718,7 +718,7 @@ export const calculateRuinRisk = (
 export const monteCarloToMarkdown = (
     result: MonteCarloResult,
     ruinRisk?: RuinRiskResult,
-    inputs?: { symbol?: string; direction: string; entry: number; stopLoss: number; takeProfits: number[]; atr: number; timeframe: string; maxSteps: number; estimatedAtr: boolean }
+    inputs?: { symbol?: string; direction: string; entry: number; stopLoss: number; takeProfits: number[]; atr: number; timeframe: string; maxSteps: number; atrSource: 'caller' | 'measured' }
 ): string => {
     const p = result.probabilities;
     const evSign = result.expectedValue >= 0 ? '+' : '';
@@ -733,7 +733,10 @@ export const monteCarloToMarkdown = (
         `5th–95th percentile trade PnL range: ${result.confidenceInterval.lower.toFixed(2)}% to ${result.confidenceInterval.upper.toFixed(2)}% (per-trade PnL, not account equity).`,
     ];
     if (inputs) {
-        lines.push(`Assumptions: ${inputs.maxSteps} candles maximum; ATR ${inputs.estimatedAtr ? 'estimated as twice stop distance' : 'supplied by caller'}, not fetched; timeframe is a label only; neutral initial drift/regime. Seed ${result.seedUsed ?? 'unknown'}. Average duration includes timeouts.`);
+        // O-64: the volatility input is named. `measured` = ATR14 computed
+        // from the tape the desk already fetches; `caller` = the model's own
+        // number, which the receipt must say so the trader can audit it.
+        lines.push(`Assumptions: ${inputs.maxSteps} candles maximum; ATR ${inputs.atrSource === 'measured' ? 'measured from the tape (ATR14)' : 'supplied by the caller'}, timeframe is a label only; neutral initial drift/regime. Seed ${result.seedUsed ?? 'unknown'}. Average duration includes timeouts.`);
     }
     if (ruinRisk) {
         lines.push(

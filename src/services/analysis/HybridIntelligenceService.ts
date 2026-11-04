@@ -1531,10 +1531,24 @@ const buildMonteCarloConfig = (
             // Average all available ATRs
             atr = availableAtrs.reduce((sum, val) => sum + val, 0) / availableAtrs.length;
         } else {
-            // Fallback: Calculate ATR from stop loss distance (slDistance is
-            // validated nonzero above, so atr stays > 0).
-            atr = slDistance * 2; // Assume SL is ~0.5 ATR
-            console.log('[MonteCarloForSetup] Using fallback ATR from SL distance:', atr);
+            // O-64: the old fallback assumed volatility FROM THE PLAN'S OWN
+            // STOP (slDistance × 2) — a wider stop simulated a wilder market,
+            // so the reported odds followed the trader's stop choice instead
+            // of the market. Measure what the packet actually observed: the
+            // 24h high→low range is a real, non-circular volatility scale.
+            // When even that is missing the packet is degraded, and a
+            // simulation on no evidence is refused, not invented.
+            const hi = hybridData.marketData?.price24hHigh;
+            const lo = hybridData.marketData?.price24hLow;
+            const dayRange = typeof hi === 'number' && typeof lo === 'number' && hi > lo && lo > 0
+                ? hi - lo
+                : NaN;
+            if (!Number.isFinite(dayRange) || dayRange <= 0) {
+                console.log('[MonteCarloForSetup] No timeframe ATR and no 24h range available — refusing the simulation rather than assuming volatility.');
+                return null;
+            }
+            atr = dayRange;
+            console.log('[MonteCarloForSetup] Using measured 24h range as volatility:', atr);
         }
 
         // Determine trend bias from regime

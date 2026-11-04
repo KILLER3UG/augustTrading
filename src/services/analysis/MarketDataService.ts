@@ -4,6 +4,8 @@
  */
 
 // Using fetch directly instead of ccxt for better browser/mobile compatibility
+import { coerceCandles } from '../../utils/candleShape';
+
 const BINANCE_API_BASE = 'https://api.binance.com';
 const BINANCE_FUTURES_API = 'https://fapi.binance.com';
 
@@ -454,6 +456,19 @@ const toKlines = (data: any[][]): Kline[] => data.map((k: any[]) => ({
     takerBuyVolume: Number.isFinite(parseFloat(k[9])) ? parseFloat(k[9]) : undefined
 }));
 
+/** The OHLC shape gate (utils/candleShape) at THIS service's boundary. This
+ *  is the third ingestion path: KlineService (chart/desk tape) and
+ *  signalMarketData (resolver tape) already gate their payloads, but every
+ *  candle this service hands to runKeyLevels, runIndicators, the packet and
+ *  the outcome verifiers used to skip the rule entirely. A broken row is
+ *  dropped NAMED; an all-incoherent payload yields [] which every caller
+ *  must treat as a failed fetch, not as an empty market. */
+const gateCandles = (rows: Kline[], label: string): Kline[] => {
+    const { kept, dropped } = coerceCandles(rows);
+    if (dropped > 0) console.warn(`[MarketDataService] ${label}: dropped ${dropped} incoherent candle(s) (OHLC shape)`);
+    return kept;
+};
+
 export const fetchOHLCV = async (
     symbol: string,
     timeframe: string = '1h',
@@ -469,7 +484,7 @@ export const fetchOHLCV = async (
         const response = await robustBinanceFetch(`/api/v3/klines?symbol=${normalizedSymbol}&interval=${timeframe}&limit=${limit}`);
         const data = await response.json();
 
-        const klines = toKlines(data);
+        const klines = gateCandles(toKlines(data), `spot klines ${normalizedSymbol} ${timeframe}`);
 
         setCache(cacheKey, klines);
         return klines;
@@ -500,7 +515,7 @@ export const fetchFuturesOHLCV = async (
         const response = await robustFuturesFetch(`/fapi/v1/klines?symbol=${normalizedSymbol}&interval=${timeframe}&limit=${limit}`);
         const data = await response.json();
 
-        const klines = toKlines(data);
+        const klines = gateCandles(toKlines(data), `futures klines ${normalizedSymbol} ${timeframe}`);
 
         setCache(cacheKey, klines);
         return klines;
@@ -585,7 +600,7 @@ export const fetchOHLCVFromTime = async (
             const response = await robustBinanceFetch(url);
             const data = await response.json();
 
-            const klines: Kline[] = data.map((k: any[]) => ({
+            const klines: Kline[] = gateCandles(data.map((k: any[]) => ({
                 time: k[0],
                 open: parseFloat(k[1]),
                 high: parseFloat(k[2]),
@@ -593,7 +608,7 @@ export const fetchOHLCVFromTime = async (
                 close: parseFloat(k[4]),
                 volume: parseFloat(k[5]),
                 takerBuyVolume: Number.isFinite(parseFloat(k[9])) ? parseFloat(k[9]) : undefined
-            }));
+            })), `historical klines ${normalizedSymbol} ${timeframe}`);
 
             console.log(`[MarketDataService] Fetched ${klines.length} historical candles for ${normalizedSymbol}`);
             setCache(cacheKey, klines);
@@ -649,7 +664,7 @@ export const fetchFuturesOHLCVFromTime = async (
             const response = await robustFuturesFetch(url);
             const data = await response.json();
 
-            const klines: Kline[] = data.map((k: any[]) => ({
+            const klines: Kline[] = gateCandles(data.map((k: any[]) => ({
                 time: k[0],
                 open: parseFloat(k[1]),
                 high: parseFloat(k[2]),
@@ -657,7 +672,7 @@ export const fetchFuturesOHLCVFromTime = async (
                 close: parseFloat(k[4]),
                 volume: parseFloat(k[5]),
                 takerBuyVolume: Number.isFinite(parseFloat(k[9])) ? parseFloat(k[9]) : undefined
-            }));
+            })), `futures historical klines ${normalizedSymbol} ${timeframe}`);
 
             console.log(`[MarketDataService] Fetched ${klines.length} FUTURES historical candles for ${normalizedSymbol}`);
             setCache(cacheKey, klines);

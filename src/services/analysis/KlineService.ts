@@ -15,6 +15,11 @@
  * logged as degraded when it wins.
  *
  * All functions return a standardized Kline[] (time in milliseconds, OHLCV).
+ *
+ * SOURCE TAGGING: `fetchKlinesTagged` reports WHICH market answered
+ * (futures / spot-mirror / unavailable) so a consumer feeding the model can
+ * disclose a degraded read on its receipt; `fetchKlines` keeps the bare
+ * candles for the UI consumers that paint what they fetch.
  */
 
 import { Kline } from '../../types';
@@ -28,7 +33,7 @@ import { coerceCandles } from '../../utils/candleShape';
 // THAT bar closes — the only volatile row is the forming one, and it stops
 // being servable the moment its close prints.
 const klineCache = new Map<string, { at: number; ttl: number; data: Kline[] }>();
-const klineInFlight = new Map<string, Promise<Kline[]>>();
+const klineInFlight = new Map<string, Promise<TaggedKlines>>();
 const KLINE_CACHE_TTL_MS = 30_000;
 /** The ceiling of a candle-aligned TTL: even a 1h series is re-read at most
  *  this often, so a symbol left on screen cannot pin a mid-hour snapshot. */
@@ -233,12 +238,36 @@ const buildBinanceSources = (symbol: string, interval: string, limit: number): F
  * `kline_e_*`. Reads prefer native, then degraded. In-flight coalescing
  * stays source-agnostic because the fetch itself always tries futures first.
  */
-export const fetchKlines = async (
+/** WHICH market answered a kline read. `futures` is the perp itself; a
+ *  `spot-mirror` result is the DEGRADED fallback — a different instrument
+ *  whose candles can deviate from the perp mark (the spot↔perp basis reads
+ *  as a price move). Every consumer that hands candles to the model must
+ *  carry this tag through to its receipt, or the degraded read silently
+ *  feeds perp analysis (open-items O-63). */
+export type KlineFeedSource = 'futures' | 'spot-mirror' | 'unavailable';
+
+export interface TaggedKlines {
+    candles: Kline[];
+    source: KlineFeedSource;
+}
+
+/** The one receipt line a desk tool prints when its candles came from the
+ *  spot mirror. Pure so check:contracts pins the wording; `null` for the
+ *  native and unavailable sources (the unavailable case gets its own
+ *  DATA_UNAVAILABLE receipt — never an implied-empty one). */
+export const spotMirrorSourceNote = (source: KlineFeedSource): string | null => {
+    if (source === 'spot-mirror') {
+        return 'CANDLE SOURCE: SPOT MIRROR — the futures kline feed was unreachable, so these candles are the SPOT market and can deviate from the perp mark (basis, wicks, volume). Treat levels and wick reads from them as approximate; prefer the packet, the live mark and the order book for exact prices.';
+    }
+    return null;
+};
+
+export const fetchKlinesTagged = async (
     symbol: string,
     interval: string,
     limit: number = 300,
     opts?: { noCache?: boolean },
-): Promise<Kline[]> => {
+): Promise<TaggedKlines> => {
     const inFlightKey = `kline_${symbol}_${interval}_${limit}`;
     const futuresKey = `kline_f_${symbol}_${interval}_${limit}`;
     const spotKey = `kline_s_${symbol}_${interval}_${limit}`;
@@ -251,16 +280,16 @@ export const fetchKlines = async (
 
     if (!opts?.noCache) {
         const native = freshEntry(futuresKey);
-        if (native) return native;
+        if (native) return { candles: native, source: 'futures' };
         const spot = freshEntry(spotKey);
-        if (spot && spot.length > 0) return spot;
+        if (spot && spot.length > 0) return { candles: spot, source: 'spot-mirror' };
         const failed = freshEntry(failedKey);
-        if (failed) return failed;
+        if (failed) return { candles: failed, source: 'unavailable' };
     }
     const inFlight = klineInFlight.get(inFlightKey);
     if (inFlight) return inFlight;
 
-    const promise = (async () => {
+    const promise = (async (): Promise<TaggedKlines> => {
         try {
             // PRIMARY: the futures market itself — same instrument the user
             // trades, same basis as the markPrice@1s feed and the packet.
@@ -272,7 +301,7 @@ export const fetchKlines = async (
             if (data.length > 0) {
                 klineCache.set(futuresKey, { at: Date.now(), ttl: candleAlignedTtlMs(interval, Date.now()), data });
                 trimKlineCache();
-                return data;
+                return { candles: data, source: 'futures' };
             }
             console.warn(
                 `[KlineService] futures klines unavailable for ${symbol} ${interval} — DEGRADED to the SPOT mirror chain; candles may deviate from the perp feed`,
@@ -286,7 +315,9 @@ export const fetchKlines = async (
             // must never be served from (or serve) this entry.
             klineCache.set(spotData.length > 0 ? spotKey : failedKey, { at: Date.now(), ttl: candleAlignedTtlMs(interval, Date.now()), data: spotData });
             trimKlineCache();
-            return spotData;
+            return spotData.length > 0
+                ? { candles: spotData, source: 'spot-mirror' }
+                : { candles: spotData, source: 'unavailable' };
         } finally {
             klineInFlight.delete(inFlightKey);
         }
@@ -294,3 +325,14 @@ export const fetchKlines = async (
     klineInFlight.set(inFlightKey, promise);
     return promise;
 };
+
+/** Untagged read for the UI consumers that PAINT what they fetch (the chart
+ *  and the live market panel render the candles they get, so the user sees
+ *  the fallback for themselves). Every consumer that hands candles to the
+ *  MODEL goes through `fetchKlinesTagged` instead and discloses the source. */
+export const fetchKlines = async (
+    symbol: string,
+    interval: string,
+    limit: number = 300,
+    opts?: { noCache?: boolean },
+): Promise<Kline[]> => (await fetchKlinesTagged(symbol, interval, limit, opts)).candles;

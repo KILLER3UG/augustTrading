@@ -13,7 +13,7 @@
  */
 
 import { fetchAllFuturesSymbols } from '../analysis/MarketDataService';
-import { fetchKlines } from '../analysis/KlineService';
+import { fetchKlinesTagged, spotMirrorSourceNote } from '../analysis/KlineService';
 import { rsiSeries, scanSetups } from './setupScan';
 import { computeSetupClusterStats } from '../learning/EvidencePackService';
 import { baseOf } from '../../utils/symbol';
@@ -35,6 +35,10 @@ export interface ScreenerRow {
     setups: { title: string; side: 'long' | 'short' | 'watch'; barsAgo?: number }[];
     /** The trader's own logged record for THIS coin, e.g. "7W/5L" ('' = no history). */
     edge: string;
+    /** True when this row's candles came from the SPOT mirror (the futures
+     *  feed was unreachable for this read) — a degraded row is named in the
+     *  digest, never averaged silently into the scan (open-items O-63). */
+    degraded: boolean;
 }
 
 export interface ScreenerOptions {
@@ -82,9 +86,11 @@ const edgeFor = (symbol: string, trades: LoggedTrade[]): string => {
 };
 
 const scanRow = async (meta: { symbol: string; baseAsset: string; price: number; change24h: number; quoteVolume: number }, interval: string, trades: LoggedTrade[]): Promise<ScreenerRow> => {
-    const row: ScreenerRow = { ...meta, rsi14: null, regime: 'range', setups: [], edge: edgeFor(meta.symbol, trades) };
+    const row: ScreenerRow = { ...meta, rsi14: null, regime: 'range', setups: [], edge: edgeFor(meta.symbol, trades), degraded: false };
     try {
-        const candles = await fetchKlines(meta.symbol, interval, 120);
+        const tagged = await fetchKlinesTagged(meta.symbol, interval, 120);
+        const candles = tagged.candles;
+        row.degraded = tagged.source === 'spot-mirror';
         if (candles.length >= 15) {
             const rsis = rsiSeries(candles);
             const last = rsis[rsis.length - 1];
@@ -156,11 +162,17 @@ export const runScreener = async (options: ScreenerOptions = {}): Promise<Screen
  *  digest the model reads (the 2026-10-27 audit T-9). */
 export const screenerToMarkdown = (rows: ScreenerRow[]): string => {
     if (rows.length === 0) return 'SCREENER — 0 rows: the scan completed and nothing met this filter. This is a real result, not a feed failure.';
+    const degraded = rows.filter(r => r.degraded);
     const head = 'symbol | price | 24h% | RSI14 | regime | setups | your edge';
     const lines = rows.map(r => {
         const setups = r.setups.length > 0 ? r.setups.map(s => `${s.title} (${s.side})`).join('; ') : '—';
         const regime = r.regime === 'up' ? '▲ up' : r.regime === 'down' ? '▼ down' : '· range';
-        return `${r.symbol} | ${r.price.toLocaleString()} | ${r.change24h >= 0 ? '+' : ''}${r.change24h.toFixed(1)}% | ${r.rsi14 ?? '—'} | ${regime} | ${setups} | ${r.edge || '—'}`;
+        const mark = r.degraded ? '*' : '';
+        return `${r.symbol}${mark} | ${r.price.toLocaleString()} | ${r.change24h >= 0 ? '+' : ''}${r.change24h.toFixed(1)}% | ${r.rsi14 ?? '—'} | ${regime} | ${setups} | ${r.edge || '—'}`;
     });
-    return [`SCREENER — ${rows.length} coins (top by 24h volume, 15m read):`, head, ...lines].join('\n');
+    const out = [`SCREENER — ${rows.length} coins (top by 24h volume, 15m read):`, head, ...lines];
+    // O-63: a degraded read is named where the digest is read, not buried in
+    // a per-row flag. `*` marks the rows; this line says what it means.
+    if (degraded.length > 0) out.push(spotMirrorSourceNote('spot-mirror')!.replace('CANDLE SOURCE: SPOT MIRROR', `CANDLE SOURCE: SPOT MIRROR for ${degraded.map(r => r.symbol).join(', ')}`));
+    return out.join('\n');
 };
