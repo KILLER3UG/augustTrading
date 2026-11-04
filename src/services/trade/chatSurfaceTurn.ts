@@ -76,7 +76,12 @@ export const CHAT_SURFACE_TOOLS = [
     'find_best_setups', 'switch_chart_symbol',
     // The seat edits its own memory, skills and tools from here — the same
     // growth set the dock has, since neither half of it needs a canvas.
-    'write_memory_note', 'get_notebook_map', 'propose_skill', 'revise_skill', 'propose_strategy',
+    // `skill_view` belongs here too: the skills index and the base prompt both
+    // tell the seat to open a matched skill's full body BEFORE acting, and
+    // this surface's tool list never carried it — the one call its own
+    // instructions demanded was the one call the executor refused (the dead
+    // affordance this file exists to prevent).
+    'skill_view', 'write_memory_note', 'get_notebook_map', 'propose_skill', 'revise_skill', 'propose_strategy',
     'amend_memory', 'forge_tool',
     'remember', 'read_memory', 'forget',
     // The one tool with a human in it: it suspends the turn until the trader
