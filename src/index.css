@@ -292,10 +292,15 @@
   --text-ui-2xs: calc(var(--ui-font-size) - 5px);
   --text-ui-2xs--line-height: 1.5;
 
-  --radius-bubble: 20px;
-  --radius-card: 12px;
-  --radius-control: 10px;
-  --radius-composer: 24px;
+  /* QUIET DESK (v4): precision radii. A trading instrument is built from
+     cut planes, not chat bubbles — 20/24px corners made every control read as
+     a consumer pill. 6/8/12 keeps a control recognisably clickable while the
+     frame stays square-ish. These four tokens are the ONLY radii in the app;
+     the utilities generated from them recolor every call site at once. */
+  --radius-bubble: 12px;
+  --radius-card: 8px;
+  --radius-control: 6px;
+  --radius-composer: 12px;
   --ease-snappy: cubic-bezier(0.2, 0, 0, 1);
   /* The curve a bare `transition-*` utility falls back to. Tailwind ships
      cubic-bezier(.4,0,.2,1) here, so every class that names a property but not
@@ -1884,4 +1889,159 @@ select {
   input:disabled {
     cursor: not-allowed;
   }
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   QUIET DESK — the v4 design layer
+   ────────────────────────────────────────────────────────────────────────
+   The palette was already right: hue-free graphite, ink with measured AA,
+   colour only where it means data. So this redesign does NOT invent a second
+   palette. It removes furniture and rebuilds hierarchy out of four things:
+
+     1. PLANE   A surface is a value step, not a box. One hairline separates
+                regions; a panel inside a panel never gets a second frame.
+     2. TYPE    Micro-labels are mono and tracked (they are instrument ticks,
+                not prose). Numerals are large, light and tabular. The answer
+                stays prose; the chrome stays quiet.
+     3. MARK    Exactly one ink mark names the active surface. The live dot is
+                the only other accent in the chrome. Both are neutral; the
+                green/red/amber/blue ramps stay reserved for market data.
+     4. AIR     Fewer controls at rest, more space around the ones that stay.
+                Nothing decorative moves, glows or shimmers in the chrome.
+
+   Plain (unlayered) rules on purpose: Tailwind v4 puts its utilities in
+   @layer utilities, and unlayered declarations win regardless of source order
+   — so these overrides hold without a single !important. Everything here is
+   scoped to a design-system class, never to a raw element type.
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* ── The vocabulary ───────────────────────────────────────────────────────
+   These are shared ROLES, not one-off styles: the rail, the content bar, the
+   four surfaces and the composer all reach for the same five names. */
+.qd-eyebrow {
+  font-family: var(--font-mono);
+  font-size: var(--text-ui-2xs);
+  font-weight: 500;
+  line-height: 1.5;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--color-zinc-600);
+  font-variant-numeric: tabular-nums;
+}
+/* A section title: large, light, tight. Weight is the hierarchy, not a box. */
+.qd-title {
+  font-size: var(--text-ui-display);
+  font-weight: 450;
+  line-height: 1.2;
+  letter-spacing: -0.035em;
+  color: var(--color-zinc-100);
+}
+/* Every figure in the chrome. Tabular so a ticking tape never shifts. */
+.qd-num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.025em;
+}
+/* The one rule. Applied to a border utility's element, never to a card. */
+.qd-rule { border-color: var(--color-hairline); }
+/* A plane is a value step with no frame and no elevation. */
+.qd-plane {
+  border: 0;
+  border-radius: var(--radius-card);
+  background: var(--color-surface-panel);
+  box-shadow: none;
+}
+/* The active mark: one 2px ink line, flush to the outer edge. */
+.qd-mark {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  border-radius: 0;
+  background: var(--color-zinc-100);
+}
+/* Text tabs — the pressed state is ink plus an underline, never a filled pill. */
+.qd-tab {
+  position: relative;
+  color: var(--color-zinc-500);
+  transition: color 0.12s var(--ease-snappy);
+}
+.qd-tab:hover { color: var(--color-zinc-200); }
+.qd-tab[aria-selected="true"],
+.qd-tab[data-active="true"] { color: var(--color-zinc-100); }
+.qd-tab[aria-selected="true"]::after,
+.qd-tab[data-active="true"]::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 2px;
+  background: var(--color-zinc-100);
+}
+
+/* ── Shared chrome, quieted ──────────────────────────────────────────────
+   These class names already ship. Retuning them here moves every surface at
+   once — the single-source discipline the charter asks for. */
+.ui-kicker {
+  font-family: var(--font-mono);
+  font-size: var(--text-ui-xs);
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  color: var(--color-zinc-300);
+}
+.ui-panel {
+  border: 0;
+  border-radius: var(--radius-card);
+  background: var(--color-surface-panel);
+  box-shadow: none;
+}
+.ui-control {
+  border-color: var(--color-hairline);
+  background: var(--color-surface-raised);
+}
+.glass,
+.glass-panel {
+  border-color: var(--color-hairline);
+  box-shadow: none;
+}
+.glass { background: var(--color-surface-panel); }
+.glass-panel { background: var(--color-surface-raised); }
+.seg-thumb {
+  background: var(--color-zinc-800);
+  box-shadow: inset 0 0 0 1px var(--color-hairline);
+}
+.tip-label {
+  border-color: var(--color-hairline);
+  border-radius: var(--radius-control);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
+}
+.tool-row-body,
+.analyzed-row .reasoning-row-body {
+  border-color: var(--color-hairline);
+  background: var(--color-zinc-950);
+}
+
+/* The empty conversation's 48px grid was a decoration behind no data. A
+   single low bloom still gives the hero a place to sit without drawing
+   attention to the background itself. */
+.chat-hero-grid {
+  background: radial-gradient(38rem 22rem at 50% 40%,
+    color-mix(in srgb, var(--color-zinc-100) 3%, transparent), transparent 70%);
+}
+
+/* A 4px scrollbar reads as a machined edge, not a second control. */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-thumb { background: var(--color-zinc-700); }
+.custom-scrollbar::-webkit-scrollbar { width: 4px; height: 4px; }
+
+/* Ink, not hue, for selected text and for the app's own antialiasing. */
+::selection {
+  background: color-mix(in srgb, var(--color-zinc-100) 18%, transparent);
+  color: var(--color-zinc-100);
+}
+body {
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
