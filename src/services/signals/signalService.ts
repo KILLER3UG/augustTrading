@@ -26,6 +26,7 @@ import type {
 import type { SignalCandle } from './signalResolver';
 import { bracketError, resolveSignal, SIGNAL_BAR_MS } from './signalResolver';
 import { appendSignalEvent, readSignals, recordSignalResolution } from './signalLedger';
+import { openSignalsOldestFirst } from './signalOrder';
 import { signalProtectionVerdict } from './signalProtections';
 import {
     crossCheckBars,
@@ -261,7 +262,11 @@ export const settleDueSignals = async (
         return { attempted: 0, resolved: 0, skipped: [] };
     }
     lastSettleAttempt = now;
-    const open = readSignals(user).filter(r => r.status === 'open').slice(0, MAX_SETTLE_PER_RUN);
+    // OLDEST-FIRST by emission (`openSignalsOldestFirst`, pinned in
+    // check:contracts): the ledger folds newest-first, so slicing it directly
+    // graded the four NEWEST open rows every pass and left an old open signal
+    // to starve until the 150-cap pruned it whole.
+    const open = openSignalsOldestFirst(readSignals(user)).slice(0, MAX_SETTLE_PER_RUN);
     const out: SettleOutcome = { attempted: open.length, resolved: 0, skipped: [] };
 
     for (const row of open) {
