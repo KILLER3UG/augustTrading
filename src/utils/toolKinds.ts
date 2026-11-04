@@ -107,10 +107,12 @@ const BY_LABEL: Record<string, ToolKindInfo> = {
     'monte carlo': { kind: 'compute', activity: 'Running Monte Carlo' },
     'price projection': { kind: 'compute', activity: 'Projecting prices' },
     'screener': { kind: 'compute', activity: 'Running the screener' },
+    'best setups': { kind: 'compute', activity: 'Ranking the best setups' },
 
     // ── draws: the desk is changing the chart ────────────────────────────
     'chart clear': { kind: 'draw', activity: 'Clearing the chart' },
     'chart draw': { kind: 'draw', activity: 'Drawing on the chart' },
+    'chart switch': { kind: 'draw', activity: 'Switching the chart symbol' },
     'draw detected': { kind: 'draw', activity: 'Drawing the detected setup' },
     'level marks': { kind: 'draw', activity: 'Marking levels' },
 
@@ -206,6 +208,10 @@ export const DESK_TOOL_NAMES: readonly string[] = [
     'get_indicators',
     'recall_chat',
     'run_screener', 'run_monte_carlo',
+    // The screener's ranked shortlist, and the one actuation that puts a
+    // discovered coin on the live chart. Neither needs a canvas: both write
+    // or read through the shared chat session / the market services.
+    'find_best_setups', 'switch_chart_symbol',
     'write_memory_note', 'get_notebook_map', 'propose_skill', 'revise_skill', 'propose_strategy',
     'amend_memory', 'forge_tool', 'scan_chart_skills',
     'skill_view',

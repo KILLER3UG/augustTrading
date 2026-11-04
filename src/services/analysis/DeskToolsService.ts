@@ -43,8 +43,10 @@ import {
     fetchMarkIndex,
     fetchOrderBookDepth,
     fetchRecentLiquidations,
+    fetchAllFuturesSymbols,
     normalizeSymbol,
 } from './MarketDataService';
+import { SCORE_FORMULA } from '../trade/bestSetups';
 import { getSessionContext } from '../infrastructure/SessionService';
 import { handleRecallTool } from '../learning/MemoryRetrievalService';
 import { formatFormingCandleLine, formatLiveMarkStamp, type FormingCandle } from '../trade/tradeChatContext';
@@ -517,6 +519,10 @@ const CACHEABLE_TOOLS = new Set([
     'get_setup_history_stats',
     'project_future_price',
     'run_screener',
+    'find_best_setups',
+    // `switch_chart_symbol` is deliberately NOT here: it is a WRITE to the
+    // shared session. A cached "switched" receipt would claim a UI change
+    // that never happened on the repeat call.
     'scan_setups',
     'web_search',
 ]);
@@ -563,6 +569,10 @@ export const MAX_TOOL_CONTENT_CHARS = 2400;
 const TOOL_BUDGETS: Record<string, number> = {
     get_market_packet: 6000,
     run_screener: 4000,
+    // A ranked shortlist carries per-coin reasons, so the 2400 default would
+    // cut the LAST candidates off silently — the model would think the
+    // market had fewer qualifying setups than the scan measured.
+    find_best_setups: 4000,
     get_all_timeframes: 8000,
     // 60 OHLCV rows are ~64 chars each on a six-figure instrument, so 60 rows
     // is ~3.8k BEFORE the order-book block, the drawing notes and the header.
@@ -868,6 +878,8 @@ const TOOL_LABELS: Record<string, string> = {
     get_setup_history_stats: 'setup history',
     get_trade_log: 'trade log',
     run_screener: 'screener',
+    find_best_setups: 'best setups',
+    switch_chart_symbol: 'chart switch',
     run_monte_carlo: 'monte carlo',
     recall_chat: 'session search',
     project_future_price: 'price projection',
@@ -1876,6 +1888,56 @@ export const DESK_TOOL_DEFINITIONS: DeskToolDefinition[] = [
     {
         type: 'function',
         function: {
+            name: 'find_best_setups',
+            description:
+                'Scan the WHOLE USDT-perp market and RANK the best LIVE trade setups. It runs the market '
+                + 'screener (top coins by 24h volume, 15m RSI/EMA regime, the strategy-book setup detectors '
+                + 'and your own logged W/L for each coin), then scores every coin by measured confluence '
+                + 'and returns the top candidates with a reason printed for every point. '
+                + `Score = ${SCORE_FORMULA} `
+                + 'This is NOT a probability, a win rate or a trade plan: no entry, stop or target is implied, '
+                + 'and a quiet market honestly returns NO candidates. Use when the trader asks for the best '
+                + 'setups, "what should I look at", or wants the market shortlisted. Then read one coin with '
+                + 'get_market_packet (passing its symbol) before naming any level, or put it on the chart '
+                + 'with switch_chart_symbol.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    top: { type: 'number', description: 'How many top-volume coins to scan, 10-100 (default 40; a wider sweep is slower and may not finish inside the tool deadline).' },
+                    limit: { type: 'number', description: 'How many ranked candidates to return, 1-20 (default 8).' },
+                    minScore: { type: 'number', description: 'Minimum confluence score, 0-30 (default 3). Raise it for a stricter shortlist; lowering it on a thin market is a decision you must name.' },
+                    direction: { type: 'string', enum: ['any', 'long', 'short'], description: 'Keep only one side (default any).' },
+                },
+                additionalProperties: false,
+            },
+        },
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'switch_chart_symbol',
+            description:
+                'Switch the trader\'s LIVE CHART to another coin. Writes the instrument into the shared chat '
+                + 'session, so the Analyze chart, the Agents composer and the shell\'s instrument label all '
+                + 'move together. Places NO order, writes NO journal row and runs NO analysis. Accepts a base '
+                + '("ETH") or a pair ("ETHUSDT", "ETH/USDT"); only TRADING USDT perpetuals are accepted, '
+                + 'checked against the live exchange universe when the feed answers. Use after find_best_setups '
+                + 'or run_screener to put a candidate in front of the trader, or when they ask to "look at '
+                + 'ETH", "switch the chart" or "show me SOL". IMPORTANT: this turn\'s default symbol is still '
+                + 'the OLD coin — pass the new symbol EXPLICITLY to every market tool you call afterwards.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    symbol: { type: 'string', description: 'The coin to show, e.g. ETHUSDT or ETH (required).' },
+                },
+                required: ['symbol'],
+                additionalProperties: false,
+            },
+        },
+    },
+    {
+        type: 'function',
+        function: {
             name: 'run_monte_carlo',
             description:
                 'Run a Monte Carlo simulation on a CONCRETE trade setup you state (direction, entry, stop loss, 1–3 take profits): win rate, expected value per trade, TP/SL outcome probabilities, PnL percentile range, and — with account args — 100-trade drawdown/ruin risk and Kelly-optimal size. Use when the user asks about the odds of a plan, whether a risk/reward holds up, or before calling a setup high-probability. Levels are ABSOLUTE prices, not percentages.',
@@ -2025,6 +2087,11 @@ export const INITIAL_DESK_TOOL_NAMES: readonly string[] = [
     'web_search',
     'emit_signal',
     'ask_user_input',
+    // Discovery and its one actuation: a trader asking "find the best setups
+    // and show me the winner" must not spend a round on `load_tools` first.
+    // Both are small schemas; neither is a market read on every turn.
+    'find_best_setups',
+    'switch_chart_symbol',
 ];
 
 /** The schema-on-demand tool. NOT a desk capability: it is not in
@@ -2317,16 +2384,23 @@ export const deskToolsMandateFor = (offered?: readonly string[], deferred = fals
     const selfModRule = has('propose_self_change') && getHarnessSettings().selfModificationMode !== 'off'
         ? 'You run inside a harness you may adjust: `propose_self_change` moves a behavior knob (thinking effort, the confirmed-skill library cap — it reverts itself within 24h) or, in shadow mode, rewrites one prompt and lets the trades that run under it judge it. Call `list_self_changes` first: a target already in force must be reverted before it changes again, and a change you did not need is a change you should revert. Risk limits, privacy, memory, the prompt A/B settings and self-modification itself are blocked — asking for them is not a failure, it is a question for the trader.\n'
         : '';
+    // Discovery is a WORKFLOW, not one lookup: the seat must know that a
+    // shortlist and a chart switch are both calls it can make here, and that
+    // a score is not a plan. Gated like the rest of the mandate, so a seat
+    // whose allow-list refuses these tools is never told to call them.
+    const discoveryRule = has('find_best_setups') && has('switch_chart_symbol')
+        ? 'MARKET DISCOVERY: `find_best_setups` scans the whole universe and RANKS the best live setups by measured confluence (`run_screener` is the raw table behind it). `switch_chart_symbol` puts a coin on the live chart when the trader asks to look at it. A score is not a plan — read the chosen coin with `get_market_packet` (passing its symbol explicitly) before naming an entry, stop or target.\n'
+        : '';
 
     return `
 **DESK TOOLS (available anytime on this turn)**
 ${deferred ? 'ONLY THE CORE TOOLS ARE LOADED. The TOOL CATALOGUE at the end lists the rest; call `load_tools` with exact names before you rely on one, and load several at once when the question needs them. A tool you have not loaded cannot be called this round.' : ''}
 You can call live tools before you speak, on any question where a fresh fact would change the answer.
 Use them for: news/macro catalysts, funding/OI crowding, order-book walls, liquidations, BTC context on alts, session timing, or a fresh price print.
-The chart symbol is only the DEFAULT: the per-symbol market tools accept a \`symbol\` argument, so when the user asks about another coin ("what about eth, can we trade there?") pull that coin directly — get_market_packet or get_all_timeframes with symbol ETHUSDT gives the full multi-timeframe read without anyone switching charts. run_screener is the exception: it scans the whole futures universe and takes no symbol.
+The chart symbol is only the DEFAULT: the per-symbol market tools accept a \`symbol\` argument, so when the user asks about another coin ("what about eth, can we trade there?") pull that coin directly — get_market_packet or get_all_timeframes with symbol ETHUSDT gives the full multi-timeframe read without anyone switching charts. run_screener and find_best_setups are the exception: they scan the whole futures universe and take no symbol.
 Your own trading memory is one of these tools: the recall tool searches your notebook (doctrine, rules, similar past trades) - call it when prior experience with this setup could change your stance.
 ${shapeRule} The market packet you are shown carries code-calculated summaries, and its printed candle rows depend on the surface you were opened in: the full packet prints EIGHT rows per timeframe, the compact one (used by surfaces that ask for brevity) prints NONE and keeps only the summaries. Either way — eight printed rows are not a chart, and a shape described from them is invented, not read. If the rows are not in front of you, call ${groundingTool ?? 'nothing'}; if you have not, either call it or say "inferred from the rows shown" and give it no confidence. ${drawingRule}${levelRule}
-${has('run_monte_carlo') ? 'run_monte_carlo simulates a concrete plan: pass direction (long/short), entry, stop_loss, and take_profits (1–3 absolute prices). Optional atr is in price units; without it volatility is assumed from twice the stop distance, NOT fetched from the market. Optional timeframe is a label, num_simulations (100–5000) and max_steps (10–1000) control the run. For account drawdown estimates pass account_balance, position_size (margin in account currency), and leverage together. Report the simulation assumptions and timeout rate, not guaranteed or historical performance.' : ''}${selfModRule}Do not call tools you do not need. Prefer 0–2 calls. After tool results arrive, write your reply from the findings — no JSON, no restated tool schemas.
+${has('run_monte_carlo') ? 'run_monte_carlo simulates a concrete plan: pass direction (long/short), entry, stop_loss, and take_profits (1–3 absolute prices). Optional atr is in price units; without it volatility is assumed from twice the stop distance, NOT fetched from the market. Optional timeframe is a label, num_simulations (100–5000) and max_steps (10–1000) control the run. For account drawdown estimates pass account_balance, position_size (margin in account currency), and leverage together. Report the simulation assumptions and timeout rate, not guaranteed or historical performance.' : ''}${selfModRule}${discoveryRule}Do not call tools you do not need. Prefer 0–2 calls. After tool results arrive, write your reply from the findings — no JSON, no restated tool schemas.
 `;
 };
 
@@ -2987,6 +3061,7 @@ const MARKET_READ_TOOLS = new Set([
     'get_session_context',
     'get_trade_log',
     'run_screener',
+    'find_best_setups',
 ]);
 
 export const isMarketReadTool = (name: string): boolean => MARKET_READ_TOOLS.has(name);
@@ -4465,6 +4540,85 @@ ${body}`);
                 if (sort === 'movers') rows = [...rows].sort((a, b) => Math.abs(b.change24h) - Math.abs(a.change24h));
                 else if (sort === 'setups') rows = [...rows].sort((a, b) => b.setups.length - a.setups.length);
                 content = screenerToMarkdown(rows);
+                break;
+            }
+            case 'find_best_setups': {
+                // The SHORTLIST over a healthy scan: same screener, one shared
+                // confluence score (the human panel's "Best setups" sort uses
+                // it too). A blind feed is UNKNOWN, never "no setups".
+                const rawTop = Number(call.arguments.top);
+                // 40 is the default on purpose: every coin costs one kline
+                // read, and a desk call has a 20s deadline. The trader can
+                // still ask for a 100-coin sweep explicitly.
+                const top = Math.min(Math.max(Number.isFinite(rawTop) ? Math.round(rawTop) : 40, 10), 100);
+                const rawLimit = Number(call.arguments.limit);
+                const limit = Math.min(Math.max(Number.isFinite(rawLimit) ? Math.round(rawLimit) : 8, 1), 20);
+                const rawMin = Number(call.arguments.minScore);
+                const minScore = Math.min(Math.max(Number.isFinite(rawMin) ? Math.round(rawMin) : 3, 0), 30);
+                const sideArg = asString(call.arguments.direction, 'any').toLowerCase();
+                const side: 'any' | 'long' | 'short' = sideArg === 'long' || sideArg === 'short' ? sideArg : 'any';
+                const interval = '15m';
+                const { runScreenerWithStatus } = await import('../trade/screener');
+                const { rankBestSetups, bestSetupsToMarkdown } = await import('../trade/bestSetups');
+                const scan = await runScreenerWithStatus({
+                    limit: top, interval, trades: context.trades || [], signal: context.signal,
+                });
+                if (scan.universeFailed) {
+                    content = dataUnavailable('find_best_setups',
+                        'the futures ticker feed was unreachable — 0 coins scanned; UNKNOWN, not "no setups"',
+                        'Say the screen is blind and name no candidate; optionally retry once');
+                    break;
+                }
+                content = bestSetupsToMarkdown(
+                    rankBestSetups(scan.rows, { limit, minScore, direction: side }),
+                    { top, interval, minScore },
+                );
+                break;
+            }
+            case 'switch_chart_symbol': {
+                // A UI WRITE, not a lookup. The one store writer keeps the
+                // chart, the dock, the Agents composer and the shell label
+                // on the same coin (services/trade/chatStore.ts).
+                const raw = asString(call.arguments.symbol);
+                if (!raw) {
+                    return rejectedResult(call, 'switch_chart_symbol rejected: symbol is required, e.g. ETHUSDT.');
+                }
+                const next = normalizeSymbol(raw);
+                if (!/^[A-Z0-9]{2,20}USDT$/.test(next)) {
+                    return rejectedResult(call, `switch_chart_symbol rejected: "${raw}" is not a USDT perpetual symbol. This desk charts USDT perps only; call run_screener for the live universe.`);
+                }
+                // A dead ticker must not be mistaken for a live universe:
+                // when the feed answers, an unknown coin is REFUSED; when it
+                // is unreachable the switch still happens but the receipt
+                // says the symbol was not verified.
+                let verification = 'NOT VERIFIED — the exchange universe feed did not answer';
+                try {
+                    // `fetchAllFuturesSymbols` takes no signal and can walk
+                    // three hosts at 15s each. A dead feed must not hold a
+                    // simple UI switch hostage, so verification gets its own
+                    // short budget; a slow answer is reported as unverified.
+                    const universe = await Promise.race([
+                        fetchAllFuturesSymbols(),
+                        new Promise<null>(resolve => { setTimeout(() => resolve(null), 3000); }),
+                    ]);
+                    if (universe && universe.length > 0) {
+                        if (!universe.some(s => s.symbol === next)) {
+                            return rejectedResult(call, `switch_chart_symbol rejected: ${next} is not a TRADING USDT perpetual in the live universe. Call run_screener or find_best_setups for real symbols.`);
+                        }
+                        verification = 'verified against the live USDT-perp universe';
+                    }
+                } catch { /* the receipt below names the blind feed */ }
+                const { getActiveSession, setActiveSymbol } = await import('../trade/chatStore');
+                if (!getActiveSession()) {
+                    return rejectedResult(call, 'switch_chart_symbol rejected: no active chat session carries the instrument.');
+                }
+                const before = setActiveSymbol(next) ?? fallback;
+                content = [
+                    `CHART SYMBOL SWITCHED: ${before} -> ${next} (${verification}).`,
+                    'The Analyze chart, the Agents composer and the shell instrument label all read this shared session, so they now show the new coin.',
+                    `This turn's DEFAULT symbol is still ${fallback}: pass symbol=${next} explicitly to every market tool you call from here.`,
+                    'No order was placed, no journal row was written and no analysis was run. Call get_market_packet with that symbol before stating any price or level.',
+                ].join(' ');
                 break;
             }
             case 'run_monte_carlo': {

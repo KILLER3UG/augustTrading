@@ -10,6 +10,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom';
 import { ArrowDown, ArrowUp, ArrowUpDown, BrainCircuit, Loader2, Minus, Search, X } from '../shared/Icons';
 import { runScreenerWithStatus, type ScreenerRow } from '../../services/trade/screener';
+import { bestSetupScore, SCORE_FORMULA } from '../../services/trade/bestSetups';
 import { display as symbolDisplay } from '../../utils/symbol';
 import { fmtPrice } from '../../utils/formatters';
 import StatusPill from '../ui/StatusPill';
@@ -25,7 +26,9 @@ export interface ScreenerPanelProps {
     trades?: LoggedTrade[];
 }
 
-type SortKey = 'volume' | 'movers' | 'rsi' | 'setups';
+/** 'best' is the SAME score the model's find_best_setups tool prints — one
+ *  ranking for the table and the answer, never two ideas of "best". */
+type SortKey = 'volume' | 'movers' | 'rsi' | 'setups' | 'best';
 
 // fmtPrice lives in utils/formatters (audit 2026-09-16 dedupe). The canonical
 // keeps this table's sub-$1 six-decimal precision and pins the locale to
@@ -61,6 +64,8 @@ interface ScreenerRowView {
     setupTitle: string;
     /** The `title` tooltip: every setup, "Name (side); …". */
     setupsTitle: string;
+    /** The shared confluence score, shown only when a setup is live. */
+    score: number;
     edge: string;
 }
 
@@ -76,7 +81,7 @@ interface ScreenerRowViewProps extends ScreenerRowView {
  *  the entire tbody). */
 const ScreenerRowView = React.memo<ScreenerRowViewProps>(({
     symbol, display, baseAsset, price, change24h, rsi14, regime,
-    setupCount, setupTitle, setupsTitle, edge, onSelect, onLearn,
+    setupCount, setupTitle, setupsTitle, score, edge, onSelect, onLearn,
 }) => (
     <tr
         data-testid={`screener-row-${symbol}`}
@@ -109,6 +114,9 @@ const ScreenerRowView = React.memo<ScreenerRowViewProps>(({
             {setupCount > 0
                 ? <span className="rounded-control bg-amber-500/10 px-1.5 py-0.5 text-ui-xs font-semibold text-amber-300" title={setupsTitle}>
                     {setupCount} · {setupTitle}
+                    <span className="ml-1.5 font-mono text-zinc-400" title={`Confluence score ${score}: ${SCORE_FORMULA}`}>
+                        {score}
+                    </span>
                 </span>
                 : <span className="text-zinc-600">—</span>}
         </td>
@@ -175,6 +183,10 @@ export const ScreenerPanel: React.FC<ScreenerPanelProps> = ({ open, onClose, onC
         if (sort.key === 'movers') sorted.sort((a, b) => dir * (Math.abs(b.change24h) - Math.abs(a.change24h)));
         else if (sort.key === 'rsi') sorted.sort((a, b) => dir * ((a.rsi14 ?? 50) - (b.rsi14 ?? 50)));
         else if (sort.key === 'setups') sorted.sort((a, b) => dir * (b.setups.length - a.setups.length));
+        else if (sort.key === 'best') sorted.sort((a, b) =>
+            dir * (bestSetupScore(a).score - bestSetupScore(b).score)
+            || b.quoteVolume - a.quoteVolume
+            || a.symbol.localeCompare(b.symbol));
         else sorted.sort((a, b) => dir * (b.quoteVolume - a.quoteVolume));
         return sorted;
     }, [rows, query, setupsOnly, sort]);
@@ -193,6 +205,7 @@ export const ScreenerPanel: React.FC<ScreenerPanelProps> = ({ open, onClose, onC
         setupCount: r.setups.length,
         setupTitle: r.setups[0]?.title ?? '',
         setupsTitle: r.setups.map(s => `${s.title} (${s.side})`).join('; '),
+        score: bestSetupScore(r).score,
         edge: r.edge || '',
     })), [visible]);
 
@@ -280,6 +293,21 @@ export const ScreenerPanel: React.FC<ScreenerPanelProps> = ({ open, onClose, onC
                         className={`shrink-0 rounded-full border px-2 py-0.5 text-ui-xs font-semibold transition-colors ${setupsOnly ? 'border-amber-500/40 bg-amber-500/10 text-amber-300' : 'border-white/10 text-zinc-400 hover:text-zinc-200'}`}
                     >
                         Setups only
+                    </button>
+                    <button
+                        type="button"
+                        data-testid="screener-best-trigger"
+                        title={`Rank by the same confluence score the desk's find_best_setups tool uses. ${SCORE_FORMULA}`}
+                        aria-label="Best setups"
+                        aria-pressed={sort.key === 'best'}
+                        onClick={() => {
+                            const on = sort.key === 'best';
+                            setSetupsOnly(!on);
+                            setSort(on ? { key: 'volume', desc: true } : { key: 'best', desc: true });
+                        }}
+                        className={`shrink-0 rounded-full border px-2 py-0.5 text-ui-xs font-semibold transition-colors ${sort.key === 'best' ? 'border-amber-500/40 bg-amber-500/10 text-amber-300' : 'border-white/10 text-zinc-400 hover:text-zinc-200'}`}
+                    >
+                        Best setups
                     </button>
                     <button type="button" onClick={onClose} aria-label="Close screener"
                         className="shrink-0 rounded-control p-1 text-zinc-500 transition-colors hover:bg-white/[0.06] hover:text-zinc-200">

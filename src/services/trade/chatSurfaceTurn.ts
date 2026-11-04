@@ -69,6 +69,11 @@ export const CHAT_SURFACE_TOOLS = [
     'get_trade_log', 'recall', 'get_setup_history_stats', 'recall_chat',
     // Market-wide discovery and simulation.
     'web_search', 'scan_setups', 'run_screener', 'run_monte_carlo',
+    // The ranked shortlist and the chart switch are session-wide, not
+    // canvas-bound: a Chat-surface seat can find the best setups and put
+    // one on the trader's chart without owning a live plot. Both are
+    // registered in DESK_TOOL_NAMES, so the executor accepts them here.
+    'find_best_setups', 'switch_chart_symbol',
     // The seat edits its own memory, skills and tools from here — the same
     // growth set the dock has, since neither half of it needs a canvas.
     'write_memory_note', 'get_notebook_map', 'propose_skill', 'revise_skill', 'propose_strategy',

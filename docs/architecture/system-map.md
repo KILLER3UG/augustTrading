@@ -1010,6 +1010,20 @@ the definitions, and then runs `runDeskToolLoop`. `executeDeskTool`
 re-checks the allow-list at execution, so a prompt that names a
 non-offered tool still cannot run it.
 
+Market discovery is one ranked path, not three independent features.
+`find_best_setups` runs the same `runScreenerWithStatus` scan as `run_screener` and
+hands the rows to `rankBestSetups` (`src/services/trade/bestSetups.ts › rankBestSetups`);
+the human screener's **Best setups** sort calls the identical scorer, so the table
+and the model cannot name different "best" coins. A score is a confluence count with
+a printed reason per point, never a probability or a trade plan. `switch_chart_symbol`
+is the workflow's one actuation: it checks the coin against the live USDT-perp
+universe and writes the shared session through `setActiveSymbol`
+(`src/services/trade/chatStore.ts › setActiveSymbol`), the same writer the symbol
+picker uses (`src/components/trade/TradeView.tsx › TradeView`). Both tools sit in
+`INITIAL_DESK_TOOL_NAMES`, so shortlist → switch costs no `load_tools` round; a
+detached evaluator is denied the switch by `UNATTENDED_DENY`
+(`src/services/trade/unattendedTools.ts › UNATTENDED_DENY`).
+
 The loop is bounded on every axis:
 
 - `MAX_DESK_TOOL_ROUNDS` (`src/services/analysis/DeskToolsService.ts › MAX_DESK_TOOL_ROUNDS`), 8,192 output tokens per round and a 180s turn budget;

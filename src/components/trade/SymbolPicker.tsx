@@ -19,7 +19,8 @@ export interface SymbolPickerProps {
     onChange: (symbol: string) => void;
     /** The chart head is the symbol, the price and the funding (v3) — the
      *  market TOOLS that used to sit there live in this menu's foot, so they
-     *  keep a door without decorating the head. */
+     *  keep a door without decorating the head. The screener is one of them:
+     *  without this door the full-screen panel is mounted but unreachable. */
     onOpenScreener?: () => void;
     onOpenWatchList?: () => void;
     watchOpenCount?: number;

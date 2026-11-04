@@ -28,6 +28,9 @@ export const UNATTENDED_DENY = [
     // A signal is a call on the trader's ledger; a detached skill evaluator
     // judges skills, it does not put calls on the record.
     'emit_signal',
+    // Nor may a run nobody is watching change the coin the trader is
+    // looking at. `find_best_setups` stays: ranking the market is a read.
+    'switch_chart_symbol',
 ];
 
 export const DETACHED_EVAL_TOOLS: string[] = CHAT_SURFACE_TOOLS.filter(

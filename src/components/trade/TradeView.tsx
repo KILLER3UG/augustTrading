@@ -505,10 +505,10 @@ const TradeView: React.FC<TradeViewProps> = ({
     }, [sharedSession?.symbol, sharedSession?.interval]);
     const changeSymbol = useCallback((next: string): void => {
         setSymbol(next);
-        // Written to the row this surface is ON, which is the row the Chat
-        // surface reads — not to whatever id the store last held.
-        const sid = chatStore.getActiveSession()?.id;
-        if (sid) chatStore.mutate(sid, sess => ({ ...sess, symbol: next }));
+        // The ONE store writer for the instrument: the desk's
+        // `switch_chart_symbol` tool lands on it too, so a model-driven
+        // switch and a picker click cannot update different rows.
+        chatStore.setActiveSymbol(next);
     }, []);
     const changeInterval = useCallback((next: ChartInterval): void => {
         setInterval_(next);

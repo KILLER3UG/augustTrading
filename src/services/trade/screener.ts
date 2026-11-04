@@ -30,8 +30,9 @@ export interface ScreenerRow {
     rsi14: number | null;
     /** EMA20/50 trend read on the scan interval. */
     regime: 'up' | 'down' | 'range';
-    /** LIVE strategy-book setups detected on the scan interval. */
-    setups: { title: string; side: 'long' | 'short' | 'watch' }[];
+    /** LIVE strategy-book setups detected on the scan interval. `barsAgo` is
+     *  the detector's trigger age (0 = current bar); bestSetups scores it. */
+    setups: { title: string; side: 'long' | 'short' | 'watch'; barsAgo?: number }[];
     /** The trader's own logged record for THIS coin, e.g. "7W/5L" ('' = no history). */
     edge: string;
 }
@@ -89,7 +90,8 @@ const scanRow = async (meta: { symbol: string; baseAsset: string; price: number;
             const last = rsis[rsis.length - 1];
             row.rsi14 = Number.isFinite(last) ? Math.round(last * 10) / 10 : null;
             row.regime = regimeOf(candles);
-            row.setups = scanSetups(candles).slice(0, 4).map(s => ({ title: s.title, side: s.side }));
+            row.setups = scanSetups(candles).slice(0, 4)
+                .map(s => ({ title: s.title, side: s.side, barsAgo: s.barsAgo }));
         }
     } catch { /* klines failed — the row stays price/volume-only */ }
     return row;

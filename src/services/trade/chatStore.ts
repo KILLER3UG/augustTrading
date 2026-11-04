@@ -304,6 +304,26 @@ export const getActiveSession = (): LiveSession | undefined => {
 };
 
 /**
+ * THE one writer for the chart's instrument.
+ *
+ * `TradeView`'s symbol picker and the desk's `switch_chart_symbol` tool both
+ * land here. The chart, the dock, the Agents composer and the shell's
+ * instrument label all read this session row, so a write that bypassed this
+ * function would leave one of them naming a different coin. Returns the
+ * symbol that was on the row before the write (or null when there is no
+ * active session), so a caller can report an honest "X -> Y" receipt.
+ */
+export const setActiveSymbol = (symbol: string): string | null => {
+    ensureLoaded();
+    const session = getActiveSession();
+    if (!session) return null;
+    const previous = session.symbol ?? null;
+    if (previous === symbol) return previous;
+    mutate(session.id, s => ({ ...s, symbol }));
+    return previous;
+};
+
+/**
  * The ACTIVE session's composer thinking tier, read fresh (no subscription).
  *
  * One row, two homes: the Chart AI dock and the Agents surface both drive this
