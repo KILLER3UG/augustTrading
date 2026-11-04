@@ -24,6 +24,7 @@
 
 import { Kline } from '../../types';
 import { coerceCandles } from '../../utils/candleShape';
+import { candleAlignedTtlMs } from '../../utils/candleTtl';
 
 // --- Short-TTL cache + in-flight coalescing ---
 // Chart mounts/polls re-race up to 4 proxy sources per fetch; a short TTL and
@@ -34,30 +35,15 @@ import { coerceCandles } from '../../utils/candleShape';
 // being servable the moment its close prints.
 const klineCache = new Map<string, { at: number; ttl: number; data: Kline[] }>();
 const klineInFlight = new Map<string, Promise<TaggedKlines>>();
-const KLINE_CACHE_TTL_MS = 30_000;
-/** The ceiling of a candle-aligned TTL: even a 1h series is re-read at most
- *  this often, so a symbol left on screen cannot pin a mid-hour snapshot. */
-const KLINE_CACHE_MAX_TTL_MS = 300_000;
 const KLINE_CACHE_MAX = 200;
 
-/** Candle-aligned freshness (ms) for one interval at `now`: the time left
- *  before the CURRENT bar of that interval closes. 5m/15m/1h align to their
- *  boundary (capped at KLINE_CACHE_MAX_TTL_MS); slower or unknown intervals
- *  keep the flat wall-clock bound, which is strictly no worse than the old
- *  fixed 30s. The 5s floor stops a read in a bar's last seconds from pinning
- *  a bar that is about to print its close. */
-export const candleAlignedTtlMs = (interval: string, now: number): number => {
-    const span = INTERVAL_MS[interval];
-    if (!span || span > 60 * 60_000) return KLINE_CACHE_TTL_MS;
-    const remaining = span - (now % span);
-    return Math.max(5_000, Math.min(remaining, KLINE_CACHE_MAX_TTL_MS));
-};
-
-const INTERVAL_MS: Record<string, number> = {
-    '5m': 5 * 60_000,
-    '15m': 15 * 60_000,
-    '1h': 60 * 60_000,
-};
+/** Candle-aligned freshness lives in `utils/candleTtl.ts` — one function for
+ *  the fetch layer AND the desk tool cache (a second implementation is how
+ *  the two caches disagree about what "fresh" means); re-exported so existing
+ *  callers and the contracts pin read it from here. It is also what keeps
+ *  KlineService OUT of the entry chunk: DeskToolsService imports the pure
+ *  util, not this module. */
+export { candleAlignedTtlMs };
 
 /** Expired sweep + insertion-ordered eviction on WRITE. The map used to grow
  *  without bound (one entry per symbol × interval × limit, each up to 1000

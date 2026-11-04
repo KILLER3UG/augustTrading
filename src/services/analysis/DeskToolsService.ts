@@ -46,7 +46,7 @@ import {
     fetchAllFuturesSymbols,
     normalizeSymbol,
 } from './MarketDataService';
-import { candleAlignedTtlMs } from './KlineService';
+import { candleAlignedTtlMs } from '../../utils/candleTtl';
 import { SCORE_FORMULA } from '../trade/bestSetups';
 import { getSessionContext } from '../infrastructure/SessionService';
 import { handleRecallTool } from '../learning/MemoryRetrievalService';
