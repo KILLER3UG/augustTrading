@@ -20,8 +20,10 @@ its icon kept their meaning; only the destination changed.
 
 Anatomy, top to bottom:
 
-- **Chart head** — one quiet line: `SymbolPicker`, hero price (`text-ui-price` mono tabular-nums), change pill, funding + countdown, feed state, timeframe control. No metrics band. `src/components/trade/TradeView.tsx` › `TradeView`
-- **OHLC/V/OI row** — the chart's crosshair readout row carries the 24h high/low/volume/OI/oracle fields the removed band held. `src/components/trade/TradingChart.tsx` › `TradingChart`
+- **Chart head** — one quiet line: `SymbolPicker`, hero price (`text-ui-price` mono tabular-nums), change, funding + countdown, feed dot. No metrics band and no tool buttons: the **market screener** and **pinned signals** live in the symbol picker's foot, where a trader already goes to change instruments. `src/components/trade/TradeView.tsx` › `TradeView`
+- **Crosshair readout** — the 24h high/low/volume/OI/oracle fields the band held appear ONLY while the pointer is over the plot, then leave with it. `src/components/trade/TradingChart.tsx` › `TradingChart`
+- **Composer** — the box is `+` / model / send. The two prompt actions ride the `+` menu ("Study the chart → skills", "Full analysis") instead of chips on the row.
+- **Activity** — the skill-audit drawer's door is the account row's inbox control at the column's foot; the content bar no longer carries a status cluster. A FAILED profile save still shows ("Save failed") because a silent save error is data loss.
 - **Order-book drawer** — 30px strip (name, live state, spread) closed by default, expands on demand. Analyze-only. Narrow (<1024) Book mode = full-height pane. `src/components/trade/TradeView.tsx` › `TradeView`
 - **Chart AI dock** — `useRightPanel` default 364px (min 300 / max 820), resize + collapse rail. Dock body order: BiasChips line, SignalCard, KeyLevels Disclosure, DeskScorecard, user bubble (max 80%), AnalyzedRow, AnswerBody (font-reading), MemoryProvenanceStrip, VerdictAudit gate behind "Inspect evidence & gate" Disclosure, prov line (code-calculated only). `src/components/trade/panels/ChatTranscriptList.tsx` › `ChatTranscriptList`
 - **Narrow <1024** — three-mode switcher **Chart | AI | Book**, one pane at a time.
@@ -113,9 +115,10 @@ the trader's journal in bulk; treat it accordingly.
 - On the **Agents** surface the SAME mode switch and utility rows arrive as nodes, and the column
   beside the thread renders the same `ConversationGroups` above the roster. Its Chats | Bots tab
   strip is DELETED — one scroll of sections, so the roster needs no switch to be reachable.
-- The **content bar** carries the A-mark, the active conversation or record name, the instrument
-  context, session state and Activity. `AgentsView`'s own bar IS that bar — no second header
-  stacks above it.
+- The **content bar** is the title, the instrument context and one muted **Live** pill (its
+  popover still carries sessions, market conditions, Live market and Vision data). No brand mark,
+  no save tick, no Activity pill. `AgentsView`'s own bar IS that bar — no second header stacks
+  above it.
 - The rail is 240px by default and drags from its right edge (200–360px; the width persists and
   double-click restores 240). Its top-right control puts it away; collapsed it leaves the layout,
   and the content bar's expand button is the ONLY way back — navigation never rides the content

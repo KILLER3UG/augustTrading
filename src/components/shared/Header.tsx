@@ -1,8 +1,7 @@
 import React, { memo, useState, useEffect, useRef } from 'react';
 import { UpdateButton } from './UpdateButton';
-import { ActivityIcon } from './Icons';
+import { ActivityIcon, AlertTriangleIcon } from './Icons';
 import NavExpandButton from '../shell/NavExpandButton';
-import StatusCluster from '../shell/StatusCluster';
 import { getSessionContext, getAllSessionsStatus, SessionContext, SessionStatus } from '../../services/infrastructure/SessionService';
 import { baseOf } from '../../utils/symbol';
 
@@ -10,8 +9,6 @@ interface HeaderProps {
     saveStatus: 'SAVED' | 'SAVING' | 'ERROR';
     isAnalysisInProgress: boolean;
     currentVisionData: string[];
-    // Network status
-    isOnline?: boolean;
     pendingQueueCount?: number;
     // Live market conditions
     liveMarketConditions?: {
@@ -23,8 +20,6 @@ interface HeaderProps {
      *  to it instead of naming a symbol of its own. */
     liveMarketSymbol?: string;
     // Toolbar entries that stayed in the header when the drawer was retired.
-    /** Opens the Activity drawer: the app’s detached skill evaluations. */
-    onOpenActivity?: () => void;
     /** Session-popover footer links. The rail's "Live Market" and "View Vision
      *  Data" rows landed here (stage 3): the popover is already the market-
      * context home, so the full-screen market view is one hop from it. */
@@ -43,26 +38,20 @@ interface HeaderProps {
     /** The instrument line beside the title (`BTC/USDT · 4h`). Omitted when the
      *  surface has no market context of its own. */
     context?: React.ReactNode;
-    /** The band's own status cluster, overridable so the App can build it ONCE
-     *  and hand the same node around. Absent, the band wires its own. */
-    status?: React.ReactNode;
 }
 
 // Memoized: Header re-renders every time App does (typing, progress ticks);
 // with stable props it only renders when something it actually shows changes.
 export const Header: React.FC<HeaderProps> = memo(({
     saveStatus,
-    isOnline = true,
     liveMarketConditions,
     liveMarketSymbol,
-    onOpenActivity,
     onOpenLiveMarket,
     onOpenVisionData,
     hasVisionData = false,
     onExpandNavRail,
     title,
     context,
-    status,
 }) => {
     const [sessionContext, setSessionContext] = useState<SessionContext | null>(null);
     const [allSessions, setAllSessions] = useState<SessionStatus[]>([]);
@@ -161,17 +150,9 @@ export const Header: React.FC<HeaderProps> = memo(({
                             <NavExpandButton onExpand={onExpandNavRail} />
                         </div>
                     )}
-                    {/* The A-mark, and only the mark: the rail has no brand row
-                        (the reference puts the wordmark nowhere), so this is
-                        the one brand cue in the shell. The word "August" used
-                        to sit beside it and repeated what the window already
-                        says. */}
-                    <div className="flex select-none items-center gap-2 self-center" aria-label="August">
-                        <svg className="h-6 w-6" viewBox="0 0 24 24" aria-hidden="true">
-                            <path d="M12 2 21.5 21h-5.1L12 11.4 7.6 21H2.5L12 2Z" fill="var(--color-zinc-100)" />
-                            <rect x="9.1" y="15.7" width="5.8" height="1.5" rx=".75" fill="var(--color-zinc-950)" />
-                        </svg>
-                    </div>
+                    {/* No brand mark in the bar: the mock's content bar is the
+                        title, the context and one live dot — the window title
+                        already says August. */}
                     {/* The content title. Navigation is not here at any width:
                         the rail carries it, and when the rail is away the
                         expand button beside this title is the only way back. */}
@@ -215,12 +196,7 @@ export const Header: React.FC<HeaderProps> = memo(({
                                 <span className={`h-1.5 w-1.5 rounded-full ${sessionContext.isKillZone ? 'bg-rose-500 animate-pulse' :
                                     sessionContext.currentSession === 'off_hours' ? 'bg-zinc-500' : 'bg-emerald-500 shadow-[0_0_0_3px_rgba(7,181,106,0.12)]'
                                     }`} />
-                                <span className={sessionContext.isKillZone ? 'text-rose-400' : ''}>
-                                    {sessionContext.currentSession === 'overlap' ? 'Ldn/NY' :
-                                        sessionContext.currentSession === 'new_york' ? 'NY' :
-                                            sessionContext.currentSession === 'london' ? 'London' :
-                                                sessionContext.currentSession === 'asian' ? 'Asia' : 'Off'}
-                                </span>
+                                <span className={sessionContext.isKillZone ? 'text-rose-400' : ''}>Live</span>
                             </button>
 
                             {/* Session Details Modal — a disclosure, not
@@ -317,12 +293,18 @@ export const Header: React.FC<HeaderProps> = memo(({
                             )}
                         </div>
                     )}
-                    {status ?? (
-                        <StatusCluster
-                            saveStatus={saveStatus}
-                            isOnline={isOnline}
-                            onOpenActivity={onOpenActivity}
-                        />
+                    {/* The bar's right edge is the Live pill and nothing else.
+                        The save state is silent while healthy — an ambient tick
+                        for a write that already succeeded is chrome — but a
+                        FAILED write still speaks, because a silent save error is
+                        data loss wearing a clean bar. */}
+                    {saveStatus === 'ERROR' && (
+                        <span role="status" aria-label="Save failed"
+                            title="The profile could not be saved"
+                            data-testid="header-save-failed"
+                            className="flex items-center gap-1 rounded-full border border-rose-500/30 bg-rose-500/10 px-1.5 py-0.5 text-ui-2xs font-medium text-rose-300">
+                            <AlertTriangleIcon className="h-3 w-3" aria-hidden="true" /> Save failed
+                        </span>
                     )}
                     {/* The update control's ONLY reachable home. It used to live in
                         the NavRail, which nothing rendered, so an available update

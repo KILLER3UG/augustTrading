@@ -19,7 +19,6 @@
  */
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { Grid3x3, PanelRight, PinIcon } from '../shared/Icons';
 import { ProviderConfig } from '../../types/provider';
 import { TradeAnalysis, LoggedTrade, Message, Kline } from '../../types';
 import { fetchMarkIndex, fetchFuturesTicker24h, fetchDerivativesData } from '../../services/analysis/MarketDataService';
@@ -314,7 +313,7 @@ export const useTickFlash = (price: number | undefined): { cls: string; seq: num
 
 
 const TradeView: React.FC<TradeViewProps> = ({
-    memoryEnabled, strategiesEnabled, providers, selectedChatModel, onSelectChatModel, onRefreshModels, verdict, bots = [], trades = [], botSessionRequest, groupSessionRequest, onRunAnalysis, onAnalysisError, onStopRun, botThreadRows, onBotTurnCommit, onSoloTurnCommit, onSyncConversation, conversationRows, onNewGroup, getAnalysisMessage, onLogProposedTrade, renderGroupSurface, groups = [], registerScrollToMessage, sidebarOpen = true, onToggleSidebar, modeRequest, activeUsername, onTradeModeChange, onOpenChat, onToggleWatch, onOpenWatchList, watchOpenCount = 0, watchOpenR, pinnedMessageIds }) => {
+    memoryEnabled, strategiesEnabled, providers, selectedChatModel, onSelectChatModel, onRefreshModels, verdict, bots = [], trades = [], botSessionRequest, groupSessionRequest, onRunAnalysis, onAnalysisError, onStopRun, botThreadRows, onBotTurnCommit, onSoloTurnCommit, onSyncConversation, conversationRows, onNewGroup, getAnalysisMessage, onLogProposedTrade, renderGroupSurface, groups = [], registerScrollToMessage, modeRequest, activeUsername, onTradeModeChange, onOpenChat, onToggleWatch, onOpenWatchList, watchOpenCount = 0, pinnedMessageIds }) => {
     // The chart opens on the coin the SHARED chat session carries. Adopting only
     // from an effect is not enough: the dock mounts in the same commit, a child's
     // effect runs before its parent's, and the dock can re-bind the active session
@@ -878,25 +877,10 @@ const TradeView: React.FC<TradeViewProps> = ({
                 was the duplication the reference removes. */}
             <div className="flex shrink-0 items-center gap-2 border-b border-white/[0.06] bg-zinc-950 px-3 py-2 sm:px-4">
                 <div className="flex min-w-0 items-center gap-1.5">
-                    {/* The book toggle now owns the drawer strip below. */}
-                    {onToggleSidebar && (
-                        <button
-                            type="button"
-                            onClick={() => (isBelowLg ? pickMode('book') : setBookOpen(v => !v))}
-                            aria-expanded={isBelowLg ? mode === 'book' : bookOpen}
-                            aria-label="Toggle order book"
-                            title={isBelowLg ? 'Show the order book' : 'Show or hide the order book'}
-                            data-testid="trade-book-toggle"
-                            className={`hidden h-7 w-7 shrink-0 items-center justify-center rounded-control transition-colors duration-[120ms] ease-[var(--ease-snappy)] sm:flex ${
-                                (isBelowLg ? mode === 'book' : bookOpen)
-                                    ? 'bg-white/[0.08] text-zinc-100'
-                                    : 'text-zinc-500 hover:bg-white/[0.05] hover:text-zinc-200'
-                            }`}
-                        >
-                            <PanelRight className="h-3.5 w-3.5" aria-hidden="true" />
-                        </button>
-                    )}
-                    <SymbolPicker symbols={symbols} value={symbol} onChange={changeSymbol} />
+                    <SymbolPicker symbols={symbols} value={symbol} onChange={changeSymbol}
+                        onOpenScreener={() => setScreenerOpen(true)}
+                        onOpenWatchList={onOpenWatchList}
+                        watchOpenCount={watchOpenCount} />
                     {/* The design's price-block: the figure carries the session's
                         own colour (green up / red down, the exchange convention),
                         the 24h change rides beside it in a tinted pill, and the
@@ -926,52 +910,21 @@ const TradeView: React.FC<TradeViewProps> = ({
                         </span>
                     </div>
                 </div>
-                {/* The chart head is one quiet line: SymbolPicker, hero
-                    price, change, funding and the feed state. The 24h
-                    high/low/volume/OI/oracle fields moved to the chart's
-                    OHLC/V/OI readout row (TradingChart) — no metrics band. */}
-                <div className="flex shrink-0 items-center gap-0.5 pl-1">
-                    <button
-                        type="button"
-                        onClick={() => setScreenerOpen(true)}
-                        aria-label="Open market screener"
-                        title="Market screener"
-                        data-testid="screener-trigger"
-                        className="flex shrink-0 items-center gap-1.5 rounded-control px-2 py-1 text-ui-dense font-medium text-zinc-400 transition-colors hover:bg-white/[0.05] hover:text-zinc-200"
-                    >
-                        <Grid3x3 className="h-3.5 w-3.5" aria-hidden="true" />
-                        Screener
-                    </button>
-                    {onOpenWatchList && (
-                        <button
-                            type="button"
-                            onClick={onOpenWatchList}
-                            aria-label={`Pinned signals, ${watchOpenCount} open`}
-                            title={watchOpenR ? `Pinned signals · ${watchOpenR}` : 'Pinned signals'}
-                            data-testid="trade-pinned-trigger"
-                            className="relative flex h-7 w-7 shrink-0 items-center justify-center rounded-control text-zinc-500 transition-colors hover:bg-white/[0.05] hover:text-zinc-200"
-                        >
-                            <PinIcon className="h-3.5 w-3.5" aria-hidden="true" />
-                            {watchOpenCount > 0 && (
-                                <span className="absolute -right-1.5 -top-1.5 min-w-[1rem] rounded-full bg-zinc-200 px-1 text-center text-ui-2xs font-mono font-bold leading-4 text-zinc-900">
-                                    {watchOpenR || (watchOpenCount > 99 ? '99+' : watchOpenCount)}
-                                </span>
-                            )}
-                        </button>
-                    )}
-                    {/* The feed state is ONE dot with the detail on hover: the
-                        word ("connecting"/"polling") rendered the same fact the
-                        beacon already colored, at chrome size. */}
-                    <span
-                        data-testid="feed-status"
-                        role="status"
-                        aria-label={`Market feed ${feed.status}`}
-                        title={feed.status === 'live' ? 'Live — websocket push (markPrice@1s · depth20@100ms · ticker · kline)' : feed.status === 'connecting' ? 'Opening websockets…' : 'Websocket down — REST polling every 5s'}
-                        className="flex shrink-0 items-center pl-1"
-                    >
-                        <span aria-hidden="true" className={`beacon ${feed.status === 'live' ? '' : 'is-quiet'}`.trim()} />
-                    </span>
-                </div>
+                {/* The chart head is ONE quiet line (v3): the symbol picker,
+                    the hero price, the change, the funding countdown and the
+                    feed dot. The 24h high/low/volume/OI/oracle fields live in
+                    the chart's crosshair readout, and the market tools (market
+                    screener, pinned signals) live in the symbol picker's foot —
+                    so no metrics band and no tool buttons ride this row. */}
+                <span
+                    data-testid="feed-status"
+                    role="status"
+                    aria-label={`Market feed ${feed.status}`}
+                    title={feed.status === 'live' ? 'Live — websocket push (markPrice@1s · depth20@100ms · ticker · kline)' : feed.status === 'connecting' ? 'Opening websockets…' : 'Websocket down — REST polling every 5s'}
+                    className="flex shrink-0 items-center pl-1"
+                >
+                    <span aria-hidden="true" className={`beacon ${feed.status === 'live' ? '' : 'is-quiet'}`.trim()} />
+                </span>
             </div>
 
             {/* MOBILE MODE SWITCHER (<lg): Chart | AI | Book, pinned under the

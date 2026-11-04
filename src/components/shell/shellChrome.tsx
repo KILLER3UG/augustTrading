@@ -8,7 +8,7 @@
  * sidebar carries once the rail is not rendered there.
  */
 import React from 'react';
-import { Settings, BotIcon } from '../shared/Icons';
+import { Settings, BotIcon, Inbox } from '../shared/Icons';
 import Tip from '../ui/Tip';
 import { useUpdateStatusDot } from '../shared/UpdateButton';
 import { useAutoUpdate } from '../../hooks/useAutoUpdate';
@@ -31,7 +31,11 @@ export const AccountRow: React.FC<{
     expanded: boolean;
     activeUsername: string | null;
     onOpenSettings: () => void;
-}> = ({ expanded, activeUsername, onOpenSettings }) => {
+    /** The Activity drawer's opener. It used to ride the content bar's status
+     *  cluster; the v3 bar is the title, the context and one live dot, so the
+     *  drawer's only door moved to the account row at the column's foot. */
+    onOpenActivity?: () => void;
+}> = ({ expanded, activeUsername, onOpenSettings, onOpenActivity }) => {
     const { isElectron } = useAutoUpdate();
     const updateDot = useUpdateStatusDot();
 
@@ -73,6 +77,19 @@ export const AccountRow: React.FC<{
                     <span className="block truncate text-ui-2xs text-zinc-600" title="Signed in">Signed in</span>
                 </span>
             </div>
+            {onOpenActivity && (
+                <Tip label="Activity" shortcut="">
+                    <button
+                        type="button"
+                        data-testid="nav-activity"
+                        onClick={onOpenActivity}
+                        aria-label="Activity — skill audits"
+                        className="flex h-7 w-7 items-center justify-center rounded-control text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-zinc-100 focus-visible:ring-2 focus-visible:ring-zinc-400"
+                    >
+                        <Inbox className="h-4 w-4" aria-hidden="true" />
+                    </button>
+                </Tip>
+            )}
             <Tip label="Settings" shortcut="Ctrl+,">
                 <button
                     type="button"

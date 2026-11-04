@@ -12,7 +12,7 @@
  */
 
 import React, { useLayoutEffect } from 'react';
-import {Camera, FileText, Plus, TriangleAlert, SendIcon, StopIcon, ChartBarIcon} from '../../shared/Icons';
+import {Camera, FileText, Plus, TriangleAlert, SendIcon, StopIcon, ChartBarIcon, LayersIcon} from '../../shared/Icons';
 import type { ProviderConfig } from '../../../types/provider';
 import type { Attachment } from '../../../hooks/useChatAttachments';
 import type { ReasoningEffort } from '../../../services/providers/reasoningControls';
@@ -214,36 +214,35 @@ const ChatComposer: React.FC<ChatComposerProps> = ({
                                     className="flex w-full items-center gap-2 rounded-control px-2 py-1.5 text-left text-ui-dense text-zinc-300 transition-colors hover:bg-white/[0.06] disabled:opacity-40">
                                     <Camera className="h-3.5 w-3.5 text-zinc-500" aria-hidden="true" /> Screenshot chart
                                 </button>
+                                {/* The two prompt ACTIONS live here now, not as
+                                    chips on the row: v3's composer is the box
+                                    alone (＋ · model · send), and an action
+                                    still needs a door. They are message
+                                    actions, so they ride the message's own
+                                    menu rather than decorating the box. */}
+                                <div aria-hidden="true" className="my-1 h-px bg-white/[0.07]" />
+                                <button type="button" data-testid="composer-scan-skills"
+                                    onClick={() => { setShowAttachMenu(false); void send(SCAN_SKILLS_PROMPT); }}
+                                    disabled={!ready || busy}
+                                    title="Study every candle in this chart and create candidate skills from what actually worked — each is a trigger + procedure, and evidence sets its status"
+                                    className="flex w-full items-center gap-2 rounded-control px-2 py-1.5 text-left text-ui-dense text-zinc-300 transition-colors hover:bg-white/[0.06] disabled:opacity-40">
+                                    <LayersIcon className="h-3.5 w-3.5 text-zinc-500" aria-hidden="true" /> Study the chart → skills
+                                </button>
+                                {onRunAnalysis && !isPanel && (
+                                    <button type="button" data-testid="composer-full-analysis"
+                                        onClick={() => { setShowAttachMenu(false); void runFullAnalysis(); }}
+                                        disabled={busy || !draft.trim()}
+                                        title={draft.trim()
+                                            ? 'Run the full analysis (live market data + tools + trade plan) on this request'
+                                            : 'Type a request to run the full analysis'}
+                                        className="flex w-full items-center gap-2 rounded-control px-2 py-1.5 text-left text-ui-dense text-zinc-300 transition-colors hover:bg-white/[0.06] disabled:opacity-40">
+                                        <ChartBarIcon className="h-3.5 w-3.5 text-zinc-500" aria-hidden="true" /> Full analysis
+                                    </button>
+                                )}
                             </div>
                         </>
                     )}
                 </div>
-                {/* Always-available growth chip: study the whole tape and
-                    create candidate skills directly (evidence sets their
-                    status). Kept out of the + menu so the action is
-                    discoverable, like Full analysis. */}
-                <button type="button" onClick={() => void send(SCAN_SKILLS_PROMPT)} disabled={!ready || busy}
-                    title="Study every candle in this chart and create candidate skills from what actually worked — each is a trigger + procedure, and evidence sets its status"
-                    className="shrink-0 whitespace-nowrap rounded-control px-2 py-1.5 text-ui-dense text-zinc-500 transition-colors hover:bg-white/[0.05] hover:text-zinc-200 disabled:opacity-40">
-                Scan → skills
-                </button>
-                {onRunAnalysis && !isPanel && (
-                    <button type="button" onClick={() => void runFullAnalysis()}
-                        disabled={busy || !draft.trim()}
-                        aria-label="Full analysis"
-                        data-testid="composer-full-analysis"
-                        title={draft.trim()
-                            ? 'Run the full analysis (live market data + tools + trade plan) on this request'
-                            : 'Type a request to run the full analysis'}
-                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-control text-zinc-500 transition-colors hover:bg-white/[0.05] hover:text-zinc-200 disabled:opacity-40">
-                        <ChartBarIcon className="h-4 w-4" aria-hidden="true" />
-                    </button>
-                )}
-                {/* D-A (docs/plan/model-menu-redesign.md): the model control
-                    lives IN the card, immediately left of send. `flex-1` +
-                    `justify-end` is what keeps send the bottom-right element:
-                    the pair takes the remaining width and the trigger truncates
-                    instead of pushing the row sideways or wrapping. */}
                 <div className="ml-auto flex min-w-0 flex-1 items-center justify-end gap-1.5" data-testid="composer-model-and-send">
                     {!isPanel && (
                         <ModelChip providers={providers} value={selectedChatModel} onChange={changeSoloModel}

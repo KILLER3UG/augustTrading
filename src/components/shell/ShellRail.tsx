@@ -179,6 +179,7 @@ interface ShellRailProps {
     onOpenSkills: () => void;
     activeUsername: string | null;
     onOpenSettings: () => void;
+    onOpenActivity?: () => void;
     /** The dragged width, shared with the Agents mode's column. */
     width: number;
     isResizing: boolean;
@@ -197,7 +198,7 @@ const ShellRail: React.FC<ShellRailProps> = ({
     onOpenSearch, workspaces, onSwitchWorkspace, onAddWorkspace,
     conversations, activeConversationId, onOpenConversation,
     onDeleteConversation, onClearConversation, onOpenSkills,
-    activeUsername, onOpenSettings,
+    activeUsername, onOpenSettings, onOpenActivity,
     width, isResizing, onResizeStart, onResizeReset, onCollapse,
     overlay = false, onCloseOverlay,
 }) => {
@@ -277,6 +278,7 @@ const ShellRail: React.FC<ShellRailProps> = ({
                 expanded
                 activeUsername={activeUsername}
                 onOpenSettings={onOpenSettings}
+                onOpenActivity={onOpenActivity}
             />
             <div
                 role="separator"

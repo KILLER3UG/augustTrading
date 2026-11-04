@@ -111,7 +111,6 @@ import type { SoloTurnRow } from './services/trade/chatTurnMirror';
 // threshold are the live pieces of that shell module, and the deletion is not
 // a rename that a future reader should undo.
 import { AccountRow, NAV_RAIL_AUTO_COLLAPSE_PX, NAV_RAIL_EXPANDED_PX } from './components/shell/shellChrome';
-import StatusCluster from './components/shell/StatusCluster';
 import ShellRail, {
     DeskInstrument, ShellModeSwitch, ShellUtility, type NavBadge,
 } from './components/shell/ShellRail';
@@ -2170,14 +2169,6 @@ const App: React.FC = () => {
         () => (surface === 'trade' ? <DeskInstrument /> : undefined),
         [surface],
     );
-    const shellStatus = useMemo(() => (
-        <StatusCluster
-            saveStatus={saveStatus}
-            isOnline={isOnline}
-            onOpenActivity={() => setIsJobsDrawerVisible(true)}
-            activityOpen={isJobsDrawerVisible}
-        />
-    ), [saveStatus, isOnline, isJobsDrawerVisible]);
 
     /** One read of "the chat's model pick is unusable", shared by the Chat
      *  surface's model chip (which colours itself amber) and its banner. */
@@ -2388,15 +2379,12 @@ const App: React.FC = () => {
                             saveStatus={saveStatus}
                             isAnalysisInProgress={isAnalysisInProgress}
                             currentVisionData={currentVisionData}
-                            isOnline={isOnline}
                             pendingQueueCount={pendingQueueCount}
                             liveMarketConditions={liveMarketConditions}
                             liveMarketSymbol={liveMarketSymbol}
-                            onOpenActivity={() => setIsJobsDrawerVisible(true)}
                             onOpenLiveMarket={handleOpenLiveMarket}
                             onOpenVisionData={() => setIsVisionDataVisible(true)}
                             hasVisionData={currentVisionData.length > 0}
-                            status={shellStatus}
                             title={shellTitle}
                             context={shellContext}
                             onExpandNavRail={isNavRailOpen ? undefined : toggleNavRail}
@@ -2594,12 +2582,12 @@ const App: React.FC = () => {
                                     />}
                                     searchRequestNonce={agentsSearchRequest}
                                     onSearchRequestConsumed={consumeAgentsSearchRequest}
-                                    statusCluster={shellStatus}
                                     accountRow={(
                                         <AccountRow
                                             expanded
                                             activeUsername={activeUsername}
                                             onOpenSettings={() => setIsSettingsMenuVisible(true)}
+                                            onOpenActivity={() => setIsJobsDrawerVisible(true)}
                                         />
                                     )}
                                     conversations={conversationHistory}

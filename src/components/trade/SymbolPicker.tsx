@@ -17,11 +17,19 @@ export interface SymbolPickerProps {
     symbols: SymbolMeta[];
     value: string;
     onChange: (symbol: string) => void;
+    /** The chart head is the symbol, the price and the funding (v3) — the
+     *  market TOOLS that used to sit there live in this menu's foot, so they
+     *  keep a door without decorating the head. */
+    onOpenScreener?: () => void;
+    onOpenWatchList?: () => void;
+    watchOpenCount?: number;
 }
 
 const display: (symbol: string) => string = symbolDisplay;
 
-export const SymbolPicker: React.FC<SymbolPickerProps> = ({ symbols, value, onChange }) => {
+export const SymbolPicker: React.FC<SymbolPickerProps> = ({
+    symbols, value, onChange, onOpenScreener, onOpenWatchList, watchOpenCount = 0,
+}) => {
     const [open, setOpen] = useState(false);
     const [query, setQuery] = useState('');
     const [cursor, setCursor] = useState(0);
@@ -169,6 +177,27 @@ export const SymbolPicker: React.FC<SymbolPickerProps> = ({ symbols, value, onCh
                                 </button>
                             ))}
                         </div>
+                        {(onOpenScreener || onOpenWatchList) && (
+                            <div className="flex items-center gap-1 border-t border-white/[0.06] px-2 py-1.5">
+                                {onOpenScreener && (
+                                    <button type="button" data-testid="screener-trigger"
+                                        onClick={() => { setOpen(false); onOpenScreener(); }}
+                                        aria-label="Open market screener" title="Market screener"
+                                        className="flex flex-1 items-center justify-center gap-1.5 rounded-control px-2 py-1 text-ui-dense text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-zinc-100">
+                                        Screener
+                                    </button>
+                                )}
+                                {onOpenWatchList && (
+                                    <button type="button" data-testid="trade-pinned-trigger"
+                                        onClick={() => { setOpen(false); onOpenWatchList(); }}
+                                        aria-label={`Pinned signals, ${watchOpenCount} open`}
+                                        title="Pinned signals"
+                                        className="flex flex-1 items-center justify-center gap-1.5 rounded-control px-2 py-1 text-ui-dense text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-zinc-100">
+                                        Pinned{watchOpenCount > 0 ? ` · ${watchOpenCount}` : ''}
+                                    </button>
+                                )}
+                            </div>
+                        )}
                         <div className="border-t border-white/[0.06] px-3 py-1.5 text-ui-2xs text-zinc-600">
                             ↑↓ navigate · ↵ select · esc close · {filtered.length} of {symbols.length} USDT perps
                         </div>

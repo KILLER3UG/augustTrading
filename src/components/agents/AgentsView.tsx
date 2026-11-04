@@ -164,7 +164,6 @@ interface AgentsViewProps {
      *  of the window, so this surface renders NO global band, and the controls
      *  that used to live in it need a home in the one title bar this surface
      *  has. Same component the other surfaces' band uses — not a copy. */
-    statusCluster?: React.ReactNode;
     /** The desk's mode switch (Analyze | Agents). It owns the top of the rail,
      *  at the same x/y the rail-less surfaces put it, so a mode hop does not
      *  move the control that caused it. The old four-tab bar is gone at every
@@ -460,7 +459,7 @@ const AgentsView: React.FC<AgentsViewProps> = ({
     username, bots, groups, messages, selection, onSelect, onNewBot, onNewGroup,
     onSendBotTurn, onAnalyze, onLogProposedTrade, onAnalysisError, onStopRun, analysisRunning = false, renderGroup, workingBotId, mailboxBusyBotIds,
     lastOpenedMap = {}, modelPicker, modelFallback = null, accountRow,
-    railExpanded = true, onToggleRailExpanded, statusCluster,
+    railExpanded = true, onToggleRailExpanded,
     modeSwitch, shellUtilities,
     railWidth = NAV_RAIL_EXPANDED_PX, railIsResizing = false,
     onRailResizeStart, onRailResizeReset,
@@ -1316,7 +1315,6 @@ const AgentsView: React.FC<AgentsViewProps> = ({
                                     </span>
                                 )}
                             </div>
-                            {statusCluster}
                         </div>
                         {/* The thread IS this surface. The charted form of the
                             desk is a different screen, reached from the pill

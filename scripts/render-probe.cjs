@@ -913,10 +913,28 @@ async function main() {
                 ohlcv: !!ohlcv,
             };
         });
-        check('chart head is one quiet line: hero price, funding, feed — no metrics band, OHLC row on the chart',
+        check('chart head is one quiet line: hero price, funding, feed — no metrics band, no resting OHLC row',
             chartHead.heroIsPrice && chartHead.funding && chartHead.feed
-            && chartHead.tapeGone && chartHead.ohlcv,
+            && chartHead.tapeGone && !chartHead.ohlcv,
             JSON.stringify(chartHead));
+        {
+            // The 24h fields are a CROSSHAIR readout: absent at rest, present
+            // while the pointer is over the plot. A row that never appears is a
+            // deleted feature; a row that never leaves is the band back again.
+            const plot = await page.locator('[data-testid="trade-chart-pane"] canvas').first().boundingBox();
+            if (plot) {
+                await page.mouse.move(plot.x + plot.width / 2, plot.y + plot.height / 2);
+                await sleep(250);
+                const overPlot = await page.locator('[data-testid="ohlcv-row"]').count();
+                await page.mouse.move(5, 5);
+                await sleep(200);
+                const atRest = await page.locator('[data-testid="ohlcv-row"]').count();
+                check('the 24h readout appears on the crosshair and leaves with it',
+                    overPlot === 1 && atRest === 0, `hover=${overPlot} rest=${atRest}`);
+            } else {
+                check('the 24h readout appears on the crosshair and leaves with it', false, 'no plot to hover');
+            }
+        }
 
         // Order-book drawer: 30px strip closed by default, name + live state + spread.
         const drawer = await page.evaluate(() => {
@@ -2331,27 +2349,16 @@ async function main() {
             closedByStrip === 'false' && drawerGone.rows === 0 && drawerGone.expanded === 'false'
             && drawerGone.stripH <= 32,
             JSON.stringify(drawerGone));
-        // The chart-head control is the same switch: opening the drawer there
-        // and closing it there must leave the same state the strip leaves.
-        const headClicked = await page.evaluate(() => {
-            const b = document.querySelector('[data-testid="trade-book-toggle"]');
-            if (!b) return 'no toggle';
-            b.click();
-            return 'clicked';
-        });
-        await sleep(300);
-        const afterHead = await page.evaluate(() => ({
-            rows: document.querySelectorAll('[data-testid="orderbook-row"]').length,
-            expanded: document.querySelector('[data-testid="orderbook-drawer-strip"]')?.getAttribute('aria-expanded'),
+        // ONE control for the drawer (v3): the strip is the only book control on
+        // the desktop head — a second toggle in the chart head would be two
+        // controls for one action, which is the chrome the mock deletes.
+        const bookControls = await page.evaluate(() => ({
+            heads: document.querySelectorAll('[data-testid="trade-book-toggle"]').length,
+            strips: document.querySelectorAll('[data-testid="orderbook-drawer-strip"]').length,
         }));
-        check('the chart-head book control opens the same drawer',
-            headClicked === 'clicked' && afterHead.expanded === 'true' && afterHead.rows >= 24,
-            `${headClicked}; ${JSON.stringify(afterHead)}`);
-        await page.evaluate(() => {
-            const b = document.querySelector('[data-testid="trade-book-toggle"]');
-            if (b?.getAttribute('aria-expanded') === 'true') b.click();
-        });
-        await sleep(250);
+        check('the drawer strip is the ONLY book control in the chart head',
+            bookControls.heads === 0 && bookControls.strips === 1,
+            JSON.stringify(bookControls));
 
 // The Chart AI dock: its separator drags to size it and its header X
         // collapses it to the rail — while the panel stays mounted, so a draft

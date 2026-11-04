@@ -239,6 +239,10 @@ const distToSegment = (px: number, py: number, ax: number, ay: number, bx: numbe
 const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onIntervalChange, sessionId, verdict, showSma = false, live = false, liveKline, lastPrice, markPrice, chartHandle, onDrawingsChange, modelDrawings, onRemoveModelShape, chatLevels, ohlcvRow }) => {
     const hostRef = useRef<HTMLDivElement | null>(null);
     const chartRef = useRef<IChartApi | null>(null);
+    // The 24h fields are a CROSSHAIR readout (v3): they appear while the
+    // pointer is over the plot and leave with it, so the resting chart is the
+    // tape and nothing else.
+    const [overPlot, setOverPlot] = useState(false);
     const candlesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
     const volumeRef = useRef<ISeriesApi<'Histogram'> | null>(null);
     const smaRef = useRef<ISeriesApi<'Line'> | null>(null);
@@ -366,7 +370,12 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
         chartRef.current = chart;
         candlesRef.current = candles;
         volumeRef.current = volume;
+        const onCrosshair = (param: Parameters<Parameters<IChartApi['subscribeCrosshairMove']>[0]>[0]) => {
+            setOverPlot(!!param?.time);
+        };
+        chart.subscribeCrosshairMove(onCrosshair);
         return () => {
+            chart.unsubscribeCrosshairMove(onCrosshair);
             chart.remove();
             chartRef.current = null;
             candlesRef.current = null;
@@ -1147,11 +1156,16 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                         <span className={`h-1.5 w-1.5 rounded-full ${status === 'live' ? 'bg-emerald-500' : status === 'loading' ? 'animate-pulse bg-cyan-400' : 'bg-rose-500'}`} aria-label={`chart ${status}`} />
                     </span>
                 </TimeframeBar>
-                {/* Chart-head readout row: 24h high/low/volume/OI/oracle —
-                    the fields the removed metrics band carried, now one
-                    quiet line above the plot instead of a band of its own. */}
-                {ohlcvRow && (
-                    <div className="flex shrink-0 items-center gap-3 overflow-x-auto border-b border-white/[0.04] px-3 py-1 text-ui-dense text-zinc-500" data-testid="ohlcv-row">
+                {/* The 24h fields are the chart's CROSSHAIR readout (v3):
+                    shown while the pointer is over the plot, gone at rest —
+                    the metrics band is deleted, not restyled. */}
+
+            <div className="relative min-h-0 flex-1 bg-zinc-950">
+                {ohlcvRow && overPlot && (
+                    <div
+                        data-testid="ohlcv-row"
+                        className="pointer-events-none absolute left-2 top-1.5 z-10 flex max-w-[calc(100%-16px)] items-center gap-3 overflow-hidden rounded-control bg-zinc-950/80 px-2 py-0.5 text-ui-dense text-zinc-500"
+                    >
                         <span className="font-mono tabular-nums">H <span className="text-zinc-300">{ohlcvRow.high24h ? fmtPriceForChart(ohlcvRow.high24h) : '—'}</span></span>
                         <span className="font-mono tabular-nums">L <span className="text-zinc-300">{ohlcvRow.low24h ? fmtPriceForChart(ohlcvRow.low24h) : '—'}</span></span>
                         <span className="font-mono tabular-nums">Vol <span className="text-zinc-300">{ohlcvRow.volume24h ? fmtUsdForChart(ohlcvRow.volume24h) : '—'}</span></span>
@@ -1159,7 +1173,6 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                         <span className="font-mono tabular-nums">Oracle <span className="text-zinc-300">{ohlcvRow.oracle ? fmtPriceForChart(ohlcvRow.oracle) : '—'}</span></span>
                     </div>
                 )}
-            <div className="relative min-h-0 flex-1 bg-zinc-950">
                 {/* The verdict-overlay tag floats INSIDE the plot now — the
                     toolbar badge it replaced duplicated the symbol picker, the
                     active timeframe and the feed dot at once. */}

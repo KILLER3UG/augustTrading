@@ -3239,6 +3239,51 @@ const asyncChecks = (async () => {
         'both entries inheriting the library default renders one view twice');
 })();
 
+// ─── the v3 chrome: fewer controls, each with one door ─────────────────────
+// Three things left the shell to match the mock: the content bar's status
+// cluster, the chart head's tool buttons + metrics band, and the composer's
+// action chips. Each removal had to keep its feature reachable, so these pin
+// BOTH halves: gone from where the mock does not draw it, present where it does.
+(() => {
+    const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+    const header = read('src/components/shared/Header.tsx');
+    const trade = read('src/components/trade/TradeView.tsx');
+    const composer = read('src/components/trade/panels/ChatComposer.tsx');
+    const chart = read('src/components/trade/TradingChart.tsx');
+    const chrome = read('src/components/shell/shellChrome.tsx');
+    const app = read('src/App.tsx');
+
+    ok('content bar: title + context + one Live pill, no brand mark and no status cluster',
+        !/aria-label="August"/.test(header) && !/StatusCluster/.test(header)
+            && /Live<\/span>/.test(header)
+            && !fs.existsSync(path.join(ROOT, 'src/components/shell/StatusCluster.tsx')),
+        'the mock bar has one live dot; a save tick and an Activity pill are chrome');
+    ok('content bar: a FAILED save still speaks',
+        /data-testid="header-save-failed"/.test(header),
+        'silence is only fine while the write is healthy');
+    ok('activity: the drawer keeps a door — the account row, not the bar',
+        /nav-activity/.test(chrome) && /onOpenActivity/.test(app) && /<JobsDrawer/.test(app),
+        'removing the pill without a new opener orphans the drawer');
+    ok('chart head: no tool buttons and no metrics band',
+        !/screener-trigger/.test(trade.slice(0, trade.indexOf('<SymbolPicker')))
+            && !/trade-pinned-trigger/.test(trade.slice(0, trade.indexOf('<SymbolPicker')))
+            && /onOpenScreener=\{/.test(trade) && /onOpenWatchList=\{onOpenWatchList\}/.test(trade),
+        'the tools moved into the symbol picker, so both the head and the picker must agree');
+    ok('chart head: ONE book control — the drawer strip, not a second head toggle',
+        !/trade-book-toggle/.test(trade) && /orderbook-drawer-strip/.test(trade),
+        'two controls for one action is the chrome the mock deletes');
+    ok('chart: the 24h fields are a crosshair readout, not a resting row',
+        /overPlot && \(/.test(chart) && /subscribeCrosshairMove/.test(chart)
+            && /unsubscribeCrosshairMove/.test(chart),
+        'a readout that never leaves is the band coming back');
+    ok('composer: the box is + / model / send, and the actions live in its menu',
+        !/Scan → skills/.test(composer)
+            && /data-testid="composer-scan-skills"/.test(composer)
+            && /data-testid="composer-full-analysis"/.test(composer)
+            && composer.indexOf('composer-scan-skills') > composer.indexOf('attach-menu'),
+        'a chip removed without a new door deletes the action');
+})();
+
 // ─── report ────────────────────────────────────────────────────────────────
 const finishReport = () => {
     console.log(`contracts: ${passed} passed, ${failures.length} failed`);
