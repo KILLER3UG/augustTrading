@@ -2859,3 +2859,72 @@ gold output, face derivation, boot repair); `lint` 0 errors; `check:docs`; `chec
 `render-probe` **194 checks**, including computed styles proving the trace has zero border, no
 fill and no rules, a 4 MB attachment observed loading before its decode, and the rail's nested
 conversation age column — zero pageerrors.
+
+## 60. The honesty batch: named sources, measured volatility, a falsifiable refusal ledger (2026-11-05)
+
+Overnight batch from the second reference-repo pass (the five-repo corpus at
+`C:	empugust-researcheport.md` plus fresh surveys of the 2025–26 agent-harness field).
+Every item serves the accuracy or signals line; none needed a new owner ruling.
+
+- **The spot mirror is named wherever the model reads candles (O-63).** `fetchKlinesTagged`
+  (`src/services/analysis/KlineService.ts` › `fetchKlinesTagged`) reports which market answered —
+  `futures` / `spot-mirror` / `unavailable` — and `spotMirrorSourceNote` is the ONE receipt line a
+  degraded read prints (`CANDLE SOURCE: SPOT MIRROR — … can deviate from the perp mark`). Consumed
+  by `get_chart_view`, `get_all_timeframes` (per-TF list in one header line), `scan_setups`,
+  `project_future_price`, and `screenerToMarkdown` (rows marked `*`, note names them); the human
+  screener rows carry a `spot` badge (`src/components/trade/ScreenerPanel.tsx`). The bare
+  `fetchKlines` stays for the UI consumers that PAINT what they fetch.
+- **The shape gate reaches the third ingestion path.** `MarketDataService` parses through
+  `coerceCandles` (`src/utils/candleShape.ts` › `coerceCandles`) at `toKlines` and both historical
+  window parsers, so runKeyLevels/runIndicators/the packet/the outcome verifiers never read a
+  broken row.
+- **Monte Carlo volatility is MEASURED, not tied to the plan's own stop (O-64).** `run_monte_carlo`
+  fetches ATR14 from the tape when the model omits `atr` and REFUSES with the named gap when it
+  cannot be measured; the receipt names a caller-supplied ATR as caller-supplied
+  (`src/services/analysis/MonteCarloService.ts` › `monteCarloToMarkdown`, `atrSource`). The
+  pipeline's `buildMonteCarloConfig` fallback reads the packet's real 24h range and refuses when
+  that is absent too. The old `slDistance * 2` made a wider stop simulate a wilder market.
+- **The settlement queue is oldest-first** (`src/services/signals/signalOrder.ts` ›
+  `openSignalsOldestFirst`, used by `settleDueSignals`). Slicing the newest-first fold graded the
+  four NEWEST open rows every pass; an old open signal starved into the 150-cap and shrank the
+  scorecard's denominator — survivorship in the accuracy numbers.
+- **Blocked emissions are recorded and graded (new).** `emitSignal`'s protection refusal appends a
+  `refuse` event carrying the FULL refused geometry (`src/types/signal.ts` ›
+  `SignalRefusalRecord`); `settleRefusedSignals` grades it with the SAME resolver
+  (`src/services/signals/signalService.ts`), oldest-first, capped at 2/pass; `foldRefusals`
+  (`src/services/signals/signalLedger.ts`) keeps them OUT of the signal rows (the tracker and the
+  scorecard never see them) with a separate `MAX_REFUSALS` cap — and the prune empties the pool
+  that is over its OWN cap, because an oldest-overall order would let a chatty rule evict a real
+  signal that is merely older (caught by the contracts pin, not by review). The feed prints one
+  refused line (`src/components/journal/SignalFeed.tsx` › `signal-refusals`): N blocked, M graded,
+  would-win/lose and the net R the rules kept off the ledger. Boot pass grades alongside
+  `settleDueSignals` (`src/hooks/useLearningHeartbeat.ts`).
+- **The loop's lesson rides the ordinary read.** `diagnosisBriefBlock`
+  (`src/services/tracking/diagnosisSkillCluster.ts`) renders the coin's last stored diagnosis —
+  refusals skipped, failures silent — under the receipt's own REFERENCE ONLY framing; the dock's
+  context block (`src/services/trade/chatTurnRunner.ts` › `buildContextBlock` via
+  `buildTradeChatContext`'s `postMortemBrief`) and the pipeline's contextParts
+  (`src/hooks/useAnalysisPipeline.ts`) both carry it, not only the emit receipt.
+- **Two dead affordances repaired.** `skill_view` is in `CHAT_SURFACE_TOOLS`
+  (`src/services/trade/chatSurfaceTurn.ts`) — the base prompt and the skills index both instructed
+  it, and the executor refused it. The desk cache's two kline-backed stamped tools expire with the
+  candle (`klineBackedCacheTtlMs` = `candleAlignedTtlMs('5m', now)`), not a flat 30s that could
+  serve a just-closed bar its pre-close OHLC.
+- **O-13 closed by the architecture.** Every recorded probability flows through `runGateScan`,
+  which folds the ceiling; the residue (a predicate ceiling on `emit_signal` conviction) is named
+  in the register as an owner question, not built.
+- **The v3 row finished.** The side tag rides the ramp (`text-ui-2xs` mono uppercase), the
+  conversation ⋯ menu floats (Escape + outside-click dismissal), the room lazy-chunk mounts a
+  `RoomSkeleton` (`src/App.tsx`) instead of a blank beat, the skills catalog's filter empty states
+  offer the next action and stopped naming the deleted Approvals inbox, KeyLevelsCard is on the
+  ramp with a `useId()` card identity, and the charter's radius numbers follow the quiet-desk
+  retune.
+- **Contracts renumbered and extended.** The duplicated 31–34 blocks are now 36–40; §41 pins the
+  honesty batch (source-note split, TTL bounds + desk parity, oldest-first queue, registry↔ids
+  equality — the guard the deleted vitest suite owned, whose headers now name the contracts check
+  — monte carlo wording, gated third path, chat surface's `skill_view`); §42 pins the refusal
+  ledger (fold, signal-fold exclusion, duplicate refusal, one resolution, the separate cap).
+
+**Verification.** `typecheck`; `check:contracts` **546** (§41 + §42 new); `check:boundaries`;
+`lint` 0 errors, 372 warnings (cap 375); `check:docs`; `build`; `boot-probe`; `render-probe`;
+`skill-approval-probe` — all green (see the wake-up report for the probe counts).
