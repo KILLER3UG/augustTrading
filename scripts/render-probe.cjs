@@ -871,6 +871,7 @@ async function main() {
             const rows = [...document.querySelectorAll('[data-testid="conversation-row"]')];
             const ages = [...document.querySelectorAll('[data-testid="conversation-age"]')]
                 .map(a => (a.textContent || '').trim());
+            const titles = rows.map(r => (r.textContent || '').replace(/\s+/g, ' ').trim());
             return {
                 rows: rows.length,
                 ages: ages.length,
@@ -878,12 +879,18 @@ async function main() {
                 newChat: !!document.querySelector('[data-testid="rail-new-chat"]'),
                 workspaces: document.querySelectorAll('[data-testid^="shell-workspace-"]').length,
                 addWorkspace: !!document.querySelector('[data-testid="shell-add-workspace"]'),
+                // Every conversation this run created is UNTITLED, so the row
+                // must derive its name from the first question. A row that
+                // still reads "New chat" is the wall of identical lines the
+                // sparse sidebar was meant to remove.
+                untitled: titles.filter(t => /^New chat/.test(t)).length,
             };
         });
-        check('the sparse rail groups conversations without workspaces, each with the mono age column',
+        check('the sparse rail lists each conversation by its first question, with a mono age',
             railShape.rows >= 1
             && railShape.ages === railShape.rows
             && railShape.badAges.length === 0
+            && railShape.untitled === 0
             && railShape.newChat
             && railShape.workspaces === 0
             && !railShape.addWorkspace,

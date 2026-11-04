@@ -75,6 +75,7 @@ import StatusPill from '../ui/StatusPill';
 import { NAV_RAIL_EXPANDED_PX } from '../shell/shellChrome';
 import NavExpandButton from '../shell/NavExpandButton';
 import { ConversationGroups } from '../shell/ConversationGroups';
+import { conversationTitle } from '../../utils/conversationTitle';
 import InlineVerdict from '../analysis/InlineVerdict';
 import TradeProposalCard, { TradeProposalLoggedRow } from '../trade/panels/TradeProposalCard';
 import { proposalStateOf, rememberProposalState } from '../../services/trade/proposalDisposition';
@@ -893,8 +894,8 @@ const AgentsView: React.FC<AgentsViewProps> = ({
      *  still be the placeholder "New chat" while the conversation the trader
      *  picked already has a name, and this bar is the one place that name is the
      *  subject of the screen. */
-    const activeConversationTitle = conversations
-        .find(c => c.id === activeConversationId)?.title?.trim();
+    const activeConversationTitle = conversationTitle(
+        conversations.find(c => c.id === activeConversationId), '');
 
     // The + New menu: one creator, four honest verbs. The old chip row made
     // "Agents" and "Rooms" look like navigation when both only opened create

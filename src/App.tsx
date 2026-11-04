@@ -70,6 +70,7 @@ import { nextEffortTier } from './components/shared/effortScale';
 import { DEFAULT_FRAMEWORKS } from './constants/models';
 import { computeChatModelFallback, isProviderReady } from './utils/providerUtils';
 import { defaultLeverage, createNewConversation, findReusableEmptyConversation } from './utils/conversationUtils';
+import { conversationTitle } from './utils/conversationTitle';
 import { type ThreadSelection, threadForProvider } from './utils/agentThreads';
 import {
     updateBot, 
@@ -2162,7 +2163,7 @@ const App: React.FC = () => {
         ? 'Journal'
         : surface === 'learn'
             ? 'Learning'
-            : (activeConversation?.title?.trim() || 'Desk');
+            : conversationTitle(activeConversation, 'Desk');
     // Memoized because Header is memoized on purpose: a fresh element on every
     // price tick would re-render the whole bar for a label that has not moved.
     const shellContext = useMemo(

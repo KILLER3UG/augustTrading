@@ -13,6 +13,7 @@
 
 import React, { useMemo, useState } from 'react';
 import type { Conversation } from '../../types';
+import { conversationTitle } from '../../utils/conversationTitle';
 
 /** The ONE age formatter for conversation rows. `now`, `5m`, `3h`, `48d`. */
 export const workspaceAgeLabel = (timestamp: number): string => {
@@ -25,8 +26,7 @@ export const workspaceAgeLabel = (timestamp: number): string => {
     return `${Math.floor(hours / 24)}d`;
 };
 
-const conversationTitle = (conversation: Conversation): string =>
-    conversation.title?.trim() || 'New chat';
+
 
 export interface ConversationGroupsProps {
     conversations: Conversation[];
@@ -118,9 +118,13 @@ export const ConversationGroups: React.FC<ConversationGroupsProps> = ({
     conversations, activeConversationId, onNewChat, onOpenConversation,
     onDeleteConversation, onClearConversation, runningAgentIds, pinnedIds,
 }) => {
+    // A conversation with no messages is a placeholder, not a record: it is
+    // hidden unless it is the one on screen (a fresh New chat stays visible).
     const rows = useMemo(
-        () => [...conversations].sort((a, b) => b.timestamp - a.timestamp),
-        [conversations],
+        () => [...conversations]
+            .filter(c => c.messages.length > 0 || c.id === activeConversationId)
+            .sort((a, b) => b.timestamp - a.timestamp),
+        [conversations, activeConversationId],
     );
     const pinned = useMemo(
         () => pinnedIds ? rows.filter(c => pinnedIds.has(c.id)) : rows.filter(c => (c as Conversation & { pinned?: boolean }).pinned),
