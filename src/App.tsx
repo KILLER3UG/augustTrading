@@ -70,7 +70,6 @@ import { nextEffortTier } from './components/shared/effortScale';
 import { DEFAULT_FRAMEWORKS } from './constants/models';
 import { computeChatModelFallback, isProviderReady } from './utils/providerUtils';
 import { defaultLeverage, createNewConversation, findReusableEmptyConversation } from './utils/conversationUtils';
-import { conversationTitle } from './utils/conversationTitle';
 import { type ThreadSelection, threadForProvider } from './utils/agentThreads';
 import {
     updateBot, 
@@ -112,7 +111,7 @@ import type { SoloTurnRow } from './services/trade/chatTurnMirror';
 // a rename that a future reader should undo.
 import { AccountRow, NAV_RAIL_AUTO_COLLAPSE_PX, NAV_RAIL_EXPANDED_PX } from './components/shell/shellChrome';
 import ShellRail, {
-    DeskInstrument, ShellModeSwitch, ShellUtility, type NavBadge,
+    DeskInstrument, type NavBadge,
 } from './components/shell/ShellRail';
 // The Journal pulls recharts + react-virtuoso into its chunk — statically
 // importing it put both on the startup path for a surface most users open
@@ -1356,6 +1355,7 @@ const App: React.FC = () => {
 
 
 
+
     // True once the ACTIVE profile's data has actually loaded. Owned here
     // because the autosave below is constructed before the loader further
     // down, and both must agree: data may only be written for a profile that
@@ -1963,6 +1963,19 @@ const App: React.FC = () => {
         selectTeamThread();
         setSurface('agents');
     }, [handleStartNewConversation, selectTeamThread, setSurface]);
+    // The rail's New chat row prints "Ctrl K" (mock v3), so the chord must DO
+    // that. It lives in its own listener because `startDeskChat` is declared
+    // after the surface handler above (a const used earlier is a TDZ crash).
+    useEffect(() => {
+        const onKey = (e: KeyboardEvent): void => {
+            if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+            if (e.key !== 'k' && e.key !== 'K') return;
+            e.preventDefault();
+            startDeskChat();
+        };
+        document.addEventListener('keydown', onKey);
+        return () => document.removeEventListener('keydown', onKey);
+    }, [startDeskChat]);
     const requestDeskSearch = useCallback(() => {
         setAgentsSearchRequest(n => n + 1);
         setSurface('agents');
@@ -2131,38 +2144,13 @@ const App: React.FC = () => {
     // `NavExpandButton` from the callbacks it already holds, because an
     // interactive-root element parked in a local variable gets attributed to
     // whichever component holds it, and `App` is not a button wrapper.
-    /** The rail's mode switch: Analyze and Agents are the same desk, so the
-     *  chat → chart hop keeps its carry-over rule here too. */
-    const shellModeSwitch = useMemo(
-        () => (
-            <ShellModeSwitch
-                surface={surface}
-                onSelect={(next) => {
-                    if (next === 'trade' && surface === 'agents') { openChartAi(); return; }
-                    selectSurface(next);
-                }}
-            />
-        ),
-        [surface, selectSurface, openChartAi],
-    );
-    const shellUtilities = useMemo(
-        () => (
-            <ShellUtility
-                surface={surface}
-                onSelect={selectSurface}
-                onOpenSkills={openSkills}
-                badges={navBadges}
-            />
-        ),
-        [surface, selectSurface, openSkills, navBadges],
-    );
     /** What the content bar is about. The rail names the workspace; this names
      *  the thing being worked on. */
     const shellTitle = surface === 'journal'
         ? 'Journal'
         : surface === 'learn'
             ? 'Learning'
-            : conversationTitle(activeConversation, 'Desk');
+            : (surface === 'agents' ? 'Chat AI' : 'Chart AI');
     // Memoized because Header is memoized on purpose: a fresh element on every
     // price tick would re-render the whole bar for a label that has not moved.
     const shellContext = useMemo(
@@ -2334,12 +2322,15 @@ const App: React.FC = () => {
                 sidebar, which carries the same mode switch and utility rows, so
                 a mode hop moves the content and not the chrome. */}
             <div className="flex-1 flex flex-row min-h-0">
-                {surface !== 'agents' && isNavRailOpen && (
+                {/* The rail is on EVERY surface, Agents included: the control
+                    that changes the surface must not move across the hop, and
+                    the Agents column is the same conversation column the mock
+                    draws beside the rail. */}
+                {isNavRailOpen && (
                     <ShellRail
                         surface={surface}
                         onSelectSurface={selectSurface}
                         onNewChat={startDeskChat}
-                        onOpenSearch={requestDeskSearch}
                         // Every profile is a workspace. The active one is first
                         // and expanded; the rest are a click to switch. The
                         // merged set guarantees the CURRENT profile always has
@@ -2573,13 +2564,7 @@ const App: React.FC = () => {
                                        the column is put away (the title bar then
                                        has to carry it), and Journal / Learning /
                                        Skills sit above the account. */
-                                    modeSwitch={shellModeSwitch}
-                                    shellUtilities={<ShellUtility
-                                        surface={surface}
-                                        onSelect={selectSurface}
-                                        onOpenSkills={openSkills}
-                                        badges={navBadges}
-                                    />}
+
                                     searchRequestNonce={agentsSearchRequest}
                                     onSearchRequestConsumed={consumeAgentsSearchRequest}
                                     accountRow={(

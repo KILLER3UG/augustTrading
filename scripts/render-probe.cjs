@@ -1875,11 +1875,12 @@ async function main() {
                     switchTop: sw.length ? Math.round(sw[0].getBoundingClientRect().top) : -1,
                     marked: sw.filter(b => b.getAttribute('aria-current') === 'page')
                         .map(b => b.getAttribute('data-testid')).join(','),
-                    // Journal / Learning / Customize are utility rows now, not
-                    // destinations; the switch owns the two desk modes and the
-                    // utility group owns the records. Customize must still have
-                    // its one home in this column.
-                    customizeInRail: !!rail?.querySelector('[data-testid="nav-customize"]'),
+                    // The mock's rail is icons only (Analyze/Agents/Chats |
+                    // Journal/Learning/account), so the Customize ROW is gone —
+                    // Skills is a tab of Learning now. What must exist is the
+                    // rail itself and its column toggle.
+                    railIcons: !!document.querySelector('[data-testid="shell-surface-rail"]')
+                        && !!document.querySelector('[data-testid="shell-rail-collapse"]'),
                     railTop: rail ? Math.round(rail.getBoundingClientRect().top) : -1,
                     // No global band on this surface: AgentsView's own bar is
                     // the content bar, so nothing stacks above the rail.
@@ -1892,8 +1893,11 @@ async function main() {
                 nav.switchCount === 4, `${nav.switchCount} entries in the rail switch`);
             check('the switch marks the screen you are actually on',
                 nav.marked === 'surface-switch-agents', nav.marked || 'nothing marked');
-            check('the sidebar keeps the Customize route with the utility group',
-                nav.customizeInRail, `customize=${nav.customizeInRail}`);
+            // The mock's rail is icons only and Skills is a TAB of Learning, so
+            // the row is gone on purpose; what must survive is the icon rail
+            // itself and its column toggle.
+            check('the shell keeps the icon rail and the column toggle',
+                !!nav.railIcons, `rail=${nav.railIcons}`);
             check('the account row says who is signed in and is not a control',
                 nav.accountName && !nav.switchUserButton,
                 `name=${nav.accountName} switchButton=${nav.switchUserButton}`);
@@ -1933,25 +1937,26 @@ async function main() {
                     && band.headTop === 0 && band.marked === 'surface-switch-trade',
                 band ? `rail right=${band.railRight}, header x=${band.headLeft} y=${band.headTop}, ${band.marked}` : 'no rail or header');
 
-            // The rail's Search row is the one shell gesture that crosses
-            // surfaces and hands the focused form a token — a row that routes
-            // but never opens the field it promises would pass every static
-            // check. Assert the destination AND the focused input.
+            // Search on the desk lives in the Agents column (mock v3 has no
+            // Search row in the list): the toggle must open the field and put
+            // the caret in it.
+            await navTo('Agents');
+            await sleep(900);
             const searchJump = await page.evaluate(() => {
-                const b = document.querySelector('[data-testid="shell-search"]');
-                if (!b) return 'no row';
+                const b = document.querySelector('[data-testid="rail-search-toggle"]');
+                if (!b) return 'no toggle';
                 b.click();
                 return 'clicked';
             });
-            const searchLanded = await page.locator('[data-testid="agents-view"]')
-                .waitFor({ timeout: 8000 }).then(() => true).catch(() => false);
+            let searchLanded = false;
             let searchFocused = false;
             for (let i = 0; i < 40 && !searchFocused; i++) {
+                searchLanded = await page.evaluate(() => !!document.querySelector('[data-testid="rail-search"]'));
                 searchFocused = await page.evaluate(() =>
                     document.activeElement?.getAttribute('data-testid') === 'rail-search');
                 if (!searchFocused) await sleep(100);
             }
-            check('the rail Search row opens the desk search field',
+            check('the Agents column search opens its field with the caret in it',
                 searchJump === 'clicked' && searchLanded && searchFocused,
                 `${searchJump}/${searchLanded}/focused=${searchFocused}`);
             await navTo('Analyze');
@@ -2603,17 +2608,16 @@ async function main() {
             await page.locator('[data-testid="agent-message"]').count() >= 4,
             `${await page.locator('[data-testid="agent-message"]').count()} rows`);
 
-        // ── Skills left the rail for Settings, and the Customize row is now the
-        //    only quick way in. Nothing else covers it: the surface sweep can no
-        //    longer see a Skills surface, and the Settings sweep below opens only
-        //    Data. So press the row and assert the Studio's OWN root mounted —
-        //    a route that opens the wrong tab would otherwise pass every gate.
-        const customize = await page.evaluate(() => {
-            const b = document.querySelector('[data-testid="nav-customize"]');
-            if (!b) return 'no row';
-            b.click();
-            return 'clicked';
-        });
+        // ── Skills is a TAB of Learning in the mock's shell (no rail row).
+        //    The documented route is Alt+3, so press the chord and assert the
+        //    Studio's OWN root mounted — a route that opens the wrong tab would
+        //    otherwise pass every gate.
+        const noCustomizeRow = await page.evaluate(() =>
+            !document.querySelector('[data-testid="nav-customize"]'));
+        check('the shell has no Customize row — Skills is a tab of Learning',
+            noCustomizeRow, noCustomizeRow ? 'row gone' : 'row still there');
+        await page.keyboard.press('Alt+3');
+        const customize = 'alt+3';
         // The Studio rides a React.lazy chunk behind a Suspense, so the Skills
         // tab appears BEFORE the Studio mounts. A fixed 1.5s wait sampled once
         // and raced the chunk — the merge that deleted the automation chunk
@@ -2637,8 +2641,8 @@ async function main() {
         // Three things, because landing on the right SURFACE is not the claim —
         // the row promises the library, so the Skills tab must be the one showing
         // and the Studio must actually be mounted inside it.
-        check('the Customize row lands on the Skills tab of the Learning surface',
-            customize === 'clicked' && reached.knowledge && reached.skillsTab && reached.studio,
+        check('Alt+3 lands on the Skills tab of the Learning surface',
+            customize === 'alt+3' && reached.knowledge && reached.skillsTab && reached.studio,
             `${customize} knowledge=${reached.knowledge} skills=${reached.skillsTab} studio=${reached.studio}`);
         await page.waitForTimeout(600);
 

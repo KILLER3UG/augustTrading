@@ -164,14 +164,6 @@ interface AgentsViewProps {
      *  of the window, so this surface renders NO global band, and the controls
      *  that used to live in it need a home in the one title bar this surface
      *  has. Same component the other surfaces' band uses — not a copy. */
-    /** The desk's mode switch (Analyze | Agents). It owns the top of the rail,
-     *  at the same x/y the rail-less surfaces put it, so a mode hop does not
-     *  move the control that caused it. The old four-tab bar is gone at every
-     *  width; the rail itself is the only navigation. */
-    modeSwitch?: React.ReactNode;
-    /** Journal / Learning / Skills: the records half of the workspace,
-     *  above the account exactly as the reference orders its utility group. */
-    shellUtilities?: React.ReactNode;
     /** Bumped by the shell rail's Search row. The field is local to this
      *  surface, so the request arrives as a token and is consumed once. */
     searchRequestNonce?: number;
@@ -460,7 +452,6 @@ const AgentsView: React.FC<AgentsViewProps> = ({
     onSendBotTurn, onAnalyze, onLogProposedTrade, onAnalysisError, onStopRun, analysisRunning = false, renderGroup, workingBotId, mailboxBusyBotIds,
     lastOpenedMap = {}, modelPicker, modelFallback = null, accountRow,
     railExpanded = true, onToggleRailExpanded,
-    modeSwitch, shellUtilities,
     railWidth = NAV_RAIL_EXPANDED_PX, railIsResizing = false,
     onRailResizeStart, onRailResizeReset,
     searchRequestNonce = 0, onSearchRequestConsumed,
@@ -960,21 +951,15 @@ const AgentsView: React.FC<AgentsViewProps> = ({
                     whether one is open. A wordmark above this row was tried and
                     removed: it pushed the switch down ~67px and the hop check
                     (which pins the switch across the hop) went red. */}
-                {(modeSwitch || onToggleRailExpanded) && (
-                    <div className="flex shrink-0 items-center justify-between gap-2 px-2 pb-1 pt-2">
-                        {/* pt-2, not pt-2.5: the shell rail's effective top
-                            padding is 8px, and the hop check pins this switch's
-                            y to the shell rail's across the Analyze ⇄ Agents
-                            hop. The switch renders in the narrow drawer too, so
-                            a phone can leave this surface without the old tabs. */}
-                        {modeSwitch ?? <span aria-hidden />}
-                        {onToggleRailExpanded && (
-                            <button type="button" onClick={onToggleRailExpanded} data-testid="rail-collapse"
-                                aria-label="Collapse conversations" title="Collapse the conversation rail"
-                                className="hidden shrink-0 rounded-control p-1.5 text-zinc-500 transition-colors hover:bg-white/[0.06] hover:text-zinc-200 md:block">
-                                <PanelLeftClose className="h-3.5 w-3.5" aria-hidden="true" />
-                            </button>
-                        )}
+                {/* The rail to this column's left owns the mode switch; what is
+                    left here is the column's own put-away, on the right edge. */}
+                {onToggleRailExpanded && (
+                    <div className="flex shrink-0 items-center justify-end gap-2 px-2 pb-1 pt-2">
+                        <button type="button" onClick={onToggleRailExpanded} data-testid="rail-collapse"
+                            aria-label="Collapse conversations" title="Collapse the conversation rail"
+                            className="hidden shrink-0 rounded-control p-1.5 text-zinc-500 transition-colors hover:bg-white/[0.06] hover:text-zinc-200 md:block">
+                            <PanelLeftClose className="h-3.5 w-3.5" aria-hidden="true" />
+                        </button>
                     </div>
                 )}
 
@@ -1193,14 +1178,6 @@ const AgentsView: React.FC<AgentsViewProps> = ({
                     )}
                 </div>
 
-                {/* The records half of the workspace, above the account — the
-                    reference's utility group. Same rows the shell rail renders,
-                    so Journal and Learning never move between modes. */}
-                {shellUtilities && (
-                    <div className="shrink-0 border-t border-white/[0.06] px-2 py-1.5">
-                        {shellUtilities}
-                    </div>
-                )}
 
                 {/* Identity, when this column IS the sidebar. It used to live only
                     in the nav rail, and putting it in both places at once is what

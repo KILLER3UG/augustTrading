@@ -106,15 +106,14 @@ the trader's journal in bulk; treat it accordingly.
 
 ## The shell
 
-- **One full-height left rail** on every surface (owner ruling, 2026-11-02; one column, v3). At
-  its top the Analyze ⇄ Agents **mode switch** — two modes of one desk, not two products — then
-  New chat and Search, then the **conversation list**: Pinned ▾ and Recent ▾, each row a bullet,
-  the title and a right-aligned mono age, with Pin / Clear / Delete on the hover menu. At its foot,
-  Journal / Learning / Skills above the account. Workspace switching is a Settings → Accounts
-  concern in v3, not a list in the rail.
-- On the **Agents** surface the SAME mode switch and utility rows arrive as nodes, and the column
-  beside the thread renders the same `ConversationGroups` above the roster. Its Chats | Bots tab
-  strip is DELETED — one scroll of sections, so the roster needs no switch to be reachable.
+- **One full-height rail, two columns** (mock v3): a 48px icon strip — Analyze, Agents, the
+  conversation column's toggle, then Journal, Learning and the account — beside the conversation
+  column: **New chat (Ctrl K)**, **Pinned**, **Recent**, and the account row
+  (`name · Signed in · local-first`) at its foot. No Search row and no mode switch in the column:
+  the rail owns the surfaces, the column owns the record, and the desk's search lives in the
+  Agents column's own field.
+- On the **Agents** surface the column is `AgentsView`'s own (conversations above the roster); its
+  Chats | Bots tab strip is DELETED — one scroll of sections.
 - The **content bar** is the title, the instrument context and one muted **Live** pill (its
   popover still carries sessions, market conditions, Live market and Vision data). No brand mark,
   no save tick, no Activity pill. `AgentsView`'s own bar IS that bar — no second header stacks

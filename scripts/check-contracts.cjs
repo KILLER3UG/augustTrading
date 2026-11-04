@@ -3224,6 +3224,23 @@ const asyncChecks = (async () => {
     const app = read('src/App.tsx');
     const agents = read('src/components/agents/AgentsView.tsx');
 
+    // The mock's shell is an icon RAIL plus a conversation COLUMN: the rail
+    // owns surfaces, the column owns the record. Folding them into one column
+    // (mode switch + rows) was the v2 shape the mock deletes.
+    ok('shell: an icon rail beside a conversation column',
+        /data-testid="shell-surface-rail"/.test(read('src/components/shell/ShellRail.tsx'))
+            && /shell-rail-collapse/.test(read('src/components/shell/ShellRail.tsx'))
+            && /shell-rail-resize/.test(read('src/components/shell/ShellRail.tsx')),
+        'one flat column of text rows is the shape the mock removes');
+    ok('shell: the column has no Search row and no mode switch (the rail owns both)',
+        !/shell-search/.test(read('src/components/shell/ShellRail.tsx'))
+            && !/<ShellModeSwitch/.test(read('src/components/shell/ShellRail.tsx')),
+        'a Search row in the list duplicates the search the Agents column owns');
+    // The New chat row prints "Ctrl K", so the chord must do that.
+    ok('shell: Ctrl/Cmd+K starts a new chat, as its row promises',
+        /startDeskChat\(\);/.test(read('src/App.tsx'))
+            && /keydown/.test(read('src/App.tsx')),
+        'a printed chord with no handler is the dead-control class');
     ok('the Agents column has no conversation tabs',
         !/role="tablist"/.test(agents) && !/rail-tab-/.test(agents) && !/railTab/.test(agents),
         'a segmented control hides half the column at rest; the reference is one scroll');

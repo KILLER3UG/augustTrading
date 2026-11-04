@@ -337,6 +337,19 @@ const TradeView: React.FC<TradeViewProps> = ({
      *  not a second network call. 200 bars so a level drawn earlier has
      *  enough history to have been judged. */
     const [levelCandles, setLevelCandles] = useState<Kline[]>([]);
+    /** The head's sparkline (mock v3): the last 48 closes, scaled to 96x26.
+     *  Grey, not red/green — it is shape, not a second verdict; the change pill
+     *  already carries the sign. */
+    const spark = useMemo(() => {
+        const closes = levelCandles.slice(-48).map(c => c.close).filter(Number.isFinite);
+        if (closes.length < 2) return '';
+        const min = Math.min(...closes);
+        const max = Math.max(...closes);
+        const span = max - min || 1;
+        return closes
+            .map((c, i) => `${((i / (closes.length - 1)) * 96).toFixed(1)},${(24 - ((c - min) / span) * 20).toFixed(1)}`)
+            .join(' ');
+    }, [levelCandles]);
     /** The `<sid>:<symbol>` bucket modelDrawings CURRENTLY holds. A turn may
      *  only merge into React state when its bucket matches this stamp — a
      *  stream-chunk tool call landing between a session-switch store emit
@@ -669,6 +682,22 @@ const TradeView: React.FC<TradeViewProps> = ({
     const nextFundingTime = feed.markIndex?.nextFundingTime ?? strip?.nextFundingTime;
     const changePct = feed.ticker?.changePercent24h ?? strip?.changePercent24h;
     const lastPrice = feed.ticker?.lastPrice ?? markPrice;
+    // The strip's one fact (mock v3): spread and book imbalance over the
+    // resting ladder. Imbalance is size-weighted, the same number the desk's
+    // depth tool reports — a wall of asks and a wall of bids are not equal
+    // evidence just because they have the same number of rows.
+    const bookMetrics = useMemo(() => {
+        const bids = feed.depth?.bids ?? [];
+        const asks = feed.depth?.asks ?? [];
+        if (!bids.length || !asks.length) return '';
+        const spread = Math.max(0, (asks[0]?.price ?? 0) - (bids[0]?.price ?? 0));
+        const bidVol = bids.reduce((n, l) => n + (l.qty || 0), 0);
+        const askVol = asks.reduce((n, l) => n + (l.qty || 0), 0);
+        const total = bidVol + askVol;
+        const imbalance = total > 0 ? Math.round(((bidVol - askVol) / total) * 100) : 0;
+        return `spread ${spread.toFixed(2)} · imbalance ${imbalance >= 0 ? '+' : ''}${imbalance}%`;
+    }, [feed.depth]);
+
     // Order-book drawer: 30px strip closed by default, expands on demand.
     const [bookOpen, setBookOpen] = useState(false);
     // Chart-head OHLC/V/OI row data — the fields the removed metrics band
@@ -902,6 +931,12 @@ const TradeView: React.FC<TradeViewProps> = ({
                                 {changePct! >= 0 ? '+' : ''}{fmtPercent(changePct!, 2)}
                             </span>
                         )}
+                        {spark && (
+                            <svg data-testid="chart-head-spark" width="96" height="26" viewBox="0 0 96 26" aria-hidden="true"
+                                className="hidden shrink-0 md:block">
+                                <polyline points={spark} fill="none" stroke="#a1a1aa" strokeWidth="1.2" />
+                            </svg>
+                        )}
                         {/* Funding rides the chart head — the quiet line, not a band. */}
                         <span className="hidden shrink-0 items-baseline gap-1.5 sm:flex" data-testid="chart-head-funding">
                             {Number.isFinite(fundingRate) ? (
@@ -1045,9 +1080,9 @@ const TradeView: React.FC<TradeViewProps> = ({
                             className="flex h-[30px] w-full items-center gap-2 px-3 text-ui-dense text-zinc-400 transition-colors hover:text-zinc-200"
                         >
                             <span className={`beacon ${feed.depthLive ? '' : 'is-quiet'}`.trim()} aria-hidden="true" />
-                            <span>Order book</span>
+                            <span>Order book · <span className="text-zinc-500">live</span></span>
                             <span className="font-mono tabular-nums text-zinc-500" data-testid="orderbook-drawer-spread">
-                                {feed.depth ? `${fmtPrice(feed.depth.bids[0]?.price ?? 0)} · ${fmtPrice(feed.depth.asks[0]?.price ?? 0)}` : '—'}
+                                {bookMetrics || '—'}
                             </span>
                             <span className="ml-auto text-zinc-500">{bookOpen ? '▾' : '▴'}</span>
                         </button>

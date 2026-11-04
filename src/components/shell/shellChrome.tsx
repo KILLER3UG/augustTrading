@@ -74,7 +74,7 @@ export const AccountRow: React.FC<{
                 </span>
                 <span className="min-w-0 flex-1">
                     <span className="block truncate text-ui-caption text-zinc-300" data-testid="nav-account-name" title={activeUsername || 'No profile'}>{activeUsername || 'No profile'}</span>
-                    <span className="block truncate text-ui-2xs text-zinc-600" title="Signed in">Signed in</span>
+                    <span className="block truncate text-ui-2xs text-zinc-600" title="Signed in · local-first">Signed in · local-first</span>
                 </span>
             </div>
             {onOpenActivity && (

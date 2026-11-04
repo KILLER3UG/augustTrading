@@ -22,7 +22,8 @@
 import React, { useRef } from 'react';
 import {
     ActivityIcon, BookOpen, GraduationCap,
-    LayersIcon, MessageSquareIcon, PanelLeftClose, Search,
+    LayersIcon, MessageSquareIcon,
+    HistoryIcon,
 } from '../shared/Icons';
 import { AccountRow } from './shellChrome';
 import { ConversationGroups } from './ConversationGroups';
@@ -47,105 +48,48 @@ const MODE_ITEMS = [
     { id: 'agents' as const, label: 'Agents', shortcut: 'Alt+4', detail: 'focused chat', Icon: MessageSquareIcon },
 ];
 
+const RAIL_W = 48;
+
+const RailIcon: React.FC<{
+    label: string;
+    testId: string;
+    onClick: () => void;
+    children: React.ReactNode;
+    current?: boolean;
+    pressed?: boolean;
+}> = ({ label, testId, onClick, children, current = false, pressed }) => (
+    <button
+        type="button"
+        onClick={onClick}
+        aria-label={label}
+        title={label}
+        aria-current={current ? 'page' : undefined}
+        aria-pressed={pressed}
+        data-testid={testId}
+        className={`relative flex h-9 w-9 shrink-0 items-center justify-center rounded-control transition-colors ${
+            current || pressed
+                ? 'bg-white/[0.06] text-zinc-100'
+                : 'text-zinc-500 hover:bg-white/[0.04] hover:text-zinc-200'
+        }`}
+    >
+        {(current || pressed) && (
+            <span aria-hidden="true" className="absolute -left-1 top-2 bottom-2 w-[2px] rounded-full bg-zinc-200" />
+        )}
+        {children}
+    </button>
+);
+
 const rowClass = (current: boolean): string =>
     `flex w-full items-center gap-2.5 rounded-control px-2.5 py-2 text-left text-ui-caption transition-colors duration-150 ease-[var(--ease-snappy)] ${
         current ? 'bg-white/[0.06] text-zinc-100' : 'text-zinc-400 hover:bg-white/[0.05] hover:text-zinc-100'
     }`;
 
-export const ShellModeSwitch: React.FC<{
-    surface: AppSurface;
-    onSelect: (surface: AppSurface) => void;
-}> = ({ surface, onSelect }) => (
-    <div
-        role="group"
-        aria-label="Desk mode"
-        className="flex w-max max-w-full items-center gap-0.5 rounded-control border border-white/[0.07] bg-zinc-900/60 p-0.5"
-    >
-        {MODE_ITEMS.map(({ id, label, shortcut, detail, Icon }) => {
-            const current = surface === id;
-            return (
-                <button
-                    key={id}
-                    type="button"
-                    onClick={current ? undefined : () => onSelect(id)}
-                    aria-current={current ? 'page' : undefined}
-                    aria-label={`${label}, shortcut ${shortcut}`}
-                    title={`${label} — ${detail} · ${shortcut}`}
-                    data-testid={`surface-switch-${id}`}
-                    className={`flex h-7 items-center gap-1.5 rounded-[6px] px-2.5 text-ui-xs font-medium transition-colors duration-150 ease-[var(--ease-snappy)] ${
-                        current ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-500 hover:text-zinc-200'
-                    }`}
-                >
-                    <Icon className="h-3.5 w-3.5" aria-hidden="true" />
-                    <span>{label}</span>
-                </button>
-            );
-        })}
-    </div>
-);
 
 /** Journal and Learning are the records half of the workspace: quiet rows at
  *  the foot of the rail, where the reference puts Sites. The Skills row is the
  *  Learning surface's Skills tab direct route — named for WHERE it lands
  *  (owner, 2026-11-03: a row labelled "Customize" that renders Learning →
  *  Skills promised a render it does not have; the label names the destination). */
-export const ShellUtility: React.FC<{
-    surface: AppSurface;
-    onSelect: (surface: AppSurface) => void;
-    onOpenSkills?: () => void;
-    badges?: Partial<Record<AppSurface, NavBadge>>;
-}> = ({ surface, onSelect, onOpenSkills, badges }) => {
-    const items = [
-        { id: 'journal' as const, label: 'Journal', shortcut: 'Alt+2', Icon: BookOpen },
-        { id: 'learn' as const, label: 'Learning', shortcut: 'Alt+5', Icon: GraduationCap },
-    ];
-    return (
-        <nav aria-label="Records and learning" className="flex flex-col gap-0.5">
-            {items.map(({ id, label, shortcut, Icon }) => {
-                const current = surface === id;
-                const badge = badges?.[id];
-                return (
-                    <button
-                        key={id}
-                        type="button"
-                        onClick={current ? undefined : () => onSelect(id)}
-                        aria-current={current ? 'page' : undefined}
-                        aria-label={badge
-                            ? `${label}. ${badge.detail}, shortcut ${shortcut}`
-                            : `${label}, shortcut ${shortcut}`}
-                        title={badge ? `${label} — ${badge.detail} · ${shortcut}` : `${label} · ${shortcut}`}
-                        data-testid={`surface-switch-${id}`}
-                        className={rowClass(current)}
-                    >
-                        <Icon className="h-4 w-4 shrink-0 text-zinc-500" aria-hidden="true" />
-                        <span className="flex-1 truncate">{label}</span>
-                        {badge?.count ? (
-                            <span
-                                aria-hidden="true"
-                                className="flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-500/15 px-1 font-mono text-ui-2xs font-semibold text-amber-400"
-                            >
-                                {badge.count > 9 ? '9+' : badge.count}
-                            </span>
-                        ) : null}
-                    </button>
-                );
-            })}
-            {onOpenSkills && (
-                <button
-                    type="button"
-                    onClick={onOpenSkills}
-                    aria-label="Skills, shortcut Alt+3"
-                    title="Skills · Alt+3"
-                    data-testid="nav-customize"
-                    className={rowClass(false)}
-                >
-                    <LayersIcon className="h-4 w-4 shrink-0 text-zinc-500" aria-hidden="true" />
-                    <span className="flex-1 truncate">Skills</span>
-                </button>
-            )}
-        </nav>
-    );
-};
 
 /** The active desk's instrument, read from the shared chat session. It is its
  *  own component so a chat-store write re-renders a label, not the App. */
@@ -165,7 +109,6 @@ interface ShellRailProps {
     surface: AppSurface;
     onSelectSurface: (surface: AppSurface) => void;
     onNewChat: () => void;
-    onOpenSearch: () => void;
     /** Legacy props — workspace switching moved to Settings → Accounts.
      *  Kept optional so App's existing call site compiles untouched. */
     workspaces?: Array<{ name: string; active: boolean }>;
@@ -195,9 +138,9 @@ interface ShellRailProps {
 
 const ShellRail: React.FC<ShellRailProps> = ({
     surface, onSelectSurface, onNewChat,
-    onOpenSearch, workspaces, onSwitchWorkspace, onAddWorkspace,
+    workspaces, onSwitchWorkspace, onAddWorkspace,
     conversations, activeConversationId, onOpenConversation,
-    onDeleteConversation, onClearConversation, onOpenSkills,
+    onDeleteConversation, onClearConversation,
     activeUsername, onOpenSettings, onOpenActivity,
     width, isResizing, onResizeStart, onResizeReset, onCollapse,
     overlay = false, onCloseOverlay,
@@ -222,77 +165,86 @@ const ShellRail: React.FC<ShellRailProps> = ({
                 data-expanded="true"
                 aria-label="August navigation"
                 style={{
-                    width,
-                    ...(overlay ? { maxWidth: 'calc(100vw - 48px)' } : null),
+                    width: width + RAIL_W,
+                    ...(overlay ? { maxWidth: 'calc(100vw - 24px)' } : null),
                 }}
-                className={`flex h-full flex-col border-r border-white/[0.06] bg-zinc-950 px-2 pb-1 pt-2 ${
+                className={`flex h-full border-r border-white/[0.06] bg-zinc-950 ${
                     overlay
                         ? 'fixed inset-y-0 left-0 z-40 shadow-2xl'
                         : 'relative shrink-0'
                 } ${isResizing ? '' : 'transition-[width] duration-150 ease-[var(--ease-snappy)]'}`}
             >
-                <div className="flex shrink-0 items-center justify-between gap-2">
-                    <ShellModeSwitch surface={surface} onSelect={onSelectSurface} />
+                {/* The mock's icon rail: the two desk modes, the conversation
+                    column's toggle, and the records at its foot. Nothing else —
+                    the list column carries New chat, Pinned, Recent and the
+                    account, exactly as design/mock-redesign-v3 draws it. */}
+                <nav
+                    aria-label="Surfaces"
+                    data-testid="shell-surface-rail"
+                    className="flex w-12 shrink-0 flex-col items-center gap-0.5 border-r border-white/[0.06] py-2"
+                >
+                    <RailIcon label="Analyze — chart and desk · Alt+1" testId="surface-switch-trade"
+                        current={surface === 'trade'} onClick={() => onSelectSurface('trade')}>
+                        <ActivityIcon className="h-[18px] w-[18px]" aria-hidden="true" />
+                    </RailIcon>
+                    <RailIcon label="Agents — focused chat · Alt+4" testId="surface-switch-agents"
+                        current={surface === 'agents'} onClick={() => onSelectSurface('agents')}>
+                        <MessageSquareIcon className="h-[18px] w-[18px]" aria-hidden="true" />
+                    </RailIcon>
+                    <RailIcon label="Hide conversations"
+                        testId="shell-rail-collapse" pressed onClick={onCollapse}>
+                        <HistoryIcon className="h-[18px] w-[18px]" aria-hidden="true" />
+                    </RailIcon>
+                    <span aria-hidden="true" className="flex-1" />
+                    <RailIcon label="Journal · Alt+2" testId="surface-switch-journal"
+                        current={surface === 'journal'} onClick={() => onSelectSurface('journal')}>
+                        <BookOpen className="h-[18px] w-[18px]" aria-hidden="true" />
+                    </RailIcon>
+                    <RailIcon label="Learning · Alt+5" testId="surface-switch-learn"
+                        current={surface === 'learn'} onClick={() => onSelectSurface('learn')}>
+                        <GraduationCap className="h-[18px] w-[18px]" aria-hidden="true" />
+                    </RailIcon>
                     <button
                         type="button"
-                        onClick={onCollapse}
-                        data-testid="shell-rail-collapse"
-                        aria-label={overlay ? 'Close navigation' : 'Collapse navigation'}
-                        title={overlay ? 'Close navigation' : 'Collapse navigation'}
-                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-control text-zinc-500 transition-colors hover:bg-white/[0.06] hover:text-zinc-200"
+                        data-testid="shell-account"
+                        onClick={onOpenSettings}
+                        aria-label={`${activeUsername || 'default'} — settings`}
+                        title="Settings · Ctrl+,"
+                        className="mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-white/10 bg-gradient-to-br from-zinc-700 to-zinc-800 text-[10px] font-semibold text-zinc-200 transition-colors hover:border-white/25"
                     >
-                        <PanelLeftClose className="h-3.5 w-3.5" aria-hidden="true" />
+                        {(activeUsername || 'default').trim().slice(0, 1).toUpperCase()}
                     </button>
+                </nav>
+
+                <div className="flex min-w-0 flex-1 flex-col" style={{ width }}>
+                    <ConversationGroups
+                        conversations={conversations}
+                        activeConversationId={activeConversationId}
+                        onNewChat={onNewChat}
+                        onOpenConversation={onOpenConversation}
+                        onDeleteConversation={onDeleteConversation}
+                        onClearConversation={onClearConversation}
+                    />
+                    <AccountRow
+                        expanded
+                        activeUsername={activeUsername}
+                        onOpenSettings={onOpenSettings}
+                        onOpenActivity={onOpenActivity}
+                    />
+                    <div
+                        role="separator"
+                        aria-orientation="vertical"
+                        aria-label="Resize navigation"
+                        data-testid="shell-rail-resize"
+                        onPointerDown={onResizeStart}
+                        onDoubleClick={onResizeReset}
+                        title="Drag to resize · double-click to reset"
+                        className="absolute inset-y-0 right-0 z-20 hidden w-1.5 cursor-col-resize touch-none items-center justify-center text-zinc-600 transition-colors hover:text-zinc-300 md:flex"
+                    >
+                        <span aria-hidden="true" className="block h-8 w-px bg-white/15 opacity-60" />
+                    </div>
                 </div>
-
-            <button
-                type="button"
-                data-testid="shell-search"
-                aria-label="Search conversations"
-                title="Search conversations · Ctrl+K"
-                onClick={onOpenSearch}
-                className={`${rowClass(false)} mt-3 shrink-0`}
-            >
-                <Search className="h-4 w-4 shrink-0 text-zinc-500" aria-hidden="true" />
-                <span className="flex-1 truncate">Search</span>
-                <kbd className="shrink-0 rounded border border-zinc-700/60 px-1 font-mono text-ui-2xs text-zinc-600" aria-hidden="true">⌘K</kbd>
-            </button>
-
-            <ConversationGroups
-                conversations={conversations}
-                activeConversationId={activeConversationId}
-                onNewChat={onNewChat}
-                onOpenConversation={onOpenConversation}
-                onDeleteConversation={onDeleteConversation}
-                onClearConversation={onClearConversation}
-            />
-
-            <div className="shrink-0 border-t border-white/[0.06] py-1.5">
-                <ShellUtility
-                    surface={surface}
-                    onSelect={onSelectSurface}
-                    onOpenSkills={onOpenSkills}
-                />
-            </div>
-            <AccountRow
-                expanded
-                activeUsername={activeUsername}
-                onOpenSettings={onOpenSettings}
-                onOpenActivity={onOpenActivity}
-            />
-            <div
-                role="separator"
-                aria-orientation="vertical"
-                aria-label="Resize navigation"
-                data-testid="shell-rail-resize"
-                onPointerDown={onResizeStart}
-                onDoubleClick={onResizeReset}
-                title="Drag to resize · double-click to reset"
-                className="absolute inset-y-0 right-0 z-20 hidden w-1.5 cursor-col-resize touch-none items-center justify-center text-zinc-600 transition-colors hover:text-zinc-300 md:flex"
-            >
-                <span aria-hidden="true" className="block h-8 w-px bg-white/15 opacity-60" />
-            </div>
-        </aside>
+            </aside>
         </>
     );
 };
