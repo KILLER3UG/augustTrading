@@ -17,7 +17,7 @@
  * resets it (and TradeView blanks the lines with the strip).
  */
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { deriveChartLines, formatDist, KEY_LEVEL_COLORS, type MessageLevelLines, type ModelKeyLevel } from '../../services/trade/keyLevels';
 import { fmtPrice } from '../../utils/formatters';
 import Disclosure from '../shared/Disclosure';
@@ -65,7 +65,11 @@ const KeyLevelsCard: React.FC<KeyLevelsCardProps> = ({ levels, symbol, messageId
     // from non-owners (card A's unmount must not null card B's lines).
     const pushRef = useRef(onChatLevels);
     pushRef.current = onChatLevels;
-    const cardIdRef = useRef<string>(messageId ?? `keylevels-${Math.random().toString(36).slice(2, 9)}`);
+    // React's instance id, not a random literal: a fallback id minted per
+    // mount was a NEW identity every remount, which orphaned the previous
+    // owner in the shared channel. useId is stable for this slot in the tree.
+    const reactId = useId();
+    const cardIdRef = useRef<string>(messageId ?? `keylevels-${reactId.replace(/[^a-zA-Z0-9-]/g, '')}`);
     const pushedRef = useRef(false);
     const lastPushedSymbolRef = useRef(symbol);
     const signature = JSON.stringify([symbol, drawing ? lines : null]);
@@ -180,9 +184,9 @@ const KeyLevelsCard: React.FC<KeyLevelsCardProps> = ({ levels, symbol, messageId
                             style={{ borderLeftColor: KEY_LEVEL_COLORS[l.kind] }}
                             className={`grid w-full grid-cols-[42px_80px_52px_1fr] items-center gap-x-2 border-l-[3px] px-3 py-1.5 text-left transition-colors hover:bg-white/[0.04] ${pinned.has(l.id) ? 'bg-white/[0.05]' : ''}`}
                         >
-                            <span className={`text-[11.5px] font-bold ${KIND_TEXT[l.kind]}`}>{l.label}{pinned.has(l.id) && <span className="ml-0.5 text-cyan-400" aria-hidden="true">⌖</span>}</span>
-                            <span className="font-mono text-[11.5px] tabular-nums text-zinc-200">{fmtPrice(l.price)}</span>
-                            <span className={`font-mono text-[10.5px] tabular-nums ${KIND_TEXT[l.kind]}`}>{formatDist(l.price, mark)}</span>
+                            <span className={`text-ui-dense font-bold ${KIND_TEXT[l.kind]}`}>{l.label}{pinned.has(l.id) && <span className="ml-0.5 text-cyan-400" aria-hidden="true">⌖</span>}</span>
+                            <span className="font-mono text-ui-dense tabular-nums text-zinc-200">{fmtPrice(l.price)}</span>
+                            <span className={`font-mono text-ui-2xs tabular-nums ${KIND_TEXT[l.kind]}`}>{formatDist(l.price, mark)}</span>
                             <span className="line-clamp-2 text-ui-dense leading-4 text-zinc-400" title={l.context}>{l.context}</span>
                         </button>
                     </React.Fragment>

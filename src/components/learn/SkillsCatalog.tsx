@@ -709,10 +709,35 @@ const SkillsCatalog: React.FC<SkillsCatalogProps> = ({ onOpenSettings, onOpenSki
                     <EmptyState
                         compact
                         align="center"
-                        title={query.trim() ? `No skill matches “${query.trim()}”.` : 'No skills yet.'}
+                        title={query.trim() ? `No skill matches “${query.trim()}”.` : activeCollection !== 'all' ? `No skills in “${activeCollection}”.` : 'No skills yet.'}
                         description={query.trim()
-                            ? 'Clear the search to see the whole roster.'
-                            : 'Approve a drafted skill in the Approvals inbox, or import a SKILL.md, and it lands here.'}
+                            ? 'The search filtered the roster down to nothing.'
+                            : activeCollection !== 'all'
+                                ? 'This collection is empty; the rest of the roster may not be.'
+                                : 'A drafted skill lands here once its evidence holds, and an imported SKILL.md lands immediately.'}
+                        action={query.trim()
+                            ? (
+                                <button
+                                    type="button"
+                                    data-testid="skills-catalog-clear-search"
+                                    onClick={() => setQuery('')}
+                                    className="rounded-control px-3 py-1.5 text-ui-dense font-semibold text-zinc-300 transition-colors hover:bg-white/[0.06] hover:text-zinc-100"
+                                >
+                                    Clear search
+                                </button>
+                            )
+                            : activeCollection !== 'all'
+                                ? (
+                                    <button
+                                        type="button"
+                                        data-testid="skills-catalog-show-all"
+                                        onClick={() => setCollection('all')}
+                                        className="rounded-control px-3 py-1.5 text-ui-dense font-semibold text-zinc-300 transition-colors hover:bg-white/[0.06] hover:text-zinc-100"
+                                    >
+                                        Show all collections
+                                    </button>
+                                )
+                                : undefined}
                     />
                 </div>
             ) : (

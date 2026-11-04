@@ -29,7 +29,7 @@ The surfaces themselves are described in [surfaces.md](surfaces.md); copy and na
 
 ## Shape and borders
 
-- [ ] `rounded-control` (10px) for inputs and buttons; `rounded-bubble` (20px) for chat bubbles.
+- [ ] `rounded-control` (6px) for inputs and buttons; `rounded-bubble` (12px) for chat bubbles. (Retuned by the quiet-desk layer, 2026-11-04 — the four tokens in `src/index.css` are the only radii; this page names them, `src/index.css` owns the numbers.)
       Nothing else invents a radius.
 - [ ] Borders are hairlines: `border-zinc-800/80`. No double borders — a panel inside a panel does
       not get a second frame.

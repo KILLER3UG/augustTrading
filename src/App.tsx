@@ -149,6 +149,21 @@ const SurfaceSkeleton: React.FC = () => (
     </div>
 );
 
+/** The IN-CONTENT skeleton: the room view lazy-chunks inside the conversation
+ *  area, where a blank beat reads as a crash (a surface skeleton would paint
+ *  a second page frame inside the page). A few muted message rows, centred
+ *  like the thread it becomes, so the chunk swap shifts nothing. */
+const RoomSkeleton: React.FC = () => (
+    <div className="flex h-full min-h-0 w-full flex-col gap-3 p-4" role="status" aria-label="Loading">
+        <div className="h-6 w-48 animate-pulse self-start rounded-control bg-zinc-900" />
+        <div className="mx-auto flex w-full max-w-[840px] flex-1 flex-col justify-end gap-3 pb-4">
+            <div className="h-4 w-3/5 animate-pulse rounded-control bg-zinc-900" />
+            <div className="h-4 w-2/5 animate-pulse self-end rounded-control bg-zinc-900" />
+            <div className="h-4 w-4/5 animate-pulse rounded-control bg-zinc-900" />
+        </div>
+    </div>
+);
+
 /** Persisted nav-rail collapse state. Deliberately NOT per-profile: the rail
  *  is a property of the window, not of who is signed into it, and two profiles
  *  on one machine should see the same rail they left behind. The key predates
@@ -1184,7 +1199,7 @@ const App: React.FC = () => {
         const group = groups.find(g => g.id === groupId);
         if (!group) return <p className="p-4 text-ui-dense leading-5 text-zinc-500">This room was deleted.</p>;
         return (
-            <React.Suspense fallback={null}>
+            <React.Suspense fallback={<RoomSkeleton />}>
                 <GroupChatView
                     group={group}
                     bots={bots}

@@ -11,7 +11,7 @@
  * The age helper lives here; nothing else defines it.
  */
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { PanelLeftClose } from '../shared/Icons';
 import type { Conversation } from '../../types';
 import { conversationTitle } from '../../utils/conversationTitle';
@@ -70,8 +70,28 @@ const ConversationRow: React.FC<{
     onClear: (id: string) => void;
 }> = ({ conversation, selected, running, onOpen, onDelete, onClear }) => {
     const [menuOpen, setMenuOpen] = useState(false);
+    const menuRef = useRef<HTMLDivElement | null>(null);
     const title = conversationTitle(conversation);
     const side = conversationSide(conversation);
+    // The actions menu FLOATS above the list instead of pushing rows down:
+    // an inline strip re-flowed every row under the opened one, which read
+    // as the list jumping. Dismisses on Escape and on a click outside — the
+    // same contract the header's session popover keeps.
+    useEffect(() => {
+        if (!menuOpen) return;
+        const onKey = (e: KeyboardEvent): void => {
+            if (e.key === 'Escape') setMenuOpen(false);
+        };
+        const onPointer = (e: PointerEvent): void => {
+            if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
+        };
+        window.addEventListener('keydown', onKey);
+        window.addEventListener('pointerdown', onPointer);
+        return () => {
+            window.removeEventListener('keydown', onKey);
+            window.removeEventListener('pointerdown', onPointer);
+        };
+    }, [menuOpen]);
     return (
         <div className={`group relative flex items-center rounded-control ${
             selected ? 'bg-white/[0.06] text-zinc-100' : 'text-zinc-500'
@@ -94,7 +114,7 @@ const ConversationRow: React.FC<{
                 <span className="min-w-0 flex-1 truncate">{title}</span>
                 {side && (
                     <span data-testid="conversation-side"
-                        className={`shrink-0 text-[11px] font-semibold ${side === 'Long' ? 'text-emerald-400' : 'text-rose-400'}`}>
+                        className={`shrink-0 font-mono text-ui-2xs uppercase tracking-wide ${side === 'Long' ? 'text-emerald-400' : 'text-rose-400'}`}>
                         {side}
                     </span>
                 )}
@@ -119,18 +139,21 @@ const ConversationRow: React.FC<{
                 </button>
             )}
             {menuOpen && (
-                <div className="mb-1 flex items-center gap-1 pl-6">
+                <div
+                    ref={menuRef}
+                    className="absolute right-1 top-full z-20 mt-0.5 flex flex-col rounded-control border border-white/[0.06] bg-zinc-900 py-1 shadow-lg"
+                >
                     <button
                         type="button"
                         onClick={() => { setMenuOpen(false); onClear(conversation.id); }}
-                        className="rounded-control px-2 py-1 text-ui-xs text-zinc-500 transition-colors hover:bg-white/[0.05] hover:text-zinc-200"
+                        className="whitespace-nowrap px-3 py-1.5 text-left text-ui-xs text-zinc-400 transition-colors hover:bg-white/[0.05] hover:text-zinc-200"
                     >
                         Clear messages
                     </button>
                     <button
                         type="button"
                         onClick={() => { setMenuOpen(false); onDelete(conversation.id); }}
-                        className="rounded-control px-2 py-1 text-ui-xs text-rose-400/90 transition-colors hover:bg-rose-500/10 hover:text-rose-300"
+                        className="whitespace-nowrap px-3 py-1.5 text-left text-ui-xs text-rose-400/90 transition-colors hover:bg-rose-500/10 hover:text-rose-300"
                     >
                         Delete
                     </button>
