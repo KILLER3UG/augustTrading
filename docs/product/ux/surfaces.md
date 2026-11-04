@@ -21,7 +21,8 @@ its icon kept their meaning; only the destination changed.
 Anatomy, top to bottom:
 
 - **Chart head** — one quiet line: `SymbolPicker`, hero price (`text-ui-price` mono tabular-nums), change, funding + countdown, feed dot. No metrics band and no tool buttons: the **market screener** and **pinned signals** live in the symbol picker's foot, where a trader already goes to change instruments. `src/components/trade/TradeView.tsx` › `TradeView`
-- **Crosshair readout** — the 24h high/low/volume/OI/oracle fields the band held appear ONLY while the pointer is over the plot, then leave with it. `src/components/trade/TradingChart.tsx` › `TradingChart`
+- **Crosshair readout** — the 24h high/low/volume/OI/oracle fields the band held appear ONLY while the pointer is over the plot, then leave with it; the grid is fainter than v2's and a verdict draws at most four lines (entry, stop, two targets). `src/components/trade/TradingChart.tsx` › `TradingChart`
+- **Drawing tools** — the resting rail is four tools (cursor, trend, horizontal, zone); fib, text, freehand and eraser live behind one caret. `src/components/trade/ChartToolRail.tsx` › `ChartToolRail`
 - **Composer** — the box is `+` / model / send. The two prompt actions ride the `+` menu ("Study the chart → skills", "Full analysis") instead of chips on the row.
 - **Activity** — the skill-audit drawer's door is the account row's inbox control at the column's foot; the content bar no longer carries a status cluster. A FAILED profile save still shows ("Save failed") because a silent save error is data loss.
 - **Order-book drawer** — 30px strip (name, live state, spread) closed by default, expands on demand. Analyze-only. Narrow (<1024) Book mode = full-height pane. `src/components/trade/TradeView.tsx` › `TradeView`
@@ -108,12 +109,14 @@ the trader's journal in bulk; treat it accordingly.
 
 - **One full-height rail, two columns** (mock v3): a 48px icon strip — Analyze, Agents, the
   conversation column's toggle, then Journal, Learning and the account — beside the conversation
-  column: **New chat (Ctrl K)**, **Pinned**, **Recent**, and the account row
+  column: **New chat (Ctrl K)**, **Pinned**, **Recent** (a row shows the side of the thread's latest
+  signal — `Long`/`Short` — read from the ledger), and the account row
   (`name · Signed in · local-first`) at its foot. No Search row and no mode switch in the column:
   the rail owns the surfaces, the column owns the record, and the desk's search lives in the
   Agents column's own field.
-- On the **Agents** surface the column is `AgentsView`'s own (conversations above the roster); its
-  Chats | Bots tab strip is DELETED — one scroll of sections.
+- On the **Agents** surface the thread is CENTRED and the column starts closed — the rail's Chats
+  icon opens `AgentsView`'s own column (conversations above the roster). Its Chats | Bots tab strip
+  is DELETED: one scroll of sections.
 - The **content bar** is the title, the instrument context and one muted **Live** pill (its
   popover still carries sessions, market conditions, Live market and Vision data). No brand mark,
   no save tick, no Activity pill. `AgentsView`'s own bar IS that bar — no second header stacks
