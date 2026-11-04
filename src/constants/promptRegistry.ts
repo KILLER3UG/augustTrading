@@ -17,7 +17,9 @@
  * missing the line that forbids writing into `skills/`. A restated copy is a
  * drift waiting to happen, so every fallback below is the SAME STRING the
  * call site passes to `getPrompt` — imported, so the two cannot diverge.
- * `tests/planE08PromptRegistry.test.ts` pins that identity.
+ * The registry↔ids equality is pinned by `scripts/check-contracts.cjs`; the
+ * vitest suite that used to pin the fallback identity was deleted with the
+ * whole suite on 2026-10-23.
  */
 
 import {

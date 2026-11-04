@@ -2734,7 +2734,7 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
         /offered <= currentTradeCount/.test(integrity));
 }
 
-// ─── 31. the tape's shape — incoherent candles are dropped and named ───────
+// ─── 36. the tape's shape — incoherent candles are dropped and named ───────
 // A candle that violates its own OHLC is a broken row, not a quieter market.
 // Before this gate a `high < low` row from any mirror could reach the chart,
 // the indicators and the signal resolver as ordinary data.
@@ -2760,7 +2760,7 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
         && /coerceCandles\(rows\)/.test(read('src/services/signals/signalMarketData.ts')));
 })();
 
-// ─── 32. one bounded continuation for a truncated desk answer ──────────────
+// ─── 37. one bounded continuation for a truncated desk answer ──────────────
 // A round that streamed words and hit the token ceiling used to ship as a
 // half answer with a notice. Now it is continued ONCE — the partial goes back
 // as the assistant's own message, and the loop returns the whole text. A
@@ -2918,7 +2918,7 @@ const asyncChecks = (async () => {
         && /recoveredFromTruncation \? '' : truncationNotice/.test(readTurn('src/services/trade/chatSurfaceTurn.ts')));
 })();
 
-// ─── 33. the accuracy floor, the candle-aligned cache, the warmup discipline ──
+// ─── 38. the accuracy floor, the candle-aligned cache, the warmup discipline ──
 // A hit rate without an interval, a slugging without a loss side, a cache
 // whose freshness ignores the bar boundary, and recursive indicators whose
 // warmup nobody declared — each is a number that looks like data. These pin
@@ -2985,7 +2985,7 @@ const asyncChecks = (async () => {
         /forming candle as of this packet/.test(read('src/services/analysis/HybridIntelligenceService.ts')));
 })();
 
-// ─── 34. the family cooldown, the conviction rubric, calibration, the rule lane ──
+// ─── 39. the family cooldown, the conviction rubric, calibration, the rule lane ──
 // A refuted setup must not dig under a healthy book; a conviction number must
 // arrive against a written rubric or not at all; the calibration verdict must
 // refuse to speak before its sample; and the harness must be graded against a
@@ -3319,7 +3319,7 @@ const asyncChecks = (async () => {
         'a chip removed without a new door deletes the action');
 })();
 
-// ─── 33. market discovery: one ranking, two doors, one chart writer ───────
+// ─── 40. market discovery: one ranking, two doors, one chart writer ───────
 // A "best setups" answer and the screener table must name the SAME best coin:
 // the score is pure logic below the render, so it is pinned here rather than
 // inferred from a screen. The two desk tools and the ONE session writer are
@@ -3474,6 +3474,91 @@ const asyncChecks = (async () => {
     ok('chart switch: a detached evaluator may not move the trader\'s chart',
         /'switch_chart_symbol'/.test(read('src/services/trade/unattendedTools.ts'))
         && /'switch_chart_symbol'/.test(read('src/services/trade/chatSurfaceTurn.ts')));
+})();
+
+// ─── 41. the honesty batch — named sources, measured volatility, the oldest-first
+//         settlement queue, and the registry↔ids equality ────────────────────
+// Everything here came from the 2026-11-05 overnight batch. Each pin is the
+// failure it refuses: a degraded feed that reads as native (O-63), a
+// simulation whose volatility followed the trader's own stop (O-64), a
+// settlement queue that graded only the newest open rows and let old ones
+// starve into the prune, and a prompt registry whose id list could drift
+// unseen once the vitest suite was deleted.
+(() => {
+    const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+    const ks = loadModule('src/services/analysis/KlineService.ts');
+    ok('kline source: the native and unavailable reads carry NO spot-mirror note',
+        ks.spotMirrorSourceNote('futures') === null && ks.spotMirrorSourceNote('unavailable') === null);
+    ok('kline source: the degraded read IS named, and names the perp mark',
+        (() => {
+            const note = ks.spotMirrorSourceNote('spot-mirror');
+            return typeof note === 'string' && note.includes('SPOT MIRROR') && note.includes('perp mark');
+        })());
+    ok('candle-aligned TTL: a mid-5m read never pins a bar past its close (floor 5s, cap 300s)',
+        (() => {
+            const t0 = 1730000000000; // arbitrary wall clock
+            for (let i = 0; i < 300; i++) {
+                const ttl = ks.candleAlignedTtlMs('5m', t0 + i * 1000);
+                if (ttl < 5000 || ttl > 300000) return false;
+            }
+            return ks.candleAlignedTtlMs('1d', t0) === 30000; // unknown/slow interval keeps the flat bound
+        })());
+
+    const desk = loadModule('src/services/analysis/DeskToolsService.ts');
+    ok('desk cache: the kline-backed stamped tools ride the SAME candle-aligned rule',
+        desk.klineBackedCacheTtlMs(1730000000000) === ks.candleAlignedTtlMs('5m', 1730000000000));
+
+    const order = loadModule('src/services/signals/signalOrder.ts');
+    const rows = [
+        { status: 'open', signal: { emittedAt: 300 } },
+        { status: 'resolved', signal: { emittedAt: 100 } },
+        { status: 'open', signal: { emittedAt: 500 } },
+        { status: 'open', signal: { emittedAt: 200 } },
+    ];
+    ok('settlement queue: the oldest OPEN row is first and a resolved row never queues',
+        JSON.stringify(order.openSignalsOldestFirst(rows).map(r => r.signal.emittedAt))
+        === JSON.stringify([200, 300, 500]));
+    ok('settlement queue: an empty open set queues nothing (never reads as "no signals")',
+        order.openSignalsOldestFirst([]).length === 0);
+
+    const ids = loadModule('src/constants/promptIds.ts').PROMPT_REGISTRY_IDS;
+    const registryIds = [...read('src/constants/promptRegistry.ts').matchAll(/\n\s+id: '([^']+)'/g)].map(m => m[1]);
+    ok('prompt registry: every registered id is in the bare-ids list (overrides cannot silently stop counting)',
+        registryIds.length > 0 && registryIds.every(id => ids.includes(id)),
+        `registry=${registryIds.length} ids=${ids.length}`);
+    ok('prompt registry: the bare-ids list carries no orphan the registry does not register',
+        ids.every(id => registryIds.includes(id)));
+    ok('prompt registry: no duplicate id in either list',
+        new Set(registryIds).size === registryIds.length && new Set(ids).size === ids.length);
+
+    // O-64's wording pins: the volatility input must be NAMED, never silent.
+    const mc = read('src/services/analysis/MonteCarloService.ts');
+    ok('monte carlo: the receipt names a MEASURED volatility as measured from the tape',
+        mc.includes("'measured from the tape (ATR14)'") && mc.includes("'supplied by the caller'"));
+    ok('monte carlo: the tool schema no longer advertises a 2×stop default',
+        !read('src/services/analysis/DeskToolsService.ts').includes('Default: 2× the entry→stop distance'));
+    ok('monte carlo: the pipeline refuses rather than assume volatility from the stop distance',
+        !read('src/services/analysis/HybridIntelligenceService.ts').includes('slDistance * 2')
+        && read('src/services/analysis/HybridIntelligenceService.ts').includes('refusing the simulation rather than assuming volatility'));
+
+    // O-63's screener half: a degraded row is marked and the digest says what
+    // the mark means. Text-pinned — the module drags the whole fetch layer.
+    const sc = read('src/services/trade/screener.ts');
+    ok('screener: a degraded row carries the flag, a mark, and a named-source line',
+        sc.includes('degraded: boolean')
+        && sc.includes("r.degraded ? '*' : ''")
+        && sc.includes('spotMirrorSourceNote'));
+    ok('screener: the human panel renders the spot-mirror marker',
+        read('src/components/trade/ScreenerPanel.tsx').includes('degraded: r.degraded'));
+    ok('the third ingestion path is gated: MarketDataService parses through candleShape',
+        read('src/services/analysis/MarketDataService.ts').includes('coerceCandles')
+        && read('src/utils/candleShape.ts').includes('MarketDataService'));
+    ok('the chat surface offers the skill_view its own prompts instruct',
+        (() => {
+            const surface = read('src/services/trade/chatSurfaceTurn.ts');
+            const tools = (surface.match(/export const CHAT_SURFACE_TOOLS = \[([\s\S]*?)\];/) || [])[1] || '';
+            return /'skill_view'/.test(tools);
+        })());
 })();
 
 // ─── report ────────────────────────────────────────────────────────────────
