@@ -203,21 +203,37 @@ const buildRegimePack = (m, tape, atr, symbol) => {
 // ─── the model call ─────────────────────────────────────────────────────
 
 const callModel = async (cfg, messages) => {
-    const res = await fetch(`${cfg.baseUrl.replace(/\/$/, '')}/chat/completions`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.apiKey}` },
-        body: JSON.stringify({
-            model: cfg.model,
-            messages,
-            temperature: 0.2,
-            max_tokens: 700,
-        }),
-    });
-    if (!res.ok) throw new Error(`provider ${res.status}: ${(await res.text()).slice(0, 200)}`);
-    const data = await res.json();
-    const text = data?.choices?.[0]?.message?.content ?? '';
-    const tokens = data?.usage?.total_tokens ?? 0;
-    return { text, tokens };
+    // Gateways hand you either the API root or the full completions URL —
+    // accept both.
+    const url = `${cfg.baseUrl.replace(/\/$/, '').replace(/\/chat\/completions$/, '')}/chat/completions`;
+    // Free-tier gateways throttle: a 429/5xx is a WAIT, not a failed sample.
+    let lastError = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+        if (attempt > 0) await new Promise(r => setTimeout(r, 10_000 * attempt));
+        const res = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.apiKey}` },
+            body: JSON.stringify({
+                model: cfg.model,
+                messages,
+                temperature: 0.2,
+                max_tokens: 8000,
+            }),
+        });
+        if (res.ok) {
+            const data = await res.json();
+            const msg = data?.choices?.[0]?.message ?? {};
+            // Reasoning models put the thinking in `reasoning` and may leave
+            // `content` null when the budget cut them mid-thought — parse
+            // whichever carries the JSON.
+            const text = msg.content ?? msg.reasoning ?? '';
+            const tokens = data?.usage?.total_tokens ?? 0;
+            return { text, tokens };
+        }
+        lastError = new Error(`provider ${res.status}: ${(await res.text()).slice(0, 200)}`);
+        if (res.status !== 429 && res.status < 500) break; // auth/shape errors do not retry
+    }
+    throw lastError;
 };
 
 const parseDecision = (text) => {
@@ -272,8 +288,10 @@ const main = async () => {
     const dryRun = args.includes('--dry-run');
     const perArm = Math.max(2, flag('samples', 40));
     const seed = Number(args[args.indexOf('--seed') + 1]) || 20261107;
-    const armsArg = args.find(a => a.startsWith('--arms'));
-    const armNames = armsArg ? armsArg.split('=')[1].split(',') : ['baseline', 'volume', 'regime'];
+    const armsIdx = args.indexOf('--arms');
+    const armNames = armsIdx >= 0
+        ? String(args[armsIdx + 1] ?? '').split(',').filter(Boolean)
+        : ['baseline', 'volume', 'regime'];
     for (const a of armNames) if (!ARMS[a]) { console.error(`unknown arm "${a}"`); process.exit(1); }
 
     const cfg = {
@@ -411,12 +429,17 @@ const main = async () => {
             let netR = null;
             let won = null;
             if (resolution) {
-                const cost = m.nrr.roundTripCostR({ stopDistancePct: (Math.abs(entry - stop) / entry) * 100 });
-                netR = cost.known ? Math.round(((resolution.grossR ?? 0) - cost.costR) * 10000) / 10000 : resolution.grossR;
-                if (resolution.status === 'won') won = 1;
-                else if (resolution.status === 'lost') won = 0;
-                else if (resolution.status === 'expired') won = netR > 0 ? 1 : 0;
-                // never_triggered: nothing scores (the call never came alive)
+                if (resolution.status === 'never_triggered') {
+                    // The call never came alive: no fill, no fees, nothing
+                    // scores — the resolver's own semantics (grossR 0, feeR 0).
+                    netR = 0;
+                } else {
+                    const cost = m.nrr.roundTripCostR({ stopDistancePct: (Math.abs(entry - stop) / entry) * 100 });
+                    netR = cost.known ? Math.round(((resolution.grossR ?? 0) - cost.costR) * 10000) / 10000 : resolution.grossR;
+                    if (resolution.status === 'won') won = 1;
+                    else if (resolution.status === 'lost') won = 0;
+                    else if (resolution.status === 'expired') won = netR > 0 ? 1 : 0;
+                }
             }
             const brier = won !== null && decision.confidence ? (CONFIDENCE_TO_P[decision.confidence] - won) ** 2 : null;
             results[arm].push({

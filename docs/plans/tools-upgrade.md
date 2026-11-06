@@ -474,3 +474,37 @@ constant-restating assertion in the drawer tests, a duplicated header comment, a
 `.qoder/` gitignored. 62 lines out; every bug-catching fixture stays. The bigger LOC
 reduction had already landed: the owner's cluster commit (268k lines) and this work's
 lazy-chunk split, which moved code out of the startup graph rather than out of the repo.
+
+## 15. The first real ablation run (2026-11-07, owner-supplied gateway)
+
+Model: `nvidia/nemotron-3.5-super-vl:free` via the owner's kilo.ai gateway (a reasoning
+model — the harness grew a `reasoning`-fallback parser, an 8k token budget, and 429/5xx
+retry; `never_triggered` now scores 0, matching the resolver's own semantics). 24 paired
+samples × 3 arms = 72 live calls, seed 20261107, 48h horizon, 0 look-ahead detections.
+
+| arm | scored | abstain | hit rate | avg net R | Brier | halluc | tokens/decision |
+|---|---|---|---|---|---|---|---|
+| baseline | 16 | 25% | 13% | −1.173 R | 0.266 | 0% | 6,768 |
+| +volume/auction | 18 | 25% | **31%** | **−0.282 R** | **0.250** | 1% | 6,274 |
+| +regime/levels/math | 22 | **8%** | 19% | −0.592 R | 0.257 | 0% | **4,594** |
+
+The three pre-declared comparisons (paired bootstrap, 10k): baseline vs volume Δ −0.701 R
+[−1.623, +0.139]; baseline vs regime Δ −0.473 R [−1.478, +0.386]; volume vs regime Δ +0.367 R
+[−0.583, +1.457] — **all three CANNOT TELL YET** at N=24, exactly what an honest harness
+says when the effect is real but the sample is not.
+
+What the numbers DO say, without overclaiming:
+- Both tool packs point the same way — fewer losses than the baseline's −1.17 R (which is
+  roughly "every scored trade stopped out"), higher hit rate, equal-or-better Brier. The
+  regime pack abstains 3× more (it refuses thin tapes instead of guessing) and costs 32%
+  fewer tokens.
+- The regime breakdown shows where the money moved: `neutral:compressed` and
+  `trend:compressed` flipped from −0.6/— (baseline) to +1.88/+5.35 under the volume pack —
+  the compression reads are where computed numbers changed decisions. One 5.35R sample is
+  one sample; the pattern is a hypothesis for the next run, not a finding.
+- Hallucinated prices: ~0–1% in the pack arms — the model quotes what it was given.
+
+**Recommended next step:** the same seed at N≈80 per arm (one overnight run) — the observed
+Δ of ~0.7 R needs roughly that N for the CI to close. Nothing in this run justifies
+removing a tool group; nothing justifies declaring victory either. The harness is now a
+one-command instrument the owner can re-run on any model.
