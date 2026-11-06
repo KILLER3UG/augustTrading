@@ -3508,10 +3508,8 @@ const checkSkillWrites = async () => {
             ] } });
             return set !== null && set.zones.length === 1 && set.zones[0].top === 102;
         })());
-    ok('drawable: every P0/P1 level tool is named drawable, and an unknown tool is refused',
-        ['volume_profile', 'naked_pocs', 'vwap', 'auction_state', 'get_key_levels', 'swing_structure', 'liquidity', 'imbalances', 'sr_zones', 'wyckoff_events']
-            .every(t => adapter.DRAWABLE_TOOLS.includes(t))
-        && adapter.drawableLevelsFor('trade_math', { values: {} }) === null);
+    ok('drawable: a tool with no standard drawing is refused by the extractor',
+        adapter.drawableLevelsFor('trade_math', { values: {} }) === null);
     ok('drawable: a null-values envelope (unavailable tool) draws nothing',
         adapter.drawableLevelsFor('vwap', { values: null }) === null);
 

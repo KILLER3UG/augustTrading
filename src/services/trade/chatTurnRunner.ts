@@ -29,10 +29,13 @@ import type { Message } from '../../types/message';
 import type { ProviderConfig } from '../../types/provider';
 import type { ChatMessage, ContentPart } from '../providers/GenericProviderService';
 import type { DeskToolCall, DeskToolResult } from '../analysis/DeskToolsService';
-import { fetchHybridData, generateHybridPromptInjection } from '../analysis/HybridIntelligenceService';
+// LAZY: the hybrid packet machinery (and its whole market-data subtree)
+// loads on first use, not at boot (O-146). Type-only import stays free.
+import type { HybridDataPacket } from '../analysis/HybridIntelligenceService';
+const hybridService = (): Promise<typeof import('../analysis/HybridIntelligenceService')> => import('../analysis/HybridIntelligenceService');
 import { DESK_TOOL_NAMES } from '../../utils/toolKinds';
 import { settleDockEntry } from '../../utils/rowSettlement';
-import { CHART_ACTION_TOOL_DEFS } from '../analysis/DeskToolsService';
+import { CHART_ACTION_TOOL_DEFS } from '../analysis/deskToolShared';
 import { focusedGoal } from '../goals/GoalService';
 import { buildTradeChatContext, describeChartSnapshotForModel } from './tradeChatContext';
 import {
@@ -525,9 +528,9 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
         if (name === 'draw_detected') {
             const wanted = String(args.pattern ?? '').trim().toLowerCase();
             if (!wanted) return receipt(false, 'draw_detected rejected: "pattern" is required — name a structure from the packet geometry table.');
-            let packet;
+            let packet: HybridDataPacket | undefined;
             try {
-                packet = await fetchHybridData(symbol);
+                packet = await (await hybridService()).fetchHybridData(symbol);
             } catch (e) {
                 return receipt(false, `draw_detected could not reach the detector: ${e instanceof Error ? e.message : 'fetch failed'}. Draw it by hand with draw_on_chart instead.`);
             }
@@ -689,8 +692,8 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
             return buildTradeChatContext({ symbol, interval, contextWindowTokens: provider?.contextWindowTokens, packetMarkdown: cached.markdown, fetchedAtMs: cached.atMs, drawingsDescription, onScreenDescription: onScreen, plansDescription: plansBlock, postMortemBrief, liveMarkPrice, formingCandle });
         }
         try {
-            const packet = await fetchHybridData(symbol);
-            const markdown = generateHybridPromptInjection(packet, { compact: true });
+            const packet = await (await hybridService()).fetchHybridData(symbol);
+            const markdown = (await hybridService()).generateHybridPromptInjection(packet, { compact: true });
             const atMs = Date.now();
             setContextAt(atMs);
             packetCache.set(symbol, { markdown, atMs });

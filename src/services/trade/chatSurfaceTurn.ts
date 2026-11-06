@@ -46,7 +46,7 @@ import { activeStrategiesBlock } from '../learning/strategyStore';
 import { buildProfileMemoryIndex } from '../learning/profileMemory';
 import { buildGoalsIndex, focusedGoal, goalMatchesMessage, listGoals } from '../goals/GoalService';
 import { runToolTurn, type ToolTurnEvents, type ToolTurnOutcome, type ToolTurnRequest } from './toolTurn';
-import { isMarketReadTool } from '../analysis/DeskToolsService';
+import { isMarketReadTool } from '../analysis/deskToolShared';
 import { runPresentTrade } from './presentTradeTool';
 import { userContentWithImage } from './chatTurnRunner';
 import { saveToolPayload } from './toolPayloadStore';

@@ -29,12 +29,7 @@ import { getPrompt } from '../infrastructure/PromptOverrideService';
 import { composePrompt } from '../../utils/composePrompt';
 import { clipNote } from '../../utils/harnessMarks';
 import { getHarnessSettings } from '../../utils/harnessSettings';
-import {
-    DESK_TOOLS_PROMPT,
-    TEXT_TOOL_FALLBACK_PROMPT,
-    resolveDefaultSymbol,
-    streamChatWithDeskTools,
-} from '../analysis/DeskToolsService';
+import { DESK_TOOLS_PROMPT, TEXT_TOOL_FALLBACK_PROMPT, resolveDefaultSymbol } from '../analysis/deskToolShared';
 
 import { isVisionModel } from '../../utils/modelUtils';
 import type { ToolAction } from '../../types/message';
@@ -446,6 +441,9 @@ export async function analyzeTradingView(
     let responseText = '';
     let reasoningAccumulated = '';
     try {
+        // LAZY: the desk whale loads on the first tool turn, not at boot
+        // (O-146 — the entry chunk carries it no longer).
+        const { streamChatWithDeskTools } = await import('../analysis/DeskToolsService');
         for await (const chunk of streamChatWithDeskTools(config, messages, {
             ...options,
             enabled: deskToolsEnabled,

@@ -103,3 +103,4 @@ delivery/
 
 # Superseded notes and design previews, kept on disk and out of the index
 .local-archive/
+.qoder/

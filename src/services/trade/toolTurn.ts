@@ -27,7 +27,8 @@
 
 import type { ProviderConfig, WireAuditEntry } from '../../types/provider';
 import type { ChatMessage } from '../providers/GenericProviderService';
-import { streamChatWithDeskTools, stripTextToolCalls } from '../analysis/DeskToolsService';
+// LAZY: the desk whale loads on the first tool turn, not at boot (O-146).
+const deskService = (): Promise<typeof import('../analysis/DeskToolsService')> => import('../analysis/DeskToolsService');
 import type { StreamWithDeskToolsOptions } from '../analysis/DeskToolsService';
 import { emptyTokenUsage, mergeTokenUsage } from '../../utils/tokenUsage';
 import type { TokenUsage } from '../../utils/tokenUsage';
@@ -179,6 +180,7 @@ const runToolTurnInner = async (req: ToolTurnRequest): Promise<InnerOutcome> => 
     let recoveredFromTruncation = false;
     const visible = (text: string): string => (req.keepTextHidden && req.keepTextHidden(raw) ? '' : text);
 
+    const { streamChatWithDeskTools } = await deskService();
     const stream = streamChatWithDeskTools(req.config, req.messages, {
         ...req.transport,
         memoryEnabled: req.memoryEnabled !== false,
@@ -211,7 +213,7 @@ const runToolTurnInner = async (req: ToolTurnRequest): Promise<InnerOutcome> => 
     }
 
     const workedMs = Math.max(0, Date.now() - startedAt);
-    const full = stripTextToolCalls(raw);
+    const full = (await deskService()).stripTextToolCalls(raw);
     // The transport self-gates: with `deskToolsEnabled` off (or the caller's own
     // `enabled: false`) it streams plain text and parses NO tool call at all. A
     // seat that still emits the protocol then claims to have read the tape while

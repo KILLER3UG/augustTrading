@@ -106,7 +106,7 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        CEILING_KB=1100
+        CEILING_KB=1000
         STALE_FLOOR_KB=$(( CEILING_KB * 90 / 100 ))
         entry=$(ls -S dist/assets/index-*.js | head -1)
         if [ -z "$entry" ]; then
