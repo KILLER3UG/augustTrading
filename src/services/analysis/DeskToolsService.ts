@@ -7,6 +7,7 @@
 
 import type { ProviderConfig } from '../../types/provider';
 import type { SkillWriteReview } from '../learning/SkillFileService';
+import type { Kline } from '../../types/message';
 import { getHarnessSettings } from '../../utils/harnessSettings';
 import { baseOf } from '../../utils/symbol';
 import { phtStamp } from '../../utils/timezone';
@@ -680,6 +681,9 @@ const TOOL_BUDGETS: Record<string, number> = {
     // A playbook scan carries per-match evidence lists — the tail a clip
     // would drop is exactly the receipts the seat is told to quote.
     scan_playbooks: 3200,
+    // The meta-label read: a verdict with its reasons — the reasons ARE the
+    // payload; a clip that cut them would leave a naked verdict.
+    meta_label: 2800,
 };
 
 /**
@@ -961,6 +965,7 @@ const TOOL_LABELS: Record<string, string> = {
     derivatives_state: 'derivatives state',
     btc_relative: 'BTC relative',
     scan_playbooks: 'playbook scan',
+    meta_label: 'meta label',
     draw_tool_levels: 'tool levels',
     draw_on_chart: 'chart draw',
     mark_trade_levels: 'level marks',
@@ -2035,6 +2040,27 @@ export const DESK_TOOL_DEFINITIONS: DeskToolDefinition[] = [
     {
         type: 'function',
         function: {
+            name: 'meta_label',
+            description:
+                'The advisory meta-label read for a concrete plan: TAKE / REDUCE (half size) / SKIP / NO_DATA with reasons — composed from the trader\'s own base rate for the setup type (with its Wilson interval vs the plan\'s break-even after costs), the drawdown traffic light, open-plan heat and correlated exposure, and the half-Kelly ceiling. Call it AFTER trade_math and BEFORE presenting a trade, and quote its verdict WITH its reasons — it informs the trader, it never refuses a card and never sizes by itself.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    coin: { type: 'string', description: 'The base coin the plan trades, e.g. BTC (required — the base-rate key).' },
+                    direction: { type: 'string', enum: ['Long', 'Short'] },
+                    entry: { type: 'number' },
+                    stop_loss: { type: 'number' },
+                    take_profits: { type: 'array', items: { type: 'number' } },
+                    regime_applies: { type: 'boolean', description: 'Whether the plan\'s regime matches the setup\'s claimed regime — omit when you cannot honestly say.' },
+                },
+                required: ['coin', 'direction', 'entry', 'stop_loss', 'take_profits'],
+                additionalProperties: false,
+            },
+        },
+    },
+    {
+        type: 'function',
+        function: {
             name: 'get_session_context',
             description:
                 'Current trading session, kill zones, weekend/weekly-close flags, and timing warnings. Call when session risk matters.',
@@ -2473,6 +2499,9 @@ export const INITIAL_DESK_TOOL_NAMES: readonly string[] = [
     // tells the seat when to load what.
     'get_regime',
     'trade_math',
+    // The advisory meta-label read: the seat should know what the trader's
+    // own numbers say about a plan before presenting it.
+    'meta_label',
 ];
 
 /** The schema-on-demand tool. NOT a desk capability: it is not in
@@ -2804,6 +2833,7 @@ export const deskToolsMandateFor = (offered?: readonly string[], deferred = fals
     const structureBits: string[] = [];
     if (has('get_regime')) structureBits.push('`get_regime` classifies trend/range/volatility on a timeframe (tag your decision with its regime_id) — call it before a read whose meaning depends on regime');
     if (has('trade_math')) structureBits.push('`trade_math` computes the plan\'s own numbers — call it with your entry/stop/targets BEFORE presenting a trade and quote its R:R, net-of-costs and break-even, never your own arithmetic; it refuses an inverted plan');
+    if (has('meta_label')) structureBits.push('`meta_label` reads the trader\'s own numbers against your plan — call it after `trade_math` and quote its TAKE/REDUCE/SKIP verdict WITH its reasons; it advises, it never refuses a card');
     const loadableFamily: string[] = [];
     if (has('volume_profile')) loadableFamily.push('`volume_profile` (POC/value area/price-vs-value)');
     if (has('naked_pocs')) loadableFamily.push('`naked_pocs` (unvisited prior-session POCs)');
@@ -4774,18 +4804,36 @@ ${body}`);
                 );
                 break;
             case 'setup_base_rate':
-            case 'risk_state': {
+            case 'risk_state':
+            case 'meta_label': {
                 // Lazy: the journal readers bundle the cluster-stats and
                 // accuracy modules; keep them out of the entry graph too.
                 const jt = await import('./journalTools');
-                content = call.name === 'setup_base_rate'
-                    ? jt.runSetupBaseRateTool(context.trades ?? [], {
+                if (call.name === 'setup_base_rate') {
+                    content = jt.runSetupBaseRateTool(context.trades ?? [], {
                         coin: asString(call.arguments.coin) || undefined,
                         direction: String(call.arguments.direction) === 'Long' ? 'Long'
                             : String(call.arguments.direction) === 'Short' ? 'Short' : undefined,
                         family: asString(call.arguments.family) || undefined,
-                    })
-                    : jt.runRiskStateTool(context.trades ?? []);
+                    });
+                } else if (call.name === 'risk_state') {
+                    content = jt.runRiskStateTool(context.trades ?? []);
+                } else {
+                    // meta_label needs the coin's 1h tape for the regime read.
+                    const sym = asSymbol(call.arguments.coin ?? call.arguments.symbol, fallback);
+                    const candles = await (await importMarketTools()).fetchRecentForTools(sym, '1h', 120).catch(() => [] as Kline[]);
+                    const tps = Array.isArray(call.arguments.take_profits)
+                        ? call.arguments.take_profits.map((t: unknown) => Number(t)).filter((t: number) => Number.isFinite(t))
+                        : [];
+                    content = await jt.runMetaLabelTool(context.trades ?? [], {
+                        coin: asString(call.arguments.coin) || baseOf(sym),
+                        direction: String(call.arguments.direction) === 'Short' ? 'Short' : 'Long',
+                        entry: Number(call.arguments.entry),
+                        stop: Number(call.arguments.stop_loss),
+                        takeProfits: tps,
+                        regimeApplies: typeof call.arguments.regime_applies === 'boolean' ? call.arguments.regime_applies : undefined,
+                    }, candles);
+                }
                 break;
             }
             case 'get_all_timeframes': {

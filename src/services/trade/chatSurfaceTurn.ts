@@ -74,8 +74,8 @@ export const CHAT_SURFACE_TOOLS = [
     'swing_structure', 'liquidity', 'imbalances', 'sr_zones', 'wyckoff_events',
     'setup_base_rate', 'risk_state',
     // The P2 composites: derivatives positioning + cross-market, plus the
-    // family-H playbook scan.
-    'derivatives_state', 'btc_relative', 'scan_playbooks',
+    // family-H playbook scan and the advisory meta-label read.
+    'derivatives_state', 'btc_relative', 'scan_playbooks', 'meta_label',
     // The trader's own history, as rows and as past sessions.
     'get_trade_log', 'recall', 'get_setup_history_stats', 'recall_chat',
     // Market-wide discovery and simulation.

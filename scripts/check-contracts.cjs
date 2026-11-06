@@ -3743,6 +3743,46 @@ const checkSkillWrites = async () => {
             candles: Array.from({ length: 30 }, (_, i) => mk2(i * 60_000, 100, 100.4, 99.6, 100)),
             atr: 1,
         })).length === 0);
+
+    // metaLabelCore — the advisory verdict rules, hand-checked. ADVISORY by
+    // construction: a verdict with reasons, never a refusal.
+    const ml = loadModule('src/services/market/metaLabelCore');
+    const mlBase = {
+        plannedRr: 2, breakEvenWinRatePct: 36.7,
+        baseRate: { sample: 30, winRate: 0.55, ciLow: 0.38, ciHigh: 0.71 },
+        regimeApplies: null, kellyHalfPct: 2.5, openPlans: 1, correlated: false,
+        drawdownLight: 'green',
+    };
+    ok('meta-label: everything green takes at full size, quoting the rate and the ceiling',
+        (() => {
+            const r = ml.metaLabel(mlBase);
+            return r.verdict === 'take' && r.sizeFractionPct === 100
+                && r.reasons.some(x => x.includes('base rate 55%'))
+                && r.reasons.some(x => x.includes('half-Kelly ceiling 2.5%'));
+        })());
+    ok('meta-label: a RED drawdown light skips — the declared stop-trading band',
+        ml.metaLabel({ ...mlBase, drawdownLight: 'red' }).verdict === 'skip'
+        && ml.metaLabel({ ...mlBase, drawdownLight: 'red' }).sizeFractionPct === 0);
+    ok('meta-label: the base rate\'s UPPER bound below break-even skips — even optimism cannot pay',
+        (() => {
+            const r = ml.metaLabel({ ...mlBase, baseRate: { sample: 30, winRate: 0.3, ciLow: 0.2, ciHigh: 0.35 }, breakEvenWinRatePct: 36.7 });
+            return r.verdict === 'skip' && r.reasons.some(x => x.includes('UPPER bound'));
+        })());
+    ok('meta-label: yellow light, correlated exposure, and a thin sample each REDUCE to half',
+        ml.metaLabel({ ...mlBase, drawdownLight: 'yellow' }).verdict === 'reduce'
+        && ml.metaLabel({ ...mlBase, correlated: true }).verdict === 'reduce'
+        && ml.metaLabel({ ...mlBase, baseRate: { ...mlBase.baseRate, sample: 8 } }).verdict === 'reduce'
+        && ml.metaLabel({ ...mlBase, regimeApplies: false }).verdict === 'reduce');
+    ok('meta-label: reduce is HALF size, never zero — a thin read is not a refusal',
+        ml.metaLabel({ ...mlBase, drawdownLight: 'yellow' }).sizeFractionPct === 50);
+    ok('meta-label: nothing measurable reads no_data with the honest reason — never a confident take off nothing',
+        (() => {
+            const r = ml.metaLabel({
+                plannedRr: 2, breakEvenWinRatePct: null, baseRate: null, regimeApplies: null,
+                kellyHalfPct: null, openPlans: 0, correlated: false, drawdownLight: 'green',
+            });
+            return r.verdict === 'no_data' && r.sizeFractionPct === null && r.reasons[0].includes('nothing measurable');
+        })());
 }
 
 // ─── report ────────────────────────────────────────────────────────────────

@@ -92,6 +92,12 @@ export const closedCandles = (candles: Kline[], tf: string, asofMs: number): Kli
 const r2 = (v: number): number => Math.round(v * 100) / 100;
 const r4 = (v: number): number => Number(v.toPrecision(6));
 
+/** The closed-candle read the other tool adapters share, exposed for the
+ *  journal-side tools (meta_label's regime read) — one tape fetcher, one
+ *  closed-bar rule. */
+export const fetchRecentForTools = async (symbol: string, tf: string, limit: number, asofMs: number = Date.now()): Promise<Kline[]> =>
+    fetchRecent(symbol, tf, limit, asofMs);
+
 const fetchRecent = async (symbol: string, tf: string, limit: number, asofMs: number): Promise<Kline[]> => {
     const raw = await fetchFuturesOHLCV(symbol, tf, limit);
     return closedCandles(raw, tf, asofMs);

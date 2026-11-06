@@ -126,6 +126,7 @@ const BY_LABEL: Record<string, ToolKindInfo> = {
     'derivatives state': { kind: 'read', activity: 'Reading the derivatives state' },
     'btc relative': { kind: 'compute', activity: 'Comparing against BTC' },
     'playbook scan': { kind: 'compute', activity: 'Scanning the playbooks' },
+    'meta label': { kind: 'compute', activity: 'Reading the meta label' },
     'tool levels': { kind: 'draw', activity: 'Drawing the tool levels' },
 
     // ── draws: the desk is changing the chart ────────────────────────────
@@ -233,6 +234,8 @@ export const DESK_TOOL_NAMES: readonly string[] = [
     // (the answer for assets without derivatives data), plus the family-H
     // playbook layer — named detectors over the same reads.
     'derivatives_state', 'btc_relative', 'scan_playbooks',
+    // The advisory meta-label read (the P3 candidate the owner asked for).
+    'meta_label',
     'get_btc_context', 'recall', 'get_setup_history_stats', 'web_search', 'scan_setups',
     'get_trade_log',
     'project_future_price',
