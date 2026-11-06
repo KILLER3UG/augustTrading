@@ -119,17 +119,26 @@ const fetchJson = async (source: FetchSource): Promise<any> => {
  * [time, open, high, low, close, volume, ...]) into standardized Kline[].
  * Time is preserved in milliseconds. Spot (/api/v3) and futures (/fapi/v1)
  * klines share this array layout.
+ *
+ * Field 9 (taker-buy base-asset volume) is kept when present: it is what
+ * makes candle-level delta a measurement instead of an estimate. Rows that
+ * predate the field or come from a venue without it simply omit it, and the
+ * delta consumers treat an absent field as unavailable — never as zero.
  */
 const parseBinanceKlines = (data: any): Kline[] => {
     if (Array.isArray(data) && data.length > 0 && Array.isArray(data[0])) {
-        return data.map((d: any[]) => ({
-            time: d[0],
-            open: parseFloat(d[1]),
-            high: parseFloat(d[2]),
-            low: parseFloat(d[3]),
-            close: parseFloat(d[4]),
-            volume: parseFloat(d[5]),
-        }));
+        return data.map((d: any[]) => {
+            const takerBuy = d.length > 9 ? parseFloat(d[9]) : NaN;
+            return {
+                time: d[0],
+                open: parseFloat(d[1]),
+                high: parseFloat(d[2]),
+                low: parseFloat(d[3]),
+                close: parseFloat(d[4]),
+                volume: parseFloat(d[5]),
+                ...(Number.isFinite(takerBuy) ? { takerBuyVolume: takerBuy } : {}),
+            };
+        });
     }
     return [];
 };
