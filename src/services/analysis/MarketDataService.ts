@@ -141,6 +141,23 @@ export interface OrderBookData {
     buyWalls: { price: number; quantity: number; usdValue: number }[];
     sellWalls: { price: number; quantity: number; usdValue: number }[];
 
+    /**
+     * Microstructure read over the top 5 levels — LIVE-ONLY by nature (an
+     * order book has no history to backtest; it must never enter a training
+     * sample). `microprice` is the size-weighted mid (the standard
+     * P_b·Q_a + P_a·Q_b over Q_b+Q_a): a heavy bid side pulls the fair
+     * price toward the ask. `top5Imbalance` is (bidQty − askQty)/(sum) over
+     * the five best levels each side. Absent (undefined) when the ladder
+     * came back empty.
+     */
+    micro?: {
+        microprice: number;
+        top5BidQty: number;
+        top5AskQty: number;
+        top5Imbalance: number;
+        note: 'live-only — no historical depth, never a training feature';
+    };
+
     // Analysis
     dominantSide: 'buyers' | 'sellers' | 'balanced';
     wallDistance: {
@@ -1354,6 +1371,21 @@ export const fetchOrderBookDepth = async (symbol: string): Promise<OrderBookData
             };
         }
 
+        // The microstructure read over the top 5 levels (see the interface
+        // note): microprice is the size-weighted mid, top5Imbalance the
+        // five-level depth skew.
+        const top5BidQty = bids.slice(0, 5).reduce((s, b) => s + b.qty, 0);
+        const top5AskQty = asks.slice(0, 5).reduce((s, a) => s + a.qty, 0);
+        const micro: OrderBookData['micro'] = top5BidQty + top5AskQty > 0
+            ? {
+                microprice: (bestBid * top5AskQty + bestAsk * top5BidQty) / (top5BidQty + top5AskQty),
+                top5BidQty,
+                top5AskQty,
+                top5Imbalance: (top5BidQty - top5AskQty) / (top5BidQty + top5AskQty),
+                note: 'live-only — no historical depth, never a training feature',
+            }
+            : undefined;
+
         const result: OrderBookData = {
             bestBid,
             bestAsk,
@@ -1366,6 +1398,7 @@ export const fetchOrderBookDepth = async (symbol: string): Promise<OrderBookData
             depthImbalance,
             buyWalls,
             sellWalls,
+            micro,
             dominantSide,
             wallDistance,
             available: true

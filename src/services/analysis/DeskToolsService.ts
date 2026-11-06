@@ -6,6 +6,7 @@
  */
 
 import type { ProviderConfig } from '../../types/provider';
+import type { SkillWriteReview } from '../learning/SkillFileService';
 import { getHarnessSettings } from '../../utils/harnessSettings';
 import { baseOf } from '../../utils/symbol';
 import { phtStamp } from '../../utils/timezone';
@@ -46,13 +47,20 @@ import {
     fetchAllFuturesSymbols,
     normalizeSymbol,
 } from './MarketDataService';
+// The market-structure tools ride in LAZY, like the hybrid packet: the cores
+// and their adapter stay out of the entry graph until a seat actually calls
+// one (O-146 — the entry chunk is over its ratchet; a static import here
+// grows it for every boot). Types are erased, so they may import statically.
+import type { ProfileAnchor, VwapAnchor } from './marketTools';
 import { candleAlignedTtlMs } from '../../utils/candleTtl';
+
+/** The one lazy door to the market-structure tool adapters. */
+const importMarketTools = (): Promise<typeof import('./marketTools')> => import('./marketTools');
 import { SCORE_FORMULA } from '../trade/bestSetups';
 import { getSessionContext } from '../infrastructure/SessionService';
 import { handleRecallTool } from '../learning/MemoryRetrievalService';
 import { formatFormingCandleLine, formatLiveMarkStamp, type FormingCandle } from '../trade/tradeChatContext';
-import { computeSetupClusterStats } from '../learning/EvidencePackService';
-import type { DiagnosisBrief } from '../tracking/diagnosisSkillCluster';
+import { computeSetupClusterStats } from '../learning/setupClusterStats';
 import {
     RECEIPT_CHARS,
     clearToolArtifacts,
@@ -63,9 +71,9 @@ import {
 import type { LoggedTrade } from '../../types';
 import type { ToolAction } from '../../types/message';
 import type { ChartDrawing } from '../trade/chartDrawings';
+import type { DiagnosisBrief } from '../tracking/diagnosisBrief';
 import { PANEL_MAIL_TOOLS, type PanelMailbox } from './PanelMailbox';
 import { intersectGoalPolicy } from '../../utils/toolKinds';
-import { PREDICATE_GRAMMAR_HINT } from './skillPredicate';
 
 /**
  * Classify a desk-tool result into a persisted model side-effect:
@@ -76,15 +84,14 @@ import { PREDICATE_GRAMMAR_HINT } from './skillPredicate';
  * `<tool> rejected:`.
  */
 export const toolActionFromResult = (name: string, ok: boolean, content: string, speaker: string): ToolAction | null => {
-    const isProposal = name === 'forge_tool' || name === 'amend_memory' || name === 'propose_skill' || name === 'revise_skill' || name === 'write_memory_note'
+    const isProposal = name === 'forge_tool' || name === 'amend_memory' || name === 'skill_write' || name === 'write_memory_note'
         || name === 'remember' || name === 'forget' || name === 'propose_strategy' || name === 'emit_signal';
     const isCustom = name.startsWith('custom_');
     if (!isProposal && !isCustom) return null;
     const at = new Date().toISOString();
     const verbFor = (tool: string): string => (
         tool === 'forge_tool' || tool === 'propose_strategy' ? 'proposed'
-            : tool === 'propose_skill' ? 'created'
-                : tool === 'revise_skill' ? 'revised'
+            : tool === 'skill_write' ? 'saved'
                     : tool === 'amend_memory' ? 'amended'
                         : tool === 'forget' ? 'removed'
                             : tool === 'emit_signal' ? 'emitted'
@@ -103,23 +110,21 @@ export const toolActionFromResult = (name: string, ok: boolean, content: string,
             verb = 'emitted';
         } else if (name === 'forge_tool') {
             label = String(parsed.id ?? parsed.name ?? 'tool');
-            review = 'Settings → Skills → Forged tools';
+            review = 'Learning → Skills → Forged tools';
             verb = 'proposed';
         } else if (name === 'amend_memory') {
             label = `notebook/${parsed.file ?? parsed.id ?? 'amendment'}`;
             review = 'Settings → Memory (log · Undo available)';
             verb = 'amended';
-        } else if (name === 'propose_skill') {
-            label = String(parsed.skill ?? 'skill');
-            review = 'Settings → Skills (candidate — evidence sets its status)';
+        } else if (name === 'skill_write') {
+            label = String(parsed.slug ?? 'skill');
+            review = parsed.created ? 'Learning → Skills (created)' : 'Learning → Skills (updated)';
+            verb = parsed.created ? 'created' : 'updated';
         } else if (name === 'propose_strategy') {
             // A plan is saved as a draft file, so the trader should be told
             // WHERE it went — otherwise a model can quietly fill the notebook.
             label = String(parsed.strategy ?? 'strategy');
-            review = 'Settings → Skills → Trade plans (draft — nothing acts on it until you activate it)';
-        } else if (name === 'revise_skill') {
-            label = String(parsed.skill ?? 'skill');
-            review = 'Settings → Skills (rewritten directly)';
+            review = 'Learning → Skills → Trade plans (draft — nothing acts on it until you activate it)';
         } else if (name === 'write_memory_note') {
             label = `${String(parsed.where ?? parsed.file ?? 'note')}${parsed.tag === 'observed' ? ' · observed' : ''}`;
             review = parsed.tag === 'observed'
@@ -143,7 +148,7 @@ export const toolActionFromResult = (name: string, ok: boolean, content: string,
 
 /** Proposals + custom tools, for the loop's per-result classification. */
 const isActionableToolResult = (r: DeskToolResult): boolean =>
-    r.name === 'forge_tool' || r.name === 'amend_memory' || r.name === 'propose_skill' || r.name === 'revise_skill' || r.name === 'write_memory_note'
+    r.name === 'forge_tool' || r.name === 'amend_memory' || r.name === 'skill_write' || r.name === 'write_memory_note'
         || r.name === 'propose_strategy' || r.name === 'emit_signal'
     || r.name === 'remember' || r.name === 'forget'
     || r.name.startsWith('custom_');
@@ -173,6 +178,8 @@ export interface DeskToolResult {
     name: string;
     ok: boolean;
     content: string;
+    skillIndexVersion?: string;
+    skillRead?: { slug: string; version: string };
     /** Resolved coin for market-data tools — the transcript names it when a
      *  call targeted a symbol OTHER than the chart's. */
     symbol?: string;
@@ -526,6 +533,33 @@ const CACHEABLE_TOOLS = new Set([
     // that never happened on the repeat call.
     'scan_setups',
     'web_search',
+    // The market-structure tools are pure reads over closed candles: a result
+    // computed inside the current bar stays valid until that bar closes, which
+    // is exactly what the candle-aligned cache TTL models. Never STAMPED —
+    // they carry no live mark, by design (as-of correctness is the point).
+    'volume_profile',
+    'naked_pocs',
+    'vwap',
+    'order_flow',
+    'effort_vs_result',
+    'auction_state',
+    'get_regime',
+    // The P1 structure family: same closed-candle reads, same honesty.
+    'swing_structure',
+    'liquidity',
+    'imbalances',
+    'sr_zones',
+    'wyckoff_events',
+    // The P2 composites: cached like the other market reads (the underlying
+    // series are cached at the fetch layer anyway).
+    'derivatives_state',
+    'btc_relative',
+    // Family H: same closed-candle reads composed into named detectors.
+    'scan_playbooks',
+    // The journal readers are deliberately NOT here: their source (the
+    // trader's rows) changes on every log write, and both are cheap — a
+    // cached base rate after a new trade would be exactly the stale number
+    // this tool family exists to end.
 ]);
 /** Tools whose cached body is stored PRE-STAMP and re-stamped on every call,
  *  so a hit replays the numbers but never a previous call's "this is now". */
@@ -612,6 +646,40 @@ const TOOL_BUDGETS: Record<string, number> = {
     // half would leave the model copying a malformed fence, which the card
     // parser drops. Sized for the whole level list + block with headroom.
     get_key_levels: 4000,
+    // The market-structure tools return one uniform JSON envelope. A session
+    // profile with its bins and the auction-state composite are the widest
+    // payloads; 3600 holds either whole with headroom (the default 2400
+    // would silently truncate the bin list — the exact silent-loss failure
+    // the get_chart_view budget exists to prevent).
+    volume_profile: 3600,
+    auction_state: 3600,
+    // A 5-session naked-POC scan and a 20-bar order-flow window measure
+    // ~2.5–3k with the envelope; the default would clip the LAST levels.
+    naked_pocs: 3000,
+    order_flow: 3000,
+    effort_vs_result: 3000,
+    vwap: 2400,
+    get_regime: 2400,
+    trade_math: 2600,
+    // P1 family — same reasoning as the P0 envelopes: a structure read with
+    // its level list must not lose its tail to the default clip.
+    swing_structure: 3000,
+    liquidity: 3200,
+    imbalances: 3000,
+    sr_zones: 3000,
+    wyckoff_events: 3000,
+    // The journal reads: a base rate is one object, risk state is small —
+    // the default would do, but the open-plan row list is the tail a clip
+    // would drop, and an unseen open position is the dangerous kind of cut.
+    setup_base_rate: 2600,
+    risk_state: 3000,
+    // The P2 composites: four sub-reads plus series-depth notes ride one
+    // envelope; the default would cut the liquidation/positioning tails.
+    derivatives_state: 3600,
+    btc_relative: 2800,
+    // A playbook scan carries per-match evidence lists — the tail a clip
+    // would drop is exactly the receipts the seat is told to quote.
+    scan_playbooks: 3200,
 };
 
 /**
@@ -746,6 +814,7 @@ export const budgetToolContent = (
     canReadBack = true,
     artifactOwner = '',
 ): string => {
+    if (name === 'skill_index' || name === 'skill_view') return content;
     const spillable = canReadBack && !isReadBackTool(name);
     let out = content;
     if (name === 'get_order_book' || name === 'get_liquidations') {
@@ -874,16 +943,35 @@ const TOOL_LABELS: Record<string, string> = {
     get_all_timeframes: 'all-timeframe compendium',
     get_chart_view: 'chart view',
     get_key_levels: 'key levels',
+    volume_profile: 'volume profile',
+    naked_pocs: 'naked POCs',
+    vwap: 'anchored VWAP',
+    order_flow: 'order flow',
+    effort_vs_result: 'effort vs result',
+    auction_state: 'auction state',
+    get_regime: 'regime',
+    trade_math: 'trade math',
+    swing_structure: 'swing structure',
+    liquidity: 'liquidity',
+    imbalances: 'imbalances',
+    sr_zones: 'S/R zones',
+    wyckoff_events: 'Wyckoff events',
+    setup_base_rate: 'setup base rate',
+    risk_state: 'risk state',
+    derivatives_state: 'derivatives state',
+    btc_relative: 'BTC relative',
+    scan_playbooks: 'playbook scan',
+    draw_tool_levels: 'tool levels',
     draw_on_chart: 'chart draw',
     mark_trade_levels: 'level marks',
     clear_chart_drawings: 'chart clear',
     write_memory_note: 'memory note',
     get_notebook_map: 'notebook map',
     skill_view: 'skill reader',
+    skill_index: 'skills list',
+    skill_write: 'skill write',
     ask_user_input: 'ask trader',
-    propose_skill: 'skill proposal',
     propose_strategy: 'strategy plan',
-    revise_skill: 'skill revision',
     recall: 'notebook recall',
     load_tools: 'tool catalogue',
     get_setup_history_stats: 'setup history',
@@ -1166,7 +1254,7 @@ export const DESK_TOOL_DEFINITIONS: DeskToolDefinition[] = [
                 type: 'object',
                 properties: {
                     skill: { type: 'string', description: 'The skill\'s name/slug exactly as the skills index lists it.' },
-                    file_path: { type: 'string', description: 'Optional: one bundled file name from the L1 listing, e.g. "references__entry-checklist.md".' },
+                    file_path: { type: 'string', description: 'Optional: one bundled file path from the L1 listing, e.g. "references/entry-checklist.md".' },
                 },
                 required: ['skill'],
                 additionalProperties: false,
@@ -1180,7 +1268,7 @@ export const DESK_TOOL_DEFINITIONS: DeskToolDefinition[] = [
             description:
                 'Read the Trader Notebook map: every folder, every file with a short excerpt. Call this '
                 + 'BEFORE writing or amending memory so you extend the right file instead of duplicating '
-                + 'knowledge. Also lists existing skills with their status and hit-rate.',
+                + 'knowledge. Also lists existing skills with their descriptions.',
             parameters: { type: 'object', properties: {}, additionalProperties: false },
         },
     },
@@ -1392,35 +1480,55 @@ export const DESK_TOOL_DEFINITIONS: DeskToolDefinition[] = [
     {
         type: 'function',
         function: {
-            name: 'propose_skill',
+            name: 'skill_index',
             description:
-                'Create a NEW trading skill (an evidence-gated procedure) DIRECTLY as a CANDIDATE — '
-                + 'no approval queue. Use when you spot a repeatable edge the notebook has no skill for. '
-                + 'Provide the full procedure: the one trigger sentence, the steps, how to validate. '
-                + 'Also write the activation description: what the skill does, then "Use this skill whenever '
-                + '<trigger phrases>." It is a HYPOTHESIS: only the evidence fold can promote or retire it. '
+                'List EVERY skill in the library: slug, title and the description that says when it applies. '
+                + 'Call this BEFORE writing a skill. If an existing skill already covers the procedure, update it '
+                + 'or merge into it instead of creating a second one.',
+            parameters: { type: 'object', properties: {}, additionalProperties: false },
+        },
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'skill_write',
+            description:
+                'Create, update or merge ONE skill. This is the only skill write. '
+                + 'First call skill_index in an earlier round and review every description; open related skills with skill_view. '
+                + 'CREATE (new slug or name) and UPDATE both scan the library for a near-duplicate: a match is REFUSED and the '
+                + 'closest skills are returned — update one, or pass supersedes to merge. '
+                + 'UPDATE (slug + if_version): rewrites the SKILL.md with the body you give. A stale if_version writes '
+                + 'nothing and returns the current bytes. '
+                + 'MERGE (supersedes): after the survivor lands, the named skills are DELETED, so read them first — their '
+                + 'bundled files move under the survivor rather than being lost. '
+                + 'The head is exactly what you write: name + description frontmatter, then your markdown body. '
+                + 'Long material goes in the skill folder: pass files with paths under references/, templates/, scripts/ or '
+                + 'assets/ and address them from the body. Scripts are stored, never executed. '
                 + 'Do not narrate this write in your reply.',
             parameters: {
                 type: 'object',
                 properties: {
-                    name: { type: 'string', description: 'Short skill name, e.g. "Funding-exhaustions long"' },
-                    kind: { type: 'string', enum: ['repeat', 'avoid'], description: 'repeat = an edge to take, avoid = a trap to dodge' },
-                    description: { type: 'string', description: 'The activation key retrieval scores: what the skill does, then "Use this skill whenever <trigger phrases>. Do NOT use for <one brief exclusion>." Under 1024 chars.' },
-                    coin: { type: 'string', description: 'Coin scope (e.g. BTC) or empty for any market' },
-                    when: { type: 'string', description: 'The ONE trigger sentence: the concrete, measurable situation this skill fires on' },
-                    steps: { type: 'string', description: 'JSON array of the procedure steps' },
-                    validate: { type: 'string', description: 'How to confirm the setup before acting' },
-                    output: { type: 'string', description: 'What the skill produces (decision/level/size guidance)' },
-                    approval: { type: 'string', description: 'What must be true for the skill to apply' },
-                    reason: { type: 'string', description: 'Evidence from THIS session that motivates the skill — kept on the skill and shown in the chat chip' },
-                    timeframe: { type: 'string', description: 'The timeframe the pattern was observed on (15m / 1h / 4h). Carried onto the skill; the replay proof assumes 1h without it.' },
-                    predicate: { type: 'string', description: PREDICATE_GRAMMAR_HINT + ' Author one whenever the trigger reduces to candle math — it is what lets the desk check the trigger in code instead of trusting a seat to read the prose. Omit it when the condition is not reducible; a fabricated clause is worse than none.' },
+                    slug: { type: 'string', description: 'The skill slug. An existing slug updates that skill in place; a new one creates it. Omit to derive it from the name.' },
+                    name: { type: 'string', description: 'Short display title, e.g. "Breakout retest". Required on create.' },
+                    description: { type: 'string', description: 'What it does, then "Use this skill whenever <trigger phrases>. Do NOT use for <one exclusion>." This is the activation key and the duplicate scan reads it. Required.' },
+                    body: { type: 'string', description: 'The full SKILL.md body in markdown. Write the procedure a reader can follow. Required.' },
+                    files: {
+                        type: 'array',
+                        items: {
+                            type: 'object',
+                            properties: {
+                                path: { type: 'string', description: 'Relative to the skill folder and under one of references/, templates/, scripts/, assets/ — e.g. "references/pullback-table.md".' },
+                                content: { type: 'string', description: 'The file text. Text only: the notebook stores characters, not binary assets.' },
+                            },
+                            required: ['path', 'content'],
+                            additionalProperties: false,
+                        },
+                        description: 'Optional support files to write with this skill. SKILL.md itself is not a support file — that is `body`.',
+                    },
+                    if_version: { type: 'string', description: 'UPDATE only: the version skill_view/skill_index showed you. A mismatch returns the current content and writes nothing.' },
+                    supersedes: { type: 'array', items: { type: 'string' }, description: 'Slugs this skill absorbs. They are DELETED after the survivor lands. Use after reading them and folding what matters into the body.' },
                 },
-                required: ['name', 'kind', 'when', 'steps', 'reason'],
-                // `source` is deliberately NOT a property: it is learner-stamped
-                // provenance (scan / post-mortem / chat), not something a model
-                // may claim. Every other field this handler reads is listed, so
-                // the closed set stays truthful.
+                required: ['description', 'body'],
                 additionalProperties: false,
             },
         },
@@ -1452,33 +1560,6 @@ export const DESK_TOOL_DEFINITIONS: DeskToolDefinition[] = [
                     timeframe: { type: 'string', description: 'Timeframe the plan was reasoned on, e.g. "15m"' },
                 },
                 required: ['name', 'entry', 'invalidation'],
-                additionalProperties: false,
-            },
-        },
-    },
-    {
-        type: 'function',
-        function: {
-            name: 'revise_skill',
-            description:
-                'Revise an existing skill DIRECTLY (narrow its trigger, sharpen its procedure) — no '
-                + 'approval queue. Status and evidence are untouched: only the evidence fold promotes or '
-                + 'retires. Find skill slugs with get_notebook_map or the recall tool. Do not narrate this '
-                + 'write in your reply.',
-            parameters: {
-                type: 'object',
-                properties: {
-                    skill_slug: { type: 'string', description: 'The skill file slug, e.g. "btc-momentum-continuation"' },
-                    when: { type: 'string', description: 'The revised ONE trigger sentence (omit to keep it)' },
-                    procedure: { type: 'string', description: 'The revised procedure/body in markdown (omit to keep it). Include the steps, validation, invalidation and the failure modes.' },
-                    // Rewriting the trigger invalidates the machine-checkable
-                    // form that described the OLD one (SkillMemoryService
-                    // overwrites it on the refinement path), so a revision that
-                    // does not restate it silently disarms the gate.
-                    predicate: { type: 'string', description: PREDICATE_GRAMMAR_HINT + ' Restate it whenever you change `when`: the stored predicate describes the old trigger.' },
-                    reason: { type: 'string', description: 'Why the current clauses are wrong or blunted — cite evidence' },
-                },
-                required: ['skill_slug', 'reason'],
                 additionalProperties: false,
             },
         },
@@ -1541,7 +1622,7 @@ export const DESK_TOOL_DEFINITIONS: DeskToolDefinition[] = [
         function: {
             name: 'get_order_book',
             description:
-                'Order-book depth: bid/ask walls and liquidity imbalance near price. A REST snapshot cached up to ~30s (check `checkedAt`) -- recent liquidity, not a live stream, so never treat a wall as unmoved. Use for entry/stop placement and sweep risk. Works for ANY symbol — scan another coin without the user switching charts.',
+                'Order-book depth: bid/ask walls and liquidity imbalance near price, plus the top-5 microstructure read (microprice = size-weighted mid, five-level depth imbalance) — LIVE-ONLY by nature, no historical depth, never a training feature. A REST snapshot cached up to ~30s (check `checkedAt`) -- recent liquidity, not a live stream, so never treat a wall as unmoved. Use for entry/stop placement and sweep risk. Works for ANY symbol — scan another coin without the user switching charts.',
             parameters: {
                 type: 'object',
                 properties: {
@@ -1632,7 +1713,7 @@ export const DESK_TOOL_DEFINITIONS: DeskToolDefinition[] = [
         function: {
             name: 'get_key_levels',
             description:
-                'Compute the key levels for one symbol/timeframe in one call: nearest support and resistance (with source, strength and how many of the last bars actually tested each), daily pivots, Fibonacci, psychological round numbers and session VWAP. The result includes a ready-to-publish `key-levels` fenced block — copy it verbatim at the end of your answer so the app renders the Key Levels card the user can toggle onto the chart. Call this whenever the question is "key levels", "where are the levels", or before naming prices the user may want drawn.',
+                'Compute the key levels for one symbol/timeframe in one call: nearest support and resistance (with source, strength and how many of the last bars actually tested each), daily pivots, Fibonacci, psychological round numbers and session VWAP — plus the session_levels frame: previous day/week/month high/low, today\'s and yesterday\'s session highs/lows (Asia/London/NY), round numbers, each with its ATR distance and touch count. The result includes a ready-to-publish `key-levels` fenced block — copy it verbatim at the end of your answer so the app renders the Key Levels card the user can toggle onto the chart (the R/S/VWAP ladder only; quote session_levels rows in prose, not in the fence). Call this whenever the question is "key levels", "where are the levels", or before naming prices the user may want drawn.',
             parameters: {
                 type: 'object',
                 properties: {
@@ -1642,6 +1723,310 @@ export const DESK_TOOL_DEFINITIONS: DeskToolDefinition[] = [
                         enum: ['5m', '15m', '1h', '4h', '1d'],
                         description: 'Timeframe the levels are computed from. Defaults to the chart interval, else 1h.',
                     },
+                },
+                additionalProperties: false,
+            },
+        },
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'volume_profile',
+            description:
+                'Volume profile over one anchor window: POC, 70% value area (VAH/VAL), high/low-volume nodes, developing POC with migration direction, and where price sits vs value (inside/above/below) with ATR distances. Call before quoting a POC, a value area, or "price is above/below value" — never state a POC you did not read from this tool or the packet.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    symbol: { type: 'string', description: 'Any perp symbol (default: the chart\'s current symbol).' },
+                    anchor: {
+                        type: 'string',
+                        enum: ['session', 'day', 'week', 'visible', 'swing', 'custom'],
+                        description: 'session = the current UTC day so far; day = the previous completed UTC day; week = the current UTC week; visible = the last 300 bars; swing = since the last major swing high; custom = from customTime.',
+                    },
+                    bins: { type: 'integer', description: 'Price bins (default 48, max 200).' },
+                    custom_time: { type: 'integer', description: 'Anchor start as ms epoch — REQUIRED when anchor is "custom".' },
+                },
+                additionalProperties: false,
+            },
+        },
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'naked_pocs',
+            description:
+                'Prior sessions\' POCs that price has NOT revisited since ("naked" levels the auction often returns to). Each carries its ATR distance and side. Call before naming an untested level from memory.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    symbol: { type: 'string', description: 'Any perp symbol (default: the chart\'s current symbol).' },
+                    granularity: { type: 'string', enum: ['day', 'week'], description: 'Session size. Default day.' },
+                    lookback: { type: 'integer', description: 'How many prior sessions to scan (default 5, max 20).' },
+                },
+                additionalProperties: false,
+            },
+        },
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'vwap',
+            description:
+                'VWAP with volume-weighted ±1σ/±2σ bands, from an anchor: session open (UTC day), the last swing high/low, or a custom time. Reports which side of VWAP price closed on, bars since the last cross, and whether anchored participants are in profit or underwater (an ESTIMATE — candle aggregates, not positions).',
+            parameters: {
+                type: 'object',
+                properties: {
+                    symbol: { type: 'string', description: 'Any perp symbol (default: the chart\'s current symbol).' },
+                    anchor: {
+                        type: 'string',
+                        enum: ['session_open', 'swing_high', 'swing_low', 'custom'],
+                        description: 'session_open = the UTC day open. Default session_open.',
+                    },
+                    custom_time: { type: 'integer', description: 'Anchor start as ms epoch — REQUIRED when anchor is "custom".' },
+                },
+                additionalProperties: false,
+            },
+        },
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'order_flow',
+            description:
+                'Candle-level order flow over a window: CVD, window net delta, buy/sell volume split, price-vs-CVD divergence, and absorption/exhaustion events. EVERY delta number here is an ESTIMATE from taker-buy volume per candle, not footprint. Call before claiming "buyers are absorbing" or "delta is diverging".',
+            parameters: {
+                type: 'object',
+                properties: {
+                    symbol: { type: 'string', description: 'Any perp symbol (default: the chart\'s current symbol).' },
+                    interval: { type: 'string', enum: ['5m', '15m', '1h'], description: 'Candle interval. Default 15m.' },
+                    window: { type: 'integer', description: 'Bars in the divergence/delta window (default 20, max 60).' },
+                },
+                additionalProperties: false,
+            },
+        },
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'effort_vs_result',
+            description:
+                'Wyckoff effort-vs-result read: each recent bar\'s volume vs its same-time-of-day average (rvol) against the spread it produced (ATR units) — drive, no-result (churn), effortless movement, climax — plus the volume-price correlation and any divergence. Call before claiming climax, absorption or "big volume did nothing".',
+            parameters: {
+                type: 'object',
+                properties: {
+                    symbol: { type: 'string', description: 'Any perp symbol (default: the chart\'s current symbol).' },
+                    interval: { type: 'string', enum: ['15m', '1h', '4h'], description: 'Bar interval. Default 1h.' },
+                },
+                additionalProperties: false,
+            },
+        },
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'auction_state',
+            description:
+                'Today\'s auction structure: initial balance (00:00–01:00 UTC) width vs the last 10 days, open type (drive / test-drive / rejection-reverse / balanced), developing day type (trend / normal / neutral…), failed IB extensions, poor highs/lows, and the value-area rotation setup vs yesterday\'s value. Session convention is the UTC day. Call before describing "today is a trend day" or an initial-balance breakout.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    symbol: { type: 'string', description: 'Any perp symbol (default: the chart\'s current symbol).' },
+                },
+                additionalProperties: false,
+            },
+        },
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'get_regime',
+            description:
+                'The market\'s regime on one timeframe as a STATE: trend/range/neutral (ADX + efficiency ratio, with a real neutral band and bars-in-state dwell) and separately compressed/normal/high volatility (ATR + Bollinger-bandwidth percentiles). Tag your decision with the returned regime_id. Call before any read whose meaning depends on regime — a breakout in compression and a breakout in a trend are different facts.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    symbol: { type: 'string', description: 'Any perp symbol (default: the chart\'s current symbol).' },
+                    interval: { type: 'string', enum: ['15m', '1h', '4h', '1d'], description: 'Timeframe. Default 1h.' },
+                },
+                additionalProperties: false,
+            },
+        },
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'trade_math',
+            description:
+                'The plan\'s arithmetic, computed: planned R:R (nearest target ÷ stop, canonical), the round-trip cost in R and the NET R:R after fees, the break-even win rate, the ATR-based position size for a risk % of equity, and the isolated-margin liquidation price (estimate). Refuses (marks inverted) a plan whose stop/target sit on the wrong sides. Call BEFORE presenting a trade — quote its numbers, not your own.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    symbol: { type: 'string', description: 'Any perp symbol (default: the chart\'s current symbol).' },
+                    direction: { type: 'string', enum: ['Long', 'Short'] },
+                    entry: { type: 'number' },
+                    stop_loss: { type: 'number' },
+                    take_profits: { type: 'array', items: { type: 'number' }, description: 'One or more target prices.' },
+                    equity_usd: { type: 'number', description: 'Account equity for sizing. Without it sizing returns unavailable — never a default.' },
+                    risk_percent: { type: 'number', description: 'Risk as % of equity (default 1).' },
+                    leverage: { type: 'number', description: 'Leverage for the liquidation estimate (default 10).' },
+                },
+                required: ['direction', 'entry', 'stop_loss', 'take_profits'],
+                additionalProperties: false,
+            },
+        },
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'swing_structure',
+            description:
+                'Swing structure on one timeframe: the HH/HL/LH/LL pivot sequence, the last BOS or CHoCH (close beyond the last opposing swing, with its direction), the sequence trend, and Fibonacci retracements from the ACTIVE swing with a confluence count per level. Call before claiming "higher lows", "structure broke", or quoting a fib level.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    symbol: { type: 'string', description: 'Any perp symbol (default: the chart\'s current symbol).' },
+                    interval: { type: 'string', enum: ['5m', '15m', '1h', '4h'], description: 'Timeframe. Default 1h.' },
+                },
+                additionalProperties: false,
+            },
+        },
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'liquidity',
+            description:
+                'Resting liquidity: equal highs/lows pools (with touch counts), sweep candidates (wick through a level, close back inside, with their status), UNTESTED swing extremes, and the next opposing liquidity pool above/below — all with ATR distances. Call before claiming "liquidity sits above" or "that high was swept".',
+            parameters: {
+                type: 'object',
+                properties: {
+                    symbol: { type: 'string', description: 'Any perp symbol (default: the chart\'s current symbol).' },
+                    interval: { type: 'string', enum: ['5m', '15m', '1h', '4h'], description: 'Timeframe. Default 1h.' },
+                },
+                additionalProperties: false,
+            },
+        },
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'imbalances',
+            description:
+                'Fair value gaps with the state that matters: size in ATR, the creating candle\'s displacement, age, and fill state (untouched / partial / through-midpoint / filled). Detection reuses the packet\'s own FVG detector. Order blocks are deliberately absent — weakest evidence, added last. Call before claiming "there\'s an unfilled gap below".',
+            parameters: {
+                type: 'object',
+                properties: {
+                    symbol: { type: 'string', description: 'Any perp symbol (default: the chart\'s current symbol).' },
+                    interval: { type: 'string', enum: ['5m', '15m', '1h', '4h'], description: 'Timeframe. Default 1h.' },
+                },
+                additionalProperties: false,
+            },
+        },
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'sr_zones',
+            description:
+                'Support/resistance ZONES (clustered swing pivots, touch-counted, not single lines) plus the dealing-range state: range high/low/mid, where price sits in it, premium/discount/equilibrium verdict, width in ATR. Call before "price is in premium" or naming a supply/demand zone.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    symbol: { type: 'string', description: 'Any perp symbol (default: the chart\'s current symbol).' },
+                    interval: { type: 'string', enum: ['15m', '1h', '4h'], description: 'Timeframe. Default 1h.' },
+                },
+                additionalProperties: false,
+            },
+        },
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'wyckoff_events',
+            description:
+                'Range detection and the spring/upthrust family: a range whose width qualifies (declared ATR cap), springs (sweep under the low, close back inside, VOLUME condition) and upthrusts at the top, signs of strength/weakness after an event. A spring without the volume condition is flagged low-confidence BY DESIGN — say "candidate", not "spring". Call before calling a spring, UTAD, or accumulation.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    symbol: { type: 'string', description: 'Any perp symbol (default: the chart\'s current symbol).' },
+                    interval: { type: 'string', enum: ['15m', '1h', '4h'], description: 'Timeframe. Default 1h.' },
+                },
+                additionalProperties: false,
+            },
+        },
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'setup_base_rate',
+            description:
+                'The trader\'s OWN measured base rate for a setup type: wins/losses/sample over the matching journal rows, with a Wilson 95% interval and average R. Refuses (says so) under 5 matching rows — no rate is quoted off a thin sample. NOT regime-conditioned: rows carry no regime snapshot yet. Call before grading a setup as "this usually works".',
+            parameters: {
+                type: 'object',
+                properties: {
+                    coin: { type: 'string', description: 'Base coin filter, e.g. BTC (default: any).' },
+                    direction: { type: 'string', enum: ['Long', 'Short'], description: 'Direction filter (default: any).' },
+                    family: { type: 'string', description: 'Strategy-family filter (default: any).' },
+                },
+                additionalProperties: false,
+            },
+        },
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'risk_state',
+            description:
+                'The portfolio\'s risk state from the journal: open plans (each ~1R by convention) grouped by coin with a correlated-exposure flag, the realized-R drawdown traffic light for today and this week (declared thresholds), and the HALF-Kelly ceiling from the closed-R pool — refused under 20 closed trades. Advisory: for sizing and refusal decisions, not a P&L report. Call before sizing a position or a second correlated entry.',
+            parameters: {
+                type: 'object',
+                properties: {},
+                additionalProperties: false,
+            },
+        },
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'derivatives_state',
+            description:
+                'The full positioning read for one symbol in one call: the price/OI quadrant (new longs / new shorts / short covering / long liquidation) with OI change over 1h/4h/24h and PERSISTENCE-filtered OI-vs-price divergence; the funding state (current rate, percentile vs ~7 days of history, declared extreme floor, funding-vs-price divergence, time to settlement); the positioning snapshot (taker, top-trader, retail ratios, each labeled with or against trend — single 5m samples); and liquidation/OI intensity in declared bands. Assets without derivatives data return available:false — never invent OI, funding or positioning numbers.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    symbol: { type: 'string', description: 'Any perp symbol (default: the chart\'s current symbol).' },
+                },
+                additionalProperties: false,
+            },
+        },
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'btc_relative',
+            description:
+                'The cross-market read: alt/BTC ratio with its z-score over the window and momentum, rolling correlation and beta vs BTC and ETH (computed on bar RETURNS), and the relative-strength rank within the declared majors set. Works for assets WITHOUT derivatives data. A stretched ratio (|z| ≥ 2) is a relative-value fact, not a timing signal.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    symbol: { type: 'string', description: 'Any perp symbol (default: the chart\'s current symbol).' },
+                    window: { type: 'integer', description: 'Window in 1h bars (default 30, max 100).' },
+                },
+                additionalProperties: false,
+            },
+        },
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'scan_playbooks',
+            description:
+                'One call composes every structure read on the same tape into NAMED setup detectors: value-area rotation, failed IB extension, Wyckoff spring/UTAD (volume-conditioned only), liquidity sweep + structure shift, absorption reversal at a level, Holy-Grail trend pullback (ADX ≥ 30 at the 20 EMA), Turtle Soup (failed 20-bar breakout), VWAP reclaim/rejection. Each match carries side, confidence, an INVALIDATION price, and the evidence list — quote the evidence, verify with the underlying tools. A match is a TAG with receipts: it never sizes a trade and never vetoes one. No match is a reading, not a failure.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    symbol: { type: 'string', description: 'Any perp symbol (default: the chart\'s current symbol).' },
+                    interval: { type: 'string', enum: ['15m', '1h', '4h'], description: 'Timeframe for the structure reads. Default 1h.' },
                 },
                 additionalProperties: false,
             },
@@ -1787,7 +2172,7 @@ export const DESK_TOOL_DEFINITIONS: DeskToolDefinition[] = [
         function: {
             name: 'recall',
             description:
-                'Search your own trading notebook - lessons learned, skill procedures, similar past trades, and your doctrine for a setup. Use when you suspect prior experience with this coin/setup or need your own loss history before arguing a stance.',
+                'Search your own trading notebook - lessons learned, skill procedures, and similar past trades for a setup. Use when you suspect prior experience with this coin/setup or need your own loss history before arguing a stance.',
             parameters: {
                 type: 'object',
                 properties: {
@@ -1834,29 +2219,6 @@ export const DESK_TOOL_DEFINITIONS: DeskToolDefinition[] = [
                 properties: {
                     symbol: { type: 'string', description: 'Any perp symbol, e.g. ETHUSDT (default: the current chart symbol).' },
                     interval: { type: 'string', description: 'Timeframe, e.g. 15m (default: the chart\'s current interval).' },
-                },
-                additionalProperties: false,
-            },
-        },
-    },
-    {
-        type: 'function',
-        function: {
-            name: 'scan_chart_skills',
-            description:
-                'Study EVERY candle of a chart (up to 1000 bars) and create skill CANDIDATES from how it actually moves: the hour-by-hour movement '
-                + 'table in the trader\'s clock (PHT), the ≥10% up/down swing legs with the state that preceded them — the "if we could turn back time, '
-                + 'when should I have been in" read — candle anatomy and run lengths, regime segments, pivots, gaps, and every strategy-book detector '
-                + 'aggregated over all history with first-touch win-rates. Candidates are created DIRECTLY (no approval queue) and are hypotheses until '
-                + 'evidence changes their status. Use when the user asks you to learn the chart, "build skills from this coin", or wants the times and '
-                + 'patterns the tape itself reveals. Slow (one model call + a full history study) — never call it twice in the same turn.',
-            parameters: {
-                type: 'object',
-                properties: {
-                    symbol: { type: 'string', description: 'Any perp symbol, e.g. ETHUSDT (default: the current chart symbol).' },
-                    interval: { type: 'string', description: 'Timeframe, e.g. 15m (default: the chart\'s current interval).' },
-                    timeframes: { type: 'array', items: { type: 'string' }, description: 'Scan SEVERAL timeframes at once (e.g. ["15m","1h","4h"]) — each contributes its own timeframe-stamped drafts. Overrides `interval`; capped at 6.' },
-                    max_skills: { type: 'number', description: 'How many skills to ask for per timeframe, 1–5 (default 3).' },
                 },
                 additionalProperties: false,
             },
@@ -2037,7 +2399,7 @@ export const DESK_TOOL_DEFINITIONS: DeskToolDefinition[] = [
         function: {
             name: 'repo_edit',
             description:
-                'Replace ONE text file in August\'s OWN checkout with the full new content (the dev checkout, or the installed app\'s self-hosted clone). Read the file first. Every write checkpoints the previous bytes under .august-checkpoints; call repo_apply to typecheck (dev) or build and reload (installed) before telling the trader it works. Use this when the trader asks you to change how August itself behaves.',
+                'Replace ONE text file in August\'s OWN checkout with the full new content (the dev checkout, or the installed app\'s self-hosted clone). Read the file first. Every write checkpoints the previous bytes under .august-checkpoints; call repo_apply to typecheck (dev) or build and reload (installed) before telling the trader it works. Use this when the trader asks you to change how August itself behaves. It runs only while the trader has self-modification switched on (Settings → Usage); with that switch OFF this call is refused and says so.',
             parameters: {
                 type: 'object',
                 properties: {
@@ -2054,7 +2416,7 @@ export const DESK_TOOL_DEFINITIONS: DeskToolDefinition[] = [
         function: {
             name: 'repo_apply',
             description:
-                'Apply and prove the current source of August\'s checkout. In dev it runs the typecheck gate; in the installed self-hosted app it runs the build and reloads the window onto it. Returns ok plus the tail of the output. A failure means the edit is not applied — fix it, do not report success.',
+                'Apply and prove the current source of August\'s checkout. In dev it runs the typecheck gate; in the installed self-hosted app it runs the build and reloads the window onto it. Returns ok plus the tail of the output. A failure means the edit is not applied — fix it, do not report success. Refused while the self-modification switch is OFF.',
             parameters: { type: 'object', properties: {}, additionalProperties: false },
         },
     },
@@ -2103,6 +2465,14 @@ export const INITIAL_DESK_TOOL_NAMES: readonly string[] = [
     // Both are small schemas; neither is a market read on every turn.
     'find_best_setups',
     'switch_chart_symbol',
+    // The two market-structure tools a decision cannot go without: the
+    // regime its read will be judged in, and the plan's own arithmetic
+    // (every presented entry/stop/target should be priced through
+    // trade_math, not through the model's head). The volume/auction family
+    // stays loadable-on-demand to bound the schema tax (O-59) — the mandate
+    // tells the seat when to load what.
+    'get_regime',
+    'trade_math',
 ];
 
 /** The schema-on-demand tool. NOT a desk capability: it is not in
@@ -2201,6 +2571,30 @@ export const CHART_ACTION_TOOL_DEFS: DeskToolDefinition[] = [
                     pattern: { type: 'string', description: 'Pattern name from the packet geometry table, e.g. "Head and Shoulders" or "Ascending Triangle".' },
                 },
                 required: ['pattern'],
+                additionalProperties: false,
+            },
+        },
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'draw_tool_levels',
+            description:
+                'Draw a market tool\'s computed levels on THIS chart, the way a trader plots them: POC/VAH/VAL and the value-area zone from volume_profile, naked POCs, VWAP and its ±1σ bands, initial balance and rotation target from auction_state, session levels from get_key_levels, fib/break levels from swing_structure, equal-level pools and untested swings from liquidity, unfilled FVG zones from imbalances, S/R zones from sr_zones, range/spring levels from wyckoff_events. The app RE-RUNS the tool and draws at the computed prices — you never restate a number, so the drawing cannot be a digit out.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    tool: {
+                        type: 'string',
+                        enum: ['volume_profile', 'naked_pocs', 'vwap', 'auction_state', 'get_key_levels', 'swing_structure', 'liquidity', 'imbalances', 'sr_zones', 'wyckoff_events'],
+                        description: 'Which tool\'s levels to draw. The tool is re-run fresh at draw time.',
+                    },
+                    symbol: { type: 'string', description: 'Any perp symbol (default: the chart\'s current symbol).' },
+                    anchor: { type: 'string', description: 'volume_profile: session|day|week|visible|swing|custom. vwap: session_open|swing_high|swing_low|custom. Default: session / session_open.' },
+                    interval: { type: 'string', description: 'Timeframe for the structure tools (swing_structure, liquidity, imbalances, sr_zones, wyckoff_events). Default 1h.' },
+                    items: { type: 'array', items: { type: 'string' }, description: 'Optional label filter — draw only lines whose label matches one of these substrings (e.g. ["POC", "value area"]).' },
+                },
+                required: ['tool'],
                 additionalProperties: false,
             },
         },
@@ -2402,6 +2796,36 @@ export const deskToolsMandateFor = (offered?: readonly string[], deferred = fals
     const discoveryRule = has('find_best_setups') && has('switch_chart_symbol')
         ? 'MARKET DISCOVERY: `find_best_setups` scans the whole universe and RANKS the best live setups by measured confluence (`run_screener` is the raw table behind it). `switch_chart_symbol` puts a coin on the live chart when the trader asks to look at it. A score is not a plan — read the chosen coin with `get_market_packet` (passing its symbol explicitly) before naming an entry, stop or target.\n'
         : '';
+    // The market-structure rule (docs/plans/tools-upgrade.md §7): these
+    // numbers exist so the seat never estimates them. Every tool named here
+    // is gated on the seat's own allow-list — a seat whose executor would
+    // refuse a name never reads that name. The closing sentence is the
+    // anti-invention rule that binds the family.
+    const structureBits: string[] = [];
+    if (has('get_regime')) structureBits.push('`get_regime` classifies trend/range/volatility on a timeframe (tag your decision with its regime_id) — call it before a read whose meaning depends on regime');
+    if (has('trade_math')) structureBits.push('`trade_math` computes the plan\'s own numbers — call it with your entry/stop/targets BEFORE presenting a trade and quote its R:R, net-of-costs and break-even, never your own arithmetic; it refuses an inverted plan');
+    const loadableFamily: string[] = [];
+    if (has('volume_profile')) loadableFamily.push('`volume_profile` (POC/value area/price-vs-value)');
+    if (has('naked_pocs')) loadableFamily.push('`naked_pocs` (unvisited prior-session POCs)');
+    if (has('vwap')) loadableFamily.push('`vwap` (session or swing-anchored VWAP and who is trapped)');
+    if (has('order_flow')) loadableFamily.push('`order_flow` (CVD/delta ESTIMATES from taker volume)');
+    if (has('effort_vs_result')) loadableFamily.push('`effort_vs_result` (climax/churn)');
+    if (has('auction_state')) loadableFamily.push('`auction_state` (initial balance, day type, open type)');
+    if (has('swing_structure')) loadableFamily.push('`swing_structure` (HH/HL/LH/LL, BOS/CHoCH, fib with confluence)');
+    if (has('liquidity')) loadableFamily.push('`liquidity` (equal levels, sweeps, untested swings, next pool)');
+    if (has('imbalances')) loadableFamily.push('`imbalances` (FVGs with fill state)');
+    if (has('sr_zones')) loadableFamily.push('`sr_zones` (S/R zones + premium/discount range state)');
+    if (has('wyckoff_events')) loadableFamily.push('`wyckoff_events` (ranges, springs/UTADs — volume-conditioned)');
+    if (has('setup_base_rate')) loadableFamily.push('`setup_base_rate` (the trader\'s measured W/L + Wilson CI for a setup type — refused under 5 rows)');
+    if (has('risk_state')) loadableFamily.push('`risk_state` (open-plan heat, drawdown light, half-Kelly ceiling — advisory)');
+    if (has('derivatives_state')) loadableFamily.push('`derivatives_state` (price/OI quadrant, funding percentile + extremes, positioning snapshot, liquidation bands — available:false for assets without derivatives, never invented)');
+    if (has('btc_relative')) loadableFamily.push('`btc_relative` (alt/BTC ratio z-score, correlation/beta on returns, RS rank — works where derivatives data does not exist)');
+    if (has('scan_playbooks')) loadableFamily.push('`scan_playbooks` (named setup detectors — rotation, failed IB, spring/UTAD, sweep+shift, absorption, pullback, Turtle Soup, VWAP reclaim — each with invalidation + evidence; a match is a tag, never a size or a veto)');
+    if (loadableFamily.length > 0) structureBits.push(`load the structure/journal family when the read needs it: ${loadableFamily.join(', ')}`);
+    if (has('draw_tool_levels')) structureBits.push('`draw_tool_levels` puts a tool\'s computed levels on the chart the way a trader plots them — name the tool, the app re-runs it and draws at the computed prices (you never restate a number)');
+    const structureRule = structureBits.length > 0
+        ? `MARKET STRUCTURE, COMPUTED: ${structureBits.join('. ')}. A level, a POC, a volume figure, a delta or a setup tag you did not read from a tool result this turn does not exist — state none, or name the read you are inferring from and strip its confidence.\n`
+        : '';
 
     return `
 **DESK TOOLS (available anytime on this turn)**
@@ -2409,9 +2833,9 @@ ${deferred ? 'ONLY THE CORE TOOLS ARE LOADED. The TOOL CATALOGUE at the end list
 You can call live tools before you speak, on any question where a fresh fact would change the answer.
 Use them for: news/macro catalysts, funding/OI crowding, order-book walls, liquidations, BTC context on alts, session timing, or a fresh price print.
 The chart symbol is only the DEFAULT: the per-symbol market tools accept a \`symbol\` argument, so when the user asks about another coin ("what about eth, can we trade there?") pull that coin directly — get_market_packet or get_all_timeframes with symbol ETHUSDT gives the full multi-timeframe read without anyone switching charts. run_screener and find_best_setups are the exception: they scan the whole futures universe and take no symbol.
-Your own trading memory is one of these tools: the recall tool searches your notebook (doctrine, rules, similar past trades) - call it when prior experience with this setup could change your stance.
+Your own trading memory is one of these tools: the recall tool searches your notebook (notes, rules, skills, similar past trades) - call it when prior experience with this setup could change your stance.
 ${shapeRule} The market packet you are shown carries code-calculated summaries, and its printed candle rows depend on the surface you were opened in: the full packet prints EIGHT rows per timeframe, the compact one (used by surfaces that ask for brevity) prints NONE and keeps only the summaries. Either way — eight printed rows are not a chart, and a shape described from them is invented, not read. If the rows are not in front of you, call ${groundingTool ?? 'nothing'}; if you have not, either call it or say "inferred from the rows shown" and give it no confidence. ${drawingRule}${levelRule}
-${has('run_monte_carlo') ? 'run_monte_carlo simulates a concrete plan: pass direction (long/short), entry, stop_loss, and take_profits (1–3 absolute prices). Volatility is MEASURED from the tape (ATR14 at the requested timeframe) when you omit atr; the call is refused — never simulated on an assumption — when the tape cannot be measured, so pass atr explicitly only to override the measurement, and the receipt will say the number was caller-supplied. Optional timeframe is a label, num_simulations (100–5000) and max_steps (10–1000) control the run. For account drawdown estimates pass account_balance, position_size (margin in account currency), and leverage together. Report the simulation assumptions and timeout rate, not guaranteed or historical performance.' : ''}${selfModRule}${discoveryRule}Do not call tools you do not need. Prefer 0–2 calls. After tool results arrive, write your reply from the findings — no JSON, no restated tool schemas.
+${has('run_monte_carlo') ? 'run_monte_carlo simulates a concrete plan: pass direction (long/short), entry, stop_loss, and take_profits (1–3 absolute prices). Volatility is MEASURED from the tape (ATR14 at the requested timeframe) when you omit atr; the call is refused — never simulated on an assumption — when the tape cannot be measured, so pass atr explicitly only to override the measurement, and the receipt will say the number was caller-supplied. Optional timeframe is a label, num_simulations (100–5000) and max_steps (10–1000) control the run. For account drawdown estimates pass account_balance, position_size (margin in account currency), and leverage together. Report the simulation assumptions and timeout rate, not guaranteed or historical performance.' : ''}${selfModRule}${discoveryRule}${structureRule}Do not call tools you do not need. Prefer 0–2 calls. After tool results arrive, write your reply from the findings — no JSON, no restated tool schemas.
 `;
 };
 
@@ -2725,6 +3149,12 @@ async function runKeyLevels(symbol: string, interval: string): Promise<string> {
         interval: tf,
         bars: klines.length,
         mark: rp(mark),
+        // The day/week/month + session + round-number frame, each level with
+        // its ATR distance and touch count — the levels a discretionary
+        // trader quotes first, computed instead of recalled. These rows are
+        // QUOTABLE but deliberately NOT in the publish fence (the card takes
+        // the R/S/VWAP ladder only).
+        session_levels: await (await importMarketTools()).buildSessionLevels(symbol).catch(() => null),
         resistance: resistance.map(r => ({
             price: r.price, sources: r.sources, strength: r.strength, touches: r.touches,
             distancePct: distancePct(r.price),
@@ -2975,6 +3405,7 @@ async function runAllTimeframes(symbol: string, liveMark?: number | null): Promi
  *  plus the calling session's context (symbol fallback, abort, trade log). */
 export interface DeskToolContext {
     defaultSymbol?: string | null;
+    skillReview?: SkillWriteReview;
     /** The conversation this turn belongs to — the value \`\${SESSION_ID}\`
      *  substitutes inside skill bodies. Absent (older callers, probes) reads
      *  as a stable per-boot id rather than an empty promise. */
@@ -3061,7 +3492,6 @@ const MARKET_TOOLS = new Set([
     'get_indicators',
     'get_btc_context',
     'scan_setups',
-    'scan_chart_skills',
     'project_future_price',
     'get_setup_history_stats',
     'run_monte_carlo',
@@ -3095,7 +3525,7 @@ const resolvedSymbolField = (call: DeskToolCall, fallback: string): { symbol?: s
  *  (`(error)`), the "rejected" ToolAction chip and the panel narration all
  *  already understand ok:false — they were just never given it. Rejections
  *  used to fall through with ok:true and ride INTO the result cache, so a
- *  "revise_skill rejected: no skill …" could even be replayed back to the
+ *  "skill_write rejected: no skill …" could even be replayed back to the
  *  model as if the revision had been queued. Rejection TEXT keeps the
  *  `<tool> rejected:` prefix contract (see toolActionFromResult). */
 const rejectedResult = (call: DeskToolCall, reason: string): DeskToolResult => ({
@@ -3195,7 +3625,8 @@ export async function executeDeskTool(
     if (context.memoryEnabled === false
         && (call.name === 'remember' || call.name === 'read_memory' || call.name === 'forget'
             || call.name === 'recall' || call.name === 'write_memory_note'
-            || call.name === 'amend_memory' || call.name === 'get_notebook_map')) {
+            || call.name === 'amend_memory' || call.name === 'get_notebook_map'
+            || call.name === 'skill_index' || call.name === 'skill_write' || call.name === 'skill_view')) {
         return rejectedResult(call, `${call.name} rejected: memory is OFF for this turn — nothing is read or saved.`);
     }
     if (call.name === 'forget' && typeof context.lastUserMessage === 'string') {
@@ -3358,7 +3789,7 @@ ${hitContent}`, ...resolvedSymbolField(call, fallback) };
                         ),
                         extractPath: call.arguments.extractPath ? String(call.arguments.extractPath) : undefined,
                     }, 'model:desk');
-                    content = JSON.stringify({ proposed: true, id: tool.id, status: tool.status, note: 'Candidate stored. A human must approve it in Settings → Skills → Forged tools before it can run.' });
+                    content = JSON.stringify({ proposed: true, id: tool.id, status: tool.status, note: 'Candidate stored. A human must approve it in Learning → Skills → Forged tools before it can run.' });
                 } catch (err) {
                     return rejectedResult(call, `forge_tool rejected: ${err instanceof Error ? err.message : String(err)}`);
                 }
@@ -3446,58 +3877,42 @@ ${hitContent}`, ...resolvedSymbolField(call, fallback) };
                 break;
             }
             case 'skill_view': {
-                // The progressive-disclosure reader. L0 is the skills index the
-                // seat already carries; this is L1 (the body + the bundled-file
-                // list) and L2 (one bundled file). A skill hidden by the
-                // compatibility gate is not openable either — the index never
-                // promised it on this runtime.
+                // L0 is the skills index the seat carries; this is L1 (the body
+                // plus the bundled-file list) and L2 (one bundled file). A skill
+                // is a folder: `references/x.md` is an address, so the reader
+                // resolves it against the skill's OWN files and nothing else.
                 const wanted = asString(call.arguments.skill).trim();
                 const filePath = asString(call.arguments.file_path || '').trim();
                 if (!wanted) return rejectedResult(call, 'skill_view rejected: skill is required');
-                const { skillIndexRows, listSkills } = await import('../learning/SkillMemoryService');
-                const slugOf = (fileName: string) => fileName.replace(/\.md$/i, '');
-                const row = skillIndexRows().find(r =>
-                    r.slug === wanted || r.slug.toLowerCase() === wanted.toLowerCase());
-                if (!row) {
-                    // Name the reason honestly: unknown, or gated off this runtime.
-                    const anyName = listSkills().some(({ file }) =>
-                        slugOf(file.name).toLowerCase() === wanted.toLowerCase());
-                    return rejectedResult(call, anyName
-                        ? `skill_view rejected: "${wanted}" exists but is not available on this runtime (its compatibility declares platforms/tools this desk does not have)`
-                        : `skill_view rejected: no skill named "${wanted}" in the index`);
-                }
-                const skill = listSkills().find(({ file }) => slugOf(file.name) === row.slug);
-                if (!skill) return rejectedResult(call, `skill_view rejected: "${wanted}" could not be opened`);
-                // Bundled files ride the same notebook folder, name-spaced to
-                // their skill: `<slug>__<role>__<name>.md`. A flat name with no
-                // separators and no traversal is the whole addressable space.
-                const bundlePrefix = `${row.slug}__`;
-                const { getMemoryFiles } = await import('../learning/MemoryFilesService');
-                const bundled = getMemoryFiles().files
-                    .filter(f => f.folderId === skill.file.folderId && f.name.startsWith(bundlePrefix))
-                    .map(f => f.name);
-                const skillDir = `notebook:skills/${row.slug}`;
+                const { getSkill, skillPathOf } = await import('../learning/SkillFileService');
+                const skill = getSkill(wanted);
+                if (!skill) return rejectedResult(call, `skill_view rejected: no skill named "${wanted}" in the index`);
+                const relative = (file: typeof skill.bundled[number]): string => {
+                    const path = skillPathOf(file) ?? file.name;
+                    return path.startsWith(`${skill.slug}/`) ? path.slice(skill.slug.length + 1) : path;
+                };
+                const bundled = skill.bundled.map(relative);
+                const skillDir = `notebook:skills/${skill.slug}`;
                 const substitute = (text: string): string => text
                     // Bare ${SKILL_DIR}/${SESSION_ID} are the spec's names; the
                     // AUGUST_/HERMES_ prefixes are the portability aliases.
                     .replace(/\$\{(?:AUGUST_|HERMES_)?SKILL_DIR\}/g, skillDir)
                     .replace(/\$\{(?:AUGUST_|HERMES_)?SESSION_ID\}/g, context.sessionId || DESK_BOOT_SESSION_ID);
                 if (filePath) {
-                    if (/[/\\]|^\.|\.\./.test(filePath) || !bundled.includes(filePath)) {
-                        return rejectedResult(call, `skill_view rejected: "${filePath}" is not one of ${row.slug}'s bundled files (path separators and .. are refused)`);
+                    if (filePath.includes('\\') || filePath.split('/').some(part => !part || part === '.' || part === '..')) {
+                        return rejectedResult(call, `skill_view rejected: "${filePath}" must stay inside this skill's folder`);
                     }
-                    // Membership was folder-scoped and the READ was not: a
-                    // same-named file in another folder could be opened as this
-                    // skill's bundle member (the 2026-10-27 audit S-5).
-                    const bundledFile = getMemoryFiles().files.find(f =>
-                        f.folderId === skill.file.folderId && f.name === filePath && f.name.startsWith(bundlePrefix));
-                    if (!bundledFile) return rejectedResult(call, `skill_view rejected: "${filePath}" could not be read`);
-                    content = `# ${filePath} — bundled file of ${row.slug}\n\n${substitute(bundledFile.content)}`;
+                    const hit = skill.bundled.find(f => relative(f) === filePath
+                        || relative(f) === `${filePath}.md`);
+                    if (!hit) {
+                        return rejectedResult(call, `skill_view rejected: "${filePath}" is not one of ${skill.slug}'s bundled files (${bundled.join(', ') || 'none'})`);
+                    }
+                    content = `# ${filePath} — bundled file of ${skill.slug}\n\n${substitute(hit.content)}`;
                     break;
                 }
-                content = `# ${row.slug}\n\n${substitute(skill.meta.body)}`
+                content = `# ${skill.slug}\nName: ${skill.name}\nDescription: ${skill.description}\nVersion: ${skill.version}\n\n${substitute(skill.body)}`
                     + (bundled.length ? `\n\n## Bundled files (open one with file_path)\n${bundled.map(b => `- ${b}`).join('\n')}` : '');
-                break;
+                return { toolCallId: call.id, name: call.name, ok: true, content, skillRead: { slug: skill.slug, version: skill.version } };
             }
             case 'emit_signal': {
                 // The harness's own call, recorded on the trader's ledger. The
@@ -3529,7 +3944,7 @@ ${hitContent}`, ...resolvedSymbolField(call, fallback) };
                         const user = getActiveUsername();
                         const [{ readDiagnoses, readTrackedPositions }, { latestDiagnosisBrief }] = await Promise.all([
                             import('../tracking/positionStore'),
-                            import('../tracking/diagnosisSkillCluster'),
+                            import('../tracking/diagnosisBrief'),
                         ]);
                         const [diagRead, posRead] = await Promise.all([readDiagnoses(user), readTrackedPositions(user)]);
                         previousDiagnosis = diagRead.ok && posRead.ok
@@ -3708,8 +4123,9 @@ ${body}`);
                 const raw = call.arguments.slugs;
                 const slugs: string[] = Array.isArray(raw) ? raw.map(String) : (raw ? [String(raw)] : []);
                 const all = listProfileMemories();
-                // A restricted seat with no write tools is an unattended reader
-                // (the skill evaluator). Sensitive rows are not a pre-read there:
+                // A restricted seat with no write tools reads like an unattended
+                // reader: its tool list was narrowed by a goal, not typed by the
+                // trader. Sensitive rows are not a pre-read there:
                 // the feature's "excluded from unattended contexts" claim has to
                 // include the explicit "all" read, not just the hint pass.
                 const unattended = seatIsRestricted(context.allowedTools) && !seatAllows(context.allowedTools, 'remember');
@@ -3789,6 +4205,16 @@ ${body}`);
             case 'repo_edit': {
                 const api = window.electronAPI?.repo;
                 if (!api) return rejectedResult(call, 'repo_edit is a desktop dev tool — this surface has no repo bridge');
+                // The self-modification switch is the trader's gate on the
+                // harness changing itself. A checkout bridge that only asks for
+                // an environment variable would let a run rewrite the app while
+                // that switch said OFF, so the switch is checked here too.
+                {
+                    const { getSelfModMode } = await import('../selfMod/SelfModificationService');
+                    if (getSelfModMode() === 'off') {
+                        return rejectedResult(call, 'repo_edit refused: self-modification is OFF. The trader turns it on in Settings → Usage (config or shadow) before any run may edit this checkout.');
+                    }
+                }
                 const info = await api.info();
                 if (!info.ok || !info.available) {
                     return rejectedResult(call, `repo_edit unavailable: ${info.ok ? (info.reason ?? 'disabled') : info.error}`);
@@ -3808,6 +4234,12 @@ ${body}`);
             case 'repo_apply': {
                 const api = window.electronAPI?.repo;
                 if (!api) return rejectedResult(call, 'repo_apply is a desktop dev tool — this surface has no repo bridge');
+                {
+                    const { getSelfModMode } = await import('../selfMod/SelfModificationService');
+                    if (getSelfModMode() === 'off') {
+                        return rejectedResult(call, 'repo_apply refused: self-modification is OFF, and applying is the half that runs the build.');
+                    }
+                }
                 const info = await api.info();
                 if (!info.ok || !info.available) {
                     return rejectedResult(call, `repo_apply unavailable: ${info.ok ? (info.reason ?? 'disabled') : info.error}`);
@@ -4037,116 +4469,64 @@ ${body}`);
                 }
                 break;
             }
-            case 'propose_skill': {
-                // A model-authored skill proposal. The deterministic gates
-                // (duplicates, malformed clauses, body caps, tombstones) run on
-                // the way in; a draft that passes applies ITSELF through the
-                // heartbeat's auto-apply (owner ruling 2026-11-03: no approval
-                // inbox). The gates, not a click, decide.
+            case 'skill_index': {
+                const { skillIndexRows, skillLibraryVersion } = await import('../learning/SkillFileService');
+                const rows = skillIndexRows();
+                const version = skillLibraryVersion();
+                content = JSON.stringify({
+                    count: rows.length,
+                    skills: rows,
+                    version,
+                    note: 'Review every description. Open related skills with skill_view before updating or merging them. Create only when none covers the procedure.',
+                });
+                return { toolCallId: call.id, name: call.name, ok: true, content, skillIndexVersion: version };
+            }
+            case 'skill_write': {
+                if (!context.skillReview?.indexVersion) {
+                    return rejectedResult(call, 'skill_write rejected: call skill_index and review the whole library in an earlier round before writing.');
+                }
                 try {
-                    const { parseCraftedSkill } = await import('../../schemas/learning');
-                    const { getActiveUsername } = await import('../../utils/activeUser');
-                    let steps: unknown = call.arguments.steps;
-                    if (typeof steps === 'string') {
-                        try { steps = JSON.parse(steps); } catch { steps = [steps]; }
-                    }
-                    // A missing `steps` used to become ["undefined"] — a real
-                    // array of one string, so the schema's min(1) passed and
-                    // the draft was queued carrying the literal word. Refuse
-                    // instead; the rejection text below lists steps because it
-                    // now genuinely can be missing.
-                    if (!Array.isArray(steps) || steps.length === 0) {
-                        return rejectedResult(call, 'propose_skill rejected: the proposal is missing its steps.');
-                    }
-                    const crafted = parseCraftedSkill({
-                        name: asString(call.arguments.name),
-                        kind: call.arguments.kind === 'repeat' ? 'repeat' : 'avoid',
-                        description: asString(call.arguments.description) || undefined,
-                        when: asString(call.arguments.when),
-                        steps,
-                        inputs: [],
-                        validate: asString(call.arguments.validate, 'Confirm on the live chart before acting.'),
-                        output: asString(call.arguments.output, 'A concrete actionable read of the setup.'),
-                        approval: asString(call.arguments.approval, 'Evidence sets the status; no human approval is required.'),
-                        predicate: asString(call.arguments.predicate) || undefined,
-                        // Required by the tool schema and, until this read, never
-                        // seen again: the human was asked to approve a rule whose
-                        // stated evidence the tool had thrown away. It rides on
-                        // the draft and the skill file.
-                        reason: asString(call.arguments.reason) || undefined,
-                        timeframe: asString(call.arguments.timeframe) || undefined,
-                    });
-                    if (!crafted) {
-                        return rejectedResult(call, 'propose_skill rejected: the proposal is missing required fields (name, when, steps).');
-                    }
-                    const { skillBodyCaps, hasUseWhenTrigger } = await import('../../utils/skillFrontmatter');
-                    const authoredBody = [
-                        crafted.when, ...crafted.steps, crafted.validate, crafted.output,
-                    ].join('\n');
-                    const caps = skillBodyCaps(authoredBody);
-                    if (caps.overHard) {
-                        return rejectedResult(call, `propose_skill rejected: the authored body is ${caps.chars.toLocaleString()} chars — over the 100k hard cap; put long material in a bundled references/ file.`);
-                    }
-                    if (caps.overSoft) {
-                        console.warn(`[Skills] proposal "${crafted.name}": ${caps.lines} lines is over the ~200-line soft cap — long material belongs in a bundled references/ file`);
-                    }
-                    if (crafted.description && !hasUseWhenTrigger(crafted.description)) {
-                        console.warn(`[Skills] proposal "${crafted.name}": the description has no "Use when" trigger — it is the activation key, and a vague one rarely activates`);
-                    }
-                    // The same quality bar every other draft source passes:
-                    // tombstone cooldown, duplicate skip, live-skill coverage
-                    // skip, trigger sanity, and a falsifiable prediction.
-                    const { deterministicDraftGate } = await import('../../services/learning/draftGates');
-                    const { draftTriggerKey } = await import('../../utils/skillDrafts');
-                    const username = getActiveUsername();
-                    // A STABLE trade id, keyed the same way the dedupe and
-                    // tombstones are. `chat-${Date.now()}` was unique every
-                    // call, so `queueSkillDraft`'s replace-by-tradeId could
-                    // never fire and a re-proposal stacked a second inbox row
-                    // instead of replacing the first.
-                    const tradeId = `chat:${draftTriggerKey(
-                        asString(call.arguments.coin) || undefined,
-                        { kind: crafted.kind, when: crafted.when },
-                    )}`;
-                    const gate = deterministicDraftGate({
-                        crafted,
-                        tradeId,
-                        username,
-                        coin: asString(call.arguments.coin) || undefined,
-                    });
-                    if (!gate.ok) {
-                        return rejectedResult(call, `propose_skill rejected: ${gate.reason}.`
-                            + (gate.reason.includes('existing skill') ? ' Use revise_skill to tighten the existing skill instead.' : '')
-                            + ' Tell the user why no draft was queued.');
-                    }
-                    // Direct candidate (owner ruling 2026-10-29): no approval
-                    // queue. The ingest path creates status 'candidate'; only
-                    // the evidence fold can promote or retire it.
-                    const { ingestCraftedSkillFromDraft } = await import('../learning/SkillMemoryService');
-                    const ingested = await ingestCraftedSkillFromDraft(
-                        gate.crafted,
-                        asString(call.arguments.coin) || undefined,
-                        username,
-                        'created directly by the model in chat (candidate)',
-                    );
-                    if (!ingested.created) {
-                        const why = ingested.reason === 'duplicate'
-                            ? 'an identical trigger already exists'
-                            : ingested.reason === 'no-skills-folder'
-                                ? 'the skills folder is unavailable'
-                                : ingested.reason === 'over-hard-cap'
-                                    ? `the body is over the hard cap${ingested.detail ? ` (${ingested.detail})` : ''}`
-                                    : 'the ingest declined';
-                        return rejectedResult(call, `propose_skill rejected: ${why}. No skill was written.`);
+                    const { writeSkillFile, skillWriteRejection } = await import('../learning/SkillFileService');
+                    const raw = call.arguments.supersedes;
+                    const supersedes = Array.isArray(raw)
+                        ? raw.map(String)
+                        : typeof raw === 'string' && raw.trim()
+                            ? raw.split(',').map(s => s.trim()).filter(Boolean)
+                            : undefined;
+                    const rawFiles = call.arguments.files;
+                    const files = Array.isArray(rawFiles)
+                        ? rawFiles
+                            .map(item => (item && typeof item === 'object')
+                                ? { path: asString((item as { path?: unknown }).path), content: asString((item as { content?: unknown }).content) }
+                                : null)
+                            .filter((f): f is { path: string; content: string } => f !== null && f.path !== '')
+                        : undefined;
+                    const result = await writeSkillFile({
+                        slug: asString(call.arguments.slug) || undefined,
+                        name: asString(call.arguments.name) || undefined,
+                        description: asString(call.arguments.description),
+                        body: asString(call.arguments.body),
+                        ifVersion: asString(call.arguments.if_version) || undefined,
+                        supersedes,
+                        files,
+                    }, undefined, context.skillReview);
+                    if (!result.ok) {
+                        return rejectedResult(call, skillWriteRejection(result));
                     }
                     content = JSON.stringify({
-                        created: true,
-                        skill: gate.crafted.name,
-                        slug: ingested.slug,
-                        note: 'Candidate created directly — no approval queue. It is a hypothesis; only evidence changes its status. The chat chip records the write. Do not narrate this write in your reply.',
+                        saved: true,
+                        slug: result.slug,
+                        created: result.created,
+                        version: result.version,
+                        merged: result.merged,
+                        ...(result.files.length ? { files: result.files } : {}),
+                        ...(result.mergeFailures.length ? { mergeFailures: result.mergeFailures } : {}),
+                        note: result.created
+                            ? 'Skill created in the library.'
+                            : 'Skill updated in place. Do not narrate this write in your reply.',
                     });
                 } catch (err) {
-                    return rejectedResult(call, `propose_skill rejected: ${err instanceof Error ? err.message : String(err)}`);
+                    return rejectedResult(call, `skill_write rejected: ${err instanceof Error ? err.message : String(err)}`);
                 }
                 break;
             }
@@ -4190,55 +4570,6 @@ ${body}`);
                     });
                 } catch (err) {
                     return rejectedResult(call, `propose_strategy rejected: ${err instanceof Error ? err.message : String(err)}`);
-                }
-                break;
-            }
-            case 'revise_skill': {
-                // Revision proposals ride the learning queue, which applies
-                // the applyable ones on the heartbeat. Nothing is written here.
-                try {
-                    const { listSkills } = await import('../learning/SkillMemoryService');
-                    const { getActiveUsername } = await import('../../utils/activeUser');
-                    const slug = asString(call.arguments.skill_slug).toLowerCase().replace(/\.md$/, '');
-                    const hit = listSkills().find(s => s.file.name.replace(/\.md$/i, '').toLowerCase() === slug);
-                    if (!hit) {
-                        // Name the REAL reason when the slug is a pending
-                        // DRAFT (the book-*/scan-*/chat-* sources): revise_skill
-                        // acts on a skill that already EXISTS AS A FILE, and a
-                        // bare "no skill" invites the model to claim a revision
-                        // that can never queue (observed 2026-09-14).
-                        const { listSkillDrafts } = await import('../../utils/skillDrafts');
-                        const username = getActiveUsername();
-                        const draftHit = listSkillDrafts(username).find(d => {
-                            const name = d.crafted.name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
-                            return name === slug || name.replace(/-/g, '') === slug.replace(/-/g, '');
-                        });
-                        return rejectedResult(call, draftHit
-                            ? `revise_skill rejected: "${slug}" is a PENDING DRAFT in the Inbox, not a live skill — drafts cannot be revised through this tool. It is edited (or approved/rejected) by the human in the Inbox.`
-                            : `revise_skill rejected: no skill "${slug}". Call get_notebook_map or recall first for the exact slug.`);
-                    }
-                    const clauses = {
-                        when: asString(call.arguments.when) || undefined,
-                        body: asString(call.arguments.procedure) || undefined,
-                        predicate: asString(call.arguments.predicate) || undefined,
-                    };
-                    const { applySkillRevisionDirect } = await import('../learning/SkillMemoryService');
-                    const revised = await applySkillRevisionDirect(
-                        slug,
-                        clauses,
-                        asString(call.arguments.reason),
-                        getActiveUsername(),
-                    );
-                    if (!revised.ok) {
-                        return rejectedResult(call, `revise_skill rejected: ${revised.error}`);
-                    }
-                    content = JSON.stringify({
-                        revised: true,
-                        skill: revised.slug ?? slug,
-                        note: 'Applied directly. Status and evidence are unchanged — only the evidence fold promotes or retires. The chat chip records the write. Do not narrate this write in your reply.',
-                    });
-                } catch (err) {
-                    return rejectedResult(call, `revise_skill rejected: ${err instanceof Error ? err.message : String(err)}`);
                 }
                 break;
             }
@@ -4350,6 +4681,113 @@ ${body}`);
                     String(call.arguments.interval || context.chartInterval || '1h'),
                 );
                 break;
+            case 'volume_profile':
+                content = await (await importMarketTools()).runVolumeProfileTool(
+                    asSymbol(call.arguments.symbol, fallback),
+                    (['session', 'day', 'week', 'visible', 'swing', 'custom'].includes(String(call.arguments.anchor))
+                        ? String(call.arguments.anchor)
+                        : 'session') as ProfileAnchor,
+                    Number.isFinite(Number(call.arguments.bins)) ? Number(call.arguments.bins) : 48,
+                    Number.isFinite(Number(call.arguments.custom_time)) ? Number(call.arguments.custom_time) : undefined,
+                );
+                break;
+            case 'naked_pocs':
+                content = await (await importMarketTools()).runNakedPocsTool(
+                    asSymbol(call.arguments.symbol, fallback),
+                    String(call.arguments.granularity) === 'week' ? 'week' : 'day',
+                    Math.min(20, Math.max(1, Number(call.arguments.lookback) || 5)),
+                );
+                break;
+            case 'vwap':
+                content = await (await importMarketTools()).runVwapTool(
+                    asSymbol(call.arguments.symbol, fallback),
+                    (['session_open', 'swing_high', 'swing_low', 'custom'].includes(String(call.arguments.anchor))
+                        ? String(call.arguments.anchor)
+                        : 'session_open') as VwapAnchor,
+                    Number.isFinite(Number(call.arguments.custom_time)) ? Number(call.arguments.custom_time) : undefined,
+                );
+                break;
+            case 'order_flow':
+                content = await (await importMarketTools()).runOrderFlowTool(
+                    asSymbol(call.arguments.symbol, fallback),
+                    (['5m', '15m', '1h'].includes(String(call.arguments.interval)) ? String(call.arguments.interval) : '15m'),
+                    Math.min(60, Math.max(6, Number(call.arguments.window) || 20)),
+                );
+                break;
+            case 'effort_vs_result':
+                content = await (await importMarketTools()).runEffortResultTool(
+                    asSymbol(call.arguments.symbol, fallback),
+                    (['15m', '1h', '4h'].includes(String(call.arguments.interval)) ? String(call.arguments.interval) : '1h'),
+                );
+                break;
+            case 'auction_state':
+                content = await (await importMarketTools()).runAuctionStateTool(asSymbol(call.arguments.symbol, fallback));
+                break;
+            case 'get_regime':
+                content = await (await importMarketTools()).runRegimeTool(
+                    asSymbol(call.arguments.symbol, fallback),
+                    (['15m', '1h', '4h', '1d'].includes(String(call.arguments.interval)) ? String(call.arguments.interval) : '1h'),
+                );
+                break;
+            case 'trade_math': {
+                const tps = Array.isArray(call.arguments.take_profits)
+                    ? call.arguments.take_profits.map((t: unknown) => Number(t)).filter((t: number) => Number.isFinite(t))
+                    : [];
+                content = await (await importMarketTools()).runTradeMathTool(
+                    asSymbol(call.arguments.symbol, fallback),
+                    String(call.arguments.direction) === 'Short' ? 'Short' : 'Long',
+                    Number(call.arguments.entry),
+                    Number(call.arguments.stop_loss),
+                    tps,
+                    {
+                        equityUsd: Number.isFinite(Number(call.arguments.equity_usd)) ? Number(call.arguments.equity_usd) : undefined,
+                        riskPercent: Number.isFinite(Number(call.arguments.risk_percent)) ? Number(call.arguments.risk_percent) : undefined,
+                        leverage: Number.isFinite(Number(call.arguments.leverage)) ? Number(call.arguments.leverage) : undefined,
+                    },
+                );
+                break;
+            }
+            case 'swing_structure':
+            case 'liquidity':
+            case 'imbalances':
+            case 'sr_zones':
+            case 'wyckoff_events':
+                content = await (await importMarketTools()).runStructureTool(
+                    call.name,
+                    asSymbol(call.arguments.symbol, fallback),
+                    (['5m', '15m', '1h', '4h'].includes(String(call.arguments.interval)) ? String(call.arguments.interval) : '1h'),
+                );
+                break;
+            case 'derivatives_state':
+                content = await (await importMarketTools()).runDerivativesStateTool(asSymbol(call.arguments.symbol, fallback));
+                break;
+            case 'btc_relative':
+                content = await (await importMarketTools()).runBtcRelativeTool(
+                    asSymbol(call.arguments.symbol, fallback),
+                    Math.min(100, Math.max(10, Number(call.arguments.window) || 30)),
+                );
+                break;
+            case 'scan_playbooks':
+                content = await (await importMarketTools()).runPlaybooksTool(
+                    asSymbol(call.arguments.symbol, fallback),
+                    (['15m', '1h', '4h'].includes(String(call.arguments.interval)) ? String(call.arguments.interval) : '1h'),
+                );
+                break;
+            case 'setup_base_rate':
+            case 'risk_state': {
+                // Lazy: the journal readers bundle the cluster-stats and
+                // accuracy modules; keep them out of the entry graph too.
+                const jt = await import('./journalTools');
+                content = call.name === 'setup_base_rate'
+                    ? jt.runSetupBaseRateTool(context.trades ?? [], {
+                        coin: asString(call.arguments.coin) || undefined,
+                        direction: String(call.arguments.direction) === 'Long' ? 'Long'
+                            : String(call.arguments.direction) === 'Short' ? 'Short' : undefined,
+                        family: asString(call.arguments.family) || undefined,
+                    })
+                    : jt.runRiskStateTool(context.trades ?? []);
+                break;
+            }
             case 'get_all_timeframes': {
                 content = await runAllTimeframes(asSymbol(call.arguments.symbol, fallback), liveMarkOf(context));
                 break;
@@ -4449,24 +4887,12 @@ ${body}`);
                 const scanSourceNote = spotMirrorSourceNote(tagged.source);
                 const { scanSetups } = await import('../trade/setupScan');
                 const setups = scanSetups(klines.map(k => ({ time: k.time, open: k.open, high: k.high, low: k.low, close: k.close, volume: k.volume })));
-                let skillIndex: Array<{ slug: string; status?: string; when?: string; enabled: boolean }> = [];
+                let skillIndex: Array<{ slug: string; description?: string; enabled: boolean }> = [];
                 try {
-                    const { listSkills, isApprovedSkill } = await import('../learning/SkillMemoryService');
-                    // `enabled`, not just status: this index is prompt-bound,
-                    // and a skill the idle lifecycle suspended must not reach
-                    // the model through the back door it left by — the same
-                    // gate `skillPredicateGate.ts:123` applies.
-                    skillIndex = listSkills().map(({ file, meta }) => ({
-                        slug: file.name.replace(/\.md$/i, ''),
-                        status: meta.status,
-                        when: meta.when,
-                        enabled: file.enabled,
-                        // And the same gate the injection and the skills index
-                        // read (P10): a rule nothing has approved cannot be
-                        // handed over, so naming it here would send the seat to
-                        // a `recall` that answers with nothing.
-                        approved: isApprovedSkill(meta),
-                    })).filter(s => s.status !== 'retired' && s.enabled && s.approved);
+                    const { listSkillFiles } = await import('../learning/SkillFileService');
+                    skillIndex = listSkillFiles()
+                        .filter(s => s.file.enabled)
+                        .map(s => ({ slug: s.slug, description: s.description, enabled: true }));
                 } catch { /* skill cross-ref is best-effort */ }
                 if (setups.length === 0) {
                     content = `SETUP SCAN ${sym} ${ivl} — nothing live in the last 5 bars. No breakout, pin, inside-bar resolution, gap, divergence, band play, pullback or failed break is currently triggered. Do not invent a setup.`;
@@ -4478,48 +4904,13 @@ ${body}`);
                     ...setups.map(s => {
                         const kw = s.keywords.map(k => k.toLowerCase());
                         const matched = skillIndex.filter(sk => {
-                            const hay = `${sk.slug} ${sk.when ?? ''}`.toLowerCase();
+                            const hay = `${sk.slug} ${sk.description ?? ''}`.toLowerCase();
                             return kw.some(k => hay.includes(k));
                         }).slice(0, 3);
-                        return `- ${s.title} [${s.side.toUpperCase()}] (${s.barsAgo === 0 ? 'current bar' : `${s.barsAgo} bars ago`}) — ${s.evidence.join('; ')}${matched.length > 0 ? ` | skills: ${matched.map(m => `${m.slug} (${m.status ?? 'candidate'})`).join(', ')}` : ''}`;
+                        return `- ${s.title} [${s.side.toUpperCase()}] (${s.barsAgo === 0 ? 'current bar' : `${s.barsAgo} bars ago`}) — ${s.evidence.join('; ')}${matched.length > 0 ? ` | skills: ${matched.map(m => m.slug).join(', ')}` : ''}`;
                     }),
                     'Treat these as CODE-detected conditions with evidence, not advice — confirm against the packet and levels before acting.',
                 ].join('\n');
-                break;
-            }
-            case 'scan_chart_skills': {
-                // Off unless the trader turned it on. A seat can ask for this by
-                // itself, so the switch needs an answer HERE rather than a quiet
-                // empty result — "no drafts" and "you have not enabled drafting"
-                // are different facts, and only one of them tells the trader what
-                // to do about it.
-                if (!getHarnessSettings().autoDraftingEnabled) {
-                    content = 'DRAFTING IS SWITCHED OFF. The app only studies charts for '
-                        + 'new playbooks when "Draft playbooks on its own" is enabled in '
-                        + 'Settings -> Session & Limits, and it is not. Nothing was read, '
-                        + 'nothing was drafted and no model call was made. Tell the trader '
-                        + 'where the switch is if they want this; do not ask again in this run.';
-                    break;
-                }
-                // The eighth learner: the model reads a study of the WHOLE
-                // tape (every bar bucketed by hour, the ≥10% swing legs with
-                // their antecedents, candle anatomy, detector win-rates) and
-                // creates pattern-first candidates DIRECTLY. The shared
-                // draftGates still judge each craft; the chip records the
-                // write, and only the evidence fold changes a candidate.
-                const sym = asSymbol(call.arguments.symbol, fallback);
-                const ivl = asString(call.arguments.interval) || context.chartInterval || '15m';
-                const { getActiveUsername } = await import('../../utils/activeUser');
-                const { scanChartForSkills, scanChartAcrossIntervals } = await import('../learning/chartScanSkills');
-                const username = getActiveUsername();
-                const maxSkills = Number.isFinite(Number(call.arguments.max_skills)) ? Number(call.arguments.max_skills) : undefined;
-                const rawTfs = Array.isArray(call.arguments.timeframes)
-                    ? (call.arguments.timeframes as unknown[]).map(t => asString(t)).filter(Boolean)
-                    : [];
-                const result = rawTfs.length > 0
-                    ? await scanChartAcrossIntervals({ symbol: sym, intervals: rawTfs, username, maxSkills, signal: context.signal })
-                    : await scanChartForSkills({ symbol: sym, interval: ivl, username, maxSkills, signal: context.signal });
-                content = result.receipt;
                 break;
             }
             case 'project_future_price': {
@@ -5178,6 +5569,38 @@ const runStreamingTurn = async (
     };
 };
 
+/** The shapes are this file's own: `skill_index` answers with JSON carrying
+ *  `"skills":[…]` and `"version":"<8 hex>"`, and a head `skill_view` answers
+ *  with a block that starts `# <slug>\nName: …\nDescription: …\nVersion: <8 hex>`.
+ *  Text-protocol seats carry the same strings inside a plain message, so this
+ *  scans CONTENT rather than tool-call records and covers both wire shapes.
+ *  Exported so a contract can pin it — a receipt the loop cannot recover from
+ *  its own transcript is a round-trip the trader pays for. */
+export const skillReviewFromTranscript = (
+    messages: Array<{ content?: unknown }>,
+): SkillWriteReview => {
+    let indexVersion: string | undefined;
+    const opened = new Map<string, string>();
+    for (const m of messages) {
+        const text = typeof m.content === 'string'
+            ? m.content
+            : Array.isArray(m.content)
+                ? m.content
+                    .map(part => (part && typeof part === 'object' && typeof (part as { text?: unknown }).text === 'string')
+                        ? (part as { text: string }).text
+                        : '')
+                    .join('\n')
+                : '';
+        if (!text) continue;
+        const index = /"skills":\[[\s\S]*?"version":"([0-9a-f]{8})"/.exec(text);
+        if (index) indexVersion = index[1];
+        for (const read of text.matchAll(/^# (\S+)\nName: [^\n]*\nDescription: [^\n]*\nVersion: ([0-9a-f]{8})\b/gm)) {
+            opened.set(read[1], read[2]);
+        }
+    }
+    return { indexVersion, opened };
+};
+
 export async function runDeskToolLoop(params: {
     config: import('../../types/provider').ProviderConfig;
     messages: import('../providers/GenericProviderService').ChatMessage[];
@@ -5332,6 +5755,23 @@ export async function runDeskToolLoop(params: {
      *  result is a tool payload — the first thing compaction shortens — so the
      *  loop keeps its own copy to test the outbound request against. */
     const skillBodiesThisTurn = new Map<string, string>();
+    /** The review the CONVERSATION already carries, not just this turn.
+     *
+     *  Every new message used to start from nothing: the seat had to call
+     *  `skill_index` again and re-open every skill it meant to change, even
+     *  though the index and the bodies it read on the previous turn are still
+     *  in its own transcript — one or two model rounds of pure ceremony per
+     *  write.
+     *
+     *  Seeding is safe rather than merely cheap. What is proved here is that
+     *  the library was SHOWN to this seat; whether that showing is still
+     *  current is decided in `writeSkillFile`, which refuses an index whose
+     *  fingerprint no longer matches the library and an update whose
+     *  `ifVersion` is not the version that exists. A stale seed therefore buys
+     *  nothing — it only costs a re-read. */
+    const seeded = skillReviewFromTranscript(messages);
+    let skillIndexVersion: string | undefined = seeded.indexVersion;
+    const openedSkillVersions = new Map(seeded.opened);
     const initialDeskDefs = DESK_TOOL_DEFINITIONS.filter(d => INITIAL_DESK_TOOL_NAMES.includes(d.function.name));
     /** Deferred names THIS seat may call. A restricted seat with a narrow list
      *  can have nothing to defer, and then no catalogue/loader is offered at
@@ -5828,6 +6268,7 @@ export async function runDeskToolLoop(params: {
                 allowedTools,
                 memoryEnabled,
                 lastUserMessage,
+                skillReview: { indexVersion: skillIndexVersion, opened: openedSkillVersions },
                 untrustedSeen,
                 modelName: config.selectedModel,
                 providerId: config.id,
@@ -5837,6 +6278,11 @@ export async function runDeskToolLoop(params: {
         const results = [...replays, ...extraResults, ...forgedResults, ...loadResults, ...coreResults];
         // What the seat actually read this turn. A bundled-file read is not the
         // procedure, so it never overwrites the body for that slug.
+        for (const r of coreResults) {
+            if (!r.ok) continue;
+            if (r.skillIndexVersion) skillIndexVersion = r.skillIndexVersion;
+            if (r.skillRead) openedSkillVersions.set(r.skillRead.slug, r.skillRead.version);
+        }
         for (const r of results) {
             if (r.name !== 'skill_view' || !r.ok) continue;
             const call = calls.find(c => c.id === r.toolCallId);
@@ -6127,7 +6573,7 @@ export async function* streamChatWithDeskTools(
     if (options?.memoryEnabled !== false) {
         try {
             const { listProfileMemories } = await import('../learning/profileMemory');
-            const { skillIndexRows } = await import('../learning/SkillMemoryService');
+            const { skillIndexRows } = await import('../learning/SkillFileService');
             const last = messages[messages.length - 1];
             const lastText = typeof last?.content === 'string' ? last.content : '';
             const hints = buildMemoryHints(
@@ -6139,7 +6585,7 @@ export async function* streamChatWithDeskTools(
                 // A candidate hypothes is not a rule: memoryHints must never
                 // tell the seat to open one as if its description were a task
                 // match. Only confirmed skills are named here.
-                skillIndexRows().filter(r => r.status === 'confirmed').map(r => r.slug),
+                skillIndexRows().map(r => r.slug),
             );
             if (hints.length > 0 && last) {
                 outbound = messages.slice(0, -1).concat([{

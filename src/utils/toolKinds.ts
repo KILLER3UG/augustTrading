@@ -108,6 +108,25 @@ const BY_LABEL: Record<string, ToolKindInfo> = {
     'price projection': { kind: 'compute', activity: 'Projecting prices' },
     'screener': { kind: 'compute', activity: 'Running the screener' },
     'best setups': { kind: 'compute', activity: 'Ranking the best setups' },
+    'volume profile': { kind: 'compute', activity: 'Building the volume profile' },
+    'naked pocs': { kind: 'compute', activity: 'Scanning for naked POCs' },
+    'anchored VWAP': { kind: 'compute', activity: 'Computing anchored VWAP' },
+    'order flow': { kind: 'compute', activity: 'Reading order flow' },
+    'effort vs result': { kind: 'compute', activity: 'Weighing effort against result' },
+    'auction state': { kind: 'compute', activity: 'Reading the auction state' },
+    'regime': { kind: 'compute', activity: 'Classifying the regime' },
+    'trade math': { kind: 'compute', activity: 'Computing the trade math' },
+    'swing structure': { kind: 'compute', activity: 'Reading swing structure' },
+    'liquidity': { kind: 'compute', activity: 'Mapping resting liquidity' },
+    'imbalances': { kind: 'compute', activity: 'Scanning fair value gaps' },
+    's/r zones': { kind: 'compute', activity: 'Clustering S/R zones' },
+    'wyckoff events': { kind: 'compute', activity: 'Detecting Wyckoff events' },
+    'setup base rate': { kind: 'read', activity: 'Measuring the setup base rate' },
+    'risk state': { kind: 'read', activity: 'Reading the risk state' },
+    'derivatives state': { kind: 'read', activity: 'Reading the derivatives state' },
+    'btc relative': { kind: 'compute', activity: 'Comparing against BTC' },
+    'playbook scan': { kind: 'compute', activity: 'Scanning the playbooks' },
+    'tool levels': { kind: 'draw', activity: 'Drawing the tool levels' },
 
     // ── draws: the desk is changing the chart ────────────────────────────
     'chart clear': { kind: 'draw', activity: 'Clearing the chart' },
@@ -201,6 +220,19 @@ export const DESK_TOOL_NAMES: readonly string[] = [
     'get_price_snapshot', 'get_order_book', 'get_derivatives',
     'get_liquidations', 'get_session_context', 'get_market_packet', 'get_all_timeframes', 'get_chart_view',
     'get_key_levels',
+    // The P0 market-structure family (docs/plans/tools-upgrade.md): volume,
+    // auction and regime reads computed from closed candles, plus the plan's
+    // own arithmetic. The seat reads these numbers instead of inventing them.
+    'volume_profile', 'naked_pocs', 'vwap', 'order_flow', 'effort_vs_result',
+    'auction_state', 'get_regime', 'trade_math',
+    // The P1 family: structure/liquidity/imbalance/zone/wyckoff reads, and
+    // the journal's own measured base rate and risk state.
+    'swing_structure', 'liquidity', 'imbalances', 'sr_zones', 'wyckoff_events',
+    'setup_base_rate', 'risk_state',
+    // The P2 composites: derivatives positioning and the cross-market read
+    // (the answer for assets without derivatives data), plus the family-H
+    // playbook layer — named detectors over the same reads.
+    'derivatives_state', 'btc_relative', 'scan_playbooks',
     'get_btc_context', 'recall', 'get_setup_history_stats', 'web_search', 'scan_setups',
     'get_trade_log',
     'project_future_price',
@@ -212,8 +244,8 @@ export const DESK_TOOL_NAMES: readonly string[] = [
     // discovered coin on the live chart. Neither needs a canvas: both write
     // or read through the shared chat session / the market services.
     'find_best_setups', 'switch_chart_symbol',
-    'write_memory_note', 'get_notebook_map', 'propose_skill', 'revise_skill', 'propose_strategy',
-    'amend_memory', 'forge_tool', 'scan_chart_skills',
+    'write_memory_note', 'get_notebook_map', 'skill_index', 'skill_write', 'propose_strategy',
+    'amend_memory', 'forge_tool',
     'skill_view',
     // The collaboration-memory trio the dock's own mandate already asks for.
     // They were refused at the executor because this list did not name them;

@@ -35,8 +35,8 @@ import { MessageRole } from '../../types';
 import { CASUAL_CHAT_SYSTEM_PROMPT, CHAT_SURFACE_SYSTEM_PROMPT } from '../../constants/prompts/chatPrompts';
 import { TASK_BUDGETS } from '../providers/taskBudgets';
 import { resolveComposerEffort, type ReasoningEffort } from '../providers/reasoningControls';
-import { buildSkillsIndexForPrompt, rankSkillIndexRows } from './tradeChatContext';
-import { skillIndexRows } from '../learning/SkillMemoryService';
+import { buildSkillsIndexForPrompt } from './tradeChatContext';
+import { skillIndexRows } from '../learning/SkillFileService';
 import { getMemoryFiles } from '../learning/MemoryFilesService';
 import { buildNotebookTopicsIndex } from '../learning/memoryTopics';
 import { buildLearningRulesIndex } from '../../utils/learningRulesIndex';
@@ -65,6 +65,17 @@ export const CHAT_SURFACE_TOOLS = [
     'get_price_snapshot', 'get_order_book', 'get_derivatives',
     'get_liquidations', 'get_session_context', 'get_market_packet', 'get_all_timeframes',
     'get_btc_context', 'get_indicators', 'project_future_price',
+    // The P0 market-structure family (docs/plans/tools-upgrade.md): the desk
+    // reads computed levels/flow/regime instead of estimating them.
+    'get_key_levels', 'volume_profile', 'naked_pocs', 'vwap', 'order_flow',
+    'effort_vs_result', 'auction_state', 'get_regime', 'trade_math',
+    // The P1 family — read-only here: `draw_tool_levels` stays dock-only (no
+    // canvas on this surface, and its receipt would have to promise one).
+    'swing_structure', 'liquidity', 'imbalances', 'sr_zones', 'wyckoff_events',
+    'setup_base_rate', 'risk_state',
+    // The P2 composites: derivatives positioning + cross-market, plus the
+    // family-H playbook scan.
+    'derivatives_state', 'btc_relative', 'scan_playbooks',
     // The trader's own history, as rows and as past sessions.
     'get_trade_log', 'recall', 'get_setup_history_stats', 'recall_chat',
     // Market-wide discovery and simulation.
@@ -81,7 +92,7 @@ export const CHAT_SURFACE_TOOLS = [
     // this surface's tool list never carried it — the one call its own
     // instructions demanded was the one call the executor refused (the dead
     // affordance this file exists to prevent).
-    'skill_view', 'write_memory_note', 'get_notebook_map', 'propose_skill', 'revise_skill', 'propose_strategy',
+    'skill_view', 'skill_index', 'skill_write', 'write_memory_note', 'get_notebook_map', 'propose_strategy',
     'amend_memory', 'forge_tool',
     'remember', 'read_memory', 'forget',
     // The one tool with a human in it: it suspends the turn until the trader
@@ -123,12 +134,12 @@ export interface ChatSurfacePrompt {
 /**
  * Assemble a surface mandate with the trader's notebook under it: surface
  * mandate + skills index + active strategy plans + the profile memory index, each
- * read FRESH per turn so a `remember` or an approved skill lands in the NEXT
- * turn's prompt instead of waiting for a reload.
+ * read FRESH per turn so a `remember` or a skill the model just wrote lands in
+ * the NEXT turn's prompt instead of waiting for a reload.
  *
- * `where` phrases the skills heading, because two surfaces ask the same question
- * about different subjects — the Agents surface matches a skill to "what the trader
- * asks about", a scheduled run to "what this schedule is looking at".
+ * `where` phrases the skills heading, because the surfaces ask the same question
+ * about different subjects: the Agents surface matches a skill to "what the
+ * trader asks about", the chart dock to "this chart".
  *
  * Every block is guarded separately. An unreadable notebook must not cost the
  * trader their answer: the prompt simply carries less, the same way the dock's
@@ -144,12 +155,7 @@ export const surfacePromptWith = (mandate: string, where: string, opts: { memory
         // The SAME ranked list the prompt carries, so the row's `injectedSkills`
         // names exactly the skills the model was shown. Ranking it twice (here
         // and inside the builder) is idempotent — the sort is stable.
-        const ranked = rankSkillIndexRows(rows);
-        // Only confirmed skills are named as usable (and recorded as injected).
-        // Candidates are hypotheses: the builder collapses them to a count and
-        // memoryHints must never recommend one.
-        const confirmed = ranked.filter(r => r.status === 'confirmed');
-        skills = confirmed.slice(0, budget.skills).map(r => r.slug);
+        skills = rows.slice(0, budget.skills).map(r => r.slug);
         skillsBlock = buildSkillsIndexForPrompt(rows, budget.skills, where);
     } catch {
         skills = [];

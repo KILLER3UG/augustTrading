@@ -37,7 +37,11 @@ import { focusedGoal } from '../goals/GoalService';
 import { buildTradeChatContext, describeChartSnapshotForModel } from './tradeChatContext';
 import {
     describeDrawingsForModel, drawingFromChartTool, drawingsFromDetectedPattern, drawingsFromLevelTool, type ChartDrawing,
+    MODEL_COLOR_NAMES, createDrawingId,
 } from './chartDrawings';
+// Type-only: erased at build, so the market-tool module stays lazy even
+// though the drawer names its anchor unions in two casts.
+import type { ProfileAnchor, VwapAnchor } from '../analysis/marketTools';
 import { runPresentTrade } from './presentTradeTool';
 import { runToolTurn, type ToolTurnEvents, type ToolTurnRequest } from './toolTurn';
 import { scoreDrawnLevel, levelAccuracy, describeLevelAccuracyForModel } from './tradePlanLevels';
@@ -51,11 +55,7 @@ import { phtClock } from '../../utils/timezone';
 import { truncationNotice, withTruncationWindow } from '../../utils/finishReason';
 import { sanitizeErrorText } from '../../utils/runStatus';
 import { ensureNotifyPermission } from '../infrastructure/notify';
-import { recordSessionForReview, runSessionSkillReview, runThesisResolver, type ReviewableSession } from '../learning/sessionSkillReview';
 import { runTraderLearner } from '../learning/traderLearner';
-import {
-    nudgeSupervisor, setSessionModel,
-} from '../learning/skillSupervisor';
 import { getActiveUsername } from '../../utils/activeUser';
 import { baseOf, quoteOf } from '../../utils/symbol';
 import { isPassReply } from '../agents/groupRounds';
@@ -76,7 +76,6 @@ import type { AgentBot } from '../agents/agentRoster';
 import { formatModelDisplayName } from '../../utils/providerUtils';
 import { isVisionModel } from '../../utils/modelUtils';
 import { TASK_BUDGETS } from '../providers/taskBudgets';
-import { getHarnessSettings } from '../../utils/harnessSettings';
 import { resolveComposerEffort, type ReasoningEffort } from '../providers/reasoningControls';
 import type { Attachment } from '../../hooks/useChatAttachments';
 import { recordToolTurnUsage } from '../../utils/sessionUsage';
@@ -350,7 +349,7 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
      *  ITS OWN session even after the user switched away. */
     const executePanelTool = async (call: DeskToolCall, turn: PanelTurnContext): Promise<DeskToolResult | null> => {
         const name = call.name;
-        if (name !== 'draw_on_chart' && name !== 'draw_detected' && name !== 'mark_trade_levels' && name !== 'clear_chart_drawings'
+        if (name !== 'draw_on_chart' && name !== 'draw_detected' && name !== 'draw_tool_levels' && name !== 'mark_trade_levels' && name !== 'clear_chart_drawings'
             && name !== 'present_trade' && name !== 'watch_price' && name !== 'wake_me' && name !== 'cancel_watch') return null;
         const args = call.arguments ?? {};
         const receipt = (ok: boolean, content: string): DeskToolResult => ({ toolCallId: call.id, name, ok, content });
@@ -556,6 +555,85 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
                 + `${visibility(drawings)}${canvasNote}`
             );
         }
+        // draw_tool_levels — the market tools' chart half. The model NAMES the
+        // tool (and optionally which labels it wants); the app RE-RUNS the
+        // tool fresh and draws at the computed prices. Same rule as
+        // draw_detected: the drawing and the computation cannot disagree,
+        // because the model never restates a number.
+        if (name === 'draw_tool_levels') {
+            // Lazy: the market-tool module (and its fetch layer) stays out of
+            // the dock chunk until a seat actually draws.
+            const mt = await import('../analysis/marketTools');
+            const wanted = String(args.tool ?? '').trim();
+            if (!mt.DRAWABLE_TOOLS.includes(wanted)) {
+                return receipt(false, `draw_tool_levels rejected: "tool" must be one of ${mt.DRAWABLE_TOOLS.join(', ')}.`);
+            }
+            // Re-run the tool FRESH at draw time (never from a cached copy the
+            // turn might have clipped) — the same move draw_detected makes.
+            const sym = String(args.symbol || turn.symbol || '').trim();
+            const items = Array.isArray(args.items) ? args.items.map(String) : undefined;
+            let content: string;
+            try {
+                switch (wanted) {
+                    case 'volume_profile':
+                        content = await mt.runVolumeProfileTool(sym, (['session', 'day', 'week', 'visible', 'swing', 'custom'].includes(String(args.anchor)) ? String(args.anchor) : 'session') as ProfileAnchor);
+                        break;
+                    case 'naked_pocs':
+                        content = await mt.runNakedPocsTool(sym, String(args.granularity) === 'week' ? 'week' : 'day', Math.min(20, Math.max(1, Number(args.lookback) || 5)));
+                        break;
+                    case 'vwap':
+                        content = await mt.runVwapTool(sym, (['session_open', 'swing_high', 'swing_low', 'custom'].includes(String(args.anchor)) ? String(args.anchor) : 'session_open') as VwapAnchor);
+                        break;
+                    case 'auction_state':
+                        content = await mt.runAuctionStateTool(sym);
+                        break;
+                    case 'get_key_levels':
+                        content = await mt.runKeyLevelsEnvelope(sym);
+                        break;
+                    default:
+                        content = await mt.runStructureTool(wanted, sym, (['5m', '15m', '1h', '4h'].includes(String(args.interval)) ? String(args.interval) : '1h'));
+                        break;
+                }
+            } catch (e) {
+                return receipt(false, `draw_tool_levels could not re-run ${wanted}: ${e instanceof Error ? e.message : 'fetch failed'}.`);
+            }
+            if (!content) return receipt(false, `draw_tool_levels: ${wanted} returned nothing.`);
+            let parsed: { values?: unknown; data_quality?: { reason?: string } };
+            try {
+                parsed = JSON.parse(content);
+            } catch {
+                return receipt(false, `draw_tool_levels: ${wanted} returned a non-JSON result; nothing to draw.`);
+            }
+            // get_key_levels' shape is its own (session_levels at the root, no
+            // envelope) — wrap it so the extractor sees one shape.
+            const set = mt.drawableLevelsFor(wanted, wanted === 'get_key_levels' ? { values: parsed } : parsed, items);
+            if (!set || (set.hlines.length === 0 && set.zones.length === 0)) {
+                const reason = parsed.data_quality?.reason ?? 'no drawable levels in the fresh result (nothing qualified)';
+                return receipt(false, `draw_tool_levels: ${wanted} produced nothing drawable — ${reason}. Nothing was drawn.`);
+            }
+            const drawnPrice2 = drawnPrice ?? undefined;
+            const nowSec = Date.now() / 1000;
+            // Zones anchor to the VISIBLE window (a zone is a region, not a
+            // point); without a fitted range, fall back to the snapshot's
+            // candle span.
+            const t0 = snap?.visibleRange?.timeLow
+                ?? (snap && snap.candles.length > 0 ? snap.candles[0].time : nowSec - 3600);
+            const t1 = snap?.visibleRange?.timeHigh
+                ?? (snap && snap.candles.length > 0 ? snap.candles[snap.candles.length - 1].time : nowSec);
+            const mk = (price: number, label: string, color: string): ChartDrawing => ({
+                id: createDrawingId(), kind: 'hline', points: [{ t: nowSec, p: price }], color, createdAt: Date.now(), label, drawnPrice: drawnPrice2,
+            });
+            const mkZone = (label: string, top: number, bottom: number, color: string): ChartDrawing => ({
+                id: createDrawingId(), kind: 'rect', points: [{ t: t0, p: top }, { t: t1, p: bottom }], color, createdAt: Date.now(), label, drawnPrice: drawnPrice2,
+            });
+            const drawings2: ChartDrawing[] = [
+                ...set.hlines.map(h => mk(h.price, h.label, MODEL_COLOR_NAMES[h.color])),
+                ...set.zones.map(z => mkZone(z.label, z.top, z.bottom, MODEL_COLOR_NAMES[z.color])),
+            ].slice(0, 20); // the model-drawing cap is 40 per symbol; one call stays half of it
+            addModelDrawings(drawings2, turn);
+            const listed = drawings2.map(d => `${d.label}${d.kind === 'rect' ? ' (zone)' : ''} @ ${d.points[0].p}`).join(', ');
+            return receipt(true, `Drew ${wanted}'s computed levels at the tool's own prices: ${listed}.${visibility(drawings2)}${canvasNote}`);
+        }
         // draw_on_chart — resolve bars-ago anchors against the newest candle.
         const lastBarTime = snap && snap.candles.length > 0
             ? snap.candles[snap.candles.length - 1].time
@@ -604,7 +682,7 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
         // block, not only the emit_signal receipt — a lesson the loop already
         // earned is invisible to an ordinary answer otherwise. A failed store
         // read costs the section, never the turn.
-        const { diagnosisBriefBlock } = await import('../tracking/diagnosisSkillCluster');
+        const { diagnosisBriefBlock } = await import('../tracking/diagnosisBrief');
         const postMortemBrief = await diagnosisBriefBlock(symbol);
         const cached = packetCache.get(symbol);
         if (cached && Date.now() - cached.atMs < PACKET_CACHE_MS) {
@@ -728,7 +806,7 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
                 // PANEL seat's next turn (and the synthesis) can SEE that a
                 // peer proposed/edited something — the cross-talk the user
                 // asked for around skill/memory/tool edits.
-                onAction?.(`${action.ok ? action.verb : 'rejected'} ${action.tool === 'revise_skill' || action.tool === 'propose_skill' ? `skill ${action.label}` : action.tool === 'write_memory_note' ? `memory note ${action.label}` : action.tool === 'amend_memory' ? `memory amendment ${action.label}` : action.tool === 'forge_tool' ? `tool ${action.label}` : action.label}`);
+                onAction?.(`${action.ok ? action.verb : 'rejected'} ${action.tool === 'skill_write' ? `skill ${action.label}` : action.tool === 'write_memory_note' ? `memory note ${action.label}` : action.tool === 'amend_memory' ? `memory amendment ${action.label}` : action.tool === 'forge_tool' ? `tool ${action.label}` : action.label}`);
             },
         };
         // The truncation tally is per-RUN, and this is the run. Without a window
@@ -803,25 +881,17 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
         return outcome.carry;
     };
 
-    /** Every few Chart AI conversations, quietly review the recent ones for
-     *  concrete trades the user+model discussed, score each against the price
-     *  history that followed, and queue win→repeat / loss→avoid skill DRAFTS
-     *  for the Inbox. Fire-and-forget, provider-gated, never blocks the chat. */
-    /** Skill learning hooks, fire-and-forget after each send. Layers:
-     *  (1) the EVENT-DRIVEN resolver re-scores cached unresolved theses on
-     *  every send (throttled inside to ~1/10min) so a discussed trade lands
-     *  in the Inbox the moment price resolves it; (2) the every-3-sessions
-     *  counter additionally runs the full transcript EXTRACTION pass;
-     *  (3) the TRADER LEARNER distills durable habits into profileMemory
-     *  every 2 sessions; (4) the SUPERVISOR gets a throttled nudge to work
-     *  its queues. All four run the session's own model (panel ⇒ first
-     *  seat) as independent calls, and all route through the draft gates. */
-    const maybeReviewSessions = (supervisorCfg: ProviderConfig | null): void => {
-        const model = supervisorCfg ?? provider;
+    /** Trader-learner hook, fire-and-forget after each send. It distills
+     *  durable habits into profile memory from the recent transcripts, using
+     *  the model the trader is actually talking to — the panel's FIRST seat
+     *  when several are selected, else the session's own pick. The every-2-sends
+     *  cadence lives inside the learner, not here. Best-effort:
+     *  no ready provider means no pass, and a throw never reaches the turn. */
+    const maybeReviewSessions = (learnerCfg: ProviderConfig | null): void => {
+        const model = learnerCfg ?? provider;
         if (!model) return;
         const user = getActiveUsername();
-        void runThesisResolver(user, model, trades).catch(() => { /* best-effort */ });
-        const reviewable: ReviewableSession[] = sessions
+        const reviewable = sessions
             .filter(s => s.kind !== 'group' && s.entries.some(e => e.role === 'ai' && e.text.trim()))
             .map(s => ({
                 id: s.id,
@@ -834,15 +904,7 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
             }));
         if (reviewable.length > 0) {
             void runTraderLearner(user, model, reviewable.map(s => s.transcript)).catch(() => { /* best-effort */ });
-            // Opt-in capability (utils/harnessSettings.autoDraftingEnabled). Checked
-            // BEFORE the counter advances: while it is off the loop must not accrue
-            // a debt of studied sessions that fires a burst of drafts the moment
-            // someone flips the switch.
-            if (getHarnessSettings().autoDraftingEnabled && recordSessionForReview(user, 3)) {
-                void runSessionSkillReview(user, reviewable, model, trades).catch(() => { /* best-effort */ });
-            }
         }
-        nudgeSupervisor(supervisorCfg);
     };
 
     /** Send a message — or RETRY one: `retryOf` is the id of a previous USER
@@ -902,15 +964,14 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
                 mutate(sid, s => (s.conversationId === synced ? s : { ...s, conversationId: synced }));
             }
         }
-        // WHO SUPERVISES: this session's model — a panel's FIRST seat when
-        // several are selected. Reported now, and it rides every learning
-        // hook fired from this send's finally block.
-        const supSeat = session.kind === 'panel' ? session.panelModels?.[0] : undefined;
-        const supBot = session.botId ? bots.find(b => b.id === session.botId) : undefined;
-        const supervisorCfg = (supSeat ? configForSeat(supSeat.providerId, supSeat.modelId) : null)
-            ?? (supBot ? configForSeat(supBot.providerId, supBot.modelId) : null)
+        // WHO DOES THE LEARNING: this session's model — a panel's FIRST seat
+        // when several are selected, else the bot's pick, else the session's
+        // own provider. It rides the learner hook fired from the finally block.
+        const learnerSeat = session.kind === 'panel' ? session.panelModels?.[0] : undefined;
+        const learnerBot = session.botId ? bots.find(b => b.id === session.botId) : undefined;
+        const learnerCfg = (learnerSeat ? configForSeat(learnerSeat.providerId, learnerSeat.modelId) : null)
+            ?? (learnerBot ? configForSeat(learnerBot.providerId, learnerBot.modelId) : null)
             ?? (session.kind !== 'panel' ? provider : null);
-        setSessionModel(supervisorCfg);
         // Retry: the model's history is everything BEFORE the retried bubble
         // (its stale answers are gone from the store too).
         // The bot answers from the SAME conversation the trader is looking at.
@@ -1086,7 +1147,7 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
             } finally {
                 mutate(sid, s => ({ ...s, entries: s.entries.map(en => (en.id === aiEntry.id ? settleDockEntry({ ...en, ...(en.workedMs === undefined ? { workedMs: workedMsFor(soloStartedAt) } : {}) }, 'completed') : en)) }));
                 endRunOwned(sid, controller);
-                maybeReviewSessions(supervisorCfg);
+                maybeReviewSessions(learnerCfg);
                 // THE TURN HAS TO TEACH THE BOT. `recordBotTurnOutcome` writes
                 // the lesson into this bot's own memory.md and feeds a closed
                 // bot-authored trade into the shared skills/evidence path. The
@@ -1299,7 +1360,7 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
             }
         } finally {
             endRunOwned(sid, controller);
-            maybeReviewSessions(supervisorCfg);
+            maybeReviewSessions(learnerCfg);
         }
     };
 
