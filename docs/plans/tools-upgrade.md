@@ -406,3 +406,44 @@ extreme invalidation, failed-IB fade, spring fires / low-confidence spring refus
 agreement and refusal, absorption at a level, the Holy-Grail shape, and a quiet context firing
 nothing), boundaries, docs, build (the lazy `marketTools` chunk is 71 kB; entry 1,136 kB),
 boot-probe.
+
+## 13. The eval harness + the meta-label (2026-11-07, owner directive)
+
+**`scripts/ablation.cjs` — the paired eval the task pre-declared and the repo never had.**
+Seeded, time-blocked (symbol, decision-time) samples over the lookback, built from ranged
+as-of fetches with a PER-SAMPLE integrity check (no closed bar at/after the decision — first
+runs: 0 detections). The arms receive the SAME closed-bar tape; only the pack differs
+(baseline rows / +volume-auction pack / +regime-levels-trade-math pack) — the design-rule-7
+pack shape, so a score difference is the pack's effect and nothing else. The model's own
+entry/stop/target are labeled by the REAL resolver over the post-decision tape (stop-first,
+costs in R). Metrics per arm: n, abstain rate, hit rate, avg net R, Brier (declared
+confidence→probability mapping), hallucinated-price rate (stated levels vs the pack's printed
+numbers and the tape), tokens per decision, and the per-regime breakdown keyed on the as-of
+`regime_id`. The THREE pre-declared comparisons score by paired bootstrap (10k) with the
+CI-straddling-zero verdict — "cannot tell yet", never "no effect". `--dry-run` needs no
+provider and exercises the whole scoring path; a real run takes
+`AUGUST_EVAL_BASE_URL/AUGUST_EVAL_API_KEY/AUGUST_EVAL_MODEL`.
+
+**`meta_label`** (core: `market/metaLabelCore.ts`) — the P3 candidate, implemented as the
+advisory read it was specified as: TAKE / REDUCE (half size) / SKIP / NO_DATA with reasons,
+composed from the trader's own base rate (Wilson interval vs the plan's break-even AFTER
+costs — skip when even the upper bound cannot pay), the drawdown traffic light (red skips),
+correlated open-plan heat and a thin sample (reduce), and the half-Kelly ceiling (a ceiling on
+size, never a raise). ADVISORY by construction: it never refuses a card and never blocks a
+turn — `proposalGate` stays the only refusing gate. On `INITIAL_DESK_TOOL_NAMES` (a plan
+should be read against the trader's own numbers before it is presented) and both seats.
+The fixtures caught a real unit bug before it shipped: the Wilson bounds arrive as fractions
+and the break-even as a percent — the raw comparison skipped every plan that had a base rate
+at all.
+
+**Pushed to main** (owner's 2026-11-06 cluster committed first as its own item, per the
+owner's call): `fdb6b81d` cleanup → `4e5d54c0` P0 cores → `06a0a50d` P1/P2/H + registration →
+`89a09bb8` contracts + smoke → `42a430c7` doc → `ba90ad93` eval + meta-label → `92d20db0`
+style fix. Contracts **548/548**; lint 0 errors / 366 warnings; boundaries, docs, build,
+boot-probe green; smoke 17/17.
+
+**CI status (honest):** red on the O-146 entry-chunk ratchet ONLY — CI builds the chunk at
+**1109 kB vs the 1100 kB ceiling** the cluster's action.yml sets. Before this work the chunk
+was **1312 kB** (Nov 5 run): the lazy-import discipline this work introduced took ~200 kB out
+of the startup graph, and the remaining 9 kB is the new tools' schema text (O-59's domain).
+The fix is the registered O-146 lazy-import work, not a ceiling raise — ratchets go down.
