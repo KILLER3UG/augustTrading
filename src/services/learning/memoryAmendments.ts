@@ -14,7 +14,8 @@
 
 import { MemoryFile } from '../../types/learning';
 import { bytesOf } from '../../utils/memoryBudget';
-import { clearMemoryWriteFailure, isHarnessRegeneratedTarget, recordMemoryWriteFailure } from './MemoryFilesService';
+import { SKILL_FOLDER } from './SkillFileService';
+import { clearMemoryWriteFailure, findFolderByName, isHarnessRegeneratedTarget, recordMemoryWriteFailure } from './MemoryFilesService';
 
 export interface MemoryAmendment {
     id: string;
@@ -113,9 +114,10 @@ export const validateAmendment = (input: {
     if (input.proposedContent.length > 8000) errors.push('proposedContent exceeds 8000 chars');
     if (!(input.reason ?? '').trim()) errors.push('reason is required');
     if (!input.targetFile) errors.push('target file not found');
+    else if (input.targetFile.folderId === findFolderByName(SKILL_FOLDER)?.id) errors.push('use skill_index and skill_write to change skills');
     // Model notes are autoManaged (the prune pass uses that flag) but are NOT
     // rebuilt by the harness. Only a genuinely regenerated file is refused.
-    else if (isHarnessRegeneratedTarget(input.targetFile)) errors.push('harness-regenerated files (profile memory, pattern memory, doctrine, recurring mistakes, suggestions) cannot be amended — they are rebuilt by the harness');
+    else if (isHarnessRegeneratedTarget(input.targetFile)) errors.push('harness-regenerated files (profile memory, pattern memory, recurring mistakes, suggestions) cannot be amended — they are rebuilt by the harness');
     else if (input.proposedContent === input.targetFile.content) errors.push('proposed content is identical to the current content');
     return { ok: errors.length === 0, errors };
 };
@@ -163,10 +165,11 @@ export const listAmendments = (status?: MemoryAmendment['status']): MemoryAmendm
 /**
  * Apply an approved correction to the notebook, and say whether the bytes landed.
  *
- * This lives here, not in the inbox, because there are TWO approvers — the inbox
- * button and the supervisor's override — and the supervisor used to call the
- * status-only helper, so an override marked a correction approved while the note
- * kept its old text (the 2026-10-27 audit M-4). One applier, one answer.
+ * This lives here, not in the inbox, because there are TWO callers — the
+ * inbox's Approve button and the model's own direct write (`applyAmendmentNow`
+ * below) — and the second one used to call the status-only helper, so a row was
+ * marked approved while the note kept its old text (the 2026-10-27 audit M-4).
+ * One applier, one answer.
  *
  * A missing target is a refusal, not a silent approval: the note a model wanted
  * to correct was deleted, so there is nothing to apply and the human must be told.
@@ -182,6 +185,7 @@ export const applyAmendmentContent = async (
     return withNotebookWriteLock(async () => {
         const file = getMemoryFiles().files.find(f => f.id === a.fileId);
         if (!file) return { ok: false, error: 'The note this correction targeted no longer exists, so nothing was changed.' };
+        if (file.folderId === findFolderByName(SKILL_FOLDER)?.id) return { ok: false, error: 'Use skill_index and skill_write to change skills.' };
         const next = a.kind === 'supersede'
             ? `${file.content}
 
@@ -259,6 +263,7 @@ export const undoAmendment = async (
     return withNotebookWriteLock(async () => {
         const file = getMemoryFiles().files.find(f => f.id === a.fileId);
         if (!file) return { ok: false, error: 'the note no longer exists' };
+        if (file.folderId === findFolderByName(SKILL_FOLDER)?.id) return { ok: false, error: 'use skill_index and skill_write to change skills' };
         if (a.appliedContent !== undefined && file.content !== a.appliedContent) {
             return { ok: false, error: 'the note changed after this correction, so undo was refused' };
         }

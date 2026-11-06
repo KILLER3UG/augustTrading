@@ -1,9 +1,0 @@
-# hermes-agent :: hermes-state-core :: 7 files :: 163 KB
-# size_bytes	type	path
-95230	source	hermes_state.py
-9186	source	hermes_state_lockguard.py
-4904	source	hermes_state_lockowners.py
-5142	source	hermes_state_pidns.py
-22725	source	hermes_state_profile_repair.py
-18931	source	hermes_state_prune_rewrite.py
-10511	source	hermes_state_rewind.py

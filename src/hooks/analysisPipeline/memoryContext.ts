@@ -1,11 +1,11 @@
 /**
  * Pipeline stage module — trader-notebook memory context assembly.
  *
- * Extracted verbatim from useAnalysisPipeline's send path: everything the
- * analysts and moderator see from the notebook for THIS setup (matched
- * skills/doctrine under per-stage budgets, bot memory, similar-setups track
- * record, regime weighting, loss-priming rows). Pure given its inputs, so it
- * is unit-testable without mounting the hook.
+ * Extracted verbatim from useAnalysisPipeline's send path: everything the seat
+ * sees from the notebook for THIS setup (the matched skill's index line, the
+ * profile memory index, bot memory, similar-setups track record, regime
+ * weighting, loss-priming rows), each under its own budget. Pure given its
+ * inputs, so it is unit-testable without mounting the hook.
  */
 
 import { extractLessonFromPostMortem } from '../../services/learning/MemoryFilesService';
@@ -35,17 +35,14 @@ const BOT_MEMORY_TOTAL_CAP = BOT_MEMORY_TOTAL_CHAR_BUDGET;
 export { minePatternFromPrompt };
 
 export interface PipelineMemoryContext {
-    /** Setup query that drove retrieval (also reused by verdict-stage calls). */
+    /** Setup query that drove retrieval. */
     memoryQuery: MemoryRetrievalQuery;
     detectedLearningCoin?: string;
     pendingDirection: 'Long' | 'Short' | 'Neutral';
     pendingPattern?: string;
     botMemoryContext: string;
-    /** Analyst-audience notebook slice (stage budget: opening). */
+    /** Analyst-audience notebook slice — the one retrieval depth a seat gets. */
     memoryFilesContext: string;
-    /** Analyst-audience notebook slice for the rebuttal rounds (stage budget:
-     *  rebuttal). Built under the same runId as the opening slice. */
-    rebuttalMemoryContext: string;
     memoryRetrieved: RetrievedMemorySource[];
     similarSetupsContext: string;
     regimeWeightingContext: string;
@@ -71,8 +68,8 @@ export const assemblePipelineMemoryContext = async (
      *  slice below (skills, similar setups/trades, loss priming) sees only
      *  what was KNOWN by that moment. Omitted ⇒ live behavior, unchanged. */
     asOfMs?: number,
-    /** Model context window (tokens) — threads to the notebook slice's stage
-     *  budgets. Omitted ⇒ default window, unchanged. */
+    /** Model context window (tokens) — threads to the notebook slice's
+     *  budget. Omitted ⇒ default window, unchanged. */
     contextWindowTokens?: number,
     /** The Settings memory switch. False strips the profile index from every
      *  seat this assembly feeds — the deep pipeline used to read it
@@ -141,9 +138,10 @@ export const assemblePipelineMemoryContext = async (
             return contexts.join('\n\n---\n\n');
         } catch { return ''; }
     })();
-    // Analyst seats get the opening slice (independent read). The verdict slice
-    // was built for a moderator that no longer exists — one model answers a
-    // send — so the second retrieval was a full notebook read nobody consumed.
+    // Analyst seats get ONE notebook slice. The rebuttal slice used to be built
+    // here as well — a second full retrieval per send whose result no consumer
+    // ever read (it was returned and dropped), and the verdict slice before it
+    // served a moderator that no longer exists: one model answers a send.
     // The profile index was read unconditionally and with no budget, so this
     // path ignored both the Settings switch and the window the same table sizes
     // for every other seat. Both now come from the shared sources.
@@ -151,15 +149,7 @@ export const assemblePipelineMemoryContext = async (
         ? ''
         : buildProfileMemoryIndex(undefined, indexBudgetFor(contextWindowTokens ?? 200_000).memory);
     const withProfile = (ctx: string): string => [profileMemoryIndex, ctx].filter(Boolean).join('\n\n---\n\n');
-    const memoryFilesContext = withProfile([getMemoryFilesContext(memoryQuery, loggedTrades, 'analyst', 'opening', { runId, asOfMs, contextWindowTokens }), botMemoryContext].filter(Boolean).join('\n\n---\n\n'));
-    // Rebuttal rounds re-enter the same seats, and until now they argued with
-    // ZERO retrieved memory — the 400-char rebuttal budget existed with no
-    // caller. Same runId as the opening slice on purpose: the ε-holdout is
-    // seeded per run, so a control run must be withheld here too or the holdout
-    // group would quietly receive treatment in round 2. Deliberately lean: no
-    // profile prefix and no bot memory, since the persona and openings are
-    // already on the seat's context and this budget is a third of the opening's.
-    const rebuttalMemoryContext = getMemoryFilesContext(memoryQuery, loggedTrades, 'analyst', 'rebuttal', { runId, asOfMs, contextWindowTokens });
+    const memoryFilesContext = withProfile([getMemoryFilesContext(memoryQuery, loggedTrades, 'analyst', { runId, asOfMs, contextWindowTokens }), botMemoryContext].filter(Boolean).join('\n\n---\n\n'));
     const memoryRetrieved = listRetrievedMemorySources(memoryQuery, loggedTrades, 'analyst');
 
     // JOURNAL-DRIVEN ACCURACY (SetupMemoryService): before the analysts
@@ -205,7 +195,6 @@ export const assemblePipelineMemoryContext = async (
         pendingPattern,
         botMemoryContext,
         memoryFilesContext,
-        rebuttalMemoryContext,
         memoryRetrieved,
         similarSetupsContext,
         regimeWeightingContext,

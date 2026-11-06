@@ -90,12 +90,6 @@ export interface ProposalGate {
      *  re-run at log time, so a plan opened from yesterday's session is not
      *  logged against a number the market left behind. */
     stampedAt: string;
-    /** The ceiling a fired code-checked AVOID predicate implies (0-1). The
-     *  gate takes the LOWER of this and its own cap; absent when no predicate
-     *  fired. */
-    skillCeiling?: number;
-    /** Which skill(s) fired, for the card and the row's warnings. */
-    skillNote?: string;
     /** Set when the plan must NOT be logged: its levels are inverted for the
      *  stated direction (E-57 §5 — there is no ratio to grade at all), or its
      *  net expectancy at its own probability is at or below the trader's floor.

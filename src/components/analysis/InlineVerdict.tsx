@@ -13,13 +13,12 @@
 
 import React from 'react';
 
-import type { Message } from '../../types/message';
 import type { TradeAnalysis } from '../../types/analysis';
 import { fmtPercent } from '../../utils/formatters';
 import { fmtRiskReward } from '../../utils/riskReward';
 import { ChevronDown } from '../shared/Icons';
 import StatusPill, { VerdictReviewPill } from '../ui/StatusPill';
-import VerdictAudit from './VerdictAudit';
+import VerdictAudit, { verdictNeedsAudit } from './VerdictAudit';
 
 const VerdictLine: React.FC<{ label: string; value: React.ReactNode }> = ({ label, value }) => (
     <div className="flex items-baseline justify-between gap-3">
@@ -30,9 +29,7 @@ const VerdictLine: React.FC<{ label: string; value: React.ReactNode }> = ({ labe
 
 const InlineVerdict: React.FC<{
     analysis?: TradeAnalysis;
-    evidencePack?: Message['evidencePack'];
-    runContract?: Message['runContract'];
-}> = ({ analysis, evidencePack, runContract }) => {
+}> = ({ analysis }) => {
     const a = analysis;
     if (!a) return null;
     const up = a.direction === 'Long';
@@ -75,25 +72,24 @@ const InlineVerdict: React.FC<{
                 <VerdictLine label="target" value={a.takeProfit?.[0]?.price ?? '—'} />
                 {typeof a.probability === 'number' && <VerdictLine label="probability" value={fmtPercent(a.probability, 0)} />}
             </div>
-            {/* Progressive disclosure for the forensic audit. The summary is
-                SENTENCE CASE like the rail headings it sits beside — the
-                `uppercase tracking-wider text-ui-2xs` texture this surface
-                removed everywhere else was still on this one row, so a
-                sentence-case source shouted from the CSS. */}
-            <details className="group/audit mt-2" open>
-                <summary className="flex cursor-pointer select-none items-center gap-1.5 py-1 text-ui-sm font-semibold text-zinc-500 transition-colors hover:text-zinc-300 list-none">
-                    <ChevronDown className="h-3 w-3 transition-transform group-open/audit:rotate-180" aria-hidden="true" />
-                    <span>Inspect evidence & gate</span>
-                </summary>
-                <div className="mt-1.5 border-t border-zinc-800/60 pt-1.5">
-                    <VerdictAudit
-                        analysis={a}
-                        evidencePack={evidencePack}
-                        runContract={runContract}
-                        className="mt-1"
-                    />
-                </div>
-            </details>
+            {/* Progressive disclosure for the audit — rendered ONLY when the
+                verdict actually needs explaining (a decline or a watch). An
+                always-on shell whose body returns null is a control that opens
+                to nothing. */}
+            {verdictNeedsAudit(a) && (
+                <details className="group/audit mt-2" open>
+                    <summary className="flex cursor-pointer select-none items-center gap-1.5 py-1 text-ui-sm font-semibold text-zinc-500 transition-colors hover:text-zinc-300 list-none">
+                        <ChevronDown className="h-3 w-3 transition-transform group-open/audit:rotate-180" aria-hidden="true" />
+                        <span>Inspect evidence & gate</span>
+                    </summary>
+                    <div className="mt-1.5 border-t border-zinc-800/60 pt-1.5">
+                        <VerdictAudit
+                            analysis={a}
+                            className="mt-1"
+                        />
+                    </div>
+                </details>
+            )}
         </div>
     );
 };

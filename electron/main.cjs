@@ -12,7 +12,9 @@ const { createSseParser } = require('./sseParser.cjs');
 // the owner names it with AUGUSTTRADING_REPO. A packaged build has no dev
 // server to apply edits, so it reports the tool as unavailable rather than
 // pretending. Every path goes through shared/repoSandbox.cjs; every write
-// leaves a copy under .august-checkpoints so any change is one undo away.
+// leaves a copy under .august-checkpoints and names its path in the receipt,
+// so a human can put the bytes back by hand. The app writes those copies and
+// has no restore path — it does not promise an undo it has not built.
 const AUGUSTTRADING_REPO = process.env.AUGUSTTRADING_REPO
     ? path.resolve(process.env.AUGUSTTRADING_REPO)
     : null;

@@ -258,29 +258,27 @@ const redactForgedTools = (value: unknown): unknown => {
  *   confidence_calibration        (the legacy key the line above migrates FROM)
  *   confluence_historical_stats   services/analysis/TimeframeConfluenceService.ts:206
  *
- * The learning loop added eleven more that bypass Preferences the same way,
+ * The learning loop added four more that bypass Preferences the same way,
  * all of them invisible to a backup before this list knew them. The symbol is
  * named rather than the line for the ones that move as their module is edited:
  *   memory_amendments_v1          services/learning/memoryAmendments.ts (KEY)
  *   august_harness_lessons_v1     services/learning/harnessLessons.ts (STORAGE_KEY)
- *   session_review_counter_v1     services/learning/sessionSkillReview.ts (COUNTER_KEY)
- *   session_review_drafted_v1     services/learning/sessionSkillReview.ts (DEDUPE_KEY)
- *   session_review_open_theses_v1 services/learning/sessionSkillReview.ts (THESIS_CACHE_KEY)
- *   session_review_resolver_v1    services/learning/sessionSkillReview.ts (RESOLVER_THROTTLE_KEY)
- *   supervisor_auto_v1_<user>     services/learning/supervisorStore.ts:107
- *   supervisor_last_run_v1_<user> services/learning/skillSupervisor.ts (LAST_RUN_KEY)
  *   trader_learning_v1:<user>     services/learning/traderLearner.ts (TOGGLE_KEY)
  *   trader_learner_counter_v1:<user> services/learning/traderLearner.ts (COUNTER_KEY)
- *   book_drafts_seeded_v1         services/learning/bookSkillDrafts.ts:177
  *
- * Five of those eleven scope with `<ns>:<user>`, not `<ns>_<user>` — the
- * learning-loop counters build `${KEY}:${username}` — which is why the matcher
+ * The two scoped keys build `${KEY}:${username}` — which is why the matcher
  * below honours both separators.
  *
- * `supervisor_auto_v1_<user>` is the sharpest of them: it holds the trader's
- * "supervisor OFF" CONSENT, whose default is `true`
- * (supervisorStore.ts:84), so a restore that missed it did not lose a cache —
- * it silently re-enabled an LLM pass the user had switched off.
+ * `trader_learning_v1:<user>` is the sharpest of them: it holds the trader's
+ * "learner OFF" CONSENT, whose default is on (`isTraderLearningEnabled` reads
+ * `!== '0'`), so a restore that missed it did not lose a cache — it silently
+ * re-enabled an LLM pass the user had switched off.
+ *
+ * Stores whose writers are deleted leave BOTH lists. Keys no code reads are not
+ * the trader's data, and a backup that carries them forever makes it look like
+ * they are. The RESTORE list is the exception and keeps a dated note where it
+ * does: a backup taken by an OLDER build still names those keys, and a restore
+ * retains those historical values without reviving their deleted consumers.
  *
  * On web this is the same store `PreferencesService` falls back to, so nothing
  * notices. On NATIVE they are two different places — Capacitor Preferences is
@@ -293,10 +291,14 @@ const redactForgedTools = (value: unknown): unknown => {
  * Deliberately NOT every key: the WebView's storage quota is the one this app
  * has already been bitten by (see utils/memoryBudget), so shadow-copying keys
  * that Preferences genuinely owns would spend eviction-prone bytes on a copy
- * nothing reads. `tests/exportRawLocalStorage.test.ts` scans the source for
- * `localStorage.*Item` call sites and fails when a new one lands in neither
- * this list nor the restore allow-list, which is the only thing that keeps this
- * paragraph honest as stores are added.
+ * nothing reads. `scripts/check-contracts.cjs` › the raw-storage section keeps
+ * two halves of this honest as stores are added: every prefix on the sweep list
+ * must still name a key some module holds, and every prefix on the sweep list
+ * must also be on the restore allow-list (the asymmetry that used to export one
+ * store's bytes and refuse to put them back). What NO gate checks is the third
+ * case — a NEW `localStorage.setItem` that lands in neither list, because being
+ * listed is a judgement about which owner reads the key, not a property a
+ * scanner can infer.
  */
 const RAW_LOCAL_STORAGE_PREFIXES: readonly string[] = [
     'profile_memory_v1',
@@ -310,16 +312,9 @@ const RAW_LOCAL_STORAGE_PREFIXES: readonly string[] = [
     'confluence_historical_stats',
     'memory_amendments_v1',
     'august_harness_lessons_v1',
-    'session_review_counter_v1',
-    'session_review_drafted_v1',
-    'session_review_open_theses_v1',
-    'session_review_resolver_v1',
-    'supervisor_auto_v1',
-    'supervisor_last_run_v1',
     'trader_learning_v1',
     'trader_learner_counter_v1',
     'august_starred_models_v1',
-    'book_drafts_seeded_v1',
     // Nav-rail width preference (Stage 2 Phase 2). A layout preference, not
     // trading data — but it is read straight from localStorage, so on NATIVE
     // it lives in a different place from the Preferences-owned keys above, and
@@ -331,29 +326,13 @@ const RAW_LOCAL_STORAGE_PREFIXES: readonly string[] = [
     // a restored backup that silently resets every panel to its default is the
     // same lost-layout annoyance. Plain numeric strings; they round-trip.
     'right_panel_width_v1',
-    // The other two dragged columns (hooks/useColumnResize): the shell rail
-    // and the order book. Same reasoning — a restored backup that silently
-    // resets them is lost layout, not lost data, but it is still the owner's
-    // choice disappearing.
+    // The other dragged column (hooks/useColumnResize): the shell rail, in px.
+    // Same reasoning — a restored backup that silently
+    // resets it is lost layout, not lost data, but it is still the owner's
+    // choice disappearing. (The order book's key left with the v3 shell, which
+    // un-pinned that column; `scripts/check-contracts.cjs` fails the export list
+    // if a key like that outlives its writer again.)
     'nav_rail_expanded_px_v1',
-    'trade_book_width_v1',
-    // Pending skill proposals (`utils/skillDrafts.ts`) call `localStorage.setItem`
-    // themselves, so on NATIVE their bytes live in the WebView origin and NOT in
-    // Preferences. `skill_drafts_v1` was already on the RESTORE allow-list, which
-    // is the worse half of this pair: the sweep read the frozen Preferences copy
-    // (or nothing) while the live drafts sat in localStorage, so a backup taken
-    // after a restore shipped stale bytes, and the restore mirror wrote into a
-    // place the owner never looks. See the comment above `isRawLocalStorageKey`:
-    // a key missing from THIS list does not merely fail to restore, it exports
-    // the wrong bytes. Covers `skill_drafts_v1:<user>` and the
-    // `skill_drafts_v1_rejected:<user>` tombstones by the same prefix.
-    'skill_drafts_v1',
-    // Same defect class, same owner style: `utils/learningQueue.ts` writes the
-    // proposal inbox through localStorage directly and was already on the
-    // restore allow-list only — so a backup exported the Preferences copy that
-    // nothing writes, and the restore mirror put it back where nothing reads.
-    // Covers `learning_proposals_v1:<user>`.
-    'learning_proposals_v1',
     // The trading surface, measured before registering (owners verified: each
     // writes `localStorage` directly and never goes through PreferencesService):
     //   watchService.ts:61 (10 watches), levelWatchService.ts:140/167 (10 arms /
@@ -404,15 +383,6 @@ const RAW_LOCAL_STORAGE_PREFIXES: readonly string[] = [
     'trading_checklist_v1',
     'trade_tf_bar_v1',
     'harness_settings_v1',
-    // The approval gate's "this pass already ran" marker: written and read straight
-    // through localStorage by services/learning/approvalMigration.ts, so it is a raw
-    // owner like the rest — unbacked on native would mean stamping the library again
-    // after a restore, which is harmless but silently re-writes every skill file.
-    'approvals_grandfathered_v1',
-    // The supervisor's triage ledger (skillSupervisor.ts `TRIAGE_KEY`): what the
-    // model has already read and said about each queue item, so a triage-only pass
-    // does not re-review it forever. Raw localStorage owner.
-    'supervisor_triaged_v1',
     // The signal ledger (services/signals/signalLedger.ts): emitted calls and
     // their resolutions, `signal_ledger_v1:<user>`. Raw owner like the rest —
     // leaving it out would make a restored profile forget every call the desk
@@ -522,8 +492,8 @@ const stripChatSessionImages = (value: unknown): unknown => {
 /**
  * Is this key owned by a store that talks to `localStorage` directly?
  *
- * Exported (narrow, predicate-only) so `tests/exportRawLocalStorage.test.ts`
- * can assert the invariant against the REAL matcher instead of a second copy
+ * Exported (narrow, predicate-only) so `scripts/check-contracts.cjs` can assert
+ * the invariant against the REAL matcher instead of a second copy
  * of the list that would drift from it.
  *
  * Two scoping conventions are in the tree, so both are honoured: `<ns>_<user>`
@@ -853,17 +823,18 @@ const RESTORABLE_PREFERENCE_KEY_PREFIXES: readonly string[] = [
     'rl_signals_data',
     'profile_memory_v1',
     'august_starred_models_v1',
-    'belief_challenge_v1_',
     'monthly_report_v1_',
     'meta_calibration_v1_',
     'regime_ledger_v1_',
     'preflight_results_v1_',
+    // Historical lifecycle keys remain restorable but have no active consumers.
     'skill_graveyard_v1_',
     'strategy_regime_matrix_v1_',
     'weekly_review_v1_',
     'weekly_rollup_v1_',
     'pass_mining_v1_',
     'skill_veto_ledger_v1_',
+    'belief_challenge_v1_',
     'learning_proposals_v1',
     'skill_drafts_v1',
     'session_review_counter_v1',
@@ -873,6 +844,9 @@ const RESTORABLE_PREFERENCE_KEY_PREFIXES: readonly string[] = [
     'trader_learning_v1',
     'trader_learner_counter_v1',
     'supervisor_auto_v1',
+    'supervisor_last_run_v1',
+    'learning_judge_gate_v1_',
+    'learning_measure_v1_',
     // The signal ledger — emitted calls and their resolutions. Scoped
     // `signal_ledger_v1:<user>`; without this prefix a restore would return the
     // journal but drop the calls the desk was graded on.
@@ -882,20 +856,10 @@ const RESTORABLE_PREFERENCE_KEY_PREFIXES: readonly string[] = [
     'tracked_positions_v1_',
     'tracked_diagnoses_v1_',
     'tracked_diagnosis_queue_v1_',
-    // The supervisor's own throttle stamp (skillSupervisor.ts, LAST_RUN_KEY).
-    // Was in NEITHER list: the export sweep found it in localStorage and wrote
-    // it into every backup, then import dropped it as un-allow-listed — a key
-    // the app ships and refuses to take back. Harmless data, but it is the
-    // same shape of bug as the learning stores above: one list, not two.
-    'supervisor_last_run_v1',
-    // Self-improvement judge gate + measurement loop (per-user,
-    // services/learning/selfImprovement.ts: `learning_judge_gate_v1_<user>`,
-    // `learning_measure_v1_<user>`).
-    'learning_judge_gate_v1_',
-    'learning_measure_v1_',
-    // Per-user prompt/strategy docs, plus the automation namespaces: the
-    // feature was deleted on 2026-10-24, but a backup taken before that still
-    // names these keys, and a restore must not silently drop them.
+    // Per-user prompt and strategy docs (both live), plus the automation
+    // namespaces: that feature was deleted on 2026-10-24, but a backup taken
+    // before it still names those keys, and a restore must ignore them rather
+    // than fail.
     'prompt_overrides_v1_',
     'strategy_docs_v1_',
     'automations_v1_',
@@ -919,6 +883,16 @@ const RESTORABLE_PREFERENCE_KEY_PREFIXES: readonly string[] = [
     'agent_threads_opened_v1',
     'desk_tools_forged_v1',
     'desk_idle_motion_v1',
+    // Exported by the sweep above, so they must be accepted back: a key the
+    // backup carries and the restore refuses is a half-migration, and this block
+    // was missing six of them until `scripts/check-contracts.cjs` started
+    // asserting the pair. The layout keys are the trader's dragged widths.
+    'model_confidence_calibration',
+    'approval_rules_v1',
+    'trade_tool_payloads_v1',
+    'nav_rail_width_v1',
+    'nav_rail_expanded_px_v1',
+    'right_panel_width_v1',
     // Shell / misc app state
     'harness_settings_v1',
     'book_drafts_seeded_v1',

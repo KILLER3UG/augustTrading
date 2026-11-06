@@ -5,7 +5,7 @@
  * hybrid pull), get_all_timeframes (every timeframe + book/funding/OI at
  * once), get_chart_view (candles + live mark + verdict levels + the
  * order book + the user's own drawings), and the GROWTH set —
- * write_memory_note / get_notebook_map / propose_skill / revise_skill /
+ * write_memory_note / get_notebook_map / skill_index / skill_write /
  * amend_memory / forge_tool — so the model can create, update and edit its
  * own memory, skills and tools right from this chat (proposals still need the
  * human's approval in Settings / the Learning surface's Coach tab; visible status rows show
@@ -38,7 +38,7 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { Activity, Compass, Crosshair, Eye, History, MoreHorizontal, PanelRightOpen, Plus, X, Zap } from '../shared/Icons';
+import { Activity, Compass, Crosshair, Eye, History, MoreHorizontal, PanelRightOpen, Plus, X } from '../shared/Icons';
 import JumpToLatestFab, { JUMP_AWAY_PX } from '../shared/JumpToLatestFab';
 import { ProviderConfig } from '../../types/provider';
 import type { LoggedTrade } from '../../types';
@@ -63,7 +63,7 @@ import BiasChips from './BiasChips';
 import { saveBot, type AgentBot } from '../../services/agents/agentRoster';
 import { resolveAgentContext, SINGLE_AGENT_MEMORY_BUDGET, type ResolvedAgentContext } from '../../services/agents/agentContext';
 import { getFirstReadyProvider, isProviderReady, formatModelDisplayName, computeChatModelFallback } from '../../utils/providerUtils';
-import { skillIndexRows } from '../../services/learning/SkillMemoryService';
+import { skillIndexRows } from '../../services/learning/SkillFileService';
 import { getMemoryFiles } from '../../services/learning/MemoryFilesService';
 import { buildNotebookTopicsIndex } from '../../services/learning/memoryTopics';
 import { indexBudgetFor } from '../../utils/promptIndexBudget';
@@ -71,16 +71,11 @@ import { buildLearningRulesIndex } from '../../utils/learningRulesIndex';
 import { storageService } from '../../services/infrastructure/StorageService';
 import { buildProfileMemoryIndex } from '../../services/learning/profileMemory';
 import { buildGoalsIndex } from '../../services/goals/GoalService';
-import {
-    ensureSupervisorListeners, setSessionModel,
-} from '../../services/learning/skillSupervisor';
 import type { ReasoningEffort } from '../../services/providers/reasoningControls';
 import { useChatAttachments } from '../../hooks/useChatAttachments';
 import ChatHistoryPalette, { relTime } from './panels/ChatHistoryPalette';
 import ChatTranscriptList from './panels/ChatTranscriptList';
-import ChatComposer, { SCAN_SKILLS_PROMPT } from './panels/ChatComposer';
-import SupervisorPanel from './SupervisorPanel';
-import SupervisorIndicator from './panels/SupervisorIndicator';
+import ChatComposer from './panels/ChatComposer';
 import { consumePendingSkillTry } from '../chat/skillDeepLink';
 import ModelPicker from '../shared/ModelPicker';
 import NewBotDialog from '../chat/NewBotDialog';
@@ -253,7 +248,6 @@ const QUICK_PROMPTS: { text: string; Icon: React.FC<{ className?: string }> }[] 
     { text: 'Key levels?', Icon: Crosshair },
     { text: 'What is the bias?', Icon: Compass },
     { text: 'Order-flow pressure?', Icon: Activity },
-    { text: 'Scan chart → skills', Icon: Zap },
 ];
 
 /**
@@ -292,9 +286,6 @@ export const ChartAiDockRail: React.FC<{
             here to animate one 8px light on a 10px column would be a second
             source of truth for the same fact. One click away is the dock. */}
         <span className={`h-2 w-2 rounded-full ${live ? 'bg-emerald-500' : 'bg-zinc-500'}`} />
-        {/* The supervisor's detail panel lives inside the dock, so opening it
-            from the collapsed rail means expanding the dock first. */}
-        <SupervisorIndicator compact onOpen={onExpand} />
     </div>
 );
 
@@ -331,8 +322,6 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
      *  history button opens a "Past Conversations" palette (search + recent
      *  sessions with relative times); ⋯ opens the Customization popover. */
     const [historyOpen, setHistoryOpen] = useState(false);
-    /** The supervisor detail panel (click the header indicator). */
-    const [supervisorOpen, setSupervisorOpen] = useState(false);
     const [historyQuery, setHistoryQuery] = useState('');
     const [historySel, setHistorySel] = useState(0);
     const [historyShowAll, setHistoryShowAll] = useState(false);
@@ -426,16 +415,14 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
     /** Compact index of the trader's skill library — rides the system prompt
      *  so the model APPLYs existing skills and strategies instead of
      *  free-styling (the mandate lives in TRADE_CHAT_SYSTEM_PROMPT). Read
-     *  FRESH on every prompt build (not a memo): a skill proposed, approved
-     *  or retired mid-session — in this dock or anywhere else — is in the
+     *  FRESH on every prompt build (not a memo): a skill created, updated or
+     *  merged mid-session — by `skill_write` or from the library — is in the
      *  next turn's prompt. One sync index read per send, against a network
      *  packet fetch: negligible. */
     const skillsIndexForPrompt = (config: ProviderConfig | null): string => {
         try {
-            // The ONE projection (SkillMemoryService.skillIndexRows), so this
-            // surface cannot drift from the Agents surface's filter again: it used
-            // to pass none of the gate's facts, naming suspended, disabled,
-            // manual-only, other-audience and unapproved rules to a seat.
+            // The ONE projection (SkillFileService.skillIndexRows), so this
+            // surface and the Agents surface name the same skills.
             // The notebook topics ride the same block — listing-first recall,
             // one line per subject, bodies on demand. ONE budget shared with
             // the Agents surface (utils/promptIndexBudget), scaled to the seat's
@@ -599,41 +586,6 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
     // Composer textarea, so a "Try in chat" skill chip can drop its /slug in
     // and hand focus back to the user (see the august:try-skill listener).
     const composerRef = useRef<HTMLTextAreaElement | null>(null);
-    // WHO SUPERVISES: the ACTIVE session's model — a panel's FIRST seat when
-    // several are selected — is reported to the supervisor on every switch
-    // and every send, so oversight always runs on the model the user chose.
-    const reportSupervisorModel = useCallback((session: LiveSession | undefined): void => {
-        if (!session) return;
-        const seat = session.kind === 'panel' ? session.panelModels?.[0] : undefined;
-        const supBot = session.botId ? bots.find(b => b.id === session.botId) : undefined;
-        setSessionModel(
-            (seat ? configForSeat(seat.providerId, seat.modelId) : null)
-                ?? (supBot ? configForSeat(supBot.providerId, supBot.modelId) : null)
-                ?? (session.kind !== 'panel' ? provider : null),
-        );
-    }, [bots, configForSeat, provider]);
-    useEffect(() => {
-        const s = chatStore.getSnapshot().sessions.find(x => x.id === activeId);
-        if (!s) return;
-        if (s.kind !== 'panel' && !s.botId && s.soloModel && s.soloModel !== soloModelRef.current) {
-            onSelectChatModel(s.soloModel);
-        }
-        reportSupervisorModel(s);
-    }, [activeId, onSelectChatModel, reportSupervisorModel]);
-    // The supervisor's queue-event listeners (drafts/tools/amendments landing
-    // anywhere schedule a debounced pass) — wired once on dock mount.
-    useEffect(() => { ensureSupervisorListeners(); }, []);
-    // Screener → learn-this-coin: the screener's per-row button dispatches
-    // `august:prefill-chat` with the scan-chart-skills token after loading
-    // the coin — prefill the composer with the scan prompt (send stays manual).
-    useEffect(() => {
-        const onPrefill = (ev: Event): void => {
-            const token = (ev as CustomEvent<{ token?: string }>).detail?.token;
-            if (token === 'scan-chart-skills') setDraft(SCAN_SKILLS_PROMPT);
-        };
-        window.addEventListener('august:prefill-chat', onPrefill);
-        return () => window.removeEventListener('august:prefill-chat', onPrefill);
-    }, []);
     // Strategy Studio / learning-queue "Try in chat" (and the skill-citation
     // chips): prepend the skill's /slash-invocation to the composer and focus
     // it, so the user lands on the chat with the skill ready to invoke. Send
@@ -1012,7 +964,6 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
                     return <span className="hidden shrink-0 text-ui-xs text-zinc-600 @min-[460px]:inline" data-testid="chat-answered-meta">answered {relTime(activeSession.updatedAt)}</span>;
                 })()}
                 <div className="ml-auto flex shrink-0 items-center gap-1">
-                    <SupervisorIndicator onOpen={() => setSupervisorOpen(true)} compact />
                     {/* The same switch the Agents surface carries, so the hop is
                         visible from BOTH ends. The ⋯ menu's "Open in Agents" row
                         stays, but a return route nobody can see is exactly the
@@ -1135,7 +1086,6 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
 
             {/* Past Conversations palette — the reference's history command:
                 search box, "Recent" rows with relative times, keyboard nav. */}
-            {supervisorOpen && <SupervisorPanel onClose={() => setSupervisorOpen(false)} />}
             {historyOpen && (
                 <ChatHistoryPalette
                     rows={historyRows}

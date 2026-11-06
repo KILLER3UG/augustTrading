@@ -8,7 +8,7 @@ import MarkdownContent from '../shared/MarkdownContent';
 import {FileTextIcon, ChevronRightIcon, ChevronLeftIcon, ChevronUpIcon, ChevronDownIcon, FolderIcon, FileText, Loader2} from '../shared/Icons';
 
 import { runNotebookReview } from '../../services/learning/MemoryReviewService';
-import { isApprovedSkill, isSkillFile, parseSkillMarkdown, serializeSkill, titleFromMeta } from '../../services/learning/SkillMemoryService';
+import { isSkillFile } from '../../services/learning/SkillFileService';
 import { topicSummaryOf } from '../../services/learning/memoryTopics';
 import { memoryUpdatedLabel } from './MemoryTopicsCard';
 import {
@@ -212,48 +212,15 @@ const MemoryFilesManager: React.FC<MemoryFilesManagerProps> = ({
     const handleToggleEnabled = useCallback(async (file: MemoryFile) => {
         try {
             const enabling = !file.enabled;
-            let patch: Partial<MemoryFile> = { enabled: enabling };
-            // Switching a skill back on by hand outranks the idle sweep that
-            // took it out. Leaving `suspendedAt` in the frontmatter would let
-            // `skillEnabledFlag` — which every attribution write recomputes
-            // `enabled` from — switch it straight back off again, making this
-            // toggle look like it did nothing.
-            if (enabling && isSkillFile(file)) {
-                const meta = parseSkillMarkdown(file.content);
-                if (meta?.suspendedAt || meta?.disabledByUser) {
-                    meta.suspendedAt = undefined;
-                    meta.disabledByUser = undefined;
-                    patch = { ...patch, content: serializeSkill(meta, titleFromMeta(meta)) };
-                }
-            } else if (!enabling && isSkillFile(file)) {
-                // The mirror of the above: `enabled: false` on the file is
-                // derived state, so a switch-off had nowhere to live and the
-                // next closed trade re-derived it to true — the trader's veto
-                // reverting on its own. Record the intent in the frontmatter
-                // that skillEnabledFlag actually reads.
-                const meta = parseSkillMarkdown(file.content);
-                if (meta) {
-                    meta.disabledByUser = true;
-                    patch = { ...patch, content: serializeSkill(meta, titleFromMeta(meta)) };
-                }
-            }
+            const patch: Partial<MemoryFile> = { enabled: enabling };
             await updateMemoryFile(file.id, patch, activeUser);
             refresh();
-            // "Injected into every prompt" was never true of either store: a
-            // skill is offered only when its trigger matches AND it is approved
-            // (the same `isApprovedSkill` the index applies), and notebook text
-            // is retrieved when relevant. An enable toggle cannot promise more
-            // than it decides.
-            const metaNow = isSkillFile(file) ? parseSkillMarkdown(String(patch.content ?? file.content)) : null;
-            const approvedNow = metaNow ? isApprovedSkill(metaNow) : false;
             toast.success(enabling ? 'Enabled' : 'Disabled',
                 !enabling
                     ? `"${file.name}" is no longer offered to the models.`
                     : isSkillFile(file)
-                        ? (approvedNow
-                            ? `"${file.name}" is enabled — the models can use it when its trigger matches.`
-                            : `"${file.name}" is enabled, but it is not approved, so it stays inactive until you approve it.`)
-                        : `"${file.name}" is enabled — the models can read it when it is relevant.`);
+                        ? `"${file.name}" is enabled - the models can use it when its description matches.`
+                        : `"${file.name}" is enabled - the models can read it when it is relevant.`);
         } catch (e: unknown) {
             toast.error('Could not toggle file', e instanceof Error ? e.message : 'Unknown error');
         }
@@ -472,28 +439,6 @@ const MemoryFilesManager: React.FC<MemoryFilesManagerProps> = ({
                             {selectedFile.autoManaged ? ' · auto-maintained' : ''}
                             {' · '}{draft.length.toLocaleString()} chars
                         </p>
-                        {selectedFolder?.name === 'skills' && (
-                            <button
-                                type="button"
-                                title="Which audience may load this skill"
-                                onClick={() => {
-                                    const meta = parseSkillMarkdown(draft);
-                                    if (!meta) return;
-                                    const order: Array<'all' | 'analyst'> = ['all', 'analyst'];
-                                    // A legacy 'moderator' skill has no seat to reach
-                                    // any more; the next click folds it into 'all'.
-                                    const current = meta.audience === 'analyst' ? 'analyst' : 'all';
-                                    const next = order[(order.indexOf(current) + 1) % order.length];
-                                    const updated = { ...meta, audience: next, modifiedAt: new Date().toISOString() };
-                                    const serialized = serializeSkill(updated, titleFromMeta(updated));
-                                    setDraft(serialized);
-                                    setIsDirty(true);
-                                }}
-                                className="px-2 py-1 rounded-control text-ui-xs font-bold uppercase tracking-wider border transition-colors bg-zinc-900 border-white/10 text-zinc-400 hover:text-zinc-100"
-                            >
-                                audience: {(parseSkillMarkdown(draft)?.audience ?? 'all')}
-                            </button>
-                        )}
                     </div>
                     <div className="flex-1 min-h-[320px] rounded-bubble border border-zinc-800 bg-zinc-900 overflow-hidden flex flex-col">
                         {isPreview ? (

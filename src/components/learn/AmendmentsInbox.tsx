@@ -50,7 +50,7 @@ export const AmendmentsInbox: React.FC = () => {
                 // was "approved" with nothing written, and a refused notebook
                 // write left the row approved while the message said it was still
                 // pending (the 2026-10-27 audit M-4). The applier lives in the service
-                // because the supervisor's override needs the same one.
+                // because the model's own auto-apply needs the same one.
                 const applied = await applyAmendmentContent(a, getActiveUsername());
                 if (!applied.ok) {
                     setSaveError(applied.error ?? 'That correction could not be applied, so it is still pending.');

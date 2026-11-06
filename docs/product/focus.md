@@ -34,7 +34,10 @@ If the answer is "it shows the trader their P&L", it is not the current product.
   not what the next feature should be.
 - **Journal-settled trade evidence as the primary learning loop.** The tracker follows both desk
   signals and accepted journal plans, and the loop that improves accuracy is **signal → price
-  outcome → diagnosis → tentative skill**, which needs no execution and no trader click.
+  outcome → diagnosis**, which needs no execution and no trader click. The step that used to mint a
+  **tentative skill** from three agreeing outcomes is deleted (2026-11-05): a skill is a document
+  the desk or the trader writes, not a record the loop stamps. The diagnosis still reaches the next
+  read — see [the learning loop](../architecture/learning-loop.md).
 - **Execution, broker keys and order placement.** Not now, and never without an owner ruling.
 - **Breadth for its own sake** — multi-market equities, fundamentals, options chains, alpha zoos.
   August trades the tape it can see; depth on that tape beats a second market.
@@ -64,7 +67,7 @@ and the next `emit_signal` receipt carries the coin's scorecard.
 
 **Closed 2026-11-02 (b3):** resolved signals and accepted journal plans are followed by the tracked
 position loop; on close, `runDiagnosisPass` (`services/tracking/postMortemDiagnosis.ts`) writes the
-structured diagnosis, and `learnFromDiagnosis` (`services/tracking/diagnosisSkillLearning.ts`) mints
-or reinforces a **tentative** skill after three independent outcomes. It injects as labelled
-context only — never a veto or a confidence cap — and auto-demotes under its floor. See
-[the learning loop](../architecture/learning-loop.md).
+structured diagnosis, and `diagnosisBriefBlock` (`services/tracking/diagnosisBrief.ts`) carries that
+coin's last recorded lesson into the next read — the dock's context block, the pipeline's context
+bundle and the `emit_signal` receipt. It is REFERENCE ONLY: never a veto, never a confidence cap,
+and never a skill. See [the learning loop](../architecture/learning-loop.md).

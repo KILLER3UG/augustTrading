@@ -5,7 +5,7 @@
  * how this app behaves, and both are already wired into every run:
  *
  *  - `config` tier — the behavior knobs the harness reads per call
- *    (`responseEffort`, `skillLibraryCap`). Applied immediately, ledgered, and
+ *    (`responseEffort`). Applied immediately, ledgered, and
  *    AUTO-REVERTED when the window closes. This is what makes the agent faster
  *    or less forgetful for the work in front of it, without letting a
  *    mid-task guess become tomorrow's default.
@@ -19,21 +19,18 @@
  * What is NOT here, on purpose:
  *  - Risk. Sizing, leverage, the edge floor, the session guard and outcome
  *    settlement are the trader's, and the deny list says so by name.
- *  - The measuring instrument. `promptAbRate` / `pinnedPromptLane` are blocked
- *    because an agent that can pin 'live' can make its own shadow unfalsifiable.
- *  - Privacy and the off-switches. `sensitiveMemoryEnabled`,
- *    `skillEnforcementEnabled`, `starterLibraryEnabled`, `autoDraftingEnabled`
- *    and the memory switch stay owner-only.
+ *  - The measuring instrument. `promptAbRate` is blocked because an agent
+ *    that can disarm the A/B can make its own shadow edit unfalsifiable.
+ *  - Privacy and the off-switch. `sensitiveMemoryEnabled` and the memory
+ *    switch stay owner-only.
  *  - `selfModificationMode` itself. Nothing in this file may widen its own
  *    authority, and the desk tool that reaches this file cannot turn it on.
- *  - Skills. They already have an approval gate AND a shadow window with
- *    evidence-gated promotion (`SkillMemoryService`, `settleShadow`). A second
- *    route around that gate would be a second skills system, so `skill:`
- *    targets are refused with a pointer to the gate that exists.
+ *  - Skills. They are documents written through `writeSkillFile`; no
+ *    self-change target may write one.
  */
 
 import {
-    getHarnessSettings, saveHarnessSettings, getSkillLibraryCap, type HarnessSettings,
+    getHarnessSettings, saveHarnessSettings, type HarnessSettings,
 } from '../../utils/harnessSettings';
 import { getActiveUsername } from '../../utils/activeUser';
 import { isRegisteredPromptId } from '../../constants/promptIds';
@@ -54,10 +51,10 @@ export const SELF_CHANGE_WINDOW_MS = 24 * 3600_000;
 export const SELF_CHANGE_COOLDOWN_MS = 6 * 3600_000;
 /** Simultaneous in-force config changes, all tiers included. */
 export const MAX_LIVE_SELF_CHANGES = 8;
-/** The shadow settles on the same evidence bar the prompt A/B already uses:
- *  `maybePinWinningPromptLane` needs 5 closed trades per side and an 8-point
- *  win-rate gap. Restating a looser bar here would make a self-edit easier to
- *  promote than the app's own experiment. */
+/** The shadow settles on the same evidence bar the prompt A/B already uses —
+ *  5 closed trades per side and an 8-point win-rate gap, the numbers
+ *  `summarizePromptLanes` is read against. Restating a looser bar here would
+ *  make a self-edit easier to promote than the app's own experiment. */
 export const SHADOW_MIN_TRADES_PER_SIDE = 5;
 export const SHADOW_MIN_WINRATE_GAP_PP = 8;
 export const PROMPT_OVERRIDE_MAX_CHARS = 6_000;
@@ -113,23 +110,6 @@ const KNOBS: Record<string, KnobDef> = {
         },
         hint: '"quality" runs the built-in role→effort schedule; "fast" drops every reasoning task one tier. Speed, not capability.',
     },
-    skillLibraryCap: {
-        label: 'confirmed-skill library cap',
-        read: () => JSON.stringify(getSkillLibraryCap()),
-        decode: raw => {
-            let value: unknown;
-            try { value = JSON.parse(raw); } catch { return { ok: false, refusal: 'skillLibraryCap must be a JSON number' }; }
-            if (typeof value !== 'number' || !Number.isFinite(value)) return { ok: false, refusal: 'skillLibraryCap must be a JSON number' };
-            if (value < 5 || value > 200) return { ok: false, refusal: `skillLibraryCap stays inside 5..200; ${value} is out of range` };
-            const cap = Math.round(value);
-            return {
-                stored: JSON.stringify(cap),
-                apply: () => { saveHarnessSettings({ skillLibraryCap: cap }); },
-                ok: true,
-            };
-        },
-        hint: 'How many confirmed skills the worth gate keeps before it turns comparative. Raising it retains more playbooks (less forgetful, pricier); lowering it saves the injection budget.',
-    },
 };
 
 /** ── The deny list (defense in depth + an honest refusal message) ───────── */
@@ -144,13 +124,8 @@ const BLOCKED_KNOB_REASONS: Record<string, string> = {
     guardMaxTradesPerDay: 'the trade cap is a risk gate',
     guardPostLossCooldownMin: 'the post-loss cooldown is a risk gate',
     outcomeSettlement: 'how outcomes are recorded is the trader\'s',
-    skillEnforcementEnabled: 'the veto off-switch is the trader\'s',
-    tentativeSkillInjectionEnabled: 'the tentative-injection switch is the trader\'s',
-    starterLibraryEnabled: 'the starter shelf approval is the trader\'s',
-    autoDraftingEnabled: 'whether the loop drafts on its own is the trader\'s',
     sensitiveMemoryEnabled: 'the sensitive-memory privacy switch is the trader\'s',
     promptAbRate: 'the measurement itself cannot be moved by the thing being measured',
-    pinnedPromptLane: 'pinning a lane would make a shadow edit unfalsifiable',
     deskToolsEnabled: 'whether the desk may call live tools at all is the trader\'s',
     selfModificationMode: 'self-modification cannot be enabled by self-modification',
 };
@@ -334,11 +309,11 @@ export const proposePromptOverride = async (
     }
 
     const settings = getHarnessSettings();
-    if (settings.promptAbRate <= 0 || settings.pinnedPromptLane) {
+    if (settings.promptAbRate <= 0) {
         return {
             ok: false,
-            error: `${target} refused: this override cannot be judged while the prompt A/B is disarmed (rate ${settings.promptAbRate}, pin ${settings.pinnedPromptLane ?? 'none'}). `
-                + 'The trader sets a sampling rate above 0% and clears the lane pin in Settings → Usage; until then a shadow edit would go to every run with nothing to compare it against.',
+            error: `${target} refused: this override cannot be judged while the prompt A/B is disarmed (rate ${settings.promptAbRate}). `
+                + 'The trader sets a sampling rate above 0% in Settings → Usage; until then a shadow edit would go to every run with nothing to compare it against.',
         };
     }
 
@@ -483,20 +458,6 @@ export const settleSelfChanges = async (
         // Inside the band: still measuring. No verdict is the honest state.
     }
     return settled;
-};
-
-/** What the seat prompt and the audit chip read: the mode plus what is in
- *  force right now. Compact by design — it rides every turn. */
-export const selfModSummary = (now = Date.now()): string[] => {
-    const mode = getSelfModMode();
-    if (mode === 'off') return [];
-    return liveSelfChanges().map(r => {
-        const value = r.after.length > 60 ? `${r.after.slice(0, 57)}…` : r.after;
-        if (r.status === 'promoted') return `${r.target} → ${value} (kept on the evidence)`;
-        if (r.status === 'shadow') return `${r.target} → ${value} (in shadow, being measured)`;
-        const hours = r.expiresAt ? Math.max(0, Math.round((Date.parse(r.expiresAt) - now) / 3600_000)) : null;
-        return `${r.target} → ${value}${hours === null ? ' (active)' : ` (active, reverts in ${hours}h)`}`;
-    });
 };
 
 /** Names the open knobs for the tool description and the refusal message. */

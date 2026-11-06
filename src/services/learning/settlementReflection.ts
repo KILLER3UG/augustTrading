@@ -2,22 +2,17 @@
  * settlementReflection — the ONE bounded model call at trade settlement (E-57 §1).
  *
  * **Why this exists.** Nothing in this app has ever written `trade.postMortem`.
- * The field is read by four live consumers and declared on the row since the
- * first version, and the only writers left are `SqliteService` round-tripping
- * legacy rows and a screenshot upload path. So the leg that turns a closed trade
- * into a notebook lesson has been running on empty text for as long as it has
- * existed: `craftSkillFromPostMortem` (`services/learning/SkillCraftService.ts:144`)
- * returns `null` whenever `postMortem.length < 40`, and `ingestLessonFromTrade`
- * (services/learning/SkillMemoryService.ts) gets zero clauses from
- * `parseLessonClauses('')`. `services/agents/botLearning.ts:234` still calls the
- * crafter on every closed bot trade and has never once received a skill.
+ * The field is read by the diary, the pattern-memory synthesis, the journal
+ * detail and the CSV export, and it is declared on the row since the first
+ * version. This call is its ONE writer. The skill-drafting legs that used to
+ * consume it are gone with the skill ledger; what remains is the written
+ * record and the `Lesson:` clause the journal-rules reader parses.
  *
  * **Why one call is allowed.** `docs/plan/README.md` rule 8 said no proposal in
  * the plan adds an LLM review call. The owner waived it for exactly this one,
- * 2026-10-21, because the cost buys back a path the code was already built to
- * run — and everything downstream of it stays human-gated: a reflection becomes a
- * skill DRAFT behind the approval inbox (`services/learning/draftGates.ts`,
- * `utils/skillDrafts.ts`), never a notebook write nobody agreed to.
+ * 2026-10-21, because the cost buys back the only writer of a field four live
+ * readers depend on. It writes the post-mortem the trader can read; it creates
+ * no rule and no skill.
  *
  * **What it never does.**
  *  - It does not overwrite a note that is already there. A trader's own words win.
@@ -105,15 +100,14 @@ export interface ReflectionResult {
     tier?: ReasoningEffort;
 }
 
-/** Session guard, mirroring `settledTradeIds` in SkillMemoryService: keyed by
- *  USER as well as trade id, because two profiles legitimately hold a trade with
- *  the same id, and marked BEFORE the first await so a throw half-way cannot
- *  make the next caller re-ask. */
+/** Session guard: keyed by USER as well as trade id, because two profiles
+ *  legitimately hold a trade with the same id, and marked BEFORE the first
+ *  await so a throw half-way cannot make the next caller re-ask. */
 const reflectedKeys = new Set<string>();
 const reflectedKey = (username: string, tradeId: string): string => `${username}:${tradeId}`;
 
 /** Test hook — the guard is session state, so a suite that reuses one trade id
- *  across cases must clear it (same pattern as `__resetSettledTradesForTests`). */
+ *  across cases must clear it. */
 export const __resetReflectedTradesForTests = (): void => { reflectedKeys.clear(); };
 
 const measured = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
@@ -162,10 +156,9 @@ const excursionLine = (trade: LoggedTrade): string => {
 const gateLine = (trade: LoggedTrade): string => {
     const g = trade.analysis?.gate;
     if (!g) return 'pre-trade gate: never ran — this row was logged UNCAPPED';
-    const parts = [`gate ${g.status} at a ${Math.round(Math.min(g.confidenceCap, g.skillCeiling ?? 1) * 100)}% cap`];
+    const parts = [`gate ${g.status} at a ${Math.round(g.confidenceCap * 100)}% cap`];
     if (g.refusal) parts.push(`REFUSED: ${g.refusal}`);
     if (g.warnings?.length) parts.push(`cautions: ${g.warnings.join(' | ')}`);
-    if (g.skillNote) parts.push(`code-checked skill: ${g.skillNote}`);
     return parts.join(' · ');
 };
 
@@ -205,7 +198,7 @@ export const reflectionPacket = (trade: LoggedTrade, injectedSkills?: string[]):
  *  (services/learning/MemoryFilesService.ts:1017) captures — it must be a plain
  *  line, not a heading or a whole-line bold, because that reader SKIPS wrapped
  *  lines as titles — and the `When …, do …` sentence is what `parseLessonClauses`
- *  (utils/lessonClause.ts) splits into a skill draft. The legacy `IF … THEN …`
+ *  (utils/lessonClause.ts) splits into a journal rule. The legacy `IF … THEN …`
  *  form is still parsed, because post-mortems written before 2026-10-30 are
  *  stored text.
  *
@@ -245,20 +238,16 @@ export const reflectOnClosedTrade = async (
     const skip = (reason: ReflectionSkipReason): ReflectionResult => ({ trade, wrote: false, reason });
 
     // A trader's own note (or a legacy row that still carries one) always wins.
-    // 40 is the length `craftSkillFromPostMortem` already treats as "a real
-    // post-mortem exists", so the two readers cannot disagree about whether the
-    // row has been reflected on.
+    // 40 characters is the length that reads as "a real post-mortem exists".
     if ((trade.postMortem ?? '').trim().length >= 40) return skip('already-written');
-    // Only rows the notebook can act on: `ingestLessonFromTradeUnlocked` returns
-    // for anything but WIN/LOSS, so an ENTRY_NOT_HIT reflection would be a call
-    // whose output cannot become a draft.
+    // Only rows the journal can act on: the lesson readers skip anything but
+    // WIN/LOSS, so an ENTRY_NOT_HIT reflection would be a call with no consumer.
     if (trade.outcome !== TradeOutcome.WIN && trade.outcome !== TradeOutcome.LOSS) return skip('not-a-lesson-row');
-    // Spend nothing on a row the draft gate would refuse anyway. This is the
-    // SAME predicate the live gate uses (utils/rootCause.ts:72), and it admits
-    // every row that carries no root-cause class yet — `classifyRootCause('')`
-    // is UNCLEAR — so an unreflected trade is never starved by the guard that
-    // exists to save it a call. Execution slips and macro shocks stay out: they
-    // must not become technical playbook rules.
+    // Spend nothing on a row that cannot become a technical rule. This is the
+    // SAME predicate the journal-rules path uses, and it admits every row that
+    // carries no root-cause class yet — `classifyRootCause('')` is UNCLEAR — so
+    // an unreflected trade is never starved by the guard that exists to save it
+    // a call. Execution slips and macro shocks stay out.
     if (!tradeAdmitsTechnicalStrategyRule(trade)) return skip('not-a-lesson-row');
 
     // The provider lookup can reject (a Preferences read failing), and a

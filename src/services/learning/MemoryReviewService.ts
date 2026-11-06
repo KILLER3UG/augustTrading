@@ -8,10 +8,10 @@
  * in this module (or anywhere else) judges its claims, so re-enabling it would
  * feed one model's unsolicited opinion back into the next debate as if it were
  * evidence, and the loop would compound its own advice. Its reader is a
- * person: `components/learn/MemoryFilesManager.tsx:85` renders it in the
+ * person: `components/learn/MemoryFilesManager.tsx` renders it in the
  * notebook UI, and it is excluded from the prompt index dump
- * (`MemoryFilesService.ts:277` `SKIP_INDEX_DUMP`), the memory graph
- * (`MemoryGraph.ts:57`) and note search by the same reasoning. Write-only with
+ * (`SKIP_INDEX_DUMP`) and from note search (`NOTE_SEARCH_SKIP_FOLDERS`) by the
+ * same reasoning. Write-only with
  * respect to the model is therefore the design, not an oversight — the file is
  * a one-way message out of the loop.
  */

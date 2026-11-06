@@ -22,12 +22,9 @@ import type { LoggedTrade } from '../../types';
 import type { DeskToolCall, DeskToolResult } from '../analysis/DeskToolsService';
 import type { ProposalGate } from './proposedTrade';
 import { parseTradeProposal, mintPlanId, buildTradePlan, type TradeProposal } from './proposedTrade';
-import { beginGateScan, cancelGateScan, gateReceiptLine, buildSkillGate } from './proposalGate';
+import { beginGateScan, cancelGateScan, gateReceiptLine } from './proposalGate';
 import { drawingsFromLevelTool, type ChartDrawing } from './chartDrawings';
 import { staleLevelsAtArm, type WatchPlan } from './tradePlanLevels';
-import { applyNotebookSkillsToAnalysis, confirmedAvoidForSetup, skillFileNameFor } from '../learning/SkillMemoryService';
-import { VetoLedgerService } from '../ui/VetoLedgerService';
-import { getActiveUsername } from '../../utils/activeUser';
 
 /** What the turn is running against: the argument bag, the coin it was asked
  *  on, the closed-trade log for the gate, and the canvas truth it must not
@@ -88,67 +85,13 @@ export const runPresentTrade = (ctx: PresentTradeContext, sink: PresentTradeSink
     const planId = mintPlanId(proposal.symbol);
     proposal.planId = planId;
 
-    // ── Deterministic skill enforcement (E-35) ────────────────────────────
-    // The model proposes; the trader's own rules check. This used to be
-    // computed and thrown away (`applyNotebookSkillsToAnalysis` had ten test
-    // call sites and zero production ones), so a confirmed AVOID skill could
-    // not stop the plan it was written to stop. A hard veto refuses the
-    // presentation and writes the falsification ledger; a candidate cap
-    // downgrades the tier before any probability is minted.
-    const username = getActiveUsername();
-    const enforcementInput: {
-        coinName?: string;
-        direction?: string;
-        confidence?: string;
-        probability?: number;
-        riskVeto?: string;
-        validationWarnings?: string[];
-    } = {
-        coinName: proposal.symbol,
-        direction: proposal.direction,
-        confidence: proposal.confidence ?? 'Medium',
-        probability: 0,
-        validationWarnings: [],
-    };
-    const enforced = applyNotebookSkillsToAnalysis(enforcementInput, { username, runId: planId });
-    if (enforced.riskVeto || enforced.direction === 'Neutral') {
-        const vetoSkill = confirmedAvoidForSetup({ coin: proposal.symbol, direction: proposal.direction }, planId);
-        const reason = enforced.riskVeto ?? 'a confirmed notebook skill vetoes this setup';
-        if (vetoSkill && username) {
-            void VetoLedgerService.recordVeto({
-                username,
-                skill: vetoSkill,
-                skillName: skillFileNameFor(vetoSkill) ?? vetoSkill.coin ?? 'skill',
-                coinName: proposal.symbol,
-                direction: proposal.direction,
-                entryPrice: proposal.entry,
-                takeProfits: proposal.takeProfits.map(price => ({ price })),
-                stopLoss: proposal.stopLoss,
-                reason,
-            }).catch(() => { /* ledger is best-effort; the refusal stands */ });
-        }
-        return receipt(call, name, false,
-            `present_trade refused: ${reason}. A confirmed notebook rule blocks this setup. `
-            + 'Do not retry this plan; tell the trader which rule vetoed it.');
-    }
-    if (enforced.confidence === 'High' || enforced.confidence === 'Medium' || enforced.confidence === 'Low') {
-        // A candidate AVOID with enough evidence caps High/Medium to Low. It is
-        // a size-down, not a refusal — the plan stays presentable.
-        proposal.confidence = enforced.confidence;
-    }
-
-    // The code-checked predicate gate runs CONCURRENTLY with the market gate.
-    // Its ceiling is folded into the one stamp the card shows and the journal
-    // records, so a fired AVOID trigger cannot be dropped on the floor while
-    // the trader logs the plan minutes later.
-    const skillGate = buildSkillGate(proposal, planId);
     // The scan starts NOW but is not awaited here. Awaiting it put a
     // market-data fetch plus an OHLCV pull per timeframe in front of drawing
     // the plan, so the card appeared seconds later on a path that used to touch
     // no network at all. The LOG path awaits the same promise (`ensureStamp`),
     // which is where the cap actually has to bind.
     let cancelled = false;
-    void beginGateScan(planId, proposal, ctx.trades, skillGate).then(gate => {
+    void beginGateScan(planId, proposal, ctx.trades).then(gate => {
         // The abort handler below can delete the in-flight entry, but the
         // promise it started still resolves. Drop that answer here: a late
         // stamp must not resurrect a card the trader cancelled.

@@ -99,8 +99,8 @@ audit defect, not an audit trail.
 
 **One entry, both homes.** `handleRunAnalysisFromChat` (`src/App.tsx` › `App`) is the only
 analysis wrapper: the dock passes it as `onRunAnalysis` (`src/App.tsx` › `App`) and the Agents
-surface as `onAnalyze` (`src/App.tsx` › `App`). It was two, and `services/trade/analysisTurn.ts`
-was deleted (2026-10-17) because a second writer keyed rows with ids no canonical
+surface as `onAnalyze` (`src/App.tsx` › `App`). It was two, and `analysisTurn`
+in `src/services/trade/` was deleted (2026-10-17) because a second writer keyed rows with ids no canonical
 row could match — that is what made the two homes disagree.
 
 **One executor, two row shapes.** `runToolTurn`
@@ -330,9 +330,11 @@ only the coin picker reads. Separately, the prompt A/B lane is a **per-run value
 `endPromptLane()` in the `finally`, because two runs deciding at once each answered
 with the other's lane and a run that threw reset the flag out from under a run still
 using it. What is still open, and registered: **no live turn path resolves an
-override at all.** Every `getPrompt` call site sits on the analysis/skill-craft
-surfaces reachable from `SkillEvalScheduler`, and the desk turn that answers this
-surface calls none — so the pair currently differs in what it RECORDS, not in what
+override at all.** The `getPrompt` call sites are the background learners
+(settlement reflection, post-mortem diagnosis, the notebook writer, the strategy
+summariser, the PDF OCR reader) and `analyzeTradingView`, whose only wrapper has no caller — and the
+desk turn that answers this surface calls none, so the pair currently differs in
+what it RECORDS, not in what
 it SENDS. Wiring it changes the bytes a trader's model sees; deleting the dial
 removes a control that has never done what it names. Either is an owner call, and
 neither is a deletion of the lane bookkeeping.
@@ -349,68 +351,23 @@ section D states exactly.
 
 ```mermaid
 flowchart TD
-    P["draft producers — sessionSkillReview · passMining · selfImprovement · bookSkillDrafts · chartScanSkills · botLearning · the propose_skill desk tool"] --> GT["two-tier evidence gate — draftGates.ts"]
-    GT --> IN["skill drafts inbox — skillDrafts.ts"]
-    IN --> HU{"direct writes — candidates land in the library, evidence sets their status; the inbox is an activity log with Undo"}
-    HU --> NB["notebook — memory_files_v1_&lt;user&gt;, tiers memoryBudget.ts: refuse growth, never evict"]
-    NB --> INJ["injected into the next prompt — resolveInvokedSkills useAnalysisPipeline"]
+    T["a closed trade"] --> SR["settlement reflection — settlementReflection.ts"]
+    SR --> NB["notebook — diary + recurring mistakes, memory_files_v1_&lt;user&gt;, tiers memoryBudget.ts: refuse growth, never evict"]
+    NB --> INJ["retrieved into the next prompt — rankedMatchedSkills / getMemoryFilesContext"]
     INJ -->|closes the loop| C3["stage 3, prompt assembly"]
-    HB["heartbeat 15 min + visibilitychange — useLearningHeartbeat, mounted App"] --> HYG["memory hygiene → memoryHygiene.ts"]
-    HYG --> IDL["idle suspension — skillIdleLifecycle.ts, rides enabled not a 4th status"]
-    BADGE["one number: approvalsWaiting App, shown on the Learning tab that holds the queues"]
-    IN -.-> BADGE
+    M["model or trader"] --> SW["skill_write / SkillLibrary — SkillFileService.ts"]
+    SW --> NB
+    HB["heartbeat 15 min + visibilitychange — useLearningHeartbeat"] --> HYG["notebook review + size report — memoryHygiene.ts"]
 ```
 
-**What changed here:** the entry node used to be `closed trade / post-mortem →
-craftSkillFromPostMortem`. The post-mortem was the only writer of
-`LoggedTrade.postMortem`, so deleting it **starved that route rather than deleting
-it** — the distinction matters because the code still looks alive. Nothing wrote
-the field for a trade closed after 2026-10-18, while `craftSkillFromPostMortem`
-([`src/services/learning/SkillCraftService.ts` › `craftSkillFromPostMortem`](../../src/services/learning/SkillCraftService.ts))
-was still called from `src/services/agents/botLearning.ts › craftAndGateBotTrade`, and its first guard is
-`if (pm.length < 40) return null` on `trade.postMortem` (`src/services/learning/SkillCraftService.ts › craftSkillFromPostMortem`). So for every
-trade closed after 2026-10-18 the craft leg could only return null; it still answered
-for a row that carries a post-mortem from before then. `src/services/learning/selfImprovement.ts › extractEpisodes`,
-`SkillMemoryService` and `DoctrineConsolidationService` read the same empty field.
-**E-57 §1 gave the leg its writer back** — `services/learning/settlementReflection.ts`
-runs ONE bounded call (`TASK_BUDGETS.postMortem`, tier `postMortem`, called from
-`src/hooks/useTradeLogging.ts › useTradeLogging` and awaited BEFORE `syncClosedTradeToNotebook`, because
-that function marks the trade settled and then folds the diary entry and the lesson
-draft out of the row's post-mortem text), and it writes nothing on a failure, a decline
-or a malformed answer, so a gap stays a gap and never becomes an invented lesson. A
-trader's own note always wins; the row now also says which model wrote the note
-(`src/types/trade.ts › LoggedTrade`).
-**Sizing that by grep is a trap, so the recipe is part of the number — and the word
-boundary is load-bearing.** Counting the TOKEN, `grep -rE "postMortem" --include="*.ts"
---include="*.tsx" .`, measures **91 lines in 29 files**; counting the field reads needs
-`grep -rE "\.postMortem\b" …` and measures **39 lines in 23 files**. Drop the `\b` and the
-second figure silently becomes **43**, because four of those lines are a DIFFERENT field:
-`postMortemCreatedAt`, the timestamp twin (read at
-`src/hooks/analysisPipeline/memoryContext.ts › assemblePipelineMemoryContext` and
-`src/services/learning/DecisionReflectionService.ts › buildDecisionReflectionContext`, and gated at
-`src/services/ui/AlgorithmicSummaryService.ts › generateAlgorithmicTradeSummary` on `postMortemCreatedAt`), and the new `postMortemModel`, the
-provenance twin. A census without the boundary sweeps a live
-name into the dead list, which is the mistake this page keeps re-recording. Earlier drafts of this page asserted
-189/57 and 105/~35 — true the day they were taken, untrue from the stage that deleted readers
-onward, and unreproducible without the filter, which is how a census becomes a claim nobody can
-check. The rest
-is a name collision with two live things: the outcome-validation engine
-(`PostMortemDataSummary` / `logPostMortemDataVerification` in
-`services/ui/AutoCaptureService.ts`, fed by the shared scan in
-`services/backtesting/outcomeEngine.ts`), which replays
-candles to decide whether a TP or SL really got hit; and the enum member
-`'autopilot' | 'postMortem'` on `LoggedTrade.rSource` / `excursionSource`
-(`src/types/trade.ts › LoggedTrade`), which names that after-close pass and is still written. A bulk
-deletion keyed on the word would remove the validator. Re-measured 2026-10-19. Deleting the writer was the owner's
-explicit choice, with no replacement. Clearing the readers is NOT simply scheduled work:
-the stored-history readers answer only for rows written before 2026-10-18, so whether
-that museum stays readable is the owner's open call (#21), and deleting the fields deletes
-the history with it.
-
-The chain from `draftGates` to the injected skill is unchanged and still runs; it
-starts at the review passes, at the chat's `propose_skill` tool, and since E-57 §1
-at a settled position again — the reflection's `When …, do …` line is what
-`ingestLessonFromTrade` turns into a draft awaiting the trader's approval.
+A closed trade still writes its diary entry and the recurring-mistakes file
+(`src/hooks/useTradeLogging.ts` → `appendDiaryEntry`, `syncRecurringMistakes`).
+It no longer writes a skill. Skills are authored through
+`src/services/learning/SkillFileService.ts › writeSkillFile` — by the model's
+`skill_write` tool or the trader's library — and nothing auto-mints one. The old
+draft chain (`draftGates` → `skillDrafts` → approval → the evidence fold) is
+deleted with the ledger. What remains of the loop is measurement: the journal,
+the signal ledger and the settlement reflection, all readable.
 
 Corollary that is easy to miss: `GlobalMemory.aiPatternMemory` and
 `insightKnowledgeBase` are **frozen stores** (see G), and
@@ -445,22 +402,22 @@ The accuracy fold rides the resolution: `signalAccuracy.baseRateFor` re-enters t
 every bar of the same tape through the same resolver, so the stored `base` is what those levels did at
 a random time. The feed shows hit rate vs base with the lift and a THIN flag under
 `MIN_ACCURACY_FILLS`, and the next `emit_signal` receipt carries this coin's `signalScorecard` — the
-measurement goes back into the call, not only into a dashboard. **The skill evidence fold (b3) is
+measurement goes back into the call, not only into a dashboard. **The tracked loop (b3) is
 closed (2026-11-02):** the tracked-position loop (`services/tracking/trackerService.ts`) follows
-open signals and accepted journal plans to the tape, `runDiagnosisPass`
-(`services/tracking/postMortemDiagnosis.ts`) writes the structured diagnosis, and
-`learnFromDiagnosis` (`services/tracking/diagnosisSkillLearning.ts`) mints or reinforces a
-tentative skill after three independent outcomes. A tentative skill is injected through
-`isInjectableSkill` as labelled context (never `isApprovedSkill`, so it cannot veto or cap
-confidence), capped at `TENTATIVE_SKILL_INJECTION_MAX` per prompt.
+open signals and accepted journal plans to the tape, and `runDiagnosisPass`
+(`services/tracking/postMortemDiagnosis.ts`) writes the structured diagnosis on close.
+`diagnosisBriefBlock` (`services/tracking/diagnosisBrief.ts`) then carries that coin's last recorded
+lesson forward — into the dock's context block, the pipeline's bundle and the next `emit_signal`
+receipt — as REFERENCE ONLY text. It mints nothing: the step that used to turn three agreeing
+outcomes into a *tentative skill*, with its own injection cap and auto-demotion floor, was deleted
+2026-11-05 with the rest of the skill lifecycle (see [the learning loop](learning-loop.md) §3).
 
 ---
 
-## E · Autonomy — rooms, alerts, one detached evaluator
+## E · Autonomy — rooms and alerts
 
 ```mermaid
 flowchart TD
-    EVAL["due skill eval — buildDefaultRunner src/services/learning/SkillEvalScheduler.ts"] --> VERD["verdict on the skill file + the Activity drawer's audit row"]
     GR["useAgentGroups.ts → groupRounds → streamQuickResponse"] --> GV["GroupChatView"]
 ```
 
@@ -471,14 +428,10 @@ bot-scoped routine executor, and the pipeline's private-message `automation` run
 mode. Nothing in the app now answers a model on a timer: every turn begins with a
 person pressing send, a bot mailbox delivery, or a room round.
 
-What survives is the one unattended caller that is not a conversation — the
-detached skill evaluator, reached from the trade-sync path
-(`runDueSkillEvalWithDefaultRunner src/services/learning/SkillMemoryService.ts › syncClosedTradeToNotebook`)
-and from the skill detail's own run. Because nobody is watching it, it runs on
-`DETACHED_EVAL_TOOLS` (`src/services/trade/unattendedTools.ts › DETACHED_EVAL_TOOLS`): the Agents surface's
-set minus every notebook-writer and minus `present_trade` / `decline_trade`, so a detached
-judgement can read the tape and cannot act on the journal. The deny list
-in that module is the single owner of "not without a human".
+Nothing unattended remains. The detached skill evaluator was deleted with the
+skill ledger; a skill is a document and has no verdict to re-run. The deny list
+in `src/services/selfMod/SelfModificationService.ts` › `BLOCKED_KNOB_REASONS` is
+the single owner of "not without a human".
 
 Stored automation data was left alone deliberately: `automations_v1_`,
 `automation_runs_v1_` and `automation_last_seen_v1_` stay allow-listed for restore
@@ -565,7 +518,7 @@ keeps what it already carries, but nothing grows them (`03fc0d5`).
 The notebook is one per-user blob at `memory_files_v1_<user>`
 (`src/services/learning/MemoryFilesService.ts › MEMORY_KEY_PREFIX`). Its folders are fixed by
 `DEFAULT_FOLDERS` (`src/services/learning/MemoryFilesService.ts › DEFAULT_FOLDERS`): `profile`, `trader-diary`,
-`market-conditions`, `rules`, `skills`, `bots`, `settled-beliefs`, `distilled`
+`market-conditions`, `rules`, `skills`, `bots`, `distilled`
 and `strategies`. The folder is the write scope, not the model's choice:
 
 | folder | owner / writer | what the next prompt may see |
@@ -573,9 +526,8 @@ and `strategies`. The folder is the write scope, not the model's choice:
 | `profile` | `syncProfileMemoryUnlocked` (`src/services/learning/MemoryFilesService.ts › buildDiaryEntry`) from the saved profile | the profile memory index (`buildProfileMemoryIndex`, `src/services/learning/profileMemory.ts › INDEX_LINE_MAX`) |
 | `trader-diary` | the trader and diary appends | free prose; not a generated index |
 | `rules` | the seed `risk-rules.md` plus trader edits | `riskRulesBlock`; the model treats each line as binding |
-| `skills` | approved skill files | the skills index / recall tool (G.3) |
+| `skills` | `writeSkillFile` — the desk's `skill_write` or the trader's library | the skills index / recall tool (G.3) |
 | `bots` | `botLearning` / the bot's own scope | bot memory, isolated or shared |
-| `settled-beliefs` | doctrine/consolidation | `settledBeliefsBlock` (`src/services/learning/settledBeliefs.ts › settledBeliefsBlock`) |
 | `distilled` | distillation passes | `loadDistilledFacts` (`src/services/learning/distilledMemory.ts › loadDistilledFacts`) |
 | `strategies` | `StrategyStore` and the `propose_strategy` tool | the active strategy block — and the uploaded BOOKS ride the same section (`activeStrategiesBlock`) |
 
@@ -587,8 +539,8 @@ go through the notebook UI / amendment inbox instead (`MemoryTopicsCard`,
 trader's source text.
 
 **Injection is a bounded slice, not the notebook.** `getMemoryFilesContext`
-(`src/services/learning/MemoryRetrievalService.ts › MemoryContextOptions`) assembles the blocks for a turn; its stage
-budgets come from `stageBudgetChars` (`src/services/learning/MemoryRetrievalService.ts › stageBudgetChars`) and the
+(`src/services/learning/MemoryRetrievalService.ts › MemoryContextOptions`) assembles the blocks for a turn; the
+budget comes from `notebookSliceChars` (`src/services/learning/MemoryRetrievalService.ts › notebookSliceChars`) and the
 `SKILL_INDEX_LINE_MAX`/`SKILL_BLOCK_MAX` limits. The notebook
 is the source; the prompt receives the subset the retrieval stage selects. The
 recall tool (`handleRecallTool`, `src/services/learning/MemoryRetrievalService.ts › handleRecallTool`) is the
@@ -616,12 +568,11 @@ Three derived memories sit beside the notebook:
   `aiPatternMemory`/`insightKnowledgeBase`. The two frozen fields keep their
   readers and bytes; nothing grows them since `03fc0d5`.
 - **Pattern memory** — `findRelevantTrades` (`src/services/learning/PatternMemorySynthesisService.ts › findRelevantTrades`)
-  is live at three sites (`src/services/learning/EvidencePackService.ts › buildVerdictEvidencePack`,
-  `src/services/learning/MemoryGraph.ts › buildMemoryGraph`,
-  `src/services/learning/MemoryRetrievalService.ts › conflictNote`).
+  is live at two sites: `src/services/learning/MemoryRetrievalService.ts › similarTradesBlock` and the
+  synthesis pass itself. The verdict evidence pack that also read it was deleted on 2026-11-06 — no
+  path ever wrote the fields its card rendered.
   `calculatePnlR` (`src/services/learning/PatternMemorySynthesisService.ts › calculatePnlR`) uses the
   canonical nearest target with a corrected exit before estimating.
-  **The gate half is dead on every trade path.**
   `generateSynthesizedPromptInjection` (`src/services/learning/PatternMemorySynthesisService.ts › generateSynthesizedPromptInjection`) has
   **no caller at all**. `generateMandatoryPatternCheck`
   (`src/services/learning/PatternMemorySynthesisService.ts › generateMandatoryPatternCheck`) is called only by
@@ -747,15 +698,13 @@ where the spec and the code disagreed):
   merging the two oldest non-sensitive rows, and refuses out loud when it
   cannot — so the ceiling only fires for a caller that skipped consolidation,
   which is exactly the hole it closes. An edit in place still lands at the cap.
-- **The approval path enforces the body contract** — `skillBodyCaps` and the
-  Use-when check ran only inside `SkillImportService` (and, as a courtesy
-  message, in `propose_skill`), so a draft queued by a post-mortem craft — or
-  one written before those gates existed — could be approved with a body no
-  import would accept. `craftedBodyGate src/services/learning/SkillMemoryService.ts › ingestCraftedSkillUnlocked`
-  is the one rule both ingest paths call: over the 100k hard cap REFUSES
-  (`over-hard-cap`, the draft stays in the inbox and the toast names the size),
-  over the 200-line soft cap and a description with no trigger WARN, exactly as
-  an import does.
+- **One write path checks the document** — `writeSkillFile`
+  (`src/services/learning/SkillFileService.ts › writeSkillFile`) refuses a
+  missing description or body and scans the whole library with `nearDuplicates`
+  before a create. A near-duplicate is refused with the skills to update or
+  merge, so the library cannot grow a second copy under a new name. There is no
+  body cap: long material belongs in `references/`, which the body addresses by
+  path.
 - **A fact read off a page is not the trader's memory** — the seat prompt
   already says a fenced result is data; the executor now stands behind that.
   The turn loop marks a turn `untrustedSeen` (`src/services/analysis/DeskToolsService.ts › runDeskToolLoop`) once
@@ -825,157 +774,66 @@ the pane edge, one hairline rule per category; the notebook is a separate store 
 away on the Learning surface. `memoryExport.ts` owns the export bytes; `ProfileMemoryCard.tsx` owns
 the page.
 
-### G.3 Skills are files with a lifecycle
+### G.3 Skills are folders, not rows
 
-A skill is a markdown file in `skills/`, parsed by `parseSkillMarkdown`
-(`src/services/learning/SkillMemoryService.ts › formatInvokedSkillSection`) into `SkillMeta` (`src/services/learning/SkillMemoryService.ts › SkillMeta`): status, kind, scope,
-evidence counts, `netR`/`grossR`, r-sample and provenance. `listSkills` is the one roster. `skillEnabledFlag` is the one place
-`enabled` is derived — suspension is `enabled: false` plus `meta.suspendedAt`,
-never a fourth status.
+A skill is a DIRECTORY under `skills/`:
 
-**The skill format is one trigger + a procedure (2026-10-30).** A skill carries `when` (its one
-checkable trigger sentence) and a body of steps; it has **no** `ifCondition`/`thenAction` pair in the
-craft, the file, the index row or the tool schemas. `parseSkillMarkdown` maps a legacy
-`ifCondition` front-matter key into `when` on read and the old keys survive as unknown frontmatter,
-so old files keep every byte; `serializeSkill` writes `when:`. The draft gates check the trigger
-(`validateTrigger`), coverage compares triggers, and `propose_skill`/`revise_skill` ask for
-`when` + `steps` (revisions may carry a full `procedure` body). The journal-rules store
-(`learning_rules_v2_<user>`) shares that vocabulary (`when` + `action`) and normalizes legacy rows on
-both read and write, so a restored backup heals on first load.
+```
+skills/<slug>/
+├── SKILL.md          required
+├── references/
+├── templates/
+├── scripts/          copied, never executed
+└── assets/
+```
 
-**The SKILL.md port, 2026-10-24** (same design pass as G.2's memory loop):
+The notebook stores files flat, so `MemoryFile.path` carries the logical path
+while `name` stays the folder-unique storage key (`<slug>.md`,
+`<slug>__references__x.md`). `isSkillFile`
+(`src/services/learning/SkillFileService.ts › isSkillFile`) recognises the head;
+`skillPathOf` derives the logical path for a file written before the field
+existed.
 
-- **Third-party frontmatter survives every rewrite.** `captureUnknownFrontmatter`
-  (`src/utils/skillFrontmatter.ts › captureUnknownFrontmatter`) captures every key the app has no semantics
-  for — `author`, `license`, `metadata.hermes.*`, `required_environment_variables`
-  — verbatim at parse, and `serializeSkill` re-emits them verbatim, because a
-  rewrite that eats a key the importer's author wrote is data loss the next
-  round-trip turns into an unexplainable diff. One vocabulary module
-  (`utils/skillFrontmatter.ts`) is shared by parser and serializer so a key can
-  never be known to one and unknown to the other.
-- **Compatibility is ENFORCED, not just carried.** `skillRunsHere`
-  (`src/utils/skillFrontmatter.ts › skillRunsHere`) maps `platforms` onto the three runtimes
-  the app actually has (browser / Electron desktop / Capacitor mobile),
-  requires `requiresTools` to be a subset of the desk's list, and fails closed
-  on `requiresEnv` — a renderer cannot honestly verify an env var. It also reads
-  the INVERSE gate: `fallbackForTools` means the skill exists to cover tools the
-  desk lacks, so it leaves the index as soon as one of them is available — a
-  procedure duplicating a live tool would tax every prompt for nothing.
-  `fallbackForToolsets` round-trips and gates nothing, because August names no
-  toolsets; guessing a set out of tool names would hide a skill for a reason no
-  author wrote. A skill this runtime cannot run leaves the index entirely, and
-  `skill_view` refuses to open it with that reason.
-- **Two vocabularies, one gate.** That gate used to read ONE shape — the
-  `compatibility:` blob this app writes. An imported file declares the same
-  thing as frontmatter keys (`requires_tools`, `fallback_for_tools`,
-  `platforms`, flat or nested under `metadata:` / `hermes:`), and
-  `declaredCompatibility` (`utils/skillFrontmatter.ts`) reads all three forms
-  (dash list, inline `[a, b]`, inline JSON) so a declaration a reader cannot see
-  stops being a constraint nobody enforces. The blob wins a key both spell; the
-  declaration fills the rest. Reading is not owning — the author's own lines stay
-  in `unknownFrontmatter` and re-emit verbatim, and a key August cannot honour
-  (`requires_toolsets`, `fallback_for_toolsets` — it names no toolsets) is
-  announced at import by `inertDeclaredKeys` rather than ignored in silence.
-- **`skill_view` — progressive disclosure on the desk.** L0 is the skills index
-  every seat already carries; the tool (`src/services/analysis/DeskToolsService.ts › executeDeskTool`) is L1 (the
-  full body plus the bundled-file list) and L2 (one bundled file by flat name —
-  path separators and `..` are refused). `${SKILL_DIR}` and `${SESSION_ID}`
-  substitute inside bodies, with `${HERMES_SKILL_DIR}`/`${HERMES_SESSION_ID}`
-  accepted as aliases.
-- **Import: folder, URL, scanned.** A picked folder imports whole — the
-  `SKILL.md` claims its sibling files as bundled files name-spaced
-  `<slug>__<subpath>`, exactly what L2 addresses (`bundledName`,
-  `src/services/learning/SkillImportService.ts › importSkillFiles`); the LEAF keeps its own extension, because a
-  bundled name is the address a body hands a model, not a title.
-  A URL brings the same shape rather than a second pipeline:
-  `fetchSkillFromUrl` (`src/services/learning/SkillImportService.ts › fetchSkillFromUrl`) fetches the raw SKILL.md
-  (https only, 15s, 400kB cap), `skillSupportRefs`
-  (`src/utils/skillFrontmatter.ts › skillSupportRefs`) reads the body for its `references/`,
-  `templates/`, `scripts/` and `assets/` siblings, and `resolveSiblingUrl`
-  (`src/utils/skillFrontmatter.ts › resolveSiblingUrl`) refuses any that is not https, is not on
-  the skill's own host, or does not resolve under the SKILL.md's own folder —
-  which is the load-bearing check, because the URL parser reads `\` as `/`
-  and a body's `references\..\..\x.md` slips past every textual rule
-  (measured in `.verify/url-ref-probe.cjs`, pinned by `check:contracts`).
-  ≤12 siblings, 200kB each, 600kB per batch, one 20s deadline shared by the
-  concurrent fetches; every refusal is named in the receipt, never dropped,
-  and an over-cap body is refused on its CONTENT (a NUL or an undecodable
-  byte), not on its extension. EVERY imported byte runs `scanSkillText`
-  (`src/utils/skillFrontmatter.ts › scanSkillText`): destructive filesystem
-  commands, fork bombs, piped shell downloads, credential-file reads and
-  credential-carrying URLs REFUSE the import with the finding named. Nothing
-  auto-runs — scripts are stored text, and this repo has no execution path
-  for them.
-- **Authoring caps** — `skillBodyCaps` (`src/utils/skillFrontmatter.ts › skillBodyCaps`):
-  200-line soft warn (move material into `references/`), 100k-char hard
-  refuse; a description with no "Use when" trigger is warned on at import,
-  because the description is the activation key and a vague one rarely
-  activates.
-- **The trader keeps the hard controls.** Each library row (`SkillsCatalog.tsx`,
-  `src/components/skills/SkillDetail.tsx › SkillDetail`) carries the enable toggle derived by
-  `skillEnabledFlag` — the ONE place `enabled` may be read — and
-  `requestRowDelete` (`src/components/dashboards/StrategyStudio.tsx › StrategyStudio`) arms ONE row and no other, so a
-  second click on that same row is the only thing that erases it.
-  `deleteSkillFile` (`src/components/skills/SkillDetail.tsx › deleteSkillFile`) takes the head AND every `<slug>__…`
-  bundled sibling in the same folder, inside one notebook write lock: a skill
-  that arrived as a folder owns files nothing else addresses, so a head-only
-  delete would leave bytes in the library that no row, no L1 list and no reader
-  can reach.
+**The file is the source of truth.** `parseSkillMarkdown` reads `name` +
+`description` and the body; `composeSkillMarkdown` writes exactly those two keys.
+There is no ledger, no approval stamp, no status and no compatibility gate.
+Nothing rewrites a trader's prose after creation — an import is stored verbatim,
+and the only rewrite is the one-time migration in `migrateSkillLibrary`, which
+strips the retired `# august:skill-ledger` face and its keys
+(`stripRetiredSkillContent`).
 
-The lifecycle has four stages:
+**One write path.** The model uses `skill_index` (every slug + description) and
+`skill_write` (create / update / merge) in `executeDeskTool`
+(`src/services/analysis/DeskToolsService.ts › executeDeskTool`). `writeSkillFile`:
+- create: scans the whole library with `nearDuplicates`; a score at or above
+  `DUPLICATE_SCORE_MIN` refuses the write and returns the closest skills to
+  update or merge;
+- update: `if_version` is the FNV hash of the bytes the writer read
+  (`contentVersion`); a stale hash returns the current content and writes nothing;
+- merge: `supersedes` deletes the named skills after the survivor lands.
 
-1. **Draft** — review passes and tools queue candidates:
-   `runSessionSkillReview` (`src/services/learning/sessionSkillReview.ts › runSessionSkillReview`), `runWeeklyReviewIfDue`
-   (`src/services/learning/weeklyReview.ts › runWeeklyReview`), `runMonthlyReportIfDue` (`src/services/learning/monthlyReport.ts › runMonthlyReport`),
-   `passMining`, `chartScanSkills`, `selfImprovement`, `botLearning`, and the
-   `propose_skill` desk tool. `queueSkillDraft` (`src/utils/skillDrafts.ts › queueSkillDraft`) and
-   `queueLearningProposal` (`src/utils/learningQueue.ts › queueLearningProposal`) write the inbox.
-2. **Gate** — `deterministicDraftGate` (`src/services/learning/draftGates.ts › deterministicDraftGate`) rejects duplicates and
-   malformed clauses; `gateEvidenceBackedDraft` requires evidence before
-   a draft can reach the library.
-3. **Auto-apply** — `autoApplyPendingSkillDrafts` (`src/services/learning/skillApproval.ts › autoApplyPendingSkillDrafts`)
-   runs on the heartbeat's draft-write event and calls `approveSkillDraft`
-   (`src/services/learning/skillApproval.ts › approveSkillDraft`), the only writer that turns a draft into a skill file.
-   It reads the library back; a failed write keeps the draft with an attempt budget. There is no approval inbox
-   (owner ruling, 2026-11-03). `repairSkillFileFormats`
-   (`src/services/learning/SkillMemoryService.ts › repairSkillFileFormats`) rewrites pre-format files into the one format at boot.
-4. **Retrieval and decay** — `rankSkillIndexRows`
-   (`src/services/trade/tradeChatContext.ts › rankSkillIndexRows`) ranks the 30-slot index;
-   `buildSkillsIndexForPrompt` renders it; `resolveInvokedSkills`
-   (`src/services/learning/SkillMemoryService.ts › resolveInvokedSkills`) returns the rows the model actually saw, and
-   `applySkillEvidence` updates the ledger from closed outcomes.
-   `runSkillIdleSweep` (`src/services/learning/skillIdleLifecycle.ts › runSkillIdleSweep`) suspends a silent skill
-   after 90 days and archives it after 180; `buildMemoryHealthReport`
-   (`src/services/learning/memoryHealth.ts › buildMemoryHealthReport`) counts the buckets, ghosts and queue sizes.
+`skill_view` opens one document plus its bundled files; the body is served whole
+(no card, no character cap).
 
-The Skills surface is the read side: `SkillsCatalog` (the E-55 two-column grid,
-with the availability mark derived from `skillEnabledFlag`), `SkillViewerPanel`,
-`SkillsLibrary`, `StrategyStudio` and the approval inbox. `deskToolCatalogue`
-documents the tool half of the same vocabulary (G.4).
+**The trader's pen is the same pen.** `SkillLibrary`
+(`src/components/skills/SkillLibrary.tsx › SkillLibrary`) lists, opens, edits,
+imports and deletes through the same `writeSkillFile`. Import
+(`importSkillFiles` in `src/services/learning/SkillImportService.ts`) preserves a
+folder's shape and screens every body with `scanSkillText`
+(`src/utils/skillFrontmatter.ts › scanSkillText`).
 
-The card's **name** is the human label (`humanizeSkillName`, `utils/skillNames.ts`):
-the slug remains the identity in the tooltip, the accessible name and every write
-path, while the visible name is the phrase a person recognises. Search matches
-both, so typing what is on screen finds the skill even when the slug is different.
+**Retrieval.** `rankedMatchedSkills`
+(`src/services/learning/MemoryRetrievalService.ts › rankedMatchedSkills`) scores a
+skill's description and body against the live setup; the opening/rebuttal stage
+gets `skillIndexLine`, the verdict gets the document itself. The chat index
+(`buildSkillsIndexForPrompt` in `src/services/trade/tradeChatContext.ts`) is a
+plain slug + description list.
 
-**Closed by E-57:** the store carried two readers with no caller —
-`formatHarnessNotesBlock`, whose subject was the ensemble's arbiter, and
-`lessonsForClass`, called only by its own tests. Both are deleted, and the module
-header no longer claims a prompt reader. What is NOT dead is the store's one live
-read: the wire-audit pin checker (`registerWireRoutePins`) asks this store whether
-a provider class is pinned to thinking-off, and the module header records
-that fact beside the commit that cut the phantom readers, so the next
-cleanup cannot delete the store on the theory that nothing reads it. Settings
-still lists the lessons, for a person.
-
-**The chart scan studies every bar, not a sample.** `scan_chart_skills` pulls the chart's full 1000-bar history;
-`src/services/learning/chartTapeStudy.ts › buildTapeStudy` buckets every bar by PHT hour (forward move, signed drift,
-up share, excursions), finds the ≥10% up/down swing legs with the state before each one (prior return, volume, range
-compression, gap, RSI), and measures candle anatomy and run lengths. `src/services/learning/chartScanSkills.ts › buildChartDigest`
-adds regimes, pivots, gaps, RSI and the book detectors, then fits `CHART_DIGEST_MAX_CHARS` — when the cap binds the raw
-tail is dropped and NAMED, never the study. Candidates are created directly through
-`src/services/learning/SkillMemoryService.ts › ingestCraftedSkillFromDraft` (no approval inbox) and stay hypotheses until
-the evidence fold moves them.
+**What does not exist any more:** candidate/confirmed/retired, `approvedBy`,
+wins/losses/netR, `evalVerdict`, the eval scheduler, the idle sweep, the
+graveyard, the draft inbox, the tentative channel, the predicate gate and the
+confidence cap it fed. A skill is context: it informs a read, it never vetoes or
+sizes a trade.
 
 ### G.4 The desk tools are one catalogue with surface allow-lists
 
@@ -999,8 +857,6 @@ mailbox tools. The surface decides what is offered:
   (L1 body + bundled-file list, L2 one bundled file) that the skills index
   header points every seat at — plus the goal environment tools and the change
   ledger tools (see G.9);
-- a detached skill eval uses `DETACHED_EVAL_TOOLS` (`src/services/trade/unattendedTools.ts › DETACHED_EVAL_TOOLS`),
-  `CHAT_SURFACE_TOOLS` minus the notebook-writers and the two journal-acting tools;
 - a panel seat adds the chart-action definitions only when its own allow-list
   names them.
 
@@ -1020,9 +876,7 @@ is the workflow's one actuation: it checks the coin against the live USDT-perp
 universe and writes the shared session through `setActiveSymbol`
 (`src/services/trade/chatStore.ts › setActiveSymbol`), the same writer the symbol
 picker uses (`src/components/trade/TradeView.tsx › TradeView`). Both tools sit in
-`INITIAL_DESK_TOOL_NAMES`, so shortlist → switch costs no `load_tools` round; a
-detached evaluator is denied the switch by `UNATTENDED_DENY`
-(`src/services/trade/unattendedTools.ts › UNATTENDED_DENY`).
+`INITIAL_DESK_TOOL_NAMES`, so shortlist → switch costs no `load_tools` round.
 
 The loop is bounded on every axis:
 
@@ -1073,8 +927,9 @@ the eval scheduler, hygiene and the supervisor — and it says which legs are st
   remains is that the desk turn resolves no override at all, so the two lanes
   currently send the same bytes and record different labels. The “Reset all (N)”
   count now ignores the ghosts too (`src/components/settings/PromptManager.tsx › PromptManager`).
-- **Harness lessons** — recorded and listed in Settings, and read live by the
-  wire-audit pin checker. There is no prompt reader, and E-57 deleted the two
+- **Harness lessons** — recorded and listed in Settings, and read live by
+  the provider request path (`src/services/providers/GenericProviderService.ts`) and the reasoning
+  controls. There is no prompt reader, and E-57 deleted the two
   functions that pretended there was one (see G.5), so this is a stated limit
   rather than a gap: a wire lesson is evidence for a human and for a pin, not a
   instruction to a seat.
@@ -1093,7 +948,7 @@ the eval scheduler, hygiene and the supervisor — and it says which legs are st
 | What | Key |
 |---|---|
 | dock sessions · active id · tool payloads | `trade_chat_sessions_v1_` · `trade_chat_active_v1_` · `trade_tool_payloads_v1_` |
-| notebook · queue · drafts · rules | `memory_files_v1_` · `learning_proposals_v1:` · `skill_drafts_v1:` · `approval_rules_v1:` |
+| notebook · journal rules | `memory_files_v1_` · `memory_files_v2_` (skills and diary are sharded) · `approval_rules_v1:` |
 | roster · providers · legacy automations | `agents_bots_v1` · `provider_configs_v1` (keys `enc:v1:` via safeStorage) · `automations_v1_` (legacy: nothing writes it since 2026-10-24, still restorable) |
 | profile memory (the collaboration facts) | `profile_memory_v1_<user>` — raw localStorage by design (`ExportService.RAW_LOCAL_STORAGE_PREFIXES`, `src/services/infrastructure/ExportService.ts › RAW_LOCAL_STORAGE_PREFIXES`), exported/restored through the prefix list, not Preferences |
 | learning rules · calibration stats · harness lessons | `learning_rules_v2_` · `model_confidence_calibration`/`confidence_calibration` · `august_harness_lessons_v1_` — the rest of the raw-localStorage family the export fallback reads |
@@ -1180,11 +1035,9 @@ prompt builder at
 goal and stops there. It shipped for a week as a function nobody called, which
 made this sentence a claim about a label rather than a behavior; the live probe
 and six `node-goals` arms now hold both arms of it — the hint on a match, nothing
-on a non-match, and no focus change from either. An unattended run passes no
-`matchText`, because a tool output or a fetched page must never be what points the
-seat at an environment.
-`UNATTENDED_DENY src/services/trade/unattendedTools.ts › UNATTENDED_DENY` keeps a detached evaluator
-able to read goals and unable to write them.
+on a non-match, and no focus change from either. `matchText` is the TRADER's own
+message and nothing else: a tool output or a fetched page must never be what
+points a seat at an environment.
 
 **A self-change is a harness edit with an undo already written.** The trader
 chooses how far it goes with one setting — `off`, `config`, `shadow` — and the
@@ -1209,10 +1062,12 @@ surfaces actually change how this app behaves:
   stamps the edited corpus onto every closed trade.
   `settleSelfChanges src/services/selfMod/SelfModificationService.ts › settleSelfChanges` then
   compares the two on those trades, on the same 5-per-side, 8-point bar declared
-  in `SHADOW_MIN_TRADES_PER_SIDE src/services/selfMod/SelfModificationService.ts › SHADOW_MIN_TRADES_PER_SIDE`
-  and in `maybePinWinningPromptLane src/utils/promptVersionStats.ts › maybePinWinningPromptLane` — and
-  promotes, leaves in shadow, or auto-reverts. It runs from the learning pass
-  beside `maybePinWinningPromptLane src/services/learning/SkillMemoryService.ts › syncClosedTradeToNotebook`
+  in `SHADOW_MIN_TRADES_PER_SIDE src/services/selfMod/SelfModificationService.ts › SHADOW_MIN_TRADES_PER_SIDE` — and
+  promotes, leaves in shadow, or auto-reverts. Time-based expiry is NOT this
+  path's job: `expireSelfChanges` runs from the learning heartbeat, at open and
+  on every sweep, so a window closes on schedule whether or not another trade
+  settles. It runs from the closed-trade
+  write-back in `useTradeLogging src/hooks/useTradeLogging.ts › useTradeLogging`,
   so a self-edit is judged by outcomes, not by the model's opinion of its own
   edit.
 
@@ -1295,8 +1150,8 @@ it to `NO_TOOLS_ALLOWED` rather than grant anything.
 | 26 | panel tools → chart echo | `executePanelTool src/services/trade/chatTurnRunner.ts › createChatTurnRunner` is what echoes the result back into the panel |
 | 27 | ~~automation tick → runAutomation~~ | DELETED (2026-10-24, owner request): the surface, the scheduler, the ration, the breaker and the bot-scoped routine executor are gone — see E |
 | 29 | rooms → groupRounds | `useAgentGroups src/hooks/useAgentGroups.ts › useAgentGroups` → `streamQuickResponse src/services/providers/GenericAnalysisService.ts › streamQuickResponse` |
-| 30 | review passes / propose_skill → draft → gates → auto-apply → skill | `draftGates.ts` → `approveSkillDraft src/services/learning/skillApproval.ts › approveSkillDraft` — the post-mortem leg is starved, not deleted (see D) |
-| 31 | approved skill → next prompt | `resolveInvokedSkills src/services/learning/SkillMemoryService.ts › resolveInvokedSkills` — closes into 24's stage 3 |
+| 30 | model or trader → skill document | `skill_index` / `skill_write` in `executeDeskTool src/services/analysis/DeskToolsService.ts › executeDeskTool` → `writeSkillFile src/services/learning/SkillFileService.ts › writeSkillFile`; a create scans the library first and a near-duplicate is refused — see G.3 |
+| 31 | skill document → next prompt | `rankedMatchedSkills src/services/learning/MemoryRetrievalService.ts › rankedMatchedSkills` / `resolveInvokedSkills src/services/learning/SkillFileService.ts › resolveInvokedSkills` — closes into 24's stage 3 |
 | 32 | logged trade → memory + autopilot | `useTradeLogging src/hooks/useTradeLogging.ts › useTradeLogging` writes the journal row and the memory note → MemoryService; proposedTrade leaves outcome PENDING so the autopilot watches it |
 | 33 | App messages + dock entries → one thread | `entriesForSession src/services/trade/chatSessions.ts › entriesForSession` |
 | 34 | chatStore → localStorage | `saveSessions src/services/trade/chatSessions.ts › saveSessions` → debounced key |
@@ -1307,7 +1162,7 @@ it to `NO_TOOLS_ALLOWED` rather than grant anything.
 | 39 | desktop calls → IPC → sseParser → chunks | `trustedHandle electron/main.cjs › trustedHandle` → `consumeProviderStream electron/main.cjs › extractStopReasonFromSse` → `createSseParser electron/sseParser.cjs › createSseParser` |
 | 40 | reasoning deltas → their own field | the trace rides ON THE ROW: `thoughtProcesses src/types/message.ts › Message` is what the Thinking row draws. The thinking STORE is written when a trade is logged (`useTradeLogging src/hooks/useTradeLogging.ts › useTradeLogging`); `saveThinkingBatch src/services/infrastructure/ThinkingStoreService.ts › saveThinkingBatch` is the RESTORE/migration path (`BackupService`, `SqliteService`), not a per-delta write |
 | 41 | notebook writes → byte tiers | a write asks `notebookPressureAllows src/services/learning/MemoryFilesService.ts › notebookPressureAllows` before the notebook may grow; the tiers come from utils/memoryBudget.ts and Settings Health reads memoryHealth.ts |
-| 42 | heartbeat → hygiene + idle sweep | `useLearningHeartbeat src/hooks/useLearningHeartbeat.ts › useLearningHeartbeat` → `memoryHygiene.ts` → `skillIdleLifecycle.ts` |
+| 42 | heartbeat → notebook hygiene | `useLearningHeartbeat src/hooks/useLearningHeartbeat.ts › useLearningHeartbeat` → `runMemoryHygieneIfDue src/services/learning/memoryHygiene.ts › runMemoryHygieneIfDue` |
 | 43 | ~~approval tray → badge~~ | DELETED (2026-11-03, owner request): the Approvals tab, its rail count and `collectApprovalItems` are gone; the queues apply themselves |
 | 44 | the pane filters what it shows | `deskThread src/utils/agentThreads.ts › deskThread` read at `AgentsView.tsx` |
 | 45 | `present_trade` → a card in either home | `runPresentTrade src/services/trade/presentTradeTool.ts › runPresentTrade` ← dock sink `chatTurnRunner.ts` / desk sink `chatSurfaceTurn.ts`; gate scan starts there, the cap binds at log time (`ensureStamp src/services/trade/proposalGate.ts › ensureStamp`), and the same stamp answers for the shape of the plan — `assessPlanShape src/services/trade/proposalGate.ts › assessPlanShape` refuses an inverted one and warns on a sub-floor ratio or an out-of-band stop, per ruling (c) of E-57 §5 |
@@ -1327,11 +1182,11 @@ it to `NO_TOOLS_ALLOWED` rather than grant anything.
 | 59 | wire decision → audit row | `buildReasoningPatch src/services/providers/reasoningControls.ts › buildReasoningPatch` → `WireAuditEntry` → `WireAuditRow`; the route, tier, applied and reason are recorded per call |
 | 60 | trade close → journal + autopilot | `logTradeWithFeedback src/hooks/useTradeLogging.ts › useTradeLogging` writes the row/memory note and the measured R; `register src/services/ui/OutcomeAutopilotService.ts › OutcomeAutopilotServiceClass` watches it |
 | 61 | autopilot → settlement | `subscribe src/services/ui/OutcomeAutopilotService.ts › OutcomeAutopilotServiceClass` → `settlementActionFor src/utils/outcomeSettlement.ts › settlementActionFor` (automatic · shadow · confirm; 15s undo) |
-| 62 | outcome → skill ledger + pattern memory | `applySkillEvidence src/services/learning/SkillMemoryService.ts › applySkillEvidence` and `calculatePnlR src/services/learning/PatternMemorySynthesisService.ts › calculatePnlR` consume the measured outcome, never a ±1 stand-in |
-| 63 | review → draft | `runSessionSkillReview src/services/learning/sessionSkillReview.ts › runSessionSkillReview` · `runWeeklyReviewIfDue src/services/learning/weeklyReview.ts › runWeeklyReviewIfDue` · `runMonthlyReportIfDue src/services/learning/monthlyReport.ts › runMonthlyReportIfDue` → `queueSkillDraft src/utils/skillDrafts.ts › queueSkillDraft` |
-| 64 | draft → gates → auto-apply | `deterministicDraftGate src/services/learning/draftGates.ts › deterministicDraftGate` / `gateEvidenceBackedDraft src/services/learning/draftGates.ts › gateEvidenceBackedDraft` → `approveSkillDraft src/services/learning/skillApproval.ts › approveSkillDraft` |
-| 65 | approved skill → notebook → prompt | `approveSkillDraft src/services/learning/skillApproval.ts › approveSkillDraft` writes the file; `resolveInvokedSkills src/services/learning/SkillMemoryService.ts › resolveInvokedSkills` returns the rows the next prompt may name |
-| 66 | heartbeat → hygiene + idle | `useLearningHeartbeat src/hooks/useLearningHeartbeat.ts › useLearningHeartbeat` → `runMemoryHygiene src/services/learning/memoryHygiene.ts › runMemoryHygiene` → `runSkillIdleSweep src/services/learning/skillIdleLifecycle.ts › runSkillIdleSweep` |
+| 62 | outcome → pattern memory | `calculatePnlR src/services/learning/PatternMemorySynthesisService.ts › calculatePnlR` consumes the measured outcome, never a ±1 stand-in. The skill ledger write was deleted with the ledger |
+| 63 | review → digest | `runWeeklyReviewIfDue src/services/learning/weeklyReview.ts › runWeeklyReviewIfDue` · `runMonthlyReportIfDue src/services/learning/monthlyReport.ts › runMonthlyReportIfDue` — no skill draft is minted |
+| 64 | ~~draft → gates → auto-apply~~ | DELETED with the skill ledger: `skill_write` is the only writer and it runs the duplicate scan itself |
+| 65 | skill document → notebook → prompt | `writeSkillFile src/services/learning/SkillFileService.ts › writeSkillFile` writes the file; `resolveInvokedSkills src/services/learning/SkillFileService.ts › resolveInvokedSkills` returns the rows the next prompt may name |
+| 66 | heartbeat → hygiene | `useLearningHeartbeat src/hooks/useLearningHeartbeat.ts › useLearningHeartbeat` → `runMemoryHygiene src/services/learning/memoryHygiene.ts › runMemoryHygiene` — the skill lifecycle is gone |
 | 67 | failure → failure row | `toFriendlyProviderError src/services/providers/GenericProviderService.ts › errorCauseChain` preserves the cause chain → `Message.error` → `ChatFailureRow`, in both homes |
 | 68 | model control → tier | `ModelChip`/`ModelMenu`; `nextEffortTier src/components/shared/effortScale.ts › nextEffortTier`; `effortDialUp src/components/shared/effortDial.ts › effortDialUp` guards the chord |
 | 69 | run → prompt lane + corpus version | `beginPromptLane src/services/infrastructure/PromptOverrideService.ts › beginPromptLane` → `promptCorpusVersion src/services/infrastructure/PromptOverrideService.ts › promptCorpusVersion` → `runStats.promptLane`/`promptVersion` |
@@ -1339,7 +1194,7 @@ it to `NO_TOOLS_ALLOWED` rather than grant anything.
 | 71 | skills index → skill_view → the body or one bundled file | `case 'skill_view' src/services/analysis/DeskToolsService.ts › executeDeskTool` — L1 body + bundled list, L2 one flat-named file (`..` refused); `${SKILL_DIR}`/`${SESSION_ID}` substitute, Hermes aliases accepted |
 | 72 | message → focused goal → a narrower toolset | `focusedGoal src/services/goals/GoalService.ts › focusedGoal` · `goalMatchesMessage src/services/goals/GoalService.ts › goalMatchesMessage` → `goalAllowedTools src/services/trade/chatSurfaceTurn.ts › runChatSurfaceTurn` → `intersectGoalPolicy src/utils/toolKinds.ts › intersectGoalPolicy` › `effectiveAllowed src/services/analysis/DeskToolsService.ts › withDeskToolsSystemPrompt`, an intersection — a goal may only narrow the seat, and narrowing to nothing leaves it `NO_TOOLS_ALLOWED src/utils/toolKinds.ts › NO_TOOLS_ALLOWED` rather than the whole desk |
 | 73 | seat → goal edit → snapshot → undo | `case 'update_goal' src/services/analysis/DeskToolsService.ts › executeDeskTool` → `updateGoal src/services/goals/GoalService.ts › updateGoal` keeps the previous snapshot → `case 'restore_goal' src/services/analysis/DeskToolsService.ts › executeDeskTool` → `restoreGoal src/services/goals/GoalService.ts › restoreGoal` |
-| 74 | seat → self-change → ledger → outcomes | `case 'propose_self_change' src/services/analysis/DeskToolsService.ts › executeDeskTool` → `proposeKnobChange src/services/selfMod/SelfModificationService.ts › proposeKnobChange` / `proposePromptOverride src/services/selfMod/SelfModificationService.ts › proposePromptOverride` → `writeSelfChange src/services/selfMod/SelfChangeLedger.ts › writeSelfChange` → `settleSelfChanges src/services/selfMod/SelfModificationService.ts › settleSelfChanges`, run from `settleSelfChanges src/services/learning/SkillMemoryService.ts › syncClosedTradeToNotebook` |
+| 74 | seat → self-change → ledger → outcomes | `case 'propose_self_change' src/services/analysis/DeskToolsService.ts › executeDeskTool` → `proposeKnobChange src/services/selfMod/SelfModificationService.ts › proposeKnobChange` / `proposePromptOverride src/services/selfMod/SelfModificationService.ts › proposePromptOverride` → `writeSelfChange src/services/selfMod/SelfChangeLedger.ts › writeSelfChange` → `settleSelfChanges src/services/selfMod/SelfModificationService.ts › settleSelfChanges`, run from `useTradeLogging src/hooks/useTradeLogging.ts › useTradeLogging` |
 | 75 | rail Goals tab → focus / undo → the header chip | `focusGoal src/services/goals/GoalService.ts › focusGoal` and `revertSelfChange src/services/selfMod/SelfModificationService.ts › revertSelfChange` pressed from `GoalRailPanel src/components/agents/GoalRailPanel.tsx › GoalRailPanel` → `ActiveGoalChip src/components/agents/ActiveGoalChip.tsx › ActiveGoalChip` names it, and its own press releases it |
 
 ---
@@ -1347,7 +1202,7 @@ it to `NO_TOOLS_ALLOWED` rather than grant anything.
 ## Invariants people get wrong
 
 1. There is **no `main.tsx`** — the entry is `index.tsx`.
-2. There is **no `utils/deskThread.ts`** — `deskThread` is `utils/agentThreads.ts`.
+2. There is **no `deskThread.ts` under utils** — `deskThread` is `utils/agentThreads.ts`.
 3. The provider layer speaks **four** wire formats; "three" describes only `electron/sseParser.cjs`,
    which has no `google` dialect.
 4. **There is no Approvals destination.** The destination set is exactly

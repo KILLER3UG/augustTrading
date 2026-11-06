@@ -173,21 +173,13 @@ export const buildTradePlan = (p: TradeProposal): TradePlan => {
     const warnings: string[] = [];
 
     const gateCap = p.gate?.status === 'evaluated' ? p.gate.confidenceCap : 1;
-    const effectiveCap = Math.min(gateCap, p.gate?.skillCeiling ?? 1);
-    if (p.gate?.status === 'evaluated' || p.gate?.skillCeiling !== undefined) {
-        const clamp = clampProbabilityToGate(probability, effectiveCap, plannedRr);
+    if (p.gate?.status === 'evaluated') {
+        const clamp = clampProbabilityToGate(probability, gateCap, plannedRr);
         if (clamp.wasClamped) {
             probability = clamp.probability;
             const next = downgradeConfidenceForProbability(clamp.probability, confidence);
             confidence = next === 'Avoid' ? confidence : next;
             warnings.push(`Gate enforcement: ${clamp.reason}`);
-        }
-        if (p.gate?.skillCeiling !== undefined) {
-            warnings.push(
-                `Code-checked skill ceiling ${(p.gate.skillCeiling * 100).toFixed(0)}%`
-                + (p.gate.skillNote ? ` — ${p.gate.skillNote}` : '')
-                + (p.gate.skillCeiling < gateCap ? '' : ' (the market gate binds lower)'),
-            );
         }
     } else if (p.gate?.status === 'unavailable') {
         warnings.push(`Gate unavailable — this plan is UNCAPPED (${p.gate.reason})`);

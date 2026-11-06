@@ -15,12 +15,11 @@ assertion count). Do not copy those numbers into prose — name the file that ow
 | Electron parses | `npm run typecheck:electron` | `electron/*.cjs` is syntactically valid | anything runtime — the desktop shell has no behavioural gate except the packaged smoke |
 | Lint | `npm run lint` | zero errors, warnings under a ratchet that binds | taste, layout, rendered text |
 | Build | `npm run build` | `tsc --noEmit` + a production Vite bundle | a prod-only runtime boot failure — that is boot-probe |
-| Contracts | `npm run check:contracts` | 13 pure-logic contracts (R:R math, retry classification, harness marks, notebook pressure, tool-pair compaction, AI-boundary coercion, skill authoring, index budget, policy tables, desk tool budget) | anything that needs a DOM, a store or a network |
+| Contracts | `npm run check:contracts` | the pure-logic contracts (R:R math, retry classification, harness marks, notebook pressure, tool-pair compaction, AI-boundary coercion, the skill document and its duplicate scan, index budget, policy tables, desk tool budget) | anything that needs a DOM, a store or a network |
 | Boundaries | `npm run check:boundaries` | no runtime edge crosses the layer table: types/schemas stay vocabulary, services and hooks take component types only, and `shared/`/`electron/` never import `src/` | a string-built `require`, a bundler alias it cannot resolve, or a boundary the table does not name |
 | Docs | `npm run check:docs` | every local link resolves, every `path` › `symbol` citation names a symbol that exists, and every gate named in `AGENTS.md` exists | whether the prose is *true* — only that its references are real |
 | Boot | `npm run boot-probe` | the production bundle starts, the Analyze surface and the chart dock mount, zero pageerrors | whether any interaction does anything |
 | Render | `npm run render-probe` | rendered row counts per conversation, send order, reload persistence, all four nav surfaces, no inert control on Learn/Journal, Settings → Data backup/export/import, computed focus indicator | a layout that only breaks at 800px; a wrong number inside a row it counted |
-| Skill approval | `npm run skill-approval-probe` | the four skill-draft outcomes and the queue's Apply, with the notebook **bytes** asserted after each click | the rest of the learning loop |
 | Installer smoke | `npm run installer-smoke` | the **packaged exe** launches and renders | anything after launch; Windows only |
 | Signature | `npm run verify:signature` | the installer is signed (or the unsigned release variable is deliberately set) | — |
 | Update manifest | `scripts/check-update-manifest.cjs` | the updater manifest names an installer that exists | the bytes behind it |
@@ -37,8 +36,7 @@ not gates. `replay:plans` is a read-only drift harness.
 - **Native/Capacitor.** No gate runs on a device.
 - **The printable trade report.** It opens; whether it prints correctly is a hand check.
 - **Prompt content.** The contracts pin pure functions; nothing asserts what a model is actually
-  sent. Prompt changes need a read of the composed string and, for the skill path,
-  `skill-approval-probe`.
+  sent. Prompt changes need a read of the composed string.
 
 ## CI and release
 
@@ -82,7 +80,7 @@ electron:release` refuses locally on purpose.
 | `electron/*.cjs` | `typecheck:electron` + `installer-smoke` before a release |
 | `scripts/**` | `typecheck:scripts`; if it is a probe, the guards' parse + lint |
 | UI, rendered text, a surface, a stylesheet | `build`, `render-probe`, and a look in a browser |
-| a prompt or anything the model reads | `check:contracts` if pure; `skill-approval-probe` for the skill path; read the composed prompt |
+| a prompt or anything the model reads | `check:contracts` if pure; read the composed prompt |
 | storage, Preferences, export | `render-probe` for the UI path; a manual export → wipe → import |
 | docs | `check:docs` |
 | a release | the whole ladder, through CI |

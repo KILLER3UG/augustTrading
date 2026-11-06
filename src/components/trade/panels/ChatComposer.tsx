@@ -6,8 +6,8 @@
  * names the provider, the model and the thinking tier, and one panel that edits
  * all three — so this file passes a value, a tier and their writers and nothing
  * else. The +
- * attach button (files + images + chart screenshot), the scan→skills chip and
- * Full analysis behave exactly as they did inline; the send button doubles as
+ * attach button (files + images + chart screenshot) and Full analysis behave
+ * exactly as they did inline; the send button doubles as
  * Stop while a run is live.
  */
 
@@ -22,12 +22,6 @@ import ModelChip from '../../shared/ModelChip';
 import ChatAttachmentStrip from './ChatAttachmentStrip';
 import ComposerWorkspaceRow from './ComposerWorkspaceRow';
 import * as chatStore from '../../../services/trade/chatStore';
-
-/** Composer chip + the empty-state "Scan chart → skills" prompt: the model
- *  reads the WHOLE tape via the scan_chart_skills desk tool and drafts skills
- *  that wait for approval in the Inbox. Exported because the shell's
- *  screener-prefill listener drops the same prompt into the draft. */
-export const SCAN_SKILLS_PROMPT = 'Scan every candle of this chart with scan_chart_skills: study the hour-by-hour movement, the ≥10% up and down legs and what preceded them — if we could turn back time, when should we have been in? Create your best candidates from what the tape proves (a trigger sentence plus a procedure, not a generic rule), and tell me what you created and which times and moves support it.';
 
 interface ChatComposerProps {
     /** The chart the chat talks about (workspace row + model picker). */
@@ -221,15 +215,7 @@ const ChatComposer: React.FC<ChatComposerProps> = ({
                                     actions, so they ride the message's own
                                     menu rather than decorating the box. */}
                                 <div aria-hidden="true" className="my-1 h-px bg-white/[0.07]" />
-                                <button type="button" data-testid="composer-scan-skills"
-                                    onClick={() => { setShowAttachMenu(false); void send(SCAN_SKILLS_PROMPT); }}
-                                    disabled={!ready || busy}
-                                    title="Study every candle in this chart and create candidate skills from what actually worked — each is a trigger + procedure, and evidence sets its status"
-                                    className="flex w-full items-center gap-2 rounded-control px-2 py-1.5 text-left text-ui-dense text-zinc-300 transition-colors hover:bg-white/[0.06] disabled:opacity-40">
-                                    <LayersIcon className="h-3.5 w-3.5 text-zinc-500" aria-hidden="true" /> Study the chart → skills
-                                </button>
-                                {onRunAnalysis && !isPanel && (
-                                    <button type="button" data-testid="composer-full-analysis"
+                                <button type="button" data-testid="composer-full-analysis"
                                         onClick={() => { setShowAttachMenu(false); void runFullAnalysis(); }}
                                         disabled={busy || !draft.trim()}
                                         title={draft.trim()
@@ -238,7 +224,6 @@ const ChatComposer: React.FC<ChatComposerProps> = ({
                                         className="flex w-full items-center gap-2 rounded-control px-2 py-1.5 text-left text-ui-dense text-zinc-300 transition-colors hover:bg-white/[0.06] disabled:opacity-40">
                                         <ChartBarIcon className="h-3.5 w-3.5 text-zinc-500" aria-hidden="true" /> Full analysis
                                     </button>
-                                )}
                             </div>
                         </>
                     )}

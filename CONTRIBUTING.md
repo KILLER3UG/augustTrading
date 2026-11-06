@@ -40,7 +40,7 @@ not make a habit of it.
 
 ## Staging
 
-- Stage by **explicit path**: `git add src/services/learning/draftGates.ts`. Never `git add -A` or
+- Stage by **explicit path**: `git add src/services/learning/SkillFileService.ts`. Never `git add -A` or
   `git add .` — they pick up scratch files, secrets and another session's work.
 - One gitignored path in an `add && commit` chain aborts the whole chain. Check the status after
   staging, and commit by pathspec when in doubt.
@@ -60,8 +60,10 @@ Run the gate your change needs — the table is in
 | `electron/*.cjs` | `npm run typecheck:electron` |
 | `scripts/**` | `npm run typecheck:scripts` |
 | UI / rendered text / stylesheet | `npm run build && npm run render-probe`, plus a look in a browser |
-| prompts / model input | `npm run check:contracts` and, for skills, `skill-approval-probe` |
+| prompts / model input | `npm run check:contracts` |
 | docs | `npm run check:docs` |
+
+**2026-11-06:** the skill-approval gate is retired with the document/context-only skill refactor.
 
 - **Prove red before green.** Reproduce the defect or the failing check first.
 - **One heavy gate at a time.** `render-probe` reports blank surfaces when it shares the machine

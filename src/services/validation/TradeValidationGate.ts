@@ -882,12 +882,6 @@ ${patternMatch.warning ? `\n PATTERN MEMORY:\n${patternMatch.warning}` : ''}
     }
 
 
-    // 3.12 Rule engine: the learned structured-rules layer is
-    // retired — skills are the only learned enforcement layer now. The core
-    // CONFIDENCE_RULES safety rails (R:R floors per confidence level) are
-    // applied via applyNotebookSkillsToAnalysis + validation elsewhere.
-
-
     // Detect trade type and run type-specific validation BEFORE the report is
     // built — the scalp/swing block can downgrade adjustedConfidence and push
     // warnings, and the report must reflect the FINAL state (it used to be

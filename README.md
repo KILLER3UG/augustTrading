@@ -102,10 +102,8 @@ artifacts on a developer machine.
 - **[docs/README.md](docs/README.md) — the reading path.** Start here.
 - [docs/product/](docs/product/) — the goal and the UX: charter, surfaces, voice.
 - [docs/engineering/](docs/engineering/) — gates and code conventions.
-- [docs/plan/](docs/plan/README.md) — the working register, the roadmap, the owner decisions, and
-  what already landed.
+- [docs/plan/](docs/plan/README.md) — the working register: what is still open, with the evidence.
 - [docs/architecture/](docs/architecture/) — the system map and the learning loop.
-- [changelog.md](changelog.md) — plain-English log of change rounds, newest first.
 
 ## License
 

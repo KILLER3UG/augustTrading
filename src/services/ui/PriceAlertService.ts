@@ -5,7 +5,7 @@
  * - WebSocket connection to Binance for real-time prices
  * - REST polling fallback with a batched request
  * - Ref-counted feed holds + per-symbol tracking for external consumers
- *   (OutcomeAutopilotService, VetoLedgerService, WatchListPanel, …)
+ *   (OutcomeAutopilotService, WatchListPanel, …)
  *
  * The former per-trade price-alert layer (Entry/TP/SL thresholds with
  * notifications and quiet hours) was removed: nothing in production could

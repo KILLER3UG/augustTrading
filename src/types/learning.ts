@@ -132,15 +132,20 @@ export interface LearningRule {
 export type RootCauseClass = 'SETUP_EDGE_FAILURE' | 'EXECUTION_ERROR' | 'MACRO_SHOCK' | 'UNCLEAR';
 
 /**
- * A single markdown file in the Trader Notebook (Settings → Personal edge).
+ * A single markdown file in the Trader Notebook (Learning → Memory).
  * The harness AND the user write these; matching enabled files are retrieved
  * into analyst, moderator, and post-mortem prompts (not a full dump).
  */
 export interface MemoryFile {
   id: string;
   folderId: string;
-  /** File name including the .md extension (e.g. "memory.md"). */
+  /** File name including the .md extension (e.g. "memory.md"). Unique in its folder. */
   name: string;
+  /** Logical path inside the folder, e.g. "my-skill/SKILL.md" or
+   *  "my-skill/references/checklist.md". The notebook stores files flat, so
+   *  this is what gives a skill its directory shape. Absent on files written
+   *  before the field existed. */
+  path?: string;
   content: string;
   /** When true the full content is injected into prompts. */
   enabled: boolean;

@@ -275,13 +275,12 @@ async function main() {
             return hit;
         };
 
-        // The skill record in the right panel — the reference's SKILL.md view.
-        // The catalog lives on Learning's MEMORY tab (the Skills tab is the
-        // library + studio), so this switches tabs before pressing a row.
-        await press('[data-testid="learn-tab-memory"]', 1800);
-        let how = await press('[data-testid="skills-catalog-grid"] button', 1500);
-        await shoot('ui-skill-viewer', how);
-        await press('[data-testid="learn-right-panel"] button[aria-label*="Close"]');
+        // A skill document, read in the Skills tab's library — the reference's
+        // SKILL.md view. The library is the one skill surface now, so this
+        // selects the tab and presses a row.
+        await press('[data-testid="learn-tab-skills"]', 1800);
+        let how = await press('[data-testid="skills-catalog-card"]', 1500);
+        await shoot('ui-skill-reader', how);
 
         // The audit disclosure under a settled verdict: August's answer to the
         // reference's collapsible "Ran a command" stack.

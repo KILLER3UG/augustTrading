@@ -5,8 +5,8 @@ import { getFirstReadyProvider } from '../../utils/providerUtils';
 
 /**
  * The Memory Model (Settings → AI setup) owns every background learning
- * pass: skill distillation, refinement, automated evals, doctrine rewrites,
- * and notebook reviews. It is persisted on the active profile as
+ * pass that remains: the pattern-memory synthesis and the notebook review.
+ * It is persisted on the active profile as
  * settings.memoryProvider / settings.memoryModel — this resolver reads it
  * back for service-side paths that run outside React state. Falls back to
  * the first ready provider when nothing is selected or it is not ready, so

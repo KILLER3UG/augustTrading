@@ -80,11 +80,6 @@ const load = (): HarnessLesson[] => {
     return lessons;
 };
 
-/** Test/eviction hook: drop the cache so the next load re-reads storage. */
-export const resetHarnessLessonCache = (): void => {
-    lessons = null;
-};
-
 const persist = (store: HarnessLesson[]): void => {
     try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(store));
@@ -151,34 +146,6 @@ registerWireRoutePins((route, providerId) =>
         && l.provider === providerId
         && l.pattern.toLowerCase().includes(`route=${route}`.toLowerCase())
     ));
-
-/**
- * Harness-lesson write path from the wire-audit stream: a clarification call
- * on a chat_completions seat where NO reasoning knob could be applied
- * (fail-closed 'none' route) is a budget lesson — the harness cannot tell
- * this wire shape to stop thinking, so a thinking-default model on it will
- * burn reasoning budget on 60-word answers. (The applied-thinking-off and
- * shim-owned anthropic cases are correct behavior and record nothing.)
- * Deduped by recordHarnessLesson's scope+kind+pattern match, so a provider
- * that keeps doing this refreshes one belief instead of spamming events.
- */
-export const recordBudgetLessonFromAudit = (
-    audit: WireAuditEntry,
-    task: string,
-    providerId: string,
-): void => {
-    if (task !== 'clarification') return;
-    if (audit.applied || audit.route !== 'none') return;
-    if (!audit.reason.includes('fail closed')) return;
-    recordHarnessLesson({
-        kind: 'budget',
-        scope: 'thinkingDefault',
-        provider: providerId,
-        pattern: 'clarification on an unverified wire shape (no thinking-off knob)',
-        lesson: 'A chat_completions seat with no verified reasoning route cannot be told to think less for fast tasks — if it thinks by default, clarifications burn reasoning budget. Probe this shape or prefer a provider with a verified thinking-off knob.',
-        evidenceId: `audit:${providerId}:clarification`,
-    });
-};
 
 // ─── P6: known-answer probes (200-accepted ≠ honored) ────────────────────────
 

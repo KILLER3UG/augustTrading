@@ -15,7 +15,7 @@
 import { fetchAllFuturesSymbols } from '../analysis/MarketDataService';
 import { fetchKlinesTagged, spotMirrorSourceNote } from '../analysis/KlineService';
 import { rsiSeries, scanSetups } from './setupScan';
-import { computeSetupClusterStats } from '../learning/EvidencePackService';
+import { computeSetupClusterStats } from '../learning/setupClusterStats';
 import { baseOf } from '../../utils/symbol';
 import type { Kline } from '../analysis/MarketDataService';
 import type { LoggedTrade } from '../../types/trade';

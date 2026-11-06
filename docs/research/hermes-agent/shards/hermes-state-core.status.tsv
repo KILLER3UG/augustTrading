@@ -1,8 +1,0 @@
-path	status	note
-hermes_state.py	read	Read in full (1,732 lines, 4 sequential chunks plus the tail). SessionDB facade: 16-mixin MRO, one writer + bounded read-only pool, WAL generation identity, write/read patience budgets, quarantine paths, token accounting, state_meta gates.
-hermes_state_lockguard.py	read	Read in full (195 lines). OFD fcntl lock guard on state.db/-shm so a stray close() in the same process cannot cancel SQLite's POSIX locks; per-inode handle counting; platform-gated no-op.
-hermes_state_lockowners.py	read	Read in full (125 lines). /proc/locks parser that names the process holding a write-class lock on state.db, with the three-pass union and the honest "no lock held at the deadline" case.
-hermes_state_pidns.py	read	Read in full (132 lines). PID-namespace identity for lock/lease holders; STRICT (TTL rows) vs LEGACY (no-expiry flock rows) policy for unstamped records; failed lookups are not cached.
-hermes_state_profile_repair.py	read	Read in full (390 lines). Crossed-profile finder/fixer/move module: mislabelled, foreign and crossed_parents lists; copy-then-delete move order; ledgered sessions refused.
-hermes_state_prune_rewrite.py	read	Read in full (259 lines). Proactive-prune in-place row rewrite with a row-version CAS digest (DB_ROW_SNAPSHOT), archived twin rows, PruneRowUnresolvedError vs PruneRowStaleError split.
-hermes_state_rewind.py	read	Read in full (163 lines). Carrier-aware user-turn rewind (/undo, /retry) shared by CLI, gateway and TUI: plan/apply split, warm-vs-durable agreement check, compaction-carrier scaffold retention.

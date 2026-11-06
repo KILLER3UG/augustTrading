@@ -20,7 +20,7 @@
  *     duplicate), forget (wrong memories get deleted, not left to rot).
  *
  * Per-user localStorage blob (`profile_memory_v1_${user}`), bounded — same
- * persistence grain as learningQueue/chatSessions, so no new storage path.
+ * persistence grain as chatSessions, so no new storage path.
  */
 
 import { getActiveUsername } from '../../utils/activeUser';

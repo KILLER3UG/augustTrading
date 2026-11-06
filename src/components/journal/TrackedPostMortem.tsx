@@ -23,7 +23,6 @@ import {
     readDiagnosisQueue,
     readTrackedPositions,
 } from '../../services/tracking/positionStore';
-import { listSkills } from '../../services/learning/SkillMemoryService';
 import { humanizeSkillName } from '../../utils/skillNames';
 import { phtStamp } from '../../utils/timezone';
 import { getActiveUsername } from '../../utils/activeUser';
@@ -100,27 +99,7 @@ const useTrackedRecord = (tradeId: string, username?: string): LoadState => {
                 ? queue.value.find(item => item.tradeId === position.id) ?? null
                 : null;
 
-            let skills: LinkedSkill[] = [];
-            try {
-                skills = listSkills()
-                    .filter(({ meta }) => meta.tradeIds.includes(position.id))
-                    .map(({ file, meta }) => ({
-                        id: file.id,
-                        title: humanizeSkillName(file.name),
-                        description: meta.description,
-                        status: meta.status,
-                        wins: meta.wins,
-                        losses: meta.losses,
-                        tentative: meta.approvedBy === 'tentative',
-                    }));
-            } catch {
-                // The notebook store is a separate record; an unreadable skill
-                // file must not take the measured path down with it. The empty
-                // list then reads as "no skill cites this trade YET", which is
-                // why the failure is also named below instead of swallowed.
-                problems.push('the skill notebook could not be read');
-            }
-
+            const skills: LinkedSkill[] = [];
             setState({
                 phase: 'ready',
                 position,

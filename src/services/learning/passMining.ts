@@ -1,35 +1,34 @@
 /**
- * Pass mining — the learning loop used to see only closed trades:
- * skill creation required a closed-trade cluster, so SKIPPED trades (the
- * discipline the research says matters most) were invisible to it.
+ * Pass mining — the journal's read on discipline. Closed trades say what the
+ * trader took; SKIPPED trades say what the trader refused, and nothing else in
+ * the loop was looking at them.
  *
  * This service resolves passes POST-HOC and deterministically: for a SKIPPED
  * trade with a reason and a preliminary plan (the analyst's entry/SL/TP,
  * already captured on the row), fetch klines after the skip timestamp and
  * check which level the would-be trade hit first:
- *   SL first  → CORRECT PASS  — the discipline worked; clusters of ≥3
- *               sharing a {coin|direction|family} fingerprint draft an
- *               avoid-skill through the existing approval-inbox path.
+ *   SL first  → CORRECT PASS  — the discipline worked.
  *   TP first  → MISSED OPPORTUNITY — surfaced as a journal counter-metric
- * ONLY. We do not teach the system to take more trades; 's
- *               breakers own that side.
+ *               ONLY. We do not teach the system to take more trades; the
+ *               trader's own breakers own that side.
  *   neither   → still open / inconclusive — stays pending for a later sweep.
  *
- * Resolutions persist per user (bounded), so clusters accumulate across
- * sessions and each skip is fetched at most once.
+ * Neither resolution writes a skill. The desk writes skills through
+ * `skill_write` (SkillFileService) when it has something to say; a skipped
+ * trade is a number in the journal, not a document.
+ *
+ * Resolutions persist per user (bounded), so each skip is fetched at most
+ * once across sessions.
  */
 
 import type { LoggedTrade } from '../../types';
 import { TradeOutcome } from '../../types/enums';
 import { getPreferenceArray, setPreferenceObject } from '../infrastructure/PreferencesService';
 import { scanTradeOutcome, resolveOutcomeFromScan } from '../backtesting/outcomeEngine';
-import { baseOf } from '../../utils/symbol';
 import { nearestTargetPrice } from '../../utils/riskReward';
 import type { Kline } from '../../types/message';
 
-/** Match MIN_CLUSTER_FOR_SKILL — three vindicated passes draft a skill. */
-export const MIN_CLUSTER_FOR_CORRECT_PASSES = 3;
-/** Cap on kline fetches per sweep (cost bound, like the eval budget). */
+/** Cap on kline fetches per sweep — the cost bound; a sweep never pages back far. */
 export const PASS_MINING_MAX_FETCHES_PER_SWEEP = 5;
 /** Only consider skips newer than this — older paths need too much history. */
 const PASS_MINING_LOOKBACK_DAYS = 30;
@@ -50,8 +49,6 @@ export interface PassRecord {
     skippedAt: string;
     resolution: PassResolution;
     resolvedAt: string;
-    /** True once a draft has been queued from this record's cluster. */
-    drafted?: boolean;
 }
 
 const KEY_PREFIX = 'pass_mining_v1_';
@@ -107,34 +104,6 @@ export const resolvePassOutcome = (
     return 'OPEN';
 };
 
-/** The {coin|direction|family} fingerprint a correct-pass cluster shares. */
-export const passClusterKey = (r: { coin?: string; direction?: string; family?: string }): string => {
-    // Canonical base coin (utils/symbol) — matches botLearning.setupKey,
-    // which derives its join key through the SAME helper.
-    const coin = baseOf(r.coin || 'GEN');
-    const dir = r.direction === 'Long' || r.direction === 'Short' ? r.direction : 'Neutral';
-    const fam = r.family || 'any';
-    return `${coin}|${dir}|${fam}`;
-};
-
-/** Group resolved CORRECT_PASS records into clusters of ≥N (draft-eligible). */
-export const correctPassClusters = (
-    records: PassRecord[],
-    minCluster: number = MIN_CLUSTER_FOR_CORRECT_PASSES,
-): Array<{ key: string; records: PassRecord[] }> => {
-    const byKey = new Map<string, PassRecord[]>();
-    for (const r of records) {
-        if (r.resolution !== 'CORRECT_PASS') continue;
-        const k = passClusterKey(r);
-        const list = byKey.get(k) ?? [];
-        list.push(r);
-        byKey.set(k, list);
-    }
-    return [...byKey.entries()]
-        .filter(([, list]) => list.length >= minCluster)
-        .map(([key, records]) => ({ key, records }));
-};
-
 /** Missed-opportunity counter-metric for the journal (never a skill). */
 export const missedOpportunityCount = (records: PassRecord[]): number =>
     records.filter(r => r.resolution === 'MISSED_OPPORTUNITY').length;
@@ -144,7 +113,7 @@ export const correctPassCount = (records: PassRecord[]): number =>
 
 /**
  * Extract the would-be plan from a skipped trade row. The preliminary plan
- * (entry/SL/TP) rides the analysis the same way the veto ledger reads it.
+ * (entry/SL/TP) rides the analysis the desk wrote when it proposed the trade.
  */
 const planOf = (t: LoggedTrade): { entry: number; sl: number; tp: number; isLong: boolean } | null => {
     const a = t.analysis;
@@ -168,15 +137,12 @@ export interface PassMiningSweepResult {
     resolved: number;
     correctPasses: number;
     missed: number;
-    /** Cluster keys a draft was queued for during this sweep. */
-    draftedClusters: string[];
 }
 
 /**
  * One sweep: resolve up to PASS_MINING_MAX_FETCHES_PER_SWEEP recent
- * unresolved skips, persist the outcomes, and draft avoid-skills (through
- * the approval inbox — the human gate stays) for clusters of ≥3 correct
- * passes that have not already drafted one.
+ * unresolved skips and persist their outcomes. It writes no skill and no
+ * queue item — the journal's two counters are the whole product.
  *
  * `fetchKlines` is injectable so tests (and offline runs) never touch the
  * network; production passes the real KlineService fetcher.
@@ -186,7 +152,7 @@ export const runPassMiningSweep = async (
     username: string,
     fetchKlines: (symbol: string, interval: string, limit: number) => Promise<Kline[]>,
 ): Promise<PassMiningSweepResult> => {
-    const result: PassMiningSweepResult = { resolved: 0, correctPasses: 0, missed: 0, draftedClusters: [] };
+    const result: PassMiningSweepResult = { resolved: 0, correctPasses: 0, missed: 0 };
     const records = await loadPassRecords(username);
     const known = new Map(records.map(r => [r.tradeId, r]));
 
@@ -241,59 +207,6 @@ export const runPassMiningSweep = async (
             if (resolution === 'CORRECT_PASS') result.correctPasses += 1;
             if (resolution === 'MISSED_OPPORTUNITY') result.missed += 1;
         }
-    }
-
-    // Draft avoid-skills for fresh clusters — through the approval inbox,
-    // provenance = the skip episode ids. Missed opportunities NEVER draft.
-    for (const cluster of correctPassClusters(records)) {
-        if (cluster.records.every(r => r.drafted)) continue;
-        const sample = cluster.records[0];
-        const coin = baseOf(sample.coin || 'GEN');
-        const dir = sample.direction || 'the side';
-        const fam = sample.family || 'this setup';
-        const crafted = {
-            name: `Avoid ${coin} ${dir} ${fam}`.slice(0, 80),
-            kind: 'avoid' as const,
-            when: `${coin} ${dir.toLowerCase()} setups in the ${fam} family.`,
-            inputs: [coin, dir, fam].filter(Boolean),
-            steps: [
-                `Recognize the ${fam} setup on ${coin} ${dir.toLowerCase()}`,
-                'Check the skip reasons that were right before',
-                'Pass unless a new, stronger confirmation appears',
-            ],
-            validate: 'The pass cluster stays vindicated (price reaches the would-be stop).',
-            output: 'Skip the setup',
-            approval: 'Always — pass-mined skills are drafts until the user approves them.',
-        };
-        // The cluster already carries a scoped default prediction; the gate
-        // adds tombstone/duplicate/coverage/trigger checks. Judged once —
-        // a skip (covered by a live skill, or rejected recently) still marks
-        // the cluster drafted so the weekly sweep never re-nags it.
-        const { queueSkillDraft } = await import('../../utils/skillDrafts');
-        const { deterministicDraftGate } = await import('./draftGates');
-        const gate = deterministicDraftGate({
-            crafted: {
-                ...crafted,
-                prediction: (await import('../../utils/skillPrediction')).defaultPrediction({
-                    coin: sample.coin,
-                    family: sample.family,
-                    regime: sample.regime,
-                }),
-            },
-            tradeId: `pass:${cluster.key}:${cluster.records.length}`,
-            username,
-            coin: sample.coin,
-            family: sample.family,
-        });
-        if (gate.ok) {
-            queueSkillDraft({
-                tradeId: `pass:${cluster.key}:${cluster.records.length}`,
-                coin: sample.coin,
-                crafted: gate.crafted,
-            }, username);
-            result.draftedClusters.push(cluster.key);
-        }
-        for (const r of cluster.records) r.drafted = true;
     }
 
     await savePassRecords(username, records);

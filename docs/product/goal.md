@@ -22,7 +22,7 @@ prep → scan → plan → manage → journal → review → improve
 - **manage** — watch the levels that matter; notice when a plan is invalidated or resolved.
 - **journal** — record what was actually decided and what happened.
 - **review** — settle the outcome and check the plan against the result.
-- **improve** — turn settled evidence into skills and doctrine the next plan is built with.
+- **improve** — turn settled evidence into skills and notebook the next plan is built with.
 
 ## The invariant
 
@@ -46,17 +46,19 @@ improvement.
 
 ## What "working" means
 
-The loop is only closed when a settled trade writes evidence the next plan reads back:
+The loop is only closed when what happened changes what the next read says:
 
 1. A proposal is logged with its entry, stop, targets and the tier that produced it.
 2. The outcome is detected and settled — today, human-confirmed.
-3. The settlement feeds skill evidence, and the skill is re-verified against the journal.
-4. The next plan's context includes what the loop learned.
+3. The settlement writes the journal, the diary entry and the recurring-mistake note, and a
+   tracked position gets its own structured diagnosis. A skill is not written by this step: a
+   skill is a document the trader or the model writes.
+4. The next plan's context includes what the notebook learned.
 
-Steps 1 and 2 exist. Step 3 is wired but starved by the size of the outcome corpus — the loop is
-idle by data, not by bug. Step 4 is the open work. `docs/plan/open-items.md` is the register of what
-is missing, and the highest-leverage item is not code: whether an outcome needs a human click (see
-`docs/plan/decisions.md`).
+Steps 1 and 2 exist. Step 3 no longer feeds a skill ledger at all — a skill is a document the
+trader or the model writes, and settlement writes the journal, the diary and the recurring-mistake
+note. Step 4 is the open work: whether what the notebook learned actually reaches the next read.
+`docs/plan/open-items.md` is the register of what is missing.
 
 **The current build order is not this loop.** Until execution exists, the learning loop that
 matters is **signal → price outcome**: a signal is recorded, the tape resolves it against its target

@@ -305,13 +305,15 @@ async function counts(page, scope) {
  * Write a profile whose ACTIVE conversation already contains settled verdicts.
  *
  * The live-chat phase above can only produce solo chat replies, so it never
- * renders a verdict card at all — which is the half of the transcript the audit
- * panels live on. These rows go into storage exactly as the app would have
- * written them, deliberately including two persisted shapes that used to throw
- * inside the message map: an evidence pack whose arrays are absent, and a
- * run-contract row whose state is no longer in the union. A crash there does
- * not drop a panel, it drops that message and every message after it — which is
- * what "the second message doesn't render" looks like from the inside.
+ * renders a verdict card at all — which is the half of the transcript the
+ * decline explanation lives on. These rows go into storage exactly as the app
+ * would have written them, and one of them deliberately carries fields the
+ * current type no longer declares: an `evidencePack` and a `runContract` whose
+ * panels were deleted on 2026-11-06 because nothing ever wrote those bytes. A
+ * trader's existing notebook is allowed to contain them, so this row is the
+ * control that an old row renders, rather than dropping that message and every
+ * message after it — which is what "the second message doesn't render" looks
+ * like from the inside.
  */
 async function seedVerdicts(page) {
     await page.evaluate(async () => {
@@ -535,19 +537,6 @@ async function seedVerdicts(page) {
                     },
                     runStats: { runId: 'probe-run', startedAt: iso(20), finishedAt: iso(19), durationMs: 12_000 },
                     analysis: analysis({}),
-                    evidencePack: {
-                        statsLine: '6 similar setups · 4 wins · median 1.8R',
-                        causePattern: 'Chasing the break before the retest holds.',
-                        similar: [{ outcome: 'LOSS', coin: 'BTCUSDT', direction: 'Long', date: '2026-09-11', lesson: 'wait for the reclaim', similarity: 81 }],
-                        skills: ['fade-the-first-break'],
-                        doctrineHeader: 'Doctrine: only trade the reclaim.',
-                    },
-                    runContract: [
-                        { id: 'gate', label: 'Gate scan', state: 'done' },
-                        { id: 'openings', label: 'Analyst openings', state: 'done' },
-                        { id: 'clarification', label: 'Clarification', state: 'skipped', note: 'budget cap' },
-                        { id: 'verdict', label: 'Moderator verdict', state: 'done' },
-                    ],
                 },
                 { id: 's3', role: 'user', text: 'SEEDED BETA', createdAt: iso(8) },
                 {
@@ -557,12 +546,13 @@ async function seedVerdicts(page) {
                     createdAt: iso(7),
                     modelsUsed: { mock: 'mock-mini' },
                     analysis: analysis({ direction: 'Neutral', confidence: 'Avoid' }),
-                    // Missing `similar`/`skills` entirely: the shape a pack
-                    // written by an older build looks like.
+                    // Bytes an older build wrote, in the shape it wrote them:
+                    // `similar`/`skills` absent, and a stage state ('complete')
+                    // that was never in the union. Nothing renders these two
+                    // fields now — the row must simply survive them.
                     evidencePack: {
                         statsLine: 'no comparable setups', causePattern: '', doctrineHeader: '',
                     },
-                    // `complete` is not a state this union knows.
                     runContract: [
                         { id: 'gate', label: 'Gate scan', state: 'complete' },
                         { id: 'rebuttals', label: 'Rebuttal rounds', state: 'skipped', note: 'single seat' },
@@ -855,7 +845,7 @@ async function main() {
         // SAVED since the auto-apply ruling (2026-11-03): a draft that passed
         // the gates is no longer waiting for a human, and the row must not say
         // it is.
-        const namesTheCall = (t) => /skill draft saved/i.test(t) && /Session-open fade short/.test(t);
+        const namesTheCall = (t) => /skill saved/i.test(t) && /probe-session-open-fade-short/.test(t);
         const firstText = await toolLineText();
         check('the tool line names the call the model actually made',
             namesTheCall(firstText), `rendered: ${firstText || '(none)'}`);
@@ -980,7 +970,7 @@ async function main() {
         const toolPersisted = await page.waitForFunction(() => {
             for (const key of Object.keys(localStorage)) {
                 if (!key.startsWith('trade_chat_sessions_v1_')) continue;
-                if ((localStorage.getItem(key) || '').includes('Session-open fade short')) return true;
+                if ((localStorage.getItem(key) || '').includes('probe-session-open-fade-short')) return true;
             }
             return false;
         }, null, { timeout: 8000 }).then(() => true).catch(() => false);
@@ -1552,8 +1542,8 @@ async function main() {
 
         // ── Seeded verdict rows ────────────────────────────────────────
         // The live-chat phase never renders a verdict card, so this is the only
-        // browser coverage of the audit panels and of the two persisted shapes
-        // that used to take the transcript down behind them.
+        // browser coverage of the decline explanation and of a stored row that
+        // carries bytes the current type no longer declares.
         await seedVerdicts(page);
         await page.reload({ waitUntil: 'domcontentloaded' });
         await page.waitForFunction(() => !document.querySelector('#splash'), null, { timeout: 25000 });
@@ -1566,12 +1556,11 @@ async function main() {
         const verdictCards = await page.locator('[data-testid="inline-verdict"]').count();
         check('both settled verdicts render a verdict card', verdictCards === 2, `${verdictCards}/2`);
         const auditCards = await page.locator('[data-testid="verdict-audit"]').count();
-        check('the verdict audit renders on both', auditCards === 2, `${auditCards}/2`);
-        const ladders = await page.locator('[data-testid="run-contract"]').count();
-        check('the run-contract ladder renders on both verdicts', ladders === 2, `${ladders}/2`);
+        check('the audit renders where the verdict needs explaining, and only there',
+            auditCards === 1, `${auditCards}/1 (the declined one)`);
         const seededText = await page.locator('main').innerText();
-        check('a skipped stage says why, in the browser',
-            seededText.includes('budget cap') && seededText.includes('single seat'),
+        check('a row carrying bytes the current type no longer declares still renders',
+            seededText.includes('No trade — the reclaim failed'),
             seededText.slice(0, 160));
         check('the declined verdict explains itself', /why avoid|why no trade/i.test(seededText));
         // The reference's thinking block: one bare settled line with a frozen
@@ -2314,29 +2303,18 @@ async function main() {
             }
         };
 
-        // ── The Health tab is where this session's backend work becomes
-        //    visible: the idle sweep's log line, the notebook byte budget, and
-        //    the suspended-skill count all surface as flags or log rows. If the
-        //    wiring were only in code, this is the check that would notice.
+        // ── The Health tab is where the learning surface's read-only panels
+        //    live. They mount lazily behind a tab, so this is the check that
+        //    notices a wiring that only exists in code.
         const healthTab = page.locator('[data-testid="learn-tab-health"]');
         if (await healthTab.count()) {
             await page.evaluate(() => document
                 .querySelector('[data-testid="learn-tab-health"]')?.click());
-            const card = page.locator('[data-testid="memory-health-card"]');
-            const hasCard = await pollFor(async () => (await card.count()) === 1);
-            check('Learning → Health opens the memory health card', hasCard === true, `${hasCard}`);
-            if (hasCard) {
-                const cardText = await card.innerText();
-                check('the idle skill sweep reports itself on screen',
-                    /Idle skill sweep/i.test(cardText), cardText.slice(0, 200));
-                check('the notebook byte budget is on screen, not just in code',
-                    /blob size/.test(cardText) && /MB · (ok|soft|trigger|hard)/.test(cardText),
-                    cardText.slice(cardText.indexOf('blob size'), cardText.indexOf('blob size') + 80));
-                check('the suspended-skill count is on screen',
-                    /skills suspended from prompts/.test(cardText),
-                    cardText.slice(cardText.indexOf('skills suspended from prompts'),
-                        cardText.indexOf('skills suspended from prompts') + 60));
-            }
+            const hasAnalytics = await pollFor(async () => (await page.locator('[data-testid="learn-analytics"]').count()) > 0);
+            const hasDiagnostics = await pollFor(async () => (await page.locator('[data-testid="learn-system"]').count()) > 0);
+            check('Learning → Health opens the analytics and diagnostics panels',
+                hasAnalytics === true && hasDiagnostics === true,
+                `analytics=${hasAnalytics} diagnostics=${hasDiagnostics}`);
         } else {
             check('Learning → Health tab is reachable', false, 'no learn-tab-health control');
         }
@@ -2754,7 +2732,7 @@ async function main() {
             return wanted.filter(w => names.includes(w));
         }, bundleNames);
         const beforeDelete = await readBundles();
-        const delSel = '[data-testid="studio-delete-probe-bundle-skill"]';
+        const delSel = '[data-testid="skill-delete-probe-bundle-skill"]';
         let deletePressed = 'no control';
         try {
             await page.waitForSelector(delSel, { timeout: 6000 });
@@ -3232,20 +3210,21 @@ async function main() {
         };
         // Learn is tabbed three ways. Sweeping only the default tab left the
         // others unjudged — the gate could not see a dead control inside Memory
-        // or Health. 18 rounds, because Health alone stacks six panels now that
-        // System's telemetry and the supervisor's log fold into it. The
-        // Approvals tab is gone (owner 2026-11-03): its queues apply themselves,
+        // or Health. 18 rounds, because the Health tab stacks several panels
+        // and a sweep that runs out before the last one leaves controls unjudged.
+        // The Approvals tab is gone (owner 2026-11-03): its queues apply themselves,
         // so the sweep names the three tabs that exist.
         await sweepSurface('Learning', 18, [
             'learn-tab-skills', 'learn-tab-memory', 'learn-tab-health',
         ]);
-        // ── The skill viewer round trip (gap 1) ──────────────────────────
-        // The sweep presses a catalog row and credits it if the surface moved.
+        // ── The skill document round trip ────────────────────────────────
+        // The sweep presses a library row and credits it if the surface moved.
         // That proves the click did SOMETHING; this proves the thing it did is
-        // the READ the reference promises: the record opens with its
-        // description (the retrieval trigger), its outcome ledger, and a
-        // close that returns the surface. A unit test mounts the panel in
-        // jsdom and passes; only this can see the panel actually appear.
+        // the READ the library promises: the row opens with its description (the
+        // retrieval trigger) and its SKILL.md body, Edit hands the SAME body
+        // back as a draft, and Cancel returns to the reader still showing it.
+        // A unit test mounts the component in jsdom and passes; only this can
+        // see the document actually appear.
         {
             let how = await navTo('Learning');
             if (how === 'not found') {
@@ -3254,38 +3233,54 @@ async function main() {
                 how = await navTo('Learning');
             }
             await page.evaluate(() => document
-                .querySelector('[data-testid="learn-tab-memory"]')?.click());
-            const rowPressed = await page.evaluate(() => {
+                .querySelector('[data-testid="learn-tab-skills"]')?.click());
+            const rowPressed = await pollFor(async () => page.evaluate(() => {
                 const row = [...document.querySelectorAll('[data-testid="skills-catalog-grid"] button')]
                     .find(b => /read fade the first break/i.test(b.getAttribute('aria-label') || ''));
-                if (!row) return false;
+                if (!row) return null;
                 row.click();
-                return true;
-            });
+                return 1;
+            }), 6000).then(v => v === 1);
             // Precondition, checked not assumed: a missing row must read as a
             // broken probe, not as a broken feature.
-            check('the seeded skill row is pressable in the catalog', rowPressed === true, `${rowPressed}`);
+            check('the seeded skill row is pressable in the library', rowPressed === true, `${rowPressed}`);
             const opened = await pollFor(async () => {
                 const text = await page.evaluate(() => {
-                    const viewer = document.querySelector('[data-testid="skill-viewer"]');
-                    if (!viewer || viewer.closest('[data-hidden="true"]')) return null;
-                    return viewer.innerText || null;
+                    const pane = document.querySelector('[data-testid="skill-library"]');
+                    return pane ? pane.innerText || null : null;
                 });
                 return text && /Fade the first breakout/.test(text) ? text : null;
             });
-            check('the skill viewer opens with its description and outcome ledger',
-                !!opened && /4W – 1L/.test(opened), String(opened).slice(0, 120));
-            if (opened) {
-                await page.evaluate(() => {
-                    document.querySelector('[aria-label="Close the skill viewer"]')?.click();
+            check('the library reader shows the description and the SKILL.md body',
+                !!opened && /fade it back inside the range/i.test(opened), String(opened).slice(0, 160));
+            const drafted = await pollFor(async () => {
+                const pressed = await page.evaluate(() => {
+                    const btn = [...document.querySelectorAll('[data-testid="skill-library"] button')]
+                        .find(b => (b.textContent || '').trim() === 'Edit');
+                    if (!btn) return 0;
+                    btn.click();
+                    return 1;
                 });
-                await sleep(600);
-                const hidden = await page.evaluate(() => {
-                    const panel = document.querySelector('[data-testid="learn-right-panel"]');
-                    return panel?.getAttribute('data-hidden') === 'true';
+                if (!pressed) return null;
+                await sleep(300);
+                return page.evaluate(() => {
+                    const boxes = [...document.querySelectorAll('[data-testid="skill-library"] textarea')];
+                    return boxes.some(t => /fade it back inside the range/i.test(t.value)) ? 1 : null;
                 });
-                check('closing the viewer hides the panel and keeps the catalog', hidden === true, `${hidden}`);
-            }
+            }, 6000).then(v => v === 1);
+            check('Edit hands the same document back as a draft, not an empty box', drafted === true, `${drafted}`);
+            await page.evaluate(() => {
+                const btn = [...document.querySelectorAll('[data-testid="skill-library"] button')]
+                    .find(b => (b.textContent || '').trim() === 'Cancel');
+                btn?.click();
+            });
+            const backToReader = await pollFor(async () => page.evaluate(() => {
+                const pane = document.querySelector('[data-testid="skill-library"]');
+                if (!pane) return null;
+                if (pane.querySelector('textarea')) return null;
+                return /fade it back inside the range/i.test(pane.innerText || '') ? 1 : null;
+            }), 6000).then(v => v === 1);
+            check('Cancel returns to the reader with the document still rendered', backToReader === true, `${backToReader}`);
         }
         // Precondition, checked not assumed: if the seeded journal had not
         // loaded, every filter chip would look inert and the sweep would fail
@@ -3447,10 +3442,9 @@ async function main() {
             reflectionSeen.trackedSample
                 ? `path=${reflectionSeen.trackedSample.hasPath} marks=${reflectionSeen.trackedSample.pathMarks} ${reflectionSeen.trackedSample.trackedText.slice(0, 120)}`
                 : 'no tracked-post-mortem block on any row');
-        check('…names the diagnosis model and the skill citing the trade',
+        check('…names the diagnosis model',
             !!reflectionSeen.trackedSample
-                && reflectionSeen.trackedSample.trackedByline.includes('zz-probe-diagnosis-model')
-                && /Fade the first break/i.test(reflectionSeen.trackedSample.trackedText),
+                && reflectionSeen.trackedSample.trackedByline.includes('zz-probe-diagnosis-model'),
             reflectionSeen.trackedSample
                 ? `byline=${reflectionSeen.trackedSample.trackedByline}`
                 : 'no byline element');
@@ -4060,8 +4054,9 @@ async function main() {
     console.log('\nRENDER PROBE OK — every exchange renders and keeps the earlier rows in both'
         + ' conversation surfaces, settled verdicts and malformed persisted audit data render without'
         + ' dropping a row, all four nav surfaces mount, the desk pane keeps the'
-        + ' trader’s own rows, Settings → Data can back up, export and import a journal file, the health'
-        + ' tab shows the idle sweep and the notebook budget, and the run produced zero pageerrors.');
+        + ' trader’s own rows, Settings → Data can back up, export and import a journal file, the skill'
+        + ' library reads, writes and deletes a bundled folder, the health tab mounts its panels, and the'
+        + ' run produced zero pageerrors.');
 }
 
 main().catch((err) => { console.error('RENDER PROBE FAIL (driver):', err); process.exit(1); });

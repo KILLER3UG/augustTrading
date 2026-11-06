@@ -10,7 +10,12 @@ import { listHarnessLessons, clearHarnessLesson, HarnessLesson } from '../../ser
  */
 export const HarnessLessonsBrowser: React.FC = () => {
     const [lessons, setLessons] = useState<HarnessLesson[]>(listHarnessLessons);
-    const refresh = (): void => setLessons(listHarnessLessons());
+    const [note, setNote] = useState<string | null>(null);
+    const refresh = (): void => {
+        const next = listHarnessLessons();
+        setLessons(next);
+        setNote(`Up to date - ${next.length} lesson${next.length === 1 ? '' : 's'}.`);
+    };
     const clearOne = (id: string): void => {
         clearHarnessLesson(id);
         refresh();
@@ -29,6 +34,7 @@ export const HarnessLessonsBrowser: React.FC = () => {
                     Refresh
                 </button>
             </div>
+            {note && <p className="mt-1 text-right text-ui-xs text-zinc-600" role="status">{note}</p>}
             <p className="mt-1 text-ui-xs leading-relaxed text-zinc-600">
                 What the harness learned about provider wires (P7). Clearing a wire lesson
                 un-pins thinking-off for that class until the next probe re-learns it.

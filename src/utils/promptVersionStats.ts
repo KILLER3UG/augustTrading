@@ -1,5 +1,4 @@
 import { LoggedTrade, TradeOutcome } from '../types';
-import { getHarnessSettings, saveHarnessSettings } from './harnessSettings';
 
 export interface PromptVersionStat {
     version: string;
@@ -41,21 +40,6 @@ export const summarizePromptLanes = (trades: LoggedTrade[]): PromptLaneStat[] =>
     });
 };
 
-/** Pin the better prompt lane once both sides have enough closed trades. */
-export const maybePinWinningPromptLane = (trades: LoggedTrade[]): void => {
-    const lanes = summarizePromptLanes(trades);
-    const live = lanes.find(l => l.lane === 'live');
-    const control = lanes.find(l => l.lane === 'control');
-    if (!live || !control || live.trades < 5 || control.trades < 5) return;
-    if (live.winRate === null || control.winRate === null) return;
-    if (Math.abs(live.winRate - control.winRate) < 8) return;
-    const winner = live.winRate > control.winRate ? 'live' : 'control';
-    saveHarnessSettings({
-        pinnedPromptLane: winner,
-        promptAbRate: winner === 'live' ? 0 : getHarnessSettings().promptAbRate,
-    });
-};
-
 export const summarizePromptVersions = (trades: LoggedTrade[]): PromptVersionStat[] => {
     const by = new Map<string, { wins: number; losses: number; declared: number[]; }>();
     for (const trade of trades) {
@@ -85,37 +69,4 @@ export const summarizePromptVersions = (trades: LoggedTrade[]): PromptVersionSta
             };
         })
         .sort((a, b) => b.trades - a.trades);
-};
-
-/**
- * Protocol A/B summary: per-protocol outcomes. A trade's
- * protocol is inferred from its promptVersion hash — versions that ran under
- * 'extended'/'efficient' lanes hash differently because the protocol rides
- * the same hash payload. We can't reverse the hash, so instead we attribute
- * by run-log evidence: trades whose debate transcript contains the protocol
- * announcement line.
- */
-export interface ProtocolStat {
-    protocol: 'standard' | 'extended' | 'efficient';
-    trades: number;
-    wins: number;
-    winRate: number | null;
-}
-
-export const summarizeDebateProtocols = (
-    tradesByProtocol: Record<string, LoggedTrade[]>,
-): ProtocolStat[] => {
-    const out: ProtocolStat[] = [];
-    for (const key of ['standard', 'extended', 'efficient'] as const) {
-        const list = tradesByProtocol[key] ?? [];
-        const closed = list.filter(t => t.outcome === TradeOutcome.WIN || t.outcome === TradeOutcome.LOSS);
-        const wins = closed.filter(t => t.outcome === TradeOutcome.WIN).length;
-        out.push({
-            protocol: key,
-            trades: closed.length,
-            wins,
-            winRate: closed.length > 0 ? Math.round((wins / closed.length) * 100) : null,
-        });
-    }
-    return out;
 };

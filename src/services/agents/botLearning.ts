@@ -25,7 +25,6 @@ import type { LoggedTrade } from '../../types';
 import { getMemoryFilesContext, type MemoryRetrievalQuery } from '../learning/MemoryRetrievalService';
 import { recordMemoryInjection } from '../learning/MemoryInjectionService';
 import { readBotMemoryMarkdown, botMemoryFolderName } from '../bots/BotMemoryService';
-import { resolveAgentContext } from './agentContext';
 import {
     createMemoryFile,
     createMemoryFolder,
@@ -34,21 +33,12 @@ import {
     updateMemoryFile,
     extractLessonFromPostMortem,
 } from '../learning/MemoryFilesService';
-import { syncClosedTradeToNotebook, listSkills, stampSkillOrigin } from '../learning/SkillMemoryService';
-import { baseOf } from '../../utils/symbol';
+import { appendDiaryEntry, syncRecurringMistakes } from '../learning/MemoryFilesService';
 import { phtDayKey } from '../../utils/timezone';
-import { craftSkillFromPostMortem } from '../learning/SkillCraftService';
-import { gateEvidenceBackedDraft } from '../learning/draftGates';
-import type { CraftedSkill } from '../../schemas/learning';
-import { loadProviderConfigs } from '../infrastructure/ProviderConfigService';
-import { isProviderReady } from '../../utils/providerUtils';
-import { TradeOutcome } from '../../types/enums';
-import type { ProviderConfig } from '../../types/provider';
 import { getBots } from './agentRoster';
 import { mineCoinFromPrompt, mineDirectionFromPrompt, minePatternFromPrompt } from '../../utils/patternMining';
 import { hasLessonLabel, parseLessonToken, stripLessonLabel } from '../../utils/lessonToken';
 import type { BotMemoryScope } from './agentRoster';
-import { getHarnessSettings } from '../../utils/harnessSettings';
 
 /** Bots get the smallest honest slice — their persona/notes already ride the
  *  system prompt; the shared slice is evidence, not a second personality. */
@@ -95,7 +85,6 @@ export const buildBotSharedMemoryContext = (
             mineBotTurnQuery(prompt),
             undefined,
             'analyst',
-            'opening',
             { runId: opts.runId, recordInjections: true },
         );
         if (!ctx.trim()) return '';
@@ -186,30 +175,6 @@ export interface BotIdentity {
     modelId?: string;
 }
 
-/** The bot's own provider, bound to its own model — the same seat resolution
- *  the Chart AI dock uses, so a bot crafts with the model it thinks with. */
-const configForBot = async (bot: BotIdentity): Promise<ProviderConfig | null> => {
-    try {
-        const configs = await loadProviderConfigs();
-        const base = configs.find(c => c.id === bot.providerId && isProviderReady(c))
-            ?? configs.find(c => c.id === bot.providerId && c.isEnabled);
-        if (!base) return null;
-        return bot.modelId ? { ...base, selectedModel: bot.modelId } : base;
-    } catch {
-        return null;
-    }
-};
-
-/** Mirrors SkillMemoryService's internal cluster key: the closed-trade cluster
- *  a draft's evidence claim is measured against. */
-const setupKey = (t: LoggedTrade): string => [
-    // Canonical base coin (utils/symbol) — matches passMining.passClusterKey,
-    // which derives its key through the SAME helper.
-    baseOf(t.analysis?.coinName || 'GEN'),
-    t.analysis?.direction === 'Long' || t.analysis?.direction === 'Short' ? t.analysis.direction : 'Neutral',
-    t.analysis?.detectedPatternFamily || t.analysis?.marketConditions?.pattern || 'any',
-].join('|');
-
 /**
  * WS-3.2's craft leg: a bot's closed trade goes through the SAME draft chain
  * the chart AI's post-mortems do — craft a procedure from the post-mortem,
@@ -222,49 +187,6 @@ const setupKey = (t: LoggedTrade): string => [
  * or a gate refusal. Fail-safe by construction — the deterministic tier inside
  * the gate still queues offline, and a throw here never reaches the turn.
  */
-export const craftAndGateBotTrade = async (
-    bot: BotIdentity,
-    trade: LoggedTrade,
-    allTrades: LoggedTrade[],
-    username: string,
-): Promise<CraftedSkill | null> => {
-    try {
-        const config = await configForBot(bot);
-        if (!config) return null;
-        const crafted = await craftSkillFromPostMortem(trade, config);
-        if (!crafted) return null;
-        const setup = {
-            coin: trade.analysis?.coinName,
-            direction: trade.analysis?.direction,
-            family: trade.analysis?.detectedPatternFamily,
-            regime: trade.marketRegime,
-        };
-        const cluster = allTrades.filter(t =>
-            (t.outcome === TradeOutcome.WIN || t.outcome === TradeOutcome.LOSS)
-            && setupKey(t) === setupKey(trade));
-        const gate = await gateEvidenceBackedDraft({
-            crafted,
-            tradeId: trade.id,
-            cluster: cluster.length > 0 ? cluster : [trade],
-            username,
-            config,
-            allTrades,
-            coin: trade.analysis?.coinName,
-            direction: trade.analysis?.direction,
-            family: trade.analysis?.detectedPatternFamily,
-            // The acting bot's persona + notes, not the roster head's — and
-            // assembled by the SAME loader the chart surface uses, so a bot
-            // cannot arrive here carrying something different from what it
-            // carried at the chart.
-            botContext: resolveAgentContext(bot, setup).notes || trade.postMortem || '',
-        });
-        return gate.action === 'queued' ? gate.crafted : null;
-    } catch (e) {
-        console.warn('[BotLearning] craft/gate failed (non-fatal):', e instanceof Error ? e.message : e);
-        return null;
-    }
-};
-
 /**
  * Persist what a bot turn learned. Two writes:
  *  1. A one-line lesson appended to the bot's own memory.md (capped so the
@@ -298,17 +220,9 @@ export const recordBotTurnOutcome = async (
             else await createMemoryFile(folder.id, 'memory.md', next, opts.username, true);
         }
 
-        // 2. Bot turns may draft playbooks automatically. Honor the same
-        // trader-controlled opt-in as session review and chart scanning.
-        // Leave trades unmarked while disabled so enabling the setting later
-        // can still fold them on a subsequent bot turn.
-        if (!getHarnessSettings().autoDraftingEnabled) return;
-
-        // 3. Closed bot-authored trades fold into the shared evidence path.
-        //    Snapshot the skill set first: provenance belongs only on files
-        //    THIS fold created, never on a chart-AI skill that happened to
-        //    count the same trade.
-        const before = new Set(listSkills().map(({ file }) => file.id));
+        // A closed bot-authored trade still writes its diary entry and the
+        // recurring-mistakes file. Skill evidence and skill drafting are gone
+        // with the ledger.
         const seen = foldedTrades.get(bot.id) ?? new Set<string>();
         const botTrades = opts.trades.filter(t => {
             const keys = Object.keys(t.modelsUsed ?? {});
@@ -319,17 +233,10 @@ export const recordBotTurnOutcome = async (
                 && !seen.has(t.id);
         });
         for (const trade of botTrades.slice(-2)) {
-            // Mark before awaiting: a throw halfway must not make the next
-            // turn re-fold it.
             seen.add(trade.id);
             foldedTrades.set(bot.id, seen);
-            // The draft chain first (craft → worth gate → queue, where the
-            // supervisor or the human approves it), then the evidence fold.
-            await craftAndGateBotTrade(bot, trade, opts.trades, opts.username);
-            await syncClosedTradeToNotebook(trade, opts.trades, opts.username, { botId: bot.id, botName: bot.name });
-        }
-        for (const { file } of listSkills()) {
-            if (!before.has(file.id)) await stampSkillOrigin(file.id, bot, opts.username);
+            await appendDiaryEntry(trade, opts.username);
+            await syncRecurringMistakes(opts.trades, opts.username);
         }
     } catch (e) {
         console.warn('[BotLearning] outcome write failed (non-fatal):', e instanceof Error ? e.message : e);
@@ -360,17 +267,15 @@ export interface BotLearningStat {
 
 /** Per-bot learning stats for the roster rail / Learning surface (WS-3.4). */
 export const loadBotLearningStats = (): BotLearningStat[] => {
-    const skills = listSkills();
     return getBots().map(b => {
-        const own = skills.filter(s => s.meta.originBotId === b.id);
         const note = readBotMemoryMarkdown(b.id) ?? '';
         const dates = [...note.matchAll(/-\s+\[(\d{4}-\d{2}-\d{2})\]/g)].map(m => m[1]);
         return {
             id: b.id,
             name: b.name,
             lessons: botLessonCount(b.id),
-            skillsAuthored: own.length,
-            evidence: own.reduce((n, s) => n + (s.meta.evidenceCount ?? s.meta.tradeIds.length), 0),
+            skillsAuthored: 0,
+            evidence: 0,
             lastLessonAt: dates.length ? dates.reduce((a, d) => (d > a ? d : a)) : null,
         };
     });

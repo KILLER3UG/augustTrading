@@ -1,15 +1,16 @@
 /**
- * MemoryFilesService — the Trader Notebook (Settings → Personal edge).
+ * MemoryFilesService — the Trader Notebook (Learning → Memory).
  *
- * Matching enabled files are retrieved by walking the memory graph
- * (see `getMemoryFilesContext`). The user writes
- * market-conditions notes and personal rules; the harness maintains three
- * things automatically:
+ * What reaches a prompt is decided by `getMemoryFilesContext` (retrieval) and
+ * the `recall` tool; there is no graph walk and no evidence gate — a skill is a
+ * document. The user writes notes and rules; the harness maintains:
  *   - profile/memory.md          — what the harness knows about the user
- *   - profile/pattern-memory.md  — human-readable synthesis (not dumped into prompts)
+ *   - profile/pattern-memory.md  — synthesis of the journal (never dumped whole)
+ *   - profile/index.md           — the notebook map, re-rendered on every persist
+ *   - profile/suggestions.md     — the notebook review's advice, kept OUT of retrieval
  *   - trader-diary/<coin>.md     — one diary entry per closed trade
  *   - rules/recurring-mistakes.md — loss clusters from the trade log
- *   - skills/*.md                — evidence-gated procedures (trigger + scores)
+ *   - skills/<slug>/SKILL.md     — skill documents, written only by SkillFileService
  *
  * Storage mirrors StrategyService: a synchronous module cache (so prompt
  * assembly at call time never awaits storage) backed by a per-user
@@ -85,8 +86,8 @@ let memoryCache: MemoryFilesStore = { version: 1, folders: [], files: [] };
  * The username the CACHE currently holds the notebook for — assigned
  * ATOMICALLY with every memoryCache swap (see adoptCache). Every persist
  * writes to THIS key, never to the username a writer captured at entry:
- * with one module-global cache, a profile switch mid-`applySkillEvidence`/
- * post-mortem used to hand the new user's notebook to the old writer, which
+ * with one module-global cache, a profile switch mid-post-mortem used to hand
+ * the new user's notebook to the old writer, which
  * persisted it under the OLD user's Preferences key (and back). Keying
  * persistence to the cache's own owner makes that impossible: data always
  * lands in the key that owns the bytes. The owner must NEVER be assigned
@@ -117,7 +118,6 @@ const DEFAULT_FOLDERS: MemoryFolder[] = [
     { id: 'rules', name: 'rules', order: 3 },
     { id: 'skills', name: 'skills', order: 4 },
     { id: 'bots', name: 'bots', order: 5 },
-    { id: 'settled-beliefs', name: 'settled-beliefs', order: 6 },
     { id: 'distilled', name: 'distilled', order: 7 },
     // Goal environments (goals/*.json). A goal is durable work state, not a
     // skill or a note; it lives in the SAME notebook blob so backup/export and
@@ -181,8 +181,8 @@ const initMemoryFilesUnlocked = async (username: string): Promise<void> => {
     // OWNER + BYTES SWAP TOGETHER. Before this, the owner was assigned
     // BEFORE the storage read below — so while B's init was in flight the
     // cache still held A's bytes but was already stamped as B's, and any
-    // unlocked concurrent persist (e.g. the ensureHarnessFoldersUnlocked
-    // call in SkillMemoryService.syncClosedTradeToNotebook) flushed A's
+    // unlocked concurrent persist (e.g. the ensureHarnessFoldersUnlocked call
+    // in the closed-trade write-back) flushed A's
     // stale bytes into B's Preferences key. Adopting atomically keeps
     // owner and bytes always belonging together.
     const adoptCache = (store: MemoryFilesStore): void => {
@@ -371,24 +371,6 @@ export const ensureHarnessFoldersUnlocked = (username: string): Promise<void> =>
         }
     }
     if (changed) await persist(username);
-});
-
-/** Serialized public API — see withNotebookWriteLock. */
-export const ensureHarnessFolders = (username: string): Promise<void> =>
-    withNotebookWriteLock(() => ensureHarnessFoldersUnlocked(username));
-
-/** Retired skills land here — out of every skill path (folder-based), kept for the record. */
-export const ARCHIVE_FOLDER_NAME = 'archive';
-
-/** Create/find skills/archive. Caller must hold the write lock (or be boot). */
-export const ensureSkillsArchiveFolderUnlocked = (username: string): Promise<MemoryFolder | null> => withNotebookRollback(async () => {
-    const existing = memoryCache.folders.find(f => f.name === ARCHIVE_FOLDER_NAME);
-    if (existing) return existing;
-    if (!memoryCache.folders.some(f => f.name === 'skills')) return null;
-    const folder: MemoryFolder = { id: uid(), name: ARCHIVE_FOLDER_NAME, order: memoryCache.folders.length };
-    memoryCache.folders.push(folder);
-    await persist(username);
-    return folder;
 });
 
 /**
@@ -673,7 +655,7 @@ export const subscribeMemoryFilesChanged = (handler: (username: string) => void)
 // ─── Write lock ─────────────────────────────────────────────────────────────
 // Every notebook mutation is a read-modify-write over the shared cache, and
 // writers run concurrently: fire-and-forget trade syncs, the awaited
-// post-mortem sync, detached eval stamping, doctrine rewrites, UI edits.
+// post-mortem sync, the skill pen, notebook reviews, UI edits.
 // Mutations are therefore serialized through a single promise chain.
 //
 // DEADLOCK RULE: a function that acquires this lock (any public mutator or
@@ -757,7 +739,8 @@ export const buildNotebookMapMarkdown = (): string => {
             .filter(f => f.folderId === folder.id)
             .sort((a, b) => a.name.localeCompare(b.name));
         for (const f of folderFiles) {
-            rows.push(`| ${folder.name}/${f.name} | ${fileBlurb(f.content)} |`);
+            // A skill is a folder: show its logical path, not the storage key.
+            rows.push(`| ${folder.name}/${f.path ?? f.name} | ${fileBlurb(f.content)} |`);
         }
     }
 
@@ -902,7 +885,10 @@ export const createMemoryFileUnlocked = async (
     content: string,
     username: string,
     /** Harness-written files (diary, profile, recurring mistakes) label themselves "auto" in the UI. */
-    autoManaged = false
+    autoManaged = false,
+    /** Logical path inside the folder (skills/<slug>/SKILL.md). The storage
+     *  name stays unique; this is what gives a skill its directory shape. */
+    path?: string,
 ): Promise<MemoryFile> => {
     const requested = name.trim();
     const cleanName = /\.(md|json)$/i.test(requested) ? requested : `${requested}.md`;
@@ -912,39 +898,33 @@ export const createMemoryFileUnlocked = async (
     }
     // Byte pressure, enforced at the ONE choke point every creation flows
     // through. Until now only `writeModelNoteUnlocked` consulted the budget,
-    // so past the trigger tier the harness kept minting skills and per-coin
-    // diaries while the Health tab told the trader it had stopped.
+    // so past the trigger tier the harness kept minting skill files while the
+    // Health tab told the trader it had stopped.
     //
-    // Scoped to the skills folder on purpose. Skills are the unbounded growth
-    // the model drives itself, and the only kind it can re-derive by
-    // consolidating. Refusing here REDIRECTS rather than blocks: the hygiene
-    // pass merges duplicate skills on the same pressure signal, so the model
-    // keeps learning by compressing instead of accumulating. Appends and
-    // updates to existing files are untouched, so evidence still lands at
-    // every tier — only minting a NEW skill stops.
+    // Scoped to the skills folder on purpose: a new skill is the growth the
+    // model drives itself, and the one it can undo by merging or deleting.
+    // Refusing here REDIRECTS rather than blocks — an update or an append to a
+    // file that already exists is untouched at every tier, so a lesson still
+    // lands; only minting a NEW skill stops until the trader frees space.
     if (!notebookPressureAllows('newFiles')) {
         const folder = memoryCache.folders.find(f => f.id === folderId)?.name ?? 'misc';
         if (folder === 'skills') {
             throw new Error(
                 'Cannot add a new skill — the notebook is at its size budget'
                 + `${notebookSize ? ` (${describePressure(notebookSize)})` : ''}.`
-                + ' The existing library still updates and still counts new outcomes.'
-                + ' A hygiene pass merges duplicate skills to shrink the active library,'
-                + ' but archived files keep their content, so only deleting notes in'
-                + ' Settings frees stored space.',
+                + ' Existing skills can still be updated. Merge or delete redundant skills to free space.',
             );
         }
     }
     const now = Date.now();
-    const file: MemoryFile = { id: uid(), folderId, name: cleanName, content, enabled: true, autoManaged, createdAt: now, updatedAt: now };
+    const file: MemoryFile = { id: uid(), folderId, name: cleanName, ...(path ? { path } : {}), content, enabled: true, autoManaged, createdAt: now, updatedAt: now };
     // A cache is a promise about what is stored. `persist` rejects on a full
     // origin quota while the array on line -3 already holds the new row, so the
     // notebook goes on serving bytes that never reached disk — and the next
-    // reader of that cache reports them as fact. That is not hypothetical:
-    // `skillApproval` asks the library whether a trigger is present, so a
-    // phantom skill makes the RETRY of a failed approval answer "Already
-    // learned" and delete the trader's only copy of the draft (the 2026-10-27 audit
-    // M-1, reproduced in the browser). Roll the mutation back with the failure
+    // reader of that cache reports them as fact. That is not hypothetical: a
+    // phantom skill makes the next write answer "already exists" and delete the
+    // trader's only copy of the draft (the 2026-10-27 audit M-1, reproduced in
+    // the browser). Roll the mutation back with the failure
     // so the store can only describe what it actually holds.
     const filesBefore = memoryCache.files;
     memoryCache.files = [...filesBefore, file];
@@ -972,6 +952,14 @@ export const createMemoryFile = (
 export const updateMemoryFileUnlocked = (id: string, patch: Partial<MemoryFile>, username: string): Promise<void> => withNotebookRollback(async () => {
     const existing = memoryCache.files.findIndex(f => f.id === id);
     if (existing < 0) return;
+    // A patch that changes nothing must not cost a write. Every persist
+    // re-renders the notebook map and rewrites the whole blob (and the sharded
+    // folders rewrite their shard), so a boot pass that "synced" identical
+    // bytes used to spend a full write per file — measured at two blob
+    // rewrites per profile load before any of the sync paths short-circuited.
+    const changed = Object.entries(patch).some(([key, value]) =>
+        (memoryCache.files[existing] as unknown as Record<string, unknown>)[key] !== value);
+    if (!changed) return;
     memoryCache.files[existing] = { ...memoryCache.files[existing], ...patch, updatedAt: Date.now() };
     await persist(username);
 });
@@ -1250,7 +1238,7 @@ const patternMemoryHeader = (stats?: PatternMemoryStats): string => {
     }
     lines.push(`- **Updated:** ${dateStr}`);
     lines.push('');
-    lines.push('See also: `skills/` (procedures with scores) and `rules/recurring-mistakes.md` (loss clusters).');
+    lines.push('See also: `skills/` (documents the desk writes and reads) and `rules/recurring-mistakes.md` (loss clusters).');
     lines.push('');
     return lines.join('\n');
 };
@@ -1522,11 +1510,10 @@ const NOTE_SECTION_SEP = '\n\n---\n\n';
 
 /**
  * The (folder, file) pairs the harness REGENERATES WHOLESALE from its own
- * data — profile sync, pattern memory, recurring mistakes, doctrine,
- * suggestions, settled beliefs. A model append into
- * one of these is silently clobbered on the next rebuild, so writeModelNote
- * rejects it; the amend_memory proposal flow is the only sanctioned write
- * path (it rejects these targets too, by design). Model notes (lessons/,
+ * data — profile sync, pattern memory, recurring mistakes, suggestions.
+ * A model append into one of these is silently clobbered on the next rebuild,
+ * so writeModelNote rejects it; the amend_memory path is the only sanctioned
+ * write (it rejects these targets too, by design). Model notes (lessons/,
  * session-timing/, …) are autoManaged but NOT regenerated — they stay
  * appendable. The trader-diary and distilled folders are banned outright
  * (checked at folder level above).
@@ -1534,18 +1521,14 @@ const NOTE_SECTION_SEP = '\n\n---\n\n';
 const HARNESS_REGENERATED_FILES: ReadonlySet<string> = new Set([
     'profile/memory.md',
     'profile/pattern-memory.md',
-    'profile/doctrine.md',
     'profile/suggestions.md',
     'rules/recurring-mistakes.md',
-    'settled-beliefs/settled-beliefs.md',
-    // settledBeliefs falls back to the profile folder when its own is absent.
-    'profile/settled-beliefs.md',
 ]);
 const isHarnessRegeneratedFile = (folderName: string, fileName: string): boolean =>
     HARNESS_REGENERATED_FILES.has(`${folderName}/${fileName}`);
 
 /** Is this file rebuilt wholesale by a harness pass (profile memory, pattern
- *  memory, doctrine, recurring mistakes, suggestions)? Model notes are
+ *  memory, recurring mistakes, suggestions)? Model notes are
  *  autoManaged too — for the prune pass — but they are NOT regenerated, so the
  *  amendment path must not confuse the two. */
 export const isHarnessRegeneratedTarget = (
@@ -1556,8 +1539,8 @@ export const isHarnessRegeneratedTarget = (
 };
 
 export const writeModelNoteUnlocked = async (note: ModelNote, username: string): Promise<MemoryFile> => {
-    let cleanFolder = slugifyName(note.folder) || 'lessons';
-    if (cleanFolder === 'skills') cleanFolder = 'lessons';
+    const cleanFolder = slugifyName(note.folder) || 'lessons';
+    if (cleanFolder === 'skills') throw new Error('Use skill_index and skill_write to write skills.');
     const baseName = slugifyName(note.fileName.replace(/\.md$/i, '')) || 'note';
     const content = (note.content ?? '').trim();
     if (!content) throw new Error('Note content is empty');
@@ -1594,7 +1577,7 @@ export const writeModelNoteUnlocked = async (note: ModelNote, username: string):
             );
         if (target) {
             // Harness-owned files are REGENERATED WHOLESALE by their owning
-            // service (profile sync, doctrine consolidation, lens memory, …) —
+            // service (profile sync, pattern synthesis, lens memory, …) —
             // an append here would be silently clobbered on the next rebuild.
             // Model notes (also autoManaged) live OUTSIDE this set and stay
             // appendable; the amendment proposal flow rejects all of them.

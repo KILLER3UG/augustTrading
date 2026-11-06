@@ -88,9 +88,6 @@ export const EFFORT_BY_TASK = {
     automatedTradingDecision: 'max',
     /** Post-mortem reports — structured, but not exploratory. */
     postMortem: 'medium',
-    /** The skill supervisor's per-item verdicts — judgment over the
-     *  catalog/graveyard/evidence, one call per item. */
-    supervision: 'medium',
     /** Vision/OCR structured extraction. */
     ocr: 'low',
 } as const;

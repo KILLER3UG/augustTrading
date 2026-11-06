@@ -251,10 +251,11 @@ export const useBotMailbox = ({
             // The bubble must carry the reply (markers included for now —
             // dispatch strips them when present). Without this the DM
             // answer renders as an empty row.
-            // runStats.runId is what makes the attribution above usable: a
-            // trade logged from this reply carries sourceRunId = replyId, so
-            // applySkillEvidence can credit the skills the bot was actually
-            // shown. Before this, no bot reply joined to any injection record.
+            // runStats.runId is what makes the provenance above reachable: a
+            // trade logged from this reply carries sourceRunId = replyId, the
+            // same id the injection record of this run is stamped with, so the
+            // strip and the printable report can say what the decision actually
+            // saw. Before this, no bot reply joined to any injection record.
             patchMessage(replyId, settleMessageRow({
                 text: raw,
                 runStats: {

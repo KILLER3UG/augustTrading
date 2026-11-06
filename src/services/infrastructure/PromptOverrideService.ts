@@ -33,8 +33,6 @@ export type PromptLane = 'live' | 'control';
 
 export const beginPromptLane = (): PromptLane => {
     const settings = getHarnessSettings();
-    if (settings.pinnedPromptLane === 'live') return 'live';
-    if (settings.pinnedPromptLane === 'control') return 'control';
     const hasOverride = Object.keys(overridesCache).length > 0;
     const rate = settings.promptAbRate;
     return hasOverride && rate > 0 && Math.random() < rate ? 'control' : 'live';
@@ -61,7 +59,7 @@ export const initPromptOverrides = async (username: string): Promise<void> => {
  * `lane` is the CALLER's run lane, defaulting to 'live'. A call site that does
  * not thread a lane is not silently getting the global one (there is none left
  * to get): it is always resolving the trader's edits. That is the honest reading
- * for the background learners — `learning.skill_worth`, `notebook.note`,
+ * for the background learners — `notebook.chat_note`,
  * `strategy.ocr_page` and friends are separate runs with no A/B decision to
  * carry. The dock's tool turn resolves NO overrides at all today, and that gap
  * is registered (E-57 §3) rather than papered over by a default.
@@ -75,11 +73,11 @@ export const getPrompt = (id: string, fallback: string, lane: PromptLane = 'live
 /**
  * A fingerprint of the prompt corpus THIS call resolves, for the journal row.
  *
- * `promptVersion` and `promptLane` have had three readers and no writer: the
- * profile card's A/B rows summarize a lane nothing records,
- * `summarizePromptVersions` groups trades by a version nothing stamps, and
- * `maybePinWinningPromptLane` can never see enough of either side to pin one.
- * This is the writer.
+ * `promptVersion` and `promptLane` are stamped here so the profile card's A/B
+ * rows and `summarizePromptVersions` have a writer at all. Whether the two
+ * lanes actually send different bytes is a separate open question: the call
+ * sites resolve `getPrompt` without a lane, so today they differ only in what
+ * is RECORDED. Registered, not papered over.
  *
  * `defaults` means the run resolved the built-in text on every id — which is
  * what the control lane does by definition, and also what a live run with no

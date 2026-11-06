@@ -22,9 +22,6 @@ import { MIN_CLOSED_TRADES_FOR_REVIEW } from './weeklyReview';
 import { buildDisciplineAnalytics, effectiveRMultiple } from '../../utils/disciplineAnalytics';
 import { rowPnlUsd } from '../validation/SessionGuardService';
 import { brierQuality } from '../validation/CalibrationLedgerService';
-import { computeAllSkillLifts } from './MemoryProvenanceService';
-import { computeSkillEconomics, worstBudgetOffender } from '../../utils/skillEconomics';
-import { getRecentMemoryInjections, type MemoryInjectionRecord } from './MemoryInjectionService';
 
 const KEY_PREFIX = 'monthly_report_v1_';
 const MONTH_MS = 30 * 24 * 60 * 60 * 1000;
@@ -164,7 +161,7 @@ export const ensembleLineFromTranscript = (turns: DebateTurn[] | undefined): num
 };
 
 /** Deterministic month-stats assembly + grade-the-panel over the window. */
-export const buildMonthReport = (trades: LoggedTrade[], nowMs: number, injections?: MemoryInjectionRecord[]): MonthlyReportCard => {
+export const buildMonthReport = (trades: LoggedTrade[], nowMs: number): MonthlyReportCard => {
     const since = nowMs - MONTH_MS;
     const period = trades.filter(t => {
         const ts = t.analysis?.createdAt ? Date.parse(t.analysis.createdAt) : NaN;
@@ -255,27 +252,6 @@ export const buildMonthReport = (trades: LoggedTrade[], nowMs: number, injection
     if (moderator?.brier != null && ensembleLine?.brier != null && ensembleLine.brier < moderator.brier - 0.02) {
         needsAttention.push(`The legacy ensemble line beat the legacy moderator this period (Brier ${ensembleLine.brier.toFixed(2)} vs ${moderator.brier.toFixed(2)}) — worth a look at how the verdict inputs were set on those old runs`);
     }
-    // Context-budget economics — the most expensive skill per unit of
-    // measured lift gets named on the scoreboard, so the cost side of the
-    // library is audited on a cadence instead of being invisible.
-    if (injections && injections.length > 0) {
-        try {
-            const economics = computeSkillEconomics(injections, computeAllSkillLifts(trades, injections));
-            const offender = worstBudgetOffender(economics);
-            if (offender) {
-                const pulls = offender.bodyFires > 0
-                    ? ` incl. ${offender.bodyFires} full-body pull${offender.bodyFires === 1 ? '' : 's'}`
-                    : '';
-                const measured = offender.liftPts !== null
-                    ? `${offender.liftPts >= 0 ? '+' : ''}${offender.liftPts}pt lift`
-                    : 'no measurable lift';
-                needsAttention.push(
-                    `Skill budget: "${offender.stem}" costs ~${Math.round(offender.cost)} chars${pulls} for ${measured} — worst value per char of any injected skill; tighten its scope or retire it`,
-                );
-            }
-        } catch { /* economics is best-effort on the scoreboard */ }
-    }
-
     const adherenceFollowedPct = followedN + brokenN > 0
         ? Math.round((followedN / (followedN + brokenN)) * 100)
         : null;
@@ -327,11 +303,7 @@ export const runMonthlyReport = async (
     trades: LoggedTrade[],
     now = Date.now(),
 ): Promise<MonthlyReportCard | null> => {
-    let injections: MemoryInjectionRecord[] = [];
-    try {
-        injections = await getRecentMemoryInjections(username);
-    } catch { /* economics omission must not block the card */ }
-    const card = buildMonthReport(trades, now, injections);
+    const card = buildMonthReport(trades, now);
     if (card.whatHappened.closed < MIN_CLOSED_TRADES_FOR_REVIEW) return null;
     await setPreferenceObject(keyFor(username), card);
     return card;

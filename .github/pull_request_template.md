@@ -10,7 +10,7 @@
 - [ ] `npm run lint`
 - [ ] `npm run build` + `npm run render-probe` for anything rendered
 - [ ] `npm run check:contracts` for pure logic; `npm run check:docs` for docs
-- [ ] `npm run skill-approval-probe` for the skill/memory path
+- [ ] `npm run check:boundaries` if an import edge moved
 - [ ] exercised by hand in the browser (UI changes only)
 
 ## Notes

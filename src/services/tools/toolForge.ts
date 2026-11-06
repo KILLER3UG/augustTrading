@@ -346,9 +346,6 @@ const trimForgedCache = (): void => {
     }
 };
 
-/** Clear the forged-tool result cache (tests, settings changes). */
-export const clearForgedToolCache = (): void => { forgedCache.clear(); };
-
 // ── Persistence + lifecycle (same store pattern as the roster) ──
 
 const load = (): ForgedTool[] => {

@@ -26,10 +26,7 @@ export interface ToolActionsRowProps {
 const ICON_OK: Record<string, React.ReactNode> = {
     amend_memory: <Brain className="h-3.5 w-3.5 shrink-0 text-zinc-500" aria-hidden="true" />,
     forge_tool: <Wrench className="h-3.5 w-3.5 shrink-0 text-zinc-500" aria-hidden="true" />,
-    skill_draft: <NotebookPen className="h-3.5 w-3.5 shrink-0 text-zinc-500" aria-hidden="true" />,
-    skill_ingest: <NotebookPen className="h-3.5 w-3.5 shrink-0 text-zinc-500" aria-hidden="true" />,
-    propose_skill: <NotebookPen className="h-3.5 w-3.5 shrink-0 text-zinc-500" aria-hidden="true" />,
-    revise_skill: <NotebookPen className="h-3.5 w-3.5 shrink-0 text-zinc-500" aria-hidden="true" />,
+    skill_write: <NotebookPen className="h-3.5 w-3.5 shrink-0 text-zinc-500" aria-hidden="true" />,
     write_memory_note: <NotebookPen className="h-3.5 w-3.5 shrink-0 text-zinc-500" aria-hidden="true" />,
     notebook_note: <NotebookPen className="h-3.5 w-3.5 shrink-0 text-zinc-500" aria-hidden="true" />,
     custom: <FilePlus2 className="h-3.5 w-3.5 shrink-0 text-zinc-500" aria-hidden="true" />,
@@ -43,27 +40,17 @@ const actionLabel = (tool: string, items: ToolAction[]): string => {
         case 'amend_memory':
             return `Memory amendment${plural} applied — the before/after and Undo are in Settings → Memory`;
         case 'forge_tool':
-            return `Desk tool${plural} proposed — review in Settings → AI Models`;
-        case 'skill_draft':
-            return `Skill draft${plural} saved — applies itself if it passes the gates (Learning → Skills)`;
-        case 'skill_ingest':
+            return `Desk tool${plural} proposed — review in Learning → Skills → Forged tools`;
+        case 'skill_write':
             return n === 1
-                ? `Skill created from evidence — ${items[0].label}`
-                : `${n} skills created from evidence`;
-        case 'propose_skill':
-            return n === 1
-                ? `Skill draft saved — ${items[0].label} (applies when it passes the gates)`
-                : `${n} skill drafts saved — they apply when they pass the gates`;
+                ? `Skill saved — ${items[0].label} (Learning → Skills)`
+                : `${n} skills saved (Learning → Skills)`;
         case 'propose_strategy':
             // Without this the row falls through to "Ran <slug>" and the trader
             // reads a plan awaiting their review as something already done.
             return n === 1
-                ? `Strategy plan proposed — ${items[0].label} (Settings → Skills → Trade plans; inactive until you activate it)`
+                ? `Strategy plan proposed — ${items[0].label} (Learning → Skills → Trade plans; inactive until you activate it)`
                 : `${n} strategy plans proposed — drafts, not active until you activate them`;
-        case 'revise_skill':
-            return n === 1
-                ? `Skill revision proposed — ${items[0].label} (Learning → Skills)`
-                : `${n} skill revisions proposed — Learning → Skills`;
         case 'remember':
             return n === 1
                 ? `Memory saved — ${(items[0].label.split('/')[1] ?? items[0].label)}`
@@ -87,8 +74,8 @@ const actionLabel = (tool: string, items: ToolAction[]): string => {
 const failNoun = (tool: string, n: number): string => {
     const plural = n === 1 ? '' : 's';
     switch (tool) {
-        case 'propose_skill':
-        case 'revise_skill':
+        case 'skill_write':
+            return `skill write${plural}`;
         case 'skill_draft':
             return `skill draft${plural}`;
         case 'skill_ingest':

@@ -222,46 +222,6 @@ export const HarnessControls: React.FC = () => {
                 />
             </label>
             <label className="block text-ui-dense text-zinc-400">
-                Starter playbook library
-                <span className="mt-0.5 block text-ui-2xs leading-4 text-zinc-500">
-                    The curated vetted-literature shelf. Turning this off withdraws
-                    approval from every starter skill at once, so none is injected.
-                </span>
-                <span className="mt-1 flex items-center gap-2">
-                    <input
-                        type="checkbox"
-                        checked={settings.starterLibraryEnabled !== false}
-                        onChange={e => persist({ starterLibraryEnabled: e.target.checked })}
-                        data-testid="harness-starter-library"
-                        className="h-3.5 w-3.5 accent-cyan-400"
-                    />
-                    <span className="text-ui-dense text-zinc-300">
-                        {settings.starterLibraryEnabled !== false ? 'Approved — injected' : 'Withdrawn'}
-                    </span>
-                </span>
-            </label>
-            <label className="block text-ui-dense text-zinc-400">
-                Tentative skills
-                <span className="mt-0.5 block text-ui-2xs leading-4 text-zinc-500">
-                    Skills the post-mortem loop earned from independent outcomes but
-                    nothing has confirmed yet. On: injected as labelled context only —
-                    they never veto or cap confidence. Off: hidden from prompts and the
-                    skills index. Any one can still be edited or retired in Learning.
-                </span>
-                <span className="mt-1 flex items-center gap-2">
-                    <input
-                        type="checkbox"
-                        checked={settings.tentativeSkillInjectionEnabled !== false}
-                        onChange={e => persist({ tentativeSkillInjectionEnabled: e.target.checked })}
-                        data-testid="harness-tentative-skills"
-                        className="h-3.5 w-3.5 accent-cyan-400"
-                    />
-                    <span className="text-ui-dense text-zinc-300">
-                        {settings.tentativeSkillInjectionEnabled !== false ? 'Injected as context' : 'Withdrawn'}
-                    </span>
-                </span>
-            </label>
-            <label className="block text-ui-dense text-zinc-400">
                 Sensitive memories
                 <span className="mt-0.5 block text-ui-2xs leading-4 text-zinc-500">
                     Whether facts about health, finances or identity may be stored at all.
@@ -282,33 +242,11 @@ export const HarnessControls: React.FC = () => {
                 </span>
             </label>
             <label className="block text-ui-dense text-zinc-400">
-                Draft playbooks on its own
-                <span className="mt-0.5 block text-ui-2xs leading-4 text-zinc-500">
-                    Studies finished conversations, bot closed trades, and the whole
-                    chart, then writes drafts into the Approvals inbox. These paths can
-                    cost provider calls, so they are off until you turn them on. Skills
-                    you save yourself, drafts you request by hand, and imports are
-                    unaffected — this switch only stops drafts the app was not asked for.
-                </span>
-                <span className="mt-1 flex items-center gap-2">
-                    <input
-                        type="checkbox"
-                        checked={settings.autoDraftingEnabled === true}
-                        onChange={e => persist({ autoDraftingEnabled: e.target.checked })}
-                        data-testid="harness-auto-drafting"
-                        className="h-3.5 w-3.5 accent-cyan-400"
-                    />
-                    <span className="text-ui-dense text-zinc-300">
-                        {settings.autoDraftingEnabled === true ? 'On — the loop drafts unasked' : 'Off — only what you ask for'}
-                    </span>
-                </span>
-            </label>
-            <label className="block text-ui-dense text-zinc-400">
                 Self-modification
                 <span className="mt-0.5 block text-ui-2xs leading-4 text-zinc-500">
                     How far the agent may change the harness it is running in. Off (the
                     default) refuses every self-change. Config lets it move a behavior
-                    knob you can see below — thinking effort, the skill library cap — and
+                    knob you can see below — thinking effort — and
                     each change reverts itself within 24 hours. Shadow additionally lets it
                     rewrite one prompt, which then has to win on the trades that ran under
                     it; that needs the Prompt A/B rate above 0% with no lane pin, or the
@@ -329,26 +267,6 @@ export const HarnessControls: React.FC = () => {
                         className="w-full"
                         triggerClassName="w-full rounded-control border border-zinc-700 bg-zinc-950 px-2 py-1 text-ui-sm hover:bg-zinc-800"
                     />
-                </span>
-            </label>
-            <label className="block text-ui-dense text-zinc-400">
-                Skill enforcement
-                <span className="mt-0.5 block text-ui-2xs leading-4 text-zinc-500">
-                    The off-switch over code-side enforcement: the confidence caps and
-                    the confirmed-avoid veto that can halt a verdict. Injection itself is
-                    governed by the approval gate, not by this.
-                </span>
-                <span className="mt-1 flex items-center gap-2">
-                    <input
-                        type="checkbox"
-                        checked={settings.skillEnforcementEnabled !== false}
-                        onChange={e => persist({ skillEnforcementEnabled: e.target.checked })}
-                        data-testid="harness-skill-enforcement"
-                        className="h-3.5 w-3.5 accent-cyan-400"
-                    />
-                    <span className="text-ui-dense text-zinc-300">
-                        {settings.skillEnforcementEnabled !== false ? 'Enforced' : 'Not enforced'}
-                    </span>
                 </span>
             </label>
             <label className="block text-ui-dense text-zinc-400">
@@ -400,19 +318,6 @@ export const HarnessControls: React.FC = () => {
                     className="mt-1 w-full"
                     triggerClassName="w-full rounded-control border border-zinc-700 bg-zinc-950 px-2 py-1 text-ui-sm hover:bg-zinc-800"
                 />
-            </label>
-            <label className="block text-ui-dense text-zinc-400">
-                Skill library cap
-                <input
-                    type="number"
-                    min={5}
-                    max={200}
-                    step={1}
-                    value={settings.skillLibraryCap ?? 40}
-                    onChange={e => persist({ skillLibraryCap: Math.min(200, Math.max(5, Math.round(Number(e.target.value) || 40))) })}
-                    className="mt-1 w-full rounded-control border border-zinc-700 bg-zinc-950 px-2 py-1 text-zinc-100"
-                />
-                <span className="mt-1 block text-ui-xs text-zinc-600">How many confirmed skills the worth gate holds before it turns comparative (displacement/revival). Default 40.</span>
             </label>
             {/* Session-guard limits: preset + overrides.
                 Takes effect immediately here; the in-the-moment cap change

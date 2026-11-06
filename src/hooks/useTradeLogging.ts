@@ -14,7 +14,6 @@ import { CaptureJournalTags } from '../types/trade';
 import { trackConfluenceOutcome, calculateConfluenceScore } from '../services/analysis/TimeframeConfluenceService';
 import { SLOptimizationData } from '../services/backtesting/StopLossOptimizerService';
 import { ConfidenceLevel } from '../services/validation/calibrationStore';
-import { syncClosedTradeToNotebook } from '../services/learning/SkillMemoryService';
 import { reflectOnClosedTrade } from '../services/learning/settlementReflection';
 import { resolveTradeRegime } from '../services/learning/regimeLedger';
 import { botOriginForMessage } from '../services/agents/botLearning';
@@ -24,6 +23,29 @@ import { withDetectedTradeType } from '../services/analysis/ScalpDetectionServic
 import * as chatStore from '../services/trade/chatStore';
 import { getHarnessSettings } from '../utils/harnessSettings';
 import { computeContractSize } from '../utils/ticketSize';
+
+/** Notebook work for a closed trade: the diary entry, the recurring-mistakes
+ *  file and the strategy-matrix telemetry. Skill evidence and skill drafting
+ *  are gone with the ledger — a skill is a document now, not a scoreboard. */
+const syncClosedTradeToNotebook = async (
+    trade: LoggedTrade,
+    allTrades: LoggedTrade[],
+    username: string,
+    _origin?: { botId: string; botName?: string },
+): Promise<void> => {
+    const { appendDiaryEntry, syncRecurringMistakes } = await import('../services/learning/MemoryFilesService');
+    await appendDiaryEntry(trade, username);
+    await syncRecurringMistakes(allTrades, username);
+    // A shadow prompt override is judged by the trades that actually ran under
+    // it. Best-effort, like the notebook writes above. Time-based expiry is NOT
+    // this path's job — the learning heartbeat owns the clock, so a window
+    // closes on schedule whether or not another trade ever settles.
+    void (async () => {
+        const { settleSelfChanges } = await import('../services/selfMod/SelfModificationService');
+        await settleSelfChanges(allTrades, { username });
+    })().catch(() => { /* settlement re-opens on the next closed trade */ });
+};
+
 import { netRiskReward, roundTripCostR, stopDistancePercent } from '../utils/netRiskReward';
 import { modelStatedSize } from '../services/trade/proposedTrade';
 import { mergePendingJournalRow, trackedPositionFromJournalTrade } from '../services/tracking/journalTracking';
@@ -302,11 +324,10 @@ export const useTradeLogging = (params: UseTradeLoggingParams) => {
         // order: the live hybrid packet, else the regime ledger's observation
         // for this coin on this day (or the nearest earlier one), else the
         // analysis's own pattern text. `mapRegimeToKey` used to answer this and
-        // DEFAULTS TO 'ranging', so an unreadable label became a ranging trade
-        // and the family × regime matrix counted a regime nobody observed. Here
-        // an unresolvable regime stays undefined, and the row says how it was
-        // learned so a reader can weigh a three-day-old ledger row apart from a
-        // packet reading.
+        // DEFAULTS TO 'ranging', so an unreadable label became a ranging trade.
+        // Here an unresolvable regime stays undefined and the row says how it
+        // was learned, so a reader can weigh a three-day-old ledger row apart
+        // from a packet reading.
         const regimeCoin = message.analysis?.coinName
             || (message.text?.match(/\b([A-Z]{2,10}USDT?)\b/)?.[1]);
         const resolvedRegime = resolveTradeRegime({
@@ -1018,6 +1039,7 @@ export const useTradeLogging = (params: UseTradeLoggingParams) => {
             });
         } catch (err) {
             console.warn('[ThinkingStore] Failed to import updateThinkingOutcome:', err);
+
         }
 
         // Auto-add to Recent Insights via the SHARED helper. This block used

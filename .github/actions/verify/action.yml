@@ -99,11 +99,14 @@ runs:
     # The ceiling is a ratchet. It fails on a REGRESSION past the current
     # build and also when the build shrinks more than 10% below the ceiling,
     # so the ratchet keeps binding instead of drifting loose.
+    # Dropped from 1200 when the skill lifecycle, its ledger and the approval
+    # machinery were deleted: the entry chunk got smaller, and a ceiling that
+    # no longer binds is not a gate.
     - name: Startup chunk stays under the ratchet
       shell: bash
       run: |
         set -euo pipefail
-        CEILING_KB=1200
+        CEILING_KB=1100
         STALE_FLOOR_KB=$(( CEILING_KB * 90 / 100 ))
         entry=$(ls -S dist/assets/index-*.js | head -1)
         if [ -z "$entry" ]; then
@@ -137,8 +140,3 @@ runs:
       shell: bash
       run: npm run render-probe
 
-    # The human-actuation path: the four draft outcomes and the queue's Apply,
-    # asserting the notebook BYTES after each click.
-    - name: Skill-approval probe (real clicks, notebook bytes after each)
-      shell: bash
-      run: npm run skill-approval-probe

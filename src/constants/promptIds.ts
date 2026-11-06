@@ -23,13 +23,8 @@ export const PROMPT_REGISTRY_IDS: readonly string[] = [
     'analysis.risk_rules',
     'analysis.memory_enforcement',
     'strategy.summarize_pdf',
-    'notebook.note',
     'notebook.chat_note',
     'strategy.ocr_page',
-    'learning.skill_craft',
-    'learning.skill_refine',
-    'learning.skill_worth',
-    'learning.chart_scan',
     'learning.settlement_reflection',
     'learning.post_mortem_diagnosis',
 ];

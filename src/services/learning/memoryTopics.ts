@@ -13,7 +13,7 @@
  *   - a file the TRADER owns (`autoManaged` is the harness's own diary,
  *     profile and rules — those have their own surfaces and regenerate, so
  *     listing them here would promise a Delete that does not stick);
- *   - not a skill (the `skills` folder is the SkillsCatalog's subject — one
+ *   - not a skill (the `skills` folder is the Skills tab's library — one
  *     record, one surface);
  *   - with content (an empty template is not a belief).
  *

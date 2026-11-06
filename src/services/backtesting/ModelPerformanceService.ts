@@ -139,8 +139,9 @@ const ROLLING_WINDOW_SIZE = 20;      // Number of recent trades to track
  */
 export const COLD_STREAK_THRESHOLD = 3;
 // MULTIPLICATIVE: score *= this halves a model's weight on a cold streak.
-// Renamed from COLD_STREAK_PENALTY, which it shared with providerFitness
-// where the same name meant an ADDITIVE per-loss win-rate penalty of 0.05.
+// Renamed from COLD_STREAK_PENALTY, a name it shared with the provider-fitness
+// module (deleted 2026-11-06) where the same name meant an ADDITIVE per-loss
+// win-rate penalty of 0.05.
 // Different operations, different units, identical name - so a refactor of one
 // would have been applied to the other. This completes the consolidation of the
 // cold-streak rule, whose THRESHOLD was also duplicated.

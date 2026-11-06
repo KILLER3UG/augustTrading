@@ -10,7 +10,6 @@ import { recalculateAnalysisMetrics } from '../utils/analysisUtils';
 import { sanitizeErrorText } from '../utils/runStatus';
 import { MAX_TRADE_SUMMARIES } from './useTradeLogging';
 import type { ConfirmOptions } from '../components/shared/ConfirmDialog';
-import { reconcileSkillsAfterOutcomeCorrection } from '../services/learning/SkillMemoryService';
 import { TradeOutcome } from '../types';
 import type { LoggedTrade, TradeSummary } from '../types';
 import type { ProviderConfig } from '../types/provider';
@@ -36,6 +35,7 @@ export interface UseTradeJournalActionsArgs {
          *  App always provides it, and a caller that does not still gets the
          *  console report — the failure is never swallowed either way. */
         error?: (title: string, message?: string) => void;
+        info?: (title: string, message?: string) => void;
     };
     /** The debounced AI-Review re-run trigger (owned by App, shared with
      *  useTradeLogging — stable identity so its memoized callbacks hold). */
@@ -420,24 +420,6 @@ export const useTradeJournalActions = (args: UseTradeJournalActionsArgs): UseTra
                     resolutionSource: 'correction' as const,
                     outcomeResolvedAt: correctedAt,
                 };
-                void reconcileSkillsAfterOutcomeCorrection(corrected, activeUsernameRef.current || 'default')
-                    .then(result => {
-                        if (result.reconciled.length > 0) {
-                            toast.success(
-                                'Skill record corrected',
-                                `${result.reconciled.length} skill${result.reconciled.length === 1 ? '' : 's'} updated to the corrected outcome.`,
-                            );
-                        }
-                    })
-                    .catch(err => {
-                        // A repair that never lands is a lost learning event;
-                        // surface it like every other notebook write.
-                        console.error('[TradeLog] Skill record correction failed:', err);
-                        toast.error?.(
-                            'Skill record not corrected',
-                            err instanceof Error ? err.message : 'The notebook write failed.',
-                        );
-                    });
             }
         }
     }, [setLoggedTrades, loggedTradesRef, activeUsernameRef, toast]);
@@ -467,6 +449,7 @@ export const useTradeJournalActions = (args: UseTradeJournalActionsArgs): UseTra
         try {
             if (loggedTrades.length === 0) {
                 setFinalTradeSummary(null);
+                toast.info?.('Nothing to synthesize yet', 'Log a closed trade first — pattern memory is written from the journal.');
                 void syncPatternMemory(null, activeUsernameRef.current || 'default').catch(reportPatternMemoryFailure);
                 return;
             }

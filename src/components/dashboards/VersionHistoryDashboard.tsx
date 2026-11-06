@@ -15,7 +15,6 @@ import { storageService } from '../../services/infrastructure/StorageService';
 import { getAttributedInsightsSummary } from '../../services/learning/severityInsights';
 import { recordInsightFeedback } from '../../services/learning/PatternMemorySynthesisService';
 import { ConfidenceCalibration } from '../../types';
-import { listSkills } from '../../services/learning/SkillMemoryService';
 import { getMemoryFilesStats } from '../../services/learning/MemoryFilesService';
 
 // -- ICONS (lucide-react) --
@@ -36,7 +35,6 @@ export const VersionHistoryDashboard: React.FC = () => {
     // is left is real, measured data, stacked in one scroll.
     const [signals, setSignals] = useState<ReinforcementSignal[]>([]);
     const [calibration, setCalibration] = useState<ConfidenceCalibration | undefined>(undefined);
-    const [rules, setRules] = useState<Array<{ file: { name: string }; meta: { kind: string; status: string; wins: number; losses: number; when?: string } }>>([]);
     const [insights, setInsights] = useState<any[]>([]);
     const [providerStats, setProviderStats] = useState<Record<string, { count: number; avgQuality: number }>>({});
 
@@ -45,7 +43,6 @@ export const VersionHistoryDashboard: React.FC = () => {
     const [memoryStats, setMemoryStats] = useState<{ enabledCount: number; charCount: number }>({ enabledCount: 0, charCount: 0 });
 
     // Selection states for dropdown outputs
-    const [selectedRuleIndex, setSelectedRuleIndex] = useState<number>(0);
     const [selectedInsightIndex, setSelectedInsightIndex] = useState<number>(0);
 
     useEffect(() => {
@@ -67,12 +64,9 @@ export const VersionHistoryDashboard: React.FC = () => {
             // so every bucket parsed as `undefined`. Read the real owner now.
             setCalibration(GlobalLearningService.getCalibration());
 
-            const sk = listSkills().filter(s => s.meta.status !== 'retired');
-            setRules(sk);
             // 5s polling reloads the lists — clamp the selection so a shrink
             // between polls can't point past the end of the new array (the
             // <select> would render no matching <option>).
-            setSelectedRuleIndex(i => Math.max(0, Math.min(i, sk.length - 1)));
 
             const iStats = getAttributedInsightsSummary();
             const topInsights = iStats.topInsights || [];
@@ -85,7 +79,7 @@ export const VersionHistoryDashboard: React.FC = () => {
 
             // Count only records this screen can actually explain.
             const logs = await storageService.getTradeLogs();
-            setStorageCount(logs.length + sk.length + (iStats.totalInsights || 0));
+            setStorageCount(logs.length + (iStats.totalInsights || 0));
         } catch (error) {
             console.error('[VersionHistoryDashboard] Failed to load data:', error);
         }
@@ -204,44 +198,6 @@ export const VersionHistoryDashboard: React.FC = () => {
                             </div>
                         </ModernCard>
 
-                        {/* 1.2 Skill Library (replaced the retired IF/THEN rule extraction) */}
-                        <ModernCard title="Skill Library" accent="purple" icon={<Icons.Brain className="w-5 h-5" />}>
-                            <div className="flex items-center justify-between mb-2">
-                                <div className="text-2xl font-light text-white">{rules.length}</div>
-                                <div className="text-ui-sm text-white/40">Active Skills</div>
-                            </div>
-
-                            {rules.length > 0 ? (
-                                <div className="flex flex-col h-full">
-                                    <div className="pb-2">
-                                        <SelectMenu
-                                            value={String(selectedRuleIndex)}
-                                            onChange={(v) => setSelectedRuleIndex(Number(v))}
-                                            options={rules.map((s, idx) => ({
-                                                value: String(idx),
-                                                label: `Skill #${idx + 1}: ${s.file.name.replace(/\.md$/i, '')}`,
-                                            }))}
-                                            aria-label="Select skill"
-                                            className="w-full"
-                                            triggerClassName="w-full rounded-control border border-white/10 bg-zinc-900 px-2.5 py-1.5 text-ui-sm hover:bg-zinc-800"
-                                        />
-                                    </div>
-                                    <div className="border-t border-zinc-800/80 py-2 overflow-y-auto max-h-[100px] custom-scrollbar">
-                                        <p className="text-ui-xs text-zinc-300 font-mono leading-relaxed">
-                                            <span className="text-zinc-400 font-bold uppercase">{rules[selectedRuleIndex]?.meta.kind}</span> {' '}
-                                            [{rules[selectedRuleIndex]?.meta.status} · {rules[selectedRuleIndex]?.meta.wins}W/{rules[selectedRuleIndex]?.meta.losses}L]
-                                            <br />
-                                            {rules[selectedRuleIndex]?.meta.when
-                                                ? `When ${rules[selectedRuleIndex]?.meta.when}`
-                                                : rules[selectedRuleIndex]?.file.name.replace(/\.md$/i, '')}
-                                        </p>
-                                    </div>
-                                </div>
-                            ) : (
-                                <div className="mt-auto text-ui-sm text-white/30 italic">No active skills yet.</div>
-                            )}
-                        </ModernCard>
-
                         {/* 1.3 Bayesian */}
                         <ModernCard
                             title="Bayesian Confidence"
@@ -329,7 +285,9 @@ export const VersionHistoryDashboard: React.FC = () => {
                         <ModernCard
                             title="Cross-Session Memory"
                             value={memoryStats.enabledCount > 0 ? `${memoryStats.enabledCount} active` : 'No files'}
-                            subtitle={memoryStats.enabledCount > 0 ? `${memoryStats.charCount.toLocaleString()} chars injected` : 'Enable memory files to inject context'}
+                            subtitle={memoryStats.enabledCount > 0
+                                ? `${memoryStats.charCount.toLocaleString()} chars in the enabled files — a send reads a budgeted slice, not the store`
+                                : 'Enable memory files to add notebook context'}
                             accent="zinc"
                             icon={<Icons.Server className="w-5 h-5" />}
                         />

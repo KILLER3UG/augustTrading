@@ -11,7 +11,7 @@
  * later run's injections cannot leak onto an older answer.
  *
  * What it reads is the injection log, not a setup match. That distinction is
- * the whole point: budgets, audience filters, lens scope and the ε-holdout all
+ * the whole point: budgets, audience filters and lens scope all
  * mean a skill can match a setup and never be shown. "Skills used" has to mean
  * shown, or the row teaches the trader to distrust it.
  *
@@ -27,7 +27,6 @@ import { getRecentMemoryInjections, type MemoryInjectionRecord } from '../../ser
 import { recordHarnessLesson } from '../../services/learning/harnessLessons';
 import { getActiveUsername } from '../../utils/activeUser';
 import { openSkillCard } from './skillDeepLink';
-import StatusPill from '../ui/StatusPill';
 
 interface MemoryProvenanceStripProps {
     /** Epoch-ms the answer's entry was created — the window's lower bound. */
@@ -45,7 +44,6 @@ interface Grouped {
     skills: string[];
     /** everything that is not a skill, as `${kind}:${path}` */
     others: Array<{ kind: string; path: string }>;
-    heldOut: boolean;
 }
 
 /** One pass over the window's records: dedupe paths, group by kind. */
@@ -53,9 +51,7 @@ export const groupInjections = (recs: MemoryInjectionRecord[]): Grouped => {
     const skills: string[] = [];
     const others: Array<{ kind: string; path: string }> = [];
     const seen = new Set<string>();
-    let heldOut = false;
     for (const r of recs) {
-        if (r.holdout) heldOut = true;
         for (const s of r.sources) {
             if (seen.has(s.path)) continue;
             seen.add(s.path);
@@ -66,7 +62,7 @@ export const groupInjections = (recs: MemoryInjectionRecord[]): Grouped => {
             }
         }
     }
-    return { skills, others, heldOut };
+    return { skills, others };
 };
 
 /** Human labels for the non-skill kinds, in read order. */
@@ -117,8 +113,6 @@ const MemoryProvenanceStrip: React.FC<MemoryProvenanceStripProps> = ({
         onLessonRecorded?.(`Flagged "/${slug}" as a harness lesson.`);
     }, [messageId, onLessonRecorded]);
 
-    // Nothing remembered is nothing to report — an empty row is noise, and a
-    // holdout run with no skills still has doctrine/rules to show.
     if (!startedAt || (grouped.skills.length === 0 && grouped.others.length === 0)) return null;
 
     const parts: string[] = [];
@@ -134,14 +128,6 @@ const MemoryProvenanceStrip: React.FC<MemoryProvenanceStripProps> = ({
                 className="hit-target flex w-full items-center gap-1.5 py-0.5 text-left">
                 <span className="shrink-0 font-mono text-ui-2xs uppercase tracking-widest text-zinc-600">memory</span>
                 <span className="min-w-0 flex-1 truncate text-ui-xs text-zinc-500" title={parts.join(' · ')}>{parts.join(' · ')}</span>
-                {grouped.heldOut && (
-                    <StatusPill
-                        tone="warn"
-                        title="This run was in the ε-holdout: skills were withheld to keep the control group honest."
-                    >
-                        held out
-                    </StatusPill>
-                )}
                 <ChevronDown className={`h-3 w-3 shrink-0 text-zinc-600 transition-transform duration-[120ms] ease-[var(--ease-snappy)] ${open ? 'rotate-180' : ''}`} />
             </button>
             {open && (

@@ -163,7 +163,7 @@ export const diagnosisPacket = (facts: DiagnosisFacts): string => {
             '',
             `PLAN (journal): ${clip(analysis?.strategy || 'no plan text recorded', 700)}`,
             `GATE: ${analysis?.gate
-                ? `${analysis.gate.status} at a ${Math.round(Math.min(analysis.gate.confidenceCap, analysis.gate.skillCeiling ?? 1) * 100)}% cap`
+                ? `${analysis.gate.status} at a ${Math.round(analysis.gate.confidenceCap * 100)}% cap`
                 + `${analysis.gate.refusal ? ` · REFUSED: ${analysis.gate.refusal}` : ''}`
                 + `${analysis.gate.warnings?.length ? ` · cautions: ${analysis.gate.warnings.join(' | ')}` : ''}`
                 : 'never ran — this row was logged UNCAPPED'}`,

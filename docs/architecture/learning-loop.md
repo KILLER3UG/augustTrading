@@ -3,153 +3,159 @@
 > **Current focus (2026-10-29).** This page describes the **trade-settled** loop. Under the owner's
 > current focus it is **infrastructure, not the primary learning loop**: August cannot execute, so
 > P&L and settlement are not the product line. The accuracy loop is **signal → price outcome**; see
-> [focus.md](../product/focus.md). This page will be rewritten when the signal ledger lands.
+> [focus.md](../product/focus.md).
 
-How a closed trade becomes a lesson the next plan reads. Every stage below is cited by symbol;
-`npm run check:docs` verifies the citations still exist. The product reason for the loop is in
-[the goal](../product/goal.md).
+How a closed trade becomes a written record, and how a written record becomes context the next read
+sees. Every stage is cited by symbol; `npm run check:docs` verifies the citations still exist. The
+product reason for the loop is in [the goal](../product/goal.md).
+
+**Owner refactor, documented 2026-11-06.** A skill is a **document used as context**, not a
+candidate/confirmed/retired record. Automatic skill writers, tentative injection, approval,
+skill outcomes/evaluation and the supervisor are removed. Skills no longer supply predicates,
+vetoes or confidence caps. The model writes through `skill_write`; the trader writes or imports
+through the library. Other notebook writers remain. See [the conventions](../engineering/conventions.md).
 
 ## The loop as it runs
 
-### 1. A trade is logged
+### 1. A trade settles
 
-`hooks/useTradeLogging.ts` calls `syncClosedTradeToNotebook` (`services/learning/SkillMemoryService.ts`).
-That one call appends the diary entry, syncs recurring mistakes, applies skill evidence (W/L,
-`controlIds`, `overriddenIds`, status), ingests the lesson's trigger, and — when a cluster
-is large enough and no skill covers it — asks `evaluateSkillWorth` (`services/learning/skillWorthGate.ts`)
-whether the cluster is worth a draft.
+`src/hooks/useTradeLogging.ts` › `syncClosedTradeToNotebook` handles notebook work for a closed
+trade, without writing a skill:
+
+- `appendDiaryEntry` and `syncRecurringMistakes` (`src/services/learning/MemoryFilesService.ts`) —
+  the trader's diary, and the note that names a mistake once it repeats;
+- `expireSelfChanges` and `settleSelfChanges` (`src/services/selfMod/SelfModificationService.ts`) —
+  the harness's own change ledger, which grades a self-modification against what happened next.
 
 ### 2. The settlement reflection
 
-`reflectOnClosedTrade` (`services/learning/settlementReflection.ts`) is the one bounded model call at
-settlement. It exists because nothing used to write `trade.postMortem`: the craft leg ran on an
-empty string and never produced a skill.
+`src/services/learning/settlementReflection.ts` › `reflectOnClosedTrade` makes a bounded model
+call for eligible non-tracker settlements. It preserves an existing post-mortem of at least 40
+trimmed characters, leaves the row unchanged on failure or decline, and guards repeat attempts
+with a bounded per-user/trade session set. Its packet uses the stored row and any supplied injected
+skill names; missing values stay explicit.
 
-Its rules are strict by design:
+Tracker settlements skip that call. `src/services/tracking/postMortemDiagnosis.ts` ›
+`runDiagnosisPass` supplies a structured diagnosis; the journal bridge in
+`src/hooks/useTradeLogging.ts` › `useTradeLogging` writes its post-mortem and syncs the notebook.
+The diary, pattern synthesis, journal detail and exports can read post-mortems, but none of these
+paths drafts a skill.
 
-- It never overwrites a note that is already there — the trader's own words win.
-- It asks nothing that is not on the row: every fact in the packet was measured and stored by the
-  settlement path.
-- It writes **nothing** on failure, decline or a malformed answer. A missing reflection is a gap; a
-  fabricated lesson is a lie the trader then grades their strategy against.
-- It runs once per trade per session; a re-fired settlement never spends a second call.
+`src/services/tracking/diagnosisBrief.ts` › `diagnosisBriefBlock` carries the last non-refused
+instrument diagnosis into subsequent reads as reference only. `buildDecisionReflectionContext`
+(`src/services/learning/DecisionReflectionService.ts`) remains a read over closed trades, not a store.
 
-### 3. Every draft passes the same gates
+### 3. How a skill comes to exist
 
-Seven sources mint skill drafts. `gateEvidenceBackedDraft` and `deterministicDraftGate`
-(`services/learning/draftGates.ts`) are the one quality bar they all pass:
+`src/services/learning/SkillFileService.ts` owns logical folders:
+`skills/<slug>/SKILL.md` plus optional `references/`, `templates/`, `scripts/` and `assets/`.
+Bundled scripts are stored, not executed.
 
-- nothing enters without a **falsifiable prediction**;
-- nothing **duplicates** a live skill — a covered setup strengthens the existing tally instead;
-- the evidence tier runs the full worth gate; the deterministic tier handles drafts with no scored
-  outcome yet (tombstone cooldown, pending-duplicate skip, trigger sanity).
+- `writeSkillFile` serves the model's `skill_write` tool and
+  `src/components/skills/SkillLibrary.tsx` › `SkillLibrary`. Creates compose `name` + `description`
+  frontmatter and a markdown body; updates preserve other author frontmatter.
+- **Version checks:** `if_version` remains optional in the tool schema because creates need none.
+  The current `writeSkillFile` requires a matching `ifVersion` for an existing target; omission or
+  mismatch refuses that update. Library edits supply the token. This is a check on that write path,
+  not a universal concurrency guarantee for all notebook operations.
+- **Lexical duplicate check:** `nearDuplicates` runs on **creates and updates** (excluding the
+  target itself and the named merge sources). Description and body are scored by **containment**
+  (`shared / min(|a|,|b|)`, `overlap`) and the name by Jaccard; the boilerplate words
+  `use/use/using/skill/skills/note/notes` are stopwords so a library of "Use this skill whenever…"
+  does not look mutually similar. Jaccard's union was the flaw: a reworded subset of an existing
+  trigger scored 0.242 against a 0.5 floor and passed, which is the exact duplicate the rule claims
+  to stop. Qualifying matches refuse the write. This proves neither semantic uniqueness nor
+  thoughtful review. `skillWriteRejection` returns the library index on duplicates and current bytes
+  on version conflicts.
+- **Merge:** `supersedes` names the absorbed skills. The service refuses conflicting bundled paths,
+  writes and checks the survivor and copied support files, then deletes the named source files.
+  Cleanup failures are returned in `mergeFailures`; deletion is not all-or-nothing.
+- **Import:** `importSkillToLibrary`, reached through `SkillImportService` and the library, also
+  checks lexical duplicates but stores the imported head verbatim with supported sibling files.
+  Imported author metadata is not restricted to two frontmatter keys.
 
-Any gate failure falls back to the deterministic tier. The human inbox remains the backstop.
+`src/services/analysis/DeskToolsService.ts` exposes `skill_index` (index, versions and each skill's
+bundled paths), `skill_view` (body, version and bundled-file listing; or one support file) and
+`skill_write`, which also writes support files (`files: [{path, content}]`) under the four role
+folders — paths are validated, traversal and a `SKILL.md` entry are refused, and each write is read
+back before the receipt says it landed. Model writes require a current index receipt and
+body-read receipts for existing targets and merge sources through `SkillWriteReview`. The receipt is
+seeded from `skillReviewFromTranscript`, so a read earned on an earlier turn of the same
+conversation counts — the library fingerprint and `ifVersion` still decide whether it is current,
+which is what makes carrying it safe rather than merely cheaper. These receipts establish tool
+reads, not semantic review of the library.
 
-### 3b. A tentative skill is earned from independent post-mortems
+### 4. Retrieval and injection
 
-The tracked-position loop does not wait for the draft inbox. `learnFromDiagnosis`
-(`services/tracking/diagnosisSkillLearning.ts`) reads the diagnosis store and asks the pure
-`collectClusterEvidence` (`services/tracking/diagnosisSkillCluster.ts`) whether **three
-independent outcomes** agree on the same setup and the same correction kind (`primaryChange`).
-Independence is `areIndependentOutcomes` (`services/tracking/positionTracker.ts`): different
-trades, non-overlapping holding windows, and not the same setup on the same PHT day. A diagnosis
-that is itself tentative (thin tape, a gap, an ambiguous same-candle exit) or a breakeven never
-counts.
+`src/services/trade/chatSurfaceTurn.ts` › `surfacePromptWith` assembles a window-budgeted skill
+index for desk turns; `skill_view` is the explicit body read. Listing a skill is not evidence that
+the model read its body or followed it.
 
-At three, `ingestTentativeSkillFromEvidence` (`services/learning/SkillMemoryService.ts`) writes a
-skill with `approvedBy: 'tentative'` (or reinforces the live skill that already covers the setup).
-It is injected as **labelled context** through `isInjectableSkill` — **never** enforcement:
-`isApprovedSkill` still refuses it, so a tentative rule can inform a read but cannot veto or cap
-confidence. The ceiling is `TENTATIVE_SKILL_INJECTION_MAX` (2 per prompt), the global switch is
-`tentativeSkillInjectionEnabled` (Settings), and a tentative skill below 40% over at least five
-tracked outcomes is auto-demoted (`tentativeDemotion`, same module) with its reason in `demotion`.
-The trader can edit or retire any tentative skill.
+The setup-aware helper `src/services/learning/MemoryRetrievalService.ts` › `rankedMatchedSkills`
+lexically ranks enabled skills by description and body, without lifecycle or approval gates.
+`getMemoryFilesContext` has ONE depth now: the best match arrives as an index
+line, and the body is pulled with `skill_view` or the `recall` tool. The rebuttal slice was assembled
+on every send and read by nobody, and the verdict depth belonged to a moderator that no longer
+exists, so both are deleted — one budget (`notebookSliceChars`), one retrieval per send. The budget
+can still clip a block; the helper reports the elided characters instead of trimming silently.
 
-### 4. A human approves the drafts that are not evidence-backed
+`src/hooks/analysisPipeline/memoryContext.ts` › `assemblePipelineMemoryContext` builds notebook
+slices without opting into injection recording. Assembly alone does not prove delivery. The verdict
+"evidence pack" and run-contract panels that once claimed to show what a moderator was
+shown are deleted (2026-11-06): no path ever wrote the fields they read.
 
-`approveSkillDraft` (`services/learning/skillApproval.ts`) is the **only** place a pending draft
-becomes a live skill. It reads the library back after the write and lets that answer decide what the
-UI says — a name collision or a refused ingest leaves the draft in the inbox and tells the trader
-why. It never deletes the draft before the write is proven.
+### 5. What a decision actually saw
 
-The post-mortem channel above is the deliberate exception (owner ruling, 2026-11-02): a rule the
-tracker earned from independent outcomes is injected as a tentative context skill without a click,
-and the human keeps edit/disable/retire control. Drafts from sources with no scored outcomes still
-wait here.
+`src/services/learning/MemoryInjectionService.ts` › `recordMemoryInjection` keeps bounded,
+per-user telemetry with optional `runId`. Retrieval records only when `recordInjections: true`:
+`src/services/agents/botLearning.ts` › `buildBotSharedMemoryContext` opts in, and
+`recordBotTurnInjection` records the bot's own memory. The shared-context caller can trim again
+after retrieval records its sources, so this is not an exact final-wire transcript.
 
-### 5. Retrieval and injection
+Retained consumers:
 
-`assemblePipelineMemoryContext` (`hooks/analysisPipeline/memoryContext.ts`) asks
-`getMemoryFilesContext` (`services/learning/MemoryRetrievalService.ts`) for what THIS setup should
-see: matched skills and doctrine under per-stage budgets, bot memory under its own cap, similar
-setups, regime weighting, loss-priming rows. The retrieval admits a skill through
-`isInjectableSkill` — approval **or** a live tentative skill — while enforcement keeps reading
-`isApprovedSkill`. A tentative block is labelled `TENTATIVE — context only, not enforced`, and
-`rankedMatchedSkills` caps the tentative candidate pool at `TENTATIVE_SKILL_INJECTION_MAX`.
+- `src/components/chat/MemoryProvenanceStrip.tsx` › `MemoryProvenanceStrip` reads records by the
+  answer's timestamp window, **not** by an exact `sourceRunId` join. It groups paths and can flag a
+  skill via `recordHarnessLesson`; this does not change the skill document.
+- `src/services/infrastructure/ExportService.ts` › `exportPreferencesData` sweeps Preferences;
+  `RESTORABLE_PREFERENCE_KEY_PREFIXES` retains `memory_injections_v1_` for restore.
 
-`recordMemoryInjection` (`services/learning/MemoryInjectionService.ts`) logs what actually made it
-into the prompt. A skill that merely matched but was budgeted out is not credited — "skills appear
-here once injected" is literally true.
+`src/utils/reportExport.ts` exports stored `sourceRunId` and `Message.injectedSkills` fields in
+training/reasoning exports; it does not read this ledger. Skill credit, outcome grading and
+evaluation consumers are removed; the retained telemetry does not certify a skill's effectiveness.
 
-### 6. Attribution
+### 6. The scheduled passes
 
-When a trade closes, `applySkillEvidence` joins `trade.sourceRunId` to the injection record's
-`runId`:
+`src/hooks/useLearningHeartbeat.ts` › `useLearningHeartbeat` has two distinct paths:
 
-| verdict | meaning |
-|---|---|
-| `FOLLOWED` | the plan followed the injected skill |
-| `OVERRIDDEN` | the trader went against it — counts, and files a rescope proposal |
-| `CONTROL` | the lift baseline |
+- **Boot/profile activation only:** `settleDueSignals`, `settleRefusedSignals` and
+  `migrateSkillLibrary`. These calls are outside the interval sweep. Migration adds missing logical
+  paths and strips retired content only from heads carrying `LEGACY_LEDGER_MARKER`; it is not a
+  universal format validator (`src/services/learning/SkillFileService.ts` › `migrateSkillLibrary`).
+- **Every 15 minutes and on return to a visible tab:** `runWeeklyReviewIfDue`,
+  `runMonthlyReportIfDue` and `runMemoryHygieneIfDue`, each with its own due-check. Their boot calls
+  live separately in `src/hooks/useUserProfileLoader.ts` › `useUserProfileLoader`.
 
-The decision reflection (`buildDecisionReflectionContext`,
-`services/learning/DecisionReflectionService.ts`) is a pure read over closed trades for the next
-prompt; it owns no store.
-
-### 7. Automated evaluation
-
-`runDueSkillEvalWithDefaultRunner` (`services/learning/SkillEvalScheduler.ts`) benchmarks skills
-itself: after a trade-log sync, one due skill is A/B evaluated with a cost cap. The verdict is
-stamped into the skill's frontmatter, and a `hurts` verdict demotes a confirmed skill on its next
-evidence pass.
-
-### 8. Scheduled hygiene
-
-`runMemoryHygieneIfDue` (`services/learning/memoryHygiene.ts`) runs weekly, due-checked per user, at
-boot. It files one line per job for the Learning → Health tab:
-
-- stale-skill demotion proposals;
-- the contradiction sweep;
-- graveyard retention (clears unusable rows; revives nothing);
-- idle skill lifecycle (`runSkillIdleSweep`, `services/learning/skillIdleLifecycle.ts`) — the only
-  stage that acts on a clock without a verdict, and it is allowed to because it touches no belief:
-  it changes what is injected, reversibly, and archives nothing destructively.
-
-### 9. The supervisor
-
-`runSupervisorPass` (`services/learning/skillSupervisor.ts`) triages queued items with one streamed
-call per item, bounded by `MAX_ITEMS_PER_PASS`. **Auto-triage, not auto-apply**: a verdict is
-recorded; the only thing that creates a skill is still the human (stage 4). There is no startup
-sweep — a pass runs when something changes or when the panel says "Run now".
+`src/services/learning/memoryHygiene.ts` › `runMemoryHygiene` selects a ready provider and calls
+`src/services/learning/MemoryReviewService.ts` › `runNotebookReview`. That model review has its
+own index-change/cooldown gate and writes human-facing, retrieval-disabled
+`profile/suggestions.md`. Hygiene also logs size pressure; it does not prune, merge or demote
+skills. Its retired lifecycle counters are deleted, not zeroed. No scheduled pass creates or
+revises skill procedures.
 
 ## What is closed, and what is not
 
 | leg | state |
 |---|---|
-| log → notebook writes | closed |
-| settlement → reflection → draft | closed (one model call, human-gated) |
-| draft gates | closed — one bar for all seven sources |
-| human approval | closed, with a read-back |
-| retrieval → injection ledger | closed |
-| attribution | wired; runs only on settled trades |
-| eval + hygiene | wired; idle by data |
-| **tracked position → diagnosis** | **closed 2026-11-02** — signals and tracked journal trades are followed to the tape, diagnosed with one structured call, and their outcomes are stored with MFE/MAE and a path |
-| **diagnosis → tentative skill** | **closed 2026-11-02** — three independent outcomes mint or reinforce a tentative skill; it is injected as labelled context and auto-demoted under the floor |
-| **the outcome corpus** | **still the bottleneck for human-gated drafts** — settlement is human-confirmed, so there are few settled rows there; the tracked loop does not wait for it |
-| **insight consolidation** | **not wired** — `insightKnowledgeBase` has no producer; a scheduled prune would walk a list nobody grows (`memoryHygiene.ts` says so in its own header) |
-| **cheap-to-expensive retrieval** | open — the retrieved context is still large by default; see the plan register |
+| settle → notebook writes | closed |
+| settlement → post-mortem | separate reflection and tracker-diagnosis paths; neither drafts skills |
+| skill → library | document writes/imports, lexical duplicate refusals and named merge deletions; limits above |
+| retrieval → injection ledger | opt-in bot telemetry, not universal send coverage |
+| provenance (what a decision saw) | retained time-window UI and backups; no skill-credit arithmetic |
+| **tracked position → diagnosis** | signals and tracked journal plans have tape outcomes and structured diagnosis; no human click is required to mint evidence, and no skill is minted |
+| **the loop's evidence base** | price outcomes, not exchange fills; the app places no trades |
+| **insight consolidation** | **not wired** — the top-level `insightKnowledgeBase` has no producer |
+| **cheap-to-expensive retrieval** | index and explicit body reads exist; delivery and final-wire coverage must be assessed per caller |
 
-The single highest-leverage change is not code: whether an outcome needs a human click
-([decisions](../plan/decisions.md) Q1, and roadmap item 3.7). Every downstream leg — evidence,
-evals, hygiene, the corpus itself — is waiting on it.
+The current learning priority is signal accuracy and diagnosis, not removing a human settlement
+click or restoring skill lifecycle machinery. See [focus.md](../product/focus.md).

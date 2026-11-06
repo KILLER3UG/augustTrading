@@ -103,8 +103,7 @@ export const useAgentGroups = ({
     const abortRef = useRef<AbortController | null>(null);
 
     const pushActivity = useCallback((entry: Omit<GroupActivityEntry, 'id' | 'at'>) => {
-        // Capped like every other event log in the repo (supervisorStore 80,
-        // debateRunLog 100): a room that runs for hours must not grow the
+        // a room that runs for hours must not grow the
         // feed unboundedly — the roster renders a recent-history strip, and
         // the oldest entries are the first anyone would scroll past anyway.
         setActivity(prev => [...prev, { ...entry, id: `act-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, at: Date.now() }].slice(-100));

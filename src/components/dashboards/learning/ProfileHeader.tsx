@@ -1,33 +1,20 @@
 
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import type { PersonalizedLearningProfile } from '../../../services/learning/SelfLearningService';
-import type { MetaCalibrationRatios } from '../../../services/learning/metaCalibration';
-import { getActiveUsername } from '../../../utils/activeUser';
 import { getWinRateColor } from './shared';
 
 /**
- * Header + meta-calibration (the loop on the loop) + the two headline
- * numbers. The ratios are a deterministic read of a sidecar store, so they
- * arrive async and simply don't render until they do.
+ * Header + the two headline numbers.
+ *
+ * The three "meta-calibration" cards that used to sit here (worth-gate
+ * precision, refinement recovery, eval agreement) were deleted on 2026-11-06
+ * with the module behind them: every recorder in that store belonged to the
+ * retired skill lifecycle, so nothing wrote a sample and the cards could only
+ * ever print '—'. A metric that cannot be non-empty is not a measurement.
  */
 export const ProfileHeader: React.FC<{
     profile: PersonalizedLearningProfile;
-    username?: string;
-}> = ({ profile, username }) => {
-    const [metaCalibration, setMetaCalibration] = useState<MetaCalibrationRatios | null>(null);
-    useEffect(() => {
-        let cancelled = false;
-        const user = username || getActiveUsername();
-        void (async () => {
-            try {
-                const { loadMetaCalibration, computeMetaCalibrationRatios } = await import('../../../services/learning/metaCalibration');
-                const d = await loadMetaCalibration(user);
-                if (!cancelled) setMetaCalibration(d.ratios ?? computeMetaCalibrationRatios(d));
-            } catch { /* surface only — never crash the dashboard */ }
-        })();
-        return () => { cancelled = true; };
-    }, [username]);
-
+}> = ({ profile }) => {
     return (
         <>
             {/* Header */}
@@ -37,30 +24,6 @@ export const ProfileHeader: React.FC<{
                     Based on {profile.totalAnalyzedTrades} analyzed trades
                 </p>
             </div>
-
-            {/* meta-calibration: the loop on the loop (deterministic ratios) */}
-            {metaCalibration && (
-                <div className="grid grid-cols-3 gap-2 sm:gap-4">
-                    <div className="bg-zinc-900 rounded-bubble p-2 sm:p-3 border border-white/5">
-                        <p className="text-ui-2xs sm:text-ui-xs text-zinc-500 uppercase tracking-wider mb-0.5">Worth-gate precision</p>
-                        <p className="text-ui-base sm:text-ui-lg font-bold text-white">
-                            {metaCalibration.worthGatePrecision !== null ? `${Math.round(metaCalibration.worthGatePrecision * 100)}%` : '—'}
-                        </p>
-                    </div>
-                    <div className="bg-zinc-900 rounded-bubble p-2 sm:p-3 border border-white/5">
-                        <p className="text-ui-2xs sm:text-ui-xs text-zinc-500 uppercase tracking-wider mb-0.5">Refinement recovery</p>
-                        <p className="text-ui-base sm:text-ui-lg font-bold text-white">
-                            {metaCalibration.refinementRecovery !== null ? `${Math.round(metaCalibration.refinementRecovery * 100)}%` : '—'}
-                        </p>
-                    </div>
-                    <div className="bg-zinc-900 rounded-bubble p-2 sm:p-3 border border-white/5">
-                        <p className="text-ui-2xs sm:text-ui-xs text-zinc-500 uppercase tracking-wider mb-0.5">Eval agreement</p>
-                        <p className="text-ui-base sm:text-ui-lg font-bold text-white">
-                            {metaCalibration.evalAgreement !== null ? `${Math.round(metaCalibration.evalAgreement * 100)}%` : '—'}
-                        </p>
-                    </div>
-                </div>
-            )}
 
             {/* Overall Performance */}
             <div className="grid grid-cols-2 gap-2 sm:gap-4">

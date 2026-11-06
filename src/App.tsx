@@ -82,7 +82,6 @@ import { buildBotSystemPrompt } from './services/agents/botMailbox';
 import { classifyBotAttention } from './services/agents/botAttention';
 import { readBotSystemMarkdown, readBotMemoryMarkdown } from './services/bots/BotMemoryService';
 import useNetworkStatus from './hooks/useNetworkStatus';
-import { useSupervisorBootstrap } from './hooks/useSupervisorBootstrap';
 import { useLearningHeartbeat } from './hooks/useLearningHeartbeat';
 import { useUIState } from './hooks/useUIState';
 import { useConversations } from './hooks/useConversations';
@@ -1423,11 +1422,11 @@ const App: React.FC = () => {
     useEffect(() => {
         const onForged = (e: Event): void => {
             const d = (e as CustomEvent<{ id?: string; name?: string }>).detail;
-            toast.warning('New tool proposal', `${d?.name ?? 'A model'} proposed a desk tool — approve or retire it in Settings → Skills → Forged tools.`);
+            toast.warning('New tool proposal', `${d?.name ?? 'A model'} proposed a desk tool — approve or retire it in Learning → Skills → Forged tools.`);
         };
         const onAmendment = (e: Event): void => {
             const d = (e as CustomEvent<{ id?: string; fileName?: string }>).detail;
-            toast.warning('Memory correction proposed', `${d?.fileName ?? 'A file'} was flagged by a model — review it in Settings → Memory.`);
+            toast.warning('Memory correction', `${d?.fileName ?? 'A file'} has a model-written correction — the before/after log and Undo are in Settings → Memory.`);
         };
         window.addEventListener(FORGED_PROPOSAL_EVENT, onForged);
         window.addEventListener(AMENDMENT_EVENT, onAmendment);
@@ -1981,10 +1980,9 @@ const App: React.FC = () => {
         setTradeGroupRequest({ groupId: id, nonce: Date.now() });
         setSurface('trade');
     }, [selectGroupThread, setSurface]);
-    // Skill-citation chip tap: open Settings → Skills so the
-    // Skill-citation chip tap: open the Strategy Studio surface so it mounts
-    // and consumes the pending slug (Studio listens for the same event when
-    // already open). The Settings → Skills tab is now just a pointer here.
+    // Skill-citation chip tap: open the skill library so it mounts and
+    // consumes the pending slug (the library listens for the same event when
+    // it is already open).
     useEffect(() => {
         const onOpenSkill = (): void => {
             // The library is the Learning surface's Skills tab, so this lands
@@ -2015,14 +2013,9 @@ const App: React.FC = () => {
         activeUsername,
     });
 
-    // WS-2.1: the supervisor's listeners + startup sweep live at App level —
-    // a session that never opens the Trade dock still self-governs its queues.
-    useSupervisorBootstrap(activeUsername);
-
-    // The four scheduled passes used to fire once, from the profile load, so
-    // they only ran when the app was opened. App level for the same reason as
-    // the supervisor above: the loop belongs to the session, not to whichever
-    // surface happens to be mounted.
+    // The periodic reviews used to fire once, from the profile load, so they
+    // only ran when the app was opened. App level because the loop belongs to
+    // the session, not to whichever surface happens to be mounted.
     useLearningHeartbeat(activeUsername, loggedTrades);
 
 
@@ -2476,10 +2469,6 @@ const App: React.FC = () => {
                                     reviewSummary={finalTradeSummary}
                                     reviewLoading={isLoading}
                                     onRegenerateReview={handleRegenerateFinalSummary}
-                                    // `onOpenSkillsSettings` stays unwired on
-                                    // purpose: Settings → Skills is "Tool approvals", so a gear
-                                    // labelled "Skill settings" there would be an affordance lie,
-                                    // and SkillsCatalog hides a control it has no handler for.
                                 />
                             </React.Suspense>
                         )}

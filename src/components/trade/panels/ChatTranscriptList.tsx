@@ -17,7 +17,7 @@ import type { TradeProposal } from '../../../services/trade/proposedTrade';
 import { formatSeatLabel } from '../../../utils/providerUtils';
 import ChatWorkTimeline from './ChatWorkTimeline';
 import TradeProposalCard, { TradeProposalLoggedRow } from './TradeProposalCard';
-import VerdictAudit from '../../analysis/VerdictAudit';
+import VerdictAudit, { verdictNeedsAudit } from '../../analysis/VerdictAudit';
 import InlineVerdict from '../../analysis/InlineVerdict';
 import MemoryProvenanceStrip from '../../chat/MemoryProvenanceStrip';
 import KeyLevelsCard from '../KeyLevelsCard';
@@ -305,12 +305,10 @@ const ChatTranscriptList: React.FC<ChatTranscriptListProps> = ({
                             )}
                             {verdict?.analysis && (projected ? (
                                 // The card already folds VerdictAudit into its
-                                // disclosure, so a projected row must not draw
-                                // the forensic block a second time below it.
-                                <InlineVerdict analysis={verdict.analysis}
-                                    evidencePack={verdict.evidencePack}
-                                    runContract={verdict.runContract} />
-                            ) : (
+                                // own disclosure, so a projected row must not
+                                // draw the explanation a second time below it.
+                                <InlineVerdict analysis={verdict.analysis} />
+                            ) : verdictNeedsAudit(verdict.analysis) ? (
                                 <Disclosure
                                     summary="Inspect evidence & gate"
                                     label="Inspect evidence and gate"
@@ -321,12 +319,10 @@ const ChatTranscriptList: React.FC<ChatTranscriptListProps> = ({
                                 >
                                     <VerdictAudit
                                         analysis={verdict.analysis}
-                                        evidencePack={verdict.evidencePack}
-                                        runContract={verdict.runContract}
                                         className="mt-1"
                                     />
                                 </Disclosure>
-                            ))}
+                            ) : null)}
                             {/* Prov line: code-calculated only — short session
                                 id · model short · thinking tier · notebook
                                 count · relative time. Never "Mock". */}

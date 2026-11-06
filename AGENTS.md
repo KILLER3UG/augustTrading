@@ -52,7 +52,6 @@ npm run check:boundaries    # the import edges the layer table promises
 npm run check:docs          # doc links + symbol citations + gate names
 npm run boot-probe          # the production bundle boots, zero pageerrors
 npm run render-probe        # rendered rows, inert controls, all four surfaces
-npm run skill-approval-probe # the human-actuation path, asserting notebook bytes
 npm run installer-smoke     # the packaged Windows exe (release gate)
 npm run electron:dev        # Vite + Electron window
 npm run electron:build      # build + package the Windows installer
@@ -73,7 +72,6 @@ npm run electron:release    # REFUSES locally by design; releases run in CI
 | `check:docs` | links resolve, symbol citations exist, AGENTS' gate names exist | whether the prose is true |
 | `boot-probe` | the bundle starts and the first surface mounts | any interaction |
 | `render-probe` | rendered rows, send order, reload persistence, four surfaces, no inert controls, focus rings | a layout that breaks at 800px; a wrong number inside a counted row |
-| `skill-approval-probe` | the four draft outcomes + Apply, by notebook bytes | the rest of the loop |
 | `installer-smoke` | the packaged exe launches and renders | anything after launch |
 
 **`render-probe` is the only gate that sees a rendered row.** A component that returns clean and
@@ -118,12 +116,18 @@ docs/                             the reading path and the plan (see docs/README
 7. **An AI row is claimed by identity (`Message.botId`), never by provider+model.**
 8. **Cite docs by symbol:** `` `src/App.tsx` › `App` ``, never a line number.
 9. **The desktop shell is not type-checked.** Run `node --check` after editing `electron/*.cjs`.
-10. **A tentative skill is context, not enforcement.** The post-mortem loop may mint one from three
-    independent outcomes (`learnFromDiagnosis`, `services/tracking/diagnosisSkillLearning.ts`). It
-    reaches a prompt through `isInjectableSkill`, **never** `isApprovedSkill`; it is labelled
-    `TENTATIVE`, capped at `TENTATIVE_SKILL_INJECTION_MAX` (2) per prompt, switched by
-    `tentativeSkillInjectionEnabled`, and auto-demoted under 40% after 5 tracked outcomes. Do not
-    add a second injection gate, and do not let it veto or cap confidence.
+10. **A skill is a document, and there is one pen.** A skill is a folder
+    (`skills/<slug>/SKILL.md` + `references/ templates/ scripts/ assets/`), written only through
+    `writeSkillFile` (`services/learning/SkillFileService.ts`) — by the model's `skill_write` tool or
+    the trader's library. The redundancy scan runs on **creates and updates**: a write whose trigger
+    or procedure overlaps another skill is REFUSED (containment, not Jaccard — a reworded subset is a
+    copy), and the refusal names the skill to update or merge. Before a model write, the tool loop
+    requires a `skill_index` from an EARLIER round (this turn's own or one already in the
+    conversation) and a `skill_view` of every target it updates or merges, and an existing skill must
+    come back with the version it read — review is enforced in code, not in a prompt. `skill_write`
+    also writes support files (`files: [{path, content}]`, under the four roles); scripts are stored
+    and never executed. Do not re-add a status, approval stamp, win/loss ledger, tentative channel
+    or body cap to the file, and do not let a skill veto or size a trade — it is context.
 11. **Writing a ref during render is deliberate here.** See
     [conventions](docs/engineering/conventions.md#two-idioms-that-look-like-mistakes) before
     "fixing" one.

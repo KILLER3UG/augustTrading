@@ -1398,8 +1398,7 @@ const AgentsView: React.FC<AgentsViewProps> = ({
                                                     and reading it here drew the identical ENTRY/STOP/TARGET/
                                                     PROBABILITY card a second time in the same turn.
                                                     `chatRowFrom` is the one place that decides. */}
-                                                {!isUser && <InlineVerdict analysis={row.analysis}
-                                                    evidencePack={m.evidencePack} runContract={m.runContract} />}
+                                                {!isUser && <InlineVerdict analysis={row.analysis} />}
                                                 {/* A plan the model PRESENTED here gets the SAME decision card the
                                                     dock renders, fed off the canonical row. One disposition store,
                                                     keyed by the row id both homes share: logging on the chart marks

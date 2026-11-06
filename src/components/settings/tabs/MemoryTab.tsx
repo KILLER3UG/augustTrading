@@ -1,5 +1,5 @@
 // TAB: Memory — the switches Settings still owns (the notebook itself, the
-// amendment inbox and the supervisor stream moved to the Learning surface).
+// amendment inbox lives on the Learning surface).
 //
 // The page is the reference Settings → Memory shape: a short stack of switches,
 // then the assistant's memories as named topics grouped under You / Topics /
@@ -41,8 +41,8 @@ const MemoryTab: React.FC<{ tab: MemoryTabProps }> = ({ tab: props }) => {
                 {/* The corrections log lives with the notebook it edits (owner
                     ruling 2026-11-03: no Approvals tab). Model amendments apply
                     themselves; this keeps the before/after and the ONE Undo.
-                    A pending row exists only when the supervisor or a
-                    trader-requested edit deferred one to a human. */}
+                    A pending row exists only when a trader-requested edit
+                    deferred one to a human. */}
                 <div className="mt-7">
                     <SettingsGroup
                         title="Corrections"

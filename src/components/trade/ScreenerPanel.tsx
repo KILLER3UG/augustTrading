@@ -8,7 +8,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowDown, ArrowUp, ArrowUpDown, BrainCircuit, Loader2, Minus, Search, X } from '../shared/Icons';
+import { ArrowDown, ArrowUp, ArrowUpDown, Loader2, Minus, Search, X } from '../shared/Icons';
 import { runScreenerWithStatus, type ScreenerRow } from '../../services/trade/screener';
 import { bestSetupScore, SCORE_FORMULA } from '../../services/trade/bestSetups';
 import { display as symbolDisplay } from '../../utils/symbol';
@@ -74,7 +74,6 @@ interface ScreenerRowView {
 
 interface ScreenerRowViewProps extends ScreenerRowView {
     onSelect: (symbol: string) => void;
-    onLearn: (symbol: string) => void;
 }
 
 /** One table row. Memoized on primitives + two stable callbacks, so typing
@@ -84,7 +83,7 @@ interface ScreenerRowViewProps extends ScreenerRowView {
  *  the entire tbody). */
 const ScreenerRowView = React.memo<ScreenerRowViewProps>(({
     symbol, display, baseAsset, price, change24h, rsi14, regime,
-    setupCount, setupTitle, setupsTitle, score, edge, degraded, onSelect, onLearn,
+    setupCount, setupTitle, setupsTitle, score, edge, degraded, onSelect,
 }) => (
     <tr
         data-testid={`screener-row-${symbol}`}
@@ -102,16 +101,6 @@ const ScreenerRowView = React.memo<ScreenerRowViewProps>(({
                     spot
                 </span>
             )}
-            <button
-                type="button"
-                data-testid={`screener-learn-${symbol}`}
-                title="Load on the chart and prefill the Chart AI to scan this coin's candles for skills"
-                aria-label={`Learn skills from ${display}`}
-                onClick={ev => { ev.stopPropagation(); onLearn(symbol); }}
-                className="ml-2 inline-flex rounded-control p-0.5 text-zinc-600 transition-colors hover:bg-white/10 hover:text-cyan-300"
-            >
-                <BrainCircuit className="h-3.5 w-3.5" aria-hidden="true" />
-            </button>
         </td>
         <td className="px-3 py-1.5 font-mono tabular-nums text-zinc-300">{price > 0 ? fmtPrice(price) : '—'}</td>
         <td className={`px-3 py-1.5 font-mono tabular-nums ${change24h >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
@@ -228,12 +217,6 @@ export const ScreenerPanel: React.FC<ScreenerPanelProps> = ({ open, onClose, onC
         onClose();
     }, [onChangeSymbol, onClose]);
 
-    const handleRowLearn = useCallback((rowSymbol: string): void => {
-        onChangeSymbol(rowSymbol);
-        window.dispatchEvent(new CustomEvent('august:prefill-chat', { detail: { token: 'scan-chart-skills' } }));
-        onClose();
-    }, [onChangeSymbol, onClose]);
-
     // A11y (it had neither): Escape closes the dialog and Tab stays inside it,
     // with focus returned to whatever opened it on close. Before this the only
     // way out was clicking the X or the backdrop — a keyboard user was stuck.
@@ -345,7 +328,6 @@ export const ScreenerPanel: React.FC<ScreenerPanelProps> = ({ open, onClose, onC
                                     key={r.symbol}
                                     {...r}
                                     onSelect={handleRowSelect}
-                                    onLearn={handleRowLearn}
                                 />
                             ))}
                             {visible.length === 0 && !running && universeFailed && (

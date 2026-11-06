@@ -6,7 +6,6 @@
 
 import { z } from 'zod';
 import type { GlobalMemory, LearningRule } from '../types';
-import { sanitizePrediction } from '../utils/skillPrediction';
 
 // =============================================================================
 // GLOBAL MEMORY (updateGlobalMemory — previously zero validation)
@@ -118,120 +117,6 @@ export const parseStrategySearchResults = (raw: unknown): ValidatedStrategySearc
  */
 export const CLAUSE_MIN_LENGTH = 12;
 
-export const CraftedSkillSchema = z.object({
-  name: z.string().min(2).max(80),
-  kind: z.enum(['repeat', 'avoid']).catch('avoid'),
-  // Activation key (what the skill does + WHEN to reach for it, with
-  // trigger words) — the supervisor writes this; skills-index lines lead
-  // with it, and retrieval scores it against the live setup. Sliced to the
-  // Agent-Skills spec's 1024 rather than rejected when a model rambles past
-  // it — a boundary that rejects a whole craft over one long sentence
-  // teaches the loop nothing (same philosophy as `predicate` below).
-  // Optional: legacy crafts fall back to a synthesized trigger sentence.
-  description: z.preprocess(
-    (v) => (typeof v === 'string' ? v.slice(0, 1024) : v),
-    z.string().optional(),
-  ),
-  when: z.string().min(8),
-  inputs: z.array(z.string()).default([]),
-  steps: z.array(z.string()).min(1),
-  validate: z.string().min(4),
-  output: z.string().min(4),
-  approval: z.string().min(4),
-  // Optional machine-checkable trigger. Length-capped here and validated where
-  // it is STORED (services/learning/SkillMemoryService → sanitizePredicate),
-  // because the field whitelist lives with the evaluator and a boundary that
-  // rejected a whole craft over one bad clause would teach the loop nothing.
-  predicate: z.string().max(240).optional().catch(undefined),
-  // Evidence from THIS session that motivated the rule. The propose_skill tool
-  // makes it required; it is optional here because a post-mortem or scan craft
-  // carries its evidence as the trade itself. It rides on the draft, is shown
-  // on the Coach card, and is persisted onto the skill — the human is being
-  // asked to approve a rule, and the evidence is the reason for asking.
-  reason: z.preprocess(
-    (v) => (typeof v === 'string' ? v.slice(0, 600) : v),
-    z.string().optional(),
-  ),
-  // Provenance stamped by a learner (not the model): the timeframe a pattern
-  // was earned on, and which source minted the draft. Optional so chat/
-  // post-mortem/verdict authors stay valid.
-  timeframe: z.string().max(12).optional(),
-  source: z.string().max(24).optional(),
-  // STRUCTURED STRATEGY — the plan beside the procedure.
-  //
-  // A skill used to be only a trigger and an action, so "create a strategy"
-  // had nowhere to land: the entry, stop, target, sizing and invalidation the
-  // model believed in had to be prose inside `steps`, which nothing can read
-  // back or check. These are OPTIONAL (a pure avoid-rule has no entry) and
-  // free-form on purpose — a price, a level reference, or a condition. What
-  // matters is that the model states a complete trade plan in fields the app
-  // can show, so a proposed strategy is a real ticket rather than a sentence.
-  strategy: z.object({
-    /** How to get in: a price, a zone, or a condition. */
-    entry: z.string().max(120).optional(),
-    /** Where it is wrong: a price or a condition that voids the setup. */
-    invalidation: z.string().max(120).optional(),
-    /** The protective level. */
-    stop: z.string().max(60).optional(),
-    /** The first objective. */
-    target: z.string().max(60).optional(),
-    /** Risk budget or sizing rule ("0.5% of equity", "half size"). */
-    sizing: z.string().max(120).optional(),
-    /** What must be true for this strategy to be tradable at all right now. */
-    conditions: z.array(z.string().max(120)).max(6).default([]),
-  }).partial().optional(),
-  // ── The parts that make it a procedure rather than a rule ──────────────
-  //
-  // `when` says when to reach for the skill; nothing said when to put it
-  // back down, and nothing recorded the failure mode the post-mortem had
-  // just witnessed. Those are the two sections that separate a skill from a
-  // trigger, and a model will not produce them unless it is asked — so the
-  // fields exist, the prompt asks, and the body formatter renders them.
-  // All optional: a legacy craft or a pure avoid-rule stays valid.
-  /** Situations that look like this one but are NOT it. */
-  whenNot: z.array(z.string().max(160)).max(6).optional(),
-  /** Known failure → what avoids or fixes it. */
-  pitfalls: z.array(z.string().max(200)).max(6).optional(),
-  /** How the agent confirms the procedure actually worked. */
-  verification: z.string().max(240).optional(),
-  /** Cross-references by slug, so a family of skills can be navigated. */
-  relatedSkills: z.array(z.string().max(60)).max(6).optional(),
-  /** Concrete instances from the source material: the setup as it appeared,
-   *  and what the procedure says to do. Optional — a pure avoid-rule may
-   *  have nothing concrete to cite, and a fabricated example is worse than
-   *  an absent one. Over-eager models list more than the section renders,
-   *  so the array is sliced to three rather than rejected. */
-  examples: z.preprocess(
-    (v) => (Array.isArray(v) ? v.slice(0, 3) : v),
-    z.array(z.object({
-      input: z.string().max(200),
-      output: z.string().max(200),
-    })).optional(),
-  ),
-  // Birth certificate: the falsifiable claim the skill must
-  // pre-register. Optional at the schema edge (legacy crafts + refinements
-  // carry none) — the persistence layer fills a deterministic default so
-  // every NEW skill ships with a claim the eval scheduler can test.
-  prediction: z.unknown().optional(),
-});
-
-export type CraftedSkill = z.infer<typeof CraftedSkillSchema> & {
-  prediction?: import('../utils/skillPrediction').SkillPrediction;
-};
-
-export const parseCraftedSkill = (raw: unknown): CraftedSkill | null => {
-  const obj = raw && typeof raw === 'object' && !Array.isArray(raw)
-    ? (raw as Record<string, unknown>).skill ?? raw
-    : raw;
-  const result = CraftedSkillSchema.safeParse(obj);
-  if (!result.success) return null;
-  const { prediction, ...rest } = result.data;
-  return {
-    ...rest,
-    prediction: sanitizePrediction(prediction) ?? undefined,
-  };
-};
-
 // =============================================================================
 // SETTLEMENT REFLECTION (E-57 §1) — the post-mortem the harness writes at
 // settlement, and the ONLY thing that has ever written `trade.postMortem`.
@@ -247,9 +132,8 @@ export const parseCraftedSkill = (raw: unknown): CraftedSkill | null => {
  *    A boundary wider than the reader would promise a clause the reader then
  *    truncates, which is the drift this repo keeps finding.
  *
- * Sliced rather than rejected past the cap, in the same spirit as
- * `CraftedSkillSchema.description`: a boundary that throws away a whole
- * reflection because one sentence ran long teaches the loop nothing. The MIN is
+ * Sliced rather than rejected past the cap: a boundary that throws away a
+ * whole reflection because one sentence ran long teaches the loop nothing. The MIN is
  * the load-bearing edge — a field too short to be a claim is a malformed
  * answer, and a malformed answer writes nothing.
  */

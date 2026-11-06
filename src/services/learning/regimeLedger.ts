@@ -162,8 +162,7 @@ export const regimeOnDay = (
  *
  * `LoggedTrade.marketRegime` is only written when a live hybrid snapshot
  * existed at log time, so most historical rows carry nothing — and every
- * regime-conditional reader (the family × regime matrix, regime-gated skills,
- * the per-regime evidence decay) silently skips them. This resolves the same
+ * regime-conditional reader silently skips them. This resolves the same
  * question once, in the one order every caller agrees on:
  *
  *   snapshot → ledger (this coin, this day or the nearest earlier one)

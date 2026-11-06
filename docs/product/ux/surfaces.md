@@ -10,11 +10,11 @@ lacks.
 | **Analyze** | `trade` | Alt+1 | reading one instrument and running the desk on it | an execution terminal — it never places an order |
 | **Journal** | `journal` | Alt+2 | the record of what was decided, plus the review over it | a library of old analyses |
 | **Agents** | `agents` | Alt+4 | the named bot roster, DMs, rooms, and the same thread as the chart dock | one generic assistant |
-| **Learning** | `learn` | Alt+5 | what the app learned and how it decided to believe it | a library you browse |
+| **Learning** | `learn` | Alt+5 | the notebook, skill documents and learning diagnostics | a skill approval or performance ledger |
 | Settings | — | overlay | configuration and data | a surface; it mounts over whatever is current |
 
-Alt+3 is not a surface: it is the Customize row, which opens **Learning → Skills**. The chord and
-its icon kept their meaning; only the destination changed.
+Alt+3 is not a surface: it is the rail's **Skills** row, which opens **Learning → Skills**. The
+chord and its icon kept their meaning; only the destination changed.
 
 ## Analyze (`trade`)
 
@@ -23,8 +23,8 @@ Anatomy, top to bottom:
 - **Chart head** — one quiet line: `SymbolPicker`, hero price (`text-ui-price` mono tabular-nums), change, funding + countdown, feed dot. No metrics band and no tool buttons: the **market screener** and **pinned signals** live in the symbol picker's foot, where a trader already goes to change instruments (`src/components/trade/SymbolPicker.tsx` › `SymbolPicker`). The screener's **Best setups** sort ranks by the same confluence score the desk's `find_best_setups` tool prints, so the table and the model name the same best coins (`src/services/trade/bestSetups.ts` › `rankBestSetups`). `src/components/trade/TradeView.tsx` › `TradeView`
 - **Crosshair readout** — the 24h high/low/volume/OI/oracle fields the band held appear ONLY while the pointer is over the plot, then leave with it; the grid is fainter than v2's and a verdict draws at most four lines (entry, stop, two targets). `src/components/trade/TradingChart.tsx` › `TradingChart`
 - **Drawing tools** — the resting rail is four tools (cursor, trend, horizontal, zone); fib, text, freehand and eraser live behind one caret. `src/components/trade/ChartToolRail.tsx` › `ChartToolRail`
-- **Composer** — the box is `+` / model / send. The two prompt actions ride the `+` menu ("Study the chart → skills", "Full analysis") instead of chips on the row.
-- **Activity** — the skill-audit drawer's door is the account row's inbox control at the column's foot; the content bar no longer carries a status cluster. A FAILED profile save still shows ("Save failed") because a silent save error is data loss.
+- **Composer** — the box is `+` / model / send. **Full analysis** rides the `+` menu; the automatic chart-to-skills action is removed. `src/components/trade/panels/ChatComposer.tsx` › `ChatComposer`
+- **Activity** — the account row's inbox control opens a drawer saying **Nothing running** and explaining that detached skill evaluations were retired; it no longer lists skill audits. `src/components/settings/JobsDrawer.tsx` › `JobsDrawer`. The content bar has no status cluster; a failed profile save still shows "Save failed".
 - **Order-book drawer** — 30px strip (name, live state, spread) closed by default, expands on demand. Analyze-only. Narrow (<1024) Book mode = full-height pane. `src/components/trade/TradeView.tsx` › `TradeView`
 - **Chart AI dock** — `useRightPanel` default 364px (min 300 / max 820), resize + collapse rail. Dock body order: BiasChips line, SignalCard, KeyLevels Disclosure, DeskScorecard, user bubble (max 80%), AnalyzedRow, AnswerBody (font-reading), MemoryProvenanceStrip, VerdictAudit gate behind "Inspect evidence & gate" Disclosure, prov line (code-calculated only). `src/components/trade/panels/ChatTranscriptList.tsx` › `ChatTranscriptList`
 - **Narrow <1024** — three-mode switcher **Chart | AI | Book**, one pane at a time.
@@ -42,8 +42,8 @@ Never: executes an order, touches an exchange account, or holds a trading key.
 - **Review cards** — weekly and monthly reviews.
 - **Export** — CSV and the printable trade report (open it and print to PDF).
 
-The ledger is the denominator for everything the learning loop believes. A trade that was never
-logged did not happen as far as the app is concerned.
+The trade ledger supports journal-based reviews. Signal price outcomes and tracked diagnoses are
+separate evidence; learning is not limited to human-logged trades.
 
 ## Agents (`agents`)
 
@@ -75,23 +75,21 @@ not a per-turn mode. Journal, Learning and Customize sit at its foot.
 so the landing tab is part of the route (`App.tsx` › `App` `selectSurface`, `openSkills`): while
 Learning inherited the library default the two rows drew one screen, which the owner named twice.
 
+**Owner refactor, 2026-11-06.** Tabs remain Skills, Memory and Health:
 
-Tabs in the loop's own order:
-
-1. **Skills** — the library the desk learns from; moved here from Settings so the library and the
-   notebook sit together. Skills earned from three independent tracked outcomes carry a
-   **tentative · context only** mark: they inform a read, never veto or cap confidence, and
-   auto-demote under 40% after five outcomes. The global switch is Settings → tentative skills.
-   Drafts apply themselves through the deterministic gates (owner ruling, 2026-11-03) — there is
-   no approval inbox between a gated draft and the library, and every skill file follows one
-   format (the boot pass repairs legacy files).
+1. **Skills** — document folders (`SKILL.md` plus optional support files). The trader can search,
+   read, edit, delete or import through `src/components/skills/SkillLibrary.tsx` › `SkillLibrary`;
+   the model uses `skill_index`, `skill_view` and `skill_write`. There are no candidate/confirmed/
+   retired states, tentative switch, approvals, outcome scores or automatic skill writers.
+   All skills are context, never deterministic predicates, vetoes or confidence caps.
 2. **Memory** — the notebook browser, including per-topic detail docks.
-3. **Health** — whether the notebook is sound: memory health, pressure, versions, diagnostics —
-   including any skill file that still does not follow the one format.
+3. **Health** — learning/profile summaries, harness lessons, versions, usage and diagnostics,
+   not a skill evaluation or format-certification screen.
 
-Never: the playbook library. Playbook Studio is the one owner of that table and lives under
-Settings → Playbooks. Never: an Approvals tab — its queues apply themselves, and the memory
-corrections log (with its one Undo) lives in Settings → Memory.
+The write/import checks and migration limits are in [the learning loop](../../architecture/learning-loop.md).
+Never: the playbook library. Playbook Studio owns that table under Settings → Playbooks.
+Never: an Approvals tab — skills have no approval queue. The separate memory corrections log
+(with Undo) lives in Settings → Memory.
 
 ## Settings (overlay)
 

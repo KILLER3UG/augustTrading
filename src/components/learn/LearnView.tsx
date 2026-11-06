@@ -8,10 +8,9 @@
  *   where it lives   what it reads   whether it's sound
  *
  * The APPROVALS tab (the old Coach tab) was removed by owner ruling
- * (2026-11-03): the queues it hosted apply themselves now — skill drafts run
- * the deterministic gates and land in the library (skillApproval's auto-apply,
- * driven by the draft-write event), and memory corrections have been direct
- * writes since 2026-10-29. There is nothing left to click, so there is no
+ * (2026-11-03). Skills are documents now, written by the model's `skill_write`
+ * or the library; memory corrections have been direct writes since
+ * 2026-10-29. There is nothing left to approve, so there is no
  * tab to click it in.
  *
  * The playbook LIBRARY is deliberately not a tab here: StrategyStudio is the
@@ -25,15 +24,10 @@ import React, { lazy, Suspense, useCallback, useEffect, useMemo, useState } from
 import { BookOpen, Gauge, Layers } from '../shared/Icons';
 import type { LoggedTrade } from '../../types';
 import type { ProviderConfig } from '../../types/provider';
-import SupervisorStream from './SupervisorStream';
-import MemoryHealthCard from './MemoryHealthCard';
 import PatternMemoryCard from './PatternMemoryCard';
-import SkillsCatalog from './SkillsCatalog';
 import MemoryTopicsCard from './MemoryTopicsCard';
 import RightPanel from '../shell/RightPanel';
 import { useRightPanel } from '../../hooks/useRightPanel';
-import { listSkills } from '../../services/learning/SkillMemoryService';
-import SkillViewerPanel, { type SkillViewerRecord } from './SkillViewerPanel';
 import MemoryTopicPanel from './MemoryTopicPanel';
 
 const MemoryFilesManager = lazy(() => import('./MemoryFilesManager'));
@@ -52,11 +46,8 @@ export type { LearnTab };
 
 const TAB_KEY = 'learn_tab_v1';
 
-/** The one dock this surface can show. The shell was built for panels; this is
- *  the first one to use it, and it opens from a SkillsCatalog row. */
-const SKILL_VIEWER_DOCK = 'skill-viewer';
-/** The notebook entry's detail — same shell, second dock. With both open the
- *  shell draws its capsule strip, which is what it was built for. */
+/** The notebook entry's detail — the one dock this surface opens; the skill
+ *  document reads in the Skills tab, not in a second viewer. */
 const MEMORY_TOPIC_DOCK = 'memory-topic';
 
 const TABS: Array<{ id: LearnTab; label: string; Icon: React.FC<{ className?: string }> }> = [
@@ -102,15 +93,12 @@ interface LearnViewProps {
     reviewSummary?: string | null;
     reviewLoading?: boolean;
     onRegenerateReview?: () => void;
-    /** Settings → Skills, for the catalog's gear. */
-    onOpenSkillsSettings?: () => void;
 }
 
 const LearnView: React.FC<LearnViewProps> = ({
     username, trades, isGlobalMemoryEnabled, setIsGlobalMemoryEnabled,
     memoryConfig = null, initialTab, onInitialTabConsumed,
     renderSkills, reviewSummary = null, reviewLoading = false, onRegenerateReview,
-    onOpenSkillsSettings,
 }) => {
     const [tab, setTab] = useState<LearnTab>(() => {
         const saved = typeof localStorage !== 'undefined' ? localStorage.getItem(TAB_KEY) : null;
@@ -131,36 +119,20 @@ const LearnView: React.FC<LearnViewProps> = ({
         try { localStorage.setItem(TAB_KEY, tab); } catch { /* private mode */ }
     }, [tab]);
 
-    // ── The skill viewer panel (gap 1) ───────────────────────────────────
+    // ── The right-panel shell ─────────────────────────────────────────────
     // Right-panel contract: the hook owns geometry and lifecycle, the layout
-    // below owns where the width lands, and the panel itself owns what a skill
-    // record looks like when it is READ rather than edited.
+    // below owns where the width lands, and the panel itself owns what a
+    // notebook entry looks like when it is READ rather than edited.
     const rightPanel = useRightPanel({ surface: 'learn', defaultWidth: 480, minWidth: 340, maxWidth: 760 });
-    const [viewerFileId, setViewerFileId] = useState<string | null>(null);
 
     useEffect(() => {
         // `register` is stable; the hook object changes identity on every width
         // commit, and re-announcing per drag tick is pure noise.
-        rightPanel.register({ id: SKILL_VIEWER_DOCK, label: 'Skill' });
         rightPanel.register({ id: MEMORY_TOPIC_DOCK, label: 'Entry' });
     }, [rightPanel.register]);
 
-    // Re-read the record from the store on each open: the viewer is a browser,
-    // not a cache, so a skill edited in the Studio after the panel last showed
-    // is current the moment it opens again.
-    const viewerSkill = useMemo<SkillViewerRecord | null>(() => {
-        if (!viewerFileId) return null;
-        const found = listSkills().find(({ file }) => file.id === viewerFileId);
-        return found ?? null;
-    }, [viewerFileId]);
-
     // ── The memory topic detail (gaps 2 + 3) ─────────────────────────────
     const [topicFileId, setTopicFileId] = useState<string | null>(null);
-
-    const openSkillViewer = useCallback((fileId: string): void => {
-        setViewerFileId(fileId);
-        rightPanel.open(SKILL_VIEWER_DOCK);
-    }, [rightPanel]);
 
     const openMemoryTopic = useCallback((fileId: string): void => {
         setTopicFileId(fileId);
@@ -218,14 +190,10 @@ const LearnView: React.FC<LearnViewProps> = ({
                                 entries with summaries — and only then does the raw
                                 file manager follow. */}
                             <MemoryTopicsCard onOpenTopic={openMemoryTopic} />
-                            <SkillsCatalog
-                            onOpenSettings={onOpenSkillsSettings}
-                            onOpenSkill={openSkillViewer}
-                        />
                         {/* The boundary wraps ONLY the lazy file manager. One
-                            boundary over the whole tab made the catalog — and every
-                            skill row in it — wait on a chunk nothing above it needs,
-                            so the tab painted "Loading…" instead of its content. */}
+                            boundary over the whole tab made the rows below it
+                            wait on a chunk nothing above needs, so the tab
+                            painted "Loading…" instead of its content. */}
                         <Suspense fallback={<Fallback />}>
                             <MemoryFilesManager
                                 username={username}
@@ -239,7 +207,6 @@ const LearnView: React.FC<LearnViewProps> = ({
 
                 {tab === 'health' && (
                     <div className="mx-auto flex w-full max-w-3xl flex-col gap-3 p-3">
-                        <MemoryHealthCard username={username} />
                         <div data-testid="learn-signals">
                             <Suspense fallback={<Fallback />}>
                                 <LearningDashboard trades={trades} username={username} />
@@ -248,15 +215,6 @@ const LearnView: React.FC<LearnViewProps> = ({
                         <Suspense fallback={<Fallback />}>
                             <HarnessLessonsBrowser />
                         </Suspense>
-
-                        {/* What the loop has been doing, not what it knows: the
-                            supervisor's running log used to sit beside the
-                            drafts, where it competed with them for attention and
-                            made the inbox read like a dashboard. */}
-                        <div className="flex h-[46vh] min-h-0 flex-col overflow-hidden rounded-control border border-zinc-800/80 bg-zinc-900">
-                            <SupervisorStream />
-                        </div>
-
 
                         {/* Runtime telemetry — the old System tab. */}
                         <div className="flex flex-col gap-3" data-testid="learn-system">
@@ -292,10 +250,6 @@ const LearnView: React.FC<LearnViewProps> = ({
                     testId="learn-right-panel"
                     className="border-l border-zinc-800/80 bg-zinc-900 lg:w-[var(--panel-w)]"
                 >
-                    {rightPanel.activeId === SKILL_VIEWER_DOCK && viewerSkill
-                        ? <SkillViewerPanel skill={viewerSkill}
-                            onClose={() => closePanel(SKILL_VIEWER_DOCK)} />
-                        : null}
                     {rightPanel.activeId === MEMORY_TOPIC_DOCK && topicFileId
                         ? <MemoryTopicPanel fileId={topicFileId}
                             username={username}
@@ -305,7 +259,7 @@ const LearnView: React.FC<LearnViewProps> = ({
                     {/* Neither dock selected but the shell is open (a stale id):
                         say so rather than rendering an empty box that reads as a
                         broken feature. */}
-                    {rightPanel.isOpen && rightPanel.activeId !== SKILL_VIEWER_DOCK && rightPanel.activeId !== MEMORY_TOPIC_DOCK
+                    {rightPanel.isOpen && rightPanel.activeId !== MEMORY_TOPIC_DOCK
                         ? <p className="p-4 text-ui-dense text-zinc-500">Nothing selected to read.</p>
                         : null}
                 </RightPanel>

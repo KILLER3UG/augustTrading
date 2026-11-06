@@ -61,18 +61,8 @@ const withTimeout = async <T>(p: Promise<T>, ms: number): Promise<T> => {
     }
 };
 
-/** What the code-checked skill predicates contribute to a plan's stamp. The
- *  ceiling is the deterministic half of E-35: a fired AVOID trigger caps the
- *  recorded probability, and the note names the skill so the row says why. */
-export interface SkillGateSignal {
-    ceiling?: number;
-    note?: string;
-}
-
-const unavailable = (reason: string, skill?: SkillGateSignal | null, minEdge?: MinEdgeVerdict, shape?: PlanShapeVerdict): ProposalGate => ({
+const unavailable = (reason: string, minEdge?: MinEdgeVerdict, shape?: PlanShapeVerdict): ProposalGate => ({
     status: 'unavailable', confidenceCap: 1, reason, stampedAt: new Date().toISOString(),
-    ...(skill?.ceiling !== undefined ? { skillCeiling: skill.ceiling } : {}),
-    ...(skill?.note ? { skillNote: skill.note } : {}),
     // An inverted plan refuses even with the market fetch down: the arithmetic
     // is plan-local, and a stamp that could not look at the tape is no reason to
     // present levels that contradict each other.
@@ -190,89 +180,39 @@ export const runGateScan = async (
     proposal: PlanForGate,
     tradeHistory: LoggedTrade[] = [],
     signal?: AbortSignal,
-    skillGate?: Promise<SkillGateSignal | null>,
 ): Promise<ProposalGate> => {
-    if (signal?.aborted) return unavailable('stopped before the gate ran', null, assessMinEdge(proposal, 1), assessPlanShape(proposal, 0));
-    const skillTask = skillGate
-        ? withTimeout(skillGate, GATE_FETCH_TIMEOUT_MS).catch(() => null)
-        : Promise.resolve<SkillGateSignal | null>(null);
+    if (signal?.aborted) return unavailable('stopped before the gate ran', assessMinEdge(proposal, 1), assessPlanShape(proposal, 0));
     try {
-        const [input, skill] = await Promise.all([
-            withTimeout(fetchGateInputData(proposal.symbol, tradeHistory), GATE_FETCH_TIMEOUT_MS),
-            skillTask,
-        ]);
-        // The plan's own shape needs no tape, so it is assessed on every exit
-        // from the fetch with whatever ATR there is — none (0) when the scan
-        // could not answer, which stands the bands down but still catches two
-        // levels that contradict each other.
-        const capWithSkill = Math.min(1, skill?.ceiling ?? 1);
+        const input = await withTimeout(fetchGateInputData(proposal.symbol, tradeHistory), GATE_FETCH_TIMEOUT_MS);
         // A Stop can land while the fetch is in flight. The fetch itself has no
         // signal (it goes through the shared market service), so the result is
         // discarded here: a cancelled turn must not settle an evaluated stamp.
-        if (signal?.aborted) return unavailable('stopped before the gate ran', skill, assessMinEdge(proposal, capWithSkill), assessPlanShape(proposal, 0));
-        if (!input) return unavailable('market data fetch returned nothing', skill, assessMinEdge(proposal, capWithSkill), assessPlanShape(proposal, 0));
+        if (signal?.aborted) return unavailable('stopped before the gate ran', assessMinEdge(proposal, 1), assessPlanShape(proposal, 0));
+        if (!input) return unavailable('market data fetch returned nothing', assessMinEdge(proposal, 1), assessPlanShape(proposal, 0));
         const shape = assessPlanShape(proposal, atrForGate(input.indicators));
         const out = runProgrammaticGate(input);
-        const cap = skill?.ceiling !== undefined
-            ? Math.min(out.confidenceCap, skill.ceiling)
-            : out.confidenceCap;
-        const minEdge = assessMinEdge(proposal, cap);
+        const minEdge = assessMinEdge(proposal, out.confidenceCap);
         const reason = out.pass
             ? `${(out.confidenceCap * 100).toFixed(0)}% cap — ${out.warnings.length > 0 ? out.warnings[0] : 'no penalties'}`
             : `insufficient data (${out.reason})`;
         return {
             status: 'evaluated',
-            confidenceCap: cap,
-            reason: skill?.ceiling !== undefined && skill.ceiling < out.confidenceCap
-                ? `${reason}; code-checked skill ceiling ${(skill.ceiling * 100).toFixed(0)}%`
-                : reason,
+            confidenceCap: out.confidenceCap,
+            reason,
             stampedAt: new Date().toISOString(),
-            ...(skill?.ceiling !== undefined ? { skillCeiling: skill.ceiling } : {}),
-            ...(skill?.note ? { skillNote: skill.note } : {}),
-            // An inverted plan has no ratio to grade and no expectancy to floor:
-            // its shape refusal is stated first, so the trader is never told to
-            // widen an edge on arithmetic that points the wrong way.
             ...(shape.refusal ? { refusal: shape.refusal } : (minEdge.refusal ? { refusal: minEdge.refusal } : {})),
             ...(shape.warnings ? { warnings: shape.warnings } : {}),
             ...(minEdge.netEdgeR !== undefined ? { netEdgeR: minEdge.netEdgeR } : {}),
             ...(minEdge.thresholdR !== undefined ? { minEdgeThresholdR: minEdge.thresholdR } : {}),
         };
     } catch (e) {
-        // The market fetch failed, but the deterministic skill gate may still
-        // have answered. Keep its ceiling rather than throwing the measurement
-        // away with the fetch.
-        const skill = await skillTask.catch(() => null);
         return unavailable(
             e instanceof Error ? e.message : String(e),
-            skill,
-            assessMinEdge(proposal, Math.min(1, skill?.ceiling ?? 1)),
+            assessMinEdge(proposal, 1),
             assessPlanShape(proposal, 0),
         );
     }
 };
-
-/** Start the deterministic predicate evaluation for a plan. One place builds
- *  this signal, so the presentation scan and a stale-stamp re-scan cannot
- *  disagree about whether a fired trigger binds. Best-effort by design: a
- *  failed fetch means NO skill signal, never a fabricated one. */
-export const buildSkillGate = (
-    proposal: Pick<TradeProposal, 'symbol' | 'direction'>,
-    runId?: string,
-): Promise<SkillGateSignal | null> => (async () => {
-    try {
-        const { evaluateSkillPredicates } = await import('../learning/skillPredicateGate');
-        const out = await evaluateSkillPredicates({
-            coin: proposal.symbol,
-            direction: proposal.direction,
-            runId,
-        });
-        if (out.ceiling === undefined) return null;
-        const names = out.fired.filter(f => f.kind === 'avoid').map(f => f.name);
-        return { ceiling: out.ceiling, note: `avoid trigger: ${names.join(', ') || 'skill fired'}` };
-    } catch {
-        return null;
-    }
-})();
 
 /** One in-flight scan per PLAN, so a model that re-presents the same plan (or a
  *  transcript that re-renders it) cannot start a second fetch per paint. */
@@ -283,12 +223,11 @@ export const beginGateScan = (
     planId: string,
     proposal: PlanForGate,
     tradeHistory: LoggedTrade[] = [],
-    skillGate?: Promise<SkillGateSignal | null>,
 ): Promise<ProposalGate> => {
     const live = inFlight.get(planId);
     if (live) return live.promise;
     const controller = new AbortController();
-    const entry = { promise: runGateScan(proposal, tradeHistory, controller.signal, skillGate), controller };
+    const entry = { promise: runGateScan(proposal, tradeHistory, controller.signal), controller };
     inFlight.set(planId, entry);
     // Drop the record once answered: `ensureStamp` then reads the stamp off the
     // proposal, and a genuinely stale one must be allowed to start a NEW scan.
@@ -320,15 +259,15 @@ export const ensureStamp = async (
     signal?: AbortSignal,
 ): Promise<ProposalGate> => {
     if (isStampFresh(proposal.gate)) return proposal.gate as ProposalGate;
-    if (proposal.planId) return await beginGateScan(proposal.planId, proposal, tradeHistory, buildSkillGate(proposal, proposal.planId));
-    return await runGateScan(proposal, tradeHistory, signal, buildSkillGate(proposal));
+    if (proposal.planId) return await beginGateScan(proposal.planId, proposal, tradeHistory);
+    return await runGateScan(proposal, tradeHistory, signal);
 };
 
 /** One line for the tool receipt / the card, in the plan's own terms. */
 export const gateReceiptLine = (gate: ProposalGate): string => {
     if (gate.refusal) return `Gate: REFUSED — ${gate.refusal}. The card will not offer "Log this trade"; do not ask the user to log it.`;
-    const cap = Math.min(gate.confidenceCap, gate.skillCeiling ?? 1);
-    return gate.status === 'evaluated' || gate.skillCeiling !== undefined
-        ? `Gate: confidence capped at ${(cap * 100).toFixed(0)}% (${gate.reason}${gate.skillNote ? `; ${gate.skillNote}` : ''}).`
+    const cap = gate.confidenceCap;
+    return gate.status === 'evaluated'
+        ? `Gate: confidence capped at ${(cap * 100).toFixed(0)}% (${gate.reason}).`
         : `Gate unavailable (${gate.reason}) — logging this plan needs an explicit confirm and it will be recorded UNCAPPED.`;
 };

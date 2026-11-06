@@ -41,7 +41,7 @@ import {
  *   - the SELECTED row is a raised panel, and it alone carries the
  *     pencil and the trash.
  *
- * What is deliberately NOT here: skills (the SkillsCatalog owns those rows)
+ * What is deliberately NOT here: skills (the Skills tab's library owns those)
  * and harness-maintained files (diary/profile/rules — they regenerate, and a
  * Delete that does not stick is a lie the surface must not tell). Those stay
  * browsable in the file manager below.

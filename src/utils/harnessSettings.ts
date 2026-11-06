@@ -21,7 +21,6 @@ export interface HarnessSettings {
      *  demand a positive floor. The card names the number it refused on. */
     minEdgeR: number;
     promptAbRate: PromptAbRate;
-    pinnedPromptLane?: 'live' | 'control';
     /** Analysts may call live desk tools (search, derivatives, session) before the brief. Default on. */
     deskToolsEnabled: boolean;
     /** Session-guard preset: 'default' = research-tight
@@ -31,56 +30,22 @@ export interface HarnessSettings {
     guardDailyLossPct?: number;
     guardMaxTradesPerDay?: number;
     guardPostLossCooldownMin?: number;
-    /** Confirmed-skills cap before the worth gate turns comparative. */
-    skillLibraryCap?: number;
     /** Composer speed dial (port of Minara's Fast/Quality toggle):
      *  'quality' (default) = the built-in role→effort schedule; 'fast' =
      *  one step down on every reasoning task (verdicts still reason, just
      *  less; quick tiers never drop below low). Never affects what the
      *  pipeline DOES — only how hard each call thinks. */
     responseEffort: 'fast' | 'quality';
-    /** THE STARTER LIBRARY — the curated `book-*.md` shelf. Vetted literature, not
-     *  model output, so it is approved by this one explicit toggle instead of one
-     *  press per card. Default ON: the books shipped to be used. Turning it off
-     *  withdraws approval from every `prior: 'book'` skill at once, which is the
-     *  whole point of gating the shelf rather than stamping 12 rows. */
-    starterLibraryEnabled: boolean;
     /** Whether a SENSITIVE-category fact (health/finances/identity, per
      *  utils/memoryWriteFilters) may be stored at all. Default OFF — a
      *  sensitive fact is refused until the trader opts in, and the write is
      *  flagged `sensitive` so recall and pre-reads keep it contained. */
     sensitiveMemoryEnabled: boolean;
-    /** The trader's off-switch over CODE-SIDE enforcement — the confidence caps and
-     *  the confirmed-avoid veto that `applyNotebookSkillsToAnalysis` /
-     *  `confirmedAvoidForSetup` apply. It did not exist: a confirmed `avoid` skill
-     *  could HALT a verdict with no way to say no. Default ON. Injection is governed
-     *  by the approval gate, not by this. */
-    skillEnforcementEnabled: boolean;
-    /** THE TENTATIVE CHANNEL — whether post-mortem-earned, not-yet-confirmed
-     *  skills may be injected as labelled context. Default ON (owner ruling,
-     *  2026-11-02). It never enables enforcement: tentative skills still fail
-     *  `isApprovedSkill`, so they cannot veto or cap confidence. Off hides them
-     *  from both the prompt and the skills index. */
-    tentativeSkillInjectionEnabled: boolean;
     /** What happens when the autopilot detects an outcome: record it after a
      *  15s Undo window, only notify, or the shadow month (show, never record).
      *  Per-coin approval rules still win over this. */
     outcomeSettlement: OutcomeSettlement;
-    /**
-     * Whether the loop may DRAFT playbooks on its own — after-turn session
-     * review, bot closed-trade learning, and whole-chart scans. These paths
-     * can spend provider calls and put rows in the inbox without being asked.
-     *
-     * OFF by default. This is the one capability in the app that shipped
-     * switched on: the loop studied every conversation and every chart whether
-     * the trader wanted it to, and the drafts landed in the inbox as a surprise.
-     * Both reference clients ship new agent capability disabled until the user
-     * turns it on ("it's off until you turn it on"), and that is the honest
-     * default for something that costs money to run. Nothing about the approval
-     * gate changes — this only decides whether drafts are produced at all.
-     */
-    autoDraftingEnabled: boolean;
-    /**
+        /**
      * How much the agent may change the harness it is running in, mid-task.
      *
      * 'off' — nothing. Every self-change tool refuses; the ledger still reads.
@@ -93,7 +58,7 @@ export interface HarnessSettings {
      *
      * OFF by default and owner-only: no desk tool may write this key, so the
      * agent cannot grant itself the capability it is being refused. Opt-IN is
-     * also deliberate — the same reading as `autoDraftingEnabled`.
+     * deliberate too.
      */
     selfModificationMode: SelfModMode;
 }
@@ -114,7 +79,6 @@ const read = (): Partial<HarnessSettings> => {
 export const getHarnessSettings = (): HarnessSettings => {
     const stored = typeof localStorage === 'undefined' ? {} : read();
     const rate = stored.promptAbRate;
-    const cap = stored.skillLibraryCap;
     return {
         // 0 means "not configured" — sizing and the session guard fail closed
         // on it. The old $10,000 stand-in here made every downstream number
@@ -132,23 +96,16 @@ export const getHarnessSettings = (): HarnessSettings => {
             ? Math.min(5, Math.max(-5, stored.minEdgeR))
             : 0,
         promptAbRate: rate === 0 || rate === 0.1 || rate === 0.5 ? rate : 0.1,
-        pinnedPromptLane: stored.pinnedPromptLane === 'live' || stored.pinnedPromptLane === 'control'
-            ? stored.pinnedPromptLane
-            : undefined,
         deskToolsEnabled: stored.deskToolsEnabled !== false,
         guardPreset: stored.guardPreset === 'ftmo' ? 'ftmo' : stored.guardPreset === 'default' ? 'default' : undefined,
         guardDailyLossPct: typeof stored.guardDailyLossPct === 'number' && stored.guardDailyLossPct > 0 ? stored.guardDailyLossPct : undefined,
         guardMaxTradesPerDay: typeof stored.guardMaxTradesPerDay === 'number' && stored.guardMaxTradesPerDay >= 1 ? stored.guardMaxTradesPerDay : undefined,
         guardPostLossCooldownMin: typeof stored.guardPostLossCooldownMin === 'number' && stored.guardPostLossCooldownMin >= 0 ? stored.guardPostLossCooldownMin : undefined,
-        skillLibraryCap: typeof cap === 'number' && Number.isFinite(cap) ? cap : undefined,
         responseEffort: stored.responseEffort === 'fast' ? 'fast' : 'quality',
         // Both opt-OUT only on an explicit false: an absent key is the shipped
         // default, and a default that silently disabled the shelf or the veto would
         // read as the app losing its rules.
-        starterLibraryEnabled: stored.starterLibraryEnabled !== false,
         sensitiveMemoryEnabled: stored.sensitiveMemoryEnabled === true,
-        skillEnforcementEnabled: stored.skillEnforcementEnabled !== false,
-        tentativeSkillInjectionEnabled: stored.tentativeSkillInjectionEnabled !== false,
         // Shadow first (E-18): resolve and SHOW every detected outcome, record
         // nothing. The trader flips to 'automatic' after the disagreement rate
         // between the detector and their own confirmation is known. Choosing
@@ -156,10 +113,7 @@ export const getHarnessSettings = (): HarnessSettings => {
         outcomeSettlement: stored.outcomeSettlement === 'automatic' || stored.outcomeSettlement === 'confirm'
             ? stored.outcomeSettlement
             : 'shadow',
-        // Opt-IN, deliberately: an absent key means the loop does not draft on
-        // its own. The old behaviour (always drafting) is what this turns off.
-        autoDraftingEnabled: stored.autoDraftingEnabled === true,
-        // Opt-IN too, and the only rail on self-modification: an absent or
+        // Opt-IN, and the only rail on self-modification: an absent or
         // malformed value means the agent may change nothing about its own
         // harness. Anything other than the two named levels fails to 'off'.
         selfModificationMode: stored.selfModificationMode === 'config' || stored.selfModificationMode === 'shadow'
@@ -215,17 +169,3 @@ export const getSessionGuardConfig = (): SessionGuardConfig => {
     };
 };
 
-/**
- * Effective confirmed-skills cap before the worth gate turns
- * comparative. localStorage-backed with a hard default — the cap must exist
- * even when nothing is stored, because an unbounded skill library silently
- * taxes every skill's chance of being seen (fixed injection budgets).
- */
-export const DEFAULT_SKILL_LIBRARY_CAP = 40;
-
-/** Effective cap, clamped to a sane range (never 0, never absurd). */
-export const getSkillLibraryCap = (): number => {
-    const n = getHarnessSettings().skillLibraryCap;
-    if (typeof n !== 'number' || !Number.isFinite(n)) return DEFAULT_SKILL_LIBRARY_CAP;
-    return Math.min(200, Math.max(5, Math.round(n)));
-};

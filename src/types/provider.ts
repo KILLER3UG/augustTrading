@@ -98,8 +98,9 @@ export interface ProviderConfig {
    * Override for the model context window in tokens — optional, and it wins
    * over everything else (`utils/contextWindow.resolveContextWindow` puts a
    * user override above a measured limit, a discovered per-model window and the
-   * 1,000,000 default). It scales retrieved-memory stage budgets
-   * (`stageBudgetChars` → `utils/tokenEstimate.windowBudgetTokens`) and it sets
+   * 1,000,000 default). It scales the retrieved-memory budget
+   * (`notebookSliceChars` → `utils/tokenEstimate.windowBudgetTokens`), the shared
+   * index budget (`utils/promptIndexBudget`) and it sets
    * the ceiling automatic compaction holds the outbound history to, so a small
    * window here is how you tell the app "compact earlier", not "inject less".
    * Set from the provider editor; absent ⇒ best available evidence.

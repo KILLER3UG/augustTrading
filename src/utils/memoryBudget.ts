@@ -19,11 +19,9 @@
  * high asks for help early rather than after the write has failed.
  *
  * Why the tiers act the way they do: this store has NOTHING safe to delete.
- * Every byte in it is either user-written, ledger-owned ("superseded beliefs
- * are never deleted" — `SkillMemoryService.ts` archives merged duplicates
- * rather than removing them for exactly that reason), or derived from a source
- * that is only rebuilt when its own trigger fires, so blanking it would leave a
- * hole in the prompt until that event. So the response to pressure is to
+ * Every byte in it is either user-written or derived from a source that is
+ * only rebuilt when its own trigger fires, so blanking it would leave a hole
+ * in the prompt until that event. So the response to pressure is to
  * REFUSE GROWTH from the unbounded writers and tell a human precisely where the
  * bytes are, never to evict silently. That is the same intent a between-caps
  * trigger serves — act before the hard cap — adapted to a system

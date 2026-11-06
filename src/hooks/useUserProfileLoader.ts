@@ -15,11 +15,6 @@ import {
     syncPatternMemory,
 } from '../services/learning/MemoryFilesService';
 import { hydrateRegimeLedger } from '../services/learning/regimeLedger';
-import { hydrateStrategyRegimeMatrix, rebuildMatrixFromJournal } from '../services/learning/strategyRegimeMatrix';
-import { ensureSeedSkills } from '../services/learning/seedStrategies';
-import { runApprovalMigration } from '../services/learning/approvalMigration';
-import { ensureBookSkillDrafts } from '../services/learning/bookSkillDrafts';
-import { runWeeklyRollupIfDue } from '../services/learning/weeklyRollup';
 import { runWeeklyReviewIfDue } from '../services/learning/weeklyReview';
 import { runMonthlyReportIfDue } from '../services/learning/monthlyReport';
 import { runMemoryHygieneIfDue } from '../services/learning/memoryHygiene';
@@ -35,7 +30,6 @@ import GlobalLearningService from '../services/learning/GlobalLearningService';
 import { PriceAlertService } from '../services/ui/PriceAlertService';
 import { OutcomeAutopilotService } from '../services/ui/OutcomeAutopilotService';
 import { initTracker, resetTracker } from '../services/tracking/trackerService';
-import { VetoLedgerService } from '../services/ui/VetoLedgerService';
 import { storageService } from '../services/infrastructure/StorageService';
 import { offlineQueue } from '../services/infrastructure/OfflineQueueService';
 import { runMigrations, checkDataIntegrity, createStartupBackup, logIntegrityEvent } from '../services/validation/DataIntegrityService';
@@ -338,32 +332,11 @@ export const useUserProfileLoader = (args: UseUserProfileLoaderArgs): UseUserPro
             await initMemoryFiles(username);
             if (isStale()) return;
 
-            // Captured, not fired: the regime matrix rebuild below reads the
-            // ledger's cache, so it must not run against an un-hydrated ledger.
-            const ledgerHydrated = hydrateRegimeLedger(username)
+            // Captured, not fired: the regime ledger's cache is read by the
+            // settlement path's regime resolution, so it must be hydrated
+            // before anything asks it a question.
+            void hydrateRegimeLedger(username)
                 .catch(() => { /* ledger is best-effort */ });
-            void hydrateStrategyRegimeMatrix(username).catch(() => { /* matrix is best-effort */ });
-            // Book-prior seed corpus (Kakushadze & Serur): create any missing
-            // seed skills once per boot. Idempotent by slug — user edits,
-            // retirements and graveyard moves are never overwritten.
-            void ensureSeedSkills(username).catch(() => { /* seeding is best-effort */ });
-            // The approval gate's one-time pass, AFTER seeding so the starter shelf
-            // exists (and it deliberately leaves `prior: 'book'` rows to the shelf
-            // toggle rather than freezing them approved). It writes a backup FIRST
-            // and refuses to stamp without one, so a swallowed failure here means
-            // "not yet migrated, retried next boot" — never "activated by accident".
-            void runApprovalMigration(username).catch(e => {
-                console.warn('[ApprovalMigration] pass deferred:', e instanceof Error ? e.message : e);
-            });
-            // The trader's own strategy-PDF playbooks, queued once as
-            // approval-gated skill drafts (Inbox / Coach). The flag guard means
-            // approving or dismissing a draft is never undone on a later boot.
-            try { ensureBookSkillDrafts(username); } catch { /* best-effort */ }
-            void runWeeklyRollupIfDue(username).then(res => {
-                if (res) console.log('[WeeklyRollup] pass complete:', res);
-            }).catch(e => {
-                console.warn('[WeeklyRollup] boot pass failed:', e instanceof Error ? e.message : e);
-            });
 
             // Monitoring/autopilot singletons take the INCOMING username
             // explicitly (the `last_active_user` marker still points at the
@@ -374,8 +347,6 @@ export const useUserProfileLoader = (args: UseUserProfileLoaderArgs): UseUserPro
             await OutcomeAutopilotService.init(username);
             if (isStale()) return;
             await initTracker(username);
-            if (isStale()) return;
-            await VetoLedgerService.init(username);
             if (isStale()) return;
             await initConfluenceService();
             if (isStale()) return;
@@ -424,23 +395,6 @@ export const useUserProfileLoader = (args: UseUserProfileLoaderArgs): UseUserPro
                 const loadedTrades = (profile.tradeLog || []).map(t => withTradeSource({ ...t, leverage: t.leverage || LEGACY_LEVERAGE }));
                 setLoggedTrades(loadedTrades);
                 syncConfluenceFromTradeLog(loadedTrades);
-
-                // Regime backfill. `marketRegime` was only ever written when a
-                // live hybrid packet existed at log time, so most historical
-                // closes carry none — and every regime-conditional reader skips
-                // them, including the family × regime matrix the retrieval rank
-                // and the moderator's scoreboard read. Recompute it from the
-                // journal, resolving each trade through the regime ledger first.
-                void ledgerHydrated
-                    .then(() => rebuildMatrixFromJournal(loadedTrades, username))
-                    .then(r => {
-                        console.info(`[RegimeMatrix] ${loadedTrades.length} rows -> ${r.cells} cells, `
-                            + `${r.samples} samples, ${r.resolvedFromHistory} recovered from the ledger, `
-                            + `${r.unresolved} still with no observed regime`);
-                    })
-                    .catch(e => {
-                        console.warn('[RegimeMatrix] rebuild deferred:', e instanceof Error ? e.message : e);
-                    });
 
                 void runWeeklyReviewIfDue(username, loadedTrades).then(res => {
                     if (res) console.log('[WeeklyReview] digest generated:', res.impulse.slice(0, 80));

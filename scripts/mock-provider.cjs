@@ -30,10 +30,9 @@ const MODEL = 'mock-mini';
  * OPT-IN tool-call scenario. `MOCK_TOOL_CALL=1` (or --tool-call) enables it.
  *
  * WHY: the desk tools are only reachable through a model turn, so the parts of
- * the proposal flow that live ABOVE the inbox — `propose_skill`'s own argument
- * parsing, the zod clause bar, `deterministicDraftGate`, and a queue write that
- * fails — could not be driven in a browser at all. Seeding a draft skips every
- * one of them.
+ * the write path that lives ABOVE the notebook — `skill_write`'s own argument
+ * parsing, the duplicate scan, and a refused write — could not be driven in a
+ * browser at all. Seeding a file skips every one of them.
  *
  * With the flag OFF nothing below runs: `toolScenario()` returns null on the
  * first line and the response is built by the same code as before. That is the
@@ -41,22 +40,27 @@ const MODEL = 'mock-mini';
  * render-probe and the approval probe unchanged.
  */
 const TOOL_SCENARIO = process.env.MOCK_TOOL_CALL === '1' || process.argv.includes('--tool-call');
-const TOOL_NAME = process.env.MOCK_TOOL_NAME || 'propose_skill';
+const TOOL_NAME = process.env.MOCK_TOOL_NAME || 'skill_write';
 
 const DEFAULT_SKILL_ARGS = {
+    slug: 'probe-session-open-fade-short',
     name: 'Session-open fade short',
-    kind: 'avoid',
-    coin: 'ETH',
-    when: 'price rallies into the first fifteen minutes of the US session and stalls at the open high',
-    steps: JSON.stringify([
-        'Mark the US session-open high on 15m',
-        'Refuse longs under it until a close takes it out',
-        'Short a reclaim failure with the stop above that high',
-    ]),
-    validate: 'Confirm the open high held twice on closing prices',
-    output: 'A short with a defined stop above the session-open high',
-    approval: 'A human approves this draft in the Coach inbox before it is applied',
-    reason: 'the last three ETH longs taken at the open all stopped out',
+    description: 'Use this skill whenever price rallies into the first fifteen minutes of the US session and stalls at the open high. Do NOT use for a trending open.',
+    body: [
+        '## When to use',
+        '',
+        'Price rallies into the first fifteen minutes of the US session and stalls at the open high.',
+        '',
+        '## Steps',
+        '',
+        '1. Mark the US session-open high on 15m.',
+        '2. Refuse longs under it until a close takes it out.',
+        '3. Short a reclaim failure with the stop above that high.',
+        '',
+        '## Verification',
+        '',
+        'The open high held twice on closing prices.',
+    ].join('\n'),
 };
 
 /** The scripted call, or null when this request must get a plain reply.
@@ -77,11 +81,30 @@ function toolScenario(body) {
     // same conversation could never get one — which is what the Stop-mid-tool
     // check needs.
     const lastUser = msgs.map(x => (x && x.role) || '').lastIndexOf('user');
-    if (msgs.slice(lastUser + 1).some(x => x && x.role === 'tool')) return null;
+    const results = msgs.slice(lastUser + 1).filter(x => x && x.role === 'tool');
     let args = DEFAULT_SKILL_ARGS;
     if (process.env.MOCK_SKILL_ARGS) {
         try { args = JSON.parse(process.env.MOCK_SKILL_ARGS); } catch { /* keep the default */ }
     }
+    let name = TOOL_NAME;
+    if (name === 'skill_write') {
+        const index = results.find(x => String(x.content).includes('"skills":'));
+        const read = results.find(x => /^# .*\nName:/.test(String(x.content)));
+        const written = results.find(x => /"saved":true|skill_write rejected:/.test(String(x.content)));
+        if (written) return null;
+        if (!index) {
+            name = 'skill_index';
+            args = {};
+        } else {
+            const existing = JSON.parse(index.content).skills.find(s => s.slug === args.slug);
+            if (existing && !read) {
+                name = 'skill_view';
+                args = { skill: existing.slug };
+            } else if (existing) {
+                args = { ...args, if_version: String(read.content).match(/\nVersion: (\w+)/)?.[1] };
+            }
+        }
+    } else if (results.length) return null;
     return {
         model: MODEL,
         choices: [{
@@ -92,7 +115,7 @@ function toolScenario(body) {
                 tool_calls: [{
                     id: `call_${Date.now().toString(36)}`,
                     type: 'function',
-                    function: { name: TOOL_NAME, arguments: JSON.stringify(args) },
+                    function: { name, arguments: JSON.stringify(args) },
                 }],
             },
             finish_reason: 'tool_calls',

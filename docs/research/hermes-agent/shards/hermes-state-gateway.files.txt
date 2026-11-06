@@ -1,4 +1,0 @@
-# hermes-agent :: hermes-state-gateway :: 2 files :: 78 KB
-# size_bytes	type	path
-60414	source	hermes_state_gateway.py
-19121	source	hermes_state_telegram.py

@@ -4,8 +4,7 @@
  * improvement impulse (Edgewonk cadence: one impulse, not a lecture).
  *
  * Trigger: at app start via runWeeklyReviewIfDue — due when >=7 days since
- * the last digest AND >=3 closed trades since (the SkillEvalScheduler
- * due-check + cooldown pattern). Rendered as a Journal card; stored in
+ * the last digest AND >=3 closed trades since. Rendered as a Journal card; stored in
  * Preferences per user.
  */
 
@@ -13,9 +12,6 @@ import { LoggedTrade } from '../../types/trade';
 import { TradeOutcome } from '../../types/enums';
 import { getPreferenceObject, setPreferenceObject } from '../infrastructure/PreferencesService';
 import { buildDisciplineAnalytics, effectiveRMultiple } from '../../utils/disciplineAnalytics';
-import { runWeeklyMetaCalibration, type MetaCalibrationRatios } from './metaCalibration';
-import { runBeliefChallengePass } from './beliefChallenge';
-import { runSelfImprovementPass } from './selfImprovement';
 import { sendChatRequest } from '../providers/GenericProviderService';
 import { getFirstReadyProvider } from '../../utils/providerUtils';
 import { loadProviderConfigs } from '../infrastructure/ProviderConfigService';
@@ -61,8 +57,6 @@ export interface WeeklyReviewDigest {
     impulse: string;
     /** Provider that wrote it (provenance). */
     providerName: string;
-    /** The loop's own ratios (null samples stay null). */
-    metaCalibration?: MetaCalibrationRatios;
 }
 
 const keyFor = (username: string): string =>
@@ -167,7 +161,6 @@ export const runWeeklyReview = async (
             stats,
             impulse,
             providerName: provider.name,
-            metaCalibration: await runWeeklyMetaCalibration(username),
         };
         await setPreferenceObject(keyFor(username), digest);
         return digest;
@@ -187,34 +180,23 @@ export const runWeeklyReviewIfDue = async (
         // Deterministic passes beside the weekly rollup (no LLM):
         // settled-belief challenge flags + the scheduled hygiene pass.
         try {
-            await runBeliefChallengePass(username, trades);
-            // (batch 6): the self-improvement loop — episodes →
-            // fingerprints → (judge-gated) distill → measurement. Offline,
-            // read-only; fires alongside the weekly review.
-            await runSelfImprovementPass(username, trades);
-            // WS-4.2: memory maintenance — stale-skill demotion proposals, the
-            // contradiction sweep, the graveyard retention pass, the
-            // notebook review, veto retraction and the lift review, each
-            // reported into the hygiene log the Health
-            // tab renders. It carries its OWN due-check, because this block
-            // re-runs whenever the digest couldn't be generated (no provider,
-            // too few trades) and hygiene must not ride along on every one of
-            // those retries. `trades` feeds the lift review.
+            // Deterministic maintenance beside the digest. Hygiene carries its
+            // OWN due-check, because this block re-runs whenever the digest
+            // could not be generated and maintenance must not ride along on
+            // every one of those retries.
             void import('./memoryHygiene')
                 .then(m => m.runMemoryHygieneIfDue(username, undefined, trades))
                 .catch(() => { /* hygiene is best-effort */ });
-            // Mine correct passes — resolve recent SKIPPED trades
-            // against post-skip klines (≤5 fetches/sweep) and queue
-            // avoid-skill drafts for vindicated-pass clusters through the
-            // approval inbox. Fire-and-forget: it fetches, so it must never
-            // delay the digest, and a network hiccup retries next week.
+            // Resolve recent SKIPPED trades against post-skip klines. This is
+            // the journal's correct-pass / missed-opportunity metric; it no
+            // longer drafts skills.
             void (async () => {
                 const { runPassMiningSweep } = await import('./passMining');
                 const { fetchKlines } = await import('../analysis/KlineService');
                 return runPassMiningSweep(trades, username, fetchKlines);
             })()
                 .then(res => {
-                    if (res.resolved > 0) console.log('[PassMining] resolved', res.resolved, 'skips; drafted:', res.draftedClusters);
+                    if (res.resolved > 0) console.log('[PassMining] resolved', res.resolved, 'skips');
                 })
                 .catch(() => { /* pass mining is best-effort */ });
         } catch { /* the review must not fail on a sweep hiccup */ }

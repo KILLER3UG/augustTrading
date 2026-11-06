@@ -36,7 +36,6 @@ import {
     abortConversationRun,
 } from '../services/trade/chatStore';
 import type { ToolTurnOutcome } from '../services/trade/toolTurn';
-import type { PredicateGateResult } from '../services/learning/skillPredicateGate';
 
 // ─── Dev-only logging ─────────────────────────────────────────────────────
 // console.log calls are gated behind the Vite dev flag so production builds
@@ -65,7 +64,7 @@ const RATE_LIMIT_COOLDOWN_MS = 60_000;
 // Learning services
 import { generateWeightedVotingContext } from '../services/backtesting/ModelPerformanceService';
 import { threadForProvider } from '../utils/agentThreads';
-import { formatInvokedSkillSection, resolveInvokedSkills } from '../services/learning/SkillMemoryService';
+import { formatInvokedSkillSection, resolveInvokedSkills } from '../services/learning/SkillFileService';
 import { extractDebateTemplate, DebateTemplate } from '../utils/debateTemplates';
 import { parseComposerIntent, formatComposerSteer } from '../utils/composerMentions';
 import { beginPromptLane, promptCorpusVersion } from '../services/infrastructure/PromptOverrideService';
@@ -871,8 +870,10 @@ export function useAnalysisPipeline(params: UseAnalysisPipelineParams) {
             setIsHybridLoading(false);
         }
 
-        // eslint-disable-next-line no-useless-assignment -- read by the failure path below (mapRunFailureMessages); the cluster owns the lane attribution now.
-                // Id of the live-streaming casual-chat bubble (if this run is a casual
+        // The `null` initializer is not decoration: the catch block below
+        // (mapRunFailureMessages) reads it, and the cluster owns the lane
+        // attribution now.
+        // Id of the live-streaming casual-chat bubble (if this run is a casual
         // reply) so the catch block can settle it on cancel/error instead of
         // leaving a stuck isStreaming placeholder.
         let casualMessageId: string | null = null;
@@ -958,38 +959,6 @@ export function useAnalysisPipeline(params: UseAnalysisPipelineParams) {
                 isGlobalMemoryEnabled !== false,
             );
 
-            // ── CODE-CHECKED SKILL TRIGGERS ──
-            // Retrieval answers which skills are RELEVANT; a predicate answers
-            // whether a relevant skill's own trigger is TRUE on the current bar.
-            // That second question used to be settled by a seat reading prose,
-            // which is precisely what a deterministic check should replace.
-            // Evaluated over candles KlineService already caches (30s with
-            // in-flight de-dupe), so in the common case this is not an extra
-            // round trip. Best-effort by design: any failure leaves the run
-            // byte-for-byte as it was before predicates existed.
-            let predicateGate: PredicateGateResult | null = null;
-            if (detectedLearningCoin) {
-                const gateSymbol = /USDT?$/i.test(detectedLearningCoin)
-                    ? detectedLearningCoin.toUpperCase()
-                    : `${detectedLearningCoin.toUpperCase()}USDT`;
-                try {
-                    const { evaluateSkillPredicates } = await import('../services/learning/skillPredicateGate');
-                    predicateGate = await evaluateSkillPredicates({
-                        coin: gateSymbol,
-                        // Same guards retrieval applies: the gate must not
-                        // clamp a Long verdict with a Short skill, and a
-                        // replay run must not read bars that had not closed
-                        // yet at its own cutoff.
-                        direction: pendingDirection,
-                        asOfMs: memoryAsOfMs,
-                        runId: userMessage.id,
-                    });
-                } catch (err) {
-                    console.warn('[PredicateGate] skipped:', err);
-                    predicateGate = null;
-                }
-            }
-
             // One context bundle for every moderator surface (autoplay debate,
             // real debate, accuracy verification, compact retry): the same
             // chart/pattern block the analysts see + the user strategies.
@@ -1049,23 +1018,19 @@ export function useAnalysisPipeline(params: UseAnalysisPipelineParams) {
             if (memoryFilesContext) contextParts.push(memoryFilesContext);
             if (similarSetupsContext) contextParts.push(similarSetupsContext);
             if (learningInjection) contextParts.push(learningInjection);
-            if (predicateGate?.note) contextParts.push(predicateGate.note);
-            // E7 extended: the coin's last stored post-mortem rides the
-            // context bundle (REFERENCE ONLY) — the lesson the loop already
-            // earned is visible to the ordinary answer, not only to the next
-            // emit_signal receipt. A failed store read costs the section,
-            // never the run.
+            // E7: the coin's last stored post-mortem rides the context bundle
+            // (REFERENCE ONLY) — a lesson the tracked loop already earned is
+            // invisible to an ordinary answer otherwise, and must not be
+            // reachable only when the seat happens to emit a signal. The block
+            // swallows its own read failure, so it costs itself, never the run.
             if (detectedLearningCoin) {
-                try {
-                    const { diagnosisBriefBlock } = await import('../services/tracking/diagnosisSkillCluster');
-                    const briefCoin = /USDT?$/i.test(detectedLearningCoin)
-                        ? detectedLearningCoin.toUpperCase()
-                        : `${detectedLearningCoin.toUpperCase()}USDT`;
-                    const briefBlock = await diagnosisBriefBlock(briefCoin);
-                    if (briefBlock) contextParts.push(briefBlock);
-                } catch { /* the brief costs itself, never the run */ }
+                const { diagnosisBriefBlock } = await import('../services/tracking/diagnosisBrief');
+                const briefCoin = /USDT?$/i.test(detectedLearningCoin)
+                    ? detectedLearningCoin.toUpperCase()
+                    : `${detectedLearningCoin.toUpperCase()}USDT`;
+                const briefBlock = await diagnosisBriefBlock(briefCoin);
+                if (briefBlock) contextParts.push(briefBlock);
             }
-
             // ========== GATE KEEPER: Two-Stage Gate Scan ==========
             // The authoritative symbol is the one detected at the top of the
             // run: extractSymbolFromPrompt (canonical pair extraction), then
@@ -1074,8 +1039,7 @@ export function useAnalysisPipeline(params: UseAnalysisPipelineParams) {
             // case-SENSITIVE — a lowercase prompt like "what is the plan for
             // btc today" minted "WHATUSDT" and ran the gate scan on a
             // nonexistent market — and it shadowed the picker value, which
-            // then never reached the gate scan, the veto ledger or the
-            // coin-lessons block.
+            // then never reached the gate scan or the coin-lessons block.
             const finalSymbol = detectedSymbol;
 
             // ========== DECISION REFLECTIONS ==========

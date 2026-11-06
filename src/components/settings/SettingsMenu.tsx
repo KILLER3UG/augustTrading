@@ -196,7 +196,7 @@ const NAV_GROUPS: NavGroup[] = [
             // Skills left this dialog for the Learning surface's own tab, so the
             // library and the notebook sit together instead of one being a
             // settings pane. The rail's Skills row and Alt+3 land there.
-            { id: 'memory', label: 'Memory', icon: <Brain className={NAV_ICON} />, keywords: 'notebook amendment supervisor profile memory files global' },
+            { id: 'memory', label: 'Memory', icon: <Brain className={NAV_ICON} />, keywords: 'notebook amendment profile memory files global' },
             { id: 'strategies', label: 'Playbooks', icon: <BookOpen className={NAV_ICON} />, keywords: 'strategy book pdf upload studio families import' },
         ],
     },

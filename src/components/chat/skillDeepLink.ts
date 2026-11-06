@@ -3,9 +3,9 @@
  * `SkillCitationChips`, in both directions.
  *
  * Tapping a skill anywhere (the provenance strip, a card) has to open that
- * skill's detail in the Studio. The Studio may not be mounted yet when the tap
- * lands — opening it is what mounts it — so the slug is parked here as well as
- * broadcast, and the Studio consumes it on mount.
+ * skill's document in the library. The library may not be mounted yet when the
+ * tap lands — opening it is what mounts it — so the slug is parked here as
+ * well as broadcast, and the library surface consumes it on mount.
  *
  * "Try in chat" is the same problem reversed: the Chart AI dock owns the only
  * composer, surfaces render exclusively, and the Studio's "Try in chat" closes
