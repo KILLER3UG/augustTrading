@@ -186,7 +186,6 @@ const buildRegimePack = (m, tape, atr, symbol) => {
         lines.push(`regime(1h): ${reg.direction} (ADX ${reg.directionStrength}, efficiency ${reg.efficiency}, dwell ${reg.dwell} bars) · volatility ${reg.volatility}${reg.atrPercentile !== null ? ` (ATR p${reg.atrPercentile})` : ''} · regime_id ${reg.regimeId}`);
     }
     const last = tape[tape.length - 1].close;
-    const tolerance = atr * 0.15;
     const dayStart = m.sc.utcDayStart(last ? tape[tape.length - 1].time : 0);
     const prevDay = tape.filter(c => c.time >= dayStart - 24 * HOUR && c.time < dayStart);
     if (prevDay.length >= 4) {
@@ -360,7 +359,6 @@ const main = async () => {
             const packLines = ARMS[arm].pack ? packs[ARMS[arm].pack] : null;
             let decision = null;
             let tokens = 0;
-            let rawText = '';
             if (dryRun) {
                 // Dry run: a deterministic stand-in decision so the scoring
                 // path is exercised end to end without a provider.
@@ -374,7 +372,6 @@ const main = async () => {
                         { role: 'system', content: SYSTEM_PROMPT },
                         { role: 'user', content: userPrompt(s.symbol, decisionIso, tape, packLines) },
                     ]);
-                    rawText = r.text;
                     tokens = r.tokens;
                     decision = parseDecision(r.text);
                 } catch (e) {
