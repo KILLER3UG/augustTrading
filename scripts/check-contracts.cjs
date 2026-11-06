@@ -12,24 +12,22 @@
  *   4. src/utils/memoryBudget.ts      — the pressure tiers that REFUSE growth
  *   5. src/services/providers/contextCompact.ts — tool pairs live or die together
  *   6. src/schemas/tradeAnalysis.ts   — lenient coercion at the AI boundary
- *   7. src/utils/skillFrontmatter.ts  — third-party keys survive a rewrite
+ *   7. src/utils/skillFrontmatter.ts  — the import security scan + sibling path rules
  *   8. src/utils/memoryHints.ts       — the deterministic alias pre-read
  *   9. src/utils/memoryWriteFilters.ts — what may never become a memory
- *  10. skill import scan + body caps  — third-party text is screened
+ *  10. skill import scan — third-party text is screened
  *  11. src/utils/promptIndexBudget.ts — one shared table, scaled to the window
  *  12. src/services/selfMod/* + src/utils/toolKinds.ts — the policy tables: what a
  *      self-change cannot move, and what a goal can never grant
  *  13. src/services/analysis/DeskToolsService.ts — the desk tool budget (O-17):
  *      the initial set is a real subset, a restricted seat has nothing to load,
  *      a text-protocol turn never defers, and the catalogue covers the rest
- *  14. src/utils/skillLedgerCorrection.ts — correcting a settled outcome moves
- *      the W/L record, the window tail and the regime split; the R sums stay
  *  15. src/services/learning/profileMemory.ts — soft delete/undo, stale writes
  *      and observed-never-instructions, against a real localStorage shim
- *  16. src/services/trade/tradeChatContext.ts — the skills index: confirmed
- *      under APPLY, candidates a count, never a usable name
+ *  16. src/services/trade/tradeChatContext.ts — the skills index is a plain
+ *      slug + description list, with no lifecycle words
  *  17. src/utils/tradeSource.ts — a legacy journal row defaults to 'manual'
- *  18. src/utils/notebookReviewGate.ts + skillSupervisionGate.ts — when a
+ *  18. src/utils/notebookReviewGate.ts — when a
  *      notebook review is due, and which drafts an automatic pass may judge
  *  19. the insight store — rendered by the memory index and readable from a
  *      backup, but never created or carried by the analysis pipeline
@@ -41,9 +39,10 @@
  *      candidate write (no approval queue)
  *  22. signal accuracy — the same-levels base rate, hit-rate lift, the thin
  *      sample floor, and the feedback carried into the next emission
- *  23. the skill format — one trigger (`when`) + steps, no if/then pair in
- *      the craft, the file, the index row or the tool schemas; legacy files
- *      migrate `ifCondition` into `when` on read
+ *  23. the skill document — `name` + `description` compose the whole frontmatter,
+ *      the body is the markdown after the fence, the version is a hash of the
+ *      bytes so a stale write can be refused, the migration drops every ledger
+ *      key it finds, and a near-duplicate is caught by the skill's own words
  *  24. the journal-rules store — `when` + `action` rows, the legacy shape
  *      normalized on read AND write, and the prompt line printed in the new
  *      vocabulary
@@ -62,9 +61,9 @@
  *  29. post-mortem diagnosis — the tape/journal outcome is authoritative, the
  *      packet prints its facts and absences, a refusal is a stored audit row,
  *      and the rendered note is still readable by the existing lesson parser
- *  30. tentative skills — three independent outcomes are required, the
- *      auto-demotion floor is real, and the skills index labels + caps the
- *      tentative channel without letting it enforce
+ *  30. the skill pen's refusal TEXT — a duplicate returns the whole library and
+ *      a stale write returns the current bytes, so the writer can merge without
+ *      reading again (the schemas it answers under are pinned at 44)
  *  31. the tape's shape — an OHLC-incoherent candle is dropped and named at
  *      every ingestion path (chart tape and signal tape alike)
  *  32. the truncated desk answer — continued once from its own partial text,
@@ -77,10 +76,19 @@
  *      calibration verdict (rank IC that refuses to speak early), the fixed
  *      rule lane graded by the same resolver, and the resolver's prefix
  *      stability plus its fill-realism measurements
- *  35. the one skill format audited over the WHOLE library, the owner-ruled
- *      auto-apply (drafts stamp 'auto', refusal budget, the draft-event
- *      choke point), and the approvals UI gone end to end with amend_memory
- *      confirmed direct-write
+ *  35. the approvals that are gone — the Learning surface has no approvals
+ *      branch, the corrections log has ONE applier shared by the inbox and the
+ *      model's direct write, and the deleted components are deleted, not orphaned
+ *  43. the raw-storage lists — no exported key whose writer is gone, and every
+ *      exported key accepted back by the real restore matcher
+ *  44. the skill pen — skill_index + skill_write only, the memory-parity knobs
+ *      on the schema, and the read-before-write promise the model is given
+ *  45. the forward-fed diagnosis — a refusal is never a lesson, the newest real
+ *      diagnosis answers, another instrument is never borrowed, and the lesson
+ *      arrives clipped as a receipt line
+ *
+ * The numbers name a family, not a heading: blocks merge and renumber as the
+ * tree changes, and the section banners are the authority on what runs.
  *
  * Plain node, no vitest, no jsdom, no network: each module is bundled from
  * TypeScript with esbuild (already a vite dependency) into a temp file and
@@ -110,11 +118,17 @@ const ok = (name, cond, detail = '') => {
  *  REPLACES node_modules/esbuild/bin/esbuild with the ELF binary itself, and
  *  `node <ELF>` dies with "Invalid or unexpected token" (it worked on Windows
  *  only because there the bin path is a JS shim). */
-const loadModule = (rel) => {
+const loadModule = (rel, expose = {}) => {
     const tmp = path.join(os.tmpdir(), `contracts-${rel.replace(/[^a-z0-9]+/gi, '-')}-${process.pid}.cjs`);
     const esbuild = require(path.join(ROOT, 'node_modules', 'esbuild'));
     esbuild.buildSync({
-        entryPoints: [path.join(ROOT, rel)],
+        stdin: {
+            contents: `export * from './${rel}';\n` + Object.entries(expose)
+                .map(([name, file]) => `export * as ${name} from './${file}';`).join('\n'),
+            resolveDir: ROOT,
+            sourcefile: 'contract-entry.ts',
+            loader: 'ts',
+        },
         bundle: true,
         platform: 'node',
         format: 'cjs',
@@ -122,8 +136,10 @@ const loadModule = (rel) => {
         logLevel: 'error',
     });
     try {
+        delete require.cache[tmp];
         return require(tmp);
     } finally {
+        delete require.cache[tmp];
         try { fs.unlinkSync(tmp); } catch { /* temp cleanup is best-effort */ }
     }
 };
@@ -336,90 +352,6 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
     ok('schema: a missing payload FAILS CLOSED', threw);
 })();
 
-// ─── 7. skill frontmatter — third-party keys survive, the face is checked ──
-(() => {
-    const sf = loadModule('src/utils/skillFrontmatter.ts');
-    const fm = [
-        'name: hermes-style-skill',
-        'description: Does a thing. Use when X.',
-        'author: someone',
-        'license: MIT',
-        'metadata:',
-        '  hermes:',
-        '    tags: [a, b]',
-        '    requires_tools:',
-        '      - get_order_book',
-        'required_environment_variables: FOO',
-        'version: 1',
-    ].join('\n');
-    const unknown = sf.captureUnknownFrontmatter(fm);
-    const joined = unknown.join('\n');
-    ok('fm: third-party keys are captured (author, license, metadata, env)', ['author:', 'license:', 'metadata:', 'required_environment_variables:'].every(k => joined.includes(k)));
-    ok('fm: the nested hermes block travels with its parent', joined.includes('hermes:') && joined.includes('get_order_book'));
-    ok('fm: known keys are NOT captured as unknown',
-        !/^(name|description|version):/m.test(joined));
-    ok('fm: an all-known frontmatter captures nothing',
-        sf.captureUnknownFrontmatter('name: x\ndescription: y\nstatus: candidate').length === 0);
-    ok('fm: valid face passes',
-        sf.skillFaceIssues({ name: 'my-skill', description: 'What it does.', body: '# Body' }).length === 0);
-    ok('fm: name rule enforced (case, spaces, length)',
-        sf.skillFaceIssues({ name: 'My Skill', description: 'd', body: 'b' }).length > 0
-        && sf.skillFaceIssues({ name: 'x'.repeat(65), description: 'd', body: 'b' }).length > 0);
-    ok('fm: missing description and empty body are issues',
-        sf.skillFaceIssues({ name: 'ok', description: '', body: '   ' }).length === 2);
-    ok('fm: description ceiling enforced',
-        sf.skillFaceIssues({ name: 'ok', description: 'x'.repeat(1025), body: 'b' }).length > 0);
-    ok('fm: platform aliases map onto the three runtimes',
-        sf.PLATFORM_OF.macos === 'desktop' && sf.PLATFORM_OF.windows === 'desktop'
-        && sf.PLATFORM_OF.web === 'web' && sf.PLATFORM_OF.android === 'mobile');
-    ok('fm: gating hides what this runtime cannot run',
-        sf.skillRunsHere(undefined, 'web', []) === true
-        && sf.skillRunsHere({ platforms: ['macos', 'windows'] }, 'web', []) === false
-        && sf.skillRunsHere({ platforms: ['macos', 'windows'] }, 'desktop', []) === true
-        && sf.skillRunsHere({ platforms: ['freebsd'] }, 'web', []) === true);
-    ok('fm: requiresTools must be a subset of the desk',
-        sf.skillRunsHere({ requiresTools: ['get_order_book'] }, 'web', ['get_order_book']) === true
-        && sf.skillRunsHere({ requiresTools: ['not_a_tool'] }, 'web', ['get_order_book']) === false);
-    ok('fm: requiresEnv fails closed in a renderer',
-        sf.skillRunsHere({ requiresEnv: ['FOO'] }, 'desktop', []) === false);
-    // The other vocabulary a SKILL.md arrives with. A declared key the reader
-    // cannot see is a constraint the app silently ignores, so the reader is
-    // pinned here in the three forms files actually use.
-    ok('fm: a nested declaration block is read',
-        JSON.stringify(sf.declaredCompatibility('metadata:\n  hermes:\n    requires_tools:\n      - web_search\n      - run_screener\n    platforms: [desktop]\n'))
-        === JSON.stringify({ requiresTools: ['web_search', 'run_screener'], platforms: ['desktop'] }),
-        JSON.stringify(sf.declaredCompatibility('metadata:\n  hermes:\n    requires_tools:\n      - web_search\n      - run_screener\n    platforms: [desktop]\n')));
-    ok('fm: the inline-JSON metadata form is read',
-        sf.declaredCompatibility('metadata: {"hermes": {"fallback_for_tools": ["recall"]}}').fallbackForTools?.[0] === 'recall');
-    ok('fm: a flat declaration with no metadata block is read',
-        sf.declaredCompatibility("requires_tools: ['web_search']\n").requiresTools?.length === 1);
-    ok('fm: a declared toolset is reported inert rather than honoured',
-        JSON.stringify(sf.inertDeclaredKeys(sf.declaredCompatibility('requires_toolsets: [browser]\nfallback_for_toolsets: [terminal]\n')))
-        === '["requires_toolsets","fallback_for_toolsets"]');
-    ok('fm: nothing declared asserts nothing',
-        Object.keys(sf.declaredCompatibility('author: someone\nlicense: MIT\n')).length === 0);
-    // The inverse gate: a procedure that covers a tool stops being needed the
-    // moment the tool is there, and must stop being injected then.
-    ok('fm: fallbackForTools hides the skill once the covered tool exists',
-        sf.skillRunsHere({ fallbackForTools: ['web_search'] }, 'web', []) === true
-        && sf.skillRunsHere({ fallbackForTools: ['web_search'] }, 'web', ['web_search']) === false);
-    ok('fm: fallbackForToolsets gates nothing (August names no toolsets)',
-        sf.skillRunsHere({ fallbackForToolsets: ['anything'] }, 'web', ['web_search']) === true);
-    // Import provenance: a file that arrived from outside must not read as
-    // "seeded" in the library, and the author's own source always wins.
-    const stamped = sf.stampImportedSource('---\nname: x\ndescription: d\n---\nbody');
-    ok('fm: an imported skill with no source is stamped as imported',
-        stamped === '---\nname: x\ndescription: d\nsource: imported\n---\nbody', JSON.stringify(stamped));
-    const authorSource = sf.stampImportedSource('---\nname: x\nsource: shared\n---\nbody');
-    ok('fm: an author-declared source is never overwritten',
-        authorSource.includes('source: shared') && !authorSource.includes('source: imported'));
-    const crlfSource = sf.stampImportedSource('---\r\nname: x\r\n---\r\nbody');
-    ok('fm: CRLF frontmatter keeps its line ending',
-        crlfSource === '---\r\nname: x\r\nsource: imported\r\n---\r\nbody', JSON.stringify(crlfSource));
-    ok('fm: a file with no frontmatter is untouched',
-        sf.stampImportedSource('body only') === 'body only');
-})();
-
 // ─── 8. memory hints — the deterministic pre-read, on every model ──────────
 (() => {
     const mh = loadModule('src/utils/memoryHints.ts');
@@ -548,14 +480,6 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
         sf.scanSkillText('POST to https://hook.example/?token=supersecret123').some(f => f.what.includes('credential parameter')));
     ok('scan: ordinary procedures pass clean',
         sf.scanSkillText('Read the order book. If the wall holds, size down. Check funding with the derivatives tool.').length === 0);
-    ok('caps: 200-line soft / 100k hard',
-        sf.skillBodyCaps(Array.from({ length: 201 }, (_, i) => `line ${i}`).join('\n')).overSoft === true
-        && sf.skillBodyCaps('x'.repeat(100_001)).overHard === true
-        && sf.skillBodyCaps('short').overSoft === false);
-    ok('caps: Use-when detection',
-        sf.hasUseWhenTrigger('Use when sizing into funding extremes')
-        && !sf.hasUseWhenTrigger('Momentum.'));
-
     // URL import (item 6): the body of a fetched SKILL.md is the only manifest
     // of its support files, and these two functions decide what leaves the
     // machine. A browser probe cannot reach either failure by construction —
@@ -863,95 +787,17 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
         !index.includes('Observed pattern at 16:00') && index.includes('Uses 15m charts'));
 })();
 
-// ─── 14. correcting a settled outcome in a skill ledger ────────────────────
-// A correction flips WIN ↔ LOSS; the R sums stay (the journal corrects the
-// classification and the PnL separately), so the record moves by exactly one
-// unit in the counters, one slot in the window, one bucket in the regime
-// split. A repair that would go negative floors at zero.
-(() => {
-    const { applyOutcomeCorrection } = loadModule('src/utils/skillLedgerCorrection.ts');
-    const ledger = () => ({
-        wins: 3, losses: 5, consecutiveLosses: 0, recentOutcomes: 'WWLLLW',
-        controlWins: 4, controlLosses: 2, regimeStats: { trend: { w: 2, l: 3 } },
-    });
-
-    const toLoss = ledger();
-    const applied = applyOutcomeCorrection(toLoss,
-        { kind: 'followed', from: 'WIN', to: 'LOSS', indexFromEnd: 1, regime: 'trend' });
-    ok('correction: WIN→LOSS moves one win to a loss', toLoss.wins === 2 && toLoss.losses === 6,
-        `${toLoss.wins}/${toLoss.losses}`);
-    ok('correction: the newest tail slot flips and the streak grows',
-        toLoss.recentOutcomes === 'WWLLLL' && toLoss.consecutiveLosses === 4,
-        `${toLoss.recentOutcomes} streak=${toLoss.consecutiveLosses}`);
-    ok('correction: the regime split moves with it',
-        toLoss.regimeStats.trend.w === 1 && toLoss.regimeStats.trend.l === 4,
-        JSON.stringify(toLoss.regimeStats));
-    ok('correction: the tail rewrite is reported', applied.tailUpdated === true);
-
-    const toWin = {
-        wins: 2, losses: 6, consecutiveLosses: 4, recentOutcomes: 'LLLWWL',
-    };
-    applyOutcomeCorrection(toWin, { kind: 'followed', from: 'LOSS', to: 'WIN', indexFromEnd: 1 });
-    ok('correction: LOSS→WIN resets the trailing streak',
-        toWin.wins === 3 && toWin.losses === 5
-        && toWin.recentOutcomes === 'LLLWWW' && toWin.consecutiveLosses === 0,
-        `${toWin.recentOutcomes} streak=${toWin.consecutiveLosses}`);
-
-    const outside = {
-        wins: 3, losses: 5, consecutiveLosses: 2, recentOutcomes: 'WWWWWWWWWWWW',
-    };
-    const outRes = applyOutcomeCorrection(outside,
-        { kind: 'followed', from: 'WIN', to: 'LOSS', indexFromEnd: 13 });
-    ok('correction: outside the 12-outcome window moves only the lifetime counters',
-        outside.wins === 2 && outside.losses === 6
-        && outside.recentOutcomes === 'WWWWWWWWWWWW' && outside.consecutiveLosses === 2
-        && outRes.tailUpdated === false);
-
-    const control = {
-        wins: 3, losses: 5, consecutiveLosses: 0, recentOutcomes: 'WWL',
-        controlWins: 4, controlLosses: 2,
-    };
-    applyOutcomeCorrection(control, { kind: 'control', from: 'LOSS', to: 'WIN', indexFromEnd: 1 });
-    ok('correction: a control trade moves only the control counters',
-        control.controlWins === 5 && control.controlLosses === 1
-        && control.wins === 3 && control.losses === 5 && control.recentOutcomes === 'WWL',
-        JSON.stringify(control));
-
-    const floor = { wins: 0, losses: 0, consecutiveLosses: 0, recentOutcomes: '' };
-    applyOutcomeCorrection(floor, { kind: 'followed', from: 'WIN', to: 'LOSS', indexFromEnd: 1 });
-    ok('correction: a repair never pushes a record negative',
-        floor.wins === 0 && floor.losses === 1);
-
-    const same = { wins: 1, losses: 1, consecutiveLosses: 0, recentOutcomes: 'WL' };
-    const sameRes = applyOutcomeCorrection(same, { kind: 'followed', from: 'WIN', to: 'WIN', indexFromEnd: 1 });
-    ok('correction: an unchanged class moves nothing',
-        same.wins === 1 && same.losses === 1 && sameRes.tailUpdated === false);
-})();
-
-// ─── 16. skills index: confirmed APPLY, candidates are a count ─────────────
+// ─── 16. the skills index: slug + description, nothing else ───────────────
 (() => {
     const tc = loadModule('src/services/trade/tradeChatContext.ts');
-    const row = (slug, status) => ({
-        slug, status, kind: 'repeat',
-        description: `${slug} setup`,
-        when: `${slug} triggers with a measured condition`,
-    });
-    const text = tc.buildSkillsIndexForPrompt(
-        [row('confirmed-a', 'confirmed'), row('cand-b', 'candidate'), row('cand-c', 'candidate')],
-        30,
-        'this chart',
-    );
-    ok('index: a confirmed skill is named under APPLY',
-        /APPLY/.test(text) && text.includes('confirmed-a'), text);
-    ok('index: a candidate is never listed as usable',
-        !text.includes('cand-b') && !text.includes('cand-c'));
-    ok('index: candidates collapse to a count', /2 candidate hypotheses/.test(text), text);
-    const onlyCandidates = tc.buildSkillsIndexForPrompt([row('cand-x', 'candidate')], 30);
-    ok('index: no confirmed → no APPLY, only a hypothesis count',
-        !/APPLY/.test(onlyCandidates)
-        && /candidate hypothesis/.test(onlyCandidates)
-        && !onlyCandidates.includes('cand-x'),
-        onlyCandidates);
+    const text = tc.buildSkillsIndexForPrompt([
+        { slug: 'breakout-retest', name: 'Breakout retest', description: 'Use when a 1h close clears the prior high.' },
+        { slug: 'funding-fade', name: 'Funding fade', description: 'Use when funding is stretched.' },
+    ], 30, 'this chart');
+    ok('index: every skill is listed by slug and description',
+        text.includes('breakout-retest') && text.includes('funding-fade'), text);
+    ok('index: no lifecycle words leaked into the index',
+        !/confirmed|candidate|TENTATIVE|\d+W\/\d+L/.test(text), text);
 })();
 
 // ─── 17. trade provenance defaults ─────────────────────────────────────────
@@ -976,13 +822,6 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
         rv.notebookReviewDue({ at: 1_000, signature: 'old' }, 'new', 2_000, 60_000) === false);
     ok('review gate: a changed index after the cooldown is due',
         rv.notebookReviewDue({ at: 1_000, signature: 'old' }, 'new', 61_000, 60_000) === true);
-    const sg = loadModule('src/utils/skillSupervisionGate.ts');
-    ok('supervision: an automatic pass defers book drafts',
-        sg.shouldDeferSupervision({ tradeId: 'book:x' }, false) === true);
-    ok('supervision: a manual pass takes book drafts',
-        sg.shouldDeferSupervision({ tradeId: 'book:x' }, true) === false);
-    ok('supervision: other sources stay automatic',
-        sg.shouldDeferSupervision({ tradeId: 'trade:1' }, false) === false);
 })();
 
 // ─── 19. the insight store: rendered, never created or carried ─────────────
@@ -1260,150 +1099,6 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
         && svc.shadowGrounding([]).verdict === 'uncited');
 })();
 
-// ─── 21. the chart tape study: every bar, hours, big legs, direct write ────
-(() => {
-    const tz = loadModule('src/utils/timezone.ts');
-    const study = loadModule('src/services/learning/chartTapeStudy.ts');
-    const scan = loadModule('src/services/learning/chartScanSkills.ts');
-    const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
-    const BASE = Date.UTC(2026, 0, 1, 0, 0);
-    const STEP = 3600_000;
-    const barAt = (i, close, volume = 100) => ({
-        time: BASE + (i - 8) * STEP, open: close, high: close * 1.004, low: close * 0.996,
-        close, volume,
-    });
-
-    ok('phtHourOf: UTC 00:00 is 08:00 PHT and UTC 16:00 is 00:00 PHT',
-        tz.phtHourOf(Date.UTC(2026, 0, 1, 0, 0)) === 8
-        && tz.phtHourOf(Date.UTC(2026, 0, 1, 16, 0)) === 0);
-
-    // Every transition step is keyed by the START bar's PHT hour.
-    const hourBars = [];
-    let px = 100;
-    for (let i = 0; i < 24 * 4; i += 1) {
-        hourBars.push(barAt(i, px));
-        const pht = i % 24;
-        px *= pht === 3 ? 1.01 : pht === 15 ? 0.99 : 1.0001;
-    }
-    const { hours, samples } = study.studyHours(hourBars, 1);
-    const h3 = hours[3];
-    const h15 = hours[15];
-    ok('tape study: hour-of-day drift and up-share come from every sampled bar',
-        samples === hourBars.length - 1
-        && Math.abs(h3.meanDrift - 0.01) < 1e-9 && h3.upShare === 1
-        && Math.abs(h15.meanDrift + 0.01) < 1e-9 && h15.upShare === 0,
-        JSON.stringify({ h3, h15, samples }));
-
-    const flat = (i, close) => ({
-        time: BASE + i * 300_000, open: close, high: close * 1.001, low: close * 0.999,
-        close, volume: i >= 18 && i <= 25 ? 300 : 100,
-    });
-    // 24 flat bars, a 2-bar dip (the entry the study should find), then a rise
-    // that crosses +10% from the dip.
-    const upTape = [];
-    for (let i = 0; i < 24; i += 1) upTape.push(flat(i, 100));
-    upTape.push(flat(24, 99), flat(25, 99));
-    const rise = [100.5, 102, 103.5, 105, 106.5, 108, 109.5];
-    rise.forEach((close, i) => upTape.push(flat(26 + i, close)));
-    for (let i = 0; i < 6; i += 1) upTape.push(flat(33 + i, 109.5));
-    const up = study.findBigMoves(upTape, 'up', 0.10, 24);
-    ok('tape study: a 10%+ rise is one up leg starting at the lowest close, non-overlapping',
-        up.moves.length >= 1
-        && up.moves[0].movePct >= 0.10
-        && up.moves[0].startPrice === 99
-        && up.moves[0].bars >= 6 && up.moves[0].bars <= 10
-        && Number.isFinite(up.moves[0].volumeRatio)
-        && Number.isFinite(up.moves[0].rangeCompression)
-        && up.moves.every((m, i) => i === 0 || m.startTime > up.moves[i - 1].endTime),
-        JSON.stringify(up.moves.slice(0, 2)));
-
-    // The mirror, built explicitly (a multiplicative mirror changes the
-    // PERCENTAGE, so transforming prices would not test the same leg).
-    const downTape = [];
-    for (let i = 0; i < 24; i += 1) downTape.push(flat(i, 200));
-    downTape.push(flat(24, 202), flat(25, 202));
-    const fall = [201, 199, 197.5, 196, 194.5, 192.5, 180.5];
-    fall.forEach((close, i) => downTape.push(flat(26 + i, close)));
-    for (let i = 0; i < 6; i += 1) downTape.push(flat(33 + i, 180.5));
-    const down = study.findBigMoves(downTape, 'down', 0.10, 24);
-    ok('tape study: the mirror finds a down leg for shorts',
-        down.moves.length >= 1 && down.moves[0].movePct >= 0.10 && down.moves[0].startPrice === 202,
-        JSON.stringify(down.moves.slice(0, 2)));
-
-    const quietTape = [];
-    for (let i = 0; i < 30; i += 1) quietTape.push(flat(i, 100));
-    for (let i = 1; i <= 6; i += 1) quietTape.push(flat(29 + i, 100 + i * 0.66));
-    const quiet = study.findBigMoves(quietTape, 'up', 0.10, 24);
-    ok('tape study: a quiet tape reports its largest leg below the threshold, never "no moves" with no scale',
-        quiet.moves.length === 0 && quiet.largest !== null
-        && quiet.largest.movePct > 0.03 && quiet.largest.movePct < 0.10,
-        JSON.stringify(quiet.largest && quiet.largest.movePct));
-
-    const runTape = [];
-    for (let i = 0; i < 12; i += 1) runTape.push(flat(i, 100 + (i % 6 < 3 ? i : 12 - i)));
-    const runs = study.studyRuns(runTape);
-    ok('tape study: consecutive-run lengths are measured, not guessed',
-        runs.up.count > 0 && runs.down.count > 0 && runs.up.max >= 2,
-        JSON.stringify(runs));
-
-    const full = study.buildTapeStudy(upTape, { horizon: 12, window: 24, threshold: 0.10 });
-    const text = study.formatTapeStudy(full);
-    ok('tape study: the text names every section and the threshold',
-        /TIME OF DAY/.test(text.timeOfDay) && /PHT/.test(text.timeOfDay)
-        && /BIG MOVES ≥10%/.test(text.bigMoves) && /CANDLE ANATOMY/.test(text.anatomy)
-        && /RUNS/.test(text.anatomy));
-    const downStudy = study.buildTapeStudy(downTape, { horizon: 12, window: 24, threshold: 0.10 });
-    const downText = study.formatTapeStudy(downStudy);
-    ok('tape study: a down leg prints as a drop, never as a plus',
-        /down #1 [^\n]*−\d+\.\d+% in/.test(downText.bigMoves)
-        && !/down #1 [^\n]*\+\d+\.\d+% in/.test(downText.bigMoves), downText.bigMoves);
-    ok('tape study: a big-move start prints the PHT clock, not UTC beside a PHT hour',
-        /PHT/.test(downText.bigMoves) && !/\d{2}:\d{2}Z/.test(downText.bigMoves)
-        && /10:0\d PHT/.test(downText.bigMoves), downText.bigMoves);
-
-    const tiny = scan.fitDigestSections([
-        { key: 'header', priority: 1, text: 'HEADER' },
-        { key: 'time-of-day', priority: 2, text: 'TIME' },
-        { key: 'last-20-raw-bars', priority: 9, text: 'X'.repeat(80) },
-    ], 30);
-    ok('digest budget: the study survives, the raw tail is dropped and NAMED',
-        tiny.includes('HEADER') && tiny.includes('TIME') && !tiny.includes('XXX')
-        && /DROPPED/.test(tiny) && /last-20-raw-bars/.test(tiny), tiny);
-
-    const big = [];
-    for (let i = 0; i < 1000; i += 1) {
-        const c = i < 500 ? 100 : 100 + (i - 500) * 0.03;
-        big.push({
-            time: BASE + i * 300_000, open: c, high: c * 1.01, low: c * 0.99, close: c,
-            volume: 100 + (i % 50) * 3,
-        });
-    }
-    const digest = scan.buildChartDigest(big, 'BTCUSDT', '5m');
-    ok('digest: the header claims the full tape and the study sections are present',
-        digest.digest.includes('EVERY candle was analysed')
-        && digest.digest.includes('TIME OF DAY')
-        && digest.digest.includes('BIG MOVES')
-        && digest.digest.includes('CANDLE ANATOMY')
-        && digest.study.bars === 1000 && digest.study.samples === 1000 - digest.study.horizon);
-    ok('digest: a 1000-bar study fits the prompt budget',
-        digest.digest.length <= scan.CHART_DIGEST_MAX_CHARS,
-        `${digest.digest.length} chars vs cap ${scan.CHART_DIGEST_MAX_CHARS}`);
-    ok('digest: the study text is bounded (measured on the worst synthetic tape)',
-        digest.digest.split('\n').filter(l => l.startsWith('up #') || l.startsWith('down #')).length <= 16,
-        `${digest.digest.split('\n').filter(l => l.startsWith('up #') || l.startsWith('down #')).length} leg lines`);
-
-    const prompt = scan.CHART_SCAN_FALLBACK_PROMPT;
-    ok('scan prompt: pattern-first, PHT, every-bar and NOT a generic rule',
-        /PATTERN-FIRST/.test(prompt) && /EVERY bar/.test(prompt) && /PHT/.test(prompt)
-        && /not a generic rule/.test(prompt) && /one checkable trigger sentence/.test(prompt)
-        && /turn back time/.test(prompt));
-    ok('scan: candidates are created directly, never queued for approval',
-        !/queueSkillDraft/.test(read('src/services/learning/chartScanSkills.ts'))
-        && /ingestCraftedSkillFromDraft/.test(read('src/services/learning/chartScanSkills.ts')));
-    ok('scan control: the other draft sources still queue (the direct write is scoped, not global)',
-        /queueSkillDraft/.test(read('src/services/learning/bookSkillDrafts.ts')));
-})();
-
 // ─── 22. signal accuracy: base rate, lift, thin, feedback ──────────────────
 (() => {
     const acc = loadModule('src/services/signals/signalAccuracy.ts');
@@ -1472,87 +1167,43 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
         /scorecard: signalScorecard\(s\.coin\)/.test(deskSrc));
 })();
 
-// ─── 23. the skill format: one trigger + steps, no IF/THEN pair ────────────
+// ─── 23. the skill document: one file, one description, no ledger ───────────
 (() => {
-    const schema = loadModule('src/schemas/learning.ts');
-    const bar = loadModule('src/services/learning/skillClauseBar.ts');
-    const skills = loadModule('src/services/learning/SkillMemoryService.ts');
-    const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
-
-    const proper = {
-        name: 'Funding exhaustion long',
-        kind: 'repeat',
-        when: 'funding has been positive for eight sessions while price stalls at a swept low',
-        inputs: [],
-        steps: ['Confirm the streak', 'Wait for a reclaim close', 'Enter with the stop under the wick'],
-        validate: 'The sweep is still visible on the live chart',
-        output: 'A long entry with a defined stop',
-        approval: 'A human confirms before sizing',
-    };
-    const parsed = schema.parseCraftedSkill(proper);
-    ok('skill format: a trigger + steps craft parses without any IF/THEN pair',
-        !!parsed && parsed.when === proper.when && parsed.steps.length === 3,
-        JSON.stringify(parsed));
-    const legacyInput = schema.parseCraftedSkill({
-        ...proper,
-        ifCondition: 'a legacy IF clause long enough',
-        thenAction: 'a legacy THEN action long enough',
-    });
-    ok('skill format: legacy IF/THEN fields are not carried onto the craft',
-        !!legacyInput && !('ifCondition' in legacyInput) && !('thenAction' in legacyInput),
-        JSON.stringify(legacyInput && Object.keys(legacyInput)));
-    ok('skill format: a craft without when or steps is refused',
-        schema.parseCraftedSkill({ ...proper, when: undefined }) === null
-        && schema.parseCraftedSkill({ ...proper, steps: [] }) === null);
-
-    ok('skill format: the trigger bar refuses generic and short sentences',
-        bar.validateTrigger({ when: 'be careful' }) !== null
-        && bar.validateTrigger({ when: 'short' }) !== null
-        && bar.validateTrigger({ when: 'funding positive 8 sessions and the low was swept' }) === null);
-
-    const meta = {
-        status: 'candidate', kind: 'repeat', wins: 0, losses: 0, consecutiveLosses: 0,
-        tradeIds: [], when: proper.when, description: 'Funding exhaustion long',
-        body: '**When:** funding has been positive...\n**What I do:** wait for the reclaim.',
-    };
-    const file = skills.serializeSkill(meta, 'Funding exhaustion long');
-    ok('skill format: the written file carries when: and never the old pair',
-        /\bwhen:/.test(file) && !/\bifCondition\s*:/.test(file) && !/\bthenAction\s*:/.test(file), file.slice(0, 220));
-    const back = skills.parseSkillMarkdown(file);
-    ok('skill format: the file round-trips its trigger', !!back && back.when === proper.when, back && back.when);
-
-    const legacyFile = [
+    const sf = loadModule('src/services/learning/SkillFileService.ts');
+    const sample = [
         '---',
-        'name: legacy-skill',
-        'description: a legacy skill',
-        'kind: repeat',
-        'ifCondition: "funding positive 8 sessions and the low was swept"',
-        'thenAction: "go long after the reclaim close"',
+        'name: "Breakout retest"',
+        'description: "Use this skill whenever a 1h close clears the prior high and the retest holds."',
         '---',
-        '**When:** funding positive 8 sessions and the low was swept.',
+        '',
+        '## When to use',
+        '',
+        'A 1h close above the prior range high, then a retest that holds.',
+        '',
     ].join('\n');
-    const migrated = skills.parseSkillMarkdown(legacyFile);
-    ok('skill format: a legacy file migrates its IF condition into the trigger on read',
-        !!migrated && migrated.when === 'funding positive 8 sessions and the low was swept',
-        migrated && migrated.when);
-    const migratedIndex = skills.skillIndexRow({ name: 'legacy-skill.md' }, migrated);
-    ok('skill format: the index row exposes the trigger, not the old pair',
-        migratedIndex.when === migrated.when
-        && !('ifCondition' in migratedIndex) && !('thenAction' in migratedIndex));
-
-    ok('skill format: the propose_skill tool no longer asks for the pair',
-        !/if_condition|then_action/.test(read('src/services/analysis/DeskToolsService.ts')));
-    for (const builder of [
-        'src/services/learning/chartScanSkills.ts',
-        'src/services/learning/sessionSkillReview.ts',
-        'src/services/learning/passMining.ts',
-        'src/services/learning/selfImprovement.ts',
-        'src/services/learning/seedStrategies.ts',
-        'src/services/learning/bookSkillDrafts.ts',
-    ]) {
-        ok(`skill format: ${builder.split('/').pop()} writes no clause pair`,
-            !/\bifCondition\s*:|\bthenAction\s*:/.test(read(builder)), builder);
-    }
+    const parsed = sf.parseSkillMarkdown(sample);
+    ok('skill document: name and description parse, body is the markdown after the fence',
+        !!parsed && parsed.name === 'Breakout retest' && /^## When to use/.test(parsed.body),
+        JSON.stringify(parsed));
+    const composed = sf.composeSkillMarkdown('Breakout retest', parsed.description, parsed.body);
+    ok('skill document: a write composes the same two keys and nothing else',
+        /^---\nname: "Breakout retest"\ndescription: "/.test(composed)
+        && !/status:|wins:|approvedBy:|august:skill-ledger/.test(composed));
+    const v1 = sf.contentVersion(sample);
+    ok('skill document: the version is a hash of the bytes, so a stale write can be refused',
+        v1 === sf.contentVersion(sample) && v1 !== sf.contentVersion(sample + '\nmore'));
+    const legacy = ['---', 'name: "Old"', 'description: "Old rule"', 'status: "confirmed"', 'wins: 4', '# august:skill-ledger', 'losses: 2', '---', '', '**When:** x', ''].join('\n');
+    const stripped = sf.stripRetiredSkillContent(legacy, 'old');
+    ok('skill document: the migration keeps name/description and drops every ledger key',
+        /name: "Old"/.test(stripped) && /description: "Old rule"/.test(stripped)
+        && !/status:|wins:|losses:|august:skill-ledger/.test(stripped), stripped);
+    const dupes = sf.nearDuplicates(
+        { name: 'Breakout retest', description: 'Use this skill whenever a 1h close clears the prior high and the retest holds.', body: 'A 1h close above the prior range high, then a retest that holds.' },
+        [{ slug: 'breakout-retest', name: 'Breakout retest', description: 'Use this skill whenever a 1h close clears the prior high and the retest holds.', body: 'A 1h close above the prior range high, then a retest that holds.', version: 'x', file: {}, bundled: [] }],
+    );
+    ok('skill document: a duplicate is caught by the skill own words',
+        dupes.length === 1 && dupes[0].slug === 'breakout-retest' && dupes[0].score >= sf.DUPLICATE_SCORE_MIN,
+        JSON.stringify(dupes));
 })();
 
 // ─── 24. the journal-rules store: when + action, normalized on read/write ──
@@ -1614,7 +1265,6 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
     const lc = loadModule('src/utils/lessonClause.ts');
     const schema = loadModule('src/schemas/learning.ts');
     const reflection = loadModule('src/services/learning/settlementReflection.ts');
-    const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 
     const current = lc.parseLessonClauses('When the daily low is swept, do wait for the 1h reclaim close.');
     ok('lesson clause: the current sentence parses into when + action',
@@ -1665,12 +1315,6 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
     ok('reflection prompt: asks for when/action and no old pair',
         /"when":/.test(prompt) && /"action":/.test(prompt)
         && !/ifCondition|thenAction/.test(prompt));
-    ok('parser: the old module is gone and nothing imports it',
-        !fs.existsSync(path.join(ROOT, 'src/utils/ifThenSkill.ts'))
-        && !/utils\/ifThenSkill/.test(read('src/services/learning/SkillMemoryService.ts')));
-    ok('parser: the notebook ingest is named for the lesson, not the pair',
-        /ingestLessonFromTrade/.test(read('src/services/learning/SkillMemoryService.ts'))
-        && !/ingestIfThenFromTrade/.test(read('src/services/learning/SkillMemoryService.ts')));
 })();
 
 // ─── 26. the memory page: categories, export and real switches ─────────────
@@ -1754,23 +1398,9 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
         /onOpenNotebook/.test(read('src/components/settings/tabs/MemoryTab.tsx')));
 })();
 
-// ─── 27. the kill gate and the signal protections ──────────────────────────
+// ─── 27. signal protections ───────────────────────────────────────────────
 (() => {
-    const gate = loadModule('src/services/learning/historyKillGate.ts');
     const prot = loadModule('src/services/signals/signalProtections.ts');
-    const bars = Array.from({ length: 200 }, (_, i) => {
-        const base = 100 + i * 0.4 + Math.sin(i / 5) * 3;
-        return { time: i * 300000, open: base, high: base + 2, low: base - 2, close: base + 0.5, volume: 1000 + (i % 7) * 50 };
-    });
-    const always = gate.historyKillGate('close > 0', bars);
-    ok('kill gate: a trigger that fires on the whole tape is killed',
-        always.verdict === 'kill' && always.fired > 0, JSON.stringify(always));
-    ok('kill gate: an unparseable predicate is invalid, never a keep',
-        gate.historyKillGate('nonsense &&', bars).verdict === 'invalid');
-    ok('kill gate: a tape too short to replay is insufficient, never a keep',
-        gate.historyKillGate('close > ema20', bars.slice(0, 40)).verdict === 'insufficient');
-    ok('kill gate: a predicate that never fires is insufficient, never a keep',
-        gate.historyKillGate('volumeRatio > 5', bars).verdict === 'insufficient');
 
     const h = (outcomeR, settledAt) => ({ coin: 'BTC', direction: 'long', outcomeR, settledAt });
     const now = 10 * 60 * 60_000;
@@ -2548,649 +2178,9 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
         JSON.stringify(clauses));
 })();
 
-// ─── 34. tentative skills — independence, demotion, labelled index ─────────
-(() => {
-    const cluster = loadModule('src/services/tracking/diagnosisSkillCluster.ts');
-    const tracker = loadModule('src/services/tracking/positionTracker.ts');
-    const chat = loadModule('src/services/trade/tradeChatContext.ts');
-    const T = (day) => Date.UTC(2026, 0, day, 0, 0);
-    const position = (id, day, over = {}) => ({
-        id, source: 'signal', sourceId: id, symbol: 'BTCUSDT', direction: 'long',
-        entry: 100, stop: 95, targets: [110], status: 'closed',
-        openedAt: T(day), entryBarTime: T(day), closedAt: T(day) + 3600_000,
-        entryContext: { thesis: 'breakout above the shelf', evidenceRefs: [], family: 'breakout' },
-        exit: {
-            reason: 'target', price: 110, at: T(day) + 3600_000, sameCandle: 'single-level',
-            ambiguous: false, gapAtOpen: false, barsRead: 10,
-            realizedR: 2, costR: 0.02, netR: 1.98, slippageModeled: true,
-        },
-        mfeR: 2.2, maeR: -0.5, mfePrice: 111, maePrice: 97.5, mfeAt: T(day), maeAt: T(day),
-        timeline: [], gaps: [], tapeCoversWindow: true,
-        timelineDownsampled: false, timelinePointsDropped: 0,
-        context: [], contextDownsampled: false, version: 1,
-        ...over,
-    });
-    const diagnosis = (tradeId, outcome, over = {}) => ({
-        id: `diag-${tradeId}`, tradeId, source: 'signal', outcome,
-        whatHappened: 'Price swept the shelf and ran to the target.',
-        rootCause: 'The entry caught the reclaim, not the first break.',
-        whatShouldHaveBeenDone: 'Wait for the reclaim.',
-        primaryChange: 'entry',
-        lesson: 'Wait for the reclaim before entering a shelf break.',
-        when: 'price breaks a shelf and reclaims it on the close',
-        action: 'enter on the reclaim, not the break',
-        confidence: 70, evidenceRefs: [], evidenceCount: 1,
-        createdAt: new Date(T(1) + 3600_000).toISOString(),
-        tentative: false,
-        ...over,
-    });
-    const positions = [position('p1', 1), position('p2', 2), position('p3', 3)];
-    const diagnoses = [
-        diagnosis('p1', 'win'),
-        diagnosis('p2', 'loss'),
-        diagnosis('p3', 'loss'),
-    ];
-    const current = diagnoses[2];
-    const currentPosition = positions[2];
-    const result = cluster.collectClusterEvidence(diagnoses, positions, current, currentPosition);
-    ok('tentative: three independent outcomes on one setup are ready',
-        result.ready && result.independentCount === 3 && result.evidence.length === 3,
-        JSON.stringify({ ready: result.ready, n: result.independentCount }));
-
-    const sameDay = position('p4', 1, { openedAt: T(1) + 2 * 3600_000, entryBarTime: T(1) + 2 * 3600_000, closedAt: T(1) + 3 * 3600_000 });
-    const sameDayDiag = diagnosis('p4', 'win', { createdAt: new Date(T(1) + 3 * 3600_000).toISOString() });
-    const sameDayResult = cluster.collectClusterEvidence(
-        [...diagnoses, sameDayDiag],
-        [...positions, sameDay],
-        sameDayDiag,
-        sameDay,
-    );
-    ok('tentative: the same setup on the same day is not independent',
-        sameDayResult.independentCount === 3 && sameDayResult.ready,
-        JSON.stringify({ n: sameDayResult.independentCount }));
-
-    const tentative = cluster.collectClusterEvidence(
-        [...diagnoses, diagnosis('p5', 'win', { tentative: true, tradeId: 'p5' })],
-        [...positions, position('p5', 4)],
-        current,
-        currentPosition,
-    );
-    ok('tentative: a noisy diagnosis never counts toward a skill',
-        tentative.independentCount === 3);
-
-    const refused = cluster.collectClusterEvidence(
-        [...diagnoses, diagnosis('p6', 'win', { tradeId: 'p6', refusal: 'thin-tape' })],
-        [...positions, position('p6', 5)],
-        current,
-        currentPosition,
-    );
-    ok('tentative: a refused diagnosis never counts toward a skill',
-        refused.independentCount === 3);
-
-    const craft = cluster.buildTentativeCraft(current, result.evidence, currentPosition);
-    ok('tentative: a loss cluster mints an AVOID skill from the latest lesson',
-        craft?.kind === 'avoid'
-        && craft.when.includes('reclaims it on the close')
-        && craft.lesson === undefined
-        && craft.description.includes('Tentative')
-        && craft.source === 'post-mortem'
-        && craft.prediction !== undefined,
-        JSON.stringify(craft && { kind: craft.kind, name: craft.name }));
-
-    ok('tentative: auto-demotion needs a sample and a real underperformance',
-        cluster.tentativeDemotion({ approvedBy: 'tentative', wins: 1, losses: 3 }) === null
-        && cluster.tentativeDemotion({ approvedBy: 'tentative', wins: 1, losses: 4 }) !== null
-        && cluster.tentativeDemotion({ approvedBy: 'tentative', wins: 2, losses: 3 }) === null // exactly the 40% floor
-        && cluster.tentativeDemotion({ approvedBy: 'tentative', wins: 2, losses: 2 }) === null
-        && cluster.tentativeDemotion({ approvedBy: 'tentative', wins: 1, losses: 5 }) !== null
-        && cluster.tentativeDemotion({ approvedBy: 'human', wins: 0, losses: 9 }) === null,
-        JSON.stringify({ oneOfFive: cluster.tentativeDemotion({ approvedBy: 'tentative', wins: 1, losses: 4 }) }));
-
-    const row = (slug, over = {}) => ({
-        slug, status: 'candidate', kind: 'avoid',
-        description: `Use when ${slug}`, when: `when ${slug}`,
-        approved: false, tentative: true,
-        ...over,
-    });
-    ok('tentative: the index admits a tentative row but not an unapproved plain row',
-        chat.isIndexableSkill(row('tent-1')) === true
-        && chat.isIndexableSkill(row('plain', { tentative: false })) === false);
-    const index = chat.buildSkillsIndexForPrompt([
-        row('tent-1'), row('tent-2'), row('tent-3'), row('tent-4'),
-        row('confirmed', { status: 'confirmed', approved: true, tentative: false }),
-    ]);
-    ok('tentative: the index labels the channel and caps its lines',
-        index.includes('Tentative skills')
-        && index.includes('CONTEXT ONLY')
-        && index.includes('tent-1') && index.includes('tent-2')
-        && !index.includes('tent-3')
-        && index.includes('2 more tentative'),
-        index.slice(-300));
-
-    const windows = [
-        { id: 'a', setupKey: 'breakout', openedAt: T(1), closedAt: T(1) + 3600_000 },
-        { id: 'b', setupKey: 'breakout', openedAt: T(2), closedAt: T(2) + 3600_000 },
-        { id: 'c', setupKey: 'breakout', openedAt: T(3), closedAt: T(3) + 3600_000 },
-    ];
-    ok('tentative: the independence helper returns the set it counted',
-        tracker.independentOutcomes(windows).length === 3
-        && tracker.countIndependentOutcomes(windows) === 3);
-})();
-
-// ─── backup recovery: the advisory must name a backup that can help ────────
-{
-    const { selectRecoveryBackup } = loadModule('src/utils/backupSelection.ts');
-    const backup = (id, timestamp, tradeCount) => ({ id, timestamp, tradeCount });
-    const newestEmpty = backup('startup-0', '2026-11-03T01:06:20.000Z', 0);
-    const olderFull = backup('full-4', '2026-11-02T20:00:00.000Z', 4);
-    const olderTwo = backup('two-2', '2026-11-01T20:00:00.000Z', 2);
-    const list = [newestEmpty, olderFull, olderTwo];
-
-    ok('backup: recovery picks the fullest backup, never the newest empty one',
-        selectRecoveryBackup(list, 0)?.id === 'full-4',
-        JSON.stringify(selectRecoveryBackup(list, 0)));
-    ok('backup: a backup that holds no more than the profile is not offered',
-        selectRecoveryBackup([newestEmpty], 0) === null
-        && selectRecoveryBackup(list, 4) === null);
-    ok('backup: the highest count wins even when it is older',
-        selectRecoveryBackup([
-            backup('new-4', '2026-11-03T00:00:00.000Z', 4),
-            backup('old-5', '2026-10-01T00:00:00.000Z', 5),
-        ], 3)?.id === 'old-5');
-    ok('backup: equal counts prefer the newer backup',
-        selectRecoveryBackup([
-            backup('old-4', '2026-10-01T00:00:00.000Z', 4),
-            backup('new-4', '2026-11-01T00:00:00.000Z', 4),
-        ], 0)?.id === 'new-4');
-    ok('backup: a profile with more trades than every backup has no recovery offer',
-        selectRecoveryBackup(list, 5) === null);
-}
-
-// ─── notification freshness: once, accurate, and actually dismissed ────────
-{
-    const readSrc = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
-    const autopilot = readSrc('src/services/ui/OutcomeAutopilotService.ts');
-    ok('shadow: a notified resolution is persisted and skipped on re-registration',
-        /shadowNotified: \[\.\.\.this\.shadowNotified\]/.test(autopilot)
-        && /this\.shadowNotified\.has\(messageId\)\)\s*return;/.test(autopilot)
-        && /markShadowNotified\(messageId: string\): boolean/.test(autopilot));
-    const watch = readSrc('src/hooks/useWatchSideEffects.ts');
-    ok('shadow: the toast only fires for a first announcement',
-        /if \(OutcomeAutopilotService\.markShadowNotified\(messageId\)\) \{/.test(watch));
-    const toast = readSrc('src/components/shared/Toast.tsx');
-    ok('toasts: the dismiss timer is independent of the container render',
-        /onDismissRef/.test(toast) && /\}, \[duration, paused\]\);/.test(toast));
-    const loader = readSrc('src/hooks/useUserProfileLoader.ts');
-    ok('data warnings: best backup and one-time alert, never the latest empty backup',
-        /integrityCheck\.newLossAlert/.test(loader)
-        && /integrityCheck\.recoveryBackup/.test(loader)
-        && !/integrityCheck\.latestBackup/.test(loader));
-    const journal = readSrc('src/hooks/useTradeJournalActions.ts');
-    ok('data warnings: only a deletion that removed rows moves the baseline',
-        /if \(removed\) void recordIntentionalTradeCount\(username, nextTrades\.length\)/.test(journal)
-        && /if \(prevTrades\.length > 0\) \{[\s\S]*?recordIntentionalTradeCount\(username, 0\)/.test(journal));
-    const integrity = readSrc('src/services/validation/DataIntegrityService.ts');
-    ok('data warnings: a past warning is adopted only when it had no recovery to offer',
-        /offered <= currentTradeCount/.test(integrity));
-}
-
-// ─── 36. the tape's shape — incoherent candles are dropped and named ───────
-// A candle that violates its own OHLC is a broken row, not a quieter market.
-// Before this gate a `high < low` row from any mirror could reach the chart,
-// the indicators and the signal resolver as ordinary data.
-(() => {
-    const cs = loadModule('src/utils/candleShape.ts');
-    const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
-    ok('candles: high<low, a body outside the wicks, non-finite and non-positive rows are all incoherent',
-        !cs.isCoherentCandle({ time: 1, open: 10, high: 9, low: 11, close: 10 })
-        && !cs.isCoherentCandle({ time: 1, open: 10, high: 12, low: 9, close: 13 })
-        && !cs.isCoherentCandle({ time: 1, open: 13, high: 12, low: 9, close: 10 })
-        && !cs.isCoherentCandle({ time: NaN, open: 10, high: 11, low: 9, close: 10 })
-        && !cs.isCoherentCandle({ time: 1, open: 0, high: 11, low: 9, close: 10 })
-        && cs.isCoherentCandle({ time: 1, open: 10, high: 11, low: 9, close: 10.5 }));
-    const { kept, dropped } = cs.coerceCandles([
-        { time: 1, open: 10, high: 11, low: 9, close: 10.5 },
-        { time: 2, open: 10, high: 9, low: 11, close: 10 },
-    ]);
-    ok('candles: coercion splits a payload into kept rows and a NAMED dropped count',
-        kept.length === 1 && kept[0].time === 1 && dropped === 1);
-    ok('candles: both ingestion paths run the shared shape rule',
-        /coerceCandles\(klines\)/.test(read('src/services/analysis/KlineService.ts'))
-        && /coerceCandles\(out\)/.test(read('src/services/signals/signalMarketData.ts'))
-        && /coerceCandles\(rows\)/.test(read('src/services/signals/signalMarketData.ts')));
-})();
-
-// ─── 37. one bounded continuation for a truncated desk answer ──────────────
-// A round that streamed words and hit the token ceiling used to ship as a
-// half answer with a notice. Now it is continued ONCE — the partial goes back
-// as the assistant's own message, and the loop returns the whole text. A
-// clean stop with a code fence still open is the same incompleteness. These
-// checks are async; the report below waits for them.
-const asyncChecks = (async () => {
-    const desk = loadModule('src/services/analysis/DeskToolsService.ts');
-    const partial = 'The tape is coiling under 100k:\n\n```json\n{"bias": "long"';
-    const completion = ',\n  "invalidation": "a 5m close above 101k"}\n```';
-    let round = 0;
-    let lastMessages = null;
-    const out = await desk.runDeskToolLoop({
-        config: { apiFormat: 'messages' },
-        messages: [{ role: 'user', content: 'read the tape' }],
-        sendTurn: async (_cfg, msgs) => {
-            round += 1;
-            lastMessages = msgs;
-            if (round === 1) return { text: partial, reasoning: '', toolCalls: [], finishReason: 'length', truncated: true };
-            return { text: completion, reasoning: '', toolCalls: [], finishReason: 'stop', truncated: false };
-        },
-    });
-    ok('desk turn: a truncated answer is continued once and the loop returns the WHOLE text',
-        round === 2 && out.finalText === partial + completion,
-        JSON.stringify({ round, len: (out.finalText || '').length }));
-    ok('desk turn: the continuation hands the partial back as the assistant\'s own message',
-        lastMessages.some(m => m.role === 'assistant' && m.content === partial)
-        && lastMessages.some(m => m.role === 'user' && /CUT OFF/.test(String(m.content))));
-
-    let fenceRounds = 0;
-    const fenceOut = await desk.runDeskToolLoop({
-        config: { apiFormat: 'messages' },
-        messages: [{ role: 'user', content: 'read the tape' }],
-        sendTurn: async () => {
-            fenceRounds += 1;
-            if (fenceRounds === 1) return { text: '```json\n{"a": 1', reasoning: '', toolCalls: [], finishReason: 'stop', truncated: false };
-            return { text: '\n```', reasoning: '', toolCalls: [], finishReason: 'stop', truncated: false };
-        },
-    });
-    ok('desk turn: an unclosed code fence with a clean stop is continued, not shipped',
-        fenceRounds === 2 && fenceOut.finalText === '```json\n{"a": 1\n```',
-        JSON.stringify({ fenceRounds, text: fenceOut.finalText }));
-
-    let alwaysRounds = 0;
-    const alwaysOut = await desk.runDeskToolLoop({
-        config: { apiFormat: 'messages' },
-        messages: [{ role: 'user', content: 'read the tape' }],
-        sendTurn: async () => {
-            alwaysRounds += 1;
-            return { text: `partial ${alwaysRounds} `, reasoning: '', toolCalls: [], finishReason: 'length', truncated: true };
-        },
-    });
-    ok('desk turn: a second truncation is NOT a second continuation — it ships as-is',
-        alwaysRounds === 2 && alwaysOut.finalText === 'partial 1 partial 2',
-        JSON.stringify({ alwaysRounds, text: alwaysOut.finalText }));
-
-    let doneRounds = 0;
-    await desk.runDeskToolLoop({
-        config: { apiFormat: 'messages' },
-        messages: [{ role: 'user', content: 'read the tape' }],
-        sendTurn: async () => {
-            doneRounds += 1;
-            return { text: 'complete answer', reasoning: '', toolCalls: [], finishReason: 'stop', truncated: false };
-        },
-    });
-    ok('desk turn: a complete answer ships without a continuation round', doneRounds === 1);
-
-    // ── The empty round is REPAIRED, silently ──────────────────────────────
-    // Owner report (2026-11-03): "thinking hit the round's token ceiling with
-    // nothing to show". The old repair could not exceed the caller's budget
-    // (Math.min clamped it), so a 400-token clarification was re-asked at 400
-    // tokens and failed the same way. And the repair itself was painted as a
-    // tool line, so the trader watched the harness describe its own wound.
-    let thinkRounds = 0;
-    const thinkEvents = [];
-    const thinkBudgets = [];
-    const thinkOut = await desk.runDeskToolLoop({
-        config: { apiFormat: 'messages' },
-        messages: [{ role: 'user', content: 'read the tape' }],
-        options: { maxTokens: 400 },
-        onToolEvent: line => thinkEvents.push(line),
-        sendTurn: async (_cfg, _msgs, options) => {
-            thinkRounds += 1;
-            thinkBudgets.push(options?.maxTokens);
-            if (thinkRounds === 1) return { text: '', reasoning: 'thinking, and thinking…', toolCalls: [], finishReason: 'length', truncated: true };
-            return { text: 'The tape is long above 101k.', reasoning: '', toolCalls: [], finishReason: 'stop', truncated: false };
-        },
-    });
-    ok('desk turn: an empty thinking round is re-asked and the answer arrives',
-        thinkRounds === 2 && thinkOut.finalText === 'The tape is long above 101k.'
-        && thinkOut.recoveredFromTruncation === true,
-        JSON.stringify({ thinkRounds, text: thinkOut.finalText, recovered: thinkOut.recoveredFromTruncation }));
-    ok('desk turn: the repair can EXCEED a small caller budget — the Math.min clamp was the bug',
-        thinkBudgets.length === 2 && thinkBudgets[1] > thinkBudgets[0] && thinkBudgets[1] >= desk.DESK_ROUND_MAX_TOKENS,
-        JSON.stringify(thinkBudgets));
-    ok('desk turn: the repair is SILENT — no tool line names the token ceiling',
-        thinkEvents.length === 0 && !thinkEvents.some(l => /token ceiling|STOPPED EARLY|nothing to show/i.test(l)));
-
-    let secondRounds = 0;
-    const secondOptions = [];
-    const secondOut = await desk.runDeskToolLoop({
-        config: { apiFormat: 'chat_completions' },
-        messages: [{ role: 'user', content: 'read the tape' }],
-        sendTurn: async (_cfg, _msgs, options) => {
-            secondRounds += 1;
-            secondOptions.push({
-                effort: options?.reasoningEffort,
-                tools: options?.tools ? options.tools.length : 0,
-                choice: options?.toolChoice,
-                maxTokens: options?.maxTokens,
-            });
-            if (secondRounds <= 2) return { text: '', reasoning: 'still thinking…', toolCalls: [], finishReason: 'length', truncated: true };
-            return { text: 'Here is the answer.', reasoning: '', toolCalls: [], finishReason: 'stop', truncated: false };
-        },
-    });
-    ok('desk turn: a second empty round removes BOTH the thinking tier and the tools',
-        secondRounds === 3
-        && secondOptions[2].effort === 'off'
-        && secondOptions[2].tools === 0
-        && secondOptions[2].choice === 'none'
-        && secondOut.recoveredFromTruncation === true,
-        JSON.stringify(secondOptions[2]));
-    ok('desk turn: the second repair does not shrink the doubled room',
-        secondOptions[2].maxTokens >= secondOptions[1].maxTokens,
-        JSON.stringify(secondOptions.map(o => o.maxTokens)));
-
-    let reasoningOnlyRounds = 0;
-    const reasoningOnlyOut = await desk.runDeskToolLoop({
-        config: { apiFormat: 'messages' },
-        messages: [{ role: 'user', content: 'read the tape' }],
-        sendTurn: async () => {
-            reasoningOnlyRounds += 1;
-            if (reasoningOnlyRounds === 1) return { text: '', reasoning: 'a full chain of thought, no answer', toolCalls: [], finishReason: 'stop', truncated: false };
-            return { text: 'The answer, in words.', reasoning: '', toolCalls: [], finishReason: 'stop', truncated: false };
-        },
-    });
-    ok('desk turn: reasoning with a clean stop and NO answer is repaired too — not a silent empty row',
-        reasoningOnlyRounds === 2 && reasoningOnlyOut.finalText === 'The answer, in words.');
-
-    let syntaxRounds = 0;
-    const syntaxOut = await desk.runDeskToolLoop({
-        config: { apiFormat: 'messages' },
-        messages: [{ role: 'user', content: 'read the tape' }],
-        sendTurn: async () => {
-            syntaxRounds += 1;
-            if (syntaxRounds === 1) return { text: '<tool_call><function=get_price_snapshot>', reasoning: '', toolCalls: [], finishReason: 'length', truncated: true };
-            return { text: 'Long above 101k.', reasoning: '', toolCalls: [], finishReason: 'stop', truncated: false };
-        },
-    });
-    ok('desk turn: a repaired malformed call also counts as recovered — no notice over a whole answer',
-        syntaxRounds === 2 && syntaxOut.recoveredFromTruncation === true && syntaxOut.finalText === 'Long above 101k.',
-        JSON.stringify({ syntaxRounds, recovered: syntaxOut.recoveredFromTruncation, text: syntaxOut.finalText }));
-    const readTurn = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
-    ok('desk turn: both chat surfaces suppress the truncation notice when the run recovered',
-        /recoveredFromTruncation \? '' : truncationNotice/.test(readTurn('src/services/trade/chatTurnRunner.ts'))
-        && /recoveredFromTruncation \? '' : truncationNotice/.test(readTurn('src/services/trade/chatSurfaceTurn.ts')));
-})();
-
-// ─── 38. the accuracy floor, the candle-aligned cache, the warmup discipline ──
-// A hit rate without an interval, a slugging without a loss side, a cache
-// whose freshness ignores the bar boundary, and recursive indicators whose
-// warmup nobody declared — each is a number that looks like data. These pin
-// the honest versions.
-(() => {
-    const acc = loadModule('src/services/signals/signalAccuracy.ts');
-    const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
-    ok('accuracy: the Wilson interval brackets the hit rate, stays in [0,1], and shrinks as n grows',
-        (() => {
-            const a = acc.wilsonInterval95(5, 10);
-            const b = acc.wilsonInterval95(50, 100);
-            return !!a && !!b && a.low < 0.5 && a.high > 0.5
-                && a.low >= 0 && a.high <= 1
-                && (a.high - a.low) > (b.high - b.low);
-        })());
-    ok('accuracy: 0/10 is an interval [0, ~0.28], never a zero-width 0%',
-        (() => {
-            const ci = acc.wilsonInterval95(0, 10);
-            return ci !== null && ci.low === 0 && Math.abs(ci.high - 0.2776) < 1e-3;
-        })());
-    ok('accuracy: wins>n and an empty sample refuse, they do not fabricate an interval',
-        acc.wilsonInterval95(11, 10) === null && acc.wilsonInterval95(0, 0) === null);
-
-    const row = (id, status, outcomeR, ambiguous = false) => ({
-        signal: { id, emittedAt: 1, expiresAt: 2, direction: 'long', entry: 1, stop: 0.9, target: 1.2, coin: 'X', evidenceRefs: [], dataHash: '', provider: '', model: '', promptVersion: '', source: 'signal', thesis: '' },
-        status, resolution: outcomeR === null ? undefined : { outcomeR, ambiguous },
-    });
-    const card = acc.scoreSignals([row('a', 'won', 2), row('b', 'won', 2), row('c', 'lost', -1)]);
-    ok('accuracy: slugging is avg win over avg loss in NET R — 2R wins vs 1R losses read 2×',
-        card.slugging !== null && Math.abs(card.slugging - 2) < 1e-9, JSON.stringify(card.slugging));
-    ok('accuracy: the scorecard carries the interval and it brackets its own hit rate',
-        card.hitCi !== null && card.hitRate !== null
-        && card.hitCi.low < card.hitRate && card.hitCi.high > card.hitRate,
-        JSON.stringify(card.hitCi));
-    ok('accuracy: a one-sided sample has no slugging — not an infinite one',
-        acc.scoreSignals([row('a', 'won', 2), row('b', 'won', 3)]).slugging === null);
-    ok('accuracy: the feed renders the scorecard\'s own slugging and interval',
-        /scorecard\.slugging/.test(read('src/components/journal/SignalFeed.tsx'))
-        && /scorecard\.hitCi/.test(read('src/components/journal/SignalFeed.tsx')));
-
-    const ks = loadModule('src/services/analysis/KlineService.ts');
-    const T = 3_120_000; // 52 minutes into an arbitrary epoch
-    ok('cache: a 5m series is fresh until its own bar closes — 180s left reads 180s, a just-opened bar reads the cap',
-        ks.candleAlignedTtlMs('5m', T) === 180_000
-        && ks.candleAlignedTtlMs('5m', 3_000_000) === 300_000);
-    ok('cache: slower or unknown intervals keep the flat bound, and a bar about to print its close gets the floor',
-        ks.candleAlignedTtlMs('4h', T) === 30_000
-        && ks.candleAlignedTtlMs('2h', T) === 30_000
-        && ks.candleAlignedTtlMs('5m', 5 * 60_000 - 2_000) === 5_000);
-
-    const ta = loadModule('src/services/analysis/taLibrary.ts');
-    const tail = Array.from({ length: 40 }, (_, i) => 100 + Math.sin(i / 3) * 5 + i * 0.1);
-    const padded = [...Array.from({ length: 240 }, (_, i) => 90 + Math.cos(i / 4)), ...tail];
-    ok('warmup: a windowed average is history-independent at the same timestamp',
-        Math.abs(ta.smaOf(tail, 20).slice(-1)[0] - ta.smaOf(padded, 20).slice(-1)[0]) < 1e-9);
-    ok('warmup: the EMA family IS warmup-sensitive — recursive values drift with history length',
-        Math.abs(ta.emaOf(tail, 20).slice(-1)[0] - ta.emaOf(padded, 20).slice(-1)[0]) > 0.05);
-    ok('warmup: Wilder RMA carries the same sensitivity',
-        Math.abs(ta.rmaOf(tail, 14).slice(-1)[0] - ta.rmaOf(padded, 14).slice(-1)[0]) > 0.01);
-    ok('warmup: every packet timeframe fetches the SAME window (300), which is what keeps recursive values comparable run to run',
-        (read('src/services/analysis/MarketDataService.ts')
-            .match(/fetchFuturesOHLCV\(normalizedSymbol, '(?:15m|1h|4h|1d)', 300\)/g) || []).length === 4);
-    ok('candles: the packet discloses that per-TF reads include the forming candle',
-        /forming candle as of this packet/.test(read('src/services/analysis/HybridIntelligenceService.ts')));
-})();
-
-// ─── 39. the family cooldown, the conviction rubric, calibration, the rule lane ──
-// A refuted setup must not dig under a healthy book; a conviction number must
-// arrive against a written rubric or not at all; the calibration verdict must
-// refuse to speak before its sample; and the harness must be graded against a
-// fixed mechanical rule, not only against a random-entry baseline.
+// ─── 35. the approvals that are gone ───────────────────────────────────────
 (() => {
     const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
-    const prot = loadModule('src/services/signals/signalProtections.ts');
-    const h = (coin, direction, outcomeR, settledAt) => ({ coin, direction, outcomeR, settledAt });
-    const now = 40 * 60 * 60_000;
-    const stopouts = [-1, -1.2, -1.5].map((r, i) => h('ETH', 'long', r, now - (6 - i) * 3600_000));
-    const interleaved = [
-        ...stopouts,
-        h('BTC', 'long', 2, now - 4 * 3600_000),
-        h('SOL', 'short', 2, now - 3 * 3600_000),
-        h('BTC', 'long', -1, now - 2 * 3600_000),
-    ];
-    const fam = prot.signalProtectionVerdict(interleaved, { coin: 'ETH', direction: 'long', now });
-    ok('protections: three same-family stopouts cool THAT family down even while the rest of the book wins',
-        fam.blocked && fam.rule === 'family-cooldown', JSON.stringify(fam));
-    ok('protections: the family cooldown never touches another family',
-        !prot.signalProtectionVerdict(interleaved, { coin: 'BTC', direction: 'long', now }).blocked
-        && !prot.signalProtectionVerdict(interleaved, { coin: 'ETH', direction: 'short', now }).blocked);
-    ok('protections: the family cooldown expires once its window passes',
-        !prot.signalProtectionVerdict(interleaved, { coin: 'ETH', direction: 'long', now: now + 13 * 3600_000 }).blocked);
-    ok('protections: a win on the family resets its stopout streak',
-        !prot.signalProtectionVerdict([...interleaved, h('ETH', 'long', 1.5, now - 30 * 60_000)],
-            { coin: 'ETH', direction: 'long', now }).blocked);
-    ok('protections: a gap-stop (worse than −1R) is still a stopout for the family rule',
-        prot.signalProtectionVerdict([
-            h('ETH', 'long', -1.8, now - 3 * 3600_000),
-            h('ETH', 'long', -2.4, now - 2 * 3600_000),
-            h('ETH', 'long', -1.05, now - 3600_000),
-            h('BTC', 'long', 2, now - 30 * 60_000),
-        ], { coin: 'ETH', direction: 'long', now }).rule === 'family-cooldown');
-
-    const conv = loadModule('src/utils/convictionScale.ts');
-    ok('conviction: 1-4 parses, everything else refuses — a provided-but-invalid value is never clamped',
-        conv.parseConviction(3) === 3 && conv.parseConviction('4') === 4
-        && conv.parseConviction(0) === null && conv.parseConviction(5) === null
-        && conv.parseConviction(2.5) === null && conv.parseConviction('strong') === null);
-    ok('conviction: the four rubric levels are written and named in the tool description',
-        [1, 2, 3, 4].every(l => typeof conv.CONVICTION_RUBRIC[l] === 'string' && conv.CONVICTION_RUBRIC[l].length > 20)
-        && /rate the EVIDENCE/i.test(read('src/services/analysis/DeskToolsService.ts'))
-        && /How strong the EVIDENCE is, on this rubric/.test(read('src/services/analysis/DeskToolsService.ts')));
-    ok('conviction: a provided-but-invalid conviction refuses the emission instead of clamping',
-        /conviction must be an integer 1-4/.test(read('src/services/signals/signalService.ts')));
-
-    const cal = loadModule('src/services/signals/signalCalibration.ts');
-    const up = Array.from({ length: 14 }, (_, i) => ({ x: i + 1, y: i * 0.5 }));
-    ok('calibration: a perfectly monotonic conviction→outcome pair reads rank IC 1, its mirror −1',
-        Math.abs(cal.spearmanRankIC(up) - 1) < 1e-9
-        && Math.abs(cal.spearmanRankIC(up.map(p => ({ x: p.x, y: -p.y }))) + 1) < 1e-9);
-    ok('calibration: a constant side has no correlation — null, never 0',
-        cal.spearmanRankIC([{ x: 2, y: 1 }, { x: 2, y: 2 }, { x: 2, y: 3 }]) === null);
-    ok('calibration: under the sample floor the verdict says insufficient, not flat',
-        cal.calibrationVerdict([]).verdict === 'insufficient');
-    ok('calibration: the thresholds are named constants, not magic numbers in a branch',
-        typeof cal.MIN_CALIBRATION_SAMPLE === 'number' && typeof cal.CALIBRATION_IC_THRESHOLD === 'number');
-
-    const lane = loadModule('src/services/signals/baselineLane.ts');
-    // Flat through the SMA warmup, then a clean rise: the close has to CROSS
-    // above its average, so the lane's own entry rule is what's being graded.
-    const trend = Array.from({ length: 300 }, (_, i) => {
-        const base = i < 30 ? 100 : 100 + (i - 30) * 0.5;
-        return { time: i * 300_000, open: base, high: base + 1, low: base - 0.2, close: base + 0.4 };
-    });
-    const laneTrend = lane.momentumBaselineFor(trend);
-    ok('baseline: on a clean uptrend the fixed rule crosses once, fills once and wins',
-        laneTrend !== null && laneTrend.signals === 1 && laneTrend.fills === 1 && laneTrend.hitRate === 1,
-        JSON.stringify(laneTrend));
-    const chop = Array.from({ length: 300 }, (_, i) => {
-        const base = 100 + Math.sin(i / 6) * 3 + Math.cos(i / 17) * 4;
-        return { time: i * 300_000, open: base, high: base + 0.8, low: base - 0.8, close: base + 0.1 };
-    });
-    const laneChop = lane.momentumBaselineFor(chop);
-    ok('baseline: a choppy tape produces multiple crossings and an honest, non-fabricated rate',
-        laneChop !== null && laneChop.fills >= 3 && laneChop.hitRate !== null && laneChop.expectancyR !== null,
-        JSON.stringify(laneChop && { signals: laneChop.signals, fills: laneChop.fills, hitRate: laneChop.hitRate }));
-    ok('baseline: a tape too short to warm the SMA is not a sample — null, never an empty 0%',
-        lane.momentumBaselineFor(trend.slice(0, 30)) === null);
-    ok('baseline: the rule is a named constant, not a tunable',
-        typeof lane.BASELINE_RULE === 'string' && lane.BASELINE_STOP_PCT === 0.01 && lane.BASELINE_REWARD_PCT === 0.02);
-    ok('baseline: the settle pass rides the rule lane onto the stored base rate',
-        /momentumBaselineFor\(primary\)/.test(read('src/services/signals/signalService.ts')));
-
-    // N5: the resolver is PREFIX-STABLE — a tape truncated at the deciding bar
-    // re-resolves to the identical outcome. This is the falsifiable form of
-    // "no lookahead": if any code path read a later bar, the truncated run
-    // would disagree with the full one.
-    const rv = loadModule('src/services/signals/signalResolver.ts');
-    const T0b = 5_000_000_000_000;
-    const BARb = rv.SIGNAL_BAR_MS;
-    const tape2 = [
-        { time: T0b, open: 101, high: 101, low: 100, close: 100.5 },
-        { time: T0b + BARb, open: 100.5, high: 100.8, low: 97.5, close: 98 },
-        { time: T0b + 2 * BARb, open: 98, high: 106, low: 97, close: 105 },
-        { time: T0b + 3 * BARb, open: 105, high: 107, low: 104, close: 106 },
-    ];
-    const baseB = { direction: 'long', entry: 100, stop: 99, target: 103, emittedAt: T0b, expiresAt: T0b + 3 * BARb };
-    const full = rv.resolveSignal(baseB, tape2, [], T0b + 3 * BARb);
-    const truncated = rv.resolveSignal(baseB, tape2.slice(0, 2), [], T0b + 3 * BARb);
-    ok('resolver: prefix stability — a tape cut at the deciding bar resolves the identical outcome',
-        full !== null && truncated !== null
-        && full.status === truncated.status
-        && full.exitAt === truncated.exitAt
-        && Math.abs(full.grossR - truncated.grossR) < 1e-12
-        && full.ambiguous === truncated.ambiguous,
-        JSON.stringify({ full: full && full.status, truncated: truncated && truncated.status }));
-    ok('resolver: every filled outcome carries the fill-realism measurement',
-        full !== null && typeof full.entryOpenR === 'number'
-        && Math.abs(full.entryOpenR - (101 - 100) / 1) < 1e-12);
-    ok('resolver: the exit-bar measure is on the resolution too',
-        full !== null && typeof full.exitOpenR === 'number');
-})();
-
-// ─── 35. the one skill format, the auto-apply, and the gone approvals ──────
-// Owner ruling 2026-11-03: every skill file follows ONE format (checked over
-// the EXISTING library too, not only at authoring), drafts apply themselves
-// through the deterministic gates, and the approval UI is gone. These pin the
-// gates that replaced the clicks.
-(() => {
-    const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
-    const sf = loadModule('src/utils/skillFrontmatter.ts');
-    ok('skill format: a conforming file raises no issue',
-        sf.skillFormatIssues({
-            fileName: 'fade-1600.md',
-            when: 'When price fades a 1600 level into the PHT afternoon',
-            description: 'Use when the desk fades a round level late in the session.',
-            body: '1. Wait for the rejection wick.\n2. Enter under the wick.\n3. Stop beyond the level.',
-        }).length === 0);
-    ok('skill format: a missing trigger, description or body is named, never guessed',
-        (() => {
-            const issues = sf.skillFormatIssues({ fileName: 'no-trigger.md' });
-            return issues.length === 3 && issues.some(i => /when/.test(i))
-                && issues.some(i => /description/.test(i)) && issues.some(i => /body/.test(i));
-        })());
-    ok('skill format: a non-slug file name and an over-cap body are issues',
-        sf.skillFormatIssues({
-            fileName: 'My Skill.MD',
-            when: 'x', description: 'y', body: 'z',
-        }).some(i => /slug/.test(i))
-        && sf.skillFormatIssues({
-            fileName: 'big.md', when: 'x', description: 'y',
-            body: 'a'.repeat(100_001),
-        }).some(i => /hard cap/.test(i)));
-    ok('skill format: the Health report audits the whole library and flags what fails',
-        /skillFormatIssues\(\{/.test(read('src/services/learning/memoryHealth.ts'))
-        && /not follow the one skill format/.test(read('src/services/learning/memoryHealth.ts')));
-
-    // The gate REPAIRS the files that predate the format, instead of only
-    // reporting them. The derivation is pure, so it is pinned here.
-    ok('skill format: the missing face is derived from the file’s own words',
-        sf.deriveSkillFace({
-            body: '**When:** price rejects the 1600 level\n\n1. Enter under the wick.',
-        }).when === 'price rejects the 1600 level'
-        && /^Use this skill whenever price rejects the 1600 level\.$/.test(
-            sf.deriveSkillFace({ when: 'price rejects the 1600 level' }).description || '')
-        && sf.deriveSkillFace({
-            description: 'Use this skill whenever price fades a 1600 level. Do NOT use for news.',
-        }).when === 'price fades a 1600 level');
-    ok('skill format: a file that states nothing is not given an invented trigger or description',
-        Object.keys(sf.deriveSkillFace({})).length === 0
-        && Object.keys(sf.deriveSkillFace({ body: '   ' })).length === 0);
-    const hs = read('src/hooks/useLearningHeartbeat.ts');
-    const skillSvc = read('src/services/learning/SkillMemoryService.ts');
-    ok('skill format: the boot pass repairs the EXISTING library through the one serializer, under the write lock',
-        /repairSkillFileFormats\(username\)/.test(hs)
-        && /repairSkillFileFormats = \(username: string\): Promise<SkillFormatRepairResult>/.test(skillSvc)
-        && /withNotebookWriteLock/.test(skillSvc.slice(skillSvc.indexOf('repairSkillFileFormats ='), skillSvc.indexOf('repairSkillFileFormats =') + 300))
-        && /serializeSkill\(next, titleFromMeta\(next\)\)/.test(skillSvc));
-    const sm = loadModule('src/services/learning/SkillMemoryService.ts');
-    const fixture = [
-        '---',
-        'name: "Fade 1600"',
-        'description: "Use this skill whenever price fades a 1600 level."',
-        'when: "price fades a 1600 level late in the session"',
-        'kind: "repeat"',
-        '---',
-        '',
-        '**When:** price fades a 1600 level late in the session',
-        '',
-        '1. Wait for the rejection wick.',
-        '2. Enter under the wick.',
-        '',
-    ].join('\n');
-    const fixtureMeta = sm.parseSkillMarkdown(fixture);
-    const rewritten = fixtureMeta ? sm.serializeSkill(fixtureMeta, 'Fade 1600') : '';
-    const reparsed = sm.parseSkillMarkdown(rewritten);
-    ok('skill format: the serializer’s OWN output conforms — the gate is calibrated on gold output',
-        !!fixtureMeta && !!reparsed
-        && sf.skillFormatIssues({ fileName: 'fade-1600.md', ...reparsed }).length === 0,
-        JSON.stringify(reparsed && sf.skillFormatIssues({ fileName: 'fade-1600.md', ...reparsed })));
-
-    const ap = loadModule('src/services/learning/skillApproval.ts');
-    ok('auto-apply: an empty store applies nothing, without error',
-        ap.autoApplyPendingSkillDrafts !== undefined);
-    ok('auto-apply: a refused draft counts its attempts and stops at the budget',
-        /attempts.*SKILL_DRAFT_MAX_ATTEMPTS|SKILL_DRAFT_MAX_ATTEMPTS.*attempts/.test(
-            read('src/services/learning/skillApproval.ts').replace(/\s+/g, ' '))
-        && /markSkillDraftFailed\(draft\.id/.test(read('src/services/learning/skillApproval.ts')));
-    ok('auto-apply: the draft-write event is the one trigger the heartbeat needs',
-        /addEventListener\('august-skill-drafts', autoApply\)/.test(read('src/hooks/useLearningHeartbeat.ts')));
-    ok('auto-apply: the write records WHO decided — the auto path stamps auto, not human',
-        /'human' \| 'auto'/.test(read('src/services/learning/skillApproval.ts'))
-        && /approvedBy === 'auto'\) return true/.test(read('src/services/learning/SkillMemoryService.ts')));
 
     // The approvals UI is GONE, and nothing may pretend it is still there.
     const learn = read('src/components/learn/LearnView.tsx');
@@ -3311,12 +2301,11 @@ const asyncChecks = (async () => {
         /overPlot && \(/.test(chart) && /subscribeCrosshairMove/.test(chart)
             && /unsubscribeCrosshairMove/.test(chart),
         'a readout that never leaves is the band coming back');
-    ok('composer: the box is + / model / send, and the actions live in its menu',
+    ok('composer: the box is + / model / send, and the full-analysis action lives in its menu',
         !/Scan → skills/.test(composer)
-            && /data-testid="composer-scan-skills"/.test(composer)
             && /data-testid="composer-full-analysis"/.test(composer)
-            && composer.indexOf('composer-scan-skills') > composer.indexOf('attach-menu'),
-        'a chip removed without a new door deletes the action');
+            && composer.indexOf('composer-full-analysis') > composer.indexOf('attach-menu'),
+        'the remaining action has no door in the composer menu');
 })();
 
 // ─── 40. market discovery: one ranking, two doors, one chart writer ───────
@@ -3471,9 +2460,6 @@ const asyncChecks = (async () => {
         /chatStore\.setActiveSymbol\(next\)/.test(trade)
         && /export const setActiveSymbol/.test(read('src/services/trade/chatStore.ts'))
         && /setActiveSymbol\(next\)/.test(read('src/services/analysis/DeskToolsService.ts')));
-    ok('chart switch: a detached evaluator may not move the trader\'s chart',
-        /'switch_chart_symbol'/.test(read('src/services/trade/unattendedTools.ts'))
-        && /'switch_chart_symbol'/.test(read('src/services/trade/chatSurfaceTurn.ts')));
 })();
 
 // ─── 41. the honesty batch — named sources, measured volatility, the oldest-first
@@ -3616,6 +2602,1149 @@ const asyncChecks = (async () => {
     delete global.localStorage;
 })();
 
+// ─── 43. the raw-storage lists — no orphan, no half-migration ──────────────
+// Two lists decide what a backup carries and what a restore accepts. Each has
+// failed alone: a store registered for export but not restore put bytes back
+// where nobody reads them, and a store whose module was DELETED but stayed on
+// the export list made every new backup carry dead bytes. Both are checked here
+// against the real lists and the real restore matcher, so a rename in the
+// source cannot make this pass by moving the words out of reach.
+(() => {
+    const readSrc = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+    const exportSrc = readSrc('src/services/infrastructure/ExportService.ts');
+    const listOf = (name) => {
+        const m = new RegExp(`const ${name}: readonly string\\[\\] = \\[([\\s\\S]*?)\\n\\];`).exec(exportSrc);
+        if (!m) throw new Error(`${name} is not a literal string array — this check needs re-anchoring`);
+        // One entry per line: a comment's apostrophe is not a key.
+        return m[1].split('\n').map(l => /^\s*'([^']+)',?\s*$/.exec(l)).filter(Boolean).map(x => x[1]);
+    };
+    const sweep = listOf('RAW_LOCAL_STORAGE_PREFIXES');
+    const restore = listOf('RESTORABLE_PREFERENCE_KEY_PREFIXES');
+
+    const tsFiles = [];
+    (function walk(d) {
+        for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+            const p = path.join(d, e.name);
+            if (e.isDirectory()) walk(p);
+            else if (/\.(ts|tsx)$/.test(e.name)) tsFiles.push(p);
+        }
+    })(path.join(ROOT, 'src'));
+    const owners = tsFiles.filter(f => !f.endsWith(path.join('infrastructure', 'ExportService.ts')));
+    const ownerText = owners.map(f => fs.readFileSync(f, 'utf8')).join('\n');
+
+    // Every sweep entry must still be a key some module holds. Dynamic keys are
+    // composed at the owner (`tracked_${kind}_v1_${user}` in positionStore.ts),
+    // so their literal never appears — the builder file is named and checked.
+    const DYNAMIC = [
+        ['tracked_positions_v1', 'src/services/tracking/positionStore.ts'],
+        ['tracked_diagnoses_v1', 'src/services/tracking/positionStore.ts'],
+        ['tracked_diagnosis_queue_v1', 'src/services/tracking/positionStore.ts'],
+    ];
+    const dynamicNames = DYNAMIC.map(([k]) => k);
+    const orphans = sweep.filter(p => !dynamicNames.includes(p)
+        && !ownerText.includes(p.replace(/_+$/, '')));
+    ok('storage: the export list carries no store whose writer is gone',
+        orphans.length === 0, orphans.join(', '));
+    ok('storage: a dynamically-composed key is only exempt while its builder is there',
+        DYNAMIC.every(([k, f]) => sweep.includes(k)
+            && fs.existsSync(path.join(ROOT, f))
+            && /tracked_/.test(readSrc(f)) && /_v1_/.test(readSrc(f))),
+        JSON.stringify(DYNAMIC.map(d => d[0])));
+    ok('storage: the export list is non-empty and free of duplicates',
+        sweep.length > 20 && new Set(sweep).size === sweep.length, `${sweep.length} entries`);
+
+    // The asymmetry that bit twice: exported, then refused on restore.
+    const { isRestorablePreferenceKey } = loadModule('src/services/infrastructure/ExportService.ts');
+    const unrestorable = sweep.filter(p => !(
+        isRestorablePreferenceKey(p)
+        || isRestorablePreferenceKey(`${p}_probe-user`)
+        || isRestorablePreferenceKey(`${p}:probe-user`)
+    ));
+    ok('storage: every exported prefix is accepted by the real restore matcher',
+        unrestorable.length === 0, unrestorable.join(', '));
+    ok('storage: the restore list is a superset of the export list, not a copy',
+        restore.length > sweep.length, `${restore.length} vs ${sweep.length}`);
+
+    // The deleted lifecycle must not come back through the backup path.
+    const gone = ['skill_drafts_v1', 'learning_proposals_v1', 'skill_graveyard_v1_',
+        'skill_veto_ledger_v1_', 'weekly_rollup_v1_', 'session_review_counter_v1',
+        'supervisor_auto_v1', 'supervisor_last_run_v1', 'supervisor_triaged_v1',
+        'approvals_grandfathered_v1', 'book_drafts_seeded_v1', 'learning_judge_gate_v1_',
+        'belief_challenge_v1_'];
+    ok('storage: no deleted skill-lifecycle store is still exported',
+        sweep.every(p => !gone.includes(p)), sweep.filter(p => gone.includes(p)).join(', '));
+})();
+
+// ─── 44. the skill pen — one write path, and reading the library first ─────
+// The owner's rule is that the desk may add and merge skills but may not spray
+// twenty near-identical ones. That is enforced in code (nearDuplicates over the
+// whole library) AND in the two schemas the model sees, so both halves are
+// pinned here against the real definitions — the same reason §13 bundles the
+// service instead of text-scanning it.
+(() => {
+    const desk = loadModule('src/services/analysis/DeskToolsService.ts');
+    const sf = loadModule('src/services/learning/SkillFileService.ts');
+    const defs = desk.DESK_TOOL_DEFINITIONS.map(d => d.function.name);
+    const byName = (n) => desk.DESK_TOOL_DEFINITIONS.find(d => d.function.name === n);
+    const write = byName('skill_write');
+    const index = byName('skill_index');
+
+    ok('pen: skill_index and skill_write are both on the wire',
+        !!index && !!write, defs.filter(n => /^skill_/.test(n)).join(', '));
+    const retired = ['propose_skill', 'revise_skill', 'scan_chart_skills', 'approve_skill',
+        'retire_skill', 'suspend_skill', 'merge_skill', 'flag_skill', 'evaluate_skill'];
+    ok('pen: no skill-lifecycle tool survived the deletion',
+        retired.every(n => !defs.includes(n)), retired.filter(n => defs.includes(n)).join(', '));
+
+    const props = Object.keys(write.function.parameters.properties);
+    ok('pen: skill_write carries the memory-parity knobs',
+        props.includes('slug') && props.includes('if_version') && props.includes('supersedes'),
+        props.join(', '));
+    ok('pen: only the content is required — a create may derive its slug',
+        JSON.stringify([...write.function.parameters.required].sort()) === JSON.stringify(['body', 'description']),
+        JSON.stringify(write.function.parameters.required));
+    ok('pen: skill_index takes no argument — it is the whole library or nothing',
+        Object.keys(index.function.parameters.properties).length === 0);
+
+    // A label is a promise: these two sentences are the only place the model is
+    // told the rule, and the refusal it fears is what makes it read first.
+    ok('pen: the index schema tells the model to read before writing',
+        /BEFORE writing a skill/.test(index.function.description)
+        && /update it|merge into it/i.test(index.function.description));
+    ok('pen: the write schema promises a duplicate is refused and a merge deletes',
+        /REFUSED/.test(write.function.description) && /DELETED/.test(write.function.description));
+
+    // The refusal is the mechanism, so its TEXT is the contract: a create
+    // refusal must hand back the library, and a stale write the current bytes.
+    const dupe = sf.skillWriteRejection({
+        ok: false, reason: 'duplicate',
+        message: 'Already in the library (breakout-retest). Update that skill instead.',
+    });
+    ok('pen: a duplicate refusal answers with the whole library',
+        dupe.startsWith('skill_write rejected:') && /Existing library:\n/.test(dupe), dupe);
+    const stale = sf.skillWriteRejection({
+        ok: false, reason: 'conflict', message: 'The file changed since you read it.',
+        current: { version: 'a1b2c3', content: 'BODY AS IT STANDS' },
+    });
+    ok('pen: a stale-version refusal returns the current bytes and version',
+        stale.includes('Current content (version a1b2c3)') && stale.includes('BODY AS IT STANDS'), stale);
+    const plain = sf.skillWriteRejection({ ok: false, reason: 'invalid', message: 'No description.' });
+    ok('pen: a refusal with nothing to show says only the reason',
+        plain === 'skill_write rejected: No description.', plain);
+})();
+
+// ─── 45. the forward-fed diagnosis — the read that survived the lifecycle ──
+// Deleting the tentative-skill minting must not delete the loop's MEMORY: the
+// last stored diagnosis still rides the dock block, the pipeline context and the
+// emit_signal receipt. These are the three rules that make that read honest —
+// above all the first, because quoting a refusal would invent a lesson the loop
+// never recorded.
+(() => {
+    const db = loadModule('src/services/tracking/diagnosisBrief.ts');
+    const pos = (id, symbol) => ({ id, symbol });
+    const diag = (id, over) => ({
+        tradeId: id, outcome: 'loss', primaryChange: 'stop placement',
+        lesson: 'Wait for the reclaim', when: 'price breaks a shelf',
+        createdAt: '2026-11-01T00:00:00.000Z', ...over,
+    });
+    const positions = [pos('t1', 'BTCUSDT'), pos('t2', 'ETHUSDT')];
+
+    ok('brief: no diagnosis for the instrument is no block',
+        db.latestDiagnosisBrief([], positions, 'BTCUSDT') === null
+        && db.latestDiagnosisBrief([diag('t1', {})], positions, '') === null);
+    ok('brief: the OTHER instrument is never borrowed',
+        db.latestDiagnosisBrief([diag('t2', {})], positions, 'BTCUSDT') === null);
+    ok('brief: a refusal is a record, not a lesson — it is skipped even when newest',
+        db.latestDiagnosisBrief(
+            [diag('t1', { createdAt: '2026-11-05T00:00:00.000Z', refusal: { reason: 'thin tape' } }), diag('t1', {})],
+            positions, 'BTCUSDT',
+        )?.at === '2026-11-01T00:00:00.000Z');
+    ok('brief: with two real diagnoses the newest answers',
+        db.latestDiagnosisBrief(
+            [diag('t1', {}), diag('t1', { createdAt: '2026-11-04T00:00:00.000Z', lesson: 'Newer lesson' })],
+            positions, 'btcusdt',
+        )?.lesson === 'Newer lesson');
+    const long = db.latestDiagnosisBrief([diag('t1', { lesson: 'x'.repeat(400) })], positions, 'BTCUSDT');
+    ok('brief: the lesson is a receipt line, clipped, not the whole note',
+        long.lesson.length === 160 && long.lesson.endsWith('…'), JSON.stringify(long.lesson.slice(-8)));
+})();
+
+// The pure parser checks cannot reach the serialized notebook or the tool executor.
+const checkSkillWrites = async () => {
+    const storage = new Map();
+    let failWrites = false;
+    global.localStorage = {
+        getItem: key => storage.get(key) ?? null,
+        setItem: (key, value) => { if (failWrites) throw new Error('disk full'); storage.set(key, String(value)); },
+        removeItem: key => storage.delete(key),
+        key: index => [...storage.keys()][index] ?? null,
+        get length() { return storage.size; },
+    };
+    global.window = global;
+    global.dispatchEvent = () => true;
+    global.addEventListener = () => {};
+    global.removeEventListener = () => {};
+    localStorage.setItem('last_active_user', 'skill-contract');
+    const desk = loadModule('src/services/analysis/DeskToolsService.ts', {
+        skills: 'src/services/learning/SkillFileService.ts',
+        notebook: 'src/services/learning/MemoryFilesService.ts',
+        amendments: 'src/services/learning/memoryAmendments.ts',
+    });
+    const sf = desk.skills;
+    await desk.notebook.initMemoryFiles('skill-contract');
+    const call = (name, args, context) => desk.executeDeskTool({ id: name, name, arguments: args }, context);
+    const input = { name: 'copper inventory', description: 'Use for copper warehouse inventory shocks.', body: 'Read warehouse changes before assigning a bias.' };
+    const unopened = await call('skill_write', input);
+    ok('pen runtime: a create before the library read writes nothing', !unopened.ok && sf.listSkillFiles().length === 0, unopened.content);
+    const pair = await desk.executeDeskTools([
+        { id: 'index', name: 'skill_index', arguments: {} },
+        { id: 'write', name: 'skill_write', arguments: input },
+    ]);
+    ok('pen runtime: parallel index and write cannot claim an earlier read', pair[0].ok && !pair[1].ok && sf.listSkillFiles().length === 0);
+    const index = await call('skill_index', {});
+    const review = { indexVersion: index.skillIndexVersion, opened: new Map() };
+    const created = await call('skill_write', input, { skillReview: review });
+    ok('pen runtime: a current prior index permits a new skill', created.ok, created.content);
+    const skill = sf.listSkillFiles()[0];
+    if (!skill) throw new Error('skill create control failed');
+    const collision = await sf.writeSkillFile({ ...input, body: 'Unversioned overwrite.' }, 'skill-contract');
+    ok('pen runtime: New skill cannot overwrite a title collision', !collision.ok && sf.getSkill(skill.slug).body === input.body);
+    const staleIndex = await call('skill_write', { name: 'gold vault', description: 'Gold vault delivery changes.', body: 'Read delivery notices.' }, { skillReview: review });
+    ok('pen runtime: a changed library requires a fresh review', !staleIndex.ok, staleIndex.content);
+    review.indexVersion = (await call('skill_index', {})).skillIndexVersion;
+    const unreadUpdate = await call('skill_write', { ...input, slug: skill.slug, if_version: skill.version }, { skillReview: review });
+    ok('pen runtime: editing requires opening the target, not only its index', !unreadUpdate.ok);
+    const viewed = await call('skill_view', { skill: skill.slug });
+    review.opened.set(viewed.skillRead.slug, viewed.skillRead.version);
+    const longBody = 'Read the warehouse tape.\n'.repeat(700) + 'END OF UNCAPPED PROCEDURE';
+    const updated = await call('skill_write', { ...input, slug: skill.slug, if_version: skill.version, body: longBody }, { skillReview: review });
+    ok('pen runtime: a read and versioned update saves the full body', updated.ok && sf.getSkill(skill.slug).body === longBody);
+    const full = await call('skill_view', { skill: skill.slug });
+    ok('pen runtime: the tool returns the complete procedure and version', full.content.includes(longBody) && full.content.includes(sf.getSkill(skill.slug).version));
+    const largeIndex = JSON.stringify({ skills: Array.from({ length: 100 }, (_, i) => ({ slug: `skill-${i}`, description: 'Long activation description '.repeat(10) })) });
+    ok('pen runtime: reviewing the full index is not a clipped prefix', desk.budgetToolContent('skill_index', largeIndex) === largeIndex);
+    const imported = await sf.importSkillToLibrary({ name: 'funding curve', content: '---\nname: funding-curve\ndescription: Use for perpetual funding dislocations.\nlicense: MIT\n---\n\nCompare the curve.\n', support: [
+        { path: 'references/nested/table.md', content: 'Curve reference bytes' },
+        { path: 'scripts/helper.py', content: 'print("never auto executed")' },
+    ] }, 'skill-contract');
+    ok('pen runtime: support imports report actual written paths', imported.ok && imported.support === 2 && imported.importedPaths.includes('references/nested/table.md'));
+    const nested = await call('skill_view', { skill: imported.slug, file_path: 'references/nested/table.md' });
+    const escape = await call('skill_view', { skill: imported.slug, file_path: '../copper-inventory/SKILL.md' });
+    ok('pen runtime: nested references open but traversal cannot', nested.ok && nested.content.includes('Curve reference bytes') && !escape.ok);
+    const funding = sf.getSkill(imported.slug);
+    const metadataSave = await sf.writeSkillFile({ slug: funding.slug, name: funding.name, description: funding.description, body: funding.body, ifVersion: funding.version }, 'skill-contract');
+    ok('pen runtime: editing imported prose preserves its license', metadataSave.ok && sf.getSkill(funding.slug).file.content.includes('license: MIT'));
+    const survivor = sf.getSkill(skill.slug);
+    const merged = await sf.writeSkillFile({ slug: survivor.slug, description: survivor.description, body: survivor.body + '\nCompare the curve.', ifVersion: survivor.version, supersedes: [funding.slug] }, 'skill-contract');
+    ok('pen runtime: merge deletes the absorbed skill but retains its dependencies', merged.ok && !sf.getSkill(funding.slug) && sf.getSkill(survivor.slug).bundled.length === 2);
+    const moved = await call('skill_view', { skill: survivor.slug, file_path: 'references/nested/table.md' });
+    ok('pen runtime: a merged reference remains readable from the survivor', moved.ok && moved.content.includes('Curve reference bytes'));
+    const legacy = { name: 'old__references__checklist.md', content: '', folderId: 'x' };
+    ok('pen runtime: legacy bundle paths preserve real extensions', sf.skillPathOf(legacy) === 'old/references/checklist.md'
+        && sf.skillPathOf({ ...legacy, name: 'old__scripts__helper.py.md' }) === 'old/scripts/helper.py'
+        && sf.skillSlugOf({ ...legacy, name: 'old__assets__values.json' }) === 'old');
+    const concurrent = await Promise.all([1, 2].map(() => sf.importSkillToLibrary({ name: 'calendar', content: '---\nname: calendar\ndescription: Use for scheduled macroeconomic announcements.\n---\n\nCheck the event release clock.' }, 'skill-contract')));
+    ok('pen runtime: concurrent identical imports cannot create duplicates', concurrent.filter(r => r.ok).length === 1);
+    const beforeFailure = sf.getSkill(survivor.slug);
+    failWrites = true;
+    const failed = await sf.writeSkillFile({ slug: survivor.slug, name: beforeFailure.name, description: beforeFailure.description, body: 'Lost draft', ifVersion: beforeFailure.version }, 'skill-contract');
+    failWrites = false;
+    ok('pen runtime: a failed persist reports failure and retains saved bytes', !failed.ok && sf.getSkill(survivor.slug).body === beforeFailure.body);
+    // The memory pen must not be a second skill pen — not through the tool,
+    // and not through a queue row written before the guard existed.
+    const bypass = await call('amend_memory', {
+        file_name: survivor.file.name.replace(/\.md$/i, ''),
+        kind: 'edit',
+        proposed_content: 'Rewritten through the memory pen.',
+        reason: 'contract: skills have one pen',
+    });
+    ok('pen runtime: amend_memory cannot rewrite a skill', !bypass.ok && sf.getSkill(survivor.slug).body === beforeFailure.body, bypass.content);
+    const queued = {
+        id: 'queued-1', fileId: survivor.file.id, fileName: survivor.file.name, kind: 'edit',
+        proposedContent: 'Applied from an old queue row.', reason: 'pending before the guard',
+        proposedBy: 'model:desk', status: 'pending', createdAt: new Date().toISOString(),
+    };
+    localStorage.setItem('memory_amendments_v1:skill-contract', JSON.stringify([queued]));
+    const queuedApply = await desk.amendments.applyAmendmentContent(queued, 'skill-contract');
+    ok('pen runtime: a queued amendment cannot land on a skill either', !queuedApply.ok && sf.getSkill(survivor.slug).body === beforeFailure.body, queuedApply.error);
+    localStorage.removeItem('memory_amendments_v1:skill-contract');
+    const note = await desk.notebook.writeModelNote(
+        { folder: 'lessons', fileName: 'contract-note', content: 'A note written by the memory pen.', decision: 'create' },
+        'skill-contract',
+    );
+    const ordinary = await desk.amendments.applyAmendmentNow({
+        fileId: note.id, kind: 'edit', proposedContent: 'Corrected note bytes.',
+        reason: 'contract: the note pen still works', proposedBy: 'model:desk',
+    }, id => desk.notebook.getMemoryFiles().files.find(f => f.id === id) ?? null, 'skill-contract');
+    ok('pen runtime: an ordinary note still amends', ordinary.ok
+        && desk.notebook.getMemoryFiles().files.find(f => f.id === note.id)?.content === 'Corrected note bytes.', ordinary.error);
+    await desk.notebook.initMemoryFiles('skill-contract');
+    ok('pen runtime: the saved folder survives a notebook reload', sf.getSkill(survivor.slug)?.bundled.length === 2);
+    // ── C: containment scoring, the update scan, the support-file write,
+    //     and a review that survives the turn it was earned in ──────────────
+    const library = sf.listSkillFiles();
+    const longTrigger = {
+        name: 'basis widening',
+        description: 'Use when perpetual funding widens against the spot basis and the perp premium rolls over inside the range.',
+        body: 'Read funding, then the basis, then the roll-over print before taking a side.',
+    };
+    const review2 = { indexVersion: sf.skillLibraryVersion(library), opened: new Map() };
+    const subset = {
+        name: 'funding rollover',
+        // Every word already appears in longTrigger's description, restated in
+        // fewer words — the shape plain Jaccard let through at 0.25.
+        description: 'Funding widens against the spot basis and the perp premium rolls over.',
+        body: 'Check the roll-over print.',
+    };
+    const subsetMatches = sf.nearDuplicates(subset, [
+        { slug: 'x', name: longTrigger.name, description: longTrigger.description, body: longTrigger.body, version: '0', file: {}, bundled: [] },
+    ]);
+    ok('pen runtime: a reworded subset of a description is caught, not diluted',
+        subsetMatches.length === 1 && subsetMatches[0].score >= 0.5,
+        subsetMatches.map(m => m.score.toFixed(3)).join(','));
+    const wide = await sf.writeSkillFile({ ...longTrigger, slug: 'basis-widening' }, 'skill-contract', review2);
+    ok('pen runtime: the first of the pair lands', wide.ok, wide.message);
+    const wideSkill = sf.getSkill('basis-widening');
+    const secondReview = { indexVersion: sf.skillLibraryVersion(), opened: new Map([[wideSkill.slug, wideSkill.version]]) };
+    const nearMiss = await sf.writeSkillFile(subset, 'skill-contract', secondReview);
+    ok('pen runtime: a create that rewords an existing trigger is refused', !nearMiss.ok && nearMiss.reason === 'duplicate', nearMiss.message);
+    // The update door is scanned too: rewriting skill A into skill B's words is
+    // the redundancy the rule exists to stop.
+    const other = await sf.writeSkillFile({
+        name: 'session open fade', description: 'Use when a breakout fades back inside the session open on thin volume.',
+        body: 'Wait for the reclaim of the open before assigning a bias.', slug: 'session-open-fade',
+    }, 'skill-contract', secondReview);
+    ok('pen runtime: an unrelated second skill lands', other.ok, other.message);
+    const fade = sf.getSkill('session-open-fade');
+    const rewritten = await sf.writeSkillFile({
+        slug: fade.slug, name: fade.name, ifVersion: fade.version,
+        description: longTrigger.description, body: longTrigger.body,
+    }, 'skill-contract', { indexVersion: sf.skillLibraryVersion(), opened: new Map([[fade.slug, fade.version]]) });
+    ok('pen runtime: rewriting one skill into another is refused',
+        !rewritten.ok && rewritten.reason === 'duplicate' && sf.getSkill(fade.slug).body === fade.body, rewritten.message);
+    // Support files: the folder shape the prompt promises is now something the
+    // tool can actually build, and a bad path changes nothing.
+    const withFiles = await sf.writeSkillFile({
+        slug: fade.slug, name: fade.name, ifVersion: fade.version,
+        description: fade.description, body: `${fade.body}\nSee references/open-window-table.md.`,
+        files: [
+            { path: 'references/open-window-table.md', content: 'OPEN WINDOW TABLE bytes' },
+            { path: 'scripts/notetype.py', content: 'print("stored, never run")' },
+        ],
+    }, 'skill-contract', { indexVersion: sf.skillLibraryVersion(), opened: new Map([[fade.slug, fade.version]]) });
+    const afterFiles = sf.getSkill(fade.slug);
+    ok('pen runtime: skill_write can build the folder it describes',
+        withFiles.ok && withFiles.files.length === 2 && afterFiles.bundled.length === 2
+        && afterFiles.bundled.some(f => sf.skillPathOf(f) === `${fade.slug}/references/open-window-table.md`), JSON.stringify(withFiles.files ?? withFiles.message));
+    const escaped = await sf.writeSkillFile({
+        slug: fade.slug, name: fade.name, ifVersion: afterFiles.version,
+        description: fade.description, body: afterFiles.body,
+        files: [{ path: '../copper-inventory/SKILL.md', content: 'escape' }],
+    }, 'skill-contract', { indexVersion: sf.skillLibraryVersion(), opened: new Map([[fade.slug, afterFiles.version]]) });
+    ok('pen runtime: a traversal support path is refused before anything is written',
+        !escaped.ok && sf.getSkill(fade.slug).bundled.length === 2, escaped.message);
+    const wrongRole = await sf.writeSkillFile({
+        slug: fade.slug, name: fade.name, ifVersion: sf.getSkill(fade.slug).version,
+        description: fade.description, body: fade.body,
+        files: [{ path: 'notes/loose.md', content: 'no such role' }],
+    }, 'skill-contract', { indexVersion: sf.skillLibraryVersion(), opened: new Map([[fade.slug, sf.getSkill(fade.slug).version]]) });
+    ok('pen runtime: a support path outside the four roles is refused', !wrongRole.ok, wrongRole.message);
+    // A review earned on an earlier turn is still in the transcript, so the
+    // next message does not pay for the read twice. Staleness is still caught
+    // by the fingerprint, which is what makes the seed safe rather than loose.
+    const seededIndex = JSON.stringify({ count: 1, skills: [{ slug: 'x' }], version: 'aaaaaaaa' });
+    const seededRead = `# ${fade.slug}\nName: ${fade.name}\nDescription: ${fade.description}\nVersion: ${fade.version}\n\nbody`;
+    const seeded = desk.skillReviewFromTranscript([{ content: seededIndex }, { content: seededRead }]);
+    ok('pen runtime: the review is recovered from the conversation itself',
+        seeded.indexVersion === 'aaaaaaaa' && seeded.opened.get(fade.slug) === fade.version, JSON.stringify([...seeded.opened]));
+    const current = desk.skillReviewFromTranscript([{ content: JSON.stringify({ skills: [], version: sf.skillLibraryVersion() }) }]);
+    ok('pen runtime: an empty library seeds an index and no reads', current.indexVersion === sf.skillLibraryVersion() && current.opened.size === 0);
+    const staleSeed = desk.skillReviewFromTranscript([{ content: seededRead }]);
+    const staleWrite = await sf.writeSkillFile({
+        slug: fade.slug, name: fade.name, ifVersion: fade.version,
+        description: fade.description, body: 'Written on a stale seed.',
+    }, 'skill-contract', staleSeed);
+    ok('pen runtime: a seeded read without a current index still writes nothing',
+        !staleWrite.ok && sf.getSkill(fade.slug).body.includes('open-window-table'), staleWrite.message);
+};
+
+// ─── 36. the market-structure tool cores — as-of math the desk reads ──────
+// Why here: these are the pure compute cores behind the P0 desk tools
+// (docs/plans/tools-upgrade.md). They need hand-computed synthetic fixtures
+// (a profile whose POC is known BY CONSTRUCTION) and a no-look-ahead test per
+// tool — a component probe cannot see either, and the network adapters are
+// deliberately below this file's reach. Every fixture states its expectation
+// in a comment; a threshold change that breaks one is a claim to re-derive.
+{
+    const mk = (time, o, h, l, c, v, tb) => ({
+        time, open: o, high: h, low: l, close: c, volume: v,
+        ...(tb === undefined ? {} : { takerBuyVolume: tb }),
+    });
+
+    // sessionConvention — the one day/week/month definition.
+    const sc = loadModule('src/services/market/sessionConvention');
+    const NOON = Date.UTC(2026, 10, 5, 12); // Thu 2026-11-05 12:00 UTC
+    ok('session: utcDayStart floors to 00:00 UTC', sc.utcDayStart(NOON) === Date.UTC(2026, 10, 5, 0));
+    ok('session: utcWeekStart lands on Monday 00:00 UTC',
+        sc.utcWeekStart(NOON) === Date.UTC(2026, 10, 2, 0) && new Date(sc.utcWeekStart(NOON)).getUTCDay() === 1);
+    ok('session: utcMonthStart is the 1st', sc.utcMonthStart(NOON) === Date.UTC(2026, 10, 1));
+    const novWindows = sc.sessionWindowsForDay(NOON);
+    ok('session: November (GMT/EST winter) shifts London and NY +1h, Asia never moves',
+        novWindows[0].startMs === Date.UTC(2026, 10, 5, 0)
+        && novWindows[1].startMs === Date.UTC(2026, 10, 5, 8) // 07:00 BST base + 1 winter hour
+        && novWindows[2].startMs === Date.UTC(2026, 10, 5, 14));
+    const julWindows = sc.sessionWindowsForDay(Date.UTC(2026, 6, 5, 12));
+    ok('session: July (BST/EDT summer) keeps the base hours',
+        julWindows[1].startMs === Date.UTC(2026, 6, 5, 7) && julWindows[2].startMs === Date.UTC(2026, 6, 5, 13));
+    ok('session: a bar in the London/NY overlap labels NY (SessionService priority)',
+        sc.sessionOfMs(Date.UTC(2026, 10, 5, 15)) === 'new_york'
+        && sc.sessionOfMs(Date.UTC(2026, 10, 5, 4)) === 'asian'
+        && sc.sessionOfMs(Date.UTC(2026, 10, 5, 11)) === 'london');
+    ok('session: initial balance is 00:00–01:00 UTC',
+        sc.initialBalanceWindow(NOON).endMs - sc.initialBalanceWindow(NOON).startMs === 3_600_000);
+    const prev = sc.previousPeriods(NOON);
+    ok('session: previous day/week/month ranges are the prior calendar periods',
+        prev.prev_day.startMs === Date.UTC(2026, 10, 4, 0) && prev.prev_day.endMs === Date.UTC(2026, 10, 5, 0)
+        && prev.prev_week.startMs === Date.UTC(2026, 9, 26, 0) && prev.prev_week.endMs === Date.UTC(2026, 10, 2, 0)
+        && prev.prev_month.startMs === Date.UTC(2026, 9, 1, 0) && prev.prev_month.endMs === Date.UTC(2026, 10, 1, 0));
+
+    // volumeProfileCore — a profile whose POC is known by construction.
+    const vp = loadModule('src/services/market/volumeProfileCore');
+    // Three price shelves at 100/104/108, each printed 3× (the core needs ≥5
+    // candles): the middle shelf carries 2× the per-bar volume, so the POC
+    // MUST sit in the 104 bin.
+    const shelf = (time, price, v, tb) => mk(time, price, price, price, price, v, tb);
+    const shelfCandles = [
+        shelf(0, 100, 10, 6), shelf(60_000, 100, 10, 6), shelf(120_000, 100, 10, 6),
+        shelf(180_000, 104, 20, 15), shelf(240_000, 104, 20, 15), shelf(300_000, 104, 20, 15),
+        shelf(360_000, 108, 10, 3), shelf(420_000, 108, 10, 3), shelf(480_000, 108, 10, 3),
+    ];
+    const profile = vp.buildVolumeProfile(shelfCandles, { bins: 8 });
+    ok('profile: the heaviest shelf is the POC',
+        profile !== null && Math.abs(profile.poc - 104.5) < 0.51,
+        profile && JSON.stringify({ poc: profile.poc }));
+    ok('profile: the 70% value area contains the POC and spans 70% of volume',
+        profile !== null && profile.valueAreaLow <= profile.poc && profile.valueAreaHigh >= profile.poc
+        && profile.valueAreaLow >= 99.9 && profile.valueAreaHigh <= 108.1,
+        profile && JSON.stringify({ va: [profile.valueAreaLow, profile.valueAreaHigh] }));
+    // The VA walk crosses zero-volume bins toward the UPPER shelf on a tie
+    // (declared tie-break: `above >= below`), so the 70% area here is
+    // [104, 108] — 'above_value' is probed beyond VAH, not inside it.
+    ok('profile: price position reads above/inside/below the value area',
+        profile !== null
+        && vp.pricePositionVsValue(profile, 109) === 'above_value'
+        && vp.pricePositionVsValue(profile, 104.5) === 'inside_value'
+        && vp.pricePositionVsValue(profile, 100.5) === 'below_value');
+    ok('profile: the buy/sell split is measured only when every candle carries taker-buy',
+        profile !== null && profile.buySellKnown === true
+        && (() => {
+            const noTb = [1, 2, 3, 4, 5].map(i => mk(i * 60_000, 100, 110, 90, 105, 10));
+            return vp.buildVolumeProfile(noTb, { bins: 8 })?.buySellKnown === false;
+        })());
+    ok('profile: a degenerate single-price window returns null, never a zero POC',
+        vp.buildVolumeProfile([shelf(0, 100, 10), shelf(60_000, 100, 10)], { bins: 8 }) === null);
+    ok('profile: fewer than 5 candles returns null', vp.buildVolumeProfile(shelfCandles.slice(0, 2), { bins: 8 }) === null);
+
+    // naked POCs: a session POC is naked until ONE candle trades through it.
+    const pocSessions = [
+        { label: 's1', startMs: 0, endMs: 100_000, poc: 104, pocShare: 0.5 },
+        { label: 's2', startMs: 100_000, endMs: 200_000, poc: 96, pocShare: 0.5 },
+    ];
+    const afterCandles = [mk(300_000, 110, 112, 105, 111, 5)]; // never touches 104 or 96
+    const nakedNow = vp.nakedPocs(pocSessions, afterCandles, 400_000);
+    ok('naked: POCs untouched after their session stay naked',
+        nakedNow.length === 2 && nakedNow.every(p => Math.abs(p.poc - (p.label === 's1' ? 104 : 96)) < 1e-9),
+        JSON.stringify(nakedNow));
+    const visited = vp.nakedPocs(pocSessions, [mk(150_000, 105, 106, 103, 104.5, 5)], 400_000);
+    ok('naked: one wick through a POC visits it — the level drops out',
+        visited.length === 1 && visited[0].label === 's2', JSON.stringify(visited));
+    ok('naked: a window not yet finished is not scanned (no partial-session POC)',
+        vp.nakedPocs([{ label: 'live', startMs: 0, endMs: 500_000, poc: 104, pocShare: 0.5 }], [], 400_000).length === 0);
+
+    // vwapCore — hand-computed VWAP over two bars.
+    const vw = loadModule('src/services/market/vwapCore');
+    // typical(0)=100, vol 10 → pv 1000; typical(1)=110, vol 10 → pv 1100 → vwap 105.
+    const vwapCandles = [mk(0, 100, 100, 100, 100, 10), mk(60_000, 110, 110, 110, 110, 10)];
+    const vwap = vw.computeVwap(vwapCandles);
+    ok('vwap: the volume-weighted typical price is exact (105 over equal volume)',
+        vwap !== null && Math.abs(vwap.vwap - 105) < 1e-9, vwap && String(vwap.vwap));
+    ok('vwap: bands are vwap ± k·σ with σ = |110−105| under two-point mass',
+        vwap !== null && Math.abs(vwap.bands.oneUpper - (105 + 5)) < 1e-9 && Math.abs(vwap.bands.oneLower - 100) < 1e-9);
+    const pos = vw.vwapPosition(vwap, vwapCandles, 106);
+    ok('vwap: close above VWAP reads participants in profit, and says it is an estimate',
+        pos !== null && pos.verdict === 'participants_in_profit' && pos.estimate === true && pos.barsSinceCross === 1,
+        pos && String(pos.barsSinceCross));
+    const belowPos = vw.vwapPosition(vwap, vwapCandles, 104);
+    ok('vwap: close below VWAP reads participants underwater',
+        belowPos !== null && belowPos.verdict === 'participants_underwater' && belowPos.barsSinceCross === 0);
+    ok('vwap: zero total volume returns null, never a NaN VWAP',
+        vw.computeVwap([mk(0, 100, 100, 100, 100, 0), mk(60_000, 110, 110, 110, 110, 0)]) === null);
+    ok('vwap: a swing_high anchor slices FROM the extreme bar forward',
+        (() => {
+            const cs = [mk(0, 90, 90, 90, 90, 5), mk(60_000, 120, 120, 120, 120, 5), mk(120_000, 100, 100, 100, 100, 5)];
+            const slice = vw.anchoredSlice(cs, 'swing_high');
+            return slice !== null && slice.length === 2 && slice[0].time === 60_000;
+        })());
+
+    // orderFlowCore — delta is 2·takerBuy − volume, and a missing field is
+    // unavailable, NOT zero.
+    const of = loadModule('src/services/market/orderFlowCore');
+    ok('orderflow: delta = 2 × takerBuy − volume (hand: 2·60 − 100 = +20)',
+        of.candleDelta(mk(0, 100, 105, 95, 104, 100, 60)) === 20);
+    ok('orderflow: a candle without taker-buy volume yields NO delta — never 0',
+        of.candleDelta(mk(0, 100, 105, 95, 104, 100)) === null);
+    ok('orderflow: a series with ANY missing field is unavailable',
+        of.deltaSeries([mk(0, 100, 105, 95, 104, 100, 60), mk(60_000, 104, 106, 100, 101, 100)]) === null);
+    const fullSeries = of.deltaSeries([
+        mk(0, 100, 105, 95, 104, 100, 60), // +20
+        mk(60_000, 104, 106, 100, 101, 100, 40), // −20
+    ]);
+    ok('orderflow: CVD sums the deltas and the buy/sell split closes',
+        fullSeries !== null && fullSeries.cvd === 0
+        && fullSeries.buyVolume === 100 && fullSeries.sellVolume === 100
+        && fullSeries.cvdSeries.length === 2);
+    // Divergence: second half makes a higher high while its net delta is negative.
+    const divUp = [
+        mk(0, 100, 101, 99, 100, 100, 30),
+        mk(60_000, 100, 100.5, 99, 100, 100, 30),
+        mk(120_000, 100, 102, 100, 101.8, 100, 20), // higher high…
+        mk(180_000, 101.8, 102.2, 101, 102, 100, 20), // …with net sell delta
+    ];
+    const divSeries = of.deltaSeries(divUp);
+    ok('orderflow: higher highs on negative net delta reads a bearish divergence',
+        divSeries !== null && of.cvdDivergence(divUp, divSeries, 4) === 'bearish',
+        divSeries && String(of.cvdDivergence(divUp, divSeries, 4)));
+
+    // effortResultCore — rvol vs the same UTC hour, spread in ATR.
+    const er = loadModule('src/services/market/effortResultCore');
+    // Four hours of history at hour 1 (~100/bar), then the probe bar at hour 1
+    // with volume 300 → rvol 3; spread 2 with ATR 1 → climax conditions.
+    const erHistory = [];
+    for (let d = 0; d < 7; d++) {
+        for (let h = 0; h < 24; h++) {
+            const t = Date.UTC(2026, 10, 1 + d, h);
+            erHistory.push(mk(t, 100, 100.5, 99.5, 100, h === 1 ? 100 : 50, 25));
+        }
+    }
+    erHistory.push(mk(Date.UTC(2026, 10, 8, 1), 100, 102.5, 99.5, 102.4, 300, 150));
+    const erRead = er.effortVsResult(erHistory, 1);
+    ok('effort: a 3× same-hour volume bar with a 1.5+ ATR close at the extreme reads climax',
+        erRead !== null && erRead.bars[erRead.bars.length - 1].read === 'climax'
+        && erRead.bars[erRead.bars.length - 1].rvol >= 2.9,
+        erRead && JSON.stringify(erRead.bars[erRead.bars.length - 1]));
+    ok('effort: thresholds are DECLARED in the read, not hidden constants',
+        erRead !== null && erRead.thresholds.rvolClimax === 3 && erRead.thresholds.spreadNoResultAtr === 0.3);
+    ok('effort: without an ATR the read is refused, not guessed',
+        er.effortVsResult(erHistory, 0) === null);
+
+    // auctionCore — the initial balance is the first UTC hour; the
+    // percentile normalizes every day by its own mean candle range.
+    const ac = loadModule('src/services/market/auctionCore');
+    const DAY = 86_400_000;
+    const day0 = Date.UTC(2026, 10, 5, 0);
+    const fiveMin = (t, o, h, l, c, v = 10) => mk(t, o, h, l, c, v, v / 2);
+    const todayBars = [];
+    // IB: 00:00–01:00 narrow (width 1). Later: break above IB then close back
+    // inside → a failed extension; and a trend-day shape for the type read.
+    for (let i = 0; i < 12; i++) todayBars.push(fiveMin(day0 + i * 300_000, 100, 100.5, 99.5, 100));
+    for (let i = 12; i < 60; i++) todayBars.push(fiveMin(day0 + i * 300_000, 100, 100.2, 99.8, 100));
+    for (let i = 60; i < 72; i++) todayBars.push(fiveMin(day0 + i * 300_000, 100, 104, 100, 103.5)); // push above IB
+    for (let i = 72; i < 120; i++) todayBars.push(fiveMin(day0 + i * 300_000, 103.5, 103.6, 99.4, 99.6)); // close back inside
+    const priorBars = [];
+    for (let d = 1; d <= 10; d++) {
+        for (let i = 0; i < 288; i++) {
+            priorBars.push(fiveMin(day0 - d * DAY + i * 300_000, 200, 200.5, 199.5, 200));
+        }
+    }
+    const ib = ac.initialBalance(todayBars, priorBars, 1, day0 + 10 * 3_600_000);
+    ok('auction: the IB is the 00:00–01:00 UTC range (100–100.5 by construction)',
+        ib !== null && Math.abs(ib.high - 100.5) < 1e-9 && Math.abs(ib.low - 99.5) < 1e-9
+        && Math.abs(ib.widthAtr - 1) < 1e-9, ib && JSON.stringify(ib));
+    ok('auction: the IB-width percentile uses ≥5 prior days when they exist',
+        ib !== null && ib.priorDaysUsed === 10 && ib.widthPercentile !== null);
+    const ot = ac.openType(todayBars, { high: 110, low: 90 }, 1, day0 + 10 * 3_600_000);
+    ok('auction: an open revisited after a push reads balanced, not drive',
+        ot !== null && ot.type === 'balanced', ot && JSON.stringify(ot));
+    const failedExt = ac.failedIbExtension(todayBars, ib, 1, day0 + 10 * 3_600_000);
+    ok('auction: beyond the IB high then a close back inside is a FAILED extension',
+        failedExt.failed === true && failedExt.side === 'above_ib_high' && failedExt.maxExtensionAtr > 2,
+        JSON.stringify(failedExt));
+    ok('auction: no candle in the day yet → the IB is null, never zeros',
+        ac.initialBalance([fiveMin(day0 + 2 * 3_600_000, 100, 101, 99, 100)], priorBars, 1, day0 + 2 * 3_600_000) === null);
+
+    // levelsCore — prev-period H/L with ATR distances and touch counts.
+    const lv = loadModule('src/services/market/levelsCore');
+    const levelCandles = [
+        mk(Date.UTC(2026, 10, 4, 5), 50, 55, 49, 52, 5),   // prev day: H 55, L 49
+        mk(Date.UTC(2026, 10, 4, 15), 52, 60, 50, 58, 5),  // prev day high actually 60
+        mk(Date.UTC(2026, 11, 2, 5), 58, 59, 57, 58, 5),   // current week
+        mk(Date.UTC(2026, 10, 5, 12), 58, 58.5, 57.5, 58, 5), // now
+    ];
+    const rows = lv.priorPeriodLevels(
+        [{ range: { startMs: Date.UTC(2026, 10, 4), endMs: Date.UTC(2026, 10, 5), label: 'prev_day' }, candles: levelCandles.slice(0, 2) }],
+        58, 1, 0.2, levelCandles,
+    );
+    ok('levels: prev-day high/low computed from the period candles with ATR distances',
+        rows.length === 2
+        && rows.find(r => r.label === 'prev_day_high')?.price === 60
+        && rows.find(r => r.label === 'prev_day_low')?.price === 49
+        && rows.find(r => r.label === 'prev_day_high')?.distanceAtr === 2
+        && rows.find(r => r.label === 'prev_day_high')?.side === 'above',
+        JSON.stringify(rows));
+    const touchPool = [mk(0, 100, 100.3, 99.7, 100, 5), mk(60_000, 100, 100.1, 99.6, 100, 5), mk(120_000, 100, 100.2, 99.9, 100, 5)];
+    ok('levels: touch counts count ranges within the tolerance',
+        (() => {
+            const rr = lv.priorPeriodLevels(
+                [{ range: { startMs: 0, endMs: 1, label: 'prev_day' }, candles: [mk(0, 99, 100.1, 99.9, 100, 5)] }],
+                100, 1, 0.2, touchPool,
+            );
+            return rr.find(r => r.label === 'prev_day_low')?.touches === 3;
+        })());
+    ok('levels: round numbers adapt to the magnitude (BTC-scale → 1000s)',
+        (() => {
+            const rr = lv.roundNumberRows(104_250, 500, 50, [], 2);
+            const prices = rr.map(r => r.price);
+            return prices.includes(105_000) && prices.includes(103_000)
+                && prices.every(p => p % 1000 === 0);
+        })(), JSON.stringify((lv.roundNumberRows(104_250, 500, 50, [], 2)).map(r => r.price)));
+    ok('levels: dedupe keeps the first row within tolerance',
+        lv.dedupeLevels([
+            { label: 'a', price: 100, distance: 0, distanceAtr: 0, touches: 0, side: 'above' },
+            { label: 'b', price: 100.05, distance: 0, distanceAtr: 0, touches: 0, side: 'above' },
+            { label: 'c', price: 102, distance: 0, distanceAtr: 0, touches: 0, side: 'above' },
+        ], 0.2).map(r => r.label).join(',') === 'a,c');
+
+    // regimeCore — a constructed trend must classify trend; a flat tape,
+    // range; and the two vol percentiles move together.
+    const rg = loadModule('src/services/market/regimeCore');
+    const trendBars = [];
+    for (let i = 0; i < 160; i++) {
+        const c = 100 + i * 0.5; // relentless up-drift
+        trendBars.push(mk(i * 3_600_000, c - 0.4, c + 0.5, c - 0.5, c, 10));
+    }
+    const trendRead = rg.regimeRead(trendBars);
+    ok('regime: a monotonic up-drift classifies trend with efficiency near 1',
+        trendRead !== null && trendRead.direction === 'trend' && trendRead.efficiency > 0.9
+        && trendRead.dwell > 50,
+        trendRead && JSON.stringify({ d: trendRead.direction, e: trendRead.efficiency, dwell: trendRead.dwell }));
+    const flatBars = [];
+    for (let i = 0; i < 160; i++) {
+        const wobble = (i % 2 === 0 ? 0.3 : -0.3);
+        flatBars.push(mk(i * 3_600_000, 100, 100.4, 99.6, 100 + wobble, 10));
+    }
+    const flatRead = rg.regimeRead(flatBars);
+    ok('regime: a mean-reverting flat tape classifies range',
+        flatRead !== null && flatRead.direction === 'range',
+        flatRead && JSON.stringify({ d: flatRead.direction, adx: flatRead.directionStrength }));
+    ok('regime: the volatility axis is separate and the regime_id is stable/taggable',
+        trendRead !== null && flatRead !== null
+        && typeof trendRead.regimeId === 'string' && trendRead.regimeId.startsWith('trend:')
+        && flatRead.regimeId.startsWith('range:')
+        && trendRead.regimeId !== flatRead.regimeId);
+    ok('regime: fewer than 80 bars returns null — no percentile on a thin window',
+        rg.regimeRead(trendBars.slice(0, 60)) === null);
+    ok('regime: the ATR series is Wilder-smoothed and matches a hand value',
+        (() => {
+            const cs = [
+                mk(0, 10, 11, 9, 10, 5),
+                mk(60_000, 10, 12, 10, 11, 5), // TR 2 (H−prevC = 2)
+                mk(120_000, 11, 12, 11, 12, 5), // TR 1
+                mk(180_000, 12, 13, 11, 13, 5), // TR 2
+            ];
+            const s = rg.atrSeries(cs, 2);
+            // TRs = [2, 1, 2]: seed = mean(first 2) = 1.5; then one Wilder
+            // step: (1.5·1 + 2)/2 = 1.75
+            return s.length === 2 && Math.abs(s[0] - 1.5) < 1e-9
+                && Math.abs(s[1] - 1.75) < 1e-9;
+        })());
+
+    // tradeMathCore — composition of the canonical modules, hand-checked.
+    const tm = loadModule('src/services/market/tradeMathCore');
+    const tmCandles = [];
+    for (let i = 0; i < 30; i++) tmCandles.push(mk(i * 60_000, 100, 100.5, 99.5, 100, 10));
+    const tmRead = tm.computeTradeMath(
+        { direction: 'Long', entry: 100, stopLoss: 99, takeProfits: [103, 110] },
+        tmCandles,
+    );
+    ok('trade_math: gross R:R is nearest-target ÷ stop (3:1 by construction)',
+        tmRead !== null && tmRead.gross.ratio === 3 && tmRead.gross.inverted === false);
+    ok('trade_math: the cost line comes from utils/netRiskReward — 5bps taker sides on a 1% stop = 0.10R',
+        tmRead !== null && Math.abs(tmRead.costs.costR - 0.1) < 1e-9
+        && Math.abs(tmRead.costs.netRewardR - 2.9) < 1e-9
+        && tmRead.costs.slippageModeled === false);
+    ok('trade_math: break-even win rate = (1+c)/(1+r) with c=0.1, r=3 → 27.5%',
+        tmRead !== null && Math.abs(tmRead.costs.breakEvenWinRatePct - 27.5) < 0.01,
+        tmRead && String(tmRead.costs.breakEvenWinRatePct));
+    const sized = tm.computeTradeMath(
+        { direction: 'Long', entry: 100, stopLoss: 99, takeProfits: [103], equityUsd: 1000, riskPercent: 1, leverage: 10 },
+        tmCandles,
+    );
+    ok('trade_math: $10 risk over a $1 stop = 0.01 qty, 1× notional needed',
+        sized !== null && sized.sizing.available === true
+        && Math.abs(sized.sizing.riskUsd - 10) < 1e-9
+        && Math.abs((sized.sizing.qty ?? 0) - 10) < 1e-9
+        && Math.abs((sized.sizing.notionalUsd ?? 0) - 1000) < 1e-9
+        && Math.abs((sized.sizing.leverageNeeded ?? 0) - 1) < 1e-9,
+        sized && JSON.stringify(sized.sizing));
+    ok('trade_math: the liquidation estimate is the isolated 1/leverage model, named',
+        sized !== null && sized.liquidation !== null
+        && Math.abs(sized.liquidation.price - 90) < 1e-9
+        && sized.liquidation.estimate === true
+        && sized.liquidation.model.includes('isolated'),
+        sized && JSON.stringify(sized.liquidation));
+    ok('trade_math: sizing without equity is unavailable with a reason, never a default',
+        tmRead !== null && tmRead.sizing.available === false && typeof tmRead.sizing.reason === 'string');
+    ok('trade_math: an inverted plan is marked, not repaired',
+        (() => {
+            const inv = tm.computeTradeMath(
+                { direction: 'Long', entry: 100, stopLoss: 101, takeProfits: [99] },
+                tmCandles,
+            );
+            return inv !== null && inv.gross.inverted === true;
+        })());
+    ok('trade_math: ATR distances are in the 30-bar window\'s units (stop = 1 × mean range)',
+        tmRead !== null && tmRead.atr !== null && tmRead.atr > 0.9 && tmRead.atr < 1.1);
+
+    // closedCandles — the adapter's as-of gate, shared by every tool.
+    const adapter = loadModule('src/services/analysis/marketTools');
+    const ASOF = 10 * 60_000;
+    const raw = [
+        mk(0, 1, 1, 1, 1, 1),             // 5m bar 0: closed at 5:00 ✓
+        mk(300_000, 1, 1, 1, 1, 1),       // 5m bar 1: closed at 10:00 ✓
+        mk(600_000, 1, 1, 1, 1, 1),       // 5m bar 2: closes at 15:00 — FORMING at asof
+    ];
+    const gated = adapter.closedCandles(raw, '5m', ASOF);
+    ok('as-of: a bar that has not CLOSED by asof is excluded — the forming bar never lies',
+        gated.length === 2 && gated.every(c => c.time + 300_000 <= ASOF),
+        JSON.stringify(gated.map(c => c.time)));
+    ok('as-of: unknown intervals fall back to open-time filtering',
+        adapter.closedCandles(raw, '7m', ASOF + 1).length === 3);
+
+    // swingStructureCore — a hand-built zigzag: highs 10@2, 11@6, 12@10,
+    // lows 8@4, 9@8. Strict k=2 fractals by construction; the 14th bar
+    // CLOSES above the 12 high for a BOS while keeping every pivot's
+    // neighbours lower (a 13-high at idx12 would kill the idx10 fractal).
+    const ss = loadModule('src/services/market/swingStructureCore');
+    const zig = [];
+    const zigHighs = { 0: 8, 1: 8.5, 2: 10, 3: 8.2, 4: 8.6, 5: 9, 6: 11, 7: 9.2, 8: 9.4, 9: 9.6, 10: 12, 11: 9.8, 12: 9.9, 13: 12.3 };
+    const zigLows = { 0: 7.5, 1: 7.8, 2: 9, 3: 8.2, 4: 8, 5: 8.7, 6: 9.5, 7: 9.15, 8: 9, 9: 9.1, 10: 9.3, 11: 9.5, 12: 9.4, 13: 9.6 };
+    for (let i = 0; i <= 13; i++) {
+        const h = zigHighs[i];
+        const l = zigLows[i];
+        const c = i === 13 ? 12.5 : (h + l) / 2; // the last bar CLOSES above the 12 high → BOS
+        zig.push(mk(i * 60_000, (h + l) / 2, h, l, c, 5));
+    }
+    const structure = ss.readStructure(zig, 2);
+    ok('structure: the pivot sequence reads HH/HH on highs and HL on lows, trend uptrend',
+        structure !== null && structure.trend === 'uptrend'
+        && structure.labels.filter(l => l.swing.kind === 'high').map(l => l.tag).join(',') === 'HH,HH'
+        && structure.labels.filter(l => l.swing.kind === 'low').map(l => l.tag).join(',') === 'HL',
+        structure && JSON.stringify(structure.labels));
+    ok('structure: the close above the last swing high is a bullish BOS at the measured level',
+        structure !== null && structure.lastBreak !== null
+        && structure.lastBreak.kind === 'BOS' && structure.lastBreak.direction === 'bullish'
+        && Math.abs(structure.lastBreak.level - 12) < 1e-9,
+        structure && JSON.stringify(structure.lastBreak));
+    // Fib from the ACTIVE leg: the last low (9 @ idx8) is OLDER than the last
+    // high (12 @ idx10), so the active leg is bearish 12→9 and its 0.618
+    // RETRACEMENT (measured from the leg's far end) sits at 9 + 3×0.618 =
+    // 10.854; the 11 pivot sits within the 0.25×ATR tolerance → confluence 1.
+    const fib = ss.activeSwingFib(zig, 1);
+    const fib618 = fib?.levels.find(l => l.ratio === '0.618');
+    ok('structure: the active-swing fib prices the 0.618 at the hand value with counted confluence',
+        fib !== null && fib.direction === 'bearish' && fib618 !== undefined
+        && Math.abs(fib618.price - 10.854) < 1e-9 && fib618.confluence === 1,
+        fib && JSON.stringify(fib618));
+
+    // imbalanceCore — a bullish FVG by construction: a.high=100 < c.low=102,
+    // displacement candle body 3×ATR. Fill depth is measured from later bars.
+    // Five overlapping fillers lead so the tape clears the ≥10-candle floor
+    // without creating a second gap.
+    const imb = loadModule('src/services/market/imbalanceCore');
+    const fillers = [];
+    for (let i = 0; i < 5; i++) fillers.push(mk(i * 60_000, 100 - i * 0.1, 100.2 - i * 0.1, 99.0 + i * 0.05, 99.6, 10));
+    const imbTape = [
+        ...fillers,
+        mk(5 * 60_000, 100, 100, 98.5, 99.5, 10),
+        mk(6 * 60_000, 101, 104.5, 100.5, 104, 30),   // displacement body 3×ATR(1)
+        mk(7 * 60_000, 104, 105, 102, 104.5, 10),     // gap [100, 102]
+        mk(8 * 60_000, 104.5, 105, 103, 104, 10),     // does not reach the gap
+        mk(9 * 60_000, 104, 104.5, 101.5, 103, 10),   // dips to 101.5 → 25% into the gap
+        mk(10 * 60_000, 103, 103.5, 102.5, 103, 10),
+        mk(11 * 60_000, 103, 103.2, 102.8, 103, 10),
+    ];
+    const imbs = imb.readImbalances(imbTape, 1);
+    ok('imbalance: the constructed FVG is sized/displaced and reads partial fill at 25%',
+        imbs !== null && imbs.length === 1 && imbs[0].direction === 'bullish'
+        && Math.abs(imbs[0].top - 102) < 1e-9 && Math.abs(imbs[0].bottom - 100) < 1e-9
+        && imbs[0].displacementAtr === 3 && imbs[0].fill === 'partial'
+        && Math.abs(imbs[0].fillPct - 0.25) < 1e-9,
+        imbs && JSON.stringify(imbs));
+    ok('imbalance: a gap below the size or displacement floor is excluded, not reported',
+        (() => {
+            const weak = [
+                ...fillers,
+                mk(5 * 60_000, 100, 100, 99.5, 99.8, 10),
+                mk(6 * 60_000, 100.1, 100.6, 100.05, 100.5, 10), // body 0.5×ATR, gap 0.2 — both floors fail
+                mk(7 * 60_000, 100.5, 100.9, 100.2, 100.8, 10),
+                mk(8 * 60_000, 100.8, 101, 100.4, 100.6, 10),
+                mk(9 * 60_000, 100.6, 100.8, 100.3, 100.5, 10),
+                mk(10 * 60_000, 100.5, 100.7, 100.4, 100.6, 10),
+                mk(11 * 60_000, 100.6, 100.8, 100.5, 100.7, 10),
+            ];
+            return imb.readImbalances(weak, 1)?.length === 0;
+        })());
+
+    // zonesCore — two swing highs 0.3 apart cluster into one supply zone; a
+    // monotonic ramp gives a premium range read.
+    const zn = loadModule('src/services/market/zonesCore');
+    const zoneTape = [];
+    for (let i = 0; i < 40; i++) {
+        // oscillate between ~8 and ~12 with double tops at 10.0 (idx2) and 10.3 (idx6)
+        const h = i === 2 ? 10 : i === 6 ? 10.3 : i === 10 ? 11 : i === 14 ? 9 : 9.5;
+        const l = i === 4 ? 8 : i === 8 ? 8.2 : i === 12 ? 8.4 : i === 16 ? 8.6 : (i % 2 ? 8.9 : 9.1);
+        zoneTape.push(mk(i * 60_000, (h + l) / 2, Math.max(h, l + 0.1), l, (h + l) / 2, 5));
+    }
+    const zonesRead = zn.readSrZones(zoneTape, 1);
+    ok('zones: pivots within the cluster tolerance merge into ONE touch-counted supply zone',
+        zonesRead !== null && zonesRead.zones.some(z =>
+            z.kind === 'supply' && z.touches >= 2 && Math.abs(z.top - 10.3) < 0.35 && Math.abs(z.bottom - 10) < 0.35),
+        zonesRead && JSON.stringify(zonesRead.zones));
+    ok('zones: a thin window or flat ATR refuses rather than zeroing',
+        zn.readSrZones(zoneTape.slice(0, 10), 1) === null && zn.readSrZones(zoneTape, 0) === null);
+
+    // wyckoffCore — a 2-wide range over 45 bars, then a spring under the low
+    // on 2.5× volume as the NEWEST completed bar (the range excludes it — a
+    // range that included its own sweep could never see a spring), and a
+    // forming tail so the sweep survives the closed-only slice.
+    const wy = loadModule('src/services/market/wyckoffCore');
+    const wyTape = [];
+    for (let i = 0; i < 45; i++) {
+        const up = i % 2 === 0;
+        wyTape.push(mk(i * 3_600_000, up ? 100 : 102, up ? 102 : 102.2, up ? 99.8 : 100, up ? 102 : 100, 10));
+    }
+    // spring bar: wick under 99.8, close back inside, 2.5× median volume
+    wyTape.push(mk(45 * 3_600_000, 100, 101, 99.0, 100.8, 25));
+    wyTape.push(mk(46 * 3_600_000, 100.8, 101.2, 100.2, 101, 10)); // forming tail
+    const wyRead = wy.readWyckoff(wyTape, 1);
+    const wySpring = wyRead?.events.find(e => e.kind === 'spring');
+    ok('wyckoff: the range qualifies and the sweep-with-volume reads a MEDIUM-confidence spring',
+        wyRead !== null && wyRead.range !== null && wySpring !== undefined
+        && wySpring.confidence === 'medium' && wySpring.volumeRatio >= 1.2
+        && wyRead.bias === 'accumulative',
+        wyRead && JSON.stringify(wyRead.events));
+    // The same shape WITHOUT volume stays a LOW-confidence candidate.
+    const wyTapeQuiet = wyTape.slice(0, 45).concat([
+        mk(45 * 3_600_000, 100, 101, 99.0, 100.8, 10),
+        mk(46 * 3_600_000, 100.8, 101.2, 100.2, 101, 10),
+    ]);
+    const wyQuiet = wy.readWyckoff(wyTapeQuiet, 1);
+    const quietSpring = wyQuiet?.events.find(e => e.kind === 'spring');
+    ok('wyckoff: a spring without the volume condition is flagged LOW, never upgraded',
+        quietSpring !== undefined && quietSpring.confidence === 'low',
+        wyQuiet && JSON.stringify(quietSpring));
+
+    // riskStateCore — hand-checked heat, light, and half-Kelly.
+    const rk = loadModule('src/services/market/riskStateCore');
+    const tradeOf = (id, coin, direction, outcome, realizedR, ts) => ({
+        id, analysis: {
+            coinName: coin, direction,
+            entryPoints: [{ price: '100' }], stopLoss: '99', takeProfit: [{ price: '103' }],
+        }, outcome, realizedR, timestamp: ts,
+    });
+    const openToday = Date.UTC(2026, 10, 5, 12);
+    const riskRows = [
+        tradeOf('o1', 'BTCUSDT', 'Long', 'PENDING', undefined, new Date(openToday).toISOString()),
+        tradeOf('o2', 'BTCUSDT', 'Short', 'PENDING', undefined, new Date(openToday).toISOString()),
+        tradeOf('o3', 'ETHUSDT', 'Long', 'PENDING', undefined, new Date(openToday).toISOString()),
+    ];
+    for (let i = 0; i < 20; i++) riskRows.push(tradeOf(`w${i}`, 'BTCUSDT', 'Long', 'WIN', 1.0, new Date(openToday - (i + 1) * 86_400_000).toISOString()));
+    for (let i = 0; i < 5; i++) riskRows.push(tradeOf(`l${i}`, 'BTCUSDT', 'Long', 'LOSS', -1.0, new Date(openToday - (i + 31) * 86_400_000).toISOString()));
+    const riskRead = rk.readRiskState(riskRows, openToday);
+    ok('risk: open plans group by coin and flag the correlated pair',
+        riskRead.open.count === 3 && riskRead.open.correlated === true
+        && riskRead.open.byCoin.find(c => c.coin === 'BTC')?.count === 2,
+        riskRead && JSON.stringify(riskRead.open.byCoin));
+    ok('risk: 20W×1R / 5L×−1R gives winRate 0.8, payoff 1, half-Kelly 30%',
+        riskRead.kelly.available === true && Math.abs(riskRead.kelly.winRate - 0.8) < 1e-9
+        && Math.abs(riskRead.kelly.fullKelly - 0.6) < 1e-9
+        && Math.abs(riskRead.kelly.halfKellyPct - 30) < 1e-9,
+        riskRead && JSON.stringify(riskRead.kelly));
+    ok('risk: the Kelly ceiling refuses under 20 closed rows, with the reason',
+        (() => {
+            const thin = rk.readRiskState(riskRows.slice(0, 3 + 10), openToday);
+            return thin.kelly.available === false && typeof thin.kelly.reason === 'string';
+        })());
+    ok('risk: a −2.5R week lights yellow against the declared threshold',
+        (() => {
+            // five −0.5R losses inside the current week → −2.5R ≤ yellow(−2), > red(−4)
+            const lossy = riskRows.map((t, i) => (i >= 3 && i < 8)
+                ? tradeOf(t.id, 'BTCUSDT', 'Long', 'LOSS', -0.5, new Date(openToday - i * 3_600_000).toISOString())
+                : t);
+            const lit = rk.readRiskState(lossy, openToday, { yellowR: -2, redR: -4 });
+            return lit.drawdown.weekR === -2.5 && lit.drawdown.light === 'yellow';
+        })());
+
+    // drawableLevelsFor — the drawer's no-drift contract: the prices that
+    // reach the chart ARE the computed prices, bit for bit.
+    const deep = 104.123456789;
+    const profSet = adapter.drawableLevelsFor('volume_profile', { values: { poc: deep, value_area_high: 106.5, value_area_low: 103.25 } });
+    ok('drawable: the POC price passes through EXACTLY — no restatement, no rounding drift',
+        profSet !== null && profSet.hlines.find(h => h.label === 'POC')?.price === deep,
+        profSet && JSON.stringify(profSet.hlines));
+    ok('drawable: the value area draws as lines AND a zone, from the same numbers',
+        profSet !== null && profSet.zones.length === 1
+        && profSet.zones[0].top === 106.5 && profSet.zones[0].bottom === 103.25);
+    ok('drawable: the items filter keeps only the asked labels',
+        (() => {
+            const filtered = adapter.drawableLevelsFor('volume_profile', { values: { poc: deep, value_area_high: 106.5, value_area_low: 103.25 } }, ['POC']);
+            return filtered !== null && filtered.hlines.length === 1 && filtered.hlines[0].label === 'POC' && filtered.zones.length === 0;
+        })());
+    ok('drawable: filled FVGs are NOT drawn — an unfilled gap is the tradable one',
+        (() => {
+            const set = adapter.drawableLevelsFor('imbalances', { values: { gaps: [
+                { direction: 'bullish', top: 102, bottom: 100, fill: 'untouched' },
+                { direction: 'bearish', top: 99, bottom: 97, fill: 'filled' },
+            ] } });
+            return set !== null && set.zones.length === 1 && set.zones[0].top === 102;
+        })());
+    ok('drawable: every P0/P1 level tool is named drawable, and an unknown tool is refused',
+        ['volume_profile', 'naked_pocs', 'vwap', 'auction_state', 'get_key_levels', 'swing_structure', 'liquidity', 'imbalances', 'sr_zones', 'wyckoff_events']
+            .every(t => adapter.DRAWABLE_TOOLS.includes(t))
+        && adapter.drawableLevelsFor('trade_math', { values: {} }) === null);
+    ok('drawable: a null-values envelope (unavailable tool) draws nothing',
+        adapter.drawableLevelsFor('vwap', { values: null }) === null);
+
+    // derivativesCore — quadrants by construction, persistence-filtered
+    // divergence, declared bands. All thresholds ride the outputs.
+    const dv = loadModule('src/services/market/derivativesCore');
+    const pr = (xs) => xs.map((c, i) => ({ t: i * 3_600_000, close: c }));
+    const or = (xs) => xs.map((c, i) => ({ t: i * 3_600_000, oi: c }));
+    ok('derivatives: the four price/OI quadrants name who is acting',
+        dv.oiPriceState(pr([100, 101, 102]), or([1000, 1050, 1100])).quadrant === 'new_longs'
+        && dv.oiPriceState(pr([100, 99.5, 98]), or([1000, 1050, 1100])).quadrant === 'new_shorts'
+        && dv.oiPriceState(pr([100, 101, 102]), or([1000, 950, 900])).quadrant === 'short_covering'
+        && dv.oiPriceState(pr([100, 99.5, 98]), or([1000, 950, 900])).quadrant === 'long_liquidation');
+    ok('derivatives: inside the declared deadband the quadrant is flat, not forced',
+        dv.oiPriceState(pr([100, 100.02, 100.05]), or([1000, 1000, 1000])).quadrant === 'flat');
+    const oiLong = dv.oiPriceState(pr(Array.from({ length: 25 }, (_, i) => 100)), or(Array.from({ length: 25 }, (_, i) => 1000 + i * 10)));
+    ok('derivatives: OI change over the standard horizons matches the hand arithmetic',
+        oiLong !== null && oiLong.oiChange['24h'] === 24 && Math.abs(oiLong.oiChange['4h'] - 3.33) < 0.01
+        && Math.abs(oiLong.oiChange['1h'] - 0.81) < 0.01,
+        oiLong && JSON.stringify(oiLong.oiChange));
+    ok('derivatives: divergence needs PERSISTENCE — three aligned opposing bars, not one',
+        dv.oiPriceState(pr([100, 101, 102, 103]), or([1000, 990, 980, 970])).divergence.kind === 'price_up_oi_down'
+        && dv.oiPriceState(pr([100, 101, 102, 103]), or([1000, 990, 995, 980])).divergence.kind === null,
+        JSON.stringify(dv.oiPriceState(pr([100, 101, 102, 103]), or([1000, 990, 995, 980])).divergence));
+    ok('derivatives: funding percentile, declared extreme floor, and drift',
+        (() => {
+            const hist = Array.from({ length: 8 }, (_, i) => ({ t: i * 28_800_000, rate: 0.0001 }));
+            const spiky = dv.fundingState(hist, 0.0008, pr([100, 101, 102]), null, 0);
+            const mild = dv.fundingState(hist, 0.0001, pr([100, 101, 102]), null, 0);
+            return spiky.percentile === 100 && spiky.extreme === true && mild.extreme === false;
+        })());
+    ok('derivatives: price up while funding persistently falls reads the divergence; settlement time is honest',
+        (() => {
+            const hist = [
+                { t: 0, rate: 0.0003 }, { t: 1, rate: 0.0003 }, { t: 2, rate: 0.0003 },
+                { t: 3, rate: 0.0001 }, { t: 4, rate: 0.0001 }, { t: 5, rate: 0.0001 },
+            ];
+            const st = dv.fundingState(hist, null, pr([100, 101, 102]), 90 * 60_000, 0);
+            return st.divergence === 'price_up_funding_falling' && st.minutesToSettlement === 90;
+        })(), JSON.stringify(dv.fundingState([
+            { t: 0, rate: 0.0003 }, { t: 1, rate: 0.0003 }, { t: 2, rate: 0.0003 },
+            { t: 3, rate: 0.0001 }, { t: 4, rate: 0.0001 }, { t: 5, rate: 0.0001 },
+        ], null, pr([100, 101, 102]), 0, 0)));
+    ok('derivatives: positioning labels each ratio with or against the trend',
+        (() => {
+            const ps = dv.positioningState({ takerRatio: 1.4, topTraderRatio: 0.8, longShortRatio: 1.1 }, pr([100, 101, 102]));
+            return ps.trend === 'up' && ps.taker.read.includes('WITH the uptrend')
+                && ps.topTraders.read.includes('AGAINST the uptrend');
+        })());
+    ok('derivatives: liquidation intensity lands in the declared bands (<2 / 2–5 / >5%)',
+        dv.liquidationRisk({ liquidationsUsd: 1500, oiUsd: 100_000, dominantSide: 'longs' }).band === 'normal'
+        && dv.liquidationRisk({ liquidationsUsd: 3000, oiUsd: 100_000, dominantSide: 'longs' }).band === 'stressed'
+        && dv.liquidationRisk({ liquidationsUsd: 6000, oiUsd: 100_000, dominantSide: 'shorts' }).band === 'cascade');
+    ok('derivatives: the RETIRED liquidation feed returns available:false with the honest reason — never "quiet"',
+        (() => {
+            const retired = dv.liquidationRisk({ liquidationsUsd: null, oiUsd: 100_000, dominantSide: null, unavailableReason: 'source_retired' });
+            return retired.available === false && retired.reason.includes('retired');
+        })());
+
+    // crossMarketCore — perfect mirrors give hand values.
+    const cm = loadModule('src/services/market/crossMarketCore');
+    const btcCloses = Array.from({ length: 31 }, (_, i) => 100 + i);
+    const mirror = btcCloses.map(c => c * 2); // alt = 2 × BTC: ratio pinned at 2
+    const mirrorRead = cm.btcRelative(mirror, btcCloses, null, 30);
+    ok('cross-market: an alt pinned at 2× BTC has ratio z 0, correlation 1, beta 1',
+        mirrorRead !== null && Math.abs(mirrorRead.ratioZScore) < 1e-9
+        && mirrorRead.correlationBtc === 1 && Math.abs(mirrorRead.betaBtc - 1) < 1e-9
+        && mirrorRead.ratioMomentumPct === 0,
+        mirrorRead && JSON.stringify({ z: mirrorRead.ratioZScore, c: mirrorRead.correlationBtc, b: mirrorRead.betaBtc }));
+    ok('cross-market: a flat alt against a falling BTC reads stretched (z > 1.5, positive momentum)',
+        (() => {
+            const flat = Array.from({ length: 31 }, () => 10);
+            const falling = Array.from({ length: 31 }, (_, i) => 130 - i);
+            const r = cm.btcRelative(flat, falling, null, 30);
+            return r !== null && r.ratioZScore > 1.5 && r.ratioMomentumPct > 20;
+        })());
+    ok('cross-market: a perfect inverse mirror correlates at −1',
+        (() => {
+            // alt[i+1] = alt[i]·(1 − rBTC[i]) — the EXACT return mirror (a
+            // linear 300−BTC is only approximately mirrored, and correlation
+            // on returns is precise enough to tell).
+            const inv = [100];
+            for (let i = 1; i < btcCloses.length; i++) {
+                const r = (btcCloses[i] - btcCloses[i - 1]) / btcCloses[i - 1];
+                inv.push(inv[i - 1] * (1 - r));
+            }
+            const r = cm.btcRelative(inv, btcCloses, null, 30);
+            return r !== null && r.correlationBtc !== null && r.correlationBtc < -0.99;
+        })());
+    ok('cross-market: the RS rank orders the set, ties keep the better rank',
+        (() => {
+            const ranks = cm.relativeStrengthRank('ALT', 2, [
+                { symbol: 'P1', windowReturnPct: 5 }, { symbol: 'P2', windowReturnPct: 1 }, { symbol: 'P3', windowReturnPct: -3 },
+            ]);
+            const alt = ranks.find(r => r.symbol === 'ALT');
+            return ranks.length === 4 && alt.rank === 2 && alt.setSize === 4
+                && ranks[0].symbol === 'P1' && ranks[3].symbol === 'P3';
+        })());
+
+    // playbooksCore — named detectors over composed reads. Each fixture hand-
+    // builds the context the adapters assemble, so the match's evidence and
+    // invalidation are checkable against the inputs.
+    const pb = loadModule('src/services/market/playbooksCore');
+    const mk2 = (time, o, h, l, c, v = 10) => mk(time, o, h, l, c, v);
+    const ctxOf = (over) => ({
+        candles: [], atr: 1, regime: null, structure: null, wyckoff: null, flow: null,
+        ib: null, failedExtension: null, rotation: null, dayOpen: null, profile: null,
+        sessionVwap: null, sweeps: [], keyLevels: [], ...over,
+    });
+    const emaVal = pb.emaSeries(Array.from({ length: 20 }, (_, i) => i + 1), 20);
+    ok('playbooks: the EMA seeds with the 20-bar SMA and steps once to the hand value',
+        emaVal.length === 1 && Math.abs(emaVal[0] - 10.5) < 1e-9
+        && (() => {
+            const two = pb.emaSeries(Array.from({ length: 21 }, (_, i) => i + 1), 20);
+            return two.length === 2 && Math.abs(two[1] - 11.5) < 1e-9; // 21·(2/21) + 10.5·(19/21)
+        })());
+
+    // Turtle Soup: a close over the 20-bar high, then the next bar back inside.
+    const tsCandles = [];
+    for (let i = 0; i < 23; i++) tsCandles.push(mk2(i * 60_000, 100, 100.5, 99.5, 100));
+    tsCandles.push(mk2(23 * 60_000, 100, 101.5, 99.8, 101));   // breakout bar
+    tsCandles.push(mk2(24 * 60_000, 100.2, 100.8, 100, 100.2)); // failure bar
+    const tsMatch = pb.scanPlaybooks(ctxOf({ candles: tsCandles, atr: 1 }))
+        .find(m => m.playbook === 'turtle_soup');
+    ok('playbooks: the failed 20-bar breakout fades SHORT with the breakout extreme as invalidation',
+        tsMatch !== undefined && tsMatch.side === 'short' && Math.abs(tsMatch.invalidation - 101.5) < 1e-9,
+        tsMatch && JSON.stringify(tsMatch));
+
+    // Failed IB extension: beyond the high, closed back inside → fade.
+    const ibCtx = ctxOf({
+        candles: Array.from({ length: 30 }, (_, i) => mk2(i * 60_000, 100, 100.4, 99.6, 100)),
+        atr: 1,
+        ib: { high: 100.5, low: 99.5, width: 1, widthAtr: 1, widthPercentile: 50, priorDaysUsed: 10 },
+        failedExtension: { side: 'above_ib_high', failed: true, maxExtensionAtr: 2.5, detail: 'extended 2.5×ATR beyond the IB high, closed back inside' },
+        dayOpen: 100,
+    });
+    const ibMatch = pb.scanPlaybooks(ibCtx).find(m => m.playbook === 'failed_ib_extension');
+    ok('playbooks: the failed IB extension fades toward the IB with the extension extreme as invalidation',
+        ibMatch !== undefined && ibMatch.side === 'short' && Math.abs(ibMatch.invalidation - 103) < 1e-9,
+        ibMatch && JSON.stringify(ibMatch));
+
+    // Wyckoff spring — only a MEDIUM-confidence event is a setup.
+    const springCandle = mk2(20 * 60_000, 100, 101, 98.5, 100.8, 25);
+    const wyCtx = ctxOf({
+        candles: (() => {
+            const cs = Array.from({ length: 30 }, (_, i) => mk2(i * 60_000, 100, 100.4, 99.6, 100));
+            cs[20] = springCandle;
+            return cs;
+        })(),
+        atr: 1,
+        wyckoff: {
+            range: { top: 102, bottom: 99.8, bars: 30, widthAtr: 1.2, medianVolume: 10 },
+            events: [{ kind: 'spring', time: 20 * 60_000, level: 99.8, volumeRatio: 2.5, confidence: 'medium', detail: 'swept under the range low and closed back inside on 2.5× median volume' }],
+            bias: 'accumulative',
+            thresholds: { maxWidthAtr: 3, minVolumeRatio: 1.2, sosDisplacementAtr: 1, rangeBars: 30 },
+            barsUsed: 31,
+            note: '',
+        },
+    });
+    const springMatch = pb.scanPlaybooks(wyCtx).find(m => m.playbook === 'wyckoff_spring');
+    ok('playbooks: the volume-confirmed spring tags LONG with the spring wick as invalidation',
+        springMatch !== undefined && springMatch.side === 'long' && Math.abs(springMatch.invalidation - 98.5) < 1e-9,
+        springMatch && JSON.stringify(springMatch));
+    ok('playbooks: a LOW-confidence spring candidate is NOT a setup',
+        (() => {
+            const quiet = { ...wyCtx, wyckoff: { ...wyCtx.wyckoff, events: [{ ...wyCtx.wyckoff.events[0], confidence: 'low' }] } };
+            return pb.scanPlaybooks(quiet).find(m => m.playbook === 'wyckoff_spring') === undefined;
+        })());
+
+    // Sweep + structure shift: sides must AGREE, and only confirmed/reclaimed.
+    const sweepCtx = ctxOf({
+        candles: Array.from({ length: 30 }, (_, i) => mk2(i * 60_000, 100, 100.4, 99.6, 100)),
+        atr: 1,
+        structure: { swings: [], labels: [], trend: 'downtrend', lastBreak: { kind: 'BOS', direction: 'bearish', level: 105, time: 0 }, barsUsed: 30 },
+        sweeps: [{ side: 'bearish', levelLabel: 'equal_levels', level: 110, extreme: 111, status: 'confirmed', sweepIndex: 3, confirmIndex: 4, barsElapsed: 5, reclaimed: true, structureBroken: true, confirmationLevel: 105, zone: { top: 111, bottom: 110 }, text: '' }],
+    });
+    const sweepMatch = pb.scanPlaybooks(sweepCtx).find(m => m.playbook === 'sweep_structure_shift');
+    ok('playbooks: a confirmed sweep whose side matches the structure break tags SHORT (high confidence)',
+        sweepMatch !== undefined && sweepMatch.side === 'short' && sweepMatch.confidence === 'high'
+        && Math.abs(sweepMatch.invalidation - 111) < 1e-9,
+        sweepMatch && JSON.stringify(sweepMatch));
+    ok('playbooks: a sweep AGAINST the structure break does not fire',
+        (() => {
+            const opposed = { ...sweepCtx, sweeps: [{ ...sweepCtx.sweeps[0], side: 'bullish' }] };
+            return pb.scanPlaybooks(opposed).find(m => m.playbook === 'sweep_structure_shift') === undefined;
+        })());
+
+    // Absorption reversal: a fresh absorption bar near a key level fades the
+    // absorbed side.
+    const absBar = mk2(29 * 60_000, 100, 100.6, 99.4, 100, 40);
+    const absCtx = ctxOf({
+        candles: (() => {
+            const cs = Array.from({ length: 30 }, (_, i) => mk2(i * 60_000, 100, 100.4, 99.6, 100));
+            cs[29] = absBar;
+            return cs;
+        })(),
+        atr: 1,
+        flow: { events: [{ time: 29 * 60_000, kind: 'absorption', side: 'buy', volumeZ: 2.4, detail: 'volume 2.4σ into a 0.2×ATR range', estimate: true }], windowBars: 60 },
+        keyLevels: [100],
+    });
+    const absMatch = pb.scanPlaybooks(absCtx).find(m => m.playbook === 'absorption_reversal');
+    ok('playbooks: buys absorbed at a key level tag SHORT with the bar high as invalidation',
+        absMatch !== undefined && absMatch.side === 'short' && Math.abs(absMatch.invalidation - 100.6) < 1e-9,
+        absMatch && JSON.stringify(absMatch));
+
+    // Trend pullback: trend regime ADX ≥ 30, close within 0.5 ATR of the
+    // 20 EMA, EMA slope still up → LONG.
+    const pullCloses = [];
+    for (let i = 0; i < 20; i++) pullCloses.push(100 + i * 0.5);
+    pullCloses.push(110, 110.5, 111, 111.5, 112);
+    pullCloses.push(110, 108.5, 107.5, 107.2, 107.1); // last close 0.4 off the EMA — inside 0.5×ATR, off the boundary
+    const pullCtx = ctxOf({
+        candles: pullCloses.map((c, i) => mk2(i * 60_000, c, c + 0.5, c - 0.5, c)),
+        atr: 1,
+        regime: {
+            regimeId: 'trend:normal:30', direction: 'trend', directionStrength: 45, efficiency: 0.7,
+            volatility: 'normal', atrPercentile: 50, bbwPercentile: 50, dwell: 20,
+            thresholds: { adxTrend: 25, adxRange: 20, efficiencyConfirm: 0.35, volHigh: 80, volCompressed: 20 },
+            barsUsed: 30,
+        },
+    });
+    const pullMatch = pb.scanPlaybooks(pullCtx).find(m => m.playbook === 'trend_pullback');
+    ok('playbooks: the Holy-Grail shape (ADX 45, close at the rising 20 EMA) tags LONG with the pullback swing as invalidation',
+        pullMatch !== undefined && pullMatch.side === 'long' && Math.abs(pullMatch.invalidation - 106.6) < 1e-9,
+        pullMatch && JSON.stringify(pullMatch));
+
+    ok('playbooks: a quiet context fires nothing — no match is a reading',
+        pb.scanPlaybooks(ctxOf({
+            candles: Array.from({ length: 30 }, (_, i) => mk2(i * 60_000, 100, 100.4, 99.6, 100)),
+            atr: 1,
+        })).length === 0);
+}
+
 // ─── report ────────────────────────────────────────────────────────────────
 const finishReport = () => {
     console.log(`contracts: ${passed} passed, ${failures.length} failed`);
@@ -3624,11 +3753,12 @@ const finishReport = () => {
         console.error('CONTRACT CHECK FAIL — a pinned contract broke; fix the module, not this file.');
         process.exit(1);
     }
-    console.log('CONTRACT CHECK OK — risk/reward math, retry classification, harness marks, notebook pressure, tool-pair compaction, AI-boundary coercion, the skill/memory authoring screens, the shared index budget, both policy tables (self-modification, goal tool narrowing), the desk tool budget, the kline row\'s PHT unit, the desk digest units, the skill outcome correction, the startup call gates, the insight store pin, the signal loop (resolver order, costs, gap fills, ledger, venue data), the chart tape study, the signal accuracy fold, the one skill format (audited, derived and boot-repaired), the journal-rules store, the post-mortem clause, the memory page export, the tracked position (signal adoption, ledger-wins resolution, exit order, gaps, excursions, capped path, independence, diagnosis queue), journal tracking (pending registration, settlement payload, plan-preserving merge, orphan handling), the post-mortem diagnosis (authoritative outcome, packet facts/absences, refusal audit, journal-note parse), the tentative skill path (three independent outcomes, the auto-demotion floor, the labelled + capped index), the candle shape gate, the truncated-answer continuation and the silent empty-round repair (budget can exceed a small caller ceiling, the second try drops thinking and tools, no notice over a recovered run) all hold.');
+    console.log('CONTRACT CHECK OK — risk/reward math, retry classification, harness marks, notebook pressure, tool-pair compaction, AI-boundary coercion, the import security scan, the shared index budget, both policy tables (self-modification, goal tool narrowing), the desk tool budget, the kline row PHT unit, the desk digest units, the startup call gates, the insight store pin, the signal loop (resolver order, costs, gap fills, ledger, venue data), the signal accuracy fold, the skill document (description, hash version, ledger-stripping migration, duplicate scan), the skill pen and its refusal text, the journal-rules store, the post-mortem clause, the memory page export, the raw-storage lists (no orphan, no half-migration), the tracked position (signal adoption, ledger-wins resolution, exit order, gaps, excursions, capped path, independence, diagnosis queue), journal tracking (pending registration, settlement payload, plan-preserving merge, orphan handling), the post-mortem diagnosis (authoritative outcome, packet facts/absences, refusal audit, journal-note parse), the candle shape gate, the truncated-answer continuation and the silent empty-round repair all hold.');
+
 };
 // The async blocks above settle in microtasks; the report waits for them so
 // their pass/fail counts land in this summary. A throw becomes a failure —
 // a crashed check must never print as a green one.
-Promise.resolve(asyncChecks)
-    .catch(e => { failures.push(`async checks threw: ${e instanceof Error ? e.message : String(e)}`); })
+checkSkillWrites()
+    .catch(e => { failures.push(`skill runtime checks threw: ${e instanceof Error ? e.stack : String(e)}`); })
     .then(finishReport);
