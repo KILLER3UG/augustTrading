@@ -447,3 +447,30 @@ boot-probe green; smoke 17/17.
 was **1312 kB** (Nov 5 run): the lazy-import discipline this work introduced took ~200 kB out
 of the startup graph, and the remaining 9 kB is the new tools' schema text (O-59's domain).
 The fix is the registered O-146 lazy-import work, not a ceiling raise — ratchets go down.
+
+## 14. O-146 closed; the deletion pass (2026-11-07)
+
+**The startup graph.** The four eager modules that pulled the desk whale into the entry
+(`GenericAnalysisService`, `toolTurn`, `chatSurfaceTurn` for one predicate, `chatTurnRunner`
+for the chart-action schemas) now read the light pieces from
+`services/analysis/deskToolShared.ts` — the market-read name sets, `deskToolsMandateFor` +
+`DESK_TOOLS_PROMPT`, `TEXT_TOOL_FALLBACK_PROMPT`, `resolveDefaultSymbol`,
+`CHART_ACTION_TOOL_DEFS` — and the whale itself (`DeskToolsService`, 168 kB built) plus the
+hybrid packet machinery load dynamically on the first tool turn. Entry chunk: **1312 kB →
+955.61 kB built**; the ratchet follows in the same change, **1100 → 1000** (the stale-floor
+rule demands the ceiling move with the build, and 955 leaves O-59's schema tax room to
+bind). `render-probe` flagged a stale-model banner miss on the first post-change run —
+machine load (gates.md rule 3), not the refactor: the banner is a synchronous memo the
+change never touched, and the probe is green on an idle machine.
+
+**The deletion pass the owner asked for, done honestly.** The repo has NO unit-test files
+(no `tests/`, no `*.test.*`) — `scripts/check-contracts.cjs` IS the test suite, the curated
+minimum the 2026-10-23 ruling produced, and its 548 assertions each pin a behavior no other
+gate reaches; five of them caught real bugs in this work alone (the fraction-vs-percent
+skip-everything, the 0–100 `positionPct`, the self-sweeping wyckoff range, the damped effort
+baseline, the unmirrored-gap fixture). The genuinely dead weight removed: `scripts/test-candle-history.ts`
+(61 lines — unwired, network-hitting, superseded by family 36 + `tool-smoke`), one
+constant-restating assertion in the drawer tests, a duplicated header comment, and
+`.qoder/` gitignored. 62 lines out; every bug-catching fixture stays. The bigger LOC
+reduction had already landed: the owner's cluster commit (268k lines) and this work's
+lazy-chunk split, which moved code out of the startup graph rather than out of the repo.
