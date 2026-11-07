@@ -2,21 +2,20 @@
  * Pipeline stage module — trader-notebook memory context assembly.
  *
  * Extracted verbatim from useAnalysisPipeline's send path: everything the seat
- * sees from the notebook for THIS setup (the matched skill's index line, the
- * profile memory index, bot memory, similar-setups track record, regime
- * weighting, loss-priming rows), each under its own budget. Pure given its
- * inputs, so it is unit-testable without mounting the hook.
+ * sees from the notebook for THIS setup (the matched skill's index line, bot
+ * memory, similar-setups track record, regime weighting, loss-priming rows),
+ * each under its own budget. Pure given its inputs, so it is unit-testable
+ * without mounting the hook.
  */
 
 import { extractLessonFromPostMortem } from '../../services/learning/MemoryFilesService';
 import { mineCoinFromPrompt, mineDirectionFromPrompt, minePatternFromPrompt } from '../../utils/patternMining';
 import { getMemoryFilesContext } from '../../services/learning/MemoryRetrievalService';
-import { buildProfileMemoryIndex } from '../../services/learning/profileMemory';
-import { indexBudgetFor } from '../../utils/promptIndexBudget';
 import { listRetrievedMemorySources, type MemoryRetrievalQuery, type RetrievedMemorySource } from '../../services/learning/MemoryRetrievalService';
 import { getBotMemoryContext } from '../../services/bots/BotMemoryService';
 import { BOT_MEMORY_TOTAL_CHAR_BUDGET } from '../../services/bots/botMemoryBudget';
 import { clipNote } from '../../utils/harnessMarks';
+import { baseOf } from '../../utils/symbol';
 import { buildSimilarSetupsContext, buildRegimeWeightingContext } from '../../services/learning/SetupMemoryService';
 import type { HybridDataPacket } from '../../services/analysis/HybridIntelligenceService';
 import type { LoggedTrade } from '../../types';
@@ -41,7 +40,9 @@ export interface PipelineMemoryContext {
     pendingDirection: 'Long' | 'Short' | 'Neutral';
     pendingPattern?: string;
     botMemoryContext: string;
-    /** Analyst-audience notebook slice — the one retrieval depth a seat gets. */
+    /** Analyst-audience notebook slice — the one retrieval depth a seat gets.
+     *  The profile memory index is NOT part of this slice; it rides the seat
+     *  prompt (`surfacePromptWith`), which is the always-on carrier. */
     memoryFilesContext: string;
     memoryRetrieved: RetrievedMemorySource[];
     similarSetupsContext: string;
@@ -59,6 +60,38 @@ export interface PipelineMemoryContext {
     asOfMs?: number;
 }
 
+/** Render the loss-priming rows as the prompt block: the trader's own recent
+ *  closed outcomes on this setup, newest first, one line each.
+ *
+ *  Exported and pure because the rows are this stage's data and the prompt
+ *  dialect is this stage's too — a second formatter elsewhere would be a
+ *  second source for the same block. Empty when there is nothing to say. */
+export const formatLossPrimingContext = (
+    rows: PipelineMemoryContext['lossPrimingRows'],
+): string => {
+    const shortDate = (iso?: string): string => {
+        if (!iso) return '';
+        const ms = Date.parse(iso);
+        return Number.isFinite(ms)
+            ? new Date(ms).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+            : '';
+    };
+    const lines = rows.map(r => {
+        const head = [shortDate(r.timestamp), r.coin ?? '?', r.direction ?? '?', r.outcome ?? '']
+            .filter(Boolean)
+            .join(' · ');
+        return r.keyLesson ? `- ${head} — ${r.keyLesson}` : `- ${head}`;
+    });
+    if (lines.length === 0) return '';
+    return [
+        ' **RECENT CLOSED TRADES ON THIS SETUP (your own logged outcomes, newest first):**',
+        ...lines,
+        '',
+        'These are REAL outcomes the user logged — let them check your direction and confidence.',
+        'They are context, not a veto: the current setup\'s own evidence always wins.',
+    ].join('\n');
+};
+
 export const assemblePipelineMemoryContext = async (
     effectiveInput: string,
     loggedTrades: LoggedTrade[],
@@ -71,15 +104,20 @@ export const assemblePipelineMemoryContext = async (
     /** Model context window (tokens) — threads to the notebook slice's
      *  budget. Omitted ⇒ default window, unchanged. */
     contextWindowTokens?: number,
-    /** The Settings memory switch. False strips the profile index from every
-     *  seat this assembly feeds — the deep pipeline used to read it
-     *  unconditionally and un-budgeted, so a trader who switched memory OFF
-     *  still had every stored fact riding a Full-analysis prompt. */
+    /** The Settings memory switch. Kept so the memory-OFF path strips BOTH
+     *  carriers: the seat prompt's profile index (`surfacePromptWith`) and
+     *  this stage's notebook slice — the `memoryOff` gate below. The profile
+     *  index itself is not in this bundle; it is the seat prompt's block (see
+     *  `memoryFilesContext` below). */
     memoryEnabled?: boolean,
 ): Promise<PipelineMemoryContext> => {
     const detectedLearningCoin = mineCoinFromPrompt(effectiveInput);
     const pendingDirection = mineDirectionFromPrompt(effectiveInput);
     const pendingPattern = minePatternFromPrompt(effectiveInput);
+    // Memory-OFF strips the notebook slice here AND the profile index in the
+    // seat prompt (`surfacePromptWith`); the switch is threaded so this stage
+    // keeps honouring the toggle it has always honoured.
+    const memoryOff = memoryEnabled === false;
 
     // TRADER NOTEBOOK: retrieve matching files, skills, similar trades
     // and rules for THIS setup — never dump the whole notebook.
@@ -142,14 +180,29 @@ export const assemblePipelineMemoryContext = async (
     // here as well — a second full retrieval per send whose result no consumer
     // ever read (it was returned and dropped), and the verdict slice before it
     // served a moderator that no longer exists: one model answers a send.
-    // The profile index was read unconditionally and with no budget, so this
-    // path ignored both the Settings switch and the window the same table sizes
-    // for every other seat. Both now come from the shared sources.
-    const profileMemoryIndex = memoryEnabled === false
+    //
+    // The profile memory index is NOT read here. It is the seat prompt's
+    // always-on block (`surfacePromptWith`), read fresh per turn under the SAME
+    // `indexBudgetFor` table, so sending a second copy in this bundle put the
+    // index into every analysis prompt twice — once in the seat prompt, once in
+    // `extraContext`. One source per concern: the seat prompt carries the
+    // profile index; this slice carries the setup-matched notebook material.
+    //
+    // The seat prompt's copy is the one to keep, and not only because it is
+    // always-on. Its line cap is sized by the ANSWERING model's window
+    // (`req.config.contextWindowTokens`), which is the model that reads it;
+    // this stage's copy was sized by the MEMORY model's window
+    // (`memoryConfig.contextWindowTokens`). The two tables agree at ≥200k (30
+    // lines) and can differ on a small local model, so the copies were not
+    // guaranteed identical — the seat's own window is the budget that applies
+    // to the prompt it is injected into.
+    //
+    // Memory-OFF strips BOTH carriers, as before: the seat prompt's block via
+    // its own `memoryEnabled` gate, and this notebook slice — memory content
+    // the toggle promises to withhold — via the gate below.
+    const memoryFilesContext = memoryOff
         ? ''
-        : buildProfileMemoryIndex(undefined, indexBudgetFor(contextWindowTokens ?? 200_000).memory);
-    const withProfile = (ctx: string): string => [profileMemoryIndex, ctx].filter(Boolean).join('\n\n---\n\n');
-    const memoryFilesContext = withProfile([getMemoryFilesContext(memoryQuery, loggedTrades, 'analyst', { runId, asOfMs, contextWindowTokens }), botMemoryContext].filter(Boolean).join('\n\n---\n\n'));
+        : [getMemoryFilesContext(memoryQuery, loggedTrades, 'analyst', { runId, asOfMs, contextWindowTokens }), botMemoryContext].filter(Boolean).join('\n\n---\n\n');
     const memoryRetrieved = listRetrievedMemorySources(memoryQuery, loggedTrades, 'analyst');
 
     // JOURNAL-DRIVEN ACCURACY (SetupMemoryService): before the analysts
@@ -169,9 +222,18 @@ export const assemblePipelineMemoryContext = async (
     // the debate seats recall their own losses on setups like this first.
     // Under a point-in-time cutoff, a lesson counts only once it was KNOWN
     // (post-mortem written), not merely once the trade was logged.
+    //
+    // Coin match compares BASE assets through the one anchored symbol helper
+    // (`utils/symbol` › `baseOf`). The journal stores the canonical pair
+    // (`coinName: plan.symbol`, e.g. "BTCUSDT") while the prompt mine yields a
+    // BARE ticker ("BTC"), so the old exact-string compare dropped the very
+    // rows this block exists to surface. "BTCUSDT" and "BTC" both read "BTC";
+    // a quote-only symbol like "USDC" is never mangled to "C".
     const lossPrimingRows = loggedTrades
         .filter(t => (t.outcome === 'WIN' || t.outcome === 'LOSS')
-            && (!detectedLearningCoin || t.analysis?.coinName?.toLowerCase() === detectedLearningCoin.toLowerCase())
+            && (!detectedLearningCoin
+                || (typeof t.analysis?.coinName === 'string'
+                    && baseOf(t.analysis.coinName) === baseOf(detectedLearningCoin)))
             && (pendingDirection === 'Neutral' || t.analysis?.direction === pendingDirection)
             && (asOfMs === undefined || Date.parse(t.postMortemCreatedAt ?? t.timestamp) <= asOfMs))
         .sort((a, b) => (b.timestamp || '').localeCompare(a.timestamp || ''))

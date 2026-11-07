@@ -12,7 +12,7 @@
  *    smarter. Zero AI cost.
  *
  * 2. `buildRegimeWeightingContext` — each model's win rate in the CURRENT
- *    market regime (plus overall), so the moderator can weight votes by who
+ *    market regime (plus overall), so the answering model can see who
  *    actually wins in this kind of market (ranging vs trending vs volatile).
  */
 
@@ -224,10 +224,10 @@ export interface RegimeModelStats {
 
 /**
  * Structured per-model win-rate stats split by regime, prioritized for the
- * CURRENT regime — the shared source for the moderator weighting prompt, the
- * team strip/dropdown win rates, and the learning-tab leaderboard. Only
- * models with ≥ minTrades overall are included. Empty when the journal is
- * too thin.
+ * CURRENT regime — the shared source for the regime-weighting prompt the
+ * answering model reads, the team strip/dropdown win rates, and the
+ * learning-tab leaderboard. Only models with ≥ minTrades overall are
+ * included. Empty when the journal is too thin.
  */
 export const computeRegimeModelStats = (
     trades: LoggedTrade[],
@@ -282,7 +282,8 @@ export const computeRegimeModelStats = (
 
 /**
  * Per-model win rate split by regime, prioritized for the CURRENT regime —
- * the moderator-weighting prompt. Empty string when the journal is too thin.
+ * the regime-weighting prompt the answering model reads. Empty string when
+ * the journal is too thin.
  */
 export const buildRegimeWeightingContext = (
     trades: LoggedTrade[],
@@ -304,7 +305,7 @@ export const buildRegimeWeightingContext = (
             return `- ${resolveName(r.key)} — ${current}: ${regimeCell} · overall ${r.totalWinRate.toFixed(0)}% (${r.total})`;
         }),
         '',
-        'INSTRUCTION: weight each analyst by their CURRENT-regime win rate when it has ≥3 trades; otherwise use their overall. This is the moderator tiebreaker.',
+        'INSTRUCTION: use the CURRENT-regime win rate as context for your own read — when it has ≥3 trades it is the most relevant sample of this regime; otherwise lean on the overall. There is no moderator weighting analysts; you are the one answering.',
     ];
     return lines.join('\n');
 };

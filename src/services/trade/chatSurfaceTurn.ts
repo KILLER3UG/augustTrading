@@ -200,6 +200,14 @@ export const surfacePromptWith = (mandate: string, where: string, opts: { memory
         // The Settings toggle is a PROMISE: memory off means no memory block —
         // profile, topics, all of it. The analysis pipeline honoured this; the
         // chat path read the store anyway until 2026-10-24.
+        //
+        // THIS is the ONE carrier of the profile memory index. The analysis
+        // pipeline's notebook slice (`assemblePipelineMemoryContext`) used to
+        // build a second copy into `extraContext`, so every analysis prompt
+        // carried these same lines twice. It is gone; the slice carries the
+        // setup-matched notebook material only, and this block keeps the whole
+        // always-on index — the seat prompt is on every path, memory-on and
+        // memory-off alike.
         memoryBlock = memoryEnabled ? buildProfileMemoryIndex(undefined, budget.memory) : '';
     } catch {
         memoryBlock = '';
@@ -256,6 +264,26 @@ const DESK_SPEAKER = 'desk';
  *  schedule sink (deleted 2026-10-24) wrote the SAME field on its row, and a
  *  second number there would mean one renderer trimming two ways. */
 export const MAX_LIVE_TOOL_LINES = 8;
+
+/** The retrieved-context block's character ceiling — the ONE budget for
+ *  `extraContext`, enforced where the block is built.
+ *
+ *  The caller orders its parts by decision relevance (coin+direction lessons
+ *  first, the broad notebook slice and the provider-accuracy table last), so
+ *  this cap only ever clips that broad tail — never the lessons that decide
+ *  THIS read.
+ *
+ *  12,000 chars ≈ 3,000 tokens at the app's conservative 4-chars-per-token
+ *  estimate: ~1.5% of a 200k window, ~9% of a 32k one, and only on turns that
+ *  actually retrieved context (a casual line with an empty journal pays
+ *  nothing). The old 6,000 sat BELOW the notebook slice's own allowance
+ *  (900 tokens ≈ 3,600 chars) plus the profile index and bot memory, so a
+ *  well-used journal had the bundle cut mid-lesson on every send — the
+ *  decision-relevant material was the first thing lost. Raised once, on
+ *  purpose: the value is the trader's own closed-trade lessons reaching the
+ *  model; the cost is a few dollars per thousand context-bearing turns at
+ *  $1–5 per million input tokens. */
+const EXTRA_CONTEXT_CHAR_CAP = 12_000;
 
 /**
  * The prompt for a Chat-surface turn, built the way `streamQuickResponse`
@@ -468,8 +496,8 @@ export const runChatSurfaceTurn = async (req: ChatSurfaceTurnRequest): Promise<T
     // a runaway retrieval cannot crowd out the chart.
     const extraContext = (req.extraContext ?? '').trim();
     const contextBlock = extraContext
-        ? `\n\n## What you already know about this trader\n${extraContext.slice(0, 6000)}${
-            extraContext.length > 6000 ? '\n… (retrieved context truncated)' : ''
+        ? `\n\n## What you already know about this trader\n${extraContext.slice(0, EXTRA_CONTEXT_CHAR_CAP)}${
+            extraContext.length > EXTRA_CONTEXT_CHAR_CAP ? '\n… (retrieved context truncated)' : ''
         }`
         : '';
     const systemText = req.requireTools

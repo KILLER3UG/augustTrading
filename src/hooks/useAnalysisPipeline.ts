@@ -935,14 +935,16 @@ export function useAnalysisPipeline(params: UseAnalysisPipelineParams) {
             // journal-driven accuracy blocks can join it.
             // TRADER NOTEBOOK stage (extracted): notebook slices, bot
             // memory, similar-setups record, regime weighting, loss priming.
-            const { assemblePipelineMemoryContext } = await import('./analysisPipeline/memoryContext');
+            const { assemblePipelineMemoryContext, formatLossPrimingContext } = await import('./analysisPipeline/memoryContext');
             const {
-                                detectedLearningCoin,
+                detectedLearningCoin,
                 pendingDirection,
                 pendingPattern,
                 memoryFilesContext,
-                                                                similarSetupsContext,
-                                                asOfMs: memoryAsOfMs,
+                similarSetupsContext,
+                regimeWeightingContext,
+                lossPrimingRows,
+                asOfMs: memoryAsOfMs,
             } = await assemblePipelineMemoryContext(
                 effectiveInput,
                 loggedTrades,
@@ -1010,15 +1012,28 @@ export function useAnalysisPipeline(params: UseAnalysisPipelineParams) {
 
             // Every retrieved block that used to be assembled into a local
             // `enhancedPrompt` and then THROWN AWAY — the sends below pass
-            // `promptToSend` — is collected here and handed to the turn, which
-            // puts it where a model reads guidance (the system prompt). The
-            // trader's own closed-trade lessons, skill-veto prose and notebook
-            // bodies were computed, logged, and never sent (the 2026-10-27 audit L-8).
+            // `promptToSend` — is collected here and handed to the DESK turn
+            // (`runChatSurfaceTurn`), which puts it where a model reads
+            // guidance (the system prompt). The bot-thread branch below takes
+            // NO context argument: bots are chat-only by design (stage 20
+            // ruling), so these blocks reach the desk path only. The trader's
+            // own closed-trade lessons, skill-veto prose and notebook bodies
+            // were computed, logged, and never sent (the 2026-10-27 audit L-8).
+            //
+            // THE ORDER IS THE BUDGET. `extraContext` is a PREFIX window — the
+            // turn keeps its front and cuts its tail — so whatever is pushed
+            // LAST is the first thing a cap removes. The order below is decision
+            // relevance for THIS read, highest first: the coin+direction-scoped
+            // lessons lead, and the broad notebook slice plus the provider
+            // accuracy table trail, because a generic accuracy ranking is worth
+            // less to one answer than the trader's own last loss on this setup.
             const contextParts: string[] = [];
-            if (memoryFilesContext) contextParts.push(memoryFilesContext);
-            if (similarSetupsContext) contextParts.push(similarSetupsContext);
-            if (learningInjection) contextParts.push(learningInjection);
-            // E7: the coin's last stored post-mortem rides the context bundle
+            // 1. Coin+direction-scoped recent closed-trade lessons (loss priming,
+            //    B4) — composed by the memory stage and read by nobody until now.
+            if (lossPrimingRows.length > 0) {
+                contextParts.push(formatLossPrimingContext(lossPrimingRows));
+            }
+            // 2. E7: the coin's last stored post-mortem rides the context bundle
             // (REFERENCE ONLY) — a lesson the tracked loop already earned is
             // invisible to an ordinary answer otherwise, and must not be
             // reachable only when the seat happens to emit a signal. The block
@@ -1031,6 +1046,16 @@ export function useAnalysisPipeline(params: UseAnalysisPipelineParams) {
                 const briefBlock = await diagnosisBriefBlock(briefCoin);
                 if (briefBlock) contextParts.push(briefBlock);
             }
+            // 3. The journal's own track record for this setup (win rate / EV).
+            if (similarSetupsContext) contextParts.push(similarSetupsContext);
+            // 4. The model's track record in the CURRENT regime — the other
+            //    block the memory stage composed and no consumer read.
+            if (regimeWeightingContext) contextParts.push(regimeWeightingContext);
+            // 5. The notebook slice (skills, bot memory).
+            if (memoryFilesContext) contextParts.push(memoryFilesContext);
+            // 6. Provider accuracy weighting — the moderator's tiebreaker, the
+            //    least coin-specific block, so it is the first to be cut.
+            if (learningInjection) contextParts.push(learningInjection);
             // ========== GATE KEEPER: Two-Stage Gate Scan ==========
             // The authoritative symbol is the one detected at the top of the
             // run: extractSymbolFromPrompt (canonical pair extraction), then
@@ -1046,6 +1071,10 @@ export function useAnalysisPipeline(params: UseAnalysisPipelineParams) {
             // Feed the user's closed trades + lessons back into the NEXT run
             // (TradingAgents/Reflexion loop): the model reasons with actual
             // outcomes for this ticker, not only generic extracted rules.
+            // Pushed last and unshifted to the FRONT: it leads the bundle, so a
+            // cap that cuts the tail never reaches it. (Its same-ticker rows
+            // overlap the loss-priming block below by design — ticker-scoped raw
+            // excerpts there, coin+direction-scoped distilled lessons here.)
             try {
                 const reflectionBlock = buildDecisionReflectionContext(loggedTrades, finalSymbol);
                 if (reflectionBlock) {
@@ -1120,7 +1149,10 @@ export function useAnalysisPipeline(params: UseAnalysisPipelineParams) {
                 // BOTS STAY CHAT-ONLY (stage 20 ruling). The roster
                 // answers with its persona over the plain transport;
                 // `useBotMailbox` and `groupRounds` are
-                // deliberately NOT moved onto the tool turn.
+                // deliberately NOT moved onto the tool turn. `extraContext`
+                // is built for the desk branch only — this transport takes no
+                // context argument, so the notebook blocks do not reach bot
+                // threads.
                 responseText = await streamQuickResponse(
                     provider.config,
                     promptToSend,
