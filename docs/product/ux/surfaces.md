@@ -78,7 +78,9 @@ Learning inherited the library default the two rows drew one screen, which the o
 **Owner refactor, 2026-11-06.** Tabs remain Skills, Memory and Health:
 
 1. **Skills** — document folders (`SKILL.md` plus optional support files). The trader can search,
-   read, edit, delete or import through `src/components/skills/SkillLibrary.tsx` › `SkillLibrary`;
+   read (the body renders as markdown), edit (a Write/Preview toggle over the same renderer, plus a
+   live hint for the suggested body headings), delete or import through
+   `src/components/skills/SkillLibrary.tsx` › `SkillLibrary`;
    the model uses `skill_index`, `skill_view` and `skill_write`. There are no candidate/confirmed/
    retired states, tentative switch, approvals, outcome scores or automatic skill writers.
    All skills are context, never deterministic predicates, vetoes or confidence caps.

@@ -54,6 +54,11 @@ Bundled scripts are stored, not executed.
 - `writeSkillFile` serves the model's `skill_write` tool and
   `src/components/skills/SkillLibrary.tsx` › `SkillLibrary`. Creates compose `name` + `description`
   frontmatter and a markdown body; updates preserve other author frontmatter.
+- **Body shape is guidance, not a gate:** the suggested headings
+  (`src/utils/skillFrontmatter.ts` › `SKILL_BODY_SECTIONS`) are named by the `skill_write` body
+  description and hinted live in the library editor
+  (`src/utils/skillFrontmatter.ts` › `missingSkillSections`); a save that skips one is never
+  refused — the containment duplicate scan stays the one deterministic refusal.
 - **Version checks:** `if_version` remains optional in the tool schema because creates need none.
   The current `writeSkillFile` requires a matching `ifVersion` for an existing target; omission or
   mismatch refuses that update. Library edits supply the token. This is a check on that write path,

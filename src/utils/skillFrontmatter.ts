@@ -35,6 +35,22 @@ export const scanSkillText = (text: string): Array<{ severity: ScanSeverity; wha
 /** The four role directories a skill folder may carry. */
 export const SKILL_SUPPORT_ROLES = ['references', 'templates', 'scripts', 'assets'] as const;
 
+/** The headings a skill body reads best with, in order. Guidance, not a gate:
+ *  nothing refuses a body that skips one — the containment duplicate scan is
+ *  the one deterministic refusal. The editor hint and the `skill_write` body
+ *  description both name these, from this one list. */
+export const SKILL_BODY_SECTIONS = ['When to use', 'Steps', 'Pitfalls', 'Verification'] as const;
+
+/** The suggested headings a body does not have yet, read off its `## `
+ *  headings case-insensitively (closing hashes tolerated). */
+export const missingSkillSections = (body: string): string[] => {
+    const present = new Set<string>();
+    for (const match of (body || '').matchAll(/^#{1,6}[ \t]+(.+?)[ \t]*#*[ \t]*$/gm)) {
+        present.add(match[1].trim().toLowerCase());
+    }
+    return SKILL_BODY_SECTIONS.filter(section => !present.has(section.toLowerCase()));
+};
+
 /** How many siblings one URL import will fetch. */
 export const SKILL_SUPPORT_REF_MAX = 12;
 

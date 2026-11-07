@@ -31,7 +31,7 @@ import {
     withNotebookWriteLock,
 } from './MemoryFilesService';
 import { getActiveUsername } from '../../utils/activeUser';
-import { SKILL_SUPPORT_ROLES } from '../../utils/skillFrontmatter';
+import { missingSkillSections, SKILL_BODY_SECTIONS, SKILL_SUPPORT_ROLES } from '../../utils/skillFrontmatter';
 import type { MemoryFile } from '../../types';
 
 export const SKILL_FOLDER = 'skills';
@@ -43,8 +43,10 @@ export const SKILL_NAME_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 /** Support directories a skill folder may carry, in the order Claude lists them.
  *  The list lives in `utils/skillFrontmatter` (the utils layer owns the shared
  *  vocabulary, and a util may not import a service) and is re-exported here so
- *  the folder shape has one owner, not two copies that can drift. */
-export { SKILL_SUPPORT_ROLES };
+ *  the folder shape has one owner, not two copies that can drift. Same for the
+ *  suggested body headings: the editor hint and the `skill_write` schema read
+ *  `SKILL_BODY_SECTIONS` / `missingSkillSections` from there. */
+export { missingSkillSections, SKILL_BODY_SECTIONS, SKILL_SUPPORT_ROLES };
 export type SkillSupportRole = typeof SKILL_SUPPORT_ROLES[number];
 
 /** Two skills whose descriptions/procedures overlap this much are the same

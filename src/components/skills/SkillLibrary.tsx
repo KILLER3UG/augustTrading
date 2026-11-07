@@ -15,8 +15,10 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
     deleteSkillFile,
     listSkillFiles,
+    missingSkillSections,
     parseSkillMarkdown,
     writeSkillFile,
+    SKILL_BODY_SECTIONS,
     type ParsedSkillMarkdown,
     type SkillFile,
 } from '../../services/learning/SkillFileService';
@@ -197,6 +199,13 @@ export const SkillLibrary: React.FC<SkillLibraryProps> = ({ initialSlug }) => {
     };
 
     const editing = draft !== null;
+
+    // Guidance, not a gate: the hint names the suggested headings the body
+    // does not have yet; a save without them is never refused.
+    const missingSections = useMemo(
+        () => (draft ? missingSkillSections(draft.body) : []),
+        [draft],
+    );
 
     return (
         <div className="flex h-full min-h-0 flex-col gap-3" data-testid="skill-library">
@@ -398,6 +407,13 @@ export const SkillLibrary: React.FC<SkillLibraryProps> = ({ initialSlug }) => {
                                         />
                                     )}
                                 </div>
+                                {missingSections.length > 0 && (
+                                    <p className="text-ui-dense text-amber-300/90" data-testid="skill-section-hint">
+                                        No {missingSections.map(s => `## ${s}`).join(', ')} heading yet — a skill reads
+                                        best with {SKILL_BODY_SECTIONS.map(s => `## ${s}`).join(', ')}. Saving without
+                                        them is fine.
+                                    </p>
+                                )}
                                 <p className="text-ui-dense text-zinc-600">
                                     This editor writes SKILL.md. Long material lives beside it —
                                     import the skill's folder to add <code>references/</code>, <code>templates/</code>,

@@ -9,6 +9,7 @@ import type { ProviderConfig } from '../../types/provider';
 import type { SkillWriteReview } from '../learning/SkillFileService';
 import type { Kline } from '../../types/message';
 import { getHarnessSettings } from '../../utils/harnessSettings';
+import { SKILL_BODY_SECTIONS } from '../../utils/skillFrontmatter';
 import { baseOf } from '../../utils/symbol';
 import { phtStamp } from '../../utils/timezone';
 import { compactKlineRow, fullKlineRow } from '../../utils/klineRows';
@@ -1520,7 +1521,7 @@ export const DESK_TOOL_DEFINITIONS: DeskToolDefinition[] = [
                     slug: { type: 'string', description: 'The skill slug. An existing slug updates that skill in place; a new one creates it. Omit to derive it from the name.' },
                     name: { type: 'string', description: 'Short display title, e.g. "Breakout retest". Required on create.' },
                     description: { type: 'string', description: 'What it does, then "Use this skill whenever <trigger phrases>. Do NOT use for <one exclusion>." This is the activation key and the duplicate scan reads it. Required.' },
-                    body: { type: 'string', description: 'The full SKILL.md body in markdown. Write the procedure a reader can follow. Required.' },
+                    body: { type: 'string', description: `The full SKILL.md body in markdown — the procedure a reader follows. Use these headings: ${SKILL_BODY_SECTIONS.map(s => `## ${s}`).join(', ')}. Required.` },
                     files: {
                         type: 'array',
                         items: {

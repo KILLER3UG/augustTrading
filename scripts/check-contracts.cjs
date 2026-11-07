@@ -1204,6 +1204,16 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
     ok('skill document: a duplicate is caught by the skill own words',
         dupes.length === 1 && dupes[0].slug === 'breakout-retest' && dupes[0].score >= sf.DUPLICATE_SCORE_MIN,
         JSON.stringify(dupes));
+    const missingAll = sf.missingSkillSections('Just prose, no headings at all.');
+    ok('skill document: a heading-less body is missing every suggested section',
+        missingAll.length === sf.SKILL_BODY_SECTIONS.length, JSON.stringify(missingAll));
+    const missingSome = sf.missingSkillSections(['## When to use', '', 'x holds.', '', '## steps', '', '1. one', ''].join('\n'));
+    ok('skill document: present headings (any case) are not missing',
+        JSON.stringify(missingSome) === JSON.stringify(['Pitfalls', 'Verification']), JSON.stringify(missingSome));
+    const desk = loadModule('src/services/analysis/DeskToolsService.ts');
+    const skillWrite = desk.DESK_TOOL_DEFINITIONS.find(d => d.function.name === 'skill_write');
+    ok('skill document: the skill_write schema asks the model for the same headings the editor hints',
+        !!skillWrite && sf.SKILL_BODY_SECTIONS.every(s => skillWrite.function.parameters.properties.body.description.includes(`## ${s}`)));
 })();
 
 // ─── 24. the journal-rules store: when + action, normalized on read/write ──
