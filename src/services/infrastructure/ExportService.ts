@@ -326,6 +326,10 @@ const RAW_LOCAL_STORAGE_PREFIXES: readonly string[] = [
     // a restored backup that silently resets every panel to its default is the
     // same lost-layout annoyance. Plain numeric strings; they round-trip.
     'right_panel_width_v1',
+    // Dock V1 tab mode ('all' | 'single'), written by
+    // components/agents/dock/dockModel.ts. A layout preference read straight
+    // from localStorage on mount, so it needs the same raw sweep as the widths.
+    'agents_dock_mode_v1',
     // The other dragged column (hooks/useColumnResize): the shell rail, in px.
     // Same reasoning — a restored backup that silently
     // resets it is lost layout, not lost data, but it is still the owner's
@@ -893,6 +897,7 @@ const RESTORABLE_PREFERENCE_KEY_PREFIXES: readonly string[] = [
     'nav_rail_width_v1',
     'nav_rail_expanded_px_v1',
     'right_panel_width_v1',
+    'agents_dock_mode_v1',
     // Shell / misc app state
     'harness_settings_v1',
     'book_drafts_seeded_v1',

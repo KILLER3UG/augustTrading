@@ -38,7 +38,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowUp, Bot, ChevronDown, Ellipsis, MessageSquare, Pencil, Paperclip, Pin, Plus, Search, StopIcon, Trash2, Users } from '../shared/Icons';
+import { ArrowUp, Bot, ChevronDown, Ellipsis, MessageSquare, Pencil, PanelRight, Paperclip, Pin, Plus, Search, StopIcon, Trash2, Users } from '../shared/Icons';
 import JumpToLatestFab, { JUMP_AWAY_PX } from '../shared/JumpToLatestFab';
 import { ModelFallbackBanner } from '../trade/panels/ChatComposer';
 import type { ProviderConfig } from '../../types/provider';
@@ -76,6 +76,7 @@ import { NAV_RAIL_EXPANDED_PX } from '../shell/shellChrome';
 import SidebarToggle from '../shell/SidebarToggle';
 import { ConversationGroups } from '../shell/ConversationGroups';
 import { conversationTitle } from '../../utils/conversationTitle';
+import AgentsDock from './dock/AgentsDock';
 import InlineVerdict from '../analysis/InlineVerdict';
 import TradeProposalCard, { TradeProposalLoggedRow } from '../trade/panels/TradeProposalCard';
 import { proposalStateOf, rememberProposalState } from '../../services/trade/proposalDisposition';
@@ -514,6 +515,10 @@ const AgentsView: React.FC<AgentsViewProps> = ({
     // Below md the rail is an overlay, not a column — at 320px a permanent
     // 42vw list left no readable transcript.
     const [railOpen, setRailOpen] = useState(false);
+    // Dock V1 — the right workspace is a peek, not a stored layout preference.
+    // The dock itself persists its width and its tab mode through the shared
+    // right-panel contract; whether it is on screen stays session state.
+    const [dockOpen, setDockOpen] = useState(false);
     // The sort toggle lived on the tab row this column no longer has; the
     // roster keeps its pinned-first order and its own inactive fold instead.
 
@@ -1163,7 +1168,12 @@ const AgentsView: React.FC<AgentsViewProps> = ({
                 )}
             </aside>
 
-            {/* ── Main pane ── */}
+            {/* ── Main pane + Dock V1 ───────────────────────────────────
+                `relative` anchors the right panel's hidden (out-of-flow)
+                state. The dock PUSHES the thread on desktop and goes
+                fullscreen below 1024px, so the centred column is never
+                squeezed to a sliver at the Electron floor of 800px. */}
+            <div className="relative flex min-h-0 flex-1">
             <section ref={paneRef} className="flex min-w-0 flex-1 flex-col bg-surface-page">
                 {/* The instrument bar. The timeframe row is the SAME component the
                     chart renders, over the same persisted selection, so a
@@ -1250,6 +1260,20 @@ const AgentsView: React.FC<AgentsViewProps> = ({
                                     </span>
                                 )}
                             </div>
+                            {/* Dock V1 — the ONE door to the right workspace.
+                                It lives in the header, never beside the symbol
+                                picker (the render gate pins that to the
+                                composer area). */}
+                            <button type="button" onClick={() => setDockOpen(v => !v)}
+                                aria-label={dockOpen ? 'Close workspace' : 'Open workspace'}
+                                aria-expanded={dockOpen}
+                                data-testid="agents-dock-toggle"
+                                title={dockOpen ? 'Close workspace' : 'Open files, charts and evidence'}
+                                className={`motion-press flex h-7 w-7 shrink-0 items-center justify-center rounded-control transition-colors ${
+                                    dockOpen ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-500 hover:bg-white/[0.06] hover:text-zinc-200'
+                                }`}>
+                                <PanelRight className="h-4 w-4" aria-hidden="true" />
+                            </button>
                         </div>
                         {/* The thread IS this surface. The charted form of the
                             desk is a different screen, reached from the pill
@@ -1595,6 +1619,14 @@ const AgentsView: React.FC<AgentsViewProps> = ({
                     </>
                 )}
             </section>
+            <AgentsDock
+                isOpen={dockOpen}
+                onClose={() => setDockOpen(false)}
+                symbol={sessionSymbol}
+                interval={sessionInterval}
+                onIntervalChange={setSessionInterval}
+            />
+            </div>
             {/* The agent's FULL card — the reader the launch list opens. It
                 mounts OUTSIDE the pane, because an overlay that mounts inside
                 the scroller is measured as the pane's own content. */}
