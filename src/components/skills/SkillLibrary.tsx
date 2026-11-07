@@ -23,6 +23,7 @@ import {
 import { importSkillFiles, readSkillFiles, fetchSkillFromUrl, type SkillFileRead, type SkillImportResult } from '../../services/learning/SkillImportService';
 import { subscribeMemoryFilesChanged } from '../../services/learning/MemoryFilesService';
 import Disclosure from '../shared/Disclosure';
+import MarkdownContent from '../shared/MarkdownContent';
 
 export interface SkillLibraryProps {
     /** Open this skill on mount (a deep link or a search result). */
@@ -57,6 +58,9 @@ export const SkillLibrary: React.FC<SkillLibraryProps> = ({ initialSlug }) => {
     const [fetching, setFetching] = useState(false);
     const [armed, setArmed] = useState<string | null>(null);
     const [note, setNote] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
+    // The editor body toggles between the raw SKILL.md text and its rendered
+    // markdown, so what is being written is what the reader will see.
+    const [preview, setPreview] = useState(false);
     const fileInput = useRef<HTMLInputElement>(null);
     const folderInput = useRef<HTMLInputElement>(null);
 
@@ -206,7 +210,7 @@ export const SkillLibrary: React.FC<SkillLibraryProps> = ({ initialSlug }) => {
                 />
                 <button
                     type="button"
-                    onClick={() => { setDraft(emptyDraft()); setSelected(null); setConflict(null); setNote(null); }}
+                    onClick={() => { setDraft(emptyDraft()); setSelected(null); setConflict(null); setNote(null); setPreview(false); }}
                     className="rounded-control border border-white/10 bg-zinc-800 px-3 py-1.5 text-ui-dense font-bold uppercase tracking-wider text-zinc-200 hover:border-white/20 hover:bg-zinc-700"
                 >
                     New skill
@@ -328,7 +332,7 @@ export const SkillLibrary: React.FC<SkillLibraryProps> = ({ initialSlug }) => {
                                     </>
                                 ) : (
                                     <>
-                                        <button type="button" onClick={() => current && setDraft(draftOf(current))} className="rounded-control border border-white/10 px-2 py-1 text-ui-dense text-zinc-300 hover:bg-white/5">Edit</button>
+                                        <button type="button" onClick={() => { if (current) { setDraft(draftOf(current)); setPreview(false); } }} className="rounded-control border border-white/10 px-2 py-1 text-ui-dense text-zinc-300 hover:bg-white/5">Edit</button>
                                         <button type="button" onClick={() => void remove()} className="rounded-control border border-rose-500/30 px-2 py-1 text-ui-dense text-rose-300 hover:bg-rose-500/10">Delete</button>
                                     </>
                                 )}
@@ -356,15 +360,44 @@ export const SkillLibrary: React.FC<SkillLibraryProps> = ({ initialSlug }) => {
                                         className="mt-1 w-full resize-y rounded-control border border-white/10 bg-zinc-950 px-2 py-1.5 text-ui-base text-zinc-100 focus:border-white/20 focus:outline-none"
                                     />
                                 </label>
-                                <label className="flex min-h-0 flex-1 flex-col text-ui-dense text-zinc-500">
-                                    SKILL.md body
-                                    <textarea
-                                        value={draft.body}
-                                        onChange={e => setDraft({ ...draft, body: e.target.value })}
-                                        placeholder={'## When to use\n\n## Steps\n\n1. …\n\n## Pitfalls\n\n## Verification'}
-                                        className="mt-1 min-h-[24vh] flex-1 resize-y rounded-control border border-white/10 bg-zinc-950 px-2 py-1.5 font-mono text-ui-dense text-zinc-100 focus:border-white/20 focus:outline-none"
-                                    />
-                                </label>
+                                <div className="flex min-h-0 flex-1 flex-col text-ui-dense text-zinc-500">
+                                    <div className="flex items-center justify-between gap-2">
+                                        <span>SKILL.md body</span>
+                                        <div className="flex gap-1" role="group" aria-label="Body view">
+                                            <button
+                                                type="button"
+                                                aria-pressed={!preview}
+                                                onClick={() => setPreview(false)}
+                                                className={`rounded-control border px-2 py-0.5 text-ui-2xs uppercase tracking-wider ${preview ? 'border-white/5 text-zinc-500 hover:bg-white/5' : 'border-white/20 bg-zinc-800 text-zinc-200'}`}
+                                            >
+                                                Write
+                                            </button>
+                                            <button
+                                                type="button"
+                                                aria-pressed={preview}
+                                                onClick={() => setPreview(true)}
+                                                className={`rounded-control border px-2 py-0.5 text-ui-2xs uppercase tracking-wider ${preview ? 'border-white/20 bg-zinc-800 text-zinc-200' : 'border-white/5 text-zinc-500 hover:bg-white/5'}`}
+                                            >
+                                                Preview
+                                            </button>
+                                        </div>
+                                    </div>
+                                    {preview ? (
+                                        <div
+                                            data-testid="skill-body-preview"
+                                            className="mt-1 min-h-[24vh] flex-1 overflow-y-auto rounded-control border border-white/10 bg-zinc-950 px-2 py-1.5"
+                                        >
+                                            <MarkdownContent content={draft.body} className="text-ui-dense text-zinc-100" />
+                                        </div>
+                                    ) : (
+                                        <textarea
+                                            value={draft.body}
+                                            onChange={e => setDraft({ ...draft, body: e.target.value })}
+                                            placeholder={'## When to use\n\n## Steps\n\n1. …\n\n## Pitfalls\n\n## Verification'}
+                                            className="mt-1 min-h-[24vh] flex-1 resize-y rounded-control border border-white/10 bg-zinc-950 px-2 py-1.5 font-mono text-ui-dense text-zinc-100 focus:border-white/20 focus:outline-none"
+                                        />
+                                    )}
+                                </div>
                                 <p className="text-ui-dense text-zinc-600">
                                     This editor writes SKILL.md. Long material lives beside it —
                                     import the skill's folder to add <code>references/</code>, <code>templates/</code>,
@@ -395,25 +428,36 @@ export const SkillLibrary: React.FC<SkillLibraryProps> = ({ initialSlug }) => {
                         ) : current && (
                             <div className="flex min-h-0 flex-1 flex-col gap-3">
                                 <p className="text-ui-dense text-zinc-400">{current.description || 'No description'}</p>
-                                <pre className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words rounded-control border border-white/5 bg-zinc-950 p-3 font-mono text-ui-dense text-zinc-300">
-                                    {current.body || '(empty body)'}
-                                </pre>
+                                <div className="min-h-0 flex-1 overflow-y-auto rounded-control border border-white/5 bg-zinc-950 p-3 custom-scrollbar" data-testid="skill-body-reader">
+                                    <MarkdownContent content={current.body || '(empty body)'} className="text-ui-base leading-relaxed text-zinc-300" />
+                                </div>
                                 {current.bundled.length > 0 && (
                                     <div>
                                         <h4 className="text-ui-dense font-bold uppercase tracking-wider text-zinc-500">Bundled files</h4>
                                         <p className="text-ui-dense text-zinc-600">Text preview only. Scripts are never executed.</p>
                                         <ul className="mt-1 space-y-0.5">
-                                            {current.bundled.map(f => (
-                                                <li key={f.id} className="font-mono text-ui-dense text-zinc-400">
-                                                    <Disclosure
-                                                        summary={f.path ?? f.name}
-                                                        label={`Read ${f.path ?? f.name}`}
-                                                        summaryClassName="cursor-pointer rounded-control px-2 py-1 hover:bg-white/5"
-                                                    >
-                                                        <pre className="overflow-auto whitespace-pre-wrap break-words rounded-control border border-white/5 bg-zinc-950 p-3 text-zinc-300">{f.content || '(empty file)'}</pre>
-                                                    </Disclosure>
-                                                </li>
-                                            ))}
+                                            {current.bundled.map(f => {
+                                                // Markdown files read as markdown; anything
+                                                // else (scripts, assets) stays raw.
+                                                const isMarkdown = /\.(md|markdown)$/i.test(f.path ?? f.name);
+                                                return (
+                                                    <li key={f.id} className="font-mono text-ui-dense text-zinc-400">
+                                                        <Disclosure
+                                                            summary={f.path ?? f.name}
+                                                            label={`Read ${f.path ?? f.name}`}
+                                                            summaryClassName="cursor-pointer rounded-control px-2 py-1 hover:bg-white/5"
+                                                        >
+                                                            {isMarkdown ? (
+                                                                <div className="max-h-[60vh] overflow-y-auto rounded-control border border-white/5 bg-zinc-950 p-3">
+                                                                    <MarkdownContent content={f.content || ''} className="text-ui-dense leading-relaxed text-zinc-300" />
+                                                                </div>
+                                                            ) : (
+                                                                <pre className="overflow-auto whitespace-pre-wrap break-words rounded-control border border-white/5 bg-zinc-950 p-3 text-zinc-300">{f.content || '(empty file)'}</pre>
+                                                            )}
+                                                        </Disclosure>
+                                                    </li>
+                                                );
+                                            })}
                                         </ul>
                                     </div>
                                 )}
