@@ -853,10 +853,9 @@ async function main() {
         check('the settled turn grew the usage ledger the Learning panel reads',
             ledgerAfter > ledgerBefore, `ledger bytes ${ledgerBefore} -> ${ledgerAfter}`);
 
-        // ── The sparse rail: ConversationGroups, no workspaces ───────────
-        // New chat + Ctrl K, Pinned (only when there are pinned rows), Recent
-        // (always). Rows: hollow dot, truncated title, mono age from
-        // workspaceAgeLabel. Counted, not sampled.
+        // ── The Analyze rail: chrome + pinned only, no Recent list ───────
+        // New chat + CtrlK stays; the Recent group is the Chat column's
+        // record now. No workspaces row, and no conversation rows here.
         const railShape = await page.evaluate(() => {
             const rows = [...document.querySelectorAll('[data-testid="conversation-row"]')];
             const ages = [...document.querySelectorAll('[data-testid="conversation-age"]')]
@@ -876,11 +875,9 @@ async function main() {
                 untitled: titles.filter(t => /^New chat/.test(t)).length,
             };
         });
-        check('the sparse rail lists each conversation by its first question, with a mono age',
-            railShape.rows >= 1
-            && railShape.ages === railShape.rows
-            && railShape.badAges.length === 0
-            && railShape.untitled === 0
+        check('the Analyze rail keeps New chat and lists no recent conversations',
+            railShape.rows === 0
+            && railShape.ages === 0
             && railShape.newChat
             && railShape.workspaces === 0
             && !railShape.addWorkspace,
@@ -1551,6 +1548,29 @@ async function main() {
         const afterReload = await agentRows();
         check('the conversation survives a reload', afterReload === 6, `${afterReload}/6 rows`);
 
+        // The record moved HERE. The same ConversationRow contract the Analyze
+        // rail used to carry is measured on the Chat column: every row titled
+        // by its first question, one mono age each, no "New chat" placeholders.
+        const chatRailShape = await page.evaluate(() => {
+            const rail = document.querySelector('[data-testid="agents-rail"]');
+            const rows = rail ? [...rail.querySelectorAll('[data-testid="conversation-row"]')] : [];
+            const ages = rail ? [...rail.querySelectorAll('[data-testid="conversation-age"]')]
+                .map(a => (a.textContent || '').trim()) : [];
+            const titles = rows.map(r => (r.textContent || '').replace(/\s+/g, ' ').trim());
+            return {
+                rows: rows.length,
+                ages: ages.length,
+                badAges: ages.filter(t => !/^(now|\d+[mhd])$/.test(t)),
+                untitled: titles.filter(t => /^New chat/.test(t)).length,
+            };
+        });
+        check('the Chat column lists each conversation by its first question, with a mono age',
+            chatRailShape.rows >= 1
+            && chatRailShape.ages === chatRailShape.rows
+            && chatRailShape.badAges.length === 0
+            && chatRailShape.untitled === 0,
+            JSON.stringify(chatRailShape));
+
         // ── Seeded verdict rows ────────────────────────────────────────
         // The live-chat phase never renders a verdict card, so this is the only
         // browser coverage of the decline explanation and of a stored row that
@@ -2073,36 +2093,28 @@ async function main() {
             check('the content bar brings the rail back at its stored width',
                 railRevived && railBack === railBefore, `${railBack}px (want ${railBefore})`);
 
-            // The duplicate Chats icon is gone on Analyze; hiding the
-            // conversation column moved to an icon after the RECENT heading.
-            // Prove the new icon actually puts the rail away and that the
-            // title-row expand button is still the way back.
+            // The duplicate Chats icon is gone on Analyze, and so is the
+            // in-column hide icon: the title-row toggle sits 40px from where
+            // that icon would land, so a second one read as a duplicate. The
+            // Analyze column keeps New chat and pinned rows only — no Recent
+            // list; the Chat column keeps both.
             const recent = await page.evaluate(() => {
                 const rail = document.querySelector('[data-testid="shell-rail"]');
-                const btn = document.querySelector('[data-testid="conversation-hide"]');
+                const list = document.querySelector('[data-testid="shell-conversations"]');
                 return {
                     chatsIcon: !!document.querySelector('[data-testid="shell-column-toggle"]'),
-                    inRail: !!btn && !!rail && rail.contains(btn),
+                    inColumnHide: !!rail?.querySelector('[data-testid="conversation-hide"]'),
+                    listMounted: !!list,
+                    recentHeading: !!list && [...list.querySelectorAll('span')]
+                        .some(s => (s.textContent || '').trim() === 'Recent'),
+                    newChat: !!document.querySelector('[data-testid="rail-new-chat"]'),
+                    headerToggle: !!document.querySelector('[data-testid="shell-rail-collapse"]'),
                 };
             });
-            check('the RECENT hide icon replaces the Chats icon on Analyze',
-                !recent.chatsIcon && recent.inRail, JSON.stringify(recent));
-            const hidePressed = await page.evaluate(() => {
-                const b = document.querySelector('[data-testid="conversation-hide"]');
-                if (!b) return false;
-                b.click();
-                return true;
-            });
-            await sleep(450);
-            const hiddenByRecent = await page.evaluate(() => ({
-                rail: !!document.querySelector('[data-testid="shell-rail"]'),
-                expand: !!document.querySelector('[data-testid="nav-rail-toggle-header"]'),
-            }));
-            check('the RECENT icon closes the conversation sidebar and leaves a way back',
-                hidePressed && !hiddenByRecent.rail && hiddenByRecent.expand,
-                JSON.stringify(hiddenByRecent));
-            await page.evaluate(() => document.querySelector('[data-testid="nav-rail-toggle-header"]')?.click());
-            await sleep(500);
+            check('the Analyze rail keeps New chat, no Recent list and no duplicate hide icon',
+                !recent.chatsIcon && !recent.inColumnHide && recent.listMounted
+                    && !recent.recentHeading && recent.newChat && recent.headerToggle,
+                JSON.stringify(recent));
 
             // Ctrl/Cmd+B belongs to the one column that still collapses: the
             // Chat sidebar. The rail is gone, so press it where a column exists —

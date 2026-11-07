@@ -109,12 +109,14 @@ the trader's journal in bulk; treat it accordingly.
 
 - **One full-height rail, two columns** (mock v3): a 48px icon strip — Analyze, Agents, then
   Journal, Learning and the account — beside the conversation column: **New chat** (Ctrl/Cmd+K
-  still works, but no keycap badge is printed), **Pinned**, **Recent** (a small hide icon sits
-  after the heading; a row shows the side of the thread's latest
-  signal — `Long`/`Short` — read from the ledger), and the account row
-  (`name · Signed in · local-first`) at its foot. No Search row and no mode switch in the column:
-  the rail owns the surfaces, the column owns the record, and the desk's search lives in the
-  Agents column's own field.
+  still works, but no keycap badge is printed), **Pinned** (only when rows are pinned), and the
+  account row (`name · Signed in · local-first`) at its foot. On **Analyze** the column is chrome
+  and pinned rows only — no Recent list and no in-column hide icon (the title-row toggle is 40px
+  away, so a second icon would duplicate it). On the **Chat**
+  surface the column also carries **Recent** (a hide icon sits after the heading; a row shows the
+  side of the thread's latest signal — `Long`/`Short` — read from the ledger). No Search row and
+  no mode switch in the column: the rail owns the surfaces, the column owns the record, and the
+  desk's search lives in the Agents column's own field.
 - On the **Agents** surface the thread is CENTRED and the column starts closed — the rail's Chats
   icon (the ONLY surface that still shows it) opens `AgentsView`'s own column (conversations above
   the roster). Its Chats | Bots tab strip is DELETED: one scroll of sections.
@@ -133,7 +135,8 @@ the trader's journal in bulk; treat it accordingly.
   toggle left of "Chart AI" is labelled **Hide conversation** (Ctrl/Cmd+B) and flips to **Show
   conversation** while the rail is away; it stays on screen precisely because the rail has no
   edge to click. Inside the list, a small icon **after the RECENT heading** hides the conversation
-  column. The old Chats "Hide conversations" icon was removed from the icon rail on every surface
+  column; Analyze has no in-column copy, because the title-row toggle sits next to where it would
+  land. The old Chats "Hide conversations" icon was removed from the icon rail on every surface
   except Agents, where it is still the only control that reopens that surface's own column.
   `src/components/shell/SidebarToggle.tsx` › `SidebarToggle` ·
   `src/components/shell/ConversationGroups.tsx` › `ConversationGroups`

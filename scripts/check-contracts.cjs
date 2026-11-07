@@ -2456,7 +2456,7 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
         && /Hide conversation · Ctrl\+B/.test(toggle)
         && /Show conversation · Ctrl\+B/.test(toggle),
         'a collapsed rail is 0px: its control cannot live inside it');
-    ok('conversations: the Chats icon is Agents-only and hiding moved to RECENT',
+    ok('conversations: the Chats icon is Agents-only and the hide icon stays in the rail',
         /\{onToggleColumn && \(/.test(rail)
         && /conversation-hide/.test(read('src/components/shell/ConversationGroups.tsx'))
         && /onHideConversation=\{onCollapse\}/.test(rail)

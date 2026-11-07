@@ -4,7 +4,8 @@
  * It lives beside the content, runs the full height of the window and owns
  * every route that is not a conversation: the Analyze ⇄ Agents mode switch,
  * New chat, Search, the sparse conversation list (ConversationGroups —
- * Pinned only when there are pinned rows, Recent always), Journal,
+ * Pinned when there are pinned rows; Recent only off Analyze, where the
+ * chart sidebar keeps chrome + pinned rows instead of a history list), Journal,
  * Learning, Skills and the account. The old top-bar tab strip is
  * gone, so the rail is the only place navigation is repeated; the collapsed
  * fallback still rides the content bar (see `shared/Header` and `AgentsView`).
@@ -228,6 +229,10 @@ const ShellRail: React.FC<ShellRailProps> = ({
                         onDeleteConversation={onDeleteConversation}
                         onClearConversation={onClearConversation}
                         onHideConversation={onCollapse}
+                        // Analyze is the chart surface: its sidebar is chrome
+                        // plus pinned rows, not a history list. Recent
+                        // conversations live on the Chat surface's column.
+                        hideRecent={surface === 'trade'}
                     />
                     <AccountRow
                         expanded
