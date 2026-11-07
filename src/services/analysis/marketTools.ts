@@ -1598,3 +1598,46 @@ export const drawableLevelsFor = (
     }
     return { hlines: hlines.filter(h => h.price > 0), zones: zones.filter(z => z.top > 0 && z.bottom > 0) };
 };
+
+// ─── the O-46 decision snapshot ─────────────────────────────────────────
+// What the market computed at PRESENT time, attached to the proposal so the
+// card, the journal row and the training corpus read ONE snapshot. Null on
+// any failure — the dashes stay, which is honest.
+
+export interface DecisionSnapshot {
+    regimeId: string | null;
+    regimeText: string | null;
+    atr: number | null;
+    atrTf: string;
+    prevDayHigh: number | null;
+    prevDayLow: number | null;
+    sessionVwap: number | null;
+    capturedAt: string;
+}
+
+export const buildDecisionSnapshot = async (symbolInput: string, asofMs: number = Date.now()): Promise<DecisionSnapshot | null> => {
+    const symbol = normalizeSymbol(symbolInput);
+    try {
+        const candles = await fetchRecent(symbol, '1h', 100, asofMs);
+        const atr = atr14(candles);
+        if (candles.length < 30 || !(atr > 0)) return null;
+        const reg = regimeRead(candles);
+        const day = utcDayStart(asofMs);
+        const prevDay = candles.filter(c => c.time >= day - UTC_DAY_MS && c.time < day);
+        const prevHigh = prevDay.length >= 4 ? Math.max(...prevDay.map(c => c.high)) : null;
+        const prevLow = prevDay.length >= 4 ? Math.min(...prevDay.map(c => c.low)) : null;
+        const dayVwap = computeVwap(candles.slice(-24));
+        return {
+            regimeId: reg ? `${reg.direction}:${reg.volatility}` : null,
+            regimeText: reg ? `${reg.direction} / ${reg.volatility} volatility (ADX ${reg.directionStrength}, dwell ${reg.dwell})` : null,
+            atr,
+            atrTf: '1h',
+            prevDayHigh: prevHigh,
+            prevDayLow: prevLow,
+            sessionVwap: dayVwap ? dayVwap.vwap : null,
+            capturedAt: new Date(asofMs).toISOString(),
+        };
+    } catch {
+        return null;
+    }
+};
