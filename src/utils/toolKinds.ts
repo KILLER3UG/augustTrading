@@ -122,6 +122,7 @@ const BY_LABEL: Record<string, ToolKindInfo> = {
     's/r zones': { kind: 'compute', activity: 'Clustering S/R zones' },
     'wyckoff events': { kind: 'compute', activity: 'Detecting Wyckoff events' },
     'setup base rate': { kind: 'read', activity: 'Measuring the setup base rate' },
+    'playbook attribution': { kind: 'read', activity: 'Measuring playbook attribution' },
     'risk state': { kind: 'read', activity: 'Reading the risk state' },
     'derivatives state': { kind: 'read', activity: 'Reading the derivatives state' },
     'btc relative': { kind: 'compute', activity: 'Comparing against BTC' },
@@ -229,7 +230,7 @@ export const DESK_TOOL_NAMES: readonly string[] = [
     // The P1 family: structure/liquidity/imbalance/zone/wyckoff reads, and
     // the journal's own measured base rate and risk state.
     'swing_structure', 'liquidity', 'imbalances', 'sr_zones', 'wyckoff_events',
-    'setup_base_rate', 'risk_state',
+    'setup_base_rate', 'playbook_attribution', 'risk_state',
     // The P2 composites: derivatives positioning and the cross-market read
     // (the answer for assets without derivatives data), plus the family-H
     // playbook layer — named detectors over the same reads.

@@ -46,8 +46,10 @@ export interface PlaybookContext {
     keyLevels: number[];
 }
 
+import type { PlaybookId } from '../../types/playbook';
+
 export interface PlaybookMatch {
-    playbook: string;
+    playbook: PlaybookId;
     side: 'long' | 'short';
     confidence: 'low' | 'medium' | 'high';
     /** The price that proves the read wrong — every playbook carries one. */

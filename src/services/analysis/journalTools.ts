@@ -1,6 +1,6 @@
 /**
  * journalTools — the journal-reading half of the market-tools family:
- * `setup_base_rate`, `risk_state` and `meta_label`.
+ * `setup_base_rate`, `risk_state`, `meta_label` and `playbook_attribution`.
  *
  * These read the SAME rows the `get_trade_log` tool reads (the desk context's
  * `trades`), so a number here and a number there cannot disagree. Every rate
@@ -8,10 +8,11 @@
  * ceiling off ten is the kind of confident nonsense this task exists to end.
  *
  * Conditioning reads what the plan RECORDED at decision time: the O-46
- * snapshot's regime (`marketConditions.timeframeAlignment`). A row without it
- * is excluded from a conditioned bucket, never guessed into one — and the
- * coverage counts say how many rows were excluded for missing the snapshot,
- * so a thin bucket is never mistaken for a losing one.
+ * snapshot's regime (`marketConditions.timeframeAlignment`) and the
+ * `scan_playbooks` id `present_trade` stamps. A row without either is
+ * excluded from a conditioned bucket, never guessed into one — and the
+ * coverage counts say how many rows were excluded for missing the tag, so a
+ * thin bucket is never mistaken for a losing one.
  *
  * Envelope shape: the same `MarketToolEnvelope` the market tools return
  * (reused from marketTools), with `evidence_level: 'documented'` — these are
@@ -20,9 +21,10 @@
 
 import type { LoggedTrade } from '../../types/trade';
 import {
-    computeSetupClusterStats, clusterRows,
-    regimeIdOf, regimeIdMatches, type SetupClusterStats,
+    computeSetupClusterStats, summariseClusterRows, clusterRows,
+    regimeIdOf, regimeIdMatches, playbookIdOf, type SetupClusterStats,
 } from '../learning/setupClusterStats';
+import { PLAYBOOK_IDS, asPlaybookId } from '../../types/playbook';
 import { wilsonInterval95 } from '../signals/signalAccuracy';
 import { plannedRiskReward, plannedRiskRewardSigned, type PlannedRiskDirection } from '../../utils/riskReward';
 import { roundTripCostR, breakEvenWinRate } from '../../utils/netRiskReward';
@@ -50,8 +52,8 @@ export const normaliseRegimeQuery = (raw: string): string => {
 };
 
 /** The setup types a caller can ask a base rate for. `family` uses the
- *  strategy-family vocabulary the rows already carry; `regime` narrows the
- *  same rows to an attributed bucket. */
+ *  strategy-family vocabulary the rows already carry; `regime` and
+ *  `playbook` narrow the same rows to an ATTRIBUTED bucket. */
 export interface SetupBaseRateParams {
     coin?: string;
     direction?: 'Long' | 'Short';
@@ -59,6 +61,8 @@ export interface SetupBaseRateParams {
     /** A decision-time regime id (`range:compressed`) or one axis segment
      *  (`compressed`). Rows with no recorded regime are excluded and counted. */
     regime?: string;
+    /** A `scan_playbooks` detector id — only plans stamped with it. */
+    playbook?: string;
 }
 
 /**
@@ -79,7 +83,7 @@ export const runSetupBaseRateTool = (
     const tool = 'setup_base_rate';
     const notes: string[] = [
         'source: the trader\'s logged journal rows (the same rows get_trade_log reads)',
-        'regime comes from the O-46 decision snapshot — a row logged without one is excluded, never guessed into a bucket',
+        'regime comes from the O-46 decision snapshot; playbook from the scan_playbooks tag present_trade stamped — a row without the tag is excluded, never guessed',
     ];
     const make = (values: Record<string, unknown> | null, summary: string, reason?: string, barsUsed = (trades ?? []).length): string =>
         JSON.stringify({
@@ -104,33 +108,51 @@ export const runSetupBaseRateTool = (
     if (rows.length === 0) {
         return make(null, '', 'the journal has no rows yet — nothing to measure a base rate on');
     }
+    // The playbook key is model-supplied, so it is proved against the detector
+    // ids before it filters: a typo that matched zero rows would otherwise
+    // read as "no sample" instead of "not a detector".
+    const requestedPlaybook = params.playbook !== undefined ? asPlaybookId(params.playbook) : null;
+    if (params.playbook !== undefined && !requestedPlaybook) {
+        return make(null, '', `"${String(params.playbook)}" is not a scan_playbooks detector id — known ids: ${PLAYBOOK_IDS.join(', ')}`);
+    }
+    const playbook = requestedPlaybook ?? undefined;
     const regime = typeof params.regime === 'string' && params.regime.trim()
         ? normaliseRegimeQuery(params.regime)
         : undefined;
 
     const considered = clusterRows(rows, { coin: params.coin, direction: params.direction, family: params.family });
     const withRegime = considered.filter(t => regimeIdOf(t) !== null).length;
+    const withPlaybook = considered.filter(t => playbookIdOf(t) !== null).length;
     const matchingRegime = regime
         ? considered.filter(t => { const id = regimeIdOf(t); return id !== null && regimeIdMatches(id, regime); }).length
         : null;
+    const matchingPlaybook = playbook ? considered.filter(t => playbookIdOf(t) === playbook).length : null;
 
-    const stats = computeSetupClusterStats(params.coin, params.direction, params.family, rows, { regime });
+    const stats = computeSetupClusterStats(params.coin, params.direction, params.family, rows, { regime, playbook });
     if (!stats || stats.sample < MIN_RATE_SAMPLE || stats.winRate === null) {
-        const bucket = regime ? ` in regime ${regime}` : '';
-        const coverage = regime
-            ? `; ${matchingRegime} of ${considered.length} considered closed row(s) match this regime, ${withRegime} carry any regime`
-            : '';
-        return make(null, '', `sample too thin: ${stats?.sample ?? 0} matching closed rows${bucket} (need ≥${MIN_RATE_SAMPLE}) — no base rate is quoted${coverage}`);
+        const bucket = [
+            regime ? ` in regime ${regime}` : '',
+            playbook ? ` tagged ${playbook}` : '',
+        ].join('');
+        const coverage = [
+            regime ? `${matchingRegime} of ${considered.length} considered closed row(s) match this regime, ${withRegime} carry any regime` : null,
+            playbook ? `${matchingPlaybook} of ${considered.length} considered closed row(s) are tagged ${playbook}, ${withPlaybook} carry any tag` : null,
+        ].filter((s): s is string => s !== null).join('; ');
+        return make(null, '', `sample too thin: ${stats?.sample ?? 0} matching closed rows${bucket} (need ≥${MIN_RATE_SAMPLE}) — no base rate is quoted${coverage ? `; ${coverage}` : ''}`);
     }
     const winRate = stats.winRate;
     const ci = wilsonInterval95(stats.wins, stats.sample);
-    const scope = regime ? `regime ${regime}` : '';
+    const scope = [
+        regime ? `regime ${regime}` : null,
+        playbook ? `playbook ${playbook}` : null,
+    ].filter((s): s is string => s !== null).join(' + ');
     const values = {
         setup: {
             coin: params.coin ?? '(any)',
             direction: params.direction ?? '(any)',
             family: params.family ?? '(any)',
             regime: regime ?? '(any)',
+            playbook: playbook ?? '(any)',
         },
         sample: stats.sample,
         wins: stats.wins,
@@ -143,7 +165,8 @@ export const runSetupBaseRateTool = (
         last_date: stats.lastDate,
         worst_lesson: stats.worstLesson,
         regime_conditioned: regime !== undefined,
-        coverage: { considered: considered.length, with_regime: withRegime },
+        playbook_conditioned: playbook !== undefined,
+        coverage: { considered: considered.length, with_regime: withRegime, with_playbook: withPlaybook },
     };
     const avg = stats.avgR !== null ? `${stats.avgR.toFixed(2)}R` : 'R n/a';
     return make(
@@ -333,6 +356,79 @@ export const runMetaLabelTool = async (
         note: 'the refusing gate is proposalGate and stays the only one — this read informs the trader, it does not block',
     };
     return make(values, `${read.verdict.toUpperCase()}${read.sizeFractionPct !== null ? ` (${read.sizeFractionPct}% of standard risk)` : ''} — ${read.reasons[0] ?? ''}`);
+};
+
+// ─── playbook_attribution — per-detector outcome, from the logged tags ───
+
+/**
+ * Every `scan_playbooks` detector, measured over the LOGGED plans that
+ * carried its tag. This is not a fire count: a scan is not persisted, so a
+ * detector that fired and was never presented has no row. The coverage line
+ * states the difference.
+ *
+ * Each detector is marked `thin: true` with a null interval under
+ * `MIN_RATE_SAMPLE`, while its raw sample stays visible — "never logged" and
+ * "one observation" must not read the same.
+ */
+export const runPlaybookAttributionTool = (
+    trades: LoggedTrade[],
+    asofMs: number = Date.now(),
+): string => {
+    const tool = 'playbook_attribution';
+    const notes: string[] = [
+        'source: LOGGED plans carrying a scan_playbooks tag — not the detector fire count (scans are not persisted)',
+        'a plan is tagged only when present_trade followed a scan match; an untagged plan is counted under coverage, never assigned to a detector',
+        `a detector under ${MIN_RATE_SAMPLE} closed plans is marked thin with no interval, while its raw sample is still shown`,
+    ];
+    const rows = trades ?? [];
+    const closed = rows.filter(t => t.outcome === 'WIN' || t.outcome === 'LOSS');
+    const tagged = closed.filter(t => playbookIdOf(t) !== null);
+    const coverage = { closed: closed.length, tagged: tagged.length, untagged: closed.length - tagged.length };
+    const make = (values: unknown, summary: string, reason?: string): string =>
+        JSON.stringify({
+            tool, asof: asofMs, symbol: '(journal)', tf: 'journal', params: {},
+            data_quality: {
+                available: reason === undefined,
+                bars_used: closed.length,
+                notes,
+                ...(reason !== undefined ? { reason } : {}),
+            },
+            values, distances_atr: {}, evidence_level: 'documented', one_line_summary: reason ?? summary,
+        } satisfies MarketToolEnvelope<unknown>);
+
+    if (closed.length === 0) {
+        return make(null, '', 'the journal has no closed rows yet — attribution needs resolved outcomes');
+    }
+    if (tagged.length === 0) {
+        return make(
+            { coverage, min_sample: MIN_RATE_SAMPLE },
+            '',
+            `no logged plan carries a playbook tag yet (0 of ${closed.length} closed) — present_trade stamps the scan_playbooks id the plan followed, so until one is logged there is nothing to attribute`,
+        );
+    }
+
+    const playbooks = PLAYBOOK_IDS.map(id => {
+        const stats = summariseClusterRows(tagged.filter(t => playbookIdOf(t) === id));
+        const ci = stats && stats.winRate !== null && stats.sample >= MIN_RATE_SAMPLE
+            ? wilsonInterval95(stats.wins, stats.sample)
+            : null;
+        return {
+            playbook: id,
+            sample: stats?.sample ?? 0,
+            wins: stats?.wins ?? 0,
+            losses: stats?.losses ?? 0,
+            win_rate: stats?.winRate ?? null,
+            wilson_95: ci ? { low: Math.round(ci.low * 1000) / 1000, high: Math.round(ci.high * 1000) / 1000 } : null,
+            avg_r: stats?.avgR ?? null,
+            thin: stats === null || stats.sample < MIN_RATE_SAMPLE,
+            last_outcome: stats?.lastOutcome ?? null,
+        };
+    });
+    const measured = playbooks.filter(p => !p.thin).length;
+    return make(
+        { coverage, min_sample: MIN_RATE_SAMPLE, playbooks },
+        `${tagged}/${closed} closed plan(s) carry a detector tag; ${measured} of ${playbooks.length} detector(s) have ≥${MIN_RATE_SAMPLE} closed`,
+    );
 };
 
 const read2 = (fn: () => number | null): number | null => fn();

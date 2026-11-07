@@ -565,3 +565,41 @@ and the refusal surfaces on the card with the export as the drain. Capture rides
 choke point both homes share (`runToolTurn`'s event tee) and is fire-and-forget — a
 recording failure can never fail a trading decision. Contracts: off-stores-nothing,
 append-whole, cap-refuses, standalone flag — 554/554.
+
+## 17. Attribution — regime-conditioned rates and per-playbook stats (2026-11-07)
+
+The N=80 verdict (§15) judged the tool PACKS. The next question is per-setup: which named
+detector, in which regime, actually pays. Two builds, smallest first.
+
+**1. `setup_base_rate` conditions.** The tool now takes `regime` and `playbook`. The regime is
+the one the O-46 snapshot recorded at decision time (`marketConditions.timeframeAlignment`,
+`${direction}:${volatility}`); the playbook is the tag `present_trade` stamps. A row without
+either is EXCLUDED, never guessed into a bucket — and the result carries
+`coverage: { considered, with_regime, with_playbook }` so a bucket that is empty because the
+tag is missing cannot read as a bucket that is empty because the trader loses there. An unknown
+detector id refuses by name instead of returning a zero-sample "thin" answer. The condition
+logic is one pure predicate in `src/services/learning/setupClusterStats.ts` ›
+`computeSetupClusterStats`; the tools only format it.
+
+**2. `meta_label` reads the live regime's bucket when it has the floor.** It composes the live
+`${direction}:${volatility}` (the snapshot's composite — NOT `regimeId`, which carries a bar
+count), uses that bucket at ≥5 closed rows, and otherwise falls back to the BLENDED rate. The
+scope is printed beside the number (`base rate 55% over 22 (regime range:compressed) …`, or
+`blended — the range:compressed bucket holds 3 closed row(s), under 5`), so a fallback can never
+pass as a conditioned read. Rule: `src/services/analysis/journalTools.ts` › `pickBaseRate`.
+
+**3. The tag exists at present time.** `present_trade` accepts a `playbook` argument, validated
+against `src/types/playbook.ts` › `PLAYBOOK_IDS` (the one list `scan_playbooks` also emits; a
+literal the list does not name is a compile error). `parseTradeProposal` keeps a known id,
+normalises case, and DROPS an unknown one; the receipt says which happened. The id rides onto
+`TradeAnalysis.playbookId`, so the journal row and the training corpus carry it.
+
+**4. `playbook_attribution`** returns every detector — raw sample, W/L, Wilson interval, avg R,
+`thin` flag — plus tagged/untagged coverage. Nine detectors are always listed, so "never logged"
+and "one observation" are distinguishable instead of both reading 0%.
+
+**The honest limit.** This counts LOGGED plans that carried a tag, not detector fires: a scan is
+not persisted, so a match that was never presented has no row. Per-detector buckets will be thin
+for a long time (9 detectors × coin × direction × regime); the refusal is the correct output, and
+the N=80 finding at this bracket stands unchanged. These builds measure; they do not create an
+edge. Contracts: 575/575.

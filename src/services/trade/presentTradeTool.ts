@@ -71,6 +71,20 @@ export interface PresentTradeSink {
 const receipt = (call: DeskToolCall, name: string, ok: boolean, content: string): DeskToolResult =>
     ({ toolCallId: call.id, name, ok, content });
 
+/**
+ * The attribution sentence in the present_trade receipt. It is the model's
+ * only proof of what the journal will be able to measure: confirm a kept id,
+ * name a dropped one rather than letting the model believe attribution
+ * landed, and say nothing when the caller supplied none.
+ */
+export const playbookAttributionLine = (requested: unknown, stamped: string | undefined): string => {
+    if (stamped) return ` Attribution: tagged ${stamped} — per-detector stats will count this plan.`;
+    const dropped = typeof requested === 'string' && requested.trim() ? requested.trim() : null;
+    return dropped
+        ? ` Attribution: "${dropped}" is not a scan_playbooks detector id, so NO playbook tag was recorded.`
+        : '';
+};
+
 /** Run one `present_trade` call. */
 export const runPresentTrade = (ctx: PresentTradeContext, sink: PresentTradeSink): DeskToolResult => {
     const { call } = ctx;
@@ -162,10 +176,11 @@ export const runPresentTrade = (ctx: PresentTradeContext, sink: PresentTradeSink
     const gateLine = proposal.gate
         ? gateReceiptLine(proposal.gate)
         : 'Gate: scanning now — no probability is shown on the card or recorded on the row until the scan answers, and the logged plan is capped by it.';
+    const playbookLine = playbookAttributionLine(args.playbook, proposal.playbookId);
     return receipt(
         call,
         name,
         true,
-        `Presented ${proposal.direction} ${proposal.symbol} @ ${proposal.entry}, SL ${proposal.stopLoss}, TP ${proposal.takeProfits.join('/')}, R:R ~${rr}:1. ${gateLine} The user sees a "Log this trade" card. ${watchLine}${ctx.canvasNote}`,
+        `Presented ${proposal.direction} ${proposal.symbol} @ ${proposal.entry}, SL ${proposal.stopLoss}, TP ${proposal.takeProfits.join('/')}, R:R ~${rr}:1. ${gateLine} The user sees a "Log this trade" card.${playbookLine} ${watchLine}${ctx.canvasNote}`,
     );
 };

@@ -159,6 +159,13 @@ export interface TradeAnalysis {
   createdAt?: string; // Timestamp for when the analysis was generated
   rrRatio?: number;
   detectedPatternFamily?: string; // New field for Market Classification Family
+  /**
+   * The `scan_playbooks` detector id the plan followed, stamped by
+   * `present_trade` from the model's `playbook` argument. Absent when no
+   * detector fired (or the id was not one of the shipped detectors) — a row
+   * without a tag is excluded from per-detector stats, never assigned to one.
+   */
+  playbookId?: string;
   detectedPatterns?: PatternDetail[]; // New: List of specific patterns
   keyLevels?: KeyLevels; // New: Support and Resistance Zones
   isUpdate?: boolean; // NEW: Flag to indicate if this is an updated setup

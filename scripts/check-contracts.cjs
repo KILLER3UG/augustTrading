@@ -3794,12 +3794,14 @@ const checkSkillWrites = async () => {
         })());
 }
 
-// ─── 46b. regime conditioning — the base rate reads the recorded regime ──
+// ─── 46b. attribution — regime-conditioned rates and per-playbook stats ──
 // The failure these pin is silent: a condition that filters every row out
-// reads as "no sample", so the tool must state coverage beside the bucket.
+// reads as "no sample", so the tools must state coverage, and an unknown
+// detector id must refuse by name instead of masquerading as a thin bucket.
 (() => {
     const scs = loadModule('src/services/learning/setupClusterStats');
     const jt = loadModule('src/services/analysis/journalTools');
+    const ids = loadModule('src/types/playbook').PLAYBOOK_IDS;
     const jRow = (o = {}) => ({
         id: o.id || `t${Math.random()}`,
         outcome: o.outcome || 'WIN',
@@ -3811,6 +3813,7 @@ const checkSkillWrites = async () => {
             stopLoss: '98',
             takeProfit: [{ price: '104' }],
             marketConditions: { timeframeAlignment: o.regime || '—' },
+            ...(o.playbook ? { playbookId: o.playbook } : {}),
         },
     });
     const rows = [
@@ -3846,19 +3849,77 @@ const checkSkillWrites = async () => {
         && out.values.coverage.considered === 8
         && out.values.coverage.with_regime === 7
         && out.one_line_summary.includes('in regime range:compressed'));
+    const unknown = JSON.parse(jt.runSetupBaseRateTool(rows, { coin: 'BTC', playbook: 'turtle-soup' }, 1));
+    ok('setup_base_rate: an unknown detector id refuses BY NAME, never as a thin bucket',
+        unknown.data_quality.available === false
+        && /not a scan_playbooks detector id/.test(unknown.data_quality.reason)
+        && unknown.data_quality.reason.includes('turtle_soup'));
 
-    const thick = scs.computeSetupClusterStats('BTC', 'Long', undefined, rows);
-    const pickThick = jt.pickBaseRate(thick, bucket, 'range:compressed');
+    const pRows = [
+        jRow({ id: 'p1', outcome: 'WIN', playbook: 'turtle_soup' }),
+        jRow({ id: 'p2', outcome: 'WIN', playbook: 'turtle_soup' }),
+        jRow({ id: 'p3', outcome: 'WIN', playbook: 'turtle_soup' }),
+        jRow({ id: 'p4', outcome: 'LOSS', playbook: 'turtle_soup' }),
+        jRow({ id: 'p5', outcome: 'LOSS', playbook: 'turtle_soup' }),
+        jRow({ id: 'p6', outcome: 'WIN', playbook: 'vwap_reclaim' }),
+        jRow({ id: 'p7', outcome: 'WIN' }),
+    ];
+    const tagged = scs.computeSetupClusterStats('BTC', 'Long', undefined, pRows, { playbook: 'turtle_soup' });
+    ok('playbook: only plans tagged with the detector enter its rate',
+        tagged.sample === 5 && tagged.wins === 3 && tagged.losses === 2);
+    const none = JSON.parse(jt.runPlaybookAttributionTool(rows, 1));
+    ok('playbook attribution: zero tagged plans is a REFUSAL, not nine empty rows',
+        none.data_quality.available === false
+        && none.values.coverage.tagged === 0
+        && /no logged plan carries a playbook tag/.test(none.data_quality.reason));
+    const att = JSON.parse(jt.runPlaybookAttributionTool(pRows, 1));
+    const soup = att.values.playbooks.find(p => p.playbook === 'turtle_soup');
+    const reclaim = att.values.playbooks.find(p => p.playbook === 'vwap_reclaim');
+    ok('playbook attribution: a detector at the floor is measured; a one-row detector stays visibly thin',
+        soup.sample === 5 && soup.thin === false && soup.wilson_95 !== null
+        && reclaim.sample === 1 && reclaim.thin === true && reclaim.wilson_95 === null);
+    ok('playbook attribution: untagged closed rows are counted under coverage, never assigned',
+        att.values.coverage.closed === 7 && att.values.coverage.tagged === 6 && att.values.coverage.untagged === 1);
+    ok('playbook attribution: every detector id is listed, measured or not',
+        att.values.playbooks.length === ids.length && att.values.playbooks.every(p => ids.includes(p.playbook)));
+
+    const pt = loadModule('src/services/trade/proposedTrade');
+    const argsOf = (playbook) => ({ direction: 'Long', entry: 100, stopLoss: 98, takeProfits: [104], playbook });
+    const good = pt.parseTradeProposal(argsOf('Turtle_Soup')).proposal;
+    const bad = pt.parseTradeProposal(argsOf('turtle-soup')).proposal;
+    ok('present_trade: a known detector id is normalised and kept; an unknown one is dropped',
+        good.playbookId === 'turtle_soup' && bad.playbookId === undefined);
+    ok('present_trade: the tag reaches the journal analysis',
+        pt.buildProposedTradeAnalysis(good).playbookId === 'turtle_soup');
+    const ptt = loadModule('src/services/trade/presentTradeTool');
+    ok('present_trade receipt: a kept tag is confirmed, a dropped one is NAMED, no tag says nothing',
+        ptt.playbookAttributionLine('turtle_soup', 'turtle_soup').includes('tagged turtle_soup')
+        && ptt.playbookAttributionLine('turtle-soup', undefined).includes('NO playbook tag was recorded')
+        && ptt.playbookAttributionLine(undefined, undefined) === '');
+
+    const thick = scs.computeSetupClusterStats('BTC', 'Long', undefined, pRows);
+    const pickThick = jt.pickBaseRate(thick, tagged, 'range:compressed');
     const pickThin = jt.pickBaseRate(
         thick,
-        scs.computeSetupClusterStats('BTC', 'Long', undefined, rows, { regime: 'trend:high' }),
-        'trend:high',
+        scs.computeSetupClusterStats('BTC', 'Long', undefined, pRows, { regime: 'range:compressed' }),
+        'range:compressed',
     );
     ok('meta-label: the live regime bucket is used when it has the floor, and the scope names it',
-        pickThick.stats === bucket && pickThick.scope === 'regime range:compressed');
+        pickThick.stats === tagged && pickThick.scope === 'regime range:compressed');
     ok('meta-label: a thin regime bucket falls back to BLENDED and says why in the scope',
-        pickThin.stats === thick && /^blended — the trend:high bucket holds 0 closed row/.test(pickThin.scope));
+        pickThin.stats === thick && /^blended — the range:compressed bucket holds 0 closed row/.test(pickThin.scope));
 
+    const desk = loadModule('src/services/analysis/DeskToolsService.ts');
+    const presentDef = desk.CHART_ACTION_TOOL_DEFS.find(d => d.function.name === 'present_trade');
+    const baseDef = desk.DESK_TOOL_DEFINITIONS.find(d => d.function.name === 'setup_base_rate');
+    const attrDef = desk.DESK_TOOL_DEFINITIONS.find(d => d.function.name === 'playbook_attribution');
+    const wanted = JSON.stringify([...ids]);
+    ok('tools: both wire schemas carry the detector enum from ONE list',
+        JSON.stringify(presentDef.function.parameters.properties.playbook.enum) === wanted
+        && JSON.stringify(baseDef.function.parameters.properties.playbook.enum) === wanted
+        && !!attrDef);
+    ok('tools: the trade seat can call the attribution tool',
+        loadModule('src/utils/toolKinds').DESK_TOOL_NAMES.includes('playbook_attribution'));
     const ml2 = loadModule('src/services/market/metaLabelCore');
     ok('meta-label: the rate line names its scope, so a blended fallback cannot read as conditioned',
         (() => {

@@ -38,6 +38,7 @@ import { DEFAULT_OUTPUT_RESERVE_TOKENS, outputTokenBudget } from '../../utils/co
 import { stepEffortDown, type ReasoningEffort } from '../providers/reasoningControls';
 import { calculateCorrelationRisk } from './CorrelationRiskService';
 import { MARKET_TOOLS, CHART_ACTION_TOOL_DEFS, deskToolsMandateFor, TEXT_TOOL_FALLBACK_PROMPT } from './deskToolShared';
+import { PLAYBOOK_IDS } from '../../types/playbook';
 // The moved vocabulary is re-exported for the lazy consumers and the
 // contract suite: one definition, two addresses.
 export { deskToolsMandateFor, DESK_TOOLS_PROMPT, TEXT_TOOL_FALLBACK_PROMPT, resolveDefaultSymbol, isMarketReadTool } from './deskToolShared';
@@ -678,6 +679,9 @@ const TOOL_BUDGETS: Record<string, number> = {
     // the default would do, but the open-plan row list is the tail a clip
     // would drop, and an unseen open position is the dangerous kind of cut.
     setup_base_rate: 2600,
+    // Nine detector rows, each with its interval and thin flag; a clip would
+    // drop the LAST detectors off the table silently.
+    playbook_attribution: 3000,
     risk_state: 3000,
     // The P2 composites: four sub-reads plus series-depth notes ride one
     // envelope; the default would cut the liquidation/positioning tails.
@@ -966,6 +970,7 @@ const TOOL_LABELS: Record<string, string> = {
     sr_zones: 'S/R zones',
     wyckoff_events: 'Wyckoff events',
     setup_base_rate: 'setup base rate',
+    playbook_attribution: 'playbook attribution',
     risk_state: 'risk state',
     derivatives_state: 'derivatives state',
     btc_relative: 'BTC relative',
@@ -1970,14 +1975,29 @@ export const DESK_TOOL_DEFINITIONS: DeskToolDefinition[] = [
         function: {
             name: 'setup_base_rate',
             description:
-                'The trader\'s OWN measured base rate for a setup type: wins/losses/sample over the matching journal rows, with a Wilson 95% interval and average R. Refuses (says so) under 5 matching rows — no rate is quoted off a thin sample. NOT regime-conditioned: rows carry no regime snapshot yet. Call before grading a setup as "this usually works".',
+                'The trader\'s OWN measured base rate for a setup type: wins/losses/sample over the matching journal rows, with a Wilson 95% interval and average R. Filter by coin/direction/family, and CONDITION on the decision-time regime or a scan_playbooks detector id when you need that bucket; a row without the recorded tag is excluded and the coverage count says how many. Refuses (says so) under 5 matching rows — no rate is quoted off a thin sample. Call before grading a setup as "this usually works".',
             parameters: {
                 type: 'object',
                 properties: {
                     coin: { type: 'string', description: 'Base coin filter, e.g. BTC (default: any).' },
                     direction: { type: 'string', enum: ['Long', 'Short'], description: 'Direction filter (default: any).' },
                     family: { type: 'string', description: 'Strategy-family filter (default: any).' },
+                    regime: { type: 'string', description: 'Only rows whose decision-time regime matches, e.g. range:compressed — or one axis (compressed, range). Rows with no recorded regime are excluded and counted.' },
+                    playbook: { type: 'string', enum: [...PLAYBOOK_IDS], description: 'Only plans tagged with this scan_playbooks detector id (present_trade stamps it).' },
                 },
+                additionalProperties: false,
+            },
+        },
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'playbook_attribution',
+            description:
+                'Per-detector outcomes from the journal: for every scan_playbooks detector, how many LOGGED plans carried its tag, wins/losses, win rate with a Wilson 95% interval and average R. Under 5 closed plans a detector is marked thin (its raw sample still shows); the coverage block reports tagged vs untagged rows. This is NOT a detector fire count — scans are not persisted, so a match never presented has no row. Call it to answer "which of my setups actually win?" before promoting or dropping one.',
+            parameters: {
+                type: 'object',
+                properties: {},
                 additionalProperties: false,
             },
         },
@@ -4485,7 +4505,8 @@ ${body}`);
                 break;
             case 'setup_base_rate':
             case 'risk_state':
-            case 'meta_label': {
+            case 'meta_label':
+            case 'playbook_attribution': {
                 // Lazy: the journal readers bundle the cluster-stats and
                 // accuracy modules; keep them out of the entry graph too.
                 const jt = await import('./journalTools');
@@ -4495,9 +4516,13 @@ ${body}`);
                         direction: String(call.arguments.direction) === 'Long' ? 'Long'
                             : String(call.arguments.direction) === 'Short' ? 'Short' : undefined,
                         family: asString(call.arguments.family) || undefined,
+                        regime: asString(call.arguments.regime) || undefined,
+                        playbook: asString(call.arguments.playbook) || undefined,
                     });
                 } else if (call.name === 'risk_state') {
                     content = jt.runRiskStateTool(context.trades ?? []);
+                } else if (call.name === 'playbook_attribution') {
+                    content = jt.runPlaybookAttributionTool(context.trades ?? []);
                 } else {
                     // meta_label needs the coin's 1h tape for the regime read.
                     const sym = asSymbol(call.arguments.coin ?? call.arguments.symbol, fallback);

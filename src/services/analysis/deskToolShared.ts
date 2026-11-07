@@ -14,6 +14,7 @@
  */
 
 import { getHarnessSettings } from '../../utils/harnessSettings';
+import { PLAYBOOK_IDS } from '../../types/playbook';
 import { extractSymbolFromPrompt } from './MarketDataService';
 import type { DeskToolDefinition } from './DeskToolsService';
 export const CHART_ACTION_TOOL_DEFS: DeskToolDefinition[] = [
@@ -116,7 +117,7 @@ export const CHART_ACTION_TOOL_DEFS: DeskToolDefinition[] = [
         function: {
             name: 'present_trade',
             description:
-                'Present a concrete, actionable trade to the user: draws the Entry/Stop/Targets on the chart AND shows a card with a "Log this trade" button. Use this when you have a specific setup you would put on — direction, entry, stop and at least one target are required. The user decides whether to log it; logging records it as an open trade that the harness later scores against the real outcome.',
+                'Present a concrete, actionable trade to the user: draws the Entry/Stop/Targets on the chart AND shows a card with a "Log this trade" button. Use this when you have a specific setup you would put on — direction, entry, stop and at least one target are required. The user decides whether to log it; logging records it as an open trade that the harness later scores against the real outcome. When the plan follows a `scan_playbooks` match, pass that match\'s exact `playbook` id — the tag lets the journal measure that detector\'s outcomes; omit it when no detector fired.',
             parameters: {
                 type: 'object',
                 properties: {
@@ -128,6 +129,11 @@ export const CHART_ACTION_TOOL_DEFS: DeskToolDefinition[] = [
                     confidence: { type: 'string', enum: ['High', 'Medium', 'Low'] },
                     rationale: { type: 'string', description: 'One or two sentences: why this setup.' },
                     invalidation: { type: 'string', description: 'What would prove the idea wrong.' },
+                    playbook: {
+                        type: 'string',
+                        enum: [...PLAYBOOK_IDS],
+                        description: 'The scan_playbooks detector id this plan follows — copy it exactly from the scan match. Omit when no detector fired; never invent one.',
+                    },
                 },
                 required: ['direction', 'entry', 'stopLoss', 'takeProfits'],
                 additionalProperties: false,
@@ -282,7 +288,8 @@ export const deskToolsMandateFor = (offered?: readonly string[], deferred = fals
     if (has('imbalances')) loadableFamily.push('`imbalances` (FVGs with fill state)');
     if (has('sr_zones')) loadableFamily.push('`sr_zones` (S/R zones + premium/discount range state)');
     if (has('wyckoff_events')) loadableFamily.push('`wyckoff_events` (ranges, springs/UTADs — volume-conditioned)');
-    if (has('setup_base_rate')) loadableFamily.push('`setup_base_rate` (the trader\'s measured W/L + Wilson CI for a setup type — refused under 5 rows)');
+    if (has('setup_base_rate')) loadableFamily.push('`setup_base_rate` (the trader\'s measured W/L + Wilson CI for a setup type — refused under 5 rows; pass `regime` or `playbook` to condition it, and read the coverage counts to see how many rows carry the tag)');
+    if (has('playbook_attribution')) loadableFamily.push('`playbook_attribution` (per-detector W/L, Wilson CI and avg R over LOGGED plans tagged with a scan_playbooks id — thin detectors stay visible; not a fire count)');
     if (has('risk_state')) loadableFamily.push('`risk_state` (open-plan heat, drawdown light, half-Kelly ceiling — advisory)');
     if (has('derivatives_state')) loadableFamily.push('`derivatives_state` (price/OI quadrant, funding percentile + extremes, positioning snapshot, liquidation bands — available:false for assets without derivatives, never invented)');
     if (has('btc_relative')) loadableFamily.push('`btc_relative` (alt/BTC ratio z-score, correlation/beta on returns, RS rank — works where derivatives data does not exist)');

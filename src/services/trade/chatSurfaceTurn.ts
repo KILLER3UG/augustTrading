@@ -72,7 +72,7 @@ export const CHAT_SURFACE_TOOLS = [
     // The P1 family — read-only here: `draw_tool_levels` stays dock-only (no
     // canvas on this surface, and its receipt would have to promise one).
     'swing_structure', 'liquidity', 'imbalances', 'sr_zones', 'wyckoff_events',
-    'setup_base_rate', 'risk_state',
+    'setup_base_rate', 'playbook_attribution', 'risk_state',
     // The P2 composites: derivatives positioning + cross-market, plus the
     // family-H playbook scan and the advisory meta-label read.
     'derivatives_state', 'btc_relative', 'scan_playbooks', 'meta_label',

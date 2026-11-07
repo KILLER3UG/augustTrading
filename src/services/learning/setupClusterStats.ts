@@ -1,17 +1,17 @@
 /**
  * setupClusterStats — this desk's recorded outcome on a setup shape.
  *
- * Pure over the trade log: coin (+ optional direction, family and regime) →
- * sample, wins/losses, average R, the newest row and its key lesson. Callers
- * print the number rather than trust a model to remember it:
+ * Pure over the trade log: coin (+ optional direction, family, regime and
+ * playbook) → sample, wins/losses, average R, the newest row and its key
+ * lesson. Callers print the number rather than trust a model to remember it:
  * `find_best_setups`' cluster line, the screener's own column, and the
- * journal tools (`setup_base_rate`, `meta_label`).
+ * journal tools (`setup_base_rate`, `playbook_attribution`, `meta_label`).
  *
- * The regime condition reads what the O-46 decision snapshot recorded at
- * PRESENT time (`marketConditions.timeframeAlignment`, written by
- * `buildDecisionSnapshot`). A row without it is EXCLUDED from a conditioned
- * bucket — never guessed into one — which is why the callers also report
- * coverage.
+ * The regime and playbook conditions read what the O-46 decision snapshot
+ * recorded at PRESENT time (`marketConditions.timeframeAlignment`, written by
+ * `buildDecisionSnapshot`) and the detector tag `present_trade` stamps on the
+ * plan. A row without either is EXCLUDED from a conditioned bucket — never
+ * guessed into one — which is why the callers also report coverage.
  *
  * It used to live in `EvidencePackService.ts`, which also assembled the
  * moderator's verdict evidence pack. That pack was deleted on 2026-11-06: no
@@ -45,6 +45,8 @@ export interface SetupClusterConditions {
     /** Only rows whose decision-time regime id matches — `range:compressed`
      *  exactly, or a single axis (`range`, `compressed`) segment. */
     regime?: string;
+    /** Only rows whose plan carried this `scan_playbooks` detector id. */
+    playbook?: string;
 }
 
 const coinOf = (t: LoggedTrade): string => baseOf(t.analysis?.coinName || '');
@@ -63,6 +65,10 @@ export const regimeIdOf = (t: LoggedTrade): string | null => {
     const raw = normalise(t.analysis?.marketConditions?.timeframeAlignment);
     return raw && raw !== '—' && raw.includes(':') ? raw : null;
 };
+
+/** The playbook detector id stamped on the plan, or null. */
+export const playbookIdOf = (t: LoggedTrade): string | null =>
+    normalise(t.analysis?.playbookId);
 
 /**
  * Segment match so one condition answers both questions: `range:compressed`
@@ -140,7 +146,8 @@ export const summariseClusterRows = (matched: LoggedTrade[]): SetupClusterStats 
 
 /**
  * Cluster stats over the trade log: coin + direction + family, optionally
- * narrowed to a regime bucket. Pure given its inputs — no storage access.
+ * narrowed to a regime and/or playbook bucket. Pure given its inputs — no
+ * storage access.
  */
 export const computeSetupClusterStats = (
     coin: string | undefined,
@@ -153,6 +160,10 @@ export const computeSetupClusterStats = (
         if (conditions?.regime) {
             const recorded = regimeIdOf(t);
             if (!recorded || !regimeIdMatches(recorded, conditions.regime)) return false;
+        }
+        if (conditions?.playbook) {
+            const recorded = playbookIdOf(t);
+            if (!recorded || recorded !== conditions.playbook.toLowerCase()) return false;
         }
         return true;
     }));

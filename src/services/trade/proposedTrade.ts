@@ -17,6 +17,7 @@
  */
 
 import { TradeAnalysis, TradeOutcome, Message, MessageRole, type ProposalGate } from '../../types';
+import { asPlaybookId, type PlaybookId } from '../../types/playbook';
 import { baseOf, quoteOf } from '../../utils/symbol';
 import { plannedRiskReward } from '../../utils/riskReward';
 import { clampProbabilityToGate, downgradeConfidenceForProbability } from '../../utils/analysisUtils';
@@ -39,6 +40,10 @@ export interface TradeProposal {
     confidence?: 'High' | 'Medium' | 'Low';
     rationale?: string;
     invalidation?: string;
+    /** The `scan_playbooks` detector this plan follows, when one fired. The
+     *  tag is what makes per-detector attribution measurable; it is context,
+     *  never a size or a veto. */
+    playbookId?: PlaybookId;
     /** Which model / session presented it — carried onto the trade for
      *  attribution so the model-performance ledger can credit/debit it. */
     proposedBy?: string;
@@ -298,6 +303,10 @@ export const parseTradeProposal = (args: Record<string, unknown>): { proposal?: 
             rationale: typeof args.rationale === 'string' ? args.rationale.slice(0, 600) : undefined,
             invalidation: typeof args.invalidation === 'string' ? args.invalidation.slice(0, 300) : undefined,
             proposedBy: typeof args.proposedBy === 'string' ? args.proposedBy.slice(0, 60) : undefined,
+            // An unknown id is DROPPED, never stored: a typo would otherwise
+            // become a detector bucket of its own the stats could never join.
+            // present_trade's receipt names the dropped value to the model.
+            playbookId: asPlaybookId(args.playbook) ?? undefined,
         },
     };
 };
@@ -358,6 +367,7 @@ export const buildProposedTradeAnalysis = (p: TradeProposal, createdAt = new Dat
         originalConfidence: plan.modelConfidence,
         ...(plan.gate ? { gate: plan.gate } : {}),
         ...(plan.warnings.length > 0 ? { validationWarnings: plan.warnings } : {}),
+        ...(p.playbookId ? { playbookId: p.playbookId } : {}),
     });
 };
 
