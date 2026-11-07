@@ -141,7 +141,59 @@ const decodeScalar = (value: string | undefined): string | undefined => {
     return trimmed;
 };
 
+/** A YAML block-scalar header: `>` or `|`, then an optional chomping marker
+ *  and/or explicit indent digit in either order. The chomp is read but every
+ *  consumer of this parse wants prose without trailing newlines, so trailing
+ *  blank lines are always dropped. */
+const BLOCK_SCALAR = /^([>|])(?:([+-])?([1-9])?|([1-9])([+-])?)?$/;
+
+const indentOf = (line: string): number => line.match(/^[ \t]*/)?.[0].length ?? 0;
+
+/** Read one frontmatter key out of the head lines. Inline scalars go through
+ *  `decodeScalar`; a block scalar (`description: >-`) collects its indented
+ *  lines — literal (`|`) keeps the breaks, folded (`>`) joins the lines with
+ *  spaces and blank lines as breaks. */
+const scalarOf = (head: string[], key: string): string | undefined => {
+    const openerIndex = head.findIndex(line => new RegExp(`^${key}:[ \\t]*(.*)$`, 'i').test(line));
+    if (openerIndex < 0) return undefined;
+    const openerLine = head[openerIndex];
+    const inline = openerLine.slice(openerLine.indexOf(':') + 1).trim();
+    const block = BLOCK_SCALAR.exec(inline);
+    if (!block) return decodeScalar(inline || undefined);
+    const literal = block[1] === '|';
+    const explicitIndent = Number(block[3] ?? block[4] ?? 0);
+    let contentIndent = explicitIndent > 0 ? indentOf(openerLine) + explicitIndent : -1;
+    const content: string[] = [];
+    for (let i = openerIndex + 1; i < head.length; i += 1) {
+        const line = head[i];
+        if (line.trim() === '') {
+            content.push('');
+            continue;
+        }
+        const indent = indentOf(line);
+        if (contentIndent < 0) contentIndent = indent;
+        if (indent < contentIndent) break;
+        content.push(line.slice(contentIndent));
+    }
+    while (content.length > 0 && content[content.length - 1] === '') content.pop();
+    if (content.length === 0) return undefined;
+    if (literal) return content.join('\n');
+    let folded = '';
+    for (const line of content) {
+        if (line === '') {
+            folded += '\n';
+            continue;
+        }
+        if (folded !== '' && !folded.endsWith('\n')) folded += ' ';
+        folded += line;
+    }
+    return folded;
+};
+
 const FRONTMATTER = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/;
+const OPEN_FENCE = /^---\r?\n/;
+const KEY_LINE = /^[A-Za-z][\w-]*[ \t]*:/;
+const BLOCK_OPENER_LINE = /^[A-Za-z][\w-]*:[ \t]*[>|](?:[+-][1-9]|[1-9][+-]|[+-]|[1-9])?[ \t]*$/;
 
 export interface ParsedSkillMarkdown {
     name?: string;
@@ -151,19 +203,59 @@ export interface ParsedSkillMarkdown {
 
 /** `name` + `description` off the frontmatter, the body after it. A file with
  *  no frontmatter still parses — its whole text is the body — because refusing
- *  a skill over a missing fence is a worse answer than serving its prose. */
+ *  a skill over a missing fence is a worse answer than serving its prose.
+ *
+ *  Two tolerances beyond the well-formed case, both for imported files this
+ *  app did not write:
+ *  · an UNCLOSED opening fence is salvaged — the leading run of `key:` lines
+ *    (plus block-scalar continuations) is the head and everything after the
+ *    first non-key line is the body, so the file does not wear its
+ *    frontmatter as prose. The first non-key line ends the head, which makes
+ *    this a heuristic for malformed input only;
+ *  · block scalars (`description: >-`) are decoded, not served raw. */
 export function parseSkillMarkdown(content: string): ParsedSkillMarkdown | null {
-    const match = FRONTMATTER.exec(content);
-    if (!match) {
-        const body = (content || '').trim();
+    const text = content || '';
+    const match = FRONTMATTER.exec(text);
+    let head: string[];
+    let rest: string;
+    if (match && KEY_LINE.test(match[1])) {
+        // A head with no `key:` line is not frontmatter — it is a body that
+        // opens with a horizontal rule and closes on another one.
+        head = match[1].split(/\r?\n/);
+        rest = match[2] || '';
+    } else if (OPEN_FENCE.test(text)) {
+        const lines = text.split(/\r?\n/);
+        let i = 1;
+        let inBlock = false;
+        while (i < lines.length) {
+            const line = lines[i];
+            if (inBlock) {
+                if (line.trim() === '' || /^[ \t]/.test(line)) {
+                    i += 1;
+                    continue;
+                }
+                break;
+            }
+            if (!KEY_LINE.test(line)) break;
+            inBlock = BLOCK_OPENER_LINE.test(line);
+            i += 1;
+        }
+        if (i <= 1) {
+            // Nothing key-shaped after the fence — this was never frontmatter.
+            const body = text.trim();
+            return body ? { body } : null;
+        }
+        head = lines.slice(1, i);
+        rest = lines.slice(i).join('\n');
+    } else {
+        const body = text.trim();
         return body ? { body } : null;
     }
-    const line = (key: string): string | undefined => {
-        const hit = match[1].match(new RegExp(`^${key}:[ \\t]*(.+)$`, 'mi'));
-        return decodeScalar(hit?.[1]);
-    };
-    const body = (match[2] || '').trim();
-    return { name: line('name'), description: line('description'), body };
+    const name = scalarOf(head, 'name');
+    const description = scalarOf(head, 'description');
+    const body = rest.trim();
+    if (!name && !description && !body) return null;
+    return { name, description, body };
 }
 
 /** The exact bytes a write produces. No ledger, no app keys, no rewrites. */
