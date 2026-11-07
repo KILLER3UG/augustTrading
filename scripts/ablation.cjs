@@ -281,6 +281,10 @@ const userPrompt = (symbol, decisionIso, tape, packLines) => {
 
 const main = async () => {
     const args = process.argv.slice(2);
+    const flag2 = (args, name, dflt) => {
+        const i = args.indexOf(name);
+        return i >= 0 && Number.isFinite(Number(args[i + 1])) ? Number(args[i + 1]) : dflt;
+    };
     const flag = (name, dflt) => {
         const i = args.indexOf(`--${name}`);
         return i >= 0 ? Number(args[i + 1]) : dflt;
@@ -332,7 +336,10 @@ const main = async () => {
     for (const a of armNames) results[a] = [];
     let integrityFailures = 0;
 
-    for (let si = 0; si < samples.length; si++) {
+    const concurrency = Math.max(1, Math.min(12, flag2(args, '--concurrency', 6)));
+    let cursor = 0;
+    let done = 0;
+    const processSample = async (si) => {
         const s = samples[si];
         const decisionIso = new Date(s.decisionTime).toISOString();
         let tape;
@@ -340,20 +347,20 @@ const main = async () => {
             tape = await asOfTape(m.md, s.symbol, s.decisionTime);
         } catch (e) {
             console.log(`  ⚠ sample ${si} ${s.symbol}: tape fetch failed (${e.message}) — skipped`);
-            continue;
+            return;
         }
-        if (tape.length < 30) { console.log(`  ⚠ sample ${si} ${s.symbol}: thin tape (${tape.length}) — skipped`); continue; }
+        if (tape.length < 30) { console.log(`  ⚠ sample ${si} ${s.symbol}: thin tape (${tape.length}) — skipped`); return; }
 
         // INTEGRITY: no closed bar at/after the decision.
         if (tape.some(c => c.time + HOUR > s.decisionTime)) {
             integrityFailures += 1;
             console.log(`  ⚠ sample ${si}: LOOK-AHEAD detected in the as-of tape — skipped and counted`);
-            continue;
+            return;
         }
         const closes = tape.map(c => c.close);
         const atrSeries = m.regime.atrSeries(tape, 14);
         const atr = atrSeries.length ? atrSeries[atrSeries.length - 1] : 0;
-        if (!(atr > 0)) { console.log(`  ⚠ sample ${si}: ATR not measurable — skipped`); continue; }
+        if (!(atr > 0)) { console.log(`  ⚠ sample ${si}: ATR not measurable — skipped`); return; }
 
         // The regime tag (the per-regime breakdown depends on it).
         const reg = m.regime.regimeRead(tape);
@@ -370,7 +377,7 @@ const main = async () => {
             post = await postTape(m.md, s.symbol, s.decisionTime, HORIZON_HOURS);
         } catch (e) {
             console.log(`  ⚠ sample ${si}: post tape failed (${e.message}) — skipped`);
-            continue;
+            return;
         }
 
         for (const arm of armNames) {
@@ -398,11 +405,11 @@ const main = async () => {
             }
             if (!decision) {
                 results[arm].push({ sample: si, symbol: s.symbol, regimeId, outcome: 'unparseable', netR: null, brier: null, hallucination: null, tokens });
-                continue;
+                return;
             }
             if (decision.direction === 'abstain') {
                 results[arm].push({ sample: si, symbol: s.symbol, regimeId, outcome: 'abstain', netR: null, brier: null, hallucination: 0, tokens });
-                continue;
+                return;
             }
 
             // Grounding: a stated level counts as grounded when it sits
@@ -447,8 +454,20 @@ const main = async () => {
                 outcome: resolution?.status ?? 'open', netR, brier, hallucination, tokens,
             });
         }
-        if ((si + 1) % 5 === 0) console.log(`  … ${si + 1}/${samples.length} samples done`);
-    }
+        done += 1;
+        if (done % 5 === 0 || done === samples.length) console.log(`  … ${done}/${samples.length} samples done`);
+    };
+    // Workers pull the next sample when free — sample i never waits for
+    // sample i-1, which is where the sequential run spent most of its wall
+    // clock. The pool bound keeps the free gateway out of permanent 429s;
+    // the per-call retry (already in) is the second line of defense.
+    await Promise.all(Array.from({ length: Math.min(concurrency, samples.length) }, async () => {
+        while (cursor < samples.length) {
+            const si = cursor;
+            cursor += 1;
+            await processSample(si);
+        }
+    }));
 
     // ── report ──────────────────────────────────────────────────────────
     const stat = (arm) => {
