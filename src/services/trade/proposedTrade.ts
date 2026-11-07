@@ -50,6 +50,24 @@ export interface TradeProposal {
      *  ids (`${planId}:ENTRY|:SL|:TP1..N`), and it rides onto the logged
      *  message so plan, warning and journal row stay the same object. */
     planId?: string;
+    /**
+     * The O-46 decision snapshot: what the market computed at PRESENT time —
+     * regime, ATR, previous-day range, session VWAP — fetched fire-and-forget
+     * by present_trade and attached to this same object, so the card, the
+     * journal row and the training corpus all read ONE snapshot. Absent when
+     * the fetch failed or had not landed yet: the marketConditions fields
+     * stay '—', which is honest, never a placeholder that looks like data.
+     */
+    decisionSnapshot?: {
+        regimeId: string | null;
+        regimeText: string | null;
+        atr: number | null;
+        atrTf: string;
+        prevDayHigh: number | null;
+        prevDayLow: number | null;
+        sessionVwap: number | null;
+        capturedAt: string;
+    };
 }
 
 /**
@@ -312,8 +330,23 @@ export const buildProposedTradeAnalysis = (p: TradeProposal, createdAt = new Dat
         // the value is the adverse move, so it is negative for both sides.
         ...(plan.stopDistancePct > 0 ? { stopLossPercentage: `-${plan.stopDistancePct.toFixed(2)}%` } : {}),
         takeProfit: plan.takeProfits.map(tp => ({ price: String(tp) })),
+        // O-46: when the decision snapshot landed, the market conditions are
+        // the MEASURED read, not dashes. Only computed fields are filled — an
+        // unfilled field stays '—' rather than wearing a placeholder that
+        // looks like data.
         marketConditions: {
-            pattern: '—', candleBehavior: '—', timeframeAlignment: '—', rsi: '—', macd: '—', sentiment: '—',
+            pattern: p.decisionSnapshot?.regimeText ?? '—',
+            candleBehavior: '—',
+            timeframeAlignment: p.decisionSnapshot?.regimeId ?? '—',
+            rsi: p.decisionSnapshot?.atr != null
+                ? `ATR ${Number(p.decisionSnapshot.atr.toPrecision(4))} (${p.decisionSnapshot.atrTf})`
+                : '—',
+            macd: p.decisionSnapshot?.prevDayHigh != null && p.decisionSnapshot?.prevDayLow != null
+                ? `prev day ${p.decisionSnapshot.prevDayHigh}–${p.decisionSnapshot.prevDayLow}`
+                : '—',
+            sentiment: p.decisionSnapshot?.sessionVwap != null
+                ? `session VWAP ${Number(p.decisionSnapshot.sessionVwap.toPrecision(6))}`
+                : '—',
         },
         historicalCorrelation: p.rationale ? `Chart AI: ${p.rationale}` : 'Proposed from the live chart in Chart AI.',
         createdAt,

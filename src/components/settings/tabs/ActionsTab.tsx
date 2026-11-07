@@ -6,7 +6,8 @@ import React from 'react';
 import { BackupManager } from '../BackupManager';
 import { StorageLocationCard } from '../StorageLocationCard';
 import { SettingsPageHeader } from './shared';
-import { exportTrainingDataJSONL } from '../../../utils/reportExport';
+import { exportTrainingDataJSONL, trainingRecordFor } from '../../../utils/reportExport';
+import { captureStatus, exportCorpusJsonl, setCaptureEnabled, isCaptureEnabled, TRAINING_CAPTURE_MAX_RECORDS } from '../../../services/learning/trainingCapture';
 import type { SettingsTabProps } from './types';
 
 export interface ActionsTabProps extends SettingsTabProps {
@@ -17,6 +18,35 @@ export interface ActionsTabProps extends SettingsTabProps {
 const ActionsTab: React.FC<{ tab: ActionsTabProps }> = ({ tab: props }) => {
     const { username, onProfileRestored } = props;
     const trades = props.loggedTrades ?? [];
+
+    // The Improve-future-August-models recorder: a LOCAL toggle (default
+    // OFF), a status line, and the corpus export. The flag deliberately
+    // does not ride in backups — re-enabling after a restore is a conscious
+    // act. State refreshes on mount and after each flip.
+    const [capture, setCapture] = React.useState<{ enabled: boolean; desktop: boolean; recordCount: number; refusedOnce: boolean; lastAt: string | null } | null>(null);
+    const [corpusBusy, setCorpusBusy] = React.useState(false);
+    const refreshCapture = React.useCallback(() => { void captureStatus().then(setCapture); }, []);
+    React.useEffect(() => { refreshCapture(); }, [refreshCapture]);
+    const flipCapture = () => {
+        setCaptureEnabled(!isCaptureEnabled());
+        refreshCapture();
+    };
+    const exportCorpus = async () => {
+        setCorpusBusy(true);
+        try {
+            const jsonl = await exportCorpusJsonl((props.loggedTrades ?? []).map(t => ({ planId: t.planId, json: trainingRecordFor(t) })));
+            const stamp = new Date().toISOString().slice(0, 10);
+            const blob = new Blob([jsonl], { type: 'application/jsonl' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `august-corpus-${stamp}.jsonl`;
+            link.click();
+            setTimeout(() => URL.revokeObjectURL(url), 60_000);
+        } finally {
+            setCorpusBusy(false);
+        }
+    };
 
     return (
         <div className="space-y-5 animate-fade-in">
@@ -48,6 +78,54 @@ const ActionsTab: React.FC<{ tab: ActionsTabProps }> = ({ tab: props }) => {
                     {trades.length === 0
                         ? 'No trades logged yet'
                         : `Export ${trades.length} ${trades.length === 1 ? 'trade' : 'trades'} (JSONL)`}
+                </button>
+            </section>
+
+            {/* Improve future August models — the decision recorder. The
+                corpus (turn + reasoning + actions + outcome, joined by planId)
+                is the fine-tuning fuel; it is LOCAL-ONLY and OFF by default. */}
+            <section className="rounded-bubble border border-white/[0.06] bg-zinc-800/40 p-4" data-testid="training-capture-card">
+                <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                        <h3 className="text-ui-dense font-semibold text-zinc-200">Improve future August models</h3>
+                        <p className="mt-1 max-w-prose text-ui-xs leading-4 text-zinc-500">
+                            When ON, every desk turn that ends in a decision is recorded to this
+                            machine only — the trader's words, the model's reasoning, the tool trail,
+                            the plan and its later outcome — as one JSON line per turn, for training a
+                            future trading-focused August model. Nothing is uploaded; the flag is not
+                            part of backups. When OFF, nothing is stored.
+                        </p>
+                    </div>
+                    <button
+                        type="button"
+                        role="switch"
+                        aria-checked={capture?.enabled ?? false}
+                        data-testid="training-capture-toggle"
+                        onClick={flipCapture}
+                        className={`shrink-0 rounded-control border px-3 py-1.5 text-ui-xs font-semibold transition-colors ${(capture?.enabled ?? false)
+                            ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
+                            : 'border-white/10 bg-zinc-900 text-zinc-400 hover:border-white/25'}`}
+                    >
+                        {(capture?.enabled ?? false) ? 'Recording ON' : 'Recording OFF'}
+                    </button>
+                </div>
+                <p className="mt-2 text-ui-xs leading-4 text-zinc-500" data-testid="training-capture-status" role="status">
+                    {!capture
+                        ? '…'
+                        : !capture.desktop
+                            ? 'Recording needs the desktop app — this environment has no local store.'
+                            : capture.enabled
+                                ? `Recording ON · ${capture.recordCount} turn${capture.recordCount === 1 ? '' : 's'} stored${capture.refusedOnce ? ` · store FULL (${TRAINING_CAPTURE_MAX_RECORDS} cap reached — export and archive to keep recording)` : ''}${capture.lastAt ? ` · last ${capture.lastAt}` : ''}`
+                                : `Recording OFF · ${capture.recordCount} turn${capture.recordCount === 1 ? '' : 's'} already stored${capture.refusedOnce ? ' · store FULL' : ''}`}
+                </p>
+                <button
+                    type="button"
+                    data-testid="export-training-corpus"
+                    disabled={corpusBusy || !capture?.desktop || capture.recordCount === 0}
+                    onClick={() => { void exportCorpus(); }}
+                    className="mt-2.5 rounded-control border border-white/10 bg-zinc-900 px-3 py-1.5 text-ui-xs font-semibold text-zinc-200 transition-colors hover:border-white/25 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                    {corpusBusy ? 'Preparing…' : 'Export training corpus (JSONL)'}
                 </button>
             </section>
 

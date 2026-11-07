@@ -28,7 +28,9 @@
 import type { ProviderConfig, WireAuditEntry } from '../../types/provider';
 import type { ChatMessage } from '../providers/GenericProviderService';
 // LAZY: the desk whale loads on the first tool turn, not at boot (O-146).
+import type { ToolAction } from '../../types/message';
 const deskService = (): Promise<typeof import('../analysis/DeskToolsService')> => import('../analysis/DeskToolsService');
+const captureTurn = (input: Parameters<typeof import('../learning/trainingCapture').captureTurn>[0]) => import('../learning/trainingCapture').then(m => m.captureTurn(input));
 import type { StreamWithDeskToolsOptions } from '../analysis/DeskToolsService';
 import { emptyTokenUsage, mergeTokenUsage } from '../../utils/tokenUsage';
 import type { TokenUsage } from '../../utils/tokenUsage';
@@ -135,6 +137,20 @@ type InnerOutcome = Omit<ToolTurnOutcome, 'usage' | 'usageCalls' | 'effort' | 'w
  * panel shows a gap instead of a number nobody measured.
  */
 export const runToolTurn = async (req: ToolTurnRequest): Promise<ToolTurnOutcome> => {
+    // The training-corpus tee: every tool line and structured action the turn
+    // produces is ALSO collected here, so the 'Improve future August models'
+    // recorder (OFF by default, Settings → Data) can store the turn whole —
+    // trader words, reasoning, tool trail, actions — without any sink
+    // reshaping. A capture failure must never touch the turn: fire-and-forget
+    // below, and the recorder itself never throws.
+    const capturedToolLines: string[] = [];
+    const capturedActions: ToolAction[] = [];
+    const teedEvents: ToolTurnEvents = {
+        ...req.events,
+        addToolLine: line => { capturedToolLines.push(line); req.events.addToolLine(line); },
+        addAction: action => { capturedActions.push(action); req.events.addAction(action); },
+    };
+
     let usage = emptyTokenUsage();
     let usageCalls = 0;
     const callerOnUsage = req.transport.onUsage;
@@ -145,6 +161,7 @@ export const runToolTurn = async (req: ToolTurnRequest): Promise<ToolTurnOutcome
     const callerOnWireAudit = req.transport.onWireAudit;
     const outcome = await runToolTurnInner({
         ...req,
+        events: teedEvents,
         transport: {
             ...req.transport,
             onUsage: (frame: TokenUsage) => {
@@ -162,6 +179,22 @@ export const runToolTurn = async (req: ToolTurnRequest): Promise<ToolTurnOutcome
     // inner executor never sees a tier, so there is exactly one place that
     // stamps it and every caller records the same value. The wire audit
     // rides out beside it, for the same reason.
+    // Fire-and-forget: OFF means a no-op inside the recorder, and a failure
+    // is data the Settings card shows — never a turn that breaks.
+    void captureTurn({
+        surface: 'chat',
+        symbol: null,
+        model: { provider: req.config.name || 'unknown', model: req.config.selectedModel },
+        effort: req.effort ?? null,
+        userText: req.lastUserMessage ?? '',
+        finalText: outcome.text ?? '',
+        reasoning: outcome.reasoning ?? '',
+        toolEvents: capturedToolLines,
+        actions: capturedActions.flat(),
+        planId: (capturedToolLines.join('\n').match(/([a-z0-9-]{6,}):ENTRY/) ?? [])[1] ?? null,
+        snapshot: null,
+    }).catch(() => undefined);
+
     return {
         ...outcome,
         usage,

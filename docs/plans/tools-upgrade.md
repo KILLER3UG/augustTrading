@@ -508,3 +508,29 @@ What the numbers DO say, without overclaiming:
 Δ of ~0.7 R needs roughly that N for the CI to close. Nothing in this run justifies
 removing a tool group; nothing justifies declaring victory either. The harness is now a
 one-command instrument the owner can re-run on any model.
+
+## 16. The training recorder + O-46 closed (2026-11-07, owner directive)
+
+**O-46 is closed on the proposed path.** `present_trade` now fetches a decision snapshot
+fire-and-forget (the same not-awaited pattern as the gate scan) and attaches it to the
+proposal object: regime (id + text + ADX/dwell), ATR with its timeframe, previous UTC-day
+range, session VWAP. `buildProposedTradeAnalysis` fills `marketConditions` from the snapshot
+— the dashes were the register's evidence the row recorded nothing measurable. An unfetched
+or failed snapshot leaves the dashes, which is the honest state.
+
+**The "Improve future August models" recorder** (`services/learning/trainingCapture.ts`,
+Settings → Data): a LOCAL toggle, default OFF. When ON, every desk turn that settles is
+appended to the corpus — the trader's words, the reasoning trace verbatim, the tool trail,
+the structured actions, the plan id, and the O-46 snapshot — keyed by planId so the journal's
+outcome joins at export. Format decided: **JSONL, not markdown** — fine-tuning pipelines
+consume it natively (the repo's journal export already ships NDJSON), the corpus is
+append-only events that JSONL appends without re-parsing, and the repo already splits human
+documents (.md skills) from machine state (.json goals); a human digest belongs in the
+export step. Privacy, in order: OFF means nothing is written — not buffered, not sampled;
+the flag deliberately does NOT ride in backups (re-enabling after a restore is a conscious
+act); the corpus is desktop-only (`userData/store`, the same atomic bridge the big stores
+use) and never uploaded; the cap (400 turns) REFUSES like the notebook rather than evicting,
+and the refusal surfaces on the card with the export as the drain. Capture rides the one
+choke point both homes share (`runToolTurn`'s event tee) and is fire-and-forget — a
+recording failure can never fail a trading decision. Contracts: off-stores-nothing,
+append-whole, cap-refuses, standalone flag — 554/554.

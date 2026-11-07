@@ -85,6 +85,15 @@ export const runPresentTrade = (ctx: PresentTradeContext, sink: PresentTradeSink
     const planId = mintPlanId(proposal.symbol);
     proposal.planId = planId;
 
+    // The O-46 decision snapshot starts NOW, like the gate scan: not awaited
+    // (the card draws first), attached to the same proposal object when it
+    // lands, so the journal row and the training corpus carry the market's
+    // measured state at decision time. A failed fetch leaves the snapshot
+    // absent — the dashes stay, which is honest.
+    void import('../analysis/marketTools').then(mt => mt.buildDecisionSnapshot(proposal.symbol))
+        .then(snap => { if (snap) proposal.decisionSnapshot = snap; })
+        .catch(() => { /* absent snapshot is the honest state */ });
+
     // The scan starts NOW but is not awaited here. Awaiting it put a
     // market-data fetch plus an OHLCV pull per timeframe in front of drawing
     // the plan, so the card appeared seconds later on a path that used to touch
