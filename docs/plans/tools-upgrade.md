@@ -504,6 +504,37 @@ What the numbers DO say, without overclaiming:
   one sample; the pattern is a hypothesis for the next run, not a finding.
 - Hallucinated prices: ~0–1% in the pack arms — the model quotes what it was given.
 
+**THE N=80 RUN (2026-11-07, same seed, parallel harness, 240 calls, 0 look-ahead):**
+
+| arm | scored | abstain | hit rate | avg net R | Brier | tokens |
+|---|---|---|---|---|---|---|
+| baseline | 53 | 28% | **34%** | −0.492 R | **0.255** | 6,846 |
+| +volume/auction | 42 | 19% | 31% | −0.698 R | 0.260 | 6,537 |
+| +regime/levels/math | 40 | **5%** | 26% | **−0.430 R** | 0.277 | **4,785** |
+
+The three pre-declared comparisons at N=80 (paired bootstrap, 10k): baseline vs volume
+Δ +0.300 R [−0.173, +0.783]; baseline vs regime Δ +0.081 R [−0.466, +0.657]; volume vs
+regime Δ −0.234 R [−0.787, +0.274] — **all three still CANNOT TELL YET, and the N=24
+volume advantage did not survive**: the point estimate flipped sign and regressed toward
+zero, exactly what an underpowered first sample warns about. THE VERDICT UNDER THE
+PRE-DECLARED RULE (keep what helps or is neutral and cheap):
+
+- **KEEP the regime pack** — statistically indistinguishable from baseline at ~30% FEWER
+  tokens per decision, with the fewest abstentions (it answers thin tapes the baseline
+  declines) and the best point estimate. Neutral and cheap is the rule's keep condition.
+- **The volume/auction pack: neutral and NOT cheap** (~26% more tokens, no measured
+  benefit at either N). By the rule it comes OUT of the pre-declared eval arms. It stays
+  as ON-DEMAND desk tools (load_tools) — the trader asking for a POC or naked POCs is a
+  different question from packing them into every decision, and the ablation only measured
+  the latter.
+- All three arms remain NEGATIVE on average at this bracket (1R stop / 2R target / 48h) —
+  the harness measures decisions; it has not found an edge at this bracket, and saying so
+  plainly is the product (docs/product/focus.md: a signal or a refusal).
+
+The N=24 → N=80 flip IS the multiple-testing lesson working as designed: small first
+samples overestimate, declared comparisons and bigger N correct them. Next look, if the
+owner wants tighter bounds: N=200 now costs ~1.5-2h on the parallel harness.
+
 **Recommended next step:** the same seed at N≈80 per arm (one overnight run) — the observed
 Δ of ~0.7 R needs roughly that N for the CI to close. Nothing in this run justifies
 removing a tool group; nothing justifies declaring victory either. The harness is now a
