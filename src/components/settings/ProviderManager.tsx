@@ -23,6 +23,7 @@ import { SelectMenu } from '../shared/SelectMenu';
 import { useToastActions } from '../shared/Toast';
 
 import StatusPill from '../ui/StatusPill';
+import ToggleSwitch from '../shared/ToggleSwitch';
 
 interface ProviderManagerProps {
     configs: ProviderConfig[];
@@ -570,34 +571,36 @@ const ProviderManager: React.FC<ProviderManagerProps> = ({
     return (
         <div className="space-y-4">
             {ConfirmDialogComponent}
-            <div className="flex items-center justify-between">
-                <div>
-                    <h3 className="text-lg font-semibold text-zinc-100">Model settings</h3>
-                    <p className="mt-0.5 text-ui-sm text-zinc-500">
-                        Manage custom model providers. Once configured, they can be selected during chat.
-                        {catalogStatus ? ` ${catalogStatus}` : ''}
-                    </p>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="font-mono text-ui-xs font-medium uppercase tracking-[0.08em] text-zinc-500">
+                    Providers{catalogStatus ? ` · ${catalogStatus}` : ''}
+                </p>
+                <div className="flex items-center gap-1.5">
+                    <button
+                        onClick={() => { if (selected) void refreshCatalog(selected, false); }}
+                        className="motion-press rounded-control border border-white/10 p-1.5 text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-300"
+                        title="Refresh model catalogs"
+                        aria-label="Refresh model catalogs"
+                    >
+                        <RefreshCw className="h-4 w-4" aria-hidden="true" />
+                    </button>
+                    <button type="button" onClick={() => setShowAddProvider(true)}
+                        className="motion-press rounded-control border border-white/10 bg-zinc-100 px-2.5 py-1.5 text-ui-dense font-semibold text-zinc-950 transition-colors hover:bg-zinc-200">
+                        + Add provider
+                    </button>
                 </div>
-                <button
-                    onClick={() => { if (selected) void refreshCatalog(selected, false); }}
-                    className="rounded-control p-1.5 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300"
-                    title="Refresh model catalogs"
-                    aria-label="Refresh model catalogs"
-                >
-                    <RefreshCw className="h-4 w-4" aria-hidden="true" />
-                </button>
             </div>
 
-            <div className="grid min-h-[540px] w-full overflow-hidden rounded-bubble border border-zinc-800 bg-zinc-900 md:grid-cols-[280px_minmax(0,1fr)]">
-                <div className="flex flex-col border-b border-zinc-800 p-3 md:border-b-0 md:border-r">
-                    <div className="min-h-0 flex-1 space-y-5 overflow-y-auto">
+            <div className="grid min-h-[540px] w-full overflow-hidden rounded-card border border-white/[0.07] bg-zinc-900/40 md:grid-cols-[280px_minmax(0,1fr)]">
+                <div className="flex flex-col border-b border-white/[0.07] p-3 md:border-b-0 md:border-r">
+                    <div className="min-h-0 flex-1 space-y-5 overflow-y-auto custom-scrollbar">
                         {([
                             { title: 'Providers', items: configs.filter(c => c.isBuiltIn) },
                             { title: 'Custom providers', items: configs.filter(c => !c.isBuiltIn) },
                         ] as const).filter(section => section.title === 'Custom providers' || section.items.length > 0).map(section => (
                             <div key={section.title}>
-                                <h5 className="mb-2 px-2 text-ui-caption text-zinc-500">{section.title}</h5>
-                                <div className="space-y-0.5">
+                                <h5 className="mb-2 px-2 font-mono text-ui-xs font-medium uppercase tracking-[0.08em] text-zinc-500">{section.title}</h5>
+                                <div className="motion-list divide-y divide-dashed divide-white/[0.07]">
                                     {section.items.map(c => {
                                         const isSelectedRow = selected?.id === c.id && !showAddProvider;
                                         const isReady = isProviderReady(c);
@@ -605,7 +608,7 @@ const ProviderManager: React.FC<ProviderManagerProps> = ({
                                             <button
                                                 key={c.id}
                                                 onClick={() => { void selectProvider(c.id); }}
-                                                className={`flex w-full items-center justify-between rounded-control px-2 py-2 text-left ${
+                                                className={`motion-press flex w-full items-center justify-between rounded-control px-2 py-2.5 text-left transition-colors ${
                                                     isSelectedRow ? 'bg-zinc-800 text-zinc-100' : 'text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-200'
                                                 }`}
                                             >
@@ -623,12 +626,9 @@ const ProviderManager: React.FC<ProviderManagerProps> = ({
                             </div>
                         ))}
                     </div>
-                    <button
-                        onClick={() => setShowAddProvider(true)}
-                        className="mt-3 flex w-full items-center justify-center rounded-control border border-dashed border-zinc-700 py-2 text-ui-caption text-zinc-400 hover:border-zinc-500 hover:text-zinc-200"
-                    >
-                        + Add provider
-                    </button>
+                    <p className="mt-3 px-2 text-ui-2xs leading-relaxed text-zinc-600">
+                        A green dot means the provider is enabled and has a key.
+                    </p>
                 </div>
 
                 <div className="min-w-0 p-5">
@@ -714,7 +714,7 @@ const ProviderManager: React.FC<ProviderManagerProps> = ({
                                         const remaining = configs.filter(c => c.id !== selected.id);
                                         if (remaining.length > 0) setSelectedId(remaining[0].id);
                                     }}
-                                    className="p-1.5 text-zinc-500 hover:text-rose-400 disabled:opacity-30"
+                                    className="motion-press rounded-control border border-rose-500/30 bg-rose-500/10 p-1.5 text-rose-300 transition-colors hover:bg-rose-500/20 hover:text-rose-200 disabled:opacity-30"
                                     title={selected.isBuiltIn ? 'Built-in providers cannot be deleted' : 'Delete provider'}
                                     aria-label={selected.isBuiltIn ? 'Built-in providers cannot be deleted' : `Delete provider ${selected.name}`}
                                 >
@@ -776,7 +776,7 @@ const ProviderManager: React.FC<ProviderManagerProps> = ({
 
                             <div>
                                 <FieldLabel>Model list</FieldLabel>
-                                <div className="max-h-[320px] min-h-[168px] space-y-2 overflow-y-auto">
+                                <div className="motion-list max-h-[320px] min-h-[168px] divide-y divide-dashed divide-white/[0.07] overflow-y-auto custom-scrollbar">
                                     {listedModels.map((m) => {
                                         const isSelectedModel = draftModel === m;
                                         const isEditingThis = editingModelId === m;
@@ -784,7 +784,7 @@ const ProviderManager: React.FC<ProviderManagerProps> = ({
                                         const modelTest = modelTests[m];
                                         const isTestingThis = testingModelId === m;
                                         return (
-                                            <div key={m} className="space-y-1">
+                                            <div key={m} className="space-y-1 py-1.5">
                                             <div
                                                 className={`flex h-[48px] items-center rounded-control px-3.5 ${
                                                     isSelectedModel ? 'bg-zinc-800 text-zinc-100' : 'bg-zinc-800/70 text-zinc-300 hover:bg-zinc-800'
@@ -801,6 +801,11 @@ const ProviderManager: React.FC<ProviderManagerProps> = ({
                                                 )}
                                                 <div className="ml-4 flex shrink-0 items-center gap-2.5" onClick={e => e.stopPropagation()}>
                                                     <span className="font-mono text-ui-xs font-medium text-zinc-500">{badgeText}</span>
+                                                    <ToggleSwitch
+                                                        checked={isSelectedModel}
+                                                        onChange={() => setDraftModel(m)}
+                                                        label={`Use ${m} as the active model`}
+                                                    />
                                                     <button type="button" onClick={() => void handleTestModel(m)} disabled={isTestingThis || isTesting || !draftUrlValidation.valid} className="p-1 text-zinc-500 hover:text-zinc-200 disabled:opacity-40" title={modelTest?.message || `Test ${m}`} aria-label={modelTest?.message ? `Test ${m} — ${modelTest.message}` : `Test model ${m}`}>
                                                         {isTestingThis ? <LoadingIcon className="h-3 w-3 animate-spin" aria-hidden="true" /> : <Zap className="h-3 w-3" aria-hidden="true" />}
                                                     </button>

@@ -8,7 +8,7 @@ import { CustomInstructionsMap } from '../../types/user';
 import { ProviderConfig, ApiFormat } from '../../types/provider';
 import type { JournalUIState } from '../../hooks/useJournalUI';
 import { EmptyState } from '../ui/EmptyState';
-import {AISettingsIcon, HistoryIcon, SettingsIcon, CodeIcon, SearchIcon, CloseIcon, User, FileText, Brain, BookOpen, Database, Search, ChevronRight} from '../shared/Icons';
+import {AISettingsIcon, HistoryIcon, SettingsIcon, CodeIcon, SearchIcon, CloseIcon, ChevronLeftIcon, User, FileText, Brain, BookOpen, Database, Search, ChevronRight, ArrowLeft, ArrowRight, PanelLeft, Info, X} from '../shared/Icons';
 import { getIdleMotionEnabled, subscribeIdleMotion } from '../../services/desk/idleMotion';
 import { loadForgedTools } from '../../services/tools/toolForge';
 import { getHarnessSettings } from '../../utils/harnessSettings';
@@ -131,12 +131,15 @@ const NavTabButton: React.FC<{
     icon: React.ReactNode;
     label: string;
     badge?: string;
-}> = ({ active, onClick, icon, label, badge }) => (
+    /** A lifecycle flag on the row. Only set on labels no gate matches exactly,
+     *  because it becomes part of the button's text content. */
+    flag?: 'Beta' | 'New';
+}> = ({ active, onClick, icon, label, badge, flag }) => (
     <button
         type="button"
         onClick={onClick}
         aria-current={active ? 'page' : undefined}
-        className={`flex w-full items-center justify-between gap-2 rounded-control px-2.5 py-2 text-left text-ui-sm font-medium transition-colors ${
+        className={`motion-press flex w-full items-center justify-between gap-2 rounded-control px-2.5 py-2 text-left text-ui-sm font-medium transition-colors ${
             active
                 ? 'bg-zinc-800 text-zinc-100 shadow-sm ring-1 ring-white/[0.09]'
                 : 'text-zinc-500 hover:bg-white/[0.04] hover:text-zinc-100'
@@ -146,11 +149,18 @@ const NavTabButton: React.FC<{
             <span className={`shrink-0 ${active ? 'text-zinc-100' : 'text-zinc-500'}`}>{icon}</span>
             <span className="truncate" title={label}>{label}</span>
         </span>
-        {badge && (
-            <span className="shrink-0 rounded-full bg-zinc-700 px-1.5 py-0.5 font-mono text-ui-2xs font-bold leading-none text-zinc-200">
-                {badge}
-            </span>
-        )}
+        <span className="flex shrink-0 items-center gap-1.5">
+            {flag && (
+                <span className={`rounded-full px-1.5 py-0.5 text-ui-2xs font-semibold leading-none ${
+                    flag === 'New' ? 'bg-emerald-500/15 text-emerald-300' : 'bg-cyan-500/15 text-cyan-300'
+                }`}>{flag}</span>
+            )}
+            {badge && (
+                <span className="rounded-full bg-zinc-700 px-1.5 py-0.5 font-mono text-ui-2xs font-bold leading-none text-zinc-200">
+                    {badge}
+                </span>
+            )}
+        </span>
     </button>
 );
 
@@ -164,6 +174,7 @@ interface NavEntry {
      *  sidebar says "Playbooks" but a user types "strategy", and both must
      *  find it. */
     keywords: string;
+    flag?: 'Beta' | 'New';
 }
 
 interface NavGroup { title: string; entries: NavEntry[] }
@@ -186,7 +197,7 @@ const NAV_GROUPS: NavGroup[] = [
         title: 'Analysis',
         entries: [
             { id: 'general', label: 'Analysis', icon: <SettingsIcon className={NAV_ICON} />, keywords: 'hybrid desk tools reduce motion idle motion capture advanced' },
-            { id: 'prompts', label: 'Prompts', icon: <CodeIcon className={NAV_ICON} />, keywords: 'template library editing' },
+            { id: 'prompts', label: 'Prompts', icon: <CodeIcon className={NAV_ICON} />, keywords: 'template library editing', flag: 'Beta' },
             { id: 'instructions', label: 'Instructions', icon: <FileText className={NAV_ICON} />, keywords: 'custom system instruction rules' },
         ],
     },
@@ -197,7 +208,7 @@ const NAV_GROUPS: NavGroup[] = [
             // library and the notebook sit together instead of one being a
             // settings pane. The rail's Skills row and Alt+3 land there.
             { id: 'memory', label: 'Memory', icon: <Brain className={NAV_ICON} />, keywords: 'notebook amendment profile memory files global' },
-            { id: 'strategies', label: 'Playbooks', icon: <BookOpen className={NAV_ICON} />, keywords: 'strategy book pdf upload studio families import' },
+            { id: 'strategies', label: 'Playbooks', icon: <BookOpen className={NAV_ICON} />, keywords: 'strategy book pdf upload studio families import', flag: 'New' },
         ],
     },
     {
@@ -208,6 +219,36 @@ const NAV_GROUPS: NavGroup[] = [
             { id: 'actions', label: 'Data', icon: <Database className={NAV_ICON} />, keywords: 'usage backup restore session tokens' },
         ],
     },
+];
+
+/** The search box's ROW index. The sidebar's keyword list finds a PAGE; these
+ *  entries find the control inside it. A hit jumps to the page and then to the
+ *  row whose title matches, so "vision" lands on the Vision Model card rather
+ *  than merely opening AI setup. Every label here names a control that exists. */
+interface SettingsSearchHit {
+    id: string;
+    label: string;
+    tab: SettingsTab;
+    keywords: string;
+}
+const SETTINGS_SEARCH_ROWS: SettingsSearchHit[] = [
+    { id: 'hybrid', label: 'Hybrid intelligence', tab: 'general', keywords: 'real time market data rsi macd ema price context' },
+    { id: 'desk-tools', label: 'Desk Tools', tab: 'general', keywords: 'web search funding open interest order book liquidations tools' },
+    { id: 'reduce-motion', label: 'Reduce motion', tab: 'general', keywords: 'animation indicators still idle motion accessibility' },
+    { id: 'capture', label: 'Auto-capture', tab: 'general', keywords: 'capture prompts context injection advanced' },
+    { id: 'vision', label: 'Vision Model', tab: 'models', keywords: 'ocr chart screenshot pdf image provider' },
+    { id: 'memory-model', label: 'Memory Model', tab: 'models', keywords: 'librarian notebook skills background passes' },
+    { id: 'providers', label: 'Model settings', tab: 'models', keywords: 'provider api key base url endpoint add custom' },
+    { id: 'prompts', label: 'Prompt library', tab: 'prompts', keywords: 'prompts template edit override' },
+    { id: 'instructions', label: 'Custom instructions', tab: 'instructions', keywords: 'system rules persona behaviour' },
+    { id: 'memory', label: 'Memory behavior', tab: 'memory', keywords: 'global notebook switches learning sensitive' },
+    { id: 'notebook', label: 'Notebook', tab: 'memory', keywords: 'memory files entries export learning surface' },
+    { id: 'playbooks', label: 'Playbooks', tab: 'strategies', keywords: 'strategy book pdf upload studio' },
+    { id: 'profile', label: 'Profile', tab: 'profile', keywords: 'trader account switch version update' },
+    { id: 'journal', label: 'Trading journal', tab: 'journal', keywords: 'trades log summary insights statistics' },
+    { id: 'storage', label: 'Storage location', tab: 'actions', keywords: 'sqlite indexeddb journal disk path' },
+    { id: 'backup', label: 'Backups', tab: 'actions', keywords: 'backup restore export import json' },
+    { id: 'usage', label: 'Session usage', tab: 'actions', keywords: 'tokens usage cost training export' },
 ];
 
 const SettingsMenu: React.FC<SettingsMenuProps> = (props) => {
@@ -313,55 +354,220 @@ const SettingsMenu: React.FC<SettingsMenuProps> = (props) => {
         setActiveTab(readyConfigProviders.length > 0 ? 'general' : 'models');
     }, [isVisible, providerConfigsLoaded, readyConfigProviders.length]);
 
+    // ── Standalone window chrome ───────────────────────────────────────────
+    // Settings is a WINDOW, not a card floating over the app: its top bar owns
+    // the sidebar toggle and the page history, its sidebar scrolls on its own,
+    // and the content pane is a separate scroll container. The dialog contract
+    // (focus trap, Escape, aria-modal, mounting outside <main>) is unchanged.
+    const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+    const [helpOpen, setHelpOpen] = useState(false);
+    const [history, setHistory] = useState<{ stack: SettingsTab[]; index: number }>(() => ({
+        stack: [activeTab], index: 0,
+    }));
+    const [pendingJump, setPendingJump] = useState<string | null>(null);
+    const contentRef = useRef<HTMLDivElement | null>(null);
+    const historyNavigationRef = useRef(false);
+
+    // Every tab change is a page visit. Back/forward set the flag first so a
+    // history move does not also append itself as a new visit.
+    useEffect(() => {
+        if (historyNavigationRef.current) {
+            historyNavigationRef.current = false;
+            return;
+        }
+        setHistory(prev => {
+            const base = prev.stack.slice(0, prev.index + 1);
+            if (base[base.length - 1] === activeTab) return prev;
+            return { stack: [...base, activeTab], index: base.length };
+        });
+    }, [activeTab]);
+
+    // Toasts + the help button share the bottom-right corner only while this
+    // window is open (see body[data-settings-open] in index.css).
+    useEffect(() => {
+        if (!isVisible) return;
+        document.body.setAttribute('data-settings-open', 'true');
+        return () => { document.body.removeAttribute('data-settings-open'); };
+    }, [isVisible]);
+
+    const searchHits = useMemo<SettingsSearchHit[]>(() => {
+        if (!navQ) return [];
+        return SETTINGS_SEARCH_ROWS.filter(hit =>
+            hit.label.toLowerCase().includes(navQ) || hit.keywords.includes(navQ),
+        ).slice(0, 7);
+    }, [navQ]);
+
+    const jumpTo = useCallback((hit: SettingsSearchHit): void => {
+        explicitTabChosenRef.current = true;
+        setActiveTab(hit.tab);
+        setNavQuery('');
+        setPendingJump(hit.label);
+        setHelpOpen(false);
+    }, []);
+
+    // The tab body is lazy-loaded, so poll briefly for its row before giving
+    // up. The scroll + highlight are transform/opacity only (motion-highlight).
+    useEffect(() => {
+        if (!pendingJump || !isVisible) return;
+        let attempts = 0;
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const find = (): void => {
+            const pane = contentRef.current;
+            const rows = pane
+                ? Array.from(pane.querySelectorAll<HTMLElement>('[data-settings-row]'))
+                : [];
+            const needle = pendingJump.toLowerCase();
+            const row = rows.find(r => (r.textContent || '').toLowerCase().includes(needle));
+            if (row) {
+                row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+                row.classList.add('motion-highlight');
+                setTimeout(() => row.classList.remove('motion-highlight'), 600);
+                setPendingJump(null);
+                return;
+            }
+            attempts += 1;
+            if (attempts < 12) timer = setTimeout(find, 80);
+            else setPendingJump(null);
+        };
+        timer = setTimeout(find, 60);
+        return () => { if (timer) clearTimeout(timer); };
+    }, [pendingJump, activeTab, isVisible]);
+
+    const goBack = useCallback((): void => {
+        if (history.index <= 0) return;
+        const next = history.index - 1;
+        historyNavigationRef.current = true;
+        setHistory({ ...history, index: next });
+        setActiveTab(history.stack[next]);
+    }, [history]);
+
+    const goForward = useCallback((): void => {
+        if (history.index >= history.stack.length - 1) return;
+        const next = history.index + 1;
+        historyNavigationRef.current = true;
+        setHistory({ ...history, index: next });
+        setActiveTab(history.stack[next]);
+    }, [history]);
+
     if (!isVisible) return null;
+
+    const activeEntry = NAV_GROUPS.flatMap(g => g.entries).find(e => e.id === activeTab);
+    const activeGroup = NAV_GROUPS.find(g => g.entries.some(e => e.id === activeTab));
+    const canGoBack = history.index > 0;
+    const canGoForward = history.index < history.stack.length - 1;
+    const noNavMatches = navQ && !NAV_GROUPS.some(g => g.entries.some(navMatches)) && searchHits.length === 0;
 
     return (
         <>
-            {/* z-modal, not a literal: the expanded nav rail rides z-drawer
-                (50), and at the same rung DOM order let the rail paint OVER
-                this modal — its panel covered the settings nav entirely. */}
-            <div className="fixed inset-0 z-modal flex items-center justify-center p-3 sm:p-6">
-                <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={requestClose} aria-hidden="true" />
-                <div
-                    ref={dialogRef}
-                    role="dialog"
-                    aria-modal="true"
-                    aria-labelledby="settings-title"
-                    className="relative flex h-[min(860px,94vh)] w-[min(1180px,97vw)] overflow-hidden rounded-bubble border border-white/10 bg-zinc-900 shadow-2xl ring-1 ring-white/[0.04] animate-fade-in"
-                >
+            <div
+                ref={dialogRef}
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="settings-title"
+                data-testid="settings-window"
+                className="fixed inset-0 z-modal flex flex-col bg-zinc-950 motion-fade"
+            >
+                {/* Top bar — sidebar toggle, back/forward, breadcrumb, close. */}
+                <div className="flex h-11 shrink-0 items-center gap-1.5 border-b border-white/[0.06] bg-zinc-900/40 px-3">
+                    <button
+                        type="button"
+                        onClick={() => setSidebarCollapsed(v => !v)}
+                        aria-label={sidebarCollapsed ? 'Show settings sidebar' : 'Hide settings sidebar'}
+                        aria-expanded={!sidebarCollapsed}
+                        data-testid="settings-sidebar-toggle"
+                        className="motion-press rounded-control p-1.5 text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-zinc-100"
+                    >
+                        <PanelLeft className="h-4 w-4" aria-hidden="true" />
+                    </button>
+                    <span aria-hidden="true" className="mx-1 h-4 w-px bg-white/[0.08]" />
+                    <button type="button" onClick={goBack} disabled={!canGoBack} aria-label="Back"
+                        data-testid="settings-back"
+                        className="motion-press rounded-control p-1.5 text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-zinc-100 disabled:opacity-30">
+                        <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+                    </button>
+                    <button type="button" onClick={goForward} disabled={!canGoForward} aria-label="Forward"
+                        data-testid="settings-forward"
+                        className="motion-press rounded-control p-1.5 text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-zinc-100 disabled:opacity-30">
+                        <ArrowRight className="h-4 w-4" aria-hidden="true" />
+                    </button>
+                    <h2 id="settings-title" className="ml-2 min-w-0 flex-1 truncate text-ui-sm font-medium text-zinc-300">
+                        <span className="text-zinc-600">{activeGroup?.title ?? 'Settings'}</span>
+                        <span className="px-1.5 text-zinc-700">/</span>
+                        {activeEntry?.label ?? 'Settings'}
+                    </h2>
                     <button
                         type="button"
                         onClick={requestClose}
                         aria-label="Close settings"
-                        className="absolute right-4 top-4 z-10 rounded-control p-1.5 text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100"
+                        className="motion-press rounded-control p-1.5 text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-zinc-100"
                     >
-                        <CloseIcon className="h-5 w-5" aria-hidden="true" />
+                        <CloseIcon className="h-4 w-4" aria-hidden="true" />
                     </button>
-                    <div className="flex-1 flex min-h-0 flex-col md:flex-row">
+                </div>
 
-                        <div className="w-full md:w-64 max-h-[32vh] overflow-y-auto md:max-h-none md:overflow-y-auto border-b md:border-b-0 md:border-r border-white/[0.06] bg-zinc-950/45 px-3 py-4 space-y-1 shrink-0 flex flex-col justify-between custom-scrollbar">
-                            <div className="space-y-1">
-                                <div className="px-1 pb-4">
-                                    <div className="mb-4 px-1.5">
-                                        <h2 id="settings-title" className="august-wordmark text-ui-xl font-semibold tracking-[-0.03em]">August</h2>
-                                        <p className="mt-1 text-ui-2xs font-medium uppercase tracking-[0.14em] text-zinc-600">Settings &amp; controls</p>
-                                    </div>
-                                    <div className="flex items-center gap-2 rounded-control border border-white/[0.07] bg-zinc-800/80 px-2.5 py-2 transition-colors focus-within:border-white/20">
-                                        <SearchIcon className="h-3.5 w-3.5 shrink-0 text-zinc-500" aria-hidden="true" />
-                                        <input
-                                            value={navQuery}
-                                            onChange={e => setNavQuery(e.target.value)}
-                                            placeholder="Search settings"
-                                            aria-label="Search settings"
-                                            className="w-full bg-transparent text-ui-sm text-zinc-200 placeholder-zinc-500 outline-none"
-                                        />
-                                    </div>
+                <div className="relative flex min-h-0 flex-1">
+                    {/* Sidebar — its own scroll container, independent of the page. */}
+                    <aside
+                        data-testid="settings-sidebar"
+                        aria-label="Settings sections"
+                        className={`shrink-0 overflow-hidden bg-zinc-950/60 ${sidebarCollapsed ? 'w-0' : 'w-64 border-r border-white/[0.06]'}`}
+                    >
+                        <div className={`flex h-full w-64 flex-col transition-[opacity,transform] duration-[var(--motion-base)] ease-[var(--motion-ease)] ${
+                            sidebarCollapsed ? 'pointer-events-none -translate-x-3 opacity-0' : 'translate-x-0 opacity-100'
+                        }`}>
+                            <div className="px-3 pt-4">
+                                <button type="button" onClick={requestClose} data-testid="settings-back-to-app"
+                                    className="motion-press flex w-full items-center gap-2 rounded-control px-2.5 py-2 text-left text-ui-sm text-zinc-400 transition-colors hover:bg-white/[0.04] hover:text-zinc-100">
+                                    <ChevronLeftIcon className="h-4 w-4" aria-hidden="true" />
+                                    Back to app
+                                </button>
+                            </div>
+                            <div className="px-3 pb-2 pt-3">
+                                <div className="flex items-center gap-2 rounded-control border border-white/[0.07] bg-zinc-800/80 px-2.5 py-2 transition-colors focus-within:border-white/20">
+                                    <SearchIcon className="h-3.5 w-3.5 shrink-0 text-zinc-500" aria-hidden="true" />
+                                    <input
+                                        value={navQuery}
+                                        onChange={e => setNavQuery(e.target.value)}
+                                        onKeyDown={e => {
+                                            if (e.key === 'Enter' && searchHits.length > 0) jumpTo(searchHits[0]);
+                                            if (e.key === 'Escape') setNavQuery('');
+                                        }}
+                                        placeholder="Search settings..."
+                                        aria-label="Search settings"
+                                        className="w-full min-w-0 bg-transparent text-ui-sm text-zinc-200 placeholder-zinc-500 outline-none"
+                                    />
+                                    {navQ && (
+                                        <button type="button" onClick={() => setNavQuery('')} aria-label="Clear search"
+                                            className="shrink-0 rounded-control p-0.5 text-zinc-500 transition-colors hover:text-zinc-200">
+                                            <X className="h-3 w-3" aria-hidden="true" />
+                                        </button>
+                                    )}
                                 </div>
+                            </div>
+                            <nav className="min-h-0 flex-1 overflow-y-auto px-3 pb-4 custom-scrollbar">
+                                {navQ && searchHits.length > 0 && (
+                                    <div className="pb-3">
+                                        <p className="ui-kicker px-2.5 pb-1">Results</p>
+                                        <div className="space-y-0.5 motion-list">
+                                            {searchHits.map(hit => (
+                                                <button key={hit.id} type="button" onClick={() => jumpTo(hit)}
+                                                    data-testid={`settings-search-${hit.id}`}
+                                                    className="motion-press flex w-full flex-col items-start gap-0.5 rounded-control px-2.5 py-2 text-left transition-colors hover:bg-white/[0.05]">
+                                                    <span className="text-ui-sm text-zinc-200">{hit.label}</span>
+                                                    <span className="max-w-full truncate text-ui-2xs text-zinc-500">
+                                                        {NAV_GROUPS.find(g => g.entries.some(e => e.id === hit.tab))?.title}
+                                                        {' · '}{NAV_GROUPS.flatMap(g => g.entries).find(e => e.id === hit.tab)?.label}
+                                                    </span>
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
                                 {NAV_GROUPS.map(group => {
                                     const entries = group.entries.filter(navMatches);
                                     if (entries.length === 0) return null;
                                     return (
-                                        <div key={group.title} className="space-y-0.5 pt-5 first:pt-0">
+                                        <div key={group.title} className="space-y-0.5 pt-4 first:pt-0">
                                             <p className="ui-kicker px-2.5 pb-1">{group.title}</p>
                                             {entries.map(entry => (
                                                 <NavTabButton
@@ -371,12 +577,13 @@ const SettingsMenu: React.FC<SettingsMenuProps> = (props) => {
                                                     icon={entry.icon}
                                                     label={entry.label}
                                                     badge={navBadge(entry.id)}
+                                                    flag={entry.flag}
                                                 />
                                             ))}
                                         </div>
                                     );
                                 })}
-                                {navQ && !NAV_GROUPS.some(g => g.entries.some(navMatches)) && (
+                                {noNavMatches && (
                                     <EmptyState
                                         compact
                                         iconVariant="subtle"
@@ -385,41 +592,38 @@ const SettingsMenu: React.FC<SettingsMenuProps> = (props) => {
                                         title={`Nothing matches "${navQuery.trim()}"`}
                                     />
                                 )}
-                            </div>
-
-                            {/* Diagnostics & Version at bottom of nav — developer
-                                tooling tucked behind a collapsible so it doesn't
-                                sit on a user-facing screen. */}
-                            <div className="pt-4 border-t border-zinc-800/80 space-y-2">
+                            </nav>
+                            <div className="border-t border-zinc-800/80 px-3 py-3">
                                 <details className="group">
                                     <summary className="flex cursor-pointer select-none list-none items-center justify-between font-mono text-ui-xs text-zinc-600 hover:text-zinc-400">
                                         <span>Developer</span>
-                                        <ChevronRight className="h-3 w-3 shrink-0 text-zinc-500 transition-transform duration-150 ease-[var(--ease-snappy)] group-open:rotate-90" aria-hidden="true" />
+                                        <ChevronRight className="h-3 w-3 shrink-0 text-zinc-500 transition-transform duration-[var(--motion-fast)] ease-[var(--motion-ease)] group-open:rotate-90" aria-hidden="true" />
                                     </summary>
                                     <div className="mt-2 px-2 pb-1 text-ui-dense leading-5 text-zinc-500">
                                         Runtime errors and the thinking-leak bin moved
                                         to <span className="text-zinc-300">Learning → Health</span>.
                                     </div>
                                 </details>
-                                <p className="text-ui-xs text-zinc-600 text-center font-mono">
+                                <p className="mt-2 text-center font-mono text-ui-xs text-zinc-600">
                                     {APP_NAME} v{APP_VERSION}
                                 </p>
                             </div>
                         </div>
+                    </aside>
 
-                        {/* Right Content Workspace. Three layout modes: tabs
-                            that own their whole scroll container (the embedded
-                            managers), a wide measure for data-dense pages, and
-                            a reading measure for preference pages. */}
-                        <div className={`flex-1 min-h-0 overflow-y-auto bg-zinc-900 custom-scrollbar ${
-                            // One frame for every preference page: a full-width
-                            // column inset from the pane edge, the reference's
-                            // measure. Full-bleed editors own their own padding.
-                            FULL_BLEED_TABS.includes(activeTab)
-                                ? ''
-                                : 'px-8 py-8 lg:px-10 [&>*]:w-full'
-                        }`}>
-
+                    {/* Content — an inset panel on its own scroll container. */}
+                    <div
+                        ref={contentRef}
+                        role="region"
+                        aria-label="Settings content"
+                        className="min-h-0 min-w-0 flex-1 overflow-y-auto bg-zinc-950 p-4 custom-scrollbar md:p-6"
+                    >
+                        <div
+                            key={activeTab}
+                            className={`mx-auto w-full max-w-[940px] motion-page rounded-bubble border border-white/[0.06] bg-zinc-900/50 ${
+                                FULL_BLEED_TABS.includes(activeTab) ? 'overflow-hidden' : 'p-6 md:p-8'
+                            }`}
+                        >
                             {/* TAB 0: Trading Journal — Hub & Quick Launcher */}
                             {activeTab === 'journal' && (
                                 <Suspense fallback={<TabFallback />}>
@@ -463,10 +667,7 @@ const SettingsMenu: React.FC<SettingsMenuProps> = (props) => {
                                 </Suspense>
                             )}
 
-                            {/* TAB 1: Profile — who is signed in and what their
-                                desk holds. The account menu has linked here all
-                                along; the tab itself was never rendered, so
-                                Profile opened an empty pane. */}
+                            {/* TAB: Profile */}
                             {activeTab === 'profile' && (
                                 <Suspense fallback={<TabFallback />}>
                                     <ProfileTab tab={{
@@ -481,7 +682,7 @@ const SettingsMenu: React.FC<SettingsMenuProps> = (props) => {
                                 </Suspense>
                             )}
 
-                            {/* TAB 2: General & Analysis */}
+                            {/* TAB: General & Analysis */}
                             {activeTab === 'general' && (
                                 <Suspense fallback={<TabFallback />}>
                                     <GeneralTab tab={{
@@ -502,8 +703,7 @@ const SettingsMenu: React.FC<SettingsMenuProps> = (props) => {
                             )}
 
                             {/* TAB: Prompts & Instructions — one body with a conditional
-                                inside (the editor when the Instructions entry is active,
-                                PromptManager otherwise), so it stays ONE component. */}
+                                inside, so it stays ONE component. */}
                             {(activeTab === 'prompts' || activeTab === 'instructions') && (
                                 <Suspense fallback={<TabFallback />}>
                                     <PromptsTab tab={{
@@ -534,35 +734,61 @@ const SettingsMenu: React.FC<SettingsMenuProps> = (props) => {
                                         visionConfig: props.visionConfig,
                                         isStrategiesEnabled: props.isStrategiesEnabled,
                                         setIsStrategiesEnabled: props.setIsStrategiesEnabled,
-                                        // The library left this dialog for the
-                                        // Learning surface's Skills tab, so the
-                                        // jump crosses surfaces now — and Settings
-                                        // closes itself on the way, the same way
-                                        // "open the notebook" already does.
                                         onOpenStrategyStudio: () => props.onOpenLearn?.('skills'),
                                     }} />
                                 </Suspense>
                             )}
 
-                            {/* TAB 6: Data — Backups & Alerts */}
+                            {/* TAB: Data — Backups & Alerts */}
                             {activeTab === 'actions' && (
                                 <Suspense fallback={<TabFallback />}>
                                     <ActionsTab tab={{
                                         username: props.username,
-                                        // The Data tab's training export counts these rows to decide
-                                        // whether the button is live, so a mount that omits them
-                                        // renders "No trades logged yet" over a full journal
-                                        // (the 2026-10-27 audit §8, item F-9).
                                         loggedTrades: props.loggedTrades,
                                         onProfileRestored: props.onProfileRestored,
                                     }} />
                                 </Suspense>
                             )}
-
                         </div>
                     </div>
                 </div>
+
+                {/* Bottom-right help — the reference's floating "?" button. */}
+                <div className="pointer-events-none absolute bottom-4 right-4 z-10 flex flex-col items-end gap-2">
+                    {helpOpen && (
+                        <div role="dialog" aria-label="Settings help" data-testid="settings-help-panel"
+                            className="motion-pop pointer-events-auto w-72 rounded-bubble border border-white/[0.08] bg-zinc-900 p-4 shadow-2xl">
+                            <p className="text-ui-sm font-semibold text-zinc-100">Settings help</p>
+                            <p className="mt-1.5 text-ui-dense leading-relaxed text-zinc-500">
+                                Search finds a control by name and jumps to it. Back and forward walk the pages
+                                you visited in this window.
+                            </p>
+                            <dl className="mt-3 space-y-1.5 text-ui-dense">
+                                {[
+                                    ['Ctrl/⌘ + ,', 'Open settings'],
+                                    ['Esc', 'Close settings'],
+                                    ['Ctrl/⌘ + K', 'New chat'],
+                                    ['Ctrl/⌘ + B', 'Hide conversation'],
+                                ].map(([key, action]) => (
+                                    <div key={key} className="flex items-center justify-between gap-2">
+                                        <dt className="font-mono text-ui-2xs text-zinc-400">{key}</dt>
+                                        <dd className="text-zinc-500">{action}</dd>
+                                    </div>
+                                ))}
+                            </dl>
+                            <p className="mt-3 flex items-start gap-1.5 text-ui-2xs leading-relaxed text-zinc-600">
+                                <Info className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
+                                August is local-first. No account, subscription or order placement lives here.
+                            </p>
+                        </div>
+                    )}
+                    <button type="button" onClick={() => setHelpOpen(v => !v)}
+                        aria-label="Settings help" aria-expanded={helpOpen} data-testid="settings-help"
+                        className="motion-press pointer-events-auto flex h-8 w-8 items-center justify-center rounded-full border border-white/[0.1] bg-zinc-800 text-ui-base font-semibold text-zinc-200 transition-colors hover:bg-zinc-700">
+                        ?
+                    </button>
                 </div>
+            </div>
             {ConfirmDialogComponent}
         </>
     );
