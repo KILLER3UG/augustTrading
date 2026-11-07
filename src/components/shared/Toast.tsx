@@ -39,6 +39,8 @@ export const useToast = () => {
 
 /** Max toasts stacked in the column before the "+N more" cap kicks in. */
 const MAX_VISIBLE_TOASTS = 4;
+/** Matches --motion-fast: hold the card mounted for its exit before removing it. */
+const TOAST_EXIT_MS = 150;
 
 // Convenience methods
 export const useToastActions = () => {
@@ -104,7 +106,7 @@ const ToastContainer: React.FC = () => {
            message covers neither the figure a trader is reading nor a panel's
            header/composer. Toasts join the bottom of the stack, so the newest
            message is the one nearest the corner. */
-        <div className="pointer-events-none fixed bottom-[calc(env(safe-area-inset-bottom,0px)+1rem)] left-4 z-confirm flex w-[min(24rem,calc(100vw-2rem))] flex-col gap-3">
+        <div className="toast-stack pointer-events-none fixed bottom-[calc(env(safe-area-inset-bottom,0px)+1rem)] left-4 z-confirm flex w-[min(24rem,calc(100vw-2rem))] flex-col gap-3">
             {hiddenCount > 0 && !expanded && (
                 <button
                     type="button"
@@ -133,12 +135,24 @@ const ToastItem: React.FC<{ toast: Toast; onDismiss: () => void }> = ({ toast, o
     // tied to the toast's own lifetime.
     const onDismissRef = useRef(onDismiss);
     onDismissRef.current = onDismiss;
+    // Dismissal is two-phase: play the exit (transform + opacity) while the
+    // card is still mounted, then let the container drop it. Every path — the
+    // auto timer, the X and the action button — goes through this one gate, so
+    // no toast vanishes without its exit and none can be dismissed twice.
+    const [leaving, setLeaving] = useState(false);
+    const leavingRef = useRef(false);
+    const requestDismiss = useCallback(() => {
+        if (leavingRef.current) return;
+        leavingRef.current = true;
+        setLeaving(true);
+        window.setTimeout(() => onDismissRef.current(), TOAST_EXIT_MS);
+    }, []);
 
     useEffect(() => {
-        if (duration <= 0 || paused) return;
-        const timer = setTimeout(() => onDismissRef.current(), duration);
+        if (duration <= 0 || paused || leavingRef.current) return;
+        const timer = setTimeout(requestDismiss, duration);
         return () => clearTimeout(timer);
-    }, [duration, paused]);
+    }, [duration, paused, requestDismiss]);
 
     // The surface stays neutral; the TYPE lives on the icon and a 2px edge.
     // A whole emerald panel for "outcome detected" read as a trading result
@@ -167,7 +181,7 @@ const ToastItem: React.FC<{ toast: Toast; onDismiss: () => void }> = ({ toast, o
 
     return (
         <div
-            className="pointer-events-auto relative animate-fade-in overflow-hidden rounded-card border border-white/[0.08] bg-zinc-900/95 p-4 shadow-2xl shadow-black/50 backdrop-blur-xl"
+            className={`pointer-events-auto relative overflow-hidden rounded-card border border-white/[0.08] bg-zinc-900/95 p-4 shadow-2xl shadow-black/50 backdrop-blur-xl ${leaving ? 'motion-toast-out' : 'motion-toast-in'}`}
             onMouseEnter={() => setPaused(true)}
             onMouseLeave={() => setPaused(false)}
             onFocus={() => setPaused(true)}
@@ -189,7 +203,7 @@ const ToastItem: React.FC<{ toast: Toast; onDismiss: () => void }> = ({ toast, o
                         <button
                             onClick={() => {
                                 toast.action!.onClick();
-                                onDismiss();
+                                requestDismiss();
                             }}
                             className="mt-3 rounded-control bg-white/[0.06] px-3 py-1.5 text-ui-dense font-medium text-zinc-200 transition-colors hover:bg-white/[0.1]"
                         >
@@ -198,7 +212,7 @@ const ToastItem: React.FC<{ toast: Toast; onDismiss: () => void }> = ({ toast, o
                     )}
                 </div>
                 <button
-                    onClick={onDismiss}
+                    onClick={requestDismiss}
                     className="-mr-1 -mt-1 rounded-control p-1 text-zinc-500 transition-colors hover:bg-white/[0.06] hover:text-zinc-200"
                     aria-label="Dismiss"
                 >

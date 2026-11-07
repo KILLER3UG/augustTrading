@@ -34,6 +34,9 @@ The surfaces themselves are described in [surfaces.md](surfaces.md); copy and na
 - [ ] Borders are hairlines: `border-zinc-800/80`. No double borders — a panel inside a panel does
       not get a second frame.
 - [ ] Dividers inside one surface are `border-t border-zinc-800/80`, not a boxed sub-card.
+      **Settings is the one boxed exception**: its pages are rounded cards with thin dashed
+      dividers between rows (`divide-dashed divide-white/[0.07]`), composed through
+      `src/components/settings/tabs/shared.tsx` › `SettingsGroup` / `SettingsRow`.
 
 ## Reuse — do not hand-roll these
 
@@ -78,11 +81,16 @@ container and it resolves against the nearest positioned ancestor and inflates t
 
 ## Motion and density
 
-- [ ] Transitions only via `--ease-snappy` at 0.12–0.18s.
+- [ ] **One motion clock for the whole app.** `--motion-fast` (150ms), `--motion-base`
+      (200ms), `--motion-slow` (250ms) and `--motion-ease` (= `--ease-snappy`) are declared in
+      `src/index.css`; `--default-transition-duration` puts bare `transition-*` utilities on the
+      same clock. Page/tab/panel/list/chart/toast motion uses the `motion-*` utilities there.
+- [ ] **Animate only `transform` and `opacity`.** No width, height, padding, margin, gap,
+      `top`/`left`, grid tracks or `max-height` — those force layout every frame.
 - [ ] No `transition-all` — it animates geometry as well as paint. Name the property:
-      `transition-colors`, `transition-transform`, `transition-[width]`.
-- [ ] No new `@keyframes`. The existing tick-flash and beacon patterns are the sanctioned
-      exceptions.
+      `transition-colors`, `transition-transform`, `transition-opacity`.
+- [ ] `prefers-reduced-motion` and the trader's own `body.motion-reduced` switch collapse every
+      duration to 0.01ms. No new `@keyframes` outside the sanctioned motion set in `index.css`.
 - [ ] **No layout shift on stream chunks.** Text grows in place; nothing below it jumps.
 - [ ] Dashboards default to one-line rows with disclosure, not cards stacked inside cards.
 
