@@ -57,6 +57,7 @@ import { chartColor } from '../../utils/themeColors';
 import { fmtPrice as fmtPriceForChart, fmtUsd as fmtUsdForChart } from '../../utils/formatters';
 import { TradeAnalysis } from '../../types';
 import { ChartToolRail, CHART_RAIL_WIDTH } from './ChartToolRail';
+import ChartFrame from '../shared/ChartFrame';
 import { shapeGeometry } from './drawingGeometry';
 
 /**
@@ -1162,7 +1163,13 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                     shown while the pointer is over the plot, gone at rest —
                     the metrics band is deleted, not restyled. */}
 
-            <div className="relative min-h-0 flex-1 bg-zinc-950">
+            <ChartFrame
+                variant="plain"
+                state={status === 'loading' ? 'loading' : status === 'unavailable' ? 'error' : 'ready'}
+                message="Candles unavailable — Binance fetch failed; retrying in 4s."
+                bodyClassName="min-h-0 flex-1 bg-zinc-950"
+                testId="trading-chart-plot"
+            >
                 {ohlcvRow && overPlot && (
                     <div
                         data-testid="ohlcv-row"
@@ -1236,30 +1243,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                         }}
                     />
                 )}
-                {status === 'loading' && (
-                    /* Cold-start frame: the axes and grid exist before the
-                        candles do, so the first paint reads "loading" instead
-                        of "broken". Decoration only — pointer-events-none,
-                        aria-hidden, gone the moment data lands. */
-                    <div
-                        data-testid="chart-skeleton"
-                        aria-hidden
-                        className="pointer-events-none absolute inset-y-0 right-0 animate-pulse"
-                        style={{ left: CHART_RAIL_WIDTH }}
-                    >
-                        <div className="absolute inset-y-0 right-0 w-14 border-l border-white/[0.06]" />
-                        <div className="absolute inset-x-0 bottom-0 h-6 border-t border-white/[0.06]" />
-                        <div className="absolute inset-x-0 top-1/4 border-t border-white/[0.04]" />
-                        <div className="absolute inset-x-0 top-2/4 border-t border-white/[0.04]" />
-                        <div className="absolute inset-x-0 top-3/4 border-t border-white/[0.04]" />
-                    </div>
-                )}
-                {status === 'unavailable' && (
-                    <div className="absolute inset-0 flex items-center justify-center">
-                        <p className="text-ui-dense text-zinc-600">Candles unavailable — Binance fetch failed; retrying in 4s.</p>
-                    </div>
-                )}
-            </div>
+            </ChartFrame>
         </div>
     );
 };

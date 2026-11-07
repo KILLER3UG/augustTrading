@@ -6,14 +6,10 @@
  * without a percent (manual dollar-only wins) are excluded from the curve —
  * they still count toward win rate and streaks elsewhere.
  *
- * P&L meaning is carried by the curve's own emerald/rose stroke, not by any
- * surface class — the old `.status-surface` opt-in was a no-op (no rule in
- * index.css since the theme went semantic globally) and has been removed.
- *
- * The four hexes this used to carry were stock Tailwind values (`#34d399`,
- * `#fb7185`, `#71717a`, `#18181b`) — cool grays and emerald/rose steps the
- * theme ramp never had. They now read the ramp, so the curve follows the app
- * instead of coinciding with it.
+ * The card, its header and its loading / empty / error presentation come from
+ * the ONE chart wrapper (`components/shared/ChartFrame.tsx`), the same wrapper
+ * the canvas candlestick chart uses. This component owns only the Recharts
+ * plot — no second frame, no duplicated state copy.
  */
 
 import { chartColor } from '../../utils/themeColors';
@@ -22,6 +18,7 @@ import React, { useMemo } from 'react';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from 'recharts';
 import { LoggedTrade, TradeOutcome } from '../../types';
 import { decidedAtOf } from '../../utils/journalAnalytics';
+import ChartFrame from '../shared/ChartFrame';
 
 interface EquityCurveDashboardProps {
     trades: LoggedTrade[];
@@ -49,45 +46,47 @@ export const EquityCurveDashboard: React.FC<EquityCurveDashboardProps> = ({ trad
         return { points, maxDrawdown: Math.round(worstDd * 10) / 10, totalPnl: Math.round(cumulative * 10) / 10, counted: decided.length };
     }, [trades]);
 
-    if (counted === 0) return null;
-
     const pnlPositive = totalPnl >= 0;
     const accent = pnlPositive
         ? chartColor('--color-emerald-400', '#23cf8b')
         : chartColor('--color-rose-400', '#f9808a');
 
     return (
-        <div className=" glass-panel p-3 sm:p-4 rounded-bubble border border-white/5 bg-zinc-800 mb-3 sm:mb-5">
-            <div className="flex flex-wrap items-center justify-between gap-2 mb-2 sm:mb-3">
-                <div className="text-ui-2xs sm:text-ui-xs text-zinc-500 uppercase font-bold tracking-widest">Equity Curve (cumulative P&L %)</div>
-                <div className="flex items-center gap-3 text-ui-xs font-mono">
+        <ChartFrame
+            className="mb-3 sm:mb-5"
+            state={counted === 0 ? 'empty' : 'ready'}
+            title="Equity curve"
+            subtitle="Cumulative P&L % over decided trades"
+            message="No decided trades with a percentage yet — the curve starts once a logged trade settles."
+            bodyClassName="h-48 sm:h-56"
+            actions={
+                <div className="flex items-center gap-3 font-mono text-ui-xs tabular-nums">
                     <span className={pnlPositive ? 'text-emerald-400' : 'text-rose-400'}>{pnlPositive ? '+' : ''}{totalPnl}%</span>
                     <span className="text-zinc-500">Max DD {maxDrawdown}%</span>
                     <span className="text-zinc-600">{counted} trade{counted === 1 ? '' : 's'}</span>
                 </div>
-            </div>
-            <div className="h-48 sm:h-56">
-                <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={points} margin={{ top: 4, right: 4, left: -18, bottom: 0 }}>
-                        <defs>
-                            <linearGradient id="equityFill" x1="0" y1="0" x2="0" y2="1">
-                                <stop offset="0%" stopColor={accent} stopOpacity={0.25} />
-                                <stop offset="100%" stopColor={accent} stopOpacity={0.02} />
-                            </linearGradient>
-                        </defs>
-                        <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
-                        <XAxis dataKey="label" tick={{ fill: chartColor('--color-zinc-500', '#9a9a9a'), fontSize: 9 }} tickLine={false} axisLine={false} minTickGap={40} />
-                        <YAxis tick={{ fill: chartColor('--color-zinc-500', '#9a9a9a'), fontSize: 9 }} tickLine={false} axisLine={false} />
-                        <Tooltip
-                            contentStyle={{ background: chartColor('--color-zinc-900', '#141414'), border: '1px solid rgba(255,255,255,0.1)', borderRadius: 12, fontSize: 11 }}
-                            labelStyle={{ color: chartColor('--color-zinc-400', '#b6b6b6') }}
-                        />
-                        <ReferenceLine y={0} stroke="rgba(255,255,255,0.12)" />
-                        <Area type="monotone" dataKey="equity" stroke={accent} strokeWidth={1.8} fill="url(#equityFill)" dot={false} name="Equity" />
-                    </AreaChart>
-                </ResponsiveContainer>
-            </div>
-        </div>
+            }
+        >
+            <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={points} margin={{ top: 4, right: 4, left: -18, bottom: 0 }}>
+                    <defs>
+                        <linearGradient id="equityFill" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor={accent} stopOpacity={0.25} />
+                            <stop offset="100%" stopColor={accent} stopOpacity={0.02} />
+                        </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
+                    <XAxis dataKey="label" tick={{ fill: chartColor('--color-zinc-500', '#9a9a9a'), fontSize: 9 }} tickLine={false} axisLine={false} minTickGap={40} />
+                    <YAxis tick={{ fill: chartColor('--color-zinc-500', '#9a9a9a'), fontSize: 9 }} tickLine={false} axisLine={false} />
+                    <Tooltip
+                        contentStyle={{ background: chartColor('--color-zinc-900', '#141414'), border: '1px solid rgba(255,255,255,0.1)', borderRadius: 12, fontSize: 11 }}
+                        labelStyle={{ color: chartColor('--color-zinc-400', '#b6b6b6') }}
+                    />
+                    <ReferenceLine y={0} stroke="rgba(255,255,255,0.12)" />
+                    <Area type="monotone" dataKey="equity" stroke={accent} strokeWidth={1.8} fill="url(#equityFill)" dot={false} name="Equity" />
+                </AreaChart>
+            </ResponsiveContainer>
+        </ChartFrame>
     );
 };
 
