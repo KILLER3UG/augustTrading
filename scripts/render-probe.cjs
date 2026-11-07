@@ -693,6 +693,7 @@ async function main() {
         cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
     });
     let out = '';
+    let browserRef = null;
     if (server) {
         server.stdout.on('data', d => { out += String(d); });
         server.stderr.on('data', d => { out += String(d); });
@@ -714,6 +715,7 @@ async function main() {
         }
 
         const browser = await chromium.launch({ headless: true });
+        browserRef = browser;
         const page = await browser.newPage();
         activePage = page;
         const pageErrors = [];
@@ -737,6 +739,31 @@ async function main() {
                 pageErrors.push(`render failure logged: ${m.text().slice(0, 300)}`);
             }
         });
+
+        // PROBE_ONLY=<phase> stops AFTER that phase. Setup and every phase up
+        // to the named one still run; the tail phases (Settings, sweep, Journal,
+        // composer, phone) are the expensive, optional ones. Unset (or `all`) =
+        // the full run, which stays the release gate.
+        const STOP_AT = (process.env.PROBE_ONLY || 'all').trim().toLowerCase();
+        const PHASES = ['core', 'settings', 'stale', 'sweep', 'skilldoc', 'postmortem', 'journal', 'composer', 'phone'];
+        if (STOP_AT !== 'all' && !PHASES.includes(STOP_AT)) {
+            console.error(`RENDER PROBE: unknown PROBE_ONLY "${STOP_AT}" — expected one of ${PHASES.join(', ')} (or all)`);
+            process.exitCode = 1;
+            return;
+        }
+        const stopAfterPhase = (phase) => STOP_AT === phase;
+        const finishPartial = async (phase) => {
+            check(`zero pageerrors across the ${phase} run`, pageErrors.length === 0,
+                pageErrors.length ? `\n---\n${pageErrors.join('\n---\n').slice(0, 3000)}` : '');
+            await Promise.allSettled(pendingShots);
+            if (failures.length) {
+                console.error(`\nRENDER PROBE FAILED — ${failures.length} check(s) in the ${phase} run:`);
+                for (const f of failures) console.error(' • ' + f);
+                process.exitCode = 1;
+                return;
+            }
+            console.log(`\nRENDER PROBE OK (partial: ${phase}) — ran through "${phase}"; the full run is the release gate.`);
+        };
 
         await seed(page);
         await page.goto(BASE + '/', { waitUntil: 'domcontentloaded' });
@@ -1548,7 +1575,8 @@ async function main() {
         //    as one that never renders at all.
         await page.reload({ waitUntil: 'domcontentloaded' });
         await page.waitForFunction(() => !document.querySelector('#splash'), null, { timeout: 25000 });
-        await sleep(2500);
+        await page.waitForFunction(() => !!document.querySelector('[data-testid="surface-switch-agents"]'),
+            null, { timeout: 25000 }).catch(() => null);
         await openDeskThread();
         const afterReload = await agentRows();
         check('the conversation survives a reload', afterReload === 6, `${afterReload}/6 rows`);
@@ -1583,7 +1611,8 @@ async function main() {
         await seedVerdicts(page);
         await page.reload({ waitUntil: 'domcontentloaded' });
         await page.waitForFunction(() => !document.querySelector('#splash'), null, { timeout: 25000 });
-        await sleep(2500);
+        await page.waitForFunction(() => !!document.querySelector('[data-testid="surface-switch-agents"]'),
+            null, { timeout: 25000 }).catch(() => null);
         await openDeskThread();
 
         const seededRows = await page.locator('[data-testid="agent-message"]').count();
@@ -1759,6 +1788,24 @@ async function main() {
             if (second !== 'clicked') return 'not found';
             await closeRailOverlayAtPhone();
             return 'clicked';
+        };
+        /** Wait for the route the switch promises, instead of a fixed sleep. */
+        const settleSurface = async (label) => {
+            const sel = { Analyze: 'trade-view', Journal: 'journal-view', Agents: 'agents-view', Learning: 'learn-view' }[label];
+            if (sel) await page.waitForSelector(`[data-testid="${sel}"]`, { timeout: 8000 }).catch(() => null);
+        };
+        /** The rail width animates (150ms); the surface mounts before it lands.
+         *  Wait for two equal reads so a measurement is not taken mid-slide. */
+        const settleRailWidth = async () => {
+            await page.evaluate(() => { window.__probeRailW = -1; });
+            await page.waitForFunction(() => {
+                const el = document.querySelector('[data-testid="shell-rail"]');
+                if (!el) return false;
+                const w = Math.round(el.getBoundingClientRect().width);
+                const prev = window.__probeRailW;
+                window.__probeRailW = w;
+                return prev === w;
+            }, null, { timeout: 4000, polling: 100 }).catch(() => null);
         };
         /** The rail is always on screen, so there is no menu to open — this now
          *  only asserts the rail exists and, if the window is narrow enough to
@@ -1956,7 +2003,7 @@ async function main() {
             // Ctrl+B belongs to the RAIL specifically, which the Agents surface no
             // longer mounts — so press it on a surface that has one.
             await navTo('Analyze');
-            await sleep(900);
+            await settleSurface('Analyze');
 
             // The shell rail is a sibling of <main> and runs full height, so
             // the content bar begins exactly where the rail ends — at the
@@ -1989,7 +2036,7 @@ async function main() {
             // Search row in the list): the toggle must open the field and put
             // the caret in it.
             await navTo('Agents');
-            await sleep(900);
+            await settleSurface('Agents');
             const searchJump = await page.evaluate(() => {
                 const b = document.querySelector('[data-testid="rail-search-toggle"]');
                 if (!b) return 'no toggle';
@@ -2008,7 +2055,7 @@ async function main() {
                 searchJump === 'clicked' && searchLanded && searchFocused,
                 `${searchJump}/${searchLanded}/focused=${searchFocused}`);
             await navTo('Analyze');
-            await sleep(700);
+            await settleSurface('Analyze');
 
             // The conversation column is the adjustable part, and Analyze no
             // longer mounts it: the rail is the 48px icon strip with no resize
@@ -2026,7 +2073,8 @@ async function main() {
                 `${analyzeRailWidth}px resize=${analyzeResize}`);
 
             await navTo('Journal');
-            await sleep(900);
+            await settleSurface('Journal');
+            await settleRailWidth();
             const columnBefore = await railBox();
             const railHandle = await page.locator('[data-testid="shell-rail-resize"]').boundingBox();
             if (railHandle) {
@@ -2052,7 +2100,8 @@ async function main() {
                 columnReset === columnBefore, `${columnWide} -> ${columnReset} (want ${columnBefore})`);
 
             await navTo('Analyze');
-            await sleep(700);
+            await settleSurface('Analyze');
+            await settleRailWidth();
             const railBefore = await railBox();
             // The collapse control belongs on the TITLE row, not at the rail's
             // foot: a put-away rail is 0px and has no edge left to click.
@@ -2081,7 +2130,8 @@ async function main() {
                 b.click();
                 return 'clicked';
             });
-            await sleep(450);
+            await page.waitForFunction(() => !document.querySelector('[data-testid="shell-rail"]'),
+                null, { timeout: 5000 }).catch(() => null);
             const railGone = await page.evaluate(() => {
                 const visible = (el) => {
                     const cs = window.getComputedStyle(el);
@@ -2115,7 +2165,7 @@ async function main() {
                 t.click();
                 return true;
             });
-            await sleep(600);
+            await page.waitForSelector('[data-testid="shell-rail"]', { timeout: 5000 }).catch(() => null);
             const railBack = await railBox();
             check('the content bar brings the rail back at its stored width',
                 railRevived && railBack === railBefore, `${railBack}px (want ${railBefore})`);
@@ -2145,7 +2195,7 @@ async function main() {
             // expand button exactly while the column is away. An unreachable nav
             // is the trap this catches.
             await navTo('Agents');
-            await sleep(900);
+            await settleSurface('Agents');
             // The Agents rail is the SAME column at the same x, so it shares
             // the dragged width. Its edge must move it, and the reset must
             // return to the designed width before the collapse check below
@@ -2195,13 +2245,14 @@ async function main() {
                 b.click();
                 return true;
             });
-            await sleep(450);
+            await page.waitForFunction(() => !document.querySelector('[data-testid="shell-rail"]'),
+                null, { timeout: 5000 }).catch(() => null);
             const collapsed = await away();
             check('the sidebar hide icon puts the Chat rail away and leaves a way back',
                 hideInSidebar && !collapsed.rail && collapsed.expand,
                 JSON.stringify(collapsed));
             await page.evaluate(() => document.querySelector('[data-testid="nav-rail-toggle-header"]')?.click());
-            await sleep(600);
+            await page.waitForSelector('[data-testid="shell-rail"]', { timeout: 5000 }).catch(() => null);
             const backAgain = await away();
             const navRailSrc = require('fs').readFileSync(
                 path.join(ROOT, 'src', 'components', 'shell', 'shellChrome.tsx'), 'utf8');
@@ -2215,7 +2266,7 @@ async function main() {
                 `${colWidth}px, hidden=${backAgain.hidden} (want ${navRailExpandedPx})`);
             // Leave the run on a known surface before the sweep.
             await navTo('Analyze');
-            await sleep(400);
+            await settleSurface('Analyze');
         }
 
         /** Wait for the surface to settle: two identical, non-empty reads of
@@ -2320,7 +2371,7 @@ async function main() {
         // first run never meets.
         {
             await openMenu(); await sleep(300);
-            await navTo('Learning'); await sleep(900);
+            await navTo('Learning'); await settleSurface('Learning');
             const coachTab = page.locator('[data-testid="learn-tab-health"]');
             if (await coachTab.count() === 1) await coachTab.click();
             await sleep(1200);
@@ -2342,6 +2393,8 @@ async function main() {
                 await sleep(250);
             }
         };
+
+        if (stopAfterPhase('core')) { await finishPartial('core'); return; }
 
         // ── The Health tab is where the learning surface's read-only panels
         //    live. They mount lazily behind a tab, so this is the check that
@@ -2994,6 +3047,8 @@ async function main() {
             await page.evaluate(() => { window.location.hash = ''; });
         }
 
+        if (stopAfterPhase('settings')) { await finishPartial('settings'); return; }
+
         // ── The stale-model banner, on the surface that shipped without one ─
         // The dock has warned about a dead chat-model pick for a while; the Chat
         // surface ran the SAME pick with NO warning. Unit tests can prove the
@@ -3025,6 +3080,8 @@ async function main() {
         check('and goes quiet once the pick is not stale',
             withoutStale.how === 'clicked' && withoutStale.text === null,
             `${withoutStale.how} · still reading: ${String(withoutStale.text).slice(0, 120)}`);
+
+        if (stopAfterPhase('stale')) { await finishPartial('stale'); return; }
 
         // ── Dead-control sweep ───────────────────────────────────────────
         // Mounting a surface proves the surface renders, not that its buttons
@@ -3257,6 +3314,8 @@ async function main() {
         await sweepSurface('Learning', 18, [
             'learn-tab-skills', 'learn-tab-memory', 'learn-tab-health',
         ]);
+        if (stopAfterPhase('sweep')) { await finishPartial('sweep'); return; }
+
         // ── The skill document round trip ────────────────────────────────
         // The sweep presses a library row and credits it if the surface moved.
         // That proves the click did SOMETHING; this proves the thing it did is
@@ -3394,6 +3453,8 @@ async function main() {
             check('the card states the tally in the units actually captured',
                 /\d+W \/ \d+L/.test(cardText), cardText.slice(0, 160));
         }
+        if (stopAfterPhase('skilldoc')) { await finishPartial('skilldoc'); return; }
+
         // ── The post-mortem the app writes at settlement (E-57 §1) ─────────
         // jsdom mounts the detail component; mounting is not the LIST rendering,
         // and a note the app writes into the trader's journal must be provably
@@ -3491,6 +3552,8 @@ async function main() {
         check('control: only the followed trade shows the tracked record',
             reflectionSeen.opened >= 2 && reflectionSeen.withTracked === 1,
             `opened=${reflectionSeen.opened} withTracked=${reflectionSeen.withTracked}`);
+
+        if (stopAfterPhase('postmortem')) { await finishPartial('postmortem'); return; }
 
         // ── Journal → Signals: the desk's own call record ─────────────────
         // The feed is a rendered LIST, so no other gate can see it. Seed one
@@ -3740,6 +3803,8 @@ async function main() {
             }
         }
 
+        if (stopAfterPhase('journal')) { await finishPartial('journal'); return; }
+
         // ── The keyboard focus indicator, in BOTH states ───────────────────
         // `:focus-visible` in index.css gives every focusable element a 2px
         // outline, and a second rule then took it away from
@@ -3987,6 +4052,8 @@ async function main() {
                 ? `${offendersBySurface.reduce((n, o) => n + o.bad.length, 0)} sub-${FLOOR_PX}px target(s) on ${offendersBySurface.length} surface(s):\n${offenderText}`
                 : '');
 
+        if (stopAfterPhase('composer')) { await finishPartial('composer'); return; }
+
         // ── Phone width: the page itself must never scroll sideways ────────
         // Only the DOCUMENT property is asserted. A wide table inside its own
         // `overflow-x-auto` frame is the doctrine's last-resort guard and is
@@ -4084,6 +4151,9 @@ async function main() {
     } finally {
         if (server) server.kill('SIGTERM');
         mock.kill('SIGTERM');
+        // A partial run returns from inside the try; close the browser here so
+        // the stop cannot leave a headless chromium process behind.
+        if (browserRef) await browserRef.close().catch(() => { /* already closed */ });
     }
 
     if (failures.length) {

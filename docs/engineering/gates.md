@@ -68,7 +68,10 @@ electron:release` refuses locally on purpose.
 5. **Overlays mount outside `<main>`.** Measuring `<main>` after opening one re-reports the previous
    surface and passes vacuously.
 6. **`render-probe` is the only gate that sees a rendered row.** A component that returns clean and
-   renders nothing passes every other gate.
+   renders nothing passes every other gate. For a UI-only iteration, stop after the relevant phase:
+   `PROBE_ONLY=core npm run render-probe` (dock + Chat + shell) or one of `settings`, `stale`,
+   `sweep`, `skilldoc`, `postmortem`, `journal`, `composer`, `phone`. Unset = the full run, which
+   remains the pre-push gate — a partial run cannot see a later surface.
 7. **Do not add another contract without saying why the existing ones cannot reach it.** The list
    is deliberately small; it is not a test suite waiting to grow.
 
