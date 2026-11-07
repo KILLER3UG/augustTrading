@@ -552,7 +552,9 @@ limit, the 1.5 MiB cleanup trigger and the 1 MiB soft limit. `notebookPressureAl
 the hard cap; it never evicts, because nothing in that store is regenerable. A
 failed write is not swallowed: `getNotebookWriteFailure`
 (`src/services/learning/MemoryFilesService.ts › getNotebookWriteFailure`) records quota vs error, bytes and streak, and the
-Health tab reads it. Backup/export carries the notebook with the profile
+Health tab reads it through `NotebookWriteFailurePanel`
+(`src/components/learn/NotebookWriteFailurePanel.tsx › NotebookWriteFailurePanel`), which renders nothing while writes are
+reaching disk. Backup/export carries the notebook with the profile
 (`createBackup`, `src/services/infrastructure/BackupService.ts › createBackup`; export namespaces in
 `src/services/infrastructure/ExportService.ts › RAW_LOCAL_STORAGE_PREFIXES`).
 
@@ -650,12 +652,17 @@ where the spec and the code disagreed):
   App → `runChatSurfaceTurn` (`src/services/trade/chatSurfaceTurn.ts › surfacePromptWith`) and App → TradeView →
   the dock, and off strips BOTH memory blocks (profile and notebook topics)
   from the seat prompt. Skills are procedures, not memory, and stay.
-  The DEEP pipeline honoured nothing: `assemblePipelineMemoryContext` called
-  `buildProfileMemoryIndex()` bare, so a Full-analysis prompt carried the
-  profile index whatever the switch said, sized by the default rather than the
-  seat's window. It now takes the flag and `indexBudgetFor`'s memory line
-  (`src/hooks/analysisPipeline/memoryContext.ts › assemblePipelineMemoryContext`) — the same table every other
-  seat reads.
+  The DEEP pipeline used to build the profile index a SECOND time:
+  `assemblePipelineMemoryContext` called `buildProfileMemoryIndex()` bare and
+  prepended it to the notebook slice, so a Full-analysis prompt carried the
+  same 30 lines twice — once in the seat prompt, once in `extraContext` —
+  sized by the default rather than the seat's window. That copy is gone: the
+  seat prompt is the ONE carrier
+  (`src/services/trade/chatSurfaceTurn.ts › surfacePromptWith`, under the same
+  `indexBudgetFor` memory line the dock reads), and the slice
+  (`src/hooks/analysisPipeline/memoryContext.ts › assemblePipelineMemoryContext`) carries the setup-matched
+  notebook material only. Off still strips BOTH: the seat prompt's block by its
+  own gate, and the slice by the `memoryEnabled` gate it keeps.
   Its ONE writer is the `Global memory` toggle in the notebook manager
   (`src/components/learn/MemoryFilesManager.tsx › MemoryFilesManager`), on the Learning surface — Settings → Memory shows
   the LIST, not the switch, which is why a probe that looks for it there finds

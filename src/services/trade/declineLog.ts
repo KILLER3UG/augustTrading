@@ -37,22 +37,61 @@ export const MAX_DECLINES = 500;
 const keyFor = (username?: string): string =>
     `${KEY_PREFIX}${(username || 'default').trim() || 'default'}`;
 
-export const listDeclines = (username?: string): DeclineRecord[] => {
-    if (typeof localStorage === 'undefined') return [];
-    try {
-        const raw = localStorage.getItem(keyFor(username ?? getActiveUsername()));
-        if (!raw) return [];
-        const parsed = JSON.parse(raw) as unknown;
-        return Array.isArray(parsed)
-            ? parsed.filter((r): r is DeclineRecord =>
-                !!r && typeof r === 'object'
-                && typeof (r as DeclineRecord).id === 'string'
-                && typeof (r as DeclineRecord).reason === 'string')
-            : [];
-    } catch {
-        return [];
+/** The result of reading the HOLD record. `rows` is empty in BOTH the
+ *  "nothing was ever declined" and the "the store could not be read" cases —
+ *  which is exactly why the old `catch { return []; }` rendered a corrupted
+ *  store as an empty history. `error` is the distinction a reader can show. */
+export interface DeclineReadResult {
+    rows: DeclineRecord[];
+    error: string | null;
+}
+
+/** Read the HOLD record, reporting a failed read instead of swallowing it.
+ *
+ *  Empty means empty ONLY when the key is absent (or holds an empty list): the
+ *  desk never declined anything. A key that is present but unreadable —
+ *  missing localStorage, a throwing getItem, invalid JSON, a non-list, or a
+ *  list with no usable record — is a failure, and says so. A list with SOME
+ *  usable record still returns the readable rows: hiding them would trade one
+ *  silent loss for another. */
+export const tryListDeclines = (username?: string): DeclineReadResult => {
+    if (typeof localStorage === 'undefined') {
+        return { rows: [], error: 'localStorage is unavailable in this environment' };
     }
+    let raw: string | null;
+    try {
+        raw = localStorage.getItem(keyFor(username ?? getActiveUsername()));
+    } catch {
+        return { rows: [], error: 'the decline history could not be read from localStorage' };
+    }
+    // No key is the honest empty state: no decline was ever recorded.
+    if (!raw) return { rows: [], error: null };
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(raw);
+    } catch {
+        return { rows: [], error: 'the decline history is corrupted (not valid JSON)' };
+    }
+    if (!Array.isArray(parsed)) {
+        return { rows: [], error: 'the decline history is corrupted (not a list of declines)' };
+    }
+    const rows = parsed.filter((r): r is DeclineRecord =>
+        !!r && typeof r === 'object'
+        && typeof (r as DeclineRecord).id === 'string'
+        && typeof (r as DeclineRecord).reason === 'string');
+    // A stored list with nothing usable in it is a corrupt store, not an empty
+    // one: the key exists, so bytes were written and are now unreadable.
+    if (rows.length === 0 && parsed.length > 0) {
+        return { rows: [], error: 'the decline history is corrupted (no readable declines)' };
+    }
+    return { rows, error: null };
 };
+
+/** The old contract: an empty array on any failure. Kept as a thin wrapper
+ *  for the callers that cannot act on an error — the write path and any
+ *  backup/export reader — so their behaviour is byte-for-byte unchanged. */
+export const listDeclines = (username?: string): DeclineRecord[] =>
+    tryListDeclines(username).rows;
 
 const num = (v: unknown): number | undefined => {
     const n = typeof v === 'number' ? v : Number(v);

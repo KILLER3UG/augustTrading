@@ -39,6 +39,8 @@ const VersionHistoryDashboardLazy = lazy(() =>
 const SessionUsagePanel = lazy(() => import('../settings/SessionUsagePanel'));
 const DiagnosticsPanel = lazy(() =>
     import('../settings/DiagnosticsPanel').then(m => ({ default: m.DiagnosticsPanel })));
+const NotebookWriteFailurePanel = lazy(() => import('./NotebookWriteFailurePanel'));
+const DeclinePanel = lazy(() => import('./DeclinePanel'));
 
 type LearnTab = 'skills' | 'memory' | 'health';
 
@@ -226,6 +228,18 @@ const LearnView: React.FC<LearnViewProps> = ({
                             </Suspense>
                             <Suspense fallback={<Fallback />}>
                                 <DiagnosticsPanel />
+                            </Suspense>
+                            {/* The sticky memory write failure — the one signal
+                                that says the notebook is NOT on disk. Renders
+                                nothing while writes are reaching disk. */}
+                            <Suspense fallback={<Fallback />}>
+                                <NotebookWriteFailurePanel />
+                            </Suspense>
+                            {/* The HOLD record — `decline_trade` writes one bounded
+                                row per declined setup and this tab is its only
+                                reader. Renders nothing while there is no decline. */}
+                            <Suspense fallback={<Fallback />}>
+                                <DeclinePanel />
                             </Suspense>
                         </div>
                     </div>
