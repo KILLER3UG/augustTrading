@@ -1,4 +1,4 @@
-import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Check, ChevronRight, Copy, Lightbulb } from './Icons';
 import { formatElapsed } from './elapsed';
 import { stripTraceMarkers } from '../../utils/traceText';
@@ -102,8 +102,16 @@ const ReasoningRow: React.FC<ReasoningRowProps> = ({
     // (expanded and running); a collapsed row must not tick 60 times a second
     // for text nobody can see. Expanding shows the trace received so far and
     // types the rest.
-    const trace = stripTraceMarkers(trimmed);
-    const visibleTrace = useLetterReveal(trace, running && open);
+    //
+    // The reveal runs against the RAW trace, never the peeled one: the raw
+    // stream is append-only, while stripTraceMarkers is not — a marker that
+    // completes mid-stream (`*this*`, `## `, `---`) removes characters from
+    // the middle of the peeled text, which the reveal would read as "a new
+    // turn" and retype the trace from its first letter. The peel runs on the
+    // revealed slice instead, so markers vanish as they complete and the
+    // reveal index only ever moves forward.
+    const rawReveal = useLetterReveal(trimmed, running && open);
+    const visibleTrace = useMemo(() => stripTraceMarkers(rawReveal), [rawReveal]);
 
     useLayoutEffect(() => {
         if (!running || !open || !bodyPinnedRef.current) return;
