@@ -96,8 +96,9 @@ const DeclinePanel: React.FC = () => {
                         </p>
                         <p className="text-ui-2xs text-zinc-500">
                             The HOLD record could not be read, so nothing is shown here — this is
-                            not an empty history. {read.error}.
+                            not an empty history.
                         </p>
+                        <p className="text-ui-2xs text-zinc-500">Details: {read.error}</p>
                     </div>
                 </div>
             </div>
