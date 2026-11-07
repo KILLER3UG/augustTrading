@@ -10,6 +10,14 @@ export interface MarketConditions {
   macd: string;
   sentiment: string;
   prices?: Record<string, string>; // New field for timeframe-specific prices
+  // O-46 decision-snapshot values, under names that say what they hold.
+  // The snapshot's only other home is the proposal, which is NOT persisted,
+  // so the journal row is the durable record of these. Optional + nullable:
+  // rows written before the snapshot existed still parse, and a value the
+  // snapshot did not compute is null, never a dash that looks like data.
+  atr?: string | null;
+  prevDayRange?: string | null;
+  sessionVwap?: string | null;
 }
 
 export interface EntryPoint {

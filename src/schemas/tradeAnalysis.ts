@@ -47,6 +47,11 @@ export const MarketConditionsSchema = z.object({
   macd: z.string(),
   sentiment: z.string(),
   prices: z.record(z.string(), z.string()).optional(),
+  // O-46 snapshot values — see MarketConditions. Optional + nullable so
+  // pre-snapshot rows parse and a missing value stays absent.
+  atr: z.string().nullable().optional(),
+  prevDayRange: z.string().nullable().optional(),
+  sessionVwap: z.string().nullable().optional(),
 });
 
 export const PatternDetailSchema = z.object({
@@ -360,6 +365,9 @@ const DEFAULT_MARKET_CONDITIONS: MarketConditions = {
   macd: 'N/A',
   sentiment: 'N/A',
   prices: { '15m': 'N/A', '1h': 'N/A', '4h': 'N/A', '1d': 'N/A' },
+  atr: null,
+  prevDayRange: null,
+  sessionVwap: null,
 };
 
 const CoercedMarketConditionsSchema = z.any().optional().transform((val): MarketConditions => {
@@ -376,6 +384,11 @@ const CoercedMarketConditionsSchema = z.any().optional().transform((val): Market
     macd: coerceToString(mc.macd) || 'N/A',
     sentiment: coerceToString(mc.sentiment) || 'N/A',
     prices,
+    // Preserved, not defaulted to 'N/A': 'N/A' is a placeholder that reads
+    // like a measured value. Absent stays null.
+    atr: coerceToString(mc.atr) || null,
+    prevDayRange: coerceToString(mc.prevDayRange) || null,
+    sessionVwap: coerceToString(mc.sessionVwap) || null,
   };
 });
 

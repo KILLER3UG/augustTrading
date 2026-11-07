@@ -60,8 +60,9 @@ export interface TradeProposal {
      * regime, ATR, previous-day range, session VWAP — fetched fire-and-forget
      * by present_trade and attached to this same object, so the card, the
      * journal row and the training corpus all read ONE snapshot. Absent when
-     * the fetch failed or had not landed yet: the marketConditions fields
-     * stay '—', which is honest, never a placeholder that looks like data.
+     * the fetch failed or had not landed yet: the snapshot's own fields stay
+     * `null` (`atr`, `prevDayRange`, `sessionVwap`) and its regime fields stay
+     * '—', which is honest, never a placeholder that looks like data.
      */
     decisionSnapshot?: {
         regimeId: string | null;
@@ -311,6 +312,30 @@ export const parseTradeProposal = (args: Record<string, unknown>): { proposal?: 
     };
 };
 
+/** The snapshot's ATR as the journal can carry it: value + its timeframe.
+ *  Null when the snapshot is absent or computed no ATR — a dash would read
+ *  like a measurement. Two decimals for ordinary magnitudes; significant
+ *  digits below a cent, where `toFixed(2)` would print "ATR 0.00" for a
+ *  volatility that is not zero. */
+const snapshotAtr = (s: TradeProposal['decisionSnapshot']): string | null => {
+    if (!s || s.atr == null) return null;
+    const v = s.atr >= 0.01 ? s.atr.toFixed(2) : String(Number(s.atr.toPrecision(4)));
+    return `ATR ${v} (${s.atrTf})`;
+};
+
+/** The previous UTC day's high–low, as one range string, low first. Both
+ *  bounds are computed together, so a half range is never shown. */
+const snapshotPrevDayRange = (s: TradeProposal['decisionSnapshot']): string | null => {
+    if (!s || s.prevDayHigh == null || s.prevDayLow == null) return null;
+    return `prev day ${s.prevDayLow}–${s.prevDayHigh}`;
+};
+
+/** The session (last 24 × 1h) VWAP, at the precision the snapshot computed. */
+const snapshotSessionVwap = (s: TradeProposal['decisionSnapshot']): string | null => {
+    if (!s || s.sessionVwap == null) return null;
+    return `session VWAP ${Number(s.sessionVwap.toPrecision(6))}`;
+};
+
 /** Build the minimal-but-valid TradeAnalysis the autopilot + journal expect.
  *
  *  The gate cap binds HERE, at the one place a confidence WORD becomes a number:
@@ -339,23 +364,23 @@ export const buildProposedTradeAnalysis = (p: TradeProposal, createdAt = new Dat
         // the value is the adverse move, so it is negative for both sides.
         ...(plan.stopDistancePct > 0 ? { stopLossPercentage: `-${plan.stopDistancePct.toFixed(2)}%` } : {}),
         takeProfit: plan.takeProfits.map(tp => ({ price: String(tp) })),
-        // O-46: when the decision snapshot landed, the market conditions are
-        // the MEASURED read, not dashes. Only computed fields are filled — an
-        // unfilled field stays '—' rather than wearing a placeholder that
-        // looks like data.
+        // O-46: the decision snapshot's regime is the one measured read with
+        // an honest home in this shape. The snapshot carries no RSI, MACD or
+        // sentiment, so those stay '—' rather than wearing a label that
+        // promises an indicator they do not hold. Its ATR, prior-day range
+        // and session VWAP now have honestly-named fields of their own: the
+        // proposal is not persisted, so without them the journal row — the
+        // only durable record — loses what the market measured.
         marketConditions: {
             pattern: p.decisionSnapshot?.regimeText ?? '—',
             candleBehavior: '—',
             timeframeAlignment: p.decisionSnapshot?.regimeId ?? '—',
-            rsi: p.decisionSnapshot?.atr != null
-                ? `ATR ${Number(p.decisionSnapshot.atr.toPrecision(4))} (${p.decisionSnapshot.atrTf})`
-                : '—',
-            macd: p.decisionSnapshot?.prevDayHigh != null && p.decisionSnapshot?.prevDayLow != null
-                ? `prev day ${p.decisionSnapshot.prevDayHigh}–${p.decisionSnapshot.prevDayLow}`
-                : '—',
-            sentiment: p.decisionSnapshot?.sessionVwap != null
-                ? `session VWAP ${Number(p.decisionSnapshot.sessionVwap.toPrecision(6))}`
-                : '—',
+            rsi: '—',
+            macd: '—',
+            sentiment: '—',
+            atr: snapshotAtr(p.decisionSnapshot),
+            prevDayRange: snapshotPrevDayRange(p.decisionSnapshot),
+            sessionVwap: snapshotSessionVwap(p.decisionSnapshot),
         },
         historicalCorrelation: p.rationale ? `Chart AI: ${p.rationale}` : 'Proposed from the live chart in Chart AI.',
         createdAt,
