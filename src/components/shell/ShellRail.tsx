@@ -136,10 +136,11 @@ const ShellRail: React.FC<ShellRailProps> = ({
     overlay = false, onCloseOverlay,
 }) => {
     void workspaces; void onSwitchWorkspace; void onAddWorkspace;
-    // Analyze is the chart surface: its sidebar is the icon rail only. The
-    // conversation column (New chat / Pinned / Recent) mounts on the record
-    // surfaces, so the chart never pays 240px for an empty list.
-    const showConversationColumn = surface !== 'trade';
+    // The shell column mounts only on the record surfaces. Analyze is the
+    // icon rail alone, and the Chat surface already carries its OWN column
+    // (AgentsView, with the roster) — rendering this one there put two
+    // "New chat" rows and two conversation lists side by side.
+    const showConversationColumn = surface !== 'trade' && surface !== 'agents';
     const railRef = useRef<HTMLElement | null>(null);
 
     return (

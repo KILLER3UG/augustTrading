@@ -1927,6 +1927,11 @@ async function main() {
                     accountName: !!rail?.querySelector('[data-testid="nav-account-name"]'),
                     switchUserButton: !!rail?.querySelector('[data-testid="nav-switch-user"]'),
                     railAccount: !!document.querySelector('[data-testid="shell-account"]'),
+                    // The Chat surface has ITS OWN conversation column; the
+                    // shell column must not mount here too (two New chat rows).
+                    newChats: document.querySelectorAll('[data-testid="rail-new-chat"]').length,
+                    shellColumn: !!document.querySelector('[data-testid="shell-rail"] [data-testid="shell-conversations"]'),
+                    agentsColumn: !!rail?.querySelector('[data-testid="shell-conversations"]'),
                 };
             });
             check('every surface is reachable from the shell rail with no menu to open',
@@ -1941,6 +1946,9 @@ async function main() {
             check('the account row says who is signed in and carries no avatar',
                 nav.accountName && !nav.switchUserButton && !nav.railAccount,
                 `name=${nav.accountName} switchButton=${nav.switchUserButton} railAvatar=${nav.railAccount}`);
+            check('the Chat surface carries ONE conversation column and one New chat',
+                nav.newChats === 1 && !nav.shellColumn && nav.agentsColumn,
+                `newChats=${nav.newChats} shellColumn=${nav.shellColumn} agentsColumn=${nav.agentsColumn}`);
             check('the sidebar runs the full height of the window — nothing is stacked above it',
                 nav.railTop === 0 && !nav.headerAbove,
                 `agents-rail top ${nav.railTop}px, header above=${nav.headerAbove}`);

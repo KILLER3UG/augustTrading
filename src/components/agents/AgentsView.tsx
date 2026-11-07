@@ -945,32 +945,6 @@ const AgentsView: React.FC<AgentsViewProps> = ({
                     whether one is open. A wordmark above this row was tried and
                     removed: it pushed the switch down ~67px and the hop check
                     (which pins the switch across the hop) went red. */}
-                {/* The reference's nav group: one-click verbs, not a menu. `New`
-                    used to open a four-item menu whose first entry was the thing
-                    everyone was reaching for, so asking for a new chat cost two
-                    clicks and a portal. The other verbs each have a real home
-                    now — New agent and New room sit on their own section headers
-                    as `+` — so nothing is lost, only the menu. */}
-                <div className="flex shrink-0 flex-col px-2 pb-1 pt-0.5">
-                    <button type="button" data-testid="rail-new-chat" aria-label="New chat"
-                        onClick={() => {
-                            onNewChat?.();
-                            // The pane must FOLLOW the conversation that was just
-                            // made. Left where it was, a selected bot's thread
-                            // stayed on screen and the press read as a dead
-                            // control. Focus is what makes the blank-reuse path —
-                            // where "New" correctly hands back the unused blank
-                            // session rather than minting another — feel like
-                            // something happened.
-                            selectThread({ kind: 'team' });
-                            composerRef.current?.focus();
-                        }}
-                        className="group flex w-full items-center gap-2.5 rounded-control px-2.5 py-2 text-left text-ui-caption text-zinc-400 transition-colors duration-[120ms] ease-[var(--ease-snappy)] hover:bg-white/[0.05] hover:text-zinc-100">
-                        <Plus className="h-4 w-4 shrink-0 text-zinc-400" aria-hidden="true" />
-                        <span className="flex-1 truncate" title="New chat">New chat</span>
-                    </button>
-                </div>
-
                 {/* One scroll of sections, the way the reference's column reads —
                     the Chats | Bots strip is deleted, not hidden. The search handle
                     sits on this slim row because it filters across the sections
@@ -1013,7 +987,11 @@ const AgentsView: React.FC<AgentsViewProps> = ({
                     activeConversationId={activeConversationId}
                     onNewChat={() => {
                         onNewChat?.();
+                        // The pane must FOLLOW the conversation that was just
+                        // made (the blank-reuse path hands back an unused blank
+                        // session), and focus makes the press feel answered.
                         selectThread({ kind: 'team' });
+                        composerRef.current?.focus();
                     }}
                     onOpenConversation={id => onLoadConversation?.(id)}
                     onDeleteConversation={id => onDeleteConversation?.(id)}

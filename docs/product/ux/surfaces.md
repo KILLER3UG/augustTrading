@@ -115,8 +115,9 @@ the trader's journal in bulk; treat it accordingly.
   240px for an empty list, and the title-row toggle puts the rail away. On the surfaces that mount
   the column (Journal, Learning; the Chat surface mounts its own open column), it holds **New chat**
   (Ctrl/Cmd+K still works, but no keycap badge is printed), **Pinned** (only when rows are
-  pinned), **Recent** (a hide icon sits after the heading; a row shows the side of the thread's
-  latest signal — `Long`/`Short` — read from the ledger), and the account row at its foot. No
+  pinned), **Recent** (the heading itself is the hide control — label + icon in one button; a row
+  shows the side of the thread's latest signal — `Long`/`Short` — read from the ledger), and the
+  account row at its foot. No
   Search row and no mode switch in the column: the rail owns the surfaces, the column owns the
   record, and the desk's search lives in the Agents column's own field.
 - On the **Agents** surface the thread is CENTRED and the conversation column mounts OPEN with the
@@ -138,8 +139,8 @@ the trader's journal in bulk; treat it accordingly.
   where the column is mounted, because a collapsed rail is 0px and needs a way back. The title-row
   toggle left of "Chart AI" is labelled **Hide conversation** (Ctrl/Cmd+B) and flips to **Show
   conversation** while the rail is away; it stays on screen precisely because the rail has no
-  edge to click. Inside the list, a small icon **after the RECENT heading** hides the conversation
-  column. Analyze mounts no column, so it has no in-column door; its title-row toggle hides the
+  edge to click. **The RECENT heading itself** hides the conversation column (label + icon, one
+  button). Analyze mounts no column, so it has no in-column door; its title-row toggle hides the
   icon strip. The old Chats "Hide conversations" clock is gone from the icon rail on every surface:
   the column's own hide icon, in the sidebar, is the control.
   `src/components/shell/SidebarToggle.tsx` › `SidebarToggle` ·
