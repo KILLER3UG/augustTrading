@@ -38,7 +38,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowUp, Bot, ChevronDown, Ellipsis, MessageSquare, Pencil, PanelLeftClose, Paperclip, Pin, Plus, Search, StopIcon, Trash2, Users } from '../shared/Icons';
+import { ArrowUp, Bot, ChevronDown, Ellipsis, MessageSquare, Pencil, Paperclip, Pin, Plus, Search, StopIcon, Trash2, Users } from '../shared/Icons';
 import JumpToLatestFab, { JUMP_AWAY_PX } from '../shared/JumpToLatestFab';
 import { ModelFallbackBanner } from '../trade/panels/ChatComposer';
 import type { ProviderConfig } from '../../types/provider';
@@ -165,7 +165,6 @@ interface AgentsViewProps {
      *  that used to live in it need a home in the one title bar this surface
      *  has. Same component the other surfaces' band uses — not a copy. */
     /** The column's own put-away (the rail's Chats icon drives the same one). */
-    onToggleColumn?: () => void;
     /** The SAME left-column state every other surface drives, handed in rather
      *  than re-derived per profile. This surface used to keep its own collapse
      *  key and its own width, so the Chat ⇄ Chart AI hop restacked the shell:
@@ -453,7 +452,7 @@ const AgentsView: React.FC<AgentsViewProps> = ({
     username, bots, groups, messages, selection, onSelect, onNewBot, onNewGroup,
     onSendBotTurn, onAnalyze, onLogProposedTrade, onAnalysisError, onStopRun, analysisRunning = false, renderGroup, workingBotId, mailboxBusyBotIds,
     lastOpenedMap = {}, modelPicker, modelFallback = null, accountRow,
-    railExpanded = true, sidebarExpanded = true, onToggleRailExpanded, onToggleColumn,
+    railExpanded = true, sidebarExpanded = true, onToggleRailExpanded,
     railWidth = NAV_RAIL_EXPANDED_PX, railIsResizing = false,
     onRailResizeStart, onRailResizeReset,
     onRevertTo, onEditPromptMessage, onStepVersion, parkedCount = 0, onRestoreParked,
@@ -946,18 +945,6 @@ const AgentsView: React.FC<AgentsViewProps> = ({
                     whether one is open. A wordmark above this row was tried and
                     removed: it pushed the switch down ~67px and the hop check
                     (which pins the switch across the hop) went red. */}
-                {/* The rail to this column's left owns the mode switch; what is
-                    left here is the column's own put-away, on the right edge. */}
-                {onToggleRailExpanded && (
-                    <div className="flex shrink-0 items-center justify-end gap-2 px-2 pb-1 pt-2">
-                        <button type="button" onClick={onToggleColumn ?? onToggleRailExpanded} data-testid="rail-collapse"
-                            aria-label="Collapse conversations" title="Collapse the conversation rail"
-                            className="hidden shrink-0 rounded-control p-1.5 text-zinc-500 transition-colors hover:bg-white/[0.06] hover:text-zinc-200 md:block">
-                            <PanelLeftClose className="h-3.5 w-3.5" aria-hidden="true" />
-                        </button>
-                    </div>
-                )}
-
                 {/* The reference's nav group: one-click verbs, not a menu. `New`
                     used to open a four-item menu whose first entry was the thing
                     everyone was reaching for, so asking for a new chat cost two

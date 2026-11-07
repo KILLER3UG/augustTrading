@@ -331,13 +331,11 @@ async function main() {
         how = await press('[data-testid="tf-compact"]', 700);
         await shoot('ui-tf-menu-open', how);
         await page.keyboard.press('Escape');
-        how = await press('[data-testid="rail-collapse"]', 900);
+        // The hide control lives IN the sidebar (after RECENT): it puts the
+        // whole rail away, and the title-row toggle is the way back.
+        how = await press('[data-testid="conversation-hide"]', 900);
         await shoot('ui-chat-collapsed', how);
-        // `rail-collapse` toggles the Agents COLUMN (onToggleColumn), so the
-        // Chats icon is the control that brings it back. `nav-rail-toggle-header`
-        // belongs to the whole-rail toggle and only exists while the rail is
-        // away — pressing it here used to collapse the rail by accident.
-        await press('[data-testid="shell-column-toggle"]', 900);
+        await press('[data-testid="nav-rail-toggle-header"]', 900);
 
         await page.setViewportSize({ width: 430, height: 860 });
         await sleep(1200);

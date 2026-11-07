@@ -2241,13 +2241,15 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
         /signalRowById/.test(read('src/components/shell/ConversationGroups.tsx'))
             && /conversationSide/.test(read('src/components/shell/ConversationGroups.tsx')),
         'a guessed side is a fabricated claim');
-    ok('chat: the conversation column starts closed and the rail toggles it',
-        /agentsColumnOpen/.test(app) && /onToggleColumn=/.test(app)
-            && /onToggleColumn\?: \(\) => void/.test(read('src/components/shell/ShellRail.tsx')),
-        "the mock's Chat surface is a centred thread with the column as a peek");
+    ok('chat: the conversation column mounts open with the rail, and the sidebar owns the hide',
+        !/agentsColumnOpen/.test(app) && !/onToggleColumn=/.test(app)
+            && !/onToggleColumn\?: \(\) => void/.test(read('src/components/shell/ShellRail.tsx'))
+            && /conversation-hide/.test(read('src/components/shell/ConversationGroups.tsx'))
+            && /onHideConversation=\{onToggleRailExpanded\}/.test(agents),
+        'the old Chats clock is gone; hiding is a sidebar control');
     ok('shell: an icon rail beside a conversation column',
         /data-testid="shell-surface-rail"/.test(read('src/components/shell/ShellRail.tsx'))
-            && /shell-column-toggle/.test(read('src/components/shell/ShellRail.tsx'))
+            && !/shell-column-toggle/.test(read('src/components/shell/ShellRail.tsx'))
             && /shell-rail-resize/.test(read('src/components/shell/ShellRail.tsx')),
         'one flat column of text rows is the shape the mock removes');
     ok('shell: the column has no Search row and no mode switch (the rail owns both)',
@@ -2452,16 +2454,17 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
         && /<SidebarToggle expanded=\{sidebarExpanded\}/.test(agentsView)
         && /onToggleNavRail=\{toggleNavRail\}/.test(read('src/App.tsx'))
         && !/shell-rail-collapse/.test(rail)
-        && /shell-column-toggle/.test(rail)
+        && !/shell-column-toggle/.test(rail)
         && /Hide conversation · Ctrl\+B/.test(toggle)
         && /Show conversation · Ctrl\+B/.test(toggle),
         'a collapsed rail is 0px: its control cannot live inside it');
-    ok('conversations: the Chats icon is Agents-only and the hide icon stays in the rail',
-        /\{onToggleColumn && \(/.test(rail)
+    ok('conversations: the hide control lives in the sidebar, not the icon rail',
+        !/onToggleColumn/.test(rail)
+        && !/shell-column-toggle/.test(rail)
         && /conversation-hide/.test(read('src/components/shell/ConversationGroups.tsx'))
         && /onHideConversation=\{onCollapse\}/.test(rail)
         && /onHideConversation=\{onToggleRailExpanded\}/.test(agentsView),
-        'one column toggle on Analyze duplicated the whole-rail collapse');
+        'the clock icon was a second toggle for a column the sidebar already hides');
     ok('new chat: the ⌘K keycap is gone, the Ctrl/Cmd+K chord still works',
         !/<kbd/.test(read('src/components/shell/ConversationGroups.tsx'))
         && /New chat · Ctrl\+K/.test(read('src/components/shell/ConversationGroups.tsx'))

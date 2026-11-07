@@ -8,7 +8,7 @@
  * sidebar carries once the rail is not rendered there.
  */
 import React from 'react';
-import { Settings, BotIcon, Inbox } from '../shared/Icons';
+import { Settings, Inbox } from '../shared/Icons';
 import Tip from '../ui/Tip';
 import { useUpdateStatusDot } from '../shared/UpdateButton';
 import { useAutoUpdate } from '../../hooks/useAutoUpdate';
@@ -66,12 +66,6 @@ export const AccountRow: React.FC<{
             <div
                 className="flex min-w-0 flex-1 items-center gap-2 rounded-control py-0.5"
             >
-                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-zinc-800 text-ui-sm font-bold uppercase text-zinc-300">
-                    {/* The person's initial, not a bot glyph — this row is the one
-                        place the rail says who is signed in (the references all use
-                        an initials block here). */}
-                    {activeUsername ? activeUsername.charAt(0) : <BotIcon className="h-4 w-4 text-zinc-500" aria-hidden="true" />}
-                </span>
                 <span className="min-w-0 flex-1">
                     <span className="block truncate text-ui-caption text-zinc-300" data-testid="nav-account-name" title={activeUsername || 'No profile'}>{activeUsername || 'No profile'}</span>
                     <span className="block truncate text-ui-2xs text-zinc-600" title="Signed in · local-first">Signed in · local-first</span>

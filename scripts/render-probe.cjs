@@ -1163,6 +1163,17 @@ async function main() {
                 const exp = await measureOverflow(page);
                 check('the expanded Chart AI dock fits the viewport',
                     overflowIsClean(exp), overflowWhy(exp));
+                // The owner's ruling: the dock KEEPS its Past Conversations
+                // control; the CHAT surface is the one that loses its clock.
+                const dockHistory = await page.evaluate(() => {
+                    const dock = document.querySelector('[data-testid="trade-chat-panel"]');
+                    return {
+                        history: !!dock?.querySelector('[aria-label="Past conversations"]'),
+                        newChat: !!dock?.querySelector('[aria-label="New chat"]'),
+                    };
+                });
+                check('the Chart AI dock keeps its Past Conversations control',
+                    dockHistory.history && dockHistory.newChat, JSON.stringify(dockHistory));
                 // And the chart must survive the expansion as a chart, not a
                 // sliver: it gave way by flexing, so it keeps a real share.
                 const paneW = await page.evaluate(() => {
@@ -1515,18 +1526,12 @@ async function main() {
         /** The Agents surface reopens on its rail, not on an open thread, so a
          *  reload that leaves the desk unselected reads as an empty conversation.
          *  Click the desk row itself rather than assuming the selection stuck. */
-        /** The Chat column starts CLOSED (mock v3 — the thread is centred and
-         *  the column is a peek), so anything that reaches for a roster row
-         *  opens it first through the rail's Chats icon. Idempotent. */
+        /** The Chat column mounts OPEN with the rail now (the old Chats clock
+         *  is gone; the hide control lives in the sidebar after RECENT). This
+         *  just waits for the column, keeping ONE call site for its readers. */
         const openChatColumn = async () => {
-            await page.evaluate(() => {
-                // The Chats/column toggle, NOT `shell-rail-collapse`: that one
-                // now puts the WHOLE rail away on every surface. Only the
-                // column toggle carries the pressed state a peek needs.
-                const t = document.querySelector('[data-testid="shell-column-toggle"]');
-                if (t && t.getAttribute('aria-pressed') === 'false') t.click();
-            });
-            await sleep(400);
+            await page.waitForSelector('[data-testid="agents-rail"]', { timeout: 5000 }).catch(() => null);
+            await sleep(200);
         };
         const openDeskThread = async () => {
             await openAgents();
@@ -1910,9 +1915,9 @@ async function main() {
                     marked: sw.filter(b => b.getAttribute('aria-current') === 'page')
                         .map(b => b.getAttribute('data-testid')).join(','),
                     // The mock's rail is icons only (Analyze/Agents/Chats |
-                    // Journal/Learning/account), so the Customize ROW is gone —
-                    // Skills is a tab of Learning now. What must exist is the
-                    // rail itself and its column toggle.
+                    // Journal/Learning), so the Customize ROW is gone — Skills
+                    // is a tab of Learning now. What must exist is the rail
+                    // itself and its column toggle.
                     railIcons: !!document.querySelector('[data-testid="shell-surface-rail"]')
                         && !!document.querySelector('[data-testid="shell-rail-collapse"]'),
                     railTop: rail ? Math.round(rail.getBoundingClientRect().top) : -1,
@@ -1921,6 +1926,7 @@ async function main() {
                     headerAbove: !!document.querySelector('header'),
                     accountName: !!rail?.querySelector('[data-testid="nav-account-name"]'),
                     switchUserButton: !!rail?.querySelector('[data-testid="nav-switch-user"]'),
+                    railAccount: !!document.querySelector('[data-testid="shell-account"]'),
                 };
             });
             check('every surface is reachable from the shell rail with no menu to open',
@@ -1932,9 +1938,9 @@ async function main() {
             // itself and its column toggle.
             check('the shell keeps the icon rail and the column toggle',
                 !!nav.railIcons, `rail=${nav.railIcons}`);
-            check('the account row says who is signed in and is not a control',
-                nav.accountName && !nav.switchUserButton,
-                `name=${nav.accountName} switchButton=${nav.switchUserButton}`);
+            check('the account row says who is signed in and carries no avatar',
+                nav.accountName && !nav.switchUserButton && !nav.railAccount,
+                `name=${nav.accountName} switchButton=${nav.switchUserButton} railAvatar=${nav.railAccount}`);
             check('the sidebar runs the full height of the window — nothing is stacked above it',
                 nav.railTop === 0 && !nav.headerAbove,
                 `agents-rail top ${nav.railTop}px, header above=${nav.headerAbove}`);
@@ -2165,35 +2171,29 @@ async function main() {
                 agentsRailReset === agentsRailBefore, `${agentsRailWide} -> ${agentsRailReset} (want ${agentsRailBefore})`);
             const away = async () => page.evaluate(() => {
                 const el = document.querySelector('[data-testid="agents-rail"]');
-                const visible = (node) => {
-                    const cs = window.getComputedStyle(node);
-                    return cs.visibility !== 'hidden' && cs.display !== 'none'
-                        && node.getClientRects().length > 0;
-                };
                 return {
+                    rail: !!document.querySelector('[data-testid="shell-rail"]'),
                     hidden: el ? el.className.split(/\s+/).includes('md:hidden') : null,
-                    switches: [...document.querySelectorAll('[data-testid^="surface-switch-"]')]
-                        .filter(visible).length,
+                    expand: !!document.querySelector('[data-testid="nav-rail-toggle-header"]'),
                 };
             });
-            // The Chat column is a PEEK (mock v3): the rail's Chats icon owns it.
-            const chatToggle = async () => {
-                await page.evaluate(() => {
-                    // Hiding the conversation column must leave the icon rail
-                    // standing; `shell-rail-collapse` is the whole-rail control.
-                    document.querySelector('[data-testid="shell-column-toggle"]')?.click();
-                });
-                await sleep(450);
-            };
+            // The hide-conversations UI lives IN the sidebar (after RECENT), not
+            // in the icon rail. It puts the whole rail away; the title-row
+            // toggle is the way back, and the column returns at the shell width.
             await openChatColumn();
-            await chatToggle();
+            const hideInSidebar = await page.evaluate(() => {
+                const b = document.querySelector('[data-testid="conversation-hide"]');
+                if (!b) return false;
+                b.click();
+                return true;
+            });
+            await sleep(450);
             const collapsed = await away();
-            // The rail PERSISTS when the column hides (mock v3): the icon strip
-            // is chrome, the column is the peek. Four surface switches stay.
-            check('the Chats icon puts the conversation column away and the rail stays',
-                collapsed.hidden === true && collapsed.switches === 4,
-                `md:hidden=${collapsed.hidden} visibleTabs=${collapsed.switches}`);
-            await chatToggle();
+            check('the sidebar hide icon puts the Chat rail away and leaves a way back',
+                hideInSidebar && !collapsed.rail && collapsed.expand,
+                JSON.stringify(collapsed));
+            await page.evaluate(() => document.querySelector('[data-testid="nav-rail-toggle-header"]')?.click());
+            await sleep(600);
             const backAgain = await away();
             const navRailSrc = require('fs').readFileSync(
                 path.join(ROOT, 'src', 'components', 'shell', 'shellChrome.tsx'), 'utf8');
@@ -2202,9 +2202,9 @@ async function main() {
                 const el = document.querySelector('[data-testid="agents-rail"]');
                 return el ? Math.round(el.getBoundingClientRect().width) : -1;
             });
-            check('the Chats icon brings the column back at the shell width',
-                backAgain.hidden === false && colWidth === navRailExpandedPx,
-                `${colWidth}px, md:hidden=${backAgain.hidden} (want ${navRailExpandedPx})`);
+            check('the title-row toggle brings the Chat column back at the shell width',
+                backAgain.rail && backAgain.hidden === false && colWidth === navRailExpandedPx,
+                `${colWidth}px, hidden=${backAgain.hidden} (want ${navRailExpandedPx})`);
             // Leave the run on a known surface before the sweep.
             await navTo('Analyze');
             await sleep(400);

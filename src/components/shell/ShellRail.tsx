@@ -24,7 +24,6 @@ import React, { useRef } from 'react';
 import {
     ActivityIcon, BookOpen, GraduationCap,
     MessageSquareIcon,
-    HistoryIcon,
 } from '../shared/Icons';
 import { AccountRow } from './shellChrome';
 import { ConversationGroups } from './ConversationGroups';
@@ -114,8 +113,6 @@ interface ShellRailProps {
     /** The rail's Chats icon. On the surfaces whose column IS the rail it
      *  collapses the rail (default); on Agents the column is the surface's own
      *  and starts closed, so the icon toggles THAT. */
-    onToggleColumn?: () => void;
-    columnOpen?: boolean;
     /** The dragged width, shared with the Agents mode's column. */
     width: number;
     isResizing: boolean;
@@ -134,7 +131,7 @@ const ShellRail: React.FC<ShellRailProps> = ({
     workspaces, onSwitchWorkspace, onAddWorkspace,
     conversations, activeConversationId, onOpenConversation,
     onDeleteConversation, onClearConversation,
-    activeUsername, onOpenSettings, onOpenActivity, onToggleColumn, columnOpen = true,
+    activeUsername, onOpenSettings, onOpenActivity,
     width, isResizing, onResizeStart, onResizeReset, onCollapse,
     overlay = false, onCloseOverlay,
 }) => {
@@ -192,13 +189,6 @@ const ShellRail: React.FC<ShellRailProps> = ({
                         current={surface === 'agents'} onClick={() => onSelectSurface('agents')}>
                         <MessageSquareIcon className="h-[18px] w-[18px]" aria-hidden="true" />
                     </RailIcon>
-                    {onToggleColumn && (
-                        <RailIcon label={columnOpen ? 'Hide conversations' : 'Show conversations'}
-                            testId="shell-column-toggle" pressed={columnOpen}
-                            onClick={onToggleColumn}>
-                            <HistoryIcon className="h-[18px] w-[18px]" aria-hidden="true" />
-                        </RailIcon>
-                    )}
                     <span aria-hidden="true" className="flex-1" />
                     <RailIcon label="Journal · Alt+2" testId="surface-switch-journal"
                         current={surface === 'journal'} onClick={() => onSelectSurface('journal')}>
@@ -211,17 +201,9 @@ const ShellRail: React.FC<ShellRailProps> = ({
                     {/* No collapse control here. The whole rail's one toggle
                         lives on the content bar's TITLE row (`SidebarToggle`),
                         where it stays reachable after the rail is put away —
-                        a 0px rail has no edge to click. */}
-                    <button
-                        type="button"
-                        data-testid="shell-account"
-                        onClick={onOpenSettings}
-                        aria-label={`${activeUsername || 'default'} — settings`}
-                        title="Settings · Ctrl+,"
-                        className="mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-white/10 bg-gradient-to-br from-zinc-700 to-zinc-800 text-[10px] font-semibold text-zinc-200 transition-colors hover:border-white/25"
-                    >
-                        {(activeUsername || 'default').trim().slice(0, 1).toUpperCase()}
-                    </button>
+                        a 0px rail has no edge to click. No account avatar
+                        either: the account row (where the column mounts) is
+                        the one place the rail says who is signed in. */}
                 </nav>
 
                 {showConversationColumn && (

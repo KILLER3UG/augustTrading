@@ -1942,8 +1942,6 @@ const App: React.FC = () => {
     // The Chat surface is a CENTRED thread in the mock: its conversation column
     // starts closed and the rail's Chats icon opens it. Session state, not a
     // stored preference — the column is a peek, not a layout.
-    const [agentsColumnOpen, setAgentsColumnOpen] = useState(false);
-    const toggleAgentsColumn = useCallback(() => setAgentsColumnOpen(v => !v), []);
     const openDeskConversation = useCallback((id: string) => {
         handleLoadConversation(id);
         selectTeamThread();
@@ -2330,8 +2328,6 @@ const App: React.FC = () => {
                         onOpenSkills={openSkills}
                         activeUsername={activeUsername}
                         onOpenSettings={() => setIsSettingsMenuVisible(true)}
-                        onToggleColumn={surface === 'agents' ? toggleAgentsColumn : undefined}
-                        columnOpen={surface === 'agents' ? agentsColumnOpen : true}
                         width={railResize.width}
                         isResizing={railResize.isResizing}
                         onResizeStart={railResize.startResize}
@@ -2525,7 +2521,7 @@ const App: React.FC = () => {
                                             showEffort={showEffort} />
                                     )}
                                     modelFallback={chatModelFallback.notice}
-                                    railExpanded={surface === 'agents' ? (isNavRailOpen && agentsColumnOpen) : isNavRailOpen}
+                                    railExpanded={isNavRailOpen}
                                     /* Whole-rail state, separate from the Agents
                                        COLUMN state above: the top-bar toggle is
                                        about the rail, on every surface. */
@@ -2533,7 +2529,6 @@ const App: React.FC = () => {
                                     /* The content bar's toggle opens/closes the RAIL;
                                        the column's own put-away is a separate callback. */
                                     onToggleRailExpanded={toggleNavRail}
-                                    onToggleColumn={toggleAgentsColumn}
                                     railWidth={railResize.width}
                                     railIsResizing={railResize.isResizing}
                                     onRailResizeStart={railResize.startResize}
