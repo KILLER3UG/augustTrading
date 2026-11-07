@@ -95,6 +95,15 @@ Never: an Approvals tab — skills have no approval queue. The separate memory c
 
 ## Settings (overlay)
 
+Settings mounts **outside `<main>`** as a full-window overlay with its own top bar
+(sidebar toggle, back/forward over the pages visited in this window, breadcrumb, close),
+an independently scrolling sidebar (**Back to app**, a search field, grouped nav), and a
+separately scrolling content pane holding one inset rounded panel on a ~940px measure.
+A search hit jumps to its page and then scrolls the matching row into view. Toasts and
+the help button share the bottom-right corner while the window is open.
+`src/components/settings/SettingsMenu.tsx` › `SettingsMenu` ·
+`src/components/settings/tabs/shared.tsx` › `SettingsGroup`
+
 Grouped, in this order:
 
 - **Setup** — AI setup (providers, keys, models).
@@ -145,6 +154,13 @@ the trader's journal in bulk; treat it accordingly.
   the column's own hide icon, in the sidebar, is the control.
   `src/components/shell/SidebarToggle.tsx` › `SidebarToggle` ·
   `src/components/shell/ConversationGroups.tsx` › `ConversationGroups`
+- The **Agents workspace dock** is the Chat surface's right panel: a vertical icon rail
+  (Files, Chart, Live, Evidence) beside a resizable panel. It uses the ONE right-panel
+  contract and supports two persisted modes — *all tabs open* and *one tab at a time*.
+  Views stay mounted while hidden, so switching never resets another view's state. Below
+  1024px the panel goes fullscreen instead of squeezing the centred thread.
+  `src/components/agents/dock/AgentsDock.tsx` › `AgentsDock` ·
+  `src/components/shared/ChartFrame.tsx` › `ChartFrame`
 - Electron's floor is 800px wide. A layout that only breaks below 1024 is a bug.
 - Heavy surfaces are `React.lazy` with `SurfaceSkeleton`, never `fallback={null}`.
 - Overlays mount **outside** `<main>`. A probe that measures `<main>` after opening one re-reports
