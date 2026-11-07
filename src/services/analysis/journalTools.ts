@@ -1,13 +1,17 @@
 /**
  * journalTools — the journal-reading half of the market-tools family:
- * `setup_base_rate` and `risk_state`.
+ * `setup_base_rate`, `risk_state` and `meta_label`.
  *
- * These two are the P1 evidence/risk pair from docs/plans/tools-upgrade.md
- * §7. They read the SAME rows the `get_trade_log` tool reads (the desk
- * context's `trades`), so a number here and a number there cannot disagree.
- * Both refuse thin samples out loud — a base rate off three trades or a
- * Kelly ceiling off ten is the kind of confident nonsense this task exists
- * to end.
+ * These read the SAME rows the `get_trade_log` tool reads (the desk context's
+ * `trades`), so a number here and a number there cannot disagree. Every rate
+ * refuses thin samples out loud — a base rate off three trades or a Kelly
+ * ceiling off ten is the kind of confident nonsense this task exists to end.
+ *
+ * Conditioning reads what the plan RECORDED at decision time: the O-46
+ * snapshot's regime (`marketConditions.timeframeAlignment`). A row without it
+ * is excluded from a conditioned bucket, never guessed into one — and the
+ * coverage counts say how many rows were excluded for missing the snapshot,
+ * so a thin bucket is never mistaken for a losing one.
  *
  * Envelope shape: the same `MarketToolEnvelope` the market tools return
  * (reused from marketTools), with `evidence_level: 'documented'` — these are
@@ -15,7 +19,10 @@
  */
 
 import type { LoggedTrade } from '../../types/trade';
-import { computeSetupClusterStats } from '../learning/setupClusterStats';
+import {
+    computeSetupClusterStats, clusterRows,
+    regimeIdOf, regimeIdMatches, type SetupClusterStats,
+} from '../learning/setupClusterStats';
 import { wilsonInterval95 } from '../signals/signalAccuracy';
 import { plannedRiskReward, plannedRiskRewardSigned, type PlannedRiskDirection } from '../../utils/riskReward';
 import { roundTripCostR, breakEvenWinRate } from '../../utils/netRiskReward';
@@ -26,24 +33,43 @@ import { atr14 } from '../../utils/smcStructure';
 import type { Kline } from '../../types/message';
 import type { MarketToolEnvelope } from './marketTools';
 
+/** The floor every quoted rate shares: under this, the tool says why it is
+ *  not quoting one. */
+const MIN_RATE_SAMPLE = 5;
+
+/**
+ * The regime a caller asked for. A trailing numeric segment is a BAR COUNT
+ * from the live read (`regimeCore.regimeId` = `trend:normal:100`), not a
+ * journal axis — the model copies that id from `get_regime`, and without
+ * this it would match no row and read as an empty bucket.
+ */
+export const normaliseRegimeQuery = (raw: string): string => {
+    const parts = raw.trim().toLowerCase().split(':').map(s => s.trim()).filter(Boolean);
+    if (parts.length > 2 && /^\d+$/.test(parts[parts.length - 1])) parts.pop();
+    return parts.join(':');
+};
+
 /** The setup types a caller can ask a base rate for. `family` uses the
- *  strategy-family vocabulary the rows already carry. */
+ *  strategy-family vocabulary the rows already carry; `regime` narrows the
+ *  same rows to an attributed bucket. */
 export interface SetupBaseRateParams {
     coin?: string;
     direction?: 'Long' | 'Short';
     family?: string;
+    /** A decision-time regime id (`range:compressed`) or one axis segment
+     *  (`compressed`). Rows with no recorded regime are excluded and counted. */
+    regime?: string;
 }
 
 /**
  * The hit rate / expectancy of a setup type, from the trader's own logged
  * rows, with a Wilson 95% interval and the sample size printed BESIDE the
- * rate. Refuses under `MIN_SAMPLE` — the envelope says why rather than
+ * rate. Refuses under `MIN_RATE_SAMPLE` — the envelope says why rather than
  * printing a 3-trade "win rate".
  *
- * Regime conditioning is NOT claimed: journal rows carry no feature snapshot
- * (register row O-46), so conditioning rows by regime would silently filter
- * to nothing. The envelope says so — the honest answer, and one more reason
- * O-46 matters.
+ * Without `regime` the rate is BLENDED across every recorded regime; the
+ * envelope states which scope it used and how many rows carry the condition
+ * at all.
  */
 export const runSetupBaseRateTool = (
     trades: LoggedTrade[],
@@ -51,8 +77,10 @@ export const runSetupBaseRateTool = (
     asofMs: number = Date.now(),
 ): string => {
     const tool = 'setup_base_rate';
-    const notes: string[] = ['source: the trader\'s logged journal rows (the same rows get_trade_log reads)'];
-    const MIN_SAMPLE = 5;
+    const notes: string[] = [
+        'source: the trader\'s logged journal rows (the same rows get_trade_log reads)',
+        'regime comes from the O-46 decision snapshot — a row logged without one is excluded, never guessed into a bucket',
+    ];
     const make = (values: Record<string, unknown> | null, summary: string, reason?: string, barsUsed = (trades ?? []).length): string =>
         JSON.stringify({
             tool,
@@ -76,29 +104,51 @@ export const runSetupBaseRateTool = (
     if (rows.length === 0) {
         return make(null, '', 'the journal has no rows yet — nothing to measure a base rate on');
     }
-    const stats = computeSetupClusterStats(params.coin, params.direction, params.family, rows);
-    if (!stats || stats.sample < MIN_SAMPLE || stats.winRate === null) {
-        return make(null, '', `sample too thin: ${stats?.sample ?? 0} matching closed rows for this setup type (need ≥${MIN_SAMPLE}) — no base rate is quoted`);
+    const regime = typeof params.regime === 'string' && params.regime.trim()
+        ? normaliseRegimeQuery(params.regime)
+        : undefined;
+
+    const considered = clusterRows(rows, { coin: params.coin, direction: params.direction, family: params.family });
+    const withRegime = considered.filter(t => regimeIdOf(t) !== null).length;
+    const matchingRegime = regime
+        ? considered.filter(t => { const id = regimeIdOf(t); return id !== null && regimeIdMatches(id, regime); }).length
+        : null;
+
+    const stats = computeSetupClusterStats(params.coin, params.direction, params.family, rows, { regime });
+    if (!stats || stats.sample < MIN_RATE_SAMPLE || stats.winRate === null) {
+        const bucket = regime ? ` in regime ${regime}` : '';
+        const coverage = regime
+            ? `; ${matchingRegime} of ${considered.length} considered closed row(s) match this regime, ${withRegime} carry any regime`
+            : '';
+        return make(null, '', `sample too thin: ${stats?.sample ?? 0} matching closed rows${bucket} (need ≥${MIN_RATE_SAMPLE}) — no base rate is quoted${coverage}`);
     }
     const winRate = stats.winRate;
     const ci = wilsonInterval95(stats.wins, stats.sample);
+    const scope = regime ? `regime ${regime}` : '';
     const values = {
-        setup: { coin: params.coin ?? '(any)', direction: params.direction ?? '(any)', family: params.family ?? '(any)' },
+        setup: {
+            coin: params.coin ?? '(any)',
+            direction: params.direction ?? '(any)',
+            family: params.family ?? '(any)',
+            regime: regime ?? '(any)',
+        },
         sample: stats.sample,
         wins: stats.wins,
         losses: stats.losses,
         win_rate: stats.winRate,
         wilson_95: ci ? { low: Math.round(ci.low * 1000) / 1000, high: Math.round(ci.high * 1000) / 1000 } : null,
         avg_r: stats.avgR,
+        min_sample: MIN_RATE_SAMPLE,
         last_outcome: stats.lastOutcome,
         last_date: stats.lastDate,
         worst_lesson: stats.worstLesson,
-        regime_conditioned: false,
-        regime_note: 'rows carry no regime snapshot (open-items O-46), so this rate is NOT regime-conditioned — treat it as the blended base rate until the journal records regime',
+        regime_conditioned: regime !== undefined,
+        coverage: { considered: considered.length, with_regime: withRegime },
     };
+    const avg = stats.avgR !== null ? `${stats.avgR.toFixed(2)}R` : 'R n/a';
     return make(
         values,
-        `${stats.wins}W/${stats.losses}L over ${stats.sample} (${(winRate * 100).toFixed(0)}%, Wilson 95% ${ci ? `${(ci.low * 100).toFixed(0)}–${(ci.high * 100).toFixed(0)}%` : 'n/a'}), avg ${stats.avgR}R`,
+        `${stats.wins}W/${stats.losses}L over ${stats.sample}${scope ? ` in ${scope}` : ' (blended across recorded regimes)'} (${(winRate * 100).toFixed(0)}%, Wilson 95% ${ci ? `${(ci.low * 100).toFixed(0)}–${(ci.high * 100).toFixed(0)}%` : 'n/a'}), avg ${avg}`,
     );
 };
 
@@ -162,6 +212,27 @@ export const runRiskStateTool = (
 // measured. ADVISORY: it never refuses a card and never blocks a turn —
 // the refusing gate is proposalGate and stays the only one.
 
+/**
+ * The rate meta_label reads: the live regime's bucket when it holds the
+ * floor, otherwise the blended rate — never a conditioned rate off two rows.
+ * The scope string is the honest label printed BESIDE the number.
+ */
+export const pickBaseRate = (
+    blended: SetupClusterStats | null,
+    conditioned: SetupClusterStats | null,
+    liveRegime: string | null,
+): { stats: SetupClusterStats | null; scope: string } => {
+    const useConditioned = conditioned !== null && conditioned.sample >= MIN_RATE_SAMPLE && conditioned.winRate !== null;
+    return useConditioned
+        ? { stats: conditioned, scope: `regime ${liveRegime}` }
+        : {
+            stats: blended,
+            scope: liveRegime
+                ? `blended — the ${liveRegime} bucket holds ${conditioned?.sample ?? 0} closed row(s), under ${MIN_RATE_SAMPLE}`
+                : 'blended — no regime read this turn',
+        };
+};
+
 export interface MetaLabelPlan {
     /** The coin the plan trades — the base-rate and correlated-exposure key. */
     coin: string;
@@ -183,6 +254,7 @@ export const runMetaLabelTool = async (
     const notes: string[] = [
         'ADVISORY — a verdict with reasons; it never refuses a card and never sizes a position by itself (the trader decides)',
         'sources: the journal rows (base rate, heat, drawdown light), the plan\'s own arithmetic (break-even after costs), the 1h regime read',
+        `the base rate is conditioned on the live regime only when that bucket holds ≥${MIN_RATE_SAMPLE} closed rows; otherwise it is BLENDED and the scope says so`,
     ];
     const make = (values: unknown, summary: string, reason?: string): string =>
         JSON.stringify({
@@ -209,9 +281,20 @@ export const runMetaLabelTool = async (
     const cost = roundTripCostR({ stopDistancePct: (signed.risk / plan.entry) * 100 });
     const breakEven = cost.known ? breakEvenWinRate({ rewardRatio: signed.ratio, costR: cost.costR }) : null;
 
+    // The regime must be read BEFORE the rate is picked: the conditioned
+    // bucket is the desk's own history in the regime this plan is entering.
+    const reg = candles.length >= 80 && atr14(candles) > 0 ? regimeRead(candles) : null;
+    // `${direction}:${volatility}` — the composite the O-46 snapshot writes.
+    // `regimeId` carries a third segment (bar count) that no journal row has.
+    const liveRegime = reg ? `${reg.direction}:${reg.volatility}` : null;
+    const blended = computeSetupClusterStats(plan.coin, plan.direction, undefined, trades ?? []);
+    const conditioned = liveRegime
+        ? computeSetupClusterStats(plan.coin, plan.direction, undefined, trades ?? [], { regime: liveRegime })
+        : null;
+    const { stats, scope: baseRateScope } = pickBaseRate(blended, conditioned, liveRegime);
+
     // The trader's own base rate for this setup type.
-    const stats = computeSetupClusterStats(plan.coin, plan.direction, undefined, trades ?? []);
-    const ci = stats && stats.sample >= 5 && stats.winRate !== null ? wilsonInterval95(stats.wins, stats.sample) : null;
+    const ci = stats && stats.sample >= MIN_RATE_SAMPLE && stats.winRate !== null ? wilsonInterval95(stats.wins, stats.sample) : null;
     const baseRate = stats && ci && stats.winRate !== null
         ? { sample: stats.sample, winRate: stats.winRate, ciLow: ci.low, ciHigh: ci.high }
         : null;
@@ -219,14 +302,11 @@ export const runMetaLabelTool = async (
     // The portfolio state.
     const risk = readRiskState(trades ?? [], asofMs);
 
-    // The regime read (the coin's 1h tape, as-of now) — context for the
-    // reasons; `regimeApplies` stays whatever the caller could honestly say.
-    const reg = candles.length >= 80 && atr14(candles) > 0 ? regimeRead(candles) : null;
-
     const read = metaLabel({
         plannedRr: signed.ratio,
         breakEvenWinRatePct: breakEven,
         baseRate,
+        baseRateScope,
         regimeApplies: plan.regimeApplies ?? null,
         kellyHalfPct: risk.kelly.available ? risk.kelly.halfKellyPct ?? null : null,
         openPlans: risk.open.count,
@@ -245,6 +325,7 @@ export const runMetaLabelTool = async (
             break_even_win_rate_pct: breakEven,
         },
         base_rate: baseRate,
+        base_rate_scope: baseRateScope,
         regime_now: reg ? { direction: reg.direction, volatility: reg.volatility, regime_id: reg.regimeId } : null,
         portfolio: { open_plans: risk.open.count, correlated: risk.open.correlated, drawdown_light: risk.drawdown.light, week_r: risk.drawdown.weekR },
         kelly_half_pct: risk.kelly.available ? risk.kelly.halfKellyPct ?? null : null,

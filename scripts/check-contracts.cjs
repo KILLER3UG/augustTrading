@@ -3794,6 +3794,84 @@ const checkSkillWrites = async () => {
         })());
 }
 
+// ─── 46b. regime conditioning — the base rate reads the recorded regime ──
+// The failure these pin is silent: a condition that filters every row out
+// reads as "no sample", so the tool must state coverage beside the bucket.
+(() => {
+    const scs = loadModule('src/services/learning/setupClusterStats');
+    const jt = loadModule('src/services/analysis/journalTools');
+    const jRow = (o = {}) => ({
+        id: o.id || `t${Math.random()}`,
+        outcome: o.outcome || 'WIN',
+        timestamp: '2026-11-01T00:00:00.000Z',
+        analysis: {
+            coinName: o.coin || 'BTCUSDT',
+            direction: o.direction || 'Long',
+            entryPoints: [{ price: '100' }],
+            stopLoss: '98',
+            takeProfit: [{ price: '104' }],
+            marketConditions: { timeframeAlignment: o.regime || '—' },
+        },
+    });
+    const rows = [
+        jRow({ id: 'w1', outcome: 'WIN', regime: 'range:compressed' }),
+        jRow({ id: 'w2', outcome: 'WIN', regime: 'range:compressed' }),
+        jRow({ id: 'w3', outcome: 'WIN', regime: 'range:compressed' }),
+        jRow({ id: 'w4', outcome: 'WIN', regime: 'range:compressed' }),
+        jRow({ id: 'l1', outcome: 'LOSS', regime: 'range:compressed' }),
+        jRow({ id: 'l2', outcome: 'LOSS', regime: 'range:compressed' }),
+        jRow({ id: 't1', outcome: 'WIN', regime: 'trend:normal' }),
+        jRow({ id: 'x1', outcome: 'WIN', regime: '—' }),
+    ];
+    ok('regime: the recorded composite parses; a dash is NOT a regime',
+        scs.regimeIdOf(jRow({ regime: 'Range:Compressed' })) === 'range:compressed'
+        && scs.regimeIdOf(jRow({})) === null);
+    ok('regime: one axis segment matches its composite; another axis does not',
+        scs.regimeIdMatches('range:compressed', 'compressed')
+        && scs.regimeIdMatches('range:compressed', 'range:compressed')
+        && !scs.regimeIdMatches('trend:normal', 'compressed'));
+    ok('regime: a copied live regime_id drops its bar-count segment and still matches the row',
+        jt.normaliseRegimeQuery('Trend:Normal:100') === 'trend:normal'
+        && jt.normaliseRegimeQuery('range:compressed') === 'range:compressed');
+    const bucket = scs.computeSetupClusterStats('BTC', 'Long', undefined, rows, { regime: 'range:compressed' });
+    ok('regime: only rows recorded in the bucket enter a conditioned rate',
+        bucket.sample === 6 && bucket.wins === 4 && bucket.losses === 2);
+    ok('regime: coverage counts the rows that carry no regime, with the same predicate',
+        scs.clusterRows(rows, { coin: 'BTC' }).length === 8
+        && scs.clusterRows(rows, { coin: 'BTC' }).filter(t => scs.regimeIdOf(t)).length === 7);
+    const out = JSON.parse(jt.runSetupBaseRateTool(rows, { coin: 'BTC', regime: 'range:compressed' }, 1));
+    ok('setup_base_rate: a conditioned read reports its scope and the coverage behind it',
+        out.data_quality.available === true
+        && out.values.regime_conditioned === true
+        && out.values.coverage.considered === 8
+        && out.values.coverage.with_regime === 7
+        && out.one_line_summary.includes('in regime range:compressed'));
+
+    const thick = scs.computeSetupClusterStats('BTC', 'Long', undefined, rows);
+    const pickThick = jt.pickBaseRate(thick, bucket, 'range:compressed');
+    const pickThin = jt.pickBaseRate(
+        thick,
+        scs.computeSetupClusterStats('BTC', 'Long', undefined, rows, { regime: 'trend:high' }),
+        'trend:high',
+    );
+    ok('meta-label: the live regime bucket is used when it has the floor, and the scope names it',
+        pickThick.stats === bucket && pickThick.scope === 'regime range:compressed');
+    ok('meta-label: a thin regime bucket falls back to BLENDED and says why in the scope',
+        pickThin.stats === thick && /^blended — the trend:high bucket holds 0 closed row/.test(pickThin.scope));
+
+    const ml2 = loadModule('src/services/market/metaLabelCore');
+    ok('meta-label: the rate line names its scope, so a blended fallback cannot read as conditioned',
+        (() => {
+            const r = ml2.metaLabel({
+                plannedRr: 2, breakEvenWinRatePct: 36.7,
+                baseRate: { sample: 30, winRate: 0.5, ciLow: 0.3, ciHigh: 0.7 },
+                baseRateScope: 'regime range:compressed', regimeApplies: true,
+                kellyHalfPct: null, openPlans: 0, correlated: false, drawdownLight: 'green',
+            });
+            return r.verdict === 'take' && r.reasons.some(x => x.includes('base rate 50% over 30 (regime range:compressed)'));
+        })());
+})();
+
 // ─── 47. the training recorder — toggle-gated, cap-refusing, plan-joined ──
 const runCaptureChecks = async () => {
         // trainingCapture — the 'Improve future August models' recorder. The

@@ -25,6 +25,10 @@ export interface MetaLabelInput {
     /** The trader's measured base rate for this setup type (null when the
      *  sample was too thin to quote one). */
     baseRate: { sample: number; winRate: number; ciLow: number; ciHigh: number } | null;
+    /** What the rate is conditioned on, stated in the reasons — e.g.
+     *  `regime range:compressed`, or `blended — the … bucket holds 2 …`.
+     *  Absent means the caller did not say, and no scope sentence prints. */
+    baseRateScope?: string | null;
     /** Does the plan's regime match the setup's claimed regime? `null` when
      *  the caller cannot say (the honest default today). */
     regimeApplies: boolean | null;
@@ -80,7 +84,7 @@ export const metaLabel = (input: MetaLabelInput): MetaLabelRead => {
         reasons.push('drawdown light RED — the declared stop-trading band; the plan waits');
     }
     if (input.baseRate && input.breakEvenWinRatePct !== null && (input.baseRate.ciHigh * 100) < input.breakEvenWinRatePct) {
-        reasons.push(`the base rate's UPPER bound (${(input.baseRate.ciHigh * 100).toFixed(0)}% over ${input.baseRate.sample}) sits below this plan's break-even (${input.breakEvenWinRatePct.toFixed(1)}% after costs) — even the optimistic read cannot pay`);
+        reasons.push(`the base rate's UPPER bound (${(input.baseRate.ciHigh * 100).toFixed(0)}% over ${input.baseRate.sample}${input.baseRateScope ? `, ${input.baseRateScope}` : ''}) sits below this plan's break-even (${input.breakEvenWinRatePct.toFixed(1)}% after costs) — even the optimistic read cannot pay`);
     }
     if (reasons.length > 0) {
         return { verdict: 'skip', sizeFractionPct: 0, reasons, thresholds: THRESHOLDS, evidence_level: 'documented' };
@@ -100,7 +104,7 @@ export const metaLabel = (input: MetaLabelInput): MetaLabelRead => {
     // TAKE — with the Kelly ceiling stated when it exists (it never raises
     // the size; it only reports what the journal supports).
     if (input.baseRate) {
-        reasons.push(`base rate ${(input.baseRate.winRate * 100).toFixed(0)}% over ${input.baseRate.sample} (Wilson 95% ${(input.baseRate.ciLow * 100).toFixed(0)}–${(input.baseRate.ciHigh * 100).toFixed(0)}%) vs break-even ${input.breakEvenWinRatePct !== null ? input.breakEvenWinRatePct.toFixed(1) + '%' : 'n/a'}`);
+        reasons.push(`base rate ${(input.baseRate.winRate * 100).toFixed(0)}% over ${input.baseRate.sample}${input.baseRateScope ? ` (${input.baseRateScope})` : ''} (Wilson 95% ${(input.baseRate.ciLow * 100).toFixed(0)}–${(input.baseRate.ciHigh * 100).toFixed(0)}%) vs break-even ${input.breakEvenWinRatePct !== null ? input.breakEvenWinRatePct.toFixed(1) + '%' : 'n/a'}`);
     }
     if (input.kellyHalfPct !== null) {
         reasons.push(`half-Kelly ceiling ${input.kellyHalfPct}% of equity — a ceiling on size, never a raise`);

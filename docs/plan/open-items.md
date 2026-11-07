@@ -65,7 +65,6 @@ to still be true; it is the thing to read first.
 
 | # | item | source | status | evidence at HEAD | covered by |
 |---|---|---|---|---|---|
-| O-46 | **The journal row records no feature snapshot** — `buildProposedTradeAnalysis` writes `marketConditions` as literal dashes, so RSI/ATR/ADX at decision time are unrecoverable. | `06-independent-review` §2.12 | **OPEN** | `src/services/trade/proposedTrade.ts:160-162` | **E-12** |
 | O-48 | **`LoggedTrade.timestamp` is the WRITE time**, so every dashboard groups by confirmation time, not decision time. | `06-independent-review` M6 | **OPEN** | `src/hooks/useTradeLogging.ts:307` (`new Date()`) vs `:284` (`message.createdAt`); read by `WinRateDashboard.tsx:117-125`, `EquityCurveDashboard.tsx:34-43`, `LearningDashboard.tsx:106` | **E-40** |
 | O-49 | **The live-journal counts were never obtained** — the number of rows under the packaged app's `app://` IndexedDB. | `stage3-arrangement` | **OPEN** | — | E-20 |
 | O-50 | **Pre-F3a rows carry no `planId`** and can therefore be re-logged. | `stage3-status` | **OPEN (accepted)** | — | — |
