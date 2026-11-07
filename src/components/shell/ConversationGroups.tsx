@@ -56,14 +56,9 @@ export interface ConversationGroupsProps {
     /** Pinned conversation ids — the Pinned group renders only when > 0. */
     pinnedIds?: ReadonlySet<string>;
     onOpenSearch?: () => void;
-    /** Put the conversation sidebar away. Lives on the RECENT heading only —
-     *  when `hideRecent` removes that heading the title-row toggle is the one
-     *  hide control, and a second icon beside New chat sat 40px from it. */
+    /** Put the conversation sidebar away. Lives on the RECENT heading; the
+     *  Analyze surface does not mount this column at all. */
     onHideConversation?: () => void;
-    /** Render the Recent group. The Analyze column turns it OFF: its
-     *  conversation history belongs to the Chat surface's column, and the
-     *  chart sidebar keeps New chat + Pinned + the hide control. */
-    hideRecent?: boolean;
 }
 
 const ConversationRow: React.FC<{
@@ -171,7 +166,7 @@ const ConversationRow: React.FC<{
 export const ConversationGroups: React.FC<ConversationGroupsProps> = ({
     conversations, activeConversationId, onNewChat, onOpenConversation,
     onDeleteConversation, onClearConversation, runningAgentIds, pinnedIds,
-    onHideConversation, hideRecent = false,
+    onHideConversation,
 }) => {
     // A conversation with no messages is a placeholder, not a record: it is
     // hidden unless it is the one on screen (a fresh New chat stays visible).
@@ -194,8 +189,7 @@ export const ConversationGroups: React.FC<ConversationGroupsProps> = ({
     // `aria-expanded="true"`: the list this button closes IS expanded right
     // now. Besides being the honest state, it keeps the inert-control sweep
     // from pressing a one-way hide button and leaving the rest of the run
-    // with no sidebar. It renders ONLY on the Recent heading: on Analyze the
-    // title-row toggle sits 40px away, so a second icon here would duplicate it.
+    // with no sidebar.
     const hideButton = onHideConversation ? (
         <button
             type="button"
@@ -243,29 +237,27 @@ export const ConversationGroups: React.FC<ConversationGroupsProps> = ({
                         ))}
                     </div>
                 )}
-                {!hideRecent && (
-                    <div className="mb-2">
-                        <div className="flex items-center justify-between gap-2 px-2.5 pb-1">
-                            <span className="text-ui-2xs font-semibold uppercase tracking-[0.14em] text-zinc-600">Recent</span>
-                            {hideButton}
-                        </div>
-                        {recent.length === 0 && pinned.length === 0 ? (
-                            <p className="px-2.5 py-2 text-ui-xs leading-relaxed text-zinc-600">
-                                No conversations yet. Everything you ask the desk lands here.
-                            </p>
-                        ) : recent.map(conversation => (
-                            <ConversationRow
-                                key={conversation.id}
-                                conversation={conversation}
-                                selected={conversation.id === activeConversationId}
-                                running={isRunning(conversation.id)}
-                                onOpen={onOpenConversation}
-                                onDelete={onDeleteConversation}
-                                onClear={onClearConversation}
-                            />
-                        ))}
+                <div className="mb-2">
+                    <div className="flex items-center justify-between gap-2 px-2.5 pb-1">
+                        <span className="text-ui-2xs font-semibold uppercase tracking-[0.14em] text-zinc-600">Recent</span>
+                        {hideButton}
                     </div>
-                )}
+                    {recent.length === 0 && pinned.length === 0 ? (
+                        <p className="px-2.5 py-2 text-ui-xs leading-relaxed text-zinc-600">
+                            No conversations yet. Everything you ask the desk lands here.
+                        </p>
+                    ) : recent.map(conversation => (
+                        <ConversationRow
+                            key={conversation.id}
+                            conversation={conversation}
+                            selected={conversation.id === activeConversationId}
+                            running={isRunning(conversation.id)}
+                            onOpen={onOpenConversation}
+                            onDelete={onDeleteConversation}
+                            onClear={onClearConversation}
+                        />
+                    ))}
+                </div>
             </div>
         </div>
     );

@@ -853,9 +853,9 @@ async function main() {
         check('the settled turn grew the usage ledger the Learning panel reads',
             ledgerAfter > ledgerBefore, `ledger bytes ${ledgerBefore} -> ${ledgerAfter}`);
 
-        // ── The Analyze rail: chrome + pinned only, no Recent list ───────
-        // New chat + CtrlK stays; the Recent group is the Chat column's
-        // record now. No workspaces row, and no conversation rows here.
+        // ── The Analyze rail: the icon strip only ───────────────────────
+        // No conversation column, so no New chat, no Recent list and no
+        // conversation rows; the chart gets the width. No workspaces row.
         const railShape = await page.evaluate(() => {
             const rows = [...document.querySelectorAll('[data-testid="conversation-row"]')];
             const ages = [...document.querySelectorAll('[data-testid="conversation-age"]')]
@@ -875,10 +875,10 @@ async function main() {
                 untitled: titles.filter(t => /^New chat/.test(t)).length,
             };
         });
-        check('the Analyze rail keeps New chat and lists no recent conversations',
+        check('the Analyze rail is the icon strip only — no conversation column',
             railShape.rows === 0
             && railShape.ages === 0
-            && railShape.newChat
+            && !railShape.newChat
             && railShape.workspaces === 0
             && !railShape.addWorkspace,
             JSON.stringify(railShape));
@@ -1996,15 +1996,24 @@ async function main() {
             await navTo('Analyze');
             await sleep(700);
 
-            // The rail is an adjustable column and carries its own collapse
-            // control. Both are drags/clicks no static assertion can see: a
-            // handle with no pointer listener and a button wired to nothing
-            // both pass a "the control exists" check.
+            // The conversation column is the adjustable part, and Analyze no
+            // longer mounts it: the rail is the 48px icon strip with no resize
+            // handle. Prove the handle still drags where the column mounts
+            // (Journal), then come back for the collapse checks.
             const railBox = () => page.evaluate(() => {
                 const el = document.querySelector('[data-testid="shell-rail"]');
                 return el ? Math.round(el.getBoundingClientRect().width) : -1;
             });
-            const railBefore = await railBox();
+            const analyzeRailWidth = await railBox();
+            const analyzeResize = await page.evaluate(() =>
+                !!document.querySelector('[data-testid="shell-rail-resize"]'));
+            check('the Analyze rail is 48px and has no conversation-column resize handle',
+                analyzeRailWidth === 48 && !analyzeResize,
+                `${analyzeRailWidth}px resize=${analyzeResize}`);
+
+            await navTo('Journal');
+            await sleep(900);
+            const columnBefore = await railBox();
             const railHandle = await page.locator('[data-testid="shell-rail-resize"]').boundingBox();
             if (railHandle) {
                 const y = railHandle.y + Math.min(120, railHandle.height / 2);
@@ -2014,9 +2023,9 @@ async function main() {
                 await page.mouse.up();
             }
             await sleep(250);
-            const railWide = await railBox();
-            check('the rail drags wider from its right edge',
-                railWide >= railBefore + 40, `${railBefore} -> ${railWide}`);
+            const columnWide = await railBox();
+            check('the conversation column drags wider from its right edge',
+                columnBefore > 48 && columnWide >= columnBefore + 40, `${columnBefore} -> ${columnWide}`);
             const railResetHandle = await page.locator('[data-testid="shell-rail-resize"]').boundingBox();
             if (railResetHandle) {
                 await page.mouse.dblclick(
@@ -2024,9 +2033,13 @@ async function main() {
                     railResetHandle.y + Math.min(120, railResetHandle.height / 2));
             }
             await sleep(300);
-            const railReset = await railBox();
-            check('double-click restores the rail width',
-                railReset === railBefore, `${railWide} -> ${railReset} (want ${railBefore})`);
+            const columnReset = await railBox();
+            check('double-click restores the conversation column width',
+                columnReset === columnBefore, `${columnWide} -> ${columnReset} (want ${columnBefore})`);
+
+            await navTo('Analyze');
+            await sleep(700);
+            const railBefore = await railBox();
             // The collapse control belongs on the TITLE row, not at the rail's
             // foot: a put-away rail is 0px and has no edge left to click.
             const placed = await page.evaluate(() => {
@@ -2093,27 +2106,23 @@ async function main() {
             check('the content bar brings the rail back at its stored width',
                 railRevived && railBack === railBefore, `${railBack}px (want ${railBefore})`);
 
-            // The duplicate Chats icon is gone on Analyze, and so is the
-            // in-column hide icon: the title-row toggle sits 40px from where
-            // that icon would land, so a second one read as a duplicate. The
-            // Analyze column keeps New chat and pinned rows only — no Recent
-            // list; the Chat column keeps both.
+            // Analyze mounts no conversation column, so there is no list, no
+            // New chat and no in-column hide icon 40px from the title-row
+            // toggle. The column (with all of those) mounts on the record
+            // surfaces; the title-row toggle is the Analyze hide control.
             const recent = await page.evaluate(() => {
                 const rail = document.querySelector('[data-testid="shell-rail"]');
-                const list = document.querySelector('[data-testid="shell-conversations"]');
                 return {
                     chatsIcon: !!document.querySelector('[data-testid="shell-column-toggle"]'),
-                    inColumnHide: !!rail?.querySelector('[data-testid="conversation-hide"]'),
-                    listMounted: !!list,
-                    recentHeading: !!list && [...list.querySelectorAll('span')]
-                        .some(s => (s.textContent || '').trim() === 'Recent'),
+                    listMounted: !!document.querySelector('[data-testid="shell-conversations"]'),
                     newChat: !!document.querySelector('[data-testid="rail-new-chat"]'),
+                    inColumnHide: !!rail?.querySelector('[data-testid="conversation-hide"]'),
                     headerToggle: !!document.querySelector('[data-testid="shell-rail-collapse"]'),
                 };
             });
-            check('the Analyze rail keeps New chat, no Recent list and no duplicate hide icon',
-                !recent.chatsIcon && !recent.inColumnHide && recent.listMounted
-                    && !recent.recentHeading && recent.newChat && recent.headerToggle,
+            check('the Analyze rail mounts no conversation column and keeps the title-row toggle',
+                !recent.chatsIcon && !recent.listMounted && !recent.newChat
+                    && !recent.inColumnHide && recent.headerToggle,
                 JSON.stringify(recent));
 
             // Ctrl/Cmd+B belongs to the one column that still collapses: the

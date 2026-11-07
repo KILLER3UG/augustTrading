@@ -139,6 +139,10 @@ const ShellRail: React.FC<ShellRailProps> = ({
     overlay = false, onCloseOverlay,
 }) => {
     void workspaces; void onSwitchWorkspace; void onAddWorkspace;
+    // Analyze is the chart surface: its sidebar is the icon rail only. The
+    // conversation column (New chat / Pinned / Recent) mounts on the record
+    // surfaces, so the chart never pays 240px for an empty list.
+    const showConversationColumn = surface !== 'trade';
     const railRef = useRef<HTMLElement | null>(null);
 
     return (
@@ -158,7 +162,7 @@ const ShellRail: React.FC<ShellRailProps> = ({
                 data-expanded="true"
                 aria-label="August navigation"
                 style={{
-                    width: width + RAIL_W,
+                    width: showConversationColumn ? width + RAIL_W : RAIL_W,
                     ...(overlay ? { maxWidth: 'calc(100vw - 24px)' } : null),
                 }}
                 className={`flex h-full border-r border-white/[0.06] bg-zinc-950 ${
@@ -172,9 +176,9 @@ const ShellRail: React.FC<ShellRailProps> = ({
                     the surfaces whose column IS the rail — it collapsed the
                     whole rail and so duplicated the title-row toggle. It stays
                     on Agents ONLY, where it opens that surface's own column
-                    (which starts closed and has no other opener). Hiding the
-                    conversation list from the rail itself is now the icon
-                    after the RECENT heading in `ConversationGroups`. */}
+                    (which starts closed and has no other opener). Analyze mounts
+                    no conversation column at all; the record surfaces hide
+                    their list with the icon after the RECENT heading. */}
                 <nav
                     aria-label="Surfaces"
                     data-testid="shell-surface-rail"
@@ -220,39 +224,37 @@ const ShellRail: React.FC<ShellRailProps> = ({
                     </button>
                 </nav>
 
-                <div className="flex min-w-0 flex-1 flex-col" style={{ width }}>
-                    <ConversationGroups
-                        conversations={conversations}
-                        activeConversationId={activeConversationId}
-                        onNewChat={onNewChat}
-                        onOpenConversation={onOpenConversation}
-                        onDeleteConversation={onDeleteConversation}
-                        onClearConversation={onClearConversation}
-                        onHideConversation={onCollapse}
-                        // Analyze is the chart surface: its sidebar is chrome
-                        // plus pinned rows, not a history list. Recent
-                        // conversations live on the Chat surface's column.
-                        hideRecent={surface === 'trade'}
-                    />
-                    <AccountRow
-                        expanded
-                        activeUsername={activeUsername}
-                        onOpenSettings={onOpenSettings}
-                        onOpenActivity={onOpenActivity}
-                    />
-                    <div
-                        role="separator"
-                        aria-orientation="vertical"
-                        aria-label="Resize navigation"
-                        data-testid="shell-rail-resize"
-                        onPointerDown={onResizeStart}
-                        onDoubleClick={onResizeReset}
-                        title="Drag to resize · double-click to reset"
-                        className="absolute inset-y-0 right-0 z-20 hidden w-1.5 cursor-col-resize touch-none items-center justify-center text-zinc-600 transition-colors hover:text-zinc-300 md:flex"
-                    >
-                        <span aria-hidden="true" className="block h-8 w-px bg-white/15 opacity-60" />
+                {showConversationColumn && (
+                    <div className="flex min-w-0 flex-1 flex-col" style={{ width }}>
+                        <ConversationGroups
+                            conversations={conversations}
+                            activeConversationId={activeConversationId}
+                            onNewChat={onNewChat}
+                            onOpenConversation={onOpenConversation}
+                            onDeleteConversation={onDeleteConversation}
+                            onClearConversation={onClearConversation}
+                            onHideConversation={onCollapse}
+                        />
+                        <AccountRow
+                            expanded
+                            activeUsername={activeUsername}
+                            onOpenSettings={onOpenSettings}
+                            onOpenActivity={onOpenActivity}
+                        />
+                        <div
+                            role="separator"
+                            aria-orientation="vertical"
+                            aria-label="Resize navigation"
+                            data-testid="shell-rail-resize"
+                            onPointerDown={onResizeStart}
+                            onDoubleClick={onResizeReset}
+                            title="Drag to resize · double-click to reset"
+                            className="absolute inset-y-0 right-0 z-20 hidden w-1.5 cursor-col-resize touch-none items-center justify-center text-zinc-600 transition-colors hover:text-zinc-300 md:flex"
+                        >
+                            <span aria-hidden="true" className="block h-8 w-px bg-white/15 opacity-60" />
+                        </div>
                     </div>
-                </div>
+                )}
             </aside>
         </>
     );
