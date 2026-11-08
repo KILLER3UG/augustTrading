@@ -128,7 +128,7 @@ const KeyLevelsCard: React.FC<KeyLevelsCardProps> = ({ levels, symbol, messageId
             summary={`Key levels · ${levels.length}`}
             label={`Key levels, ${levels.length} levels, disclosure`}
             testId="key-levels-disclosure"
-            className="mt-2 overflow-hidden rounded-control border border-white/[0.04] bg-white/[0.015]"
+            className="mt-2 overflow-hidden rounded-control border border-hairline bg-white/[0.015]"
             summaryClassName="flex items-center justify-between px-3 py-2 text-ui-xs font-bold uppercase tracking-[0.09em] text-zinc-400"
             bodyClassName=""
         >
@@ -162,7 +162,7 @@ const KeyLevelsCard: React.FC<KeyLevelsCardProps> = ({ levels, symbol, messageId
                     chart
                 </label>
             </div>
-            <div className="grid grid-cols-[42px_80px_52px_1fr] gap-x-2 border-y border-white/[0.06] px-3 py-1 text-ui-2xs font-bold uppercase tracking-[0.1em] text-zinc-600">
+            <div className="grid grid-cols-[42px_80px_52px_1fr] gap-x-2 border-y border-hairline px-3 py-1 text-ui-2xs font-bold uppercase tracking-[0.1em] text-zinc-600">
                 <span>Level</span><span>Price</span><span>Dist</span><span>Context</span>
             </div>
             <div className="py-0.5">
@@ -192,7 +192,7 @@ const KeyLevelsCard: React.FC<KeyLevelsCardProps> = ({ levels, symbol, messageId
                     </React.Fragment>
                 ))}
             </div>
-            <div className="border-t border-white/[0.06] px-3 py-1.5 text-ui-xs text-zinc-600">
+            <div className="border-t border-hairline px-3 py-1.5 text-ui-xs text-zinc-600">
                 hover = preview on chart · click = pin / unpin
                 {drawing && <span className="ml-2 text-emerald-400">· {drawnCount} drawn</span>}
             </div>

@@ -53,8 +53,8 @@ const WatchListPanel: React.FC<WatchListPanelProps> = ({
     return (
         <div className="fixed inset-0 z-modal flex items-end justify-end bg-black/50 sm:items-stretch" role="dialog" aria-label="Pinned signals">
             <button type="button" className="absolute inset-0 cursor-default" aria-label="Close pinned signals overlay" onClick={onClose} />
-            <div ref={dialogRef} className="relative flex h-[85vh] w-full max-w-md flex-col overflow-hidden rounded-t-2xl border border-white/10 bg-zinc-950 shadow-2xl sm:h-full sm:rounded-none sm:border-l sm:border-t-0 sm:border-b-0">
-                <div className="flex items-center gap-2 border-b border-white/10 px-4 py-3">
+            <div ref={dialogRef} className="relative flex h-[85vh] w-full max-w-md flex-col overflow-hidden rounded-t-2xl border border-hairline bg-zinc-950 shadow-2xl sm:h-full sm:rounded-none sm:border-l sm:border-t-0 sm:border-b-0">
+                <div className="flex items-center gap-2 border-b border-hairline px-4 py-3">
                     <PinIcon className="h-4 w-4 text-zinc-300" aria-hidden="true" />
                     <h2 className="text-ui-base font-semibold text-zinc-100">Pinned signals</h2>
                     <span className="text-ui-dense text-zinc-500">{openCount} open</span>
@@ -62,7 +62,7 @@ const WatchListPanel: React.FC<WatchListPanelProps> = ({
                         <CloseIcon className="h-4 w-4" aria-hidden="true" />
                     </button>
                 </div>
-                <div className="flex gap-1 border-b border-white/10 px-4 py-2">
+                <div className="flex gap-1 border-b border-hairline px-4 py-2">
                     {(['open', 'closed', 'all'] as const).map(id => (
                         <button
                             key={id}
@@ -76,7 +76,7 @@ const WatchListPanel: React.FC<WatchListPanelProps> = ({
                 </div>
                 <div className="flex-1 overflow-y-auto custom-scrollbar p-3 space-y-2">
                     {bookRisk && (
-                        <p className="rounded-control border border-white/10 bg-zinc-900 px-3 py-2 text-ui-dense leading-relaxed text-zinc-400">{bookRisk}</p>
+                        <p className="rounded-control border border-hairline bg-zinc-900 px-3 py-2 text-ui-dense leading-relaxed text-zinc-400">{bookRisk}</p>
                     )}
                     {visible.length === 0 ? (
                         <p className="px-2 py-8 text-center text-ui-caption text-zinc-500">
@@ -94,7 +94,7 @@ const WatchListPanel: React.FC<WatchListPanelProps> = ({
                         const priced = symbol ? PriceAlertService.getCurrentPrice(symbol.includes('USDT') ? symbol : `${symbol}USDT`) : undefined;
                         const paper = paperPnlR(analysis, priced);
                         return (
-                            <div key={signal.messageId} className=" rounded-bubble border border-white/10 bg-zinc-900/60 p-3">
+                            <div key={signal.messageId} className=" rounded-bubble border border-hairline bg-zinc-900/60 p-3">
                                 <div className="flex flex-wrap items-baseline gap-2">
                                     <span className="text-ui-sm font-semibold text-zinc-100">{analysis.coinName || 'Setup'}</span>
                                     <span className="text-ui-dense font-medium text-zinc-300">{dir}</span>
@@ -124,7 +124,7 @@ const WatchListPanel: React.FC<WatchListPanelProps> = ({
                                     <p className="mt-2 text-ui-dense text-cyan-300">Autopilot: {resolution.detail}</p>
                                 )}
                                 {signal.watchEpisodes && signal.watchEpisodes.length > 0 && (
-                                    <ol className="mt-2 space-y-1 border-t border-white/5 pt-2">
+                                    <ol className="mt-2 space-y-1 border-t border-hairline pt-2">
                                         {signal.watchEpisodes.slice(-6).map((ep, i) => (
                                             <li key={`${ep.at}-${i}`} className="text-ui-xs leading-4 text-zinc-500">
                                                 <span className="font-semibold uppercase tracking-widest text-zinc-600">{ep.kind}</span>
@@ -143,10 +143,10 @@ const WatchListPanel: React.FC<WatchListPanelProps> = ({
                                     {pending && resolution && onConfirmAutopilot && (
                                         <button type="button" onClick={() => onConfirmAutopilot(signal.messageId, signal.conversationId)} className="rounded-control border border-cyan-500/40 bg-cyan-500/15 px-2.5 py-1 text-ui-dense font-semibold text-cyan-300">Confirm autopilot</button>
                                     )}
-                                    <button type="button" onClick={() => onOpenSignal(signal.conversationId, signal.messageId)} className="rounded-control border border-white/10 px-2.5 py-1 text-ui-dense text-zinc-300 hover:text-zinc-100">
+                                    <button type="button" onClick={() => onOpenSignal(signal.conversationId, signal.messageId)} className="rounded-control border border-hairline px-2.5 py-1 text-ui-dense text-zinc-300 hover:text-zinc-100">
                                         {inThisChat ? 'Show in chat' : 'Open chat'}
                                     </button>
-                                    <button type="button" onClick={() => onToggleWatch(signal.messageId, signal.conversationId)} className="rounded-control border border-white/10 px-2.5 py-1 text-ui-dense text-zinc-500 hover:text-zinc-300">
+                                    <button type="button" onClick={() => onToggleWatch(signal.messageId, signal.conversationId)} className="rounded-control border border-hairline px-2.5 py-1 text-ui-dense text-zinc-500 hover:text-zinc-300">
                                         Unpin
                                     </button>
                                 </div>

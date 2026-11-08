@@ -45,7 +45,7 @@ export const AutoJournalRulesCard: React.FC<AutoJournalRulesCardProps> = ({ user
                     &ldquo;Never&rdquo; dismisses it — remove a rule to go back to asking.
                 </p>
             </div>
-            <div className="divide-y divide-white/[0.05] overflow-hidden rounded-bubble border border-white/[0.07] bg-zinc-900/50">
+            <div className="divide-y divide-hairline overflow-hidden rounded-bubble border border-hairline bg-zinc-900/50">
                 {rules.length === 0 ? (
                     <EmptyState
                         compact
@@ -58,7 +58,7 @@ export const AutoJournalRulesCard: React.FC<AutoJournalRulesCardProps> = ({ user
                     <div key={rule.coin} className="flex items-center gap-3 p-4">
                         <span
                             aria-hidden="true"
-                            className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-control border border-white/[0.06] bg-white/[0.04] ${
+                            className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-control border border-hairline bg-white/[0.04] ${
                                 rule.policy === 'always' ? 'text-emerald-400' : 'text-rose-400'
                             }`}
                         >
@@ -78,7 +78,7 @@ export const AutoJournalRulesCard: React.FC<AutoJournalRulesCardProps> = ({ user
                             type="button"
                             onClick={() => revoke(rule.coin)}
                             aria-label={`Remove the ${rule.policy === 'always' ? 'always' : 'never'} journal rule for ${rule.coin}`}
-                            className="shrink-0 rounded-control border border-white/10 bg-zinc-800 px-2.5 py-1 text-ui-dense font-semibold text-zinc-200 transition-colors hover:border-white/20 hover:bg-zinc-700 hover:text-zinc-100 active:scale-[0.98]"
+                            className="shrink-0 rounded-control border border-hairline bg-zinc-800 px-2.5 py-1 text-ui-dense font-semibold text-zinc-200 transition-colors hover:border-line hover:bg-zinc-700 hover:text-zinc-100 active:scale-[0.98]"
                         >
                             Ask instead
                         </button>

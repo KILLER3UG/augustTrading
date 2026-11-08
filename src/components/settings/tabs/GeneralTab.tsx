@@ -123,7 +123,7 @@ const GeneralTab: React.FC<{ tab: GeneralTabProps }> = ({ tab: props }) => {
                         <ChevronDown className={`h-4 w-4 shrink-0 text-zinc-500 transition-transform duration-150 ease-[var(--ease-snappy)] ${isAdvancedOpen ? 'rotate-180' : ''}`} aria-hidden="true" />
                     </span>
                 )}
-                summaryClassName="flex w-full items-center justify-between gap-4 rounded-bubble border border-white/[0.07] bg-zinc-900/50 px-4 py-3 text-left transition-colors hover:bg-zinc-800/40"
+                summaryClassName="flex w-full items-center justify-between gap-4 rounded-bubble border border-hairline bg-zinc-900/50 px-4 py-3 text-left transition-colors hover:bg-zinc-800/40"
                 bodyClassName="mt-3 space-y-3 animate-fade-in"
             >
 

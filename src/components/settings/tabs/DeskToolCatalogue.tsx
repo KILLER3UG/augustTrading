@@ -76,7 +76,7 @@ const DeskToolCatalogue: React.FC = () => {
                     </span>
                 </span>
             )}
-            summaryClassName="flex w-full items-center justify-between gap-4 rounded-bubble border border-white/[0.07] bg-zinc-900/50 px-4 py-3 text-left transition-colors hover:bg-zinc-800/40"
+            summaryClassName="flex w-full items-center justify-between gap-4 rounded-bubble border border-hairline bg-zinc-900/50 px-4 py-3 text-left transition-colors hover:bg-zinc-800/40"
             bodyClassName="mt-3 space-y-4 animate-fade-in"
         >
             {byKind.map(group => {
@@ -90,7 +90,7 @@ const DeskToolCatalogue: React.FC = () => {
                         </h4>
                         <ul className="space-y-1.5">
                             {group.tools.map(tool => (
-                                <li key={tool.name} data-testid="desk-tool-row" className="rounded-control border border-white/[0.05] bg-zinc-900/40 px-3 py-2">
+                                <li key={tool.name} data-testid="desk-tool-row" className="rounded-control border border-hairline bg-zinc-900/40 px-3 py-2">
                                     <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
                                         <span className="text-ui-dense font-semibold text-zinc-200">{tool.label}</span>
                                         <code className="font-mono text-ui-2xs text-zinc-600">{tool.name}</code>

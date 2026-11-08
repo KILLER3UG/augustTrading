@@ -75,14 +75,14 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({ proposal, canLog,
     // compare it against.
     const stated = modelStatedSize(proposal.rationale);
     return (
-    <div className="mt-1 rounded-control border border-white/[0.04] bg-white/[0.015] p-2.5" data-testid="trade-proposal-card">
+    <div className="mt-1 rounded-control border border-hairline bg-white/[0.015] p-2.5" data-testid="trade-proposal-card">
         <div className="flex items-center gap-2">
             <span className={`rounded-control px-1.5 py-0.5 text-ui-xs font-bold ${proposal.direction === 'Long' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-rose-500/15 text-rose-400'}`}>{proposal.direction}</span>
             <span className="font-mono text-ui-sm font-bold text-zinc-100">{proposal.symbol}</span>
             {/* The number that gates "Log this trade" — from the canonical
                 planned-R:R util, the same chip the Agents surface header shows. */}
             {computeRrRatio(proposal) > 0 && (
-                <span className="rounded-control border border-white/[0.04] bg-white/[0.04] px-1.5 py-0.5 font-mono text-ui-xs font-medium text-zinc-300">
+                <span className="rounded-control border border-hairline bg-white/[0.04] px-1.5 py-0.5 font-mono text-ui-xs font-medium text-zinc-300">
                     {fmtRiskReward(computeRrRatio(proposal), 1)} R:R
                 </span>
             )}
@@ -96,7 +96,7 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({ proposal, canLog,
                 </span>
             )}
         </div>
-        <div className="mt-2 grid grid-cols-3 gap-2 rounded-control border border-white/[0.04] bg-white/[0.02] p-2 font-mono text-ui-dense tabular-nums">
+        <div className="mt-2 grid grid-cols-3 gap-2 rounded-control border border-hairline bg-white/[0.02] p-2 font-mono text-ui-dense tabular-nums">
             <div>
                 <div className="font-mono text-ui-xs uppercase text-zinc-500">Entry</div>
                 <div className="font-semibold text-zinc-100">{proposal.entry}</div>
@@ -127,7 +127,7 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({ proposal, canLog,
             // applied. It is the app's number, not the model's, and it can
             // only ever be SMALLER than a full ticket: the sizing rule
             // downgrades, it never scales up.
-            <div className="mt-2 rounded-control border border-white/[0.04] bg-white/[0.02] p-2" data-testid="proposal-size">
+            <div className="mt-2 rounded-control border border-hairline bg-white/[0.02] p-2" data-testid="proposal-size">
                 <div className="font-mono text-ui-xs uppercase text-zinc-500">Suggested size</div>
                 <div className={`font-mono text-ui-dense ${size.equityUsd > 0 ? 'text-zinc-200' : 'text-amber-400/90'}`}>
                     {size.equityUsd > 0 ? size.line : 'Not sized — equity not set'}
@@ -211,7 +211,7 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({ proposal, canLog,
             )}
             <button type="button"
                 onClick={onCancel}
-                className="rounded-control border border-white/[0.06] px-2.5 py-1 text-ui-dense text-zinc-400 transition-colors hover:bg-white/[0.04] hover:text-zinc-200">
+                className="rounded-control border border-hairline px-2.5 py-1 text-ui-dense text-zinc-400 transition-colors hover:bg-white/[0.04] hover:text-zinc-200">
                 Cancel
             </button>
         </div>

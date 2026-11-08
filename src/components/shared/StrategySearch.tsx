@@ -179,17 +179,17 @@ const StrategySearch: React.FC<StrategySearchProps> = ({
         aria-hidden={!isVisible}
         inert={!isVisible}
         aria-label="Playbook & Strategy Search"
-        className={`fixed top-0 right-0 h-full w-full sm:w-[480px] bg-zinc-900 border-l border-white/10 shadow-2xl z-drawer transform transition-transform duration-[150ms] ease-[var(--ease-snappy)] flex flex-col ${isVisible ? 'translate-x-0' : 'translate-x-full'}`}
+        className={`fixed top-0 right-0 h-full w-full sm:w-[480px] bg-zinc-900 border-l border-hairline shadow-2xl z-drawer transform transition-transform duration-[150ms] ease-[var(--ease-snappy)] flex flex-col ${isVisible ? 'translate-x-0' : 'translate-x-full'}`}
       >
         <div className="flex flex-col h-full">
-          <header className="flex items-center justify-between p-4 sm:p-6 border-b border-white/5 bg-zinc-800">
+          <header className="flex items-center justify-between p-4 sm:p-6 border-b border-hairline bg-zinc-800">
             <h2 className="text-lg sm:text-xl font-bold text-cyan-400 tracking-tight">Playbook & Discovery</h2>
             <button onClick={onClose} className="p-2 sm:p-3 rounded-control text-zinc-400 hover:bg-zinc-800 hover:text-white transition-colors" aria-label="Close strategy search">
               <CloseIcon className="w-5 h-5 sm:w-6 sm:h-6" aria-hidden="true" />
             </button>
           </header>
           
-          <div className="p-4 sm:p-6 border-b border-white/5 bg-zinc-800">
+          <div className="p-4 sm:p-6 border-b border-hairline bg-zinc-800">
              <form onSubmit={handleSearch} className="flex gap-2 sm:gap-3 mb-3 sm:mb-5">
                 <div className="relative flex-1">
                     <input
@@ -197,7 +197,7 @@ const StrategySearch: React.FC<StrategySearchProps> = ({
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
                         placeholder="Search..."
-                        className="w-full bg-zinc-950 border border-white/10 rounded-control pl-4 sm:pl-5 pr-10 sm:pr-12 py-3 sm:py-4 text-ui-base sm:text-ui-lg text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/50 focus:border-cyan-500/50 transition-[border-color,box-shadow] duration-[150ms] ease-[var(--ease-snappy)]"
+                        className="w-full bg-zinc-950 border border-hairline rounded-control pl-4 sm:pl-5 pr-10 sm:pr-12 py-3 sm:py-4 text-ui-base sm:text-ui-lg text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 focus:border-accent/50 transition-[border-color,box-shadow] duration-[150ms] ease-[var(--ease-snappy)]"
                     />
                     <button
                         type="submit"
@@ -229,7 +229,7 @@ const StrategySearch: React.FC<StrategySearchProps> = ({
                 <div className="space-y-3 sm:space-y-5">
                     <h3 className="text-ui-sm sm:text-ui-base font-bold text-zinc-500 uppercase tracking-widest pl-1">Discovery Results</h3>
                     {(searchResults || []).map((result) => (
-                        <div key={result.name} className="p-4 sm:p-6 bg-zinc-800 rounded-bubble border border-white/5 hover:border-cyan-500/30 transition-colors animate-fade-in">
+                        <div key={result.name} className="p-4 sm:p-6 bg-zinc-800 rounded-bubble border border-hairline hover:border-cyan-500/30 transition-colors animate-fade-in">
                            <div className="flex justify-between items-start mb-3 sm:mb-4">
                                 <h4 className="font-bold text-cyan-400 text-lg sm:text-xl">{result.name}</h4>
                                 <button 
@@ -245,7 +245,7 @@ const StrategySearch: React.FC<StrategySearchProps> = ({
                                 </button>
                            </div>
                            <p className="text-ui-base sm:text-ui-lg text-zinc-300 leading-relaxed">{result.description}</p>
-                           {result.rationale && <div className="mt-3 sm:mt-4 pt-3 sm:pt-4 border-t border-white/5"><p className="text-ui-sm sm:text-ui-base text-zinc-500 italic">Rationale: {result.rationale}</p></div>}
+                           {result.rationale && <div className="mt-3 sm:mt-4 pt-3 sm:pt-4 border-t border-hairline"><p className="text-ui-sm sm:text-ui-base text-zinc-500 italic">Rationale: {result.rationale}</p></div>}
                         </div>
                     ))}
                 </div>
@@ -285,7 +285,7 @@ const StrategySearch: React.FC<StrategySearchProps> = ({
                                                     <span className="text-ui-xs sm:text-ui-sm px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-control font-bold bg-zinc-700 text-zinc-400">N/A</span>
                                                 )}
                                             </h4>
-                                            <span className={`text-ui-micro sm:text-ui-xs font-bold uppercase px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-control bg-black/30 border border-white/10`}>{family.tag}</span>
+                                            <span className={`text-ui-micro sm:text-ui-xs font-bold uppercase px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-control bg-black/30 border border-hairline`}>{family.tag}</span>
                                         </div>
                                         <p className="text-ui-base sm:text-ui-lg font-bold opacity-90 mb-1 sm:mb-2">"{family.nickname}"</p>
                                         <p className="text-ui-sm sm:text-ui-base opacity-80 mb-3 sm:mb-5 leading-relaxed">{family.personality}</p>
@@ -297,7 +297,7 @@ const StrategySearch: React.FC<StrategySearchProps> = ({
                                                     {family.features.slice(0, 3).map((f, i) => <li key={i}>{f}</li>)}
                                                 </ul>
                                             </div>
-                                            <div className="pt-2 sm:pt-3 border-t border-white/5">
+                                            <div className="pt-2 sm:pt-3 border-t border-hairline">
                                                 <span className="text-ui-xs sm:text-ui-sm font-bold uppercase opacity-60 block mb-0.5 sm:mb-1">Outcome Tendency</span>
                                                 <p className="text-ui-xs sm:text-ui-base opacity-90 italic">{family.tendency}</p>
                                             </div>
@@ -331,7 +331,7 @@ const StrategySearch: React.FC<StrategySearchProps> = ({
                             const isViewing = viewingFramework === framework;
                             
                             return (
-                                <div key={index} className={`rounded-bubble overflow-hidden border transition-[border-color,box-shadow] duration-[150ms] ease-[var(--ease-snappy)] ${isViewing ? 'bg-zinc-800 border-cyan-500/30 shadow-lg' : 'bg-zinc-800 border-white/5 hover:border-white/10'}`}>
+                                <div key={index} className={`rounded-bubble overflow-hidden border transition-[border-color,box-shadow] duration-[150ms] ease-[var(--ease-snappy)] ${isViewing ? 'bg-zinc-800 border-cyan-500/30 shadow-lg' : 'bg-zinc-800 border-hairline hover:border-line'}`}>
                                     <div 
                                         className="p-3 sm:p-5 flex items-center justify-between cursor-pointer"
                                         role="button"
@@ -358,7 +358,7 @@ const StrategySearch: React.FC<StrategySearchProps> = ({
                                     </div>
                                     
                                     {isViewing && (
-                                        <div className="px-3 sm:px-5 pb-3 sm:pb-5 pt-0 animate-fade-in border-t border-white/5 mt-1 sm:mt-2">
+                                        <div className="px-3 sm:px-5 pb-3 sm:pb-5 pt-0 animate-fade-in border-t border-hairline mt-1 sm:mt-2">
                                             <div className="pt-2 sm:pt-4">
                                                 {isFetchingDescription ? (
                                                     <div className="flex items-center gap-2 sm:gap-3 text-zinc-500">

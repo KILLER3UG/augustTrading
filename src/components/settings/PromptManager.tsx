@@ -463,14 +463,14 @@ const PromptDiffView: React.FC<{ baseText: string; currentText: string }> = ({ b
             {rows.map((row, index) => (
                 <div
                     key={index}
-                    className={`grid grid-cols-2 gap-0 border-b border-white/[0.03] ${
+                    className={`grid grid-cols-2 gap-0 border-b border-hairline ${
                         row.op === 'add' ? 'bg-emerald-500/5' : row.op === 'remove' ? 'bg-rose-500/5' : ''
                     }`}
                 >
                     <div className={`whitespace-pre-wrap break-words px-4 py-0.5 ${row.op === 'remove' ? 'text-rose-300' : 'text-zinc-500'} ${row.op === 'add' ? 'opacity-40' : ''}`}>
                         {row.baseLine ?? ''}
                     </div>
-                    <div className={`whitespace-pre-wrap break-words border-l border-white/5 px-4 py-0.5 ${row.op === 'add' ? 'text-emerald-300' : 'text-zinc-500'} ${row.op === 'remove' ? 'opacity-40' : ''}`}>
+                    <div className={`whitespace-pre-wrap break-words border-l border-hairline px-4 py-0.5 ${row.op === 'add' ? 'text-emerald-300' : 'text-zinc-500'} ${row.op === 'remove' ? 'opacity-40' : ''}`}>
                         {row.currentLine ?? ''}
                     </div>
                 </div>

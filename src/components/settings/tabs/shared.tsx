@@ -23,7 +23,7 @@ const SettingsGroup: React.FC<{
                 {description && <p className="mt-1 text-ui-sm leading-relaxed text-zinc-500">{description}</p>}
             </div>
         )}
-        <div className="motion-list divide-y divide-dashed divide-white/[0.07] overflow-hidden rounded-card border border-white/[0.06] bg-zinc-900/40 px-4">
+        <div className="motion-list divide-y divide-dashed divide-hairline overflow-hidden rounded-card border border-hairline bg-zinc-900/40 px-4">
             {children}
         </div>
     </section>
@@ -86,7 +86,7 @@ const SettingsButton: React.FC<{
         className={`motion-press inline-flex items-center gap-1.5 rounded-control border px-3 py-1.5 text-ui-dense font-semibold transition-colors disabled:opacity-40 ${
             tone === 'danger'
                 ? 'border-rose-500/30 bg-rose-500/10 text-rose-300 hover:bg-rose-500/20 hover:text-rose-200'
-                : 'border-white/10 bg-zinc-800 text-zinc-300 hover:border-white/20 hover:bg-zinc-700 hover:text-zinc-100'
+                : 'border-hairline bg-zinc-800 text-zinc-300 hover:border-line hover:bg-zinc-700 hover:text-zinc-100'
         }`}
     >
         {children}
@@ -102,7 +102,7 @@ const SegmentedControl: React.FC<{
     ariaLabel: string;
 }> = ({ value, options, onChange, ariaLabel }) => (
     <div role="radiogroup" aria-label={ariaLabel}
-        className="flex items-center gap-0.5 rounded-full border border-white/[0.07] bg-zinc-800/70 p-0.5">
+        className="flex items-center gap-0.5 rounded-full border border-hairline bg-zinc-800/70 p-0.5">
         {options.map(o => (
             <button
                 key={o.id}

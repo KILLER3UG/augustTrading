@@ -132,10 +132,10 @@ export const SymbolPicker: React.FC<SymbolPickerProps> = ({
                     <div className="fixed inset-0 z-40" aria-hidden="true" onClick={() => setOpen(false)} />
                     <div
                         data-testid="symbol-picker"
-                        className="fixed z-drawer w-80 overflow-hidden rounded-bubble border border-white/10 bg-zinc-900 shadow-2xl"
+                        className="fixed z-drawer w-80 overflow-hidden rounded-bubble border border-hairline bg-zinc-900 shadow-2xl"
                         style={anchor}
                     >
-                        <div className="flex items-center gap-2 border-b border-white/[0.06] px-3 py-2">
+                        <div className="flex items-center gap-2 border-b border-hairline px-3 py-2">
                             <Search className="h-3.5 w-3.5 shrink-0 text-zinc-500" aria-hidden="true" />
                             <input
                                 ref={inputRef}
@@ -179,7 +179,7 @@ export const SymbolPicker: React.FC<SymbolPickerProps> = ({
                             ))}
                         </div>
                         {(onOpenScreener || onOpenWatchList) && (
-                            <div className="flex items-center gap-1 border-t border-white/[0.06] px-2 py-1.5">
+                            <div className="flex items-center gap-1 border-t border-hairline px-2 py-1.5">
                                 {onOpenScreener && (
                                     <button type="button" data-testid="screener-trigger"
                                         onClick={() => { setOpen(false); onOpenScreener(); }}
@@ -199,7 +199,7 @@ export const SymbolPicker: React.FC<SymbolPickerProps> = ({
                                 )}
                             </div>
                         )}
-                        <div className="border-t border-white/[0.06] px-3 py-1.5 text-ui-2xs text-zinc-600">
+                        <div className="border-t border-hairline px-3 py-1.5 text-ui-2xs text-zinc-600">
                             ↑↓ navigate · ↵ select · esc close · {filtered.length} of {symbols.length} USDT perps
                         </div>
                     </div>

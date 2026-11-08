@@ -102,7 +102,7 @@ export const AmendmentsInbox: React.FC = () => {
                 </p>
             )}
             {amendments.length === 0 && (
-                <p className="rounded-control border border-white/5 bg-zinc-900/50 px-3 py-4 text-center text-ui-sm text-zinc-600">
+                <p className="rounded-control border border-hairline bg-zinc-900/50 px-3 py-4 text-center text-ui-sm text-zinc-600">
                     No amendment proposals. Models can propose corrections to your notebook via <code className="text-zinc-400">amend_memory</code>.
                 </p>
             )}
@@ -122,7 +122,7 @@ export const AmendmentsInbox: React.FC = () => {
                             disabled={busyId === a.id}
                             onClick={() => { void resolve(a, true); }}
                             data-testid={`approve-amendment-${a.id}`}
-                            className="flex items-center gap-1 rounded-control border border-white/10 px-2 py-1 text-ui-dense font-semibold text-zinc-200 hover:bg-zinc-800 disabled:opacity-40"
+                            className="flex items-center gap-1 rounded-control border border-hairline px-2 py-1 text-ui-dense font-semibold text-zinc-200 hover:bg-zinc-800 disabled:opacity-40"
                         >
                             <Check className="h-3 w-3" aria-hidden="true" /> {a.kind === 'supersede' ? 'Append correction' : 'Apply replacement'}
                         </button>
@@ -138,7 +138,7 @@ export const AmendmentsInbox: React.FC = () => {
                 </div>
             ))}
             {resolved.length > 0 && (
-                <details className="rounded-control border border-white/5 bg-zinc-900/30 px-3 py-2">
+                <details className="rounded-control border border-hairline bg-zinc-900/30 px-3 py-2">
                     <summary className="cursor-pointer text-ui-dense text-zinc-500">{resolved.length} resolved</summary>
                     <div className="mt-2 space-y-1.5">
                         {resolved.map(a => (
@@ -149,7 +149,7 @@ export const AmendmentsInbox: React.FC = () => {
                                 {a.status === 'approved' && typeof a.previousContent === 'string' && (
                                     <button type="button" disabled={busyId === a.id} onClick={() => { void undo(a); }}
                                         data-testid={`undo-amendment-${a.id}`}
-                                        className="shrink-0 rounded-control border border-zinc-800 px-2 py-0.5 text-ui-2xs font-semibold text-zinc-300 hover:border-white/25 hover:text-zinc-100 disabled:opacity-40">
+                                        className="shrink-0 rounded-control border border-zinc-800 px-2 py-0.5 text-ui-2xs font-semibold text-zinc-300 hover:border-line hover:text-zinc-100 disabled:opacity-40">
                                         Undo
                                     </button>
                                 )}

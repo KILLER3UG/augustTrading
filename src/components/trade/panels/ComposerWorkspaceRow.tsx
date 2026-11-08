@@ -36,12 +36,12 @@ const ComposerWorkspaceRow: React.FC<ComposerWorkspaceRowProps> = ({
         {isPanel && (
             <button type="button" onClick={onTogglePicker}
                 aria-expanded={pickerOpen} title="Add / remove panel models (up to 5)"
-                className="rounded-full border border-white/10 px-1.5 py-0.5 text-ui-2xs font-bold uppercase tracking-wider text-zinc-400 transition-colors hover:border-white/25 hover:text-zinc-100">
+                className="rounded-full border border-hairline px-1.5 py-0.5 text-ui-2xs font-bold uppercase tracking-wider text-zinc-400 transition-colors hover:border-line hover:text-zinc-100">
                 panel · {panelCount}/{PANEL_MAX_MODELS}
             </button>
         )}
         {botName !== null && (
-            <span className="truncate rounded-full border border-white/10 px-1.5 py-0.5 text-ui-2xs font-semibold text-zinc-400" title={botName}>{botName}</span>
+            <span className="truncate rounded-full border border-hairline px-1.5 py-0.5 text-ui-2xs font-semibold text-zinc-400" title={botName}>{botName}</span>
         )}
         {/* The fallback names only the interval. Printing `${symbol} · ${interval}`
             here put the instrument on the row twice in two formats — the same

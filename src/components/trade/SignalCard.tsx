@@ -104,7 +104,7 @@ export const SignalCard: React.FC<SignalCardProps> = ({ signal, row, onShowOnCha
     }, [signal, rr, dirLabel]);
 
     return (
-        <div className="overflow-hidden rounded-card border border-white/[0.06] bg-white/[0.015]" data-testid="signal-card">
+        <div className="overflow-hidden rounded-card border border-hairline bg-white/[0.015]" data-testid="signal-card">
             <div className="flex items-center gap-2 px-3 pt-3">
                 <span
                     className={`inline-flex items-center gap-1 rounded-control px-1.5 py-0.5 text-ui-dense font-bold ${signal.direction === 'long' ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'}`}
@@ -184,7 +184,7 @@ export const SignalCard: React.FC<SignalCardProps> = ({ signal, row, onShowOnCha
                 </button>
             </div>
 
-            <div className="border-t border-white/[0.04] px-3 py-1.5 font-mono text-ui-2xs text-zinc-600" data-testid="signal-meta">
+            <div className="border-t border-hairline px-3 py-1.5 font-mono text-ui-2xs text-zinc-600" data-testid="signal-meta">
                 {shortId(signal.id)} · {ago(signal.emittedAt)} · {timeLeft(signal.expiresAt)} · {signal.coin} · {row?.status ?? 'open'}
             </div>
         </div>

@@ -163,7 +163,7 @@ const ShellRail: React.FC<ShellRailProps> = ({
                     width: showConversationColumn ? width + RAIL_W : RAIL_W,
                     ...(overlay ? { maxWidth: 'calc(100vw - 24px)' } : null),
                 }}
-                className={`flex h-full border-r border-white/[0.06] bg-zinc-950 ${
+                className={`flex h-full border-r border-hairline bg-zinc-950 ${
                     overlay
                         ? 'fixed inset-y-0 left-0 z-40 shadow-2xl'
                         : 'relative shrink-0'
@@ -180,7 +180,7 @@ const ShellRail: React.FC<ShellRailProps> = ({
                 <nav
                     aria-label="Surfaces"
                     data-testid="shell-surface-rail"
-                    className="flex w-12 shrink-0 flex-col items-center gap-0.5 border-r border-white/[0.06] py-2"
+                    className="flex w-12 shrink-0 flex-col items-center gap-0.5 border-r border-hairline py-2"
                 >
                     <RailIcon label="Analyze — chart and desk · Alt+1" testId="surface-switch-trade"
                         current={surface === 'trade'} onClick={() => onSelectSurface('trade')}>

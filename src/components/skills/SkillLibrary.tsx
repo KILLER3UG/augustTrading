@@ -215,19 +215,17 @@ export const SkillLibrary: React.FC<SkillLibraryProps> = ({ initialSlug }) => {
                     onChange={e => setQuery(e.target.value)}
                     placeholder="Search skills"
                     aria-label="Search skills"
-                    className="min-w-0 flex-1 rounded-control border border-white/10 bg-zinc-900 px-3 py-1.5 text-ui-dense text-zinc-200 placeholder:text-zinc-600 focus:border-white/20 focus:outline-none"
+                    className={inputClass}
                 />
                 <button
                     type="button"
                     onClick={() => { setDraft(emptyDraft()); setSelected(null); setConflict(null); setNote(null); setPreview(false); }}
-                    className="rounded-control border border-white/10 bg-zinc-800 px-3 py-1.5 text-ui-dense font-bold uppercase tracking-wider text-zinc-200 hover:border-white/20 hover:bg-zinc-700"
                 >
                     New skill
                 </button>
                 <button
                     type="button"
                     onClick={() => fileInput.current?.click()}
-                    className="rounded-control border border-white/10 bg-zinc-800 px-3 py-1.5 text-ui-dense font-bold uppercase tracking-wider text-zinc-200 hover:border-white/20 hover:bg-zinc-700"
                     title="Import standalone skill .md files"
                 >
                     Import files
@@ -242,7 +240,7 @@ export const SkillLibrary: React.FC<SkillLibraryProps> = ({ initialSlug }) => {
                 <button
                     type="button"
                     onClick={() => folderInput.current?.click()}
-                    className="rounded-control border border-white/10 bg-zinc-800 px-3 py-1.5 text-ui-dense font-bold uppercase tracking-wider text-zinc-200 hover:border-white/20 hover:bg-zinc-700"
+                    className={buttonClass}
                     title="Import a SKILL.md folder with bundled text files; binary assets are not supported"
                 >
                     Import folder
@@ -264,14 +262,13 @@ export const SkillLibrary: React.FC<SkillLibraryProps> = ({ initialSlug }) => {
                     placeholder="https://…/SKILL.md"
                     aria-label="Skill URL"
                     data-testid="skills-import-url"
-                    className="min-w-0 flex-1 rounded-control border border-white/10 bg-zinc-900 px-3 py-1.5 text-ui-dense text-zinc-200 placeholder:text-zinc-600 focus:border-white/20 focus:outline-none"
                 />
                 <button
                     type="button"
                     data-testid="skills-import-url-go"
                     disabled={fetching || !url.trim()}
                     onClick={() => void fetchFromUrl()}
-                    className="rounded-control border border-white/10 bg-zinc-800 px-3 py-1.5 text-ui-dense font-bold uppercase tracking-wider text-zinc-200 hover:border-white/20 hover:bg-zinc-700 disabled:opacity-40"
+                    className={`${buttonClass} disabled:opacity-40`}
                 >
                     {fetching ? 'Fetching…' : 'Fetch URL'}
                 </button>
@@ -282,14 +279,12 @@ export const SkillLibrary: React.FC<SkillLibraryProps> = ({ initialSlug }) => {
                     role={note.kind === 'error' ? 'alert' : 'status'}
                     className={`rounded-control border px-3 py-2 text-ui-dense ${note.kind === 'error' ? 'border-rose-500/30 bg-rose-500/10 text-rose-200' : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-200'}`}
                 >
-                    {note.text}
                 </p>
             )}
 
             <div className="flex min-h-0 flex-1 flex-col gap-3 md:flex-row">
                 <ul className="min-h-0 flex-1 space-y-2 overflow-y-auto" data-testid="skills-catalog-grid">
                     {filtered.length === 0 && (
-                        <li className="rounded-control border border-dashed border-white/10 px-3 py-6 text-center text-ui-dense text-zinc-500">
                             {skills.length === 0 ? 'No skills yet. Write one, or import a SKILL.md folder.' : 'No skill matches that search.'}
                         </li>
                     )}
@@ -300,7 +295,7 @@ export const SkillLibrary: React.FC<SkillLibraryProps> = ({ initialSlug }) => {
                                 onClick={() => choose(skill.slug)}
                                 data-testid="skills-catalog-card"
                                 aria-label={`Read ${skill.name}`}
-                                className={`min-w-0 flex-1 rounded-control border px-3 py-2 text-left transition-colors ${selected === skill.slug ? 'border-white/25 bg-zinc-800' : 'border-white/5 bg-zinc-900 hover:border-white/15 hover:bg-zinc-800/70'}`}
+                                className="flex h-full w-full flex-col gap-1.5 rounded-control border border-hairline bg-zinc-900 p-3 pr-10 text-left transition-colors hover:border-line hover:bg-zinc-800/70 focus:outline-none focus-visible:ring-1 focus-visible:ring-zinc-500"
                             >
                                 <span className="flex items-baseline justify-between gap-2">
                                     <span className="truncate text-ui-base font-medium text-zinc-100">{skill.name}</span>
@@ -319,7 +314,7 @@ export const SkillLibrary: React.FC<SkillLibraryProps> = ({ initialSlug }) => {
                                     if (armed === skill.slug) void removeSlug(skill.slug);
                                     else setArmed(skill.slug);
                                 }}
-                                className={`shrink-0 rounded-control border px-2 text-ui-dense ${armed === skill.slug ? 'border-rose-400/60 bg-rose-500/15 text-rose-200' : 'border-white/5 text-zinc-500 hover:border-rose-500/30 hover:text-rose-300'}`}
+                                className={`absolute right-1.5 top-1.5 grid h-7 w-7 place-items-center rounded-control border transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-zinc-500 ${isArmed ? 'border-rose-400/60 bg-rose-500/15 text-rose-200' : 'border-transparent text-zinc-600 hover:border-rose-500/30 hover:text-rose-300'}`}
                             >
                                 {armed === skill.slug ? 'Sure?' : 'Delete'}
                             </button>
@@ -328,7 +323,6 @@ export const SkillLibrary: React.FC<SkillLibraryProps> = ({ initialSlug }) => {
                 </ul>
 
                 {(editing || current) && (
-                    <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto rounded-control border border-white/10 bg-zinc-900 p-3">
                         <div className="flex items-center justify-between gap-2">
                             <h3 className="truncate font-serif text-ui-lg text-zinc-100">
                                 {editing ? draft.slug ?? 'New skill' : current?.name}
@@ -336,12 +330,12 @@ export const SkillLibrary: React.FC<SkillLibraryProps> = ({ initialSlug }) => {
                             <div className="flex shrink-0 gap-2">
                                 {editing ? (
                                     <>
-                                        <button type="button" onClick={() => { setDraft(null); setConflict(null); setNote(null); }} className="rounded-control border border-white/10 px-2 py-1 text-ui-dense text-zinc-300 hover:bg-white/5">Cancel</button>
                                         <button type="button" disabled={conflict !== null} onClick={() => void save()} className="rounded-control border border-emerald-500/30 bg-emerald-500/10 px-2 py-1 text-ui-dense font-bold uppercase tracking-wider text-emerald-200 hover:bg-emerald-500/20 disabled:opacity-40">Save</button>
+    const inputClass = 'min-w-0 flex-1 rounded-control border border-hairline bg-zinc-900 px-3 py-1.5 text-ui-dense text-zinc-200 placeholder:text-zinc-600 focus:border-line focus:outline-none';
+    const buttonClass = 'inline-flex items-center gap-1.5 rounded-control border border-hairline bg-zinc-800 px-3 py-1.5 text-ui-dense font-medium text-zinc-200 hover:border-line hover:bg-zinc-700';
                                     </>
                                 ) : (
                                     <>
-                                        <button type="button" onClick={() => { if (current) { setDraft(draftOf(current)); setPreview(false); } }} className="rounded-control border border-white/10 px-2 py-1 text-ui-dense text-zinc-300 hover:bg-white/5">Edit</button>
                                         <button type="button" onClick={() => void remove()} className="rounded-control border border-rose-500/30 px-2 py-1 text-ui-dense text-rose-300 hover:bg-rose-500/10">Delete</button>
                                     </>
                                 )}
@@ -349,6 +343,7 @@ export const SkillLibrary: React.FC<SkillLibraryProps> = ({ initialSlug }) => {
                         </div>
 
                         {editing ? (
+                        placeholder="Search skills"
                             <div className="flex min-h-0 flex-1 flex-col gap-2">
                                 <label className="text-ui-dense text-zinc-500">
                                     Title
@@ -356,7 +351,6 @@ export const SkillLibrary: React.FC<SkillLibraryProps> = ({ initialSlug }) => {
                                         value={draft.name}
                                         onChange={e => setDraft({ ...draft, name: e.target.value })}
                                         placeholder="Breakout retest"
-                                        className="mt-1 w-full rounded-control border border-white/10 bg-zinc-950 px-2 py-1.5 text-ui-base text-zinc-100 focus:border-white/20 focus:outline-none"
                                     />
                                 </label>
                                 <label className="text-ui-dense text-zinc-500">
@@ -366,7 +360,6 @@ export const SkillLibrary: React.FC<SkillLibraryProps> = ({ initialSlug }) => {
                                         onChange={e => setDraft({ ...draft, description: e.target.value })}
                                         rows={3}
                                         placeholder="Use this skill whenever a 1h close clears the prior range high and the retest holds. Do NOT use for range chop."
-                                        className="mt-1 w-full resize-y rounded-control border border-white/10 bg-zinc-950 px-2 py-1.5 text-ui-base text-zinc-100 focus:border-white/20 focus:outline-none"
                                     />
                                 </label>
                                 <div className="flex min-h-0 flex-1 flex-col text-ui-dense text-zinc-500">
@@ -377,7 +370,6 @@ export const SkillLibrary: React.FC<SkillLibraryProps> = ({ initialSlug }) => {
                                                 type="button"
                                                 aria-pressed={!preview}
                                                 onClick={() => setPreview(false)}
-                                                className={`rounded-control border px-2 py-0.5 text-ui-2xs uppercase tracking-wider ${preview ? 'border-white/5 text-zinc-500 hover:bg-white/5' : 'border-white/20 bg-zinc-800 text-zinc-200'}`}
                                             >
                                                 Write
                                             </button>
@@ -385,7 +377,6 @@ export const SkillLibrary: React.FC<SkillLibraryProps> = ({ initialSlug }) => {
                                                 type="button"
                                                 aria-pressed={preview}
                                                 onClick={() => setPreview(true)}
-                                                className={`rounded-control border px-2 py-0.5 text-ui-2xs uppercase tracking-wider ${preview ? 'border-white/20 bg-zinc-800 text-zinc-200' : 'border-white/5 text-zinc-500 hover:bg-white/5'}`}
                                             >
                                                 Preview
                                             </button>
@@ -394,7 +385,6 @@ export const SkillLibrary: React.FC<SkillLibraryProps> = ({ initialSlug }) => {
                                     {preview ? (
                                         <div
                                             data-testid="skill-body-preview"
-                                            className="mt-1 min-h-[24vh] flex-1 overflow-y-auto rounded-control border border-white/10 bg-zinc-950 px-2 py-1.5"
                                         >
                                             <MarkdownContent content={draft.body} className="text-ui-dense text-zinc-100" />
                                         </div>
@@ -403,7 +393,6 @@ export const SkillLibrary: React.FC<SkillLibraryProps> = ({ initialSlug }) => {
                                             value={draft.body}
                                             onChange={e => setDraft({ ...draft, body: e.target.value })}
                                             placeholder={'## When to use\n\n## Steps\n\n1. …\n\n## Pitfalls\n\n## Verification'}
-                                            className="mt-1 min-h-[24vh] flex-1 resize-y rounded-control border border-white/10 bg-zinc-950 px-2 py-1.5 font-mono text-ui-dense text-zinc-100 focus:border-white/20 focus:outline-none"
                                         />
                                     )}
                                 </div>
@@ -420,31 +409,27 @@ export const SkillLibrary: React.FC<SkillLibraryProps> = ({ initialSlug }) => {
                                     <code> scripts/</code> and <code>assets/</code> files.
                                 </p>
                                 {conflict && (
-                                    <section className="space-y-2 border-t border-white/10 pt-3" aria-label="Current saved version">
                                         <h4 className="text-ui-dense font-bold uppercase tracking-wider text-zinc-400">Current saved version · {conflict.version}</h4>
                                         <p className="text-ui-dense text-zinc-400">Your draft above is unchanged. Reconcile it with the saved content below, then use the current version before saving.</p>
-                                        <p className="text-ui-base text-zinc-200">Title: {conflict.name || '(no title)'}</p>
                                         <p className="whitespace-pre-wrap text-ui-dense text-zinc-400">Description: {conflict.description || '(no description)'}</p>
-                                        <pre className="overflow-auto whitespace-pre-wrap break-words rounded-control border border-white/5 bg-zinc-950 p-3 font-mono text-ui-dense text-zinc-300">{conflict.body || '(empty body)'}</pre>
                                         <button
                                             type="button"
                                             onClick={() => {
                                                 setDraft(d => d ? { ...d, version: conflict.version } : d);
                                                 setConflict(null);
                                                 setNote({ kind: 'ok', text: 'Current version adopted. Your draft is unchanged; save when ready.' });
+                    <p className="col-span-full rounded-control border border-dashed border-hairline px-3 py-8 text-center text-ui-dense text-zinc-500">
                                             }}
                                             title="Keep your reconciled draft and adopt only the saved version token"
-                                            className="rounded-control border border-white/10 px-2 py-1 text-ui-dense text-zinc-300 hover:bg-white/5"
-                                        >
                                             Use current version
                                         </button>
+                        <div key={skill.slug} className="relative">
                                     </section>
                                 )}
                             </div>
                         ) : current && (
                             <div className="flex min-h-0 flex-1 flex-col gap-3">
                                 <p className="text-ui-dense text-zinc-400">{current.description || 'No description'}</p>
-                                <div className="min-h-0 flex-1 overflow-y-auto rounded-control border border-white/5 bg-zinc-950 p-3 custom-scrollbar" data-testid="skill-body-reader">
                                     <MarkdownContent content={current.body || '(empty body)'} className="text-ui-base leading-relaxed text-zinc-300" />
                                 </div>
                                 {current.bundled.length > 0 && (
@@ -453,22 +438,16 @@ export const SkillLibrary: React.FC<SkillLibraryProps> = ({ initialSlug }) => {
                                         <p className="text-ui-dense text-zinc-600">Text preview only. Scripts are never executed.</p>
                                         <ul className="mt-1 space-y-0.5">
                                             {current.bundled.map(f => {
-                                                // Markdown files read as markdown; anything
                                                 // else (scripts, assets) stays raw.
                                                 const isMarkdown = /\.(md|markdown)$/i.test(f.path ?? f.name);
                                                 return (
-                                                    <li key={f.id} className="font-mono text-ui-dense text-zinc-400">
                                                         <Disclosure
                                                             summary={f.path ?? f.name}
                                                             label={`Read ${f.path ?? f.name}`}
-                                                            summaryClassName="cursor-pointer rounded-control px-2 py-1 hover:bg-white/5"
                                                         >
                                                             {isMarkdown ? (
-                                                                <div className="max-h-[60vh] overflow-y-auto rounded-control border border-white/5 bg-zinc-950 p-3">
-                                                                    <MarkdownContent content={f.content || ''} className="text-ui-dense leading-relaxed text-zinc-300" />
                                                                 </div>
                                                             ) : (
-                                                                <pre className="overflow-auto whitespace-pre-wrap break-words rounded-control border border-white/5 bg-zinc-950 p-3 text-zinc-300">{f.content || '(empty file)'}</pre>
                                                             )}
                                                         </Disclosure>
                                                     </li>
@@ -487,3 +466,34 @@ export const SkillLibrary: React.FC<SkillLibraryProps> = ({ initialSlug }) => {
 };
 
 export default SkillLibrary;
+                    className="inline-flex items-center gap-1.5 rounded-control px-1.5 py-1 text-ui-base text-zinc-400 transition-colors hover:text-zinc-100 focus:outline-none focus-visible:ring-1 focus-visible:ring-zinc-500"
+                    className={`${buttonClass} disabled:opacity-40`}
+                    Edit
+                    Delete
+                    <p className="truncate font-mono text-ui-dense text-zinc-500">
+                        type="button"
+                <p className="text-ui-dense text-zinc-500">Description</p>
+            <aside className="w-full shrink-0 rounded-control border border-hairline bg-zinc-900/60 p-3 md:w-64">
+                <p className="mt-0.5 flex items-center gap-1.5 text-ui-dense text-zinc-200">
+                <p className="mt-0.5 text-ui-dense text-zinc-200">{current.bundled.length}</p>
+                <p className="mt-3 border-t border-hairline pt-2 text-ui-2xs leading-relaxed text-zinc-500">
+            <nav aria-label="Skill files" className="flex w-full shrink-0 flex-col gap-0.5 overflow-y-auto md:w-56">
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-control border border-hairline bg-zinc-900">
+                <div className="flex shrink-0 items-center gap-1.5 border-b border-hairline px-2 py-1.5">
+                                    <tr className="border-b border-hairline">
+                                    <tr className="border-b border-hairline">
+                                    <tr className="border-b border-hairline">
+                                    </tr>
+                                    <tr className="border-b border-hairline">
+                                    </tr>
+        <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto rounded-control border border-hairline bg-zinc-900 p-3">
+                    <button type="button" onClick={() => { setDraft(null); setConflict(null); setNote(null); }} className="rounded-control border border-hairline px-2 py-1 text-ui-dense text-zinc-300 hover:bg-white/5">Cancel</button>
+                        className="mt-1 w-full rounded-control border border-hairline bg-zinc-950 px-2 py-1.5 text-ui-base text-zinc-100 focus:border-line focus:outline-none"
+                        className="mt-1 w-full resize-y rounded-control border border-hairline bg-zinc-950 px-2 py-1.5 text-ui-base text-zinc-100 focus:border-line focus:outline-none"
+                                className={`rounded-control border px-2 py-0.5 text-ui-2xs uppercase tracking-wider ${preview ? 'border-hairline text-zinc-500 hover:bg-white/5' : 'border-line bg-zinc-800 text-zinc-200'}`}
+                                className={`rounded-control border px-2 py-0.5 text-ui-2xs uppercase tracking-wider ${preview ? 'border-line bg-zinc-800 text-zinc-200' : 'border-hairline text-zinc-500 hover:bg-white/5'}`}
+                            className="mt-1 min-h-[24vh] flex-1 overflow-y-auto rounded-control border border-hairline bg-zinc-950 px-2 py-1.5"
+                            className="mt-1 min-h-[24vh] flex-1 resize-y rounded-control border border-hairline bg-zinc-950 px-2 py-1.5 font-mono text-ui-dense text-zinc-100 focus:border-line focus:outline-none"
+                    <section className="space-y-2 border-t border-hairline pt-3" aria-label="Current saved version">
+                        <pre className="overflow-auto whitespace-pre-wrap break-words rounded-control border border-hairline bg-zinc-950 p-3 font-mono text-ui-dense text-zinc-300">{conflict.body || '(empty body)'}</pre>
+                            className="rounded-control border border-hairline px-2 py-1 text-ui-dense text-zinc-300 hover:bg-white/5"

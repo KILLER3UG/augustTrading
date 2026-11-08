@@ -141,7 +141,7 @@ const ConversationRow: React.FC<{
             {menuOpen && (
                 <div
                     ref={menuRef}
-                    className="absolute right-1 top-full z-20 mt-0.5 flex flex-col rounded-control border border-white/[0.06] bg-zinc-900 py-1 shadow-lg"
+                    className="absolute right-1 top-full z-20 mt-0.5 flex flex-col rounded-control border border-hairline bg-zinc-900 py-1 shadow-lg"
                 >
                     <button
                         type="button"

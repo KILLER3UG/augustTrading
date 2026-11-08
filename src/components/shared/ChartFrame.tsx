@@ -76,7 +76,7 @@ const StateOverlay: React.FC<Pick<ChartFrameProps, 'state' | 'message' | 'onRetr
                     </p>
                     {onRetry && (
                         <button type="button" onClick={onRetry}
-                            className="motion-press mt-1 inline-flex items-center gap-1.5 rounded-control border border-white/10 bg-zinc-800 px-2.5 py-1.5 text-ui-dense font-semibold text-zinc-200 transition-colors hover:bg-zinc-700">
+                            className="motion-press mt-1 inline-flex items-center gap-1.5 rounded-control border border-hairline bg-zinc-800 px-2.5 py-1.5 text-ui-dense font-semibold text-zinc-200 transition-colors hover:bg-zinc-700">
                             <RefreshCw className="h-3 w-3" aria-hidden="true" />
                             Retry
                         </button>
@@ -109,11 +109,11 @@ const ChartFrame: React.FC<ChartFrameProps> = ({
     return (
         <div
             data-testid={testId}
-            className={['motion-fade flex min-h-0 w-full min-w-0 flex-col overflow-hidden rounded-card border border-white/[0.06] bg-zinc-900/40', className]
+            className={['motion-fade flex min-h-0 w-full min-w-0 flex-col overflow-hidden rounded-card border border-hairline bg-zinc-900/40', className]
                 .filter(Boolean).join(' ')}
         >
             {(title || actions || subtitle) && (
-                <header className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-white/[0.06] px-4 py-2.5">
+                <header className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-hairline px-4 py-2.5">
                     <div className="min-w-0">
                         {title && (
                             <p className="truncate font-mono text-ui-xs font-medium uppercase tracking-[0.08em] text-zinc-400">{title}</p>

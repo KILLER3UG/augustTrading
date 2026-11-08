@@ -79,7 +79,7 @@ export const WhyAvoidPanel: React.FC<{ analysis: TradeAnalysis }> = ({ analysis 
             )}
 
             {showTimeline && (
-                <div className="mt-2 border-t border-white/5 pt-2">
+                <div className="mt-2 border-t border-hairline pt-2">
                     <div className="text-ui-xs uppercase tracking-widest text-zinc-500">Confidence timeline</div>
                     <ol className="mt-1 space-y-1">
                         {steps.map((step, index) => (

@@ -102,7 +102,7 @@ const SignalTableRow: React.FC<{ row: SignalRow; tracked?: TrackedPosition }> = 
     return (
         <>
             <tr
-                className="border-b border-white/[0.04] align-top transition-colors hover:bg-white/[0.02]"
+                className="border-b border-hairline align-top transition-colors hover:bg-white/[0.02]"
                 data-testid="signal-card"
                 data-signal-id={s.id}
                 data-status={row.status}
@@ -177,7 +177,7 @@ const SignalTableRow: React.FC<{ row: SignalRow; tracked?: TrackedPosition }> = 
                 </td>
             </tr>
             {open && (
-                <tr className="border-b border-white/[0.04]" id={detailId} data-testid={detailId}>
+                <tr className="border-b border-hairline" id={detailId} data-testid={detailId}>
                     <td colSpan={9} className="bg-white/[0.015] px-4 py-5">
                         <div className="grid gap-6 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
                             <div className="min-w-0 space-y-4">
@@ -189,7 +189,7 @@ const SignalTableRow: React.FC<{ row: SignalRow; tracked?: TrackedPosition }> = 
                                     <p className="text-ui-2xs uppercase tracking-[0.12em] text-zinc-500">Evidence</p>
                                     <div className="mt-1.5 flex flex-wrap gap-1.5">
                                         {s.evidenceRefs.length > 0 ? s.evidenceRefs.map((ref, i) => (
-                                            <span key={`${ref}-${i}`} className="rounded-control border border-white/[0.06] px-1.5 py-0.5 font-mono text-ui-2xs text-zinc-400">
+                                            <span key={`${ref}-${i}`} className="rounded-control border border-hairline px-1.5 py-0.5 font-mono text-ui-2xs text-zinc-400">
                                                 {ref}
                                             </span>
                                         )) : (
@@ -213,7 +213,7 @@ const SignalTableRow: React.FC<{ row: SignalRow; tracked?: TrackedPosition }> = 
                                 </div>
 
                                 {resolution && (
-                                    <div className="border-t border-white/[0.06] pt-3 text-ui-2xs leading-relaxed text-zinc-500">
+                                    <div className="border-t border-hairline pt-3 text-ui-2xs leading-relaxed text-zinc-500">
                                         <p className="font-mono text-ui-dense text-zinc-300">
                                             gross {signedR(resolution.grossR)} · cost {resolution.feeR.toFixed(2)}R · net {signedR(resolution.outcomeR)}
                                         </p>
@@ -249,7 +249,7 @@ const SignalTableRow: React.FC<{ row: SignalRow; tracked?: TrackedPosition }> = 
                                 </p>
 
                                 {tracked ? (
-                                    <div className="border-t border-white/[0.06] pt-3 text-ui-2xs leading-relaxed text-zinc-500" data-testid="signal-tracked-state">
+                                    <div className="border-t border-hairline pt-3 text-ui-2xs leading-relaxed text-zinc-500" data-testid="signal-tracked-state">
                                         <p className="text-ui-2xs uppercase tracking-wider text-zinc-600">Tracker</p>
                                         <p className="mt-1 text-ui-dense text-zinc-300">
                                             {TRACKED_STATUS_WORD[tracked.status]} · {tracked.barsRead} closed bar{tracked.barsRead === 1 ? '' : 's'}
@@ -266,7 +266,7 @@ const SignalTableRow: React.FC<{ row: SignalRow; tracked?: TrackedPosition }> = 
                                         )}
                                     </div>
                                 ) : (
-                                    <p className="border-t border-white/[0.06] pt-3 text-ui-2xs text-zinc-600">
+                                    <p className="border-t border-hairline pt-3 text-ui-2xs text-zinc-600">
                                         Not tracked — the ledger is this call's record. The tracker adopts signals emitted in the last 24 hours.
                                     </p>
                                 )}
@@ -389,7 +389,7 @@ const SignalFeed: React.FC<SignalFeedProps> = ({ user }) => {
                 </div>
 
                 {summary.emitted > 0 && (
-                    <section className="grid grid-cols-2 gap-x-6 gap-y-5 border-y border-white/[0.06] py-5 sm:grid-cols-3 lg:grid-cols-7">
+                    <section className="grid grid-cols-2 gap-x-6 gap-y-5 border-y border-hairline py-5 sm:grid-cols-3 lg:grid-cols-7">
                         <Stat
                             label="Hit rate"
                             value={pct(summary.hitRate)}
@@ -466,7 +466,7 @@ const SignalFeed: React.FC<SignalFeedProps> = ({ user }) => {
                     <div className="overflow-x-auto">
                         <table data-testid="signal-table" className="w-full min-w-[820px] border-collapse text-left">
                             <thead>
-                                <tr className="border-b border-white/[0.08] text-ui-2xs uppercase tracking-[0.1em] text-zinc-500">
+                                <tr className="border-b border-hairline text-ui-2xs uppercase tracking-[0.1em] text-zinc-500">
                                     <th scope="col" className="py-2 pr-4 font-medium">Signal</th>
                                     <th scope="col" className="py-2 px-3 font-medium">Status</th>
                                     <th scope="col" className="py-2 px-3 text-right font-medium">Entry</th>

@@ -17,7 +17,7 @@ export const WeeklyReviewCard: React.FC<{ username: string }> = ({ username }) =
     if (!digest) return null;
     const s = digest.stats;
     return (
-        <div className="rounded-bubble border border-white/10 bg-zinc-900/60 p-4">
+        <div className="rounded-bubble border border-hairline bg-zinc-900/60 p-4">
             <div className="flex items-baseline justify-between">
                 <p className="text-ui-xs font-bold uppercase tracking-widest text-zinc-500">
                     Weekly review · {digest.generatedAt.slice(0, 10)}

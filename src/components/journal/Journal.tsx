@@ -77,7 +77,7 @@ const TABS: TabConfig[] = [
  *  here — the duplicated copy is how the overlay version lost its aria-labels. */
 const ExportTray: React.FC<{ trades: LoggedTrade[] }> = ({ trades }) => {
     const empty = trades.length === 0;
-    const cls = 'inline-flex items-center gap-1.5 rounded-control border border-white/[0.07] bg-zinc-800/80 px-3 py-1.5 text-ui-xs font-semibold text-zinc-400 transition-colors hover:border-white/20 hover:bg-zinc-700/70 hover:text-zinc-100 disabled:opacity-40';
+    const cls = 'inline-flex items-center gap-1.5 rounded-control border border-hairline bg-zinc-800/80 px-3 py-1.5 text-ui-xs font-semibold text-zinc-400 transition-colors hover:border-line hover:bg-zinc-700/70 hover:text-zinc-100 disabled:opacity-40';
     return (
         <>
             <button
@@ -230,7 +230,7 @@ const JournalInner: React.FC<JournalProps> = ({
                 )}
             </div>
             {!documentOpen && (
-            <div ref={tabListRef} role="tablist" aria-label="Journal sections" onKeyDown={handleTabsKeyDown} className="shrink-0 px-5 sm:px-8 pt-4 pb-5 flex items-center gap-2 overflow-x-auto border-b border-white/[0.04] custom-scrollbar">
+            <div ref={tabListRef} role="tablist" aria-label="Journal sections" onKeyDown={handleTabsKeyDown} className="shrink-0 px-5 sm:px-8 pt-4 pb-5 flex items-center gap-2 overflow-x-auto border-b border-hairline custom-scrollbar">
                 {TABS.map((tab) => {
                     const isActive = activeTab === tab.id;
                     return (
@@ -339,7 +339,7 @@ const LastTwentyCard: React.FC<{ trades: LoggedTrade[] }> = ({ trades }) => {
         : 'text-zinc-500';
 
   return (
-    <section className="rounded-bubble border border-white/[0.06] bg-zinc-900/40 p-4" data-testid="journal-last-20">
+    <section className="rounded-bubble border border-hairline bg-zinc-900/40 p-4" data-testid="journal-last-20">
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
         <h3 className="text-ui-xs font-semibold uppercase tracking-wider text-zinc-500">
           Last {RECENT_TRADES_WINDOW} logged trades
@@ -354,7 +354,7 @@ const LastTwentyCard: React.FC<{ trades: LoggedTrade[] }> = ({ trades }) => {
       </div>
       <ol className="mt-3 space-y-1">
         {brief.rows.map(r => (
-          <li key={r.id} className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 border-b border-white/[0.04] pb-1 text-ui-dense last:border-0">
+          <li key={r.id} className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 border-b border-hairline pb-1 text-ui-dense last:border-0">
             <span className="font-mono text-ui-2xs text-zinc-600 whitespace-nowrap">
               {phtDayKey(Date.parse(r.loggedAt))} {phtClock(r.loggedAt)}
             </span>

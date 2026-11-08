@@ -71,7 +71,7 @@ const TimeframeBar: React.FC<TimeframeBarProps> = ({ interval, onIntervalChange,
     };
 
     return (
-        <div className={`relative flex shrink-0 flex-wrap items-center gap-1 ${className ?? 'border-b border-white/[0.06] px-3 py-2'}`}>
+        <div className={`relative flex shrink-0 flex-wrap items-center gap-1 ${className ?? 'border-b border-hairline px-3 py-2'}`}>
             {compact ? (
                 <>
                     <button type="button" data-testid="tf-compact" ref={chipRef}
@@ -90,7 +90,7 @@ const TimeframeBar: React.FC<TimeframeBarProps> = ({ interval, onIntervalChange,
                         <>
                             <div className="fixed inset-0 z-20" aria-hidden onClick={() => setMenuOpen(false)} />
                             <div role="menu" data-testid="tf-compact-menu"
-                                className={`absolute left-0 ${menuUp ? 'bottom-8' : 'top-8'} z-40 w-28 rounded-bubble border border-white/10 bg-zinc-900 p-1 shadow-xl`}>
+                                className={`absolute left-0 ${menuUp ? 'bottom-8' : 'top-8'} z-40 w-28 rounded-bubble border border-hairline bg-zinc-900 p-1 shadow-xl`}>
                                 {shownIntervals.map(tf => (
                                     <button key={tf} type="button" role="menuitem"
                                         onClick={() => { onIntervalChange(tf); setMenuOpen(false); }}
@@ -143,7 +143,7 @@ const TimeframeBar: React.FC<TimeframeBarProps> = ({ interval, onIntervalChange,
                         on the Agents surface, and the Chat composer sits at
                         z-[90]. The overlay that closes it is z-20 either
                         way; only the panel needed lifting. */}
-                    <div className={`absolute left-2 ${pickerUp ? 'bottom-9' : 'top-9'} z-40 w-40 rounded-bubble border border-white/10 bg-zinc-900 p-1 shadow-xl`} data-testid="tf-picker">
+                    <div className={`absolute left-2 ${pickerUp ? 'bottom-9' : 'top-9'} z-40 w-40 rounded-bubble border border-hairline bg-zinc-900 p-1 shadow-xl`} data-testid="tf-picker">
                         {/* A SECTION HEADING, so it takes the reference's rule:
                             small, muted, sentence case — not the uppercase
                             letter-spaced eyebrow the data readouts keep. */}

@@ -60,7 +60,7 @@ const WireAuditRow: React.FC<WireAuditRowProps> = ({ entries, noTrace }) => {
                 <span className="text-ui-2xs text-zinc-500" title={summary}>{summary}</span>
             )}
             summaryClassName="cursor-pointer text-ui-2xs text-zinc-500 transition-colors hover:text-zinc-300"
-            bodyClassName="mt-1 space-y-1 rounded-control border border-white/[0.05] bg-zinc-950/40 px-2.5 py-2"
+            bodyClassName="mt-1 space-y-1 rounded-control border border-hairline bg-zinc-950/40 px-2.5 py-2"
         >
             {entries.map((entry, i) => (
                 <div key={`${entry.route}-${i}`} className="text-ui-2xs leading-5 text-zinc-500">

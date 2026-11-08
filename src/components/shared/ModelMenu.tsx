@@ -321,7 +321,7 @@ const ModelMenu: React.FC<ModelMenuProps> = ({
             onPointerDownCapture={(e) => e.stopPropagation()}
             onKeyDown={onProviderPanelKeyDown}
             style={{ top: providerPanelPos.top, left: providerPanelPos.left, width: PROVIDER_W }}
-            className="fixed z-flyout rounded-bubble border border-white/10 bg-zinc-900 p-1 shadow-xl"
+            className="fixed z-flyout rounded-bubble border border-hairline bg-zinc-900 p-1 shadow-xl"
         >
             <div className="custom-scrollbar max-h-64 overflow-y-auto">
                 {readyProviders.map(p => (
@@ -333,7 +333,7 @@ const ModelMenu: React.FC<ModelMenuProps> = ({
                         className="flex w-full items-center gap-2 rounded-control px-2 py-1.5 text-left text-ui-dense text-zinc-300 transition-colors hover:bg-white/[0.06]">
                         <Check className={`h-3 w-3 shrink-0 ${p.id === activeProviderId ? 'text-emerald-400' : 'opacity-0'}`} aria-hidden="true" />
                         <span className="min-w-0 flex-1 truncate" title={p.name}>{p.name}</span>
-                        <span className="shrink-0 rounded-control border border-white/10 px-1 text-ui-2xs uppercase tracking-wider text-zinc-500">API</span>
+                        <span className="shrink-0 rounded-control border border-hairline px-1 text-ui-2xs uppercase tracking-wider text-zinc-500">API</span>
                     </button>
                 ))}
             </div>
@@ -367,17 +367,17 @@ const ModelMenu: React.FC<ModelMenuProps> = ({
                 onPointerDownCapture={(e) => e.stopPropagation()}
                 onKeyDown={onMainKeyDown}
                 style={{ top: pos.top, left: pos.left, width: MAIN_W, maxHeight: pos.maxHeight }}
-                className="fixed z-flyout flex flex-col rounded-bubble border border-white/10 bg-zinc-900 shadow-xl outline-none"
+                className="fixed z-flyout flex flex-col rounded-bubble border border-hairline bg-zinc-900 shadow-xl outline-none"
             >
                 <button type="button" role="menuitem" aria-haspopup="menu" aria-expanded={providersOpen}
                     data-testid="model-menu-provider-row"
                     onMouseEnter={() => setProvidersOpen(true)}
                     onClick={() => setProvidersOpen(v => !v)}
                     title={`${activeProvider?.name ?? 'No provider'} — ${activeProvider?.apiFormat ?? ''}`}
-                    className="flex shrink-0 items-center gap-2 border-b border-white/5 px-3 py-2.5 text-left transition-colors hover:bg-white/[0.04]">
+                    className="flex shrink-0 items-center gap-2 border-b border-hairline px-3 py-2.5 text-left transition-colors hover:bg-white/[0.04]">
                     <Box className="h-4 w-4 shrink-0 text-cyan-400" aria-hidden="true" />
                     <span className="min-w-0 flex-1 truncate text-ui-sm font-medium text-zinc-100" title={activeProvider?.name ?? 'No ready provider'}>{activeProvider?.name ?? 'No ready provider'}</span>
-                    <span className="shrink-0 rounded-control border border-white/10 px-1 text-ui-2xs uppercase tracking-wider text-zinc-500">API</span>
+                    <span className="shrink-0 rounded-control border border-hairline px-1 text-ui-2xs uppercase tracking-wider text-zinc-500">API</span>
                     <ChevronRight className="h-3.5 w-3.5 shrink-0 text-zinc-600" aria-hidden="true" />
                 </button>
 
@@ -391,7 +391,7 @@ const ModelMenu: React.FC<ModelMenuProps> = ({
                     <button type="button" data-testid="model-menu-free-only" aria-pressed={freeOnly}
                         onClick={() => setFree(!freeOnly)}
                         title="Show only free models in every model menu"
-                        className={`ml-auto rounded-full border px-1.5 py-px text-ui-2xs uppercase tracking-wider transition-colors ${freeOnly ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-400' : 'border-white/10 text-zinc-500 hover:text-zinc-300'}`}>
+                        className={`ml-auto rounded-full border px-1.5 py-px text-ui-2xs uppercase tracking-wider transition-colors ${freeOnly ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-400' : 'border-hairline text-zinc-500 hover:text-zinc-300'}`}>
                         free only
                     </button>
                     {onRefreshModels && (
@@ -431,7 +431,7 @@ const ModelMenu: React.FC<ModelMenuProps> = ({
                             placeholder="Search models…"
                             aria-label="Search models by name"
                             data-testid="model-picker-search"
-                            className="w-full rounded-control border border-white/10 bg-zinc-800/60 px-2 py-1 text-left text-ui-dense text-zinc-100 placeholder:text-zinc-600 focus:border-zinc-500 focus:outline-none"
+                            className="w-full rounded-control border border-hairline bg-zinc-800/60 px-2 py-1 text-left text-ui-dense text-zinc-100 placeholder:text-zinc-600 focus:border-zinc-500 focus:outline-none"
                         />
                     </div>
                 )}
@@ -476,11 +476,11 @@ const ModelMenu: React.FC<ModelMenuProps> = ({
                 </div>
 
                 {showEffort && (
-                    <div className="shrink-0 border-t border-white/5 px-3 pb-3 pt-2" data-testid="model-menu-effort">
+                    <div className="shrink-0 border-t border-hairline px-3 pb-3 pt-2" data-testid="model-menu-effort">
                         <div className="mb-1.5 flex items-center justify-between gap-2">
                             <span className="flex items-center gap-1.5 text-ui-2xs font-bold uppercase tracking-widest text-zinc-600">
                                 Effort
-                                <kbd className="rounded-control border border-white/10 px-1 text-ui-2xs font-normal tracking-normal text-zinc-500">{shortcutHint}</kbd>
+                                <kbd className="rounded-control border border-hairline px-1 text-ui-2xs font-normal tracking-normal text-zinc-500">{shortcutHint}</kbd>
                             </span>
                             <span className="text-ui-dense font-medium text-zinc-200">{effortChoiceOf(effort).label}</span>
                         </div>

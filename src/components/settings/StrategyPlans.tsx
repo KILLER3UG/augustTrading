@@ -71,7 +71,7 @@ const Plan: React.FC<{ meta: StrategyMeta; onChanged: () => void }> = ({ meta, o
                     type="button"
                     disabled={busy}
                     onClick={() => void act(meta.status === 'active' ? 'retired' : 'active')}
-                    className="shrink-0 rounded-control border border-white/10 bg-zinc-800 px-2.5 py-1 text-ui-dense font-bold uppercase tracking-wider text-zinc-200 hover:border-white/20 hover:bg-zinc-700 disabled:opacity-50"
+                    className="shrink-0 rounded-control border border-hairline bg-zinc-800 px-2.5 py-1 text-ui-dense font-bold uppercase tracking-wider text-zinc-200 hover:border-line hover:bg-zinc-700 disabled:opacity-50"
                 >
                     {meta.status === 'active' ? 'Retire' : 'Activate'}
                 </button>

@@ -168,7 +168,7 @@ const ChatTranscriptList: React.FC<ChatTranscriptListProps> = ({
                         <div className="flex flex-col items-end gap-1.5">
                             {e.image && (
                                 <div className="flex flex-col items-end gap-0.5">
-                                    <img src={e.image} alt="attached" className="max-h-40 rounded-bubble border border-white/10 object-contain" />
+                                    <img src={e.image} alt="attached" className="max-h-40 rounded-bubble border border-hairline object-contain" />
                                     {!answerStreaming && <RetryChip onRetry={() => void send('', e.id)} />}
                                 </div>
                             )}
@@ -178,7 +178,7 @@ const ChatTranscriptList: React.FC<ChatTranscriptListProps> = ({
                                 // with a missing src, which renders as a broken icon.
                                 <div
                                     data-testid="chat-image-omitted"
-                                    className="rounded-control border border-white/10 bg-zinc-900/60 px-2.5 py-1.5 text-ui-dense text-zinc-500"
+                                    className="rounded-control border border-hairline bg-zinc-900/60 px-2.5 py-1.5 text-ui-dense text-zinc-500"
                                 >
                                     image not backed up ({e.imageOmitted.mime}, {Math.max(1, Math.round(e.imageOmitted.bytes / 1024))} KB)
                                 </div>

@@ -60,7 +60,7 @@ const ActionsTab: React.FC<{ tab: ActionsTabProps }> = ({ tab: props }) => {
             {/* Training data — the journal as one model-ready JSON record per
                 trade. A local download of the trader's own rows; nothing here
                 leaves the machine. */}
-            <section className="rounded-bubble border border-white/[0.06] bg-zinc-800/40 p-4" data-testid="training-export-card">
+            <section className="rounded-bubble border border-hairline bg-zinc-800/40 p-4" data-testid="training-export-card">
                 <h3 className="text-ui-dense font-semibold text-zinc-200">Training data</h3>
                 <p className="mt-1 max-w-prose text-ui-xs leading-4 text-zinc-500">
                     One JSON record per trade on its own line: the plan it came from, the verdict,
@@ -73,7 +73,7 @@ const ActionsTab: React.FC<{ tab: ActionsTabProps }> = ({ tab: props }) => {
                     data-testid="export-training-jsonl"
                     disabled={trades.length === 0}
                     onClick={() => exportTrainingDataJSONL(trades)}
-                    className="mt-2.5 rounded-control border border-white/10 bg-zinc-900 px-3 py-1.5 text-ui-xs font-semibold text-zinc-200 transition-colors hover:border-white/25 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="mt-2.5 rounded-control border border-hairline bg-zinc-900 px-3 py-1.5 text-ui-xs font-semibold text-zinc-200 transition-colors hover:border-line hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                     {trades.length === 0
                         ? 'No trades logged yet'
@@ -84,7 +84,7 @@ const ActionsTab: React.FC<{ tab: ActionsTabProps }> = ({ tab: props }) => {
             {/* Improve future August models — the decision recorder. The
                 corpus (turn + reasoning + actions + outcome, joined by planId)
                 is the fine-tuning fuel; it is LOCAL-ONLY and OFF by default. */}
-            <section className="rounded-bubble border border-white/[0.06] bg-zinc-800/40 p-4" data-testid="training-capture-card">
+            <section className="rounded-bubble border border-hairline bg-zinc-800/40 p-4" data-testid="training-capture-card">
                 <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                         <h3 className="text-ui-dense font-semibold text-zinc-200">Improve future August models</h3>
@@ -104,7 +104,7 @@ const ActionsTab: React.FC<{ tab: ActionsTabProps }> = ({ tab: props }) => {
                         onClick={flipCapture}
                         className={`shrink-0 rounded-control border px-3 py-1.5 text-ui-xs font-semibold transition-colors ${(capture?.enabled ?? false)
                             ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
-                            : 'border-white/10 bg-zinc-900 text-zinc-400 hover:border-white/25'}`}
+                            : 'border-hairline bg-zinc-900 text-zinc-400 hover:border-line'}`}
                     >
                         {(capture?.enabled ?? false) ? 'Recording ON' : 'Recording OFF'}
                     </button>
@@ -123,7 +123,7 @@ const ActionsTab: React.FC<{ tab: ActionsTabProps }> = ({ tab: props }) => {
                     data-testid="export-training-corpus"
                     disabled={corpusBusy || !capture?.desktop || capture.recordCount === 0}
                     onClick={() => { void exportCorpus(); }}
-                    className="mt-2.5 rounded-control border border-white/10 bg-zinc-900 px-3 py-1.5 text-ui-xs font-semibold text-zinc-200 transition-colors hover:border-white/25 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="mt-2.5 rounded-control border border-hairline bg-zinc-900 px-3 py-1.5 text-ui-xs font-semibold text-zinc-200 transition-colors hover:border-line hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                     {corpusBusy ? 'Preparing…' : 'Export training corpus (JSONL)'}
                 </button>

@@ -81,7 +81,7 @@ export const ToolForgeManager: React.FC = () => {
                 </p>
             )}
             {tools.length === 0 && (
-                <p className="rounded-control border border-white/5 bg-zinc-900/50 px-3 py-4 text-center text-ui-sm text-zinc-600">
+                <p className="rounded-control border border-hairline bg-zinc-900/50 px-3 py-4 text-center text-ui-sm text-zinc-600">
                     No forged tools yet. Models propose one by calling <code className="text-zinc-400">forge_tool</code> when the desk lacks a lookup they need.
                 </p>
             )}
@@ -90,7 +90,7 @@ export const ToolForgeManager: React.FC = () => {
                 return (
                     <div
                         key={tool.id}
-                        className="rounded-control border border-white/5 bg-zinc-900/40 p-3"
+                        className="rounded-control border border-hairline bg-zinc-900/40 p-3"
                         data-testid={`forged-tool-${tool.id}`}
                     >
                         <div className="flex items-center gap-2">
@@ -113,7 +113,7 @@ export const ToolForgeManager: React.FC = () => {
                                     type="button"
                                     onClick={() => act(() => approveForgedTool(tool.id))}
                                     data-testid={`approve-forged-${tool.id}`}
-                                    className="flex items-center gap-1 rounded-control border border-white/10 px-2 py-1 text-ui-dense font-semibold text-zinc-200 hover:bg-zinc-800"
+                                    className="flex items-center gap-1 rounded-control border border-hairline px-2 py-1 text-ui-dense font-semibold text-zinc-200 hover:bg-zinc-800"
                                 >
                                     <Check className="h-3 w-3" aria-hidden="true" /> Approve network access
                                 </button>

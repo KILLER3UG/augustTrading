@@ -295,9 +295,9 @@ const [trendlineDrawings, setTrendlineDrawings] = useState<ChartDrawing[]>([]);
     return (
         <div ref={dialogRef} role="dialog" aria-modal={isEmbedded ? undefined : 'true'} aria-label="Live Market" className={` flex flex-col ${isEmbedded ? 'h-full' : 'fixed inset-0 bg-zinc-950 z-modal animate-fade-in pb-[env(safe-area-inset-bottom)]'}`}>
             {/* Header - 2 rows on mobile for spacious feel */}
-            <div className="bg-zinc-900 border-b border-white/10 flex-shrink-0 shadow-lg shadow-black/20">
+            <div className="bg-zinc-900 border-b border-hairline flex-shrink-0 shadow-lg shadow-black/20">
                 {/* Top Row - Title, Price & Close */}
-                <div className="flex items-center justify-between px-4 sm:px-6 py-4 border-b border-white/5">
+                <div className="flex items-center justify-between px-4 sm:px-6 py-4 border-b border-hairline">
                     <div className="flex items-center gap-2 sm:gap-3">
                         <div className="flex items-center gap-1.5 sm:gap-2 text-cyan-400">
                             <ActivityIcon className="w-5 h-5 sm:w-6 sm:h-6" aria-hidden="true" />
@@ -357,7 +357,7 @@ const [trendlineDrawings, setTrendlineDrawings] = useState<ChartDrawing[]>([]);
                             aria-label="Market symbol"
                             className="shrink-0"
                             drop="up"
-                            triggerClassName="h-12 min-w-[112px] rounded-control border border-white/10 bg-zinc-800 px-4 text-ui-base font-bold hover:bg-zinc-700 focus:border-cyan-500"
+                            triggerClassName="h-12 min-w-[112px] rounded-control border border-hairline bg-zinc-800 px-4 text-ui-base font-bold hover:bg-zinc-700 focus:border-accent"
                         />
 
                         {/* Interval Selector — bound to the SAME state the chart's
@@ -370,7 +370,7 @@ const [trendlineDrawings, setTrendlineDrawings] = useState<ChartDrawing[]>([]);
                             aria-label="Chart interval"
                             className="shrink-0"
                             drop="up"
-                            triggerClassName="h-12 min-w-[78px] rounded-control border border-white/10 bg-zinc-800 px-4 text-ui-base font-bold hover:bg-zinc-700 focus:border-cyan-500"
+                            triggerClassName="h-12 min-w-[78px] rounded-control border border-hairline bg-zinc-800 px-4 text-ui-base font-bold hover:bg-zinc-700 focus:border-accent"
                         />
                     </div>
 
@@ -431,7 +431,7 @@ const [trendlineDrawings, setTrendlineDrawings] = useState<ChartDrawing[]>([]);
 
                                 {/* Key Levels */}
                                 {!isAIAnalyzing && keyLevels.length > 0 && (
-                                    <div className="bg-zinc-900 border border-white/10 rounded-control px-3 py-2">
+                                    <div className="bg-zinc-900 border border-hairline rounded-control px-3 py-2">
                                         <span className="text-ui-xs font-bold text-zinc-500 uppercase tracking-wider">Key Levels</span>
                                         <div className="flex flex-col gap-1 mt-1">
                                             {keyLevels.slice(0, 4).map((level, i) => (
@@ -450,7 +450,7 @@ const [trendlineDrawings, setTrendlineDrawings] = useState<ChartDrawing[]>([]);
                                     the chart above (modelDrawings); this row is the readable
                                     summary of the same numbers, not a second copy of them. */}
                                 {!isAIAnalyzing && trendlines.length > 0 && (
-                                    <div className="bg-zinc-900 border border-white/10 rounded-control px-3 py-2" data-testid="ai-trendlines">
+                                    <div className="bg-zinc-900 border border-hairline rounded-control px-3 py-2" data-testid="ai-trendlines">
                                         <span className="text-ui-xs font-bold text-zinc-500 uppercase tracking-wider">Trendlines</span>
                                         <div className="flex flex-col gap-1 mt-1">
                                             {trendlines.slice(0, 4).map((line, i) => {
@@ -473,7 +473,7 @@ const [trendlineDrawings, setTrendlineDrawings] = useState<ChartDrawing[]>([]);
 
                                 {/* AI Summary */}
                                 {!isAIAnalyzing && aiSummary && (
-                                    <div className="bg-zinc-900 border border-white/10 rounded-control px-3 py-2">
+                                    <div className="bg-zinc-900 border border-hairline rounded-control px-3 py-2">
                                         <span className="text-ui-xs text-zinc-400 leading-relaxed line-clamp-3" title={aiSummary}>{aiSummary}</span>
                                     </div>
                                 )}
@@ -483,7 +483,7 @@ const [trendlineDrawings, setTrendlineDrawings] = useState<ChartDrawing[]>([]);
 
             {/* AI Market Insights Panel */}
             {(marketInsights || isAIAnalyzing) && (
-                <div className="flex-shrink-0 bg-zinc-900 border-t border-white/10">
+                <div className="flex-shrink-0 bg-zinc-900 border-t border-hairline">
                     {/* Panel Header */}
                     <button
                         type="button"
@@ -514,7 +514,7 @@ const [trendlineDrawings, setTrendlineDrawings] = useState<ChartDrawing[]>([]);
                     {isInsightsPanelExpanded && marketInsights && !isAIAnalyzing && (
                         <div id="live-market-insights" className="px-4 sm:px-6 pb-6 space-y-4 max-h-[45vh] overflow-y-auto custom-scrollbar">
                             {/* Current Situation */}
-                            <div className="bg-zinc-800 rounded-bubble p-3 border border-white/5">
+                            <div className="bg-zinc-800 rounded-bubble p-3 border border-hairline">
                                 <div className="flex items-center gap-2 mb-2">
                                     <ActivityIcon className="w-4 h-4 text-cyan-400" aria-hidden="true" />
                                     <span className="text-ui-sm font-bold text-zinc-400 uppercase tracking-wider">Current Situation</span>
@@ -524,7 +524,7 @@ const [trendlineDrawings, setTrendlineDrawings] = useState<ChartDrawing[]>([]);
 
                             {/* Key Observations */}
                             {marketInsights.observations.length > 0 && (
-                                <div className="bg-zinc-800 rounded-bubble p-3 border border-white/5">
+                                <div className="bg-zinc-800 rounded-bubble p-3 border border-hairline">
                                     <div className="flex items-center gap-2 mb-2">
                                         <span className="text-ui-sm font-bold text-zinc-400 uppercase tracking-wider">Key Observations</span>
                                     </div>
@@ -584,7 +584,7 @@ const [trendlineDrawings, setTrendlineDrawings] = useState<ChartDrawing[]>([]);
                         id would make the two divs indistinguishable. */}
                     {isInsightsPanelExpanded && isAIAnalyzing && (
                         <div className="px-4 sm:px-6 pb-6">
-                            <div className="bg-zinc-800 rounded-bubble p-6 border border-white/5 flex flex-col items-center justify-center gap-3">
+                            <div className="bg-zinc-800 rounded-bubble p-6 border border-hairline flex flex-col items-center justify-center gap-3">
                                 <Spinner size="w-8 h-8" color="border-cyan-400" />
                                 <span className="text-ui-base text-zinc-400">Analyzing market conditions...</span>
                             </div>

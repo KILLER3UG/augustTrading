@@ -12,7 +12,7 @@ const TONE: Record<PillTone, string> = {
     down: 'border-rose-500/30 bg-rose-500/10 text-rose-400',
     warn: 'border-amber-500/30 bg-amber-500/10 text-amber-400',
     info: 'border-cyan-500/30 bg-cyan-500/10 text-cyan-400',
-    neutral: 'border-white/10 bg-white/[0.04] text-zinc-400',
+    neutral: 'border-hairline bg-white/[0.04] text-zinc-400',
 };
 
 interface StatusPillProps {

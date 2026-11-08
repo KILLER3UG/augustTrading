@@ -103,7 +103,7 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, className 
         rehypePlugins={[[rehypeKatex, KATEX_OPTIONS]]}
         components={{
           pre: ({ children }) => (
-            <pre className="my-3 rounded-bubble bg-black/50 border border-white/10 p-3 overflow-x-auto text-ui-sm font-mono leading-relaxed text-zinc-300 whitespace-pre-wrap [&_code]:rounded-none [&_code]:border-0 [&_code]:bg-transparent [&_code]:px-0 [&_code]:py-0">
+            <pre className="my-3 rounded-bubble bg-black/50 border border-hairline p-3 overflow-x-auto text-ui-sm font-mono leading-relaxed text-zinc-300 whitespace-pre-wrap [&_code]:rounded-none [&_code]:border-0 [&_code]:bg-transparent [&_code]:px-0 [&_code]:py-0">
               {children}
             </pre>
           ),
@@ -127,7 +127,7 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, className 
             return (
               <code
                 {...props}
-                className="rounded-control border border-white/10 bg-white/[0.06] px-1 py-0.5 font-mono text-[12.5px] text-zinc-200"
+                className="rounded-control break-inside-avoid border border-hairline bg-white/[0.06] px-1 py-0.5 font-mono text-[12.5px] text-zinc-200 whitespace-nowrap"
               >
                 {children}
               </code>
@@ -161,12 +161,12 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, className 
             <td className="border-b border-zinc-700/60 px-3 py-1.5 text-ui-caption text-zinc-300 align-middle leading-snug">{children}</td>
           ),
           blockquote: ({ children }) => (
-            <blockquote className="border-l-2 border-white/20 pl-3.5 text-zinc-400 italic">{children}</blockquote>
+            <blockquote className="border-l-2 border-line pl-3.5 text-zinc-400 italic">{children}</blockquote>
           ),
           h1: ({ children }) => <h1 className="mt-5 mb-2.5 text-lg font-semibold text-zinc-100">{children}</h1>,
           h2: ({ children }) => <h2 className="mt-5 mb-2.5 text-ui-lg font-semibold text-zinc-100">{children}</h2>,
           h3: ({ children }) => <h3 className="mt-4 mb-2 text-ui-base font-semibold text-zinc-100">{children}</h3>,
-          hr: () => <hr className="my-4 border-white/10" />,
+          hr: () => <hr className="my-4 border-hairline" />,
           p: ({ children }) => <p className="my-3 leading-[1.65] text-zinc-300">{children}</p>,
           ul: ({ children }) => <ul className="my-3 list-disc space-y-1.5 pl-5 text-zinc-300 marker:text-zinc-600">{children}</ul>,
           ol: ({ children }) => <ol className="my-3 list-decimal space-y-1.5 pl-5 text-zinc-300 marker:text-zinc-600">{children}</ol>,

@@ -183,9 +183,9 @@ const OrderBookPanel: React.FC<OrderBookPanelProps> = ({ symbol, live = false, l
            page, so it is separated from the chart by ONE HAIRLINE and carries
            no fill of its own. The old panel fill (zinc-900 at 40 %) was a
            second box down the middle of the surface. */
-        <div className={`flex h-full min-h-0 flex-col ${bare ? '' : 'border-l border-white/[0.06]'}`}>
+        <div className={`flex h-full min-h-0 flex-col ${bare ? '' : 'border-l border-hairline'}`}>
             {!bare && (
-            <div className="flex shrink-0 items-center justify-between border-b border-white/[0.04] px-3 py-2.5">
+            <div className="flex shrink-0 items-center justify-between border-b border-hairline px-3 py-2.5">
                 <h2 className="ui-kicker">Order Book</h2>
                 {/* The feed state is a WORD, not a figure, so it wears the
                     interface face — the monospace is for the numbers in the
@@ -241,7 +241,7 @@ const OrderBookPanel: React.FC<OrderBookPanelProps> = ({ symbol, live = false, l
                     not with a colour. */}
                 <div
                     data-testid="orderbook-spread"
-                    className={`${GRID} my-1 items-center border-y border-white/[0.06] py-1 font-mono text-ui-xs tabular-nums text-zinc-400`}
+                    className={`${GRID} my-1 items-center border-y border-hairline py-1 font-mono text-ui-xs tabular-nums text-zinc-400`}
                 >
                     <span className={spreadPercent > 0.05 ? 'text-amber-400' : 'text-zinc-500'}>spread</span>
                     <span className="text-right text-zinc-300">{bestAsk && bestBid ? fmtPrice(spreadValue) : '—'}</span>

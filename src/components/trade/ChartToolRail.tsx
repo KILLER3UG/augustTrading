@@ -130,7 +130,7 @@ export const ChartToolRail: React.FC<ChartToolRailProps> = ({
                which drew a second box down the left edge of the plot. It is
                the page colour now, and the one hairline on its right is what
                separates the icon column from the chart. */
-            className="absolute left-0 top-0 z-20 flex h-full w-10 flex-col items-center gap-0.5 border-r border-white/[0.06] bg-zinc-950 py-1.5"
+            className="absolute left-0 top-0 z-20 flex h-full w-10 flex-col items-center gap-0.5 border-r border-hairline bg-zinc-950 py-1.5"
         >
             <RailButton title="Cursor — pan & zoom the chart" active={tool === 'cursor'} onClick={() => onSelectTool('cursor')}>
                 <MousePointer2 className="h-4 w-4" aria-hidden="true" />
@@ -164,7 +164,7 @@ export const ChartToolRail: React.FC<ChartToolRailProps> = ({
                 {trendFlyout && (
                     <>
                         <div className="fixed inset-0 z-30" aria-hidden onClick={() => setTrendFlyout(false)} />
-                        <div className="absolute left-9 top-0 z-40 flex flex-col gap-0.5 rounded-bubble border border-white/10 bg-zinc-900 p-1 shadow-xl" data-testid="trend-flyout">
+                        <div className="absolute left-9 top-0 z-40 flex flex-col gap-0.5 rounded-bubble border border-hairline bg-zinc-900 p-1 shadow-xl" data-testid="trend-flyout">
                             <RailButton title="Trendline — click start, click end" active={tool === 'trend'} onClick={() => pick('trend')}>
                                 <TrendIcon className="h-4 w-4" aria-hidden="true" />
                             </RailButton>
@@ -192,7 +192,7 @@ export const ChartToolRail: React.FC<ChartToolRailProps> = ({
                 {moreFlyout && (
                     <>
                         <div className="fixed inset-0 z-30" aria-hidden onClick={() => setMoreFlyout(false)} />
-                        <div className="absolute left-9 top-0 z-40 flex flex-col gap-0.5 rounded-bubble border border-white/10 bg-zinc-900 p-1 shadow-xl" data-testid="more-tools-flyout">
+                        <div className="absolute left-9 top-0 z-40 flex flex-col gap-0.5 rounded-bubble border border-hairline bg-zinc-900 p-1 shadow-xl" data-testid="more-tools-flyout">
                             <RailButton title="Fib retracement — click swing low, click swing high" active={tool === 'fib'} onClick={() => pick('fib')}>
                                 <FibIcon className="h-4 w-4" aria-hidden="true" />
                             </RailButton>
@@ -232,11 +232,11 @@ export const ChartToolRail: React.FC<ChartToolRailProps> = ({
                 {paletteOpen && (
                     <>
                         <div className="fixed inset-0 z-30" aria-hidden onClick={() => setPaletteOpen(false)} />
-                        <div className="absolute left-9 bottom-0 z-40 flex flex-col gap-1 rounded-bubble border border-white/10 bg-zinc-900 p-2 shadow-xl" data-testid="rail-palette">
+                        <div className="absolute left-9 bottom-0 z-40 flex flex-col gap-1 rounded-bubble border border-hairline bg-zinc-900 p-2 shadow-xl" data-testid="rail-palette">
                             {DRAW_COLORS.map(c => (
                                 <button key={c} type="button" aria-label={`Draw with ${c}`}
                                     onClick={() => { onColorChange(c); setPaletteOpen(false); }}
-                                    className={`h-4 w-4 rounded-full border transition-transform ${color === c ? 'scale-110 border-white/60' : 'border-transparent hover:scale-105'}`}
+                                    className={`h-4 w-4 rounded-full border transition-transform ${color === c ? 'scale-110 border-line' : 'border-transparent hover:scale-105'}`}
                                     style={{ backgroundColor: c }} />
                             ))}
                         </div>

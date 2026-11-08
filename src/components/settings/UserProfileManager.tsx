@@ -89,9 +89,9 @@ const UserProfileManager: React.FC<UserProfileManagerProps> = ({ isVisible, isLo
 
   return (
     <div ref={trapRef} className="fixed inset-0 bg-black z-modal flex items-center justify-center p-4 animate-fade-in" role="dialog" aria-modal="true" aria-label="User profile selection" aria-busy={isBusy} onClick={(e) => { if (e.target === e.currentTarget && canClose && !pendingRef.current) onClose?.(); }}>
-      <div className="relative w-full max-w-md bg-zinc-900 rounded-bubble border border-white/10 shadow-2xl overflow-hidden">
+      <div className="relative w-full max-w-md bg-zinc-900 rounded-bubble border border-hairline shadow-2xl overflow-hidden">
           {/* Header */}
-          <div className="relative px-8 py-10 text-center border-b border-white/5">
+          <div className="relative px-8 py-10 text-center border-b border-hairline">
               {onClose && !isFreshBlank && (
                   <button
                       type="button"
@@ -123,7 +123,7 @@ const UserProfileManager: React.FC<UserProfileManagerProps> = ({ isVisible, isLo
                      <label className="text-ui-sm font-bold text-zinc-500 uppercase tracking-widest pl-1 block">Continue Session</label>
                      <div className="max-h-48 overflow-y-auto space-y-2 pr-1 custom-scrollbar">
                          {existingUsers.map(user => (
-                             <div key={user} className="flex items-center gap-1 rounded-control bg-zinc-800 border border-white/5 pr-2">
+                             <div key={user} className="flex items-center gap-1 rounded-control bg-zinc-800 border border-hairline pr-2">
                                  <button
                                     type="button"
                                     aria-label={`Continue session as ${user}`}
@@ -163,7 +163,7 @@ const UserProfileManager: React.FC<UserProfileManagerProps> = ({ isVisible, isLo
                         value={newUsername} 
                         onChange={(e) => { setNewUsername(e.target.value); setFormError(''); }} 
                         placeholder="Create New Workspace" 
-                        className={`w-full bg-zinc-950 border rounded-control px-5 py-4 text-white placeholder-zinc-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/50 focus:border-transparent transition-colors duration-[150ms] ease-[var(--ease-snappy)] font-medium ${formError ? 'border-rose-500/50' : 'border-white/10'}`}
+                        className={`w-full bg-zinc-950 border rounded-control px-5 py-4 text-white placeholder-zinc-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 focus:border-transparent transition-colors duration-[150ms] ease-[var(--ease-snappy)] font-medium ${formError ? 'border-rose-500/50' : 'border-hairline'}`}
                         autoFocus
                         aria-invalid={!!formError}
                         aria-describedby={formError ? 'username-error' : undefined}
@@ -180,7 +180,7 @@ const UserProfileManager: React.FC<UserProfileManagerProps> = ({ isVisible, isLo
              </form>
 
              {/* Footer Actions */}
-             <div className="pt-4 border-t border-white/5 flex justify-center">
+             <div className="pt-4 border-t border-hairline flex justify-center">
                  <input 
                      type="file"
                      disabled={isBusy}

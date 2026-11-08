@@ -33,7 +33,7 @@ const InstructionCard: React.FC<{
     const { confirm: confirmDelete, ConfirmDialogComponent } = useConfirmDialog();
 
     return (
-        <div className={`rounded-bubble border transition-[background-color,border-color,opacity,box-shadow] duration-[150ms] ease-[var(--ease-snappy)] ${instruction.isActive ? 'bg-zinc-900 border-cyan-500/30 shadow-[0_0_15px_-5px_rgba(176, 176, 182,0.1)]' : 'bg-zinc-800 border-white/5 opacity-80 hover:opacity-100'}`}>
+        <div className={`rounded-bubble border transition-[background-color,border-color,opacity,box-shadow] duration-[150ms] ease-[var(--ease-snappy)] ${instruction.isActive ? 'bg-zinc-900 border-zinc-600 shadow-[0_0_15px_-5px_rgba(176, 176, 182,0.1)]' : 'bg-zinc-800 border-hairline opacity-80 hover:opacity-100'}`}>
             <div className="p-3 flex items-center justify-between gap-3">
                 <div className="flex-1 flex items-center gap-3 min-w-0">
                     <button
@@ -49,7 +49,7 @@ const InstructionCard: React.FC<{
                                 type="text"
                                 value={instruction.title}
                                 onChange={(e) => onUpdate(instruction.id, { title: e.target.value })}
-                                className="w-full bg-zinc-950 border border-white/10 rounded-control px-2 py-1 text-ui-sm text-white font-bold focus:border-cyan-500/50 outline-none"
+                                className="w-full bg-zinc-950 border border-hairline rounded-control px-2 py-1 text-ui-sm text-white font-bold focus:border-accent/50 outline-none"
                                 placeholder="Instruction Title"
                             />
                         ) : (
@@ -83,12 +83,12 @@ const InstructionCard: React.FC<{
             {ConfirmDialogComponent}
 
             {isExpanded && (
-                <div className="px-3 pb-3 animate-fade-in border-t border-white/5 pt-3">
+                <div className="px-3 pb-3 animate-fade-in border-t border-hairline pt-3">
                     <textarea
                         value={instruction.content}
                         onChange={(e) => onUpdate(instruction.id, { content: e.target.value })}
                         placeholder="Enter instruction content..."
-                        className="w-full h-32 bg-zinc-950 border border-white/10 rounded-control p-3 text-ui-sm text-zinc-300 focus:outline-none focus:border-cyan-500/30 resize-none leading-relaxed custom-scrollbar font-mono"
+                        className="w-full h-32 bg-zinc-950 border border-hairline rounded-control p-3 text-ui-sm text-zinc-300 focus:outline-none focus:border-accent/30 resize-none leading-relaxed custom-scrollbar font-mono"
                     />
                     <div className="flex justify-end mt-2">
                         <span className="text-ui-xs text-zinc-500">
@@ -162,7 +162,7 @@ const CustomInstructionsEditor: React.FC<CustomInstructionsEditorProps> = ({
             />
 
             {/* Tabs for Mode Selection */}
-            <div className="flex space-x-1 bg-zinc-900 p-1 rounded-control border border-white/5">
+            <div className="flex space-x-1 bg-zinc-900 p-1 rounded-control border border-hairline">
                 <button
                     onClick={() => onTabChange('general')}
                     className={`flex-1 py-1.5 text-ui-xs font-bold uppercase tracking-wider rounded-control transition-colors duration-[150ms] ease-[var(--ease-snappy)] ${activeTab === 'general' ? 'bg-zinc-700 text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-300'}`}
@@ -172,7 +172,7 @@ const CustomInstructionsEditor: React.FC<CustomInstructionsEditorProps> = ({
             </div>
 
             {/* Word Count Progress */}
-            <div className="bg-zinc-800 rounded-bubble p-3 border border-white/5">
+            <div className="bg-zinc-800 rounded-bubble p-3 border border-hairline">
                 <div className="flex justify-between items-center text-ui-xs font-mono mb-1.5">
                     <span className="text-zinc-500 uppercase font-bold tracking-wider">Token Usage</span>
                     <span className={`${totalWordCount > MAX_WORD_COUNT ? 'text-rose-400 font-bold' : 'text-zinc-400'}`}>
@@ -192,7 +192,7 @@ const CustomInstructionsEditor: React.FC<CustomInstructionsEditorProps> = ({
             {/* Instruction List */}
             <div className="space-y-3">
                 {currentInstructions.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center py-10 text-center border border-dashed border-white/10 rounded-bubble">
+                    <div className="flex flex-col items-center justify-center py-10 text-center border border-dashed border-hairline rounded-bubble">
                         <span className="text-3xl mb-3"></span>
                         <p className="text-ui-sm text-zinc-600 italic">No custom instructions for this mode yet.</p>
                     </div>
@@ -212,7 +212,7 @@ const CustomInstructionsEditor: React.FC<CustomInstructionsEditorProps> = ({
             <button
                 onClick={handleAddInstruction}
                 disabled={currentInstructions.length >= MAX_ITEMS}
-                className="w-full py-3 rounded-control border border-white/10 bg-zinc-800 hover:bg-zinc-700 text-ui-sm font-bold uppercase tracking-wider text-zinc-400 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                className="w-full py-3 rounded-control border border-hairline bg-zinc-800 hover:bg-zinc-700 text-ui-sm font-bold uppercase tracking-wider text-zinc-400 hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
                 + Add New Instruction ({currentInstructions.length}/{MAX_ITEMS})
             </button>

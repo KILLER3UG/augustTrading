@@ -64,7 +64,7 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
       {icon && (
         <div
           className={[
-            'flex items-center justify-center rounded-full bg-zinc-900 border border-white/5 text-zinc-500',
+            'flex items-center justify-center rounded-full bg-zinc-900 border border-hairline text-zinc-500',
             compact ? (isSubtle ? 'mb-3 h-10 w-10' : 'mb-4 h-12 w-12') : (isSubtle ? 'mb-4 h-12 w-12' : 'mb-5 h-16 w-16'),
           ].join(' ')}
           aria-hidden="true"

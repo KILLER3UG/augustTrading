@@ -40,7 +40,7 @@ const JournalTab: React.FC<{ tab: JournalTabProps }> = ({ tab: props }) => {
                         onClose();
                         onOpenJournal?.('log');
                     }}
-                    className="mb-3.5 inline-flex items-center justify-center gap-2 rounded-control border border-white/10 bg-zinc-800 px-3 py-1.5 text-ui-dense font-semibold text-zinc-200 transition-colors hover:border-white/20 hover:bg-zinc-700 hover:text-zinc-100 active:scale-[0.98]"
+                    className="mb-3.5 inline-flex items-center justify-center gap-2 rounded-control border border-hairline bg-zinc-800 px-3 py-1.5 text-ui-dense font-semibold text-zinc-200 transition-colors hover:border-line hover:bg-zinc-700 hover:text-zinc-100 active:scale-[0.98]"
                 >
                     <span>Open Trading Journal</span>
                     <ArrowUpRight className="h-3.5 w-3.5" aria-hidden="true" />
@@ -60,7 +60,7 @@ const JournalTab: React.FC<{ tab: JournalTabProps }> = ({ tab: props }) => {
                         onClose();
                         onOpenJournal?.('log');
                     }}
-                    className="group flex flex-col rounded-bubble border border-white/[0.06] bg-zinc-800/30 p-4 text-left transition-colors hover:border-cyan-500/40 hover:bg-zinc-800/60"
+                    className="group flex flex-col rounded-bubble border border-hairline bg-zinc-800/30 p-4 text-left transition-colors hover:border-accent/40 hover:bg-zinc-800/60"
                 >
                     <div className="flex items-center justify-between w-full">
                         <span className="font-semibold text-ui-sm text-zinc-200 group-hover:text-cyan-400 transition-colors">Trade Log</span>
@@ -75,7 +75,7 @@ const JournalTab: React.FC<{ tab: JournalTabProps }> = ({ tab: props }) => {
                         onClose();
                         onOpenLearn?.('memory');
                     }}
-                    className="group flex flex-col rounded-bubble border border-white/[0.06] bg-zinc-800/30 p-4 text-left transition-colors hover:border-cyan-500/40 hover:bg-zinc-800/60"
+                    className="group flex flex-col rounded-bubble border border-hairline bg-zinc-800/30 p-4 text-left transition-colors hover:border-accent/40 hover:bg-zinc-800/60"
                 >
                     <div className="flex items-center justify-between w-full">
                         <span className="font-semibold text-ui-sm text-zinc-200 group-hover:text-cyan-400 transition-colors">Pattern Memory</span>
@@ -130,7 +130,7 @@ const JournalTab: React.FC<{ tab: JournalTabProps }> = ({ tab: props }) => {
                                 value={props.summaryCharLimit ?? 1000}
                                 onChange={e => props.onUpdateSummaryCharLimit?.(Number(e.target.value))}
                                 aria-label="Summary character limit"
-                                className="w-24 rounded-control border border-white/[0.08] bg-zinc-900 px-3 py-1.5 text-right font-mono text-ui-sm text-zinc-200 focus:border-cyan-500 focus:outline-none"
+                                className="w-24 rounded-control border border-hairline bg-zinc-900 px-3 py-1.5 text-right font-mono text-ui-sm text-zinc-200 focus:border-accent focus:outline-none"
                                 min={200}
                                 max={5000}
                                 step={100}

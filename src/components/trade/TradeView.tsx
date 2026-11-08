@@ -904,7 +904,7 @@ const TradeView: React.FC<TradeViewProps> = ({
                 dropped. The sparkline left with the merge: the live chart
                 sits directly below, and a second small chart of the same data
                 was the duplication the reference removes. */}
-            <div className="flex shrink-0 items-center gap-2 border-b border-white/[0.06] bg-zinc-950 px-3 py-2 sm:px-4">
+            <div className="flex shrink-0 items-center gap-2 border-b border-hairline bg-zinc-950 px-3 py-2 sm:px-4">
                 <div className="flex min-w-0 items-center gap-1.5">
                     <SymbolPicker symbols={symbols} value={symbol} onChange={changeSymbol}
                         onOpenScreener={() => setScreenerOpen(true)}
@@ -1069,7 +1069,7 @@ const TradeView: React.FC<TradeViewProps> = ({
                     <div
                         data-testid="trade-sidebar"
                         data-book-open={bookOpen ? 'true' : 'false'}
-                        className="shrink-0 border-t border-white/[0.06]"
+                        className="shrink-0 border-t border-hairline"
                     >
                         <button
                             type="button"

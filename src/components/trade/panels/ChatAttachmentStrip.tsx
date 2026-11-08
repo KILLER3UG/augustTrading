@@ -26,7 +26,7 @@ const ChatAttachmentStrip: React.FC<ChatAttachmentStripProps> = ({ attachments, 
                 key={a.id}
                 data-testid="chat-attachment"
                 data-attachment-loading={a.loading ? 'true' : 'false'}
-                className="flex items-center gap-1 rounded-control border border-white/10 bg-zinc-800 py-1 pl-1 pr-1.5 text-ui-xs text-zinc-300"
+                className="flex items-center gap-1 rounded-control border border-hairline bg-zinc-800 py-1 pl-1 pr-1.5 text-ui-xs text-zinc-300"
             >
                 {a.kind === 'image'
                     ? (a.loading || !a.payload

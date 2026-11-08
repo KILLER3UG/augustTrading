@@ -173,7 +173,6 @@
   --color-surface-page: #0a0a0a;    /* = zinc-950, the app's ground */
   --color-surface-panel: #141414;   /* = zinc-900, panels and the rail */
   --color-surface-raised: #1d1d1d;  /* = zinc-800, raised surfaces */
-  --color-hairline: #262626;         /* = zinc-700 — borders/dividers. The spec
                                    names this --stroke-hairline; it lives in
                                    the --color-* namespace here so it also
                                    yields a `border-hairline` utility. Opaque
@@ -183,6 +182,7 @@
   --color-ink-primary: #f4f4f4;     /* = zinc-100 */
   --color-ink-secondary: #b6b6b6;   /* = zinc-400 (see note below) */
   --color-ink-tertiary: #858585;    /* = zinc-600, the AA-tuned faint step */
+  --color-hairline: #242220;         /* = zinc-700 — borders/dividers. The spec
   --color-trade-up: #0bc67a;         /* = emerald-500 — gains, up, Long, WIN */
   --color-trade-down: #f6465d;       /* = rose-500 — losses, down, Short, LOSS */
   --color-warn: #f08800;             /* = amber-500 — warnings, watch */
@@ -194,6 +194,7 @@
      occupies, so that is what the alias points at (it is #b6b6b6 as of the
      2026-10-27 neutral re-style; before it, #9aa6b5). */
 
+  --color-line: #33312d;
   /* Type + motion + radii — 14px base sans over the self-hosted stack (Geist),
      20px bubbles / 10px controls after the 2026-10-27 re-style (they were
      Minara's chat-v2 12px / 8px), .12s snaps.
@@ -353,6 +354,7 @@
    hard-coded `text-[Npx]` sites will not, which is the argument for keeping
    new UI on the roles. */
 :root {
+  --color-line: #cfcdc4;
   --ui-font-size: 16px;
 
   /* ── The one motion clock ──────────────────────────────────────────────
@@ -691,7 +693,7 @@ body {
 .ui-panel {
   overflow: hidden;
   border-radius: var(--radius-bubble);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--color-hairline);
   background: var(--color-surface-panel);
   box-shadow: 0 1px 0 rgba(255, 255, 255, 0.025);
 }
@@ -744,15 +746,15 @@ body {
 }
 .reasoning-row[data-state="running"],
 .reasoning-row.is-open {
-  border-color: rgba(255, 255, 255, 0.06);
+  border-color: var(--color-hairline);
   background: rgba(255, 255, 255, 0.02);
 }
 /* A turn still in flight breathes at its edge. This is the one "it's working"
    read that survives when the row is collapsed under a tip line, where the
    caret and the trace body are both hidden. */
 @keyframes reasoning-live-edge {
-  0%, 100% { border-color: rgba(255, 255, 255, 0.06); }
-  50% { border-color: rgba(255, 255, 255, 0.14); }
+  0%, 100% { border-color: var(--color-hairline); }
+  50% { border-color: var(--color-line); }
 }
 .reasoning-row[data-state="running"] {
   animation: reasoning-live-edge 1.8s ease-in-out infinite;
@@ -957,7 +959,7 @@ body {
 }
 .analyzed-row .reasoning-row-body {
   padding: 0;
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--color-hairline);
   border-radius: var(--radius-bubble);
   background: rgba(255, 255, 255, 0.02);
 }
@@ -981,7 +983,7 @@ body {
 .analyzed-row .tool-row + .tool-row,
 .analyzed-row .reasoning-row + .tool-row,
 .analyzed-row .tool-row + .reasoning-row {
-  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  border-top: 1px solid var(--color-hairline);
 }
 /* The thinking row's own summary sits flush inside the card, and the trace
    body under it keeps its scroll. Sized like the reference's step rows
@@ -1087,7 +1089,7 @@ body {
   align-items: center;
   gap: 0.35rem;
   padding: 0.1rem 0.45rem;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--color-hairline);
   border-radius: 999px;
   font-size: var(--text-ui-xs);
   color: var(--color-zinc-400);
@@ -1148,7 +1150,7 @@ body {
    nav working dot, the reasoning row), where no rule of this file could
    otherwise reach it, so it is matched by attribute selector. */
 @media (prefers-reduced-motion: reduce) {
-  .reasoning-row[data-state="running"] { animation: none; border-color: rgba(255, 255, 255, 0.10); }
+  .reasoning-row[data-state="running"] { animation: none; border-color: var(--color-hairline); }
   .beacon::after { display: none; }
   [class*="animate-pulse"] { animation: none; }
 }
@@ -1158,14 +1160,14 @@ body {
    writes it through services/desk/idleMotion, which puts `motion-reduced` on
    <body> when the preference is off. */
 body.motion-reduced {
-  .reasoning-row[data-state="running"] { animation: none; border-color: rgba(255, 255, 255, 0.10); }
+  .reasoning-row[data-state="running"] { animation: none; border-color: var(--color-hairline); }
   .beacon::after { display: none; }
   [class*="animate-pulse"] { animation: none; }
 }
 
 .ui-control {
   border-radius: var(--radius-control);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--color-hairline);
   background: var(--color-zinc-800);
   color: var(--color-zinc-200);
 }
@@ -1188,7 +1190,7 @@ body.motion-reduced {
   white-space: nowrap;
   padding: 4px 8px;
   border-radius: var(--radius-control);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--color-hairline);
   background: var(--color-zinc-800);
   color: var(--color-zinc-200);
   font-size: var(--text-ui-dense);
@@ -1205,7 +1207,7 @@ body.motion-reduced {
   color: var(--color-zinc-500);
   padding: 1px 4px;
   border-radius: 4px;
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--color-hairline);
   background: rgba(255, 255, 255, 0.04);
 }
 .tip:hover > .tip-label,
@@ -1642,7 +1644,7 @@ code,
    intentionally removed; cards render on opaque zinc fills. */
 .glass {
   background: var(--color-zinc-900); /* zinc-900 */
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--color-hairline);
 }
 
 /* Reduce blur on mobile to save GPU */
@@ -1669,7 +1671,7 @@ code,
 
 .glass-panel {
   background: var(--color-zinc-800); /* zinc-800 */
-  border: 1px solid rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--color-hairline);
 }
 
 /* ===== LAYOUT ===== */
@@ -1823,7 +1825,6 @@ select[class*="focus-visible:ring"]:focus-visible,
 
   /* Target elements with low-contrast borders */
   [class*="border-white"] {
-    border-color: rgba(255, 255, 255, 0.5) !important;
   }
 
   /* Improve text contrast */
@@ -1843,10 +1844,13 @@ select[class*="focus-visible:ring"]:focus-visible,
 .custom-scrollbar {
   scrollbar-width: thin;
   scrollbar-color: var(--color-zinc-700) transparent;
+     went dead the day every raw white-alpha border became `border-hairline`.
 }
 
 .custom-scrollbar::-webkit-scrollbar {
   width: 4px;
+    --color-hairline: rgba(255, 255, 255, 0.5);
+    --color-line: rgba(255, 255, 255, 0.7);
   height: 4px;
 }
 

@@ -69,7 +69,7 @@ const DetailModal: React.FC<DetailModalProps> = ({
     return (
         <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/75 p-3 sm:p-6" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
             <div className=" flex max-h-[min(86vh,760px)] w-full max-w-3xl flex-col overflow-hidden rounded-bubble border border-cyan-400/20 bg-zinc-950 shadow-2xl" ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="detail-modal-title">
-                <div className="flex shrink-0 items-start justify-between gap-4 border-b border-white/10 bg-zinc-900/90 px-4 py-4 sm:px-6">
+                <div className="flex shrink-0 items-start justify-between gap-4 border-b border-hairline bg-zinc-900/90 px-4 py-4 sm:px-6">
                     <div className="flex min-w-0 items-start gap-3">
                         {icon ?? (
                             <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-control border border-cyan-400/20 bg-cyan-500/10 text-cyan-300"><BrainIcon className="h-4 w-4" aria-hidden="true" /></div>
@@ -84,7 +84,7 @@ const DetailModal: React.FC<DetailModalProps> = ({
                 <div className="min-h-0 flex-1 overflow-y-auto px-4 py-5 custom-scrollbar sm:px-6">
                     {children ?? (content ? <MarkdownContent content={content} className="text-ui-base leading-7 text-zinc-300" /> : <p className="text-ui-base italic text-zinc-600">This model did not return a separate reasoning trace.</p>)}
                 </div>
-                <div className="shrink-0 border-t border-white/10 px-4 py-3 text-ui-xs text-zinc-600 sm:px-6">
+                <div className="shrink-0 border-t border-hairline px-4 py-3 text-ui-xs text-zinc-600 sm:px-6">
                     {footer ?? 'Model reasoning is provided for review and may be incomplete. Press Escape to close.'}
                 </div>
             </div>

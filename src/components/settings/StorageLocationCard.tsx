@@ -60,7 +60,7 @@ export const StorageLocationCard: React.FC = () => {
 
     if (failed) {
         return (
-            <div className="rounded-bubble border border-white/5 bg-zinc-900/60 px-4 py-3" data-testid="storage-location-card">
+            <div className="rounded-bubble border border-hairline bg-zinc-900/60 px-4 py-3" data-testid="storage-location-card">
                 <p className="text-ui-xs uppercase tracking-widest text-zinc-500">Storage</p>
                 <p className="text-ui-base text-zinc-300 mt-1" data-testid="storage-location-unknown">
                     Storage location unavailable — export a backup before assuming this journal is safe.
@@ -70,7 +70,7 @@ export const StorageLocationCard: React.FC = () => {
     }
     if (!info) {
         return (
-            <div className="rounded-bubble border border-white/5 bg-zinc-900/60 px-4 py-3" data-testid="storage-location-card">
+            <div className="rounded-bubble border border-hairline bg-zinc-900/60 px-4 py-3" data-testid="storage-location-card">
                 <p className="text-ui-xs uppercase tracking-widest text-zinc-500">Storage</p>
                 <p className="text-ui-base text-zinc-500 mt-1">Checking…</p>
             </div>
@@ -82,7 +82,7 @@ export const StorageLocationCard: React.FC = () => {
         : 'IndexedDB — inside the browser profile';
 
     return (
-        <div className="rounded-bubble border border-white/5 bg-zinc-900/60 px-4 py-3" data-testid="storage-location-card">
+        <div className="rounded-bubble border border-hairline bg-zinc-900/60 px-4 py-3" data-testid="storage-location-card">
             <p className="text-ui-xs uppercase tracking-widest text-zinc-500">Storage</p>
             <p className="text-ui-base text-zinc-200 mt-1" data-testid="storage-location-value">
                 {where}

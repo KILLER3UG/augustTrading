@@ -121,8 +121,8 @@ export const VersionHistoryDashboard: React.FC = () => {
             <div className={`
         relative overflow-hidden
         bg-gradient-to-br ${config.split(' ')[0]} ${config.split(' ')[1]}
-        rounded-bubble border border-white/5
-        transition-[border-color,box-shadow,transform] duration-[150ms] ease-[var(--ease-snappy)] hover:shadow-2xl hover:border-white/10 hover:-translate-y-1
+        rounded-bubble border border-hairline
+        transition-[border-color,box-shadow,transform] duration-[150ms] ease-[var(--ease-snappy)] hover:shadow-2xl hover:border-line hover:-translate-y-1
         ${large ? 'col-span-1 md:col-span-2 row-span-2' : 'col-span-1'}
         flex flex-col group
       `}>
@@ -226,7 +226,7 @@ export const VersionHistoryDashboard: React.FC = () => {
                                             }))}
                                             aria-label="Select insight"
                                             className="w-full"
-                                            triggerClassName="w-full rounded-control border border-white/10 bg-zinc-900 px-2.5 py-1.5 text-ui-sm hover:bg-zinc-800"
+                                            triggerClassName="w-full rounded-control border border-hairline bg-zinc-900 px-2.5 py-1.5 text-ui-sm hover:bg-zinc-800"
                                         />
                                     </div>
                                     <div className="border-t border-zinc-800/80 py-2 overflow-y-auto max-h-[100px] custom-scrollbar">
@@ -315,7 +315,7 @@ export const VersionHistoryDashboard: React.FC = () => {
         <div className="flex flex-col gap-4 bg-zinc-950" data-testid="system-intelligence-embedded">
             {/* Identity + the running version — the one place this screen says
                 which build the trader is on. The Learning tab owns the chrome. */}
-            <div className="flex items-center justify-between gap-3 border-b border-white/[0.06] pb-2.5">
+            <div className="flex items-center justify-between gap-3 border-b border-hairline pb-2.5">
                 <div className="flex items-center gap-2.5">
                     <div className="rounded-control border border-zinc-700 bg-zinc-800 p-1.5">
                         <Icons.Brain className="h-4 w-4 text-zinc-300" />

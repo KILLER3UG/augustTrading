@@ -141,7 +141,7 @@ export function useConfirmDialog() {
                         className="absolute inset-0 bg-black/60"
                         onClick={handleCancel}
                     />
-                    <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="confirm-dialog-title" className="relative w-full max-w-md bg-zinc-900 border border-white/10 rounded-bubble shadow-2xl overflow-hidden animate-fade-in">
+                    <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="confirm-dialog-title" className="relative w-full max-w-md bg-zinc-900 border border-hairline rounded-bubble shadow-2xl overflow-hidden animate-fade-in">
                         <div className="p-6">
                             <div className="flex items-start gap-4">
                                 {state.destructive && (
@@ -176,7 +176,7 @@ export function useConfirmDialog() {
                                                 autoComplete="off"
                                                 spellCheck={false}
                                                 autoFocus
-                                                className="mt-1.5 w-full rounded-control border border-white/15 bg-zinc-950 px-2.5 py-1.5 font-mono text-ui-base text-zinc-100 placeholder-zinc-600 focus:border-rose-400/50 focus:outline-none"
+                                                className="mt-1.5 w-full rounded-control border border-line bg-zinc-950 px-2.5 py-1.5 font-mono text-ui-base text-zinc-100 placeholder-zinc-600 focus:border-rose-400/50 focus:outline-none"
                                                 placeholder={state.typedConfirm}
                                             />
                                         </div>
@@ -191,7 +191,7 @@ export function useConfirmDialog() {
                                 </button>
                             </div>
                         </div>
-                        <div className="px-6 py-4 bg-zinc-900 border-t border-white/5 flex items-center justify-end gap-3">
+                        <div className="px-6 py-4 bg-zinc-900 border-t border-hairline flex items-center justify-end gap-3">
                             <button
                                 onClick={handleCancel}
                                 className="px-4 py-2 text-ui-base font-medium text-zinc-300 hover:text-white rounded-control hover:bg-zinc-800 transition-colors"
@@ -218,7 +218,7 @@ export function useConfirmDialog() {
                 hears "Action completed", and the 5s grace window closes. */}
             {undoVisible && (
                 <div role="status" className="fixed bottom-4 left-1/2 -translate-x-1/2 z-[101] animate-fade-in">
-                    <div className="flex items-center gap-4 px-4 py-3 bg-zinc-800 border border-white/10 rounded-bubble shadow-2xl">
+                    <div className="flex items-center gap-4 px-4 py-3 bg-zinc-800 border border-hairline rounded-bubble shadow-2xl">
                         <span className="text-ui-base text-zinc-200">Action completed</span>
                         <button
                             type="button"

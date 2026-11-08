@@ -16,8 +16,8 @@ interface ActivityDrawerProps {
 const JobsDrawer: React.FC<ActivityDrawerProps> = ({ open, onClose }) => {
     if (!open) return null;
     return (
-        <div id="activity-drawer" data-testid="activity-drawer" className="fixed inset-y-0 right-0 z-drawer flex w-full max-w-sm flex-col border-l border-white/10 bg-zinc-950 shadow-2xl shadow-black/60 animate-fade-in">
-            <div className="flex shrink-0 items-center justify-between border-b border-white/10 px-4 py-3">
+        <div id="activity-drawer" data-testid="activity-drawer" className="fixed inset-y-0 right-0 z-drawer flex w-full max-w-sm flex-col border-l border-hairline bg-zinc-950 shadow-2xl shadow-black/60 animate-fade-in">
+            <div className="flex shrink-0 items-center justify-between border-b border-hairline px-4 py-3">
                 <p className="text-ui-dense font-bold uppercase tracking-widest text-zinc-400">Activity</p>
                 <button type="button" onClick={onClose} className="rounded-control p-1 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200 transition-colors" aria-label="Close activity">
                     <X className="h-3.5 w-3.5" aria-hidden="true" />

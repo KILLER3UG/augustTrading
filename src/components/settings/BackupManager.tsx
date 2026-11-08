@@ -242,7 +242,7 @@ export const BackupManager: React.FC<BackupManagerProps> = ({ username, onProfil
             onClick={() => fileInputRef.current?.click()}
             disabled={isImporting}
             data-testid="backup-import-button"
-            className="px-3 py-2 rounded-control border border-white/10 text-zinc-200 hover:bg-zinc-800 text-ui-sm font-bold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="px-3 py-2 rounded-control border border-hairline text-zinc-200 hover:bg-zinc-800 text-ui-sm font-bold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isImporting ? 'Reading…' : 'Import from file'}
           </button>
@@ -283,7 +283,7 @@ export const BackupManager: React.FC<BackupManagerProps> = ({ username, onProfil
             onClick={() => void handleExportMessages('md')}
             disabled={!!exportingAs}
             data-testid="export-messages-md"
-            className="px-3 py-2 rounded-control border border-white/10 text-zinc-200 hover:bg-zinc-800 text-ui-sm font-bold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="px-3 py-2 rounded-control border border-hairline text-zinc-200 hover:bg-zinc-800 text-ui-sm font-bold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {exportingAs === 'md' ? 'Writing…' : 'Markdown'}
           </button>
@@ -291,7 +291,7 @@ export const BackupManager: React.FC<BackupManagerProps> = ({ username, onProfil
             onClick={() => void handleExportMessages('csv')}
             disabled={!!exportingAs}
             data-testid="export-messages-csv"
-            className="px-3 py-2 rounded-control border border-white/10 text-zinc-200 hover:bg-zinc-800 text-ui-sm font-bold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="px-3 py-2 rounded-control border border-hairline text-zinc-200 hover:bg-zinc-800 text-ui-sm font-bold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {exportingAs === 'csv' ? 'Writing…' : 'CSV'}
           </button>
@@ -321,7 +321,7 @@ export const BackupManager: React.FC<BackupManagerProps> = ({ username, onProfil
           <p className="text-ui-sm text-zinc-600 mt-1">The next auto-backup (or "Back up now") will appear here.</p>
         </div>
       ) : (
-        <div className="divide-y divide-white/5 border border-white/5 rounded-bubble overflow-hidden">
+        <div className="divide-y divide-hairline border border-hairline rounded-bubble overflow-hidden">
           {backups.map(backup => (
             <div key={backup.id} className="flex items-center gap-3 px-4 py-3 bg-zinc-900/60 hover:bg-zinc-900 transition-colors">
               <div className="min-w-0 flex-1">

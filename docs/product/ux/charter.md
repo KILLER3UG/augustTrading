@@ -33,16 +33,18 @@ The surfaces themselves are described in [surfaces.md](surfaces.md); copy and na
       Nothing else invents a radius.
 - [ ] Borders are hairlines: `border-zinc-800/80`. No double borders — a panel inside a panel does
       not get a second frame.
-- [ ] Dividers inside one surface are `border-t border-zinc-800/80`, not a boxed sub-card.
       **Settings is the one boxed exception**: its pages are rounded cards with thin dashed
-      dividers between rows (`divide-dashed divide-white/[0.07]`), composed through
+      dividers between rows (`divide-dashed divide-hairline`), composed through
       `src/components/settings/tabs/shared.tsx` › `SettingsGroup` / `SettingsRow`.
 
 ## Reuse — do not hand-roll these
+- [ ] Borders are hairlines, and there are exactly **two**: `border-hairline` (the resting step,
+      `#242220` — the reference's `--hair`) and `border-line` (`#33312d`, its `--hair-2`), which a
 
 | You need | Use |
 |---|---|
 | a state chip / pill | `StatusPill` (`tone: up \| down \| warn \| info \| neutral`, `kicker` for micro-caps) |
+- [ ] Dividers inside one surface are `border-t border-hairline`, not a boxed sub-card.
 | an empty view | `EmptyState` |
 | a tooltip | `Tip` (it carries `shortcut=`; the key hint must be in the accessible name too) |
 | a dropdown | `SelectMenu` |

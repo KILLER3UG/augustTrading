@@ -253,7 +253,7 @@ const StrategiesManager: React.FC<StrategiesManagerProps> = ({
                         <button
                             type="button"
                             onClick={onOpenStrategyStudio}
-                            className="inline-flex items-center gap-1.5 rounded-control border border-white/10 bg-zinc-800 px-3 py-1.5 text-ui-sm font-medium text-zinc-100 transition-colors hover:border-white/20 hover:bg-zinc-700"
+                            className="inline-flex items-center gap-1.5 rounded-control border border-hairline bg-zinc-800 px-3 py-1.5 text-ui-sm font-medium text-zinc-100 transition-colors hover:border-line hover:bg-zinc-700"
                         >
                             Strategy Studio
                         </button>
@@ -303,7 +303,7 @@ const StrategiesManager: React.FC<StrategiesManagerProps> = ({
                 ) : docs.map(doc => {
                     const isExpanded = expandedId === doc.id;
                     return (
-                        <div key={doc.id} className={`rounded-bubble border transition-colors ${isExpanded ? 'border-cyan-500/30 bg-zinc-900' : 'border-white/5 bg-zinc-900/60 hover:border-white/10'}`}>
+                        <div key={doc.id} className={`rounded-bubble border transition-colors ${isExpanded ? 'border-zinc-700 bg-zinc-900' : 'border-hairline bg-zinc-900/60 hover:border-line'}`}>
                             <button
                                 type="button"
                                 onClick={() => openEditor(doc)}
@@ -347,7 +347,7 @@ const StrategiesManager: React.FC<StrategiesManagerProps> = ({
                                             <button
                                                 type="button"
                                                 onClick={() => handleToggleDoc(doc)}
-                                                className="px-3 py-1.5 rounded-control border border-white/10 text-zinc-400 hover:text-zinc-200 hover:border-white/20 text-ui-xs font-bold uppercase tracking-widest transition-colors"
+                                                className="px-3 py-1.5 rounded-control border border-hairline text-zinc-400 hover:text-zinc-200 hover:border-line text-ui-xs font-bold uppercase tracking-widest transition-colors"
                                             >
                                                 {doc.enabled ? 'Disable' : 'Enable'}
                                             </button>
@@ -355,7 +355,7 @@ const StrategiesManager: React.FC<StrategiesManagerProps> = ({
                                                 type="button"
                                                 onClick={() => handleResummarize(doc)}
                                                 disabled={isProcessing}
-                                                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-control border border-white/10 text-zinc-400 hover:text-zinc-200 hover:border-white/20 disabled:opacity-50 text-ui-xs font-bold uppercase tracking-widest transition-colors"
+                                                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-control border border-hairline text-zinc-400 hover:text-zinc-200 hover:border-line disabled:opacity-50 text-ui-xs font-bold uppercase tracking-widest transition-colors"
                                             >
                                                 <RefreshIcon className="w-3 h-3" aria-hidden="true" />
                                                 Re-summarize

@@ -43,7 +43,7 @@ export const LessonsSection: React.FC<LessonsSectionProps> = ({ topLessons, clos
     }), [topLessons, closedWindowed, lessonRegimeFilter, lessonPnlThreshold]);
 
     return (
-        <div className="bg-zinc-800 rounded-bubble border border-white/5 p-3 sm:p-4">
+        <div className="bg-zinc-800 rounded-bubble border border-hairline p-3 sm:p-4">
             <h4 className="text-ui-xs sm:text-ui-sm font-bold text-zinc-500 uppercase tracking-wider mb-2 sm:mb-3">Top Lessons (outcome-weighted)</h4>
             {topLessons.length === 0 ? (
                 <p className="text-ui-sm text-zinc-600 italic">Log at least 2 trades on the same coin + direction to see clusters.</p>
@@ -53,7 +53,7 @@ export const LessonsSection: React.FC<LessonsSectionProps> = ({ topLessons, clos
                         const matches = lessonMatches[i] ?? [];
                         const isOpen = expandedLesson === i;
                         return (
-                            <div key={i} className="rounded-control border border-white/5 bg-zinc-950/40 px-2.5 py-2">
+                            <div key={i} className="rounded-control border border-hairline bg-zinc-950/40 px-2.5 py-2">
                                 <div className="flex items-center justify-between text-ui-base">
                                     <span className="text-zinc-300 truncate pr-2 flex items-center gap-1.5" title={`${l.label} ×${l.count}`}>
                                         {l.kind === 'loss' ? (
@@ -85,7 +85,7 @@ export const LessonsSection: React.FC<LessonsSectionProps> = ({ topLessons, clos
                                             <button
                                                 onClick={() => setLessonRegimeFilter('all')}
                                                 className={`px-1.5 py-0.5 rounded-control text-ui-2xs font-bold uppercase tracking-wider border transition-colors ${
-                                                    lessonRegimeFilter === 'all' ? 'bg-cyan-500/20 border-cyan-500/30 text-cyan-400' : 'bg-zinc-900 border-white/10 text-zinc-500 hover:text-zinc-300'
+                                                    lessonRegimeFilter === 'all' ? 'bg-zinc-800 border-transparent text-zinc-100' : 'bg-zinc-900 border-hairline text-zinc-500 hover:text-zinc-300'
                                                 }`}
                                             >
                                                 all regimes
@@ -95,7 +95,7 @@ export const LessonsSection: React.FC<LessonsSectionProps> = ({ topLessons, clos
                                                     key={r}
                                                     onClick={() => setLessonRegimeFilter(prev => prev === r ? 'all' : r)}
                                                     className={`px-1.5 py-0.5 rounded-control text-ui-2xs font-bold uppercase tracking-wider border transition-colors ${
-                                                        lessonRegimeFilter === r ? 'bg-cyan-500/20 border-cyan-500/30 text-cyan-400' : 'bg-zinc-900 border-white/10 text-zinc-500 hover:text-zinc-300'
+                                                        lessonRegimeFilter === r ? 'bg-zinc-800 border-transparent text-zinc-100' : 'bg-zinc-900 border-hairline text-zinc-500 hover:text-zinc-300'
                                                     }`}
                                                 >
                                                     {r}
@@ -104,7 +104,7 @@ export const LessonsSection: React.FC<LessonsSectionProps> = ({ topLessons, clos
                                             <button
                                                 onClick={() => setLessonPnlThreshold(v => !v)}
                                                 className={`px-1.5 py-0.5 rounded-control text-ui-2xs font-bold uppercase tracking-wider border transition-colors ${
-                                                    lessonPnlThreshold ? 'bg-rose-500/20 border-rose-500/30 text-rose-400' : 'bg-zinc-900 border-white/10 text-zinc-500 hover:text-zinc-300'
+                                                    lessonPnlThreshold ? 'bg-rose-500/20 border-rose-500/30 text-rose-400' : 'bg-zinc-900 border-hairline text-zinc-500 hover:text-zinc-300'
                                                 }`}
                                             >
                                                 ≤ −2% only
@@ -114,7 +114,7 @@ export const LessonsSection: React.FC<LessonsSectionProps> = ({ topLessons, clos
                                             <p className="text-ui-xs text-zinc-600 italic">No trades match these filters in the current time window.</p>
                                         ) : (
                                             matches.slice(-8).map(t => (
-                                                <div key={t.id} className="flex items-center justify-between rounded-control bg-zinc-900/60 border border-white/5 px-2 py-1 text-ui-xs font-mono tabular-nums">
+                                                <div key={t.id} className="flex items-center justify-between rounded-control bg-zinc-900/60 border border-hairline px-2 py-1 text-ui-xs font-mono tabular-nums">
                                                     <span className="text-zinc-400 truncate pr-2" title={`${new Date(decidedAtOf(t)).toLocaleDateString()} · ${t.analysis?.direction} · ${t.marketRegime ?? '?'}`}>
                                                         {new Date(decidedAtOf(t)).toLocaleDateString()} · {t.analysis?.direction}
                                                         <span className="text-zinc-600"> · {t.marketRegime ?? '?'}</span>

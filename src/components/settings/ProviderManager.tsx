@@ -578,21 +578,21 @@ const ProviderManager: React.FC<ProviderManagerProps> = ({
                 <div className="flex items-center gap-1.5">
                     <button
                         onClick={() => { if (selected) void refreshCatalog(selected, false); }}
-                        className="motion-press rounded-control border border-white/10 p-1.5 text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-300"
+                        className="motion-press rounded-control border border-hairline p-1.5 text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-300"
                         title="Refresh model catalogs"
                         aria-label="Refresh model catalogs"
                     >
                         <RefreshCw className="h-4 w-4" aria-hidden="true" />
                     </button>
                     <button type="button" onClick={() => setShowAddProvider(true)}
-                        className="motion-press rounded-control border border-white/10 bg-zinc-100 px-2.5 py-1.5 text-ui-dense font-semibold text-zinc-950 transition-colors hover:bg-zinc-200">
+                        className="motion-press rounded-control border border-hairline bg-zinc-100 px-2.5 py-1.5 text-ui-dense font-semibold text-zinc-950 transition-colors hover:bg-zinc-200">
                         + Add provider
                     </button>
                 </div>
             </div>
 
-            <div className="grid min-h-[540px] w-full overflow-hidden rounded-card border border-white/[0.07] bg-zinc-900/40 md:grid-cols-[280px_minmax(0,1fr)]">
-                <div className="flex flex-col border-b border-white/[0.07] p-3 md:border-b-0 md:border-r">
+            <div className="grid min-h-[540px] w-full overflow-hidden rounded-card border border-hairline bg-zinc-900/40 md:grid-cols-[280px_minmax(0,1fr)]">
+                <div className="flex flex-col border-b border-hairline p-3 md:border-b-0 md:border-r">
                     <div className="min-h-0 flex-1 space-y-5 overflow-y-auto custom-scrollbar">
                         {([
                             { title: 'Providers', items: configs.filter(c => c.isBuiltIn) },
@@ -600,7 +600,7 @@ const ProviderManager: React.FC<ProviderManagerProps> = ({
                         ] as const).filter(section => section.title === 'Custom providers' || section.items.length > 0).map(section => (
                             <div key={section.title}>
                                 <h5 className="mb-2 px-2 font-mono text-ui-xs font-medium uppercase tracking-[0.08em] text-zinc-500">{section.title}</h5>
-                                <div className="motion-list divide-y divide-dashed divide-white/[0.07]">
+                                <div className="motion-list divide-y divide-dashed divide-hairline">
                                     {section.items.map(c => {
                                         const isSelectedRow = selected?.id === c.id && !showAddProvider;
                                         const isReady = isProviderReady(c);
@@ -776,7 +776,7 @@ const ProviderManager: React.FC<ProviderManagerProps> = ({
 
                             <div>
                                 <FieldLabel>Model list</FieldLabel>
-                                <div className="motion-list max-h-[320px] min-h-[168px] divide-y divide-dashed divide-white/[0.07] overflow-y-auto custom-scrollbar">
+                                <div className="motion-list max-h-[320px] min-h-[168px] divide-y divide-dashed divide-hairline overflow-y-auto custom-scrollbar">
                                     {listedModels.map((m) => {
                                         const isSelectedModel = draftModel === m;
                                         const isEditingThis = editingModelId === m;

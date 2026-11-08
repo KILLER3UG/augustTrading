@@ -296,7 +296,7 @@ const MemoryFilesManager: React.FC<MemoryFilesManagerProps> = ({
                     </p>
                     <div className="mt-2 space-y-1.5">
                         {corruptSidecars.map(s => (
-                            <div key={s.key} className="flex items-center justify-between gap-3 rounded-control border border-white/10 bg-zinc-900/60 px-2.5 py-1.5">
+                            <div key={s.key} className="flex items-center justify-between gap-3 rounded-control border border-hairline bg-zinc-900/60 px-2.5 py-1.5">
                                 <span className="font-mono text-ui-xs text-zinc-400">
                                     {s.capturedAt ? new Date(s.capturedAt).toLocaleString() : s.key}
                                     {s.reason ? ` · ${s.reason}` : ''}

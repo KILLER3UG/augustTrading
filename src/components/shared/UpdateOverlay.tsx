@@ -207,7 +207,7 @@ const UpdateOverlay: React.FC = () => {
                                     <summary className="cursor-pointer text-ui-sm font-semibold uppercase tracking-wider text-zinc-500 transition-colors hover:text-zinc-300">
                                         What's new in v{version}
                                     </summary>
-                                    <div className="mt-2 max-h-44 overflow-y-auto rounded-control border border-white/[0.06] bg-zinc-950/60 p-3 text-ui-dense leading-5 text-zinc-400 custom-scrollbar">
+                                    <div className="mt-2 max-h-44 overflow-y-auto rounded-control border border-hairline bg-zinc-950/60 p-3 text-ui-dense leading-5 text-zinc-400 custom-scrollbar">
                                         {notes.map(renderNoteLine)}
                                     </div>
                                 </details>

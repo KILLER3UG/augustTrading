@@ -111,7 +111,7 @@ const ToastContainer: React.FC = () => {
                 <button
                     type="button"
                     onClick={() => setExpanded(true)}
-                    className="pointer-events-auto self-start rounded-full border border-white/10 bg-zinc-900/90 px-2.5 py-1 text-ui-xs font-semibold text-zinc-400 shadow-lg transition-colors hover:text-zinc-200"
+                    className="pointer-events-auto self-start rounded-full border border-hairline bg-zinc-900/90 px-2.5 py-1 text-ui-xs font-semibold text-zinc-400 shadow-lg transition-colors hover:text-zinc-200"
                 >
                     +{hiddenCount} more
                 </button>
@@ -181,7 +181,7 @@ const ToastItem: React.FC<{ toast: Toast; onDismiss: () => void }> = ({ toast, o
 
     return (
         <div
-            className={`pointer-events-auto relative overflow-hidden rounded-card border border-white/[0.08] bg-zinc-900/95 p-4 shadow-2xl shadow-black/50 backdrop-blur-xl ${leaving ? 'motion-toast-out' : 'motion-toast-in'}`}
+            className={`pointer-events-auto relative overflow-hidden rounded-card border border-hairline bg-zinc-900/95 p-4 shadow-2xl shadow-black/50 backdrop-blur-xl ${leaving ? 'motion-toast-out' : 'motion-toast-in'}`}
             onMouseEnter={() => setPaused(true)}
             onMouseLeave={() => setPaused(false)}
             onFocus={() => setPaused(true)}

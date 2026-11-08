@@ -52,7 +52,7 @@ const InlineVerdict: React.FC<{
                 )}
                 <span className="truncate text-ui-caption font-semibold text-zinc-100" title={a.coinName ?? 'setup'}>{a.coinName ?? 'setup'}</span>
                 {a.rrRatio && (
-                    <span className="rounded-control border border-white/[0.04] bg-white/[0.04] px-1.5 py-0.5 font-mono text-ui-xs font-medium text-zinc-300">
+                    <span className="rounded-control border border-hairline bg-white/[0.04] px-1.5 py-0.5 font-mono text-ui-xs font-medium text-zinc-300">
                         {fmtRiskReward(a.rrRatio, 1)} R:R
                     </span>
                 )}
@@ -66,7 +66,7 @@ const InlineVerdict: React.FC<{
                     </span>
                 )}
             </div>
-            <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 rounded-control border border-white/[0.04] bg-white/[0.02] p-2.5">
+            <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 rounded-control border border-hairline bg-white/[0.02] p-2.5">
                 <VerdictLine label="entry" value={a.entryPoints?.[0]?.price ?? '—'} />
                 <VerdictLine label="stop" value={a.stopLoss ?? '—'} />
                 <VerdictLine label="target" value={a.takeProfit?.[0]?.price ?? '—'} />

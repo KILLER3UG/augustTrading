@@ -31,12 +31,12 @@ export const SetupLifecycleCard: React.FC<SetupLifecycleCardProps> = ({ analysis
     const isTerminalException = lifecycle.stage === 'expired' || lifecycle.stage === 'skipped';
 
     return (
-        <section className={`${embedded ? 'border-t border-white/5' : 'rounded-bubble border'} ${isTerminalException && !embedded ? 'border-amber-500/25 bg-amber-950/15' : embedded ? '' : 'border-white/10 bg-zinc-900/70'} ${compact ? 'px-4 py-3' : 'mb-4 px-4 py-4'}`} aria-label="Setup lifecycle">
+        <section className={`${embedded ? 'border-t border-hairline' : 'rounded-bubble border'} ${isTerminalException && !embedded ? 'border-amber-500/25 bg-amber-950/15' : embedded ? '' : 'border-hairline bg-zinc-900/70'} ${compact ? 'px-4 py-3' : 'mb-4 px-4 py-4'}`} aria-label="Setup lifecycle">
             <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                     <div className="flex items-center gap-2">
                         <span className="ui-kicker">Setup lifecycle</span>
-                        <span className="rounded-control border border-white/10 bg-zinc-800 px-2 py-0.5 text-ui-xs text-zinc-200">{lifecycle.label}</span>
+                        <span className="rounded-control border border-hairline bg-zinc-800 px-2 py-0.5 text-ui-xs text-zinc-200">{lifecycle.label}</span>
                     </div>
                     <p className="mt-1 text-ui-sm text-zinc-300">{lifecycle.summary}</p>
                 </div>

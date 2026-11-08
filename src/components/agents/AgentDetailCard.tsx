@@ -67,7 +67,7 @@ const AgentDetailCard: React.FC<AgentDetailCardProps> = ({ bot, skillsAuthored, 
             {trace && (
                 <section>
                     <h3 className="mb-1.5 text-ui-2xs font-semibold uppercase tracking-widest text-zinc-500">Its last thinking</h3>
-                    <div className="rounded-control border border-white/[0.06] bg-zinc-900/60 px-3 py-2.5">
+                    <div className="rounded-control border border-hairline bg-zinc-900/60 px-3 py-2.5">
                         <MarkdownContent content={trace} className="text-ui-dense leading-6 text-zinc-400" />
                     </div>
                 </section>

@@ -54,7 +54,7 @@ const ChatHistoryPalette: React.FC<ChatHistoryPaletteProps> = ({
     onQueryChange, onSelChange, onSelect, onDelete, onShowAll, onClose,
 }) => (
     <div className="absolute inset-0 z-40 flex items-start justify-center bg-black/50 px-6 pt-20" data-testid="chat-history-backdrop" onClick={onClose}>
-        <div className="w-full max-w-sm overflow-hidden rounded-bubble border border-white/10 bg-zinc-900 shadow-2xl" data-testid="chat-history" onClick={e => e.stopPropagation()}>
+        <div className="w-full max-w-sm overflow-hidden rounded-bubble border border-hairline bg-zinc-900 shadow-2xl" data-testid="chat-history" onClick={e => e.stopPropagation()}>
             <input
                 autoFocus
                 value={query}
@@ -67,7 +67,7 @@ const ChatHistoryPalette: React.FC<ChatHistoryPaletteProps> = ({
                 }}
                 placeholder="Search all conversations…"
                 aria-label="Search all conversations"
-                className="w-full border-b border-white/[0.06] bg-transparent px-4 py-3 text-ui-sm text-zinc-100 placeholder:text-zinc-600 focus:outline-none"
+                className="w-full border-b border-hairline bg-transparent px-4 py-3 text-ui-sm text-zinc-100 placeholder:text-zinc-600 focus:outline-none"
             />
             <div className="max-h-72 overflow-y-auto custom-scrollbar px-1 pb-1">
                 <p className="px-3 py-1 text-ui-xs text-zinc-600">Recent</p>
@@ -96,7 +96,7 @@ const ChatHistoryPalette: React.FC<ChatHistoryPaletteProps> = ({
                     </button>
                 )}
             </div>
-            <div className="flex items-center justify-between border-t border-white/[0.06] px-4 py-2 text-ui-xs text-zinc-600">
+            <div className="flex items-center justify-between border-t border-hairline px-4 py-2 text-ui-xs text-zinc-600">
                 <span>↑↓ to navigate</span>
                 <span>↵ to select</span>
             </div>

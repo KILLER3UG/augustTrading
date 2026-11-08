@@ -144,7 +144,7 @@ const dataUrlToFile = (dataUrl: string, filename: string): File => {
 const SurfaceSkeleton: React.FC = () => (
     <div className="flex h-full min-h-0 w-full flex-col gap-3 bg-zinc-950 p-4" role="status" aria-label="Loading">
         <div className="h-8 w-40 animate-pulse rounded-control bg-zinc-900" />
-        <div className="flex-1 animate-pulse rounded-bubble border border-white/[0.06] bg-zinc-900" />
+        <div className="flex-1 animate-pulse rounded-bubble border border-hairline bg-zinc-900" />
     </div>
 );
 

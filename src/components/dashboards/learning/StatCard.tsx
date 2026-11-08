@@ -14,7 +14,7 @@ export const StatCard: React.FC<{
     items: StatCardItem[];
     emptyText?: string;
 }> = ({ title, items, emptyText = 'Not enough data' }) => (
-    <div className="bg-zinc-800 rounded-bubble border border-white/5 p-3 sm:p-4">
+    <div className="bg-zinc-800 rounded-bubble border border-hairline p-3 sm:p-4">
         <h4 className="text-ui-xs sm:text-ui-sm font-bold text-zinc-500 uppercase tracking-wider mb-2 sm:mb-3">{title}</h4>
         {items.length > 0 ? (
             <div className="space-y-2">

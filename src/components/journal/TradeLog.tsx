@@ -172,7 +172,7 @@ const TradeDetailView: React.FC<{
                                         {/* Outcome correction — segmented buttons
                                             (the old <select> dropdown is gone). */}
                                         {onUpdateOutcome && (
-                                            <div className="flex items-center gap-1 ml-2 pl-2 border-l border-white/10 flex-wrap">
+                                            <div className="flex items-center gap-1 ml-2 pl-2 border-l border-hairline flex-wrap">
                                                 <span className="text-ui-xs text-zinc-400">Outcome:</span>
                                                 {[TradeOutcome.WIN, TradeOutcome.LOSS, TradeOutcome.ENTRY_NOT_HIT, TradeOutcome.SKIPPED].map(o => (
                                                     <button
@@ -184,8 +184,8 @@ const TradeDetailView: React.FC<{
                                                                     ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300'
                                                                     : o === TradeOutcome.LOSS
                                                                         ? 'bg-rose-500/20 border-rose-500/40 text-rose-300'
-                                                                        : 'bg-zinc-700 border-white/20 text-zinc-200'
-                                                                : 'bg-zinc-800 border-white/10 text-zinc-500 hover:text-zinc-300'
+                                                                        : 'bg-zinc-700 border-line text-zinc-200'
+                                                                : 'bg-zinc-800 border-hairline text-zinc-500 hover:text-zinc-300'
                                                         }`}
                                                         title={`Set outcome to ${o === TradeOutcome.ENTRY_NOT_HIT ? 'NO ENTRY' : o}`}
                                                     >
@@ -204,7 +204,7 @@ const TradeDetailView: React.FC<{
                                             what makes the label stick: the classifier
                                             skips any trade that already carries one. */}
                                         {onUpdateType && (
-                                            <div className="flex items-center gap-1 ml-2 pl-2 border-l border-white/10" data-testid="trade-type-editor">
+                                            <div className="flex items-center gap-1 ml-2 pl-2 border-l border-hairline" data-testid="trade-type-editor">
                                                 <span className="text-ui-xs text-zinc-400">Class:</span>
                                                 {(['scalp', 'swing'] as const).map(tt => (
                                                     <button
@@ -217,8 +217,8 @@ const TradeDetailView: React.FC<{
                                                             : 'Auto-detected — set it yourself'}
                                                         className={`px-1.5 py-0.5 rounded-control text-ui-2xs font-bold uppercase tracking-wider border transition-colors duration-[150ms] ease-[var(--ease-snappy)] ${
                                                             (trade.tradeType || analysis?.tradeType) === tt
-                                                                ? 'bg-zinc-700 border-white/20 text-zinc-100'
-                                                                : 'bg-zinc-800 border-white/10 text-zinc-500 hover:text-zinc-300'
+                                                                ? 'bg-zinc-700 border-line text-zinc-100'
+                                                                : 'bg-zinc-800 border-hairline text-zinc-500 hover:text-zinc-300'
                                                         }`}
                                                     >
                                                         {tt === 'scalp' ? '◆ scalp' : '◇ swing'}
@@ -233,14 +233,14 @@ const TradeDetailView: React.FC<{
                                         {/* PnL editing — dollar amount + leveraged percent
                                             (autopilot trades only carry the percent). */}
                                         {onUpdatePnL && (
-                                            <div className="flex items-center gap-1.5 ml-2 pl-2 border-l border-white/10">
+                                            <div className="flex items-center gap-1.5 ml-2 pl-2 border-l border-hairline">
                                                 <span className="text-ui-xs text-zinc-400">PnL $</span>
                                                 <input
                                                     type="number"
                                                     value={pnlDraftAmount}
                                                     onChange={(e) => setPnlDraftAmount(e.target.value)}
                                                     placeholder={pnlAmount !== undefined ? undefined : '—'}
-                                                    className="w-20 bg-zinc-800 border border-white/10 rounded-control px-1.5 py-0.5 text-ui-xs font-mono text-zinc-300 outline-none focus:border-cyan-500/40"
+                                                    className="w-20 bg-zinc-800 border border-hairline rounded-control px-1.5 py-0.5 text-ui-xs font-mono text-zinc-300 outline-none focus:border-accent/40"
                                                     aria-label="PnL in dollars"
                                                 />
                                                 <span className="text-ui-xs text-zinc-400">%</span>
@@ -249,7 +249,7 @@ const TradeDetailView: React.FC<{
                                                     value={pnlDraftPercent}
                                                     onChange={(e) => setPnlDraftPercent(e.target.value)}
                                                     placeholder={pnlPercent !== undefined ? undefined : '—'}
-                                                    className="w-14 bg-zinc-800 border border-white/10 rounded-control px-1.5 py-0.5 text-ui-xs font-mono text-zinc-300 outline-none focus:border-cyan-500/40"
+                                                    className="w-14 bg-zinc-800 border border-hairline rounded-control px-1.5 py-0.5 text-ui-xs font-mono text-zinc-300 outline-none focus:border-accent/40"
                                                     aria-label="PnL as leveraged percent"
                                                 />
                                                 <button
@@ -337,7 +337,7 @@ const TradeDetailView: React.FC<{
 
                                 {correctedEntry && <div className="col-span-2 bg-amber-500/10 p-2 rounded-control border border-amber-500/20 text-amber-200 font-medium">Corrected Entry: {correctedEntry}</div>}
 
-                                <div className="col-span-2 text-ui-2xs text-zinc-600 pt-3 mt-1 border-t border-white/5 flex justify-between uppercase tracking-wider">
+                                <div className="col-span-2 text-ui-2xs text-zinc-600 pt-3 mt-1 border-t border-hairline flex justify-between uppercase tracking-wider">
                                     <span>Analyst: {(() => {
                                         const usedEntries = modelsUsed && Object.keys(modelsUsed).length > 0 ? Object.entries(modelsUsed) : [];
                                         if (usedEntries.length > 0) {

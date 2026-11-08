@@ -143,7 +143,7 @@ export const Header: React.FC<HeaderProps> = memo(({
     };
 
     return (
-        <header className="sticky top-0 z-20 flex-shrink-0 border-b border-white/[0.06] bg-zinc-950/90 backdrop-blur px-3 sm:px-5 pt-[calc(env(safe-area-inset-top,0px)+0px)]">
+        <header className="sticky top-0 z-20 flex-shrink-0 border-b border-hairline bg-zinc-950/90 backdrop-blur px-3 sm:px-5 pt-[calc(env(safe-area-inset-top,0px)+0px)]">
             <div className="flex h-14 items-stretch justify-between gap-3">
                 <div className="flex min-w-0 items-stretch gap-2 sm:gap-4">
                     {onToggleNavRail && (
@@ -190,7 +190,7 @@ export const Header: React.FC<HeaderProps> = memo(({
                         <div className="static sm:relative" ref={sessionModalRef}>
                             <button
                                 onClick={() => setIsSessionModalOpen(!isSessionModalOpen)}
-                                className="flex items-center gap-1.5 hit-target rounded-full border border-transparent px-2 py-1 text-ui-xs font-medium text-zinc-400 whitespace-nowrap transition-colors duration-[150ms] ease-[var(--ease-snappy)] hover:border-white/[0.08] hover:bg-white/[0.04] hover:text-zinc-200 focus-visible:ring-2 focus-visible:ring-zinc-500"
+                                className="flex items-center gap-1.5 hit-target rounded-full border border-transparent px-2 py-1 text-ui-xs font-medium text-zinc-400 whitespace-nowrap transition-colors duration-[150ms] ease-[var(--ease-snappy)] hover:border-line hover:bg-white/[0.04] hover:text-zinc-200 focus-visible:ring-2 focus-visible:ring-zinc-500"
                                 aria-expanded={isSessionModalOpen}
                                 aria-controls="session-details-popover"
                                 aria-haspopup="dialog"
@@ -204,11 +204,11 @@ export const Header: React.FC<HeaderProps> = memo(({
                             {/* Session Details Modal — a disclosure, not
                                 a modal: see the no-trap note above. */}
                             {isSessionModalOpen && (
-                                     <div id="session-details-popover" role="dialog" aria-label="Session details" className="absolute top-full left-0 sm:left-auto sm:right-0 mt-4 sm:mt-2 w-80 bg-zinc-900 border border-white/10 rounded-bubble shadow-2xl overflow-hidden z-drawer animate-fade-in">
+                                     <div id="session-details-popover" role="dialog" aria-label="Session details" className="absolute top-full left-0 sm:left-auto sm:right-0 mt-4 sm:mt-2 w-80 bg-zinc-900 border border-hairline rounded-bubble shadow-2xl overflow-hidden z-drawer animate-fade-in">
                                     <div className="p-3 bg-zinc-900">
                                         {/* Live Market Conditions Section */}
                                         {liveMarketConditions && (
-                                            <div className="mb-3 p-2 bg-zinc-800 rounded-control border border-white/5">
+                                            <div className="mb-3 p-2 bg-zinc-800 rounded-control border border-hairline">
                                                 <div className="flex items-center justify-between mb-1.5">
                                                     <div className="text-ui-xs font-bold text-zinc-300 uppercase tracking-wider flex items-center gap-1">
                                                         <span className="w-1.5 h-1.5 rounded-full bg-zinc-300 animate-pulse" />
@@ -262,7 +262,7 @@ export const Header: React.FC<HeaderProps> = memo(({
                                             ))}
                                         </div>
                                         {sessionContext.warnings.length > 0 && (
-                                            <div className="mt-3 pt-2 border-t border-white/5">
+                                            <div className="mt-3 pt-2 border-t border-hairline">
                                                 <div className="flex items-center gap-1.5 text-amber-400 mb-1">
                                                     <ActivityIcon className="w-3 h-3" aria-hidden="true" />
                                                     <span className="text-ui-xs font-bold">Market Condition</span>
@@ -273,7 +273,7 @@ export const Header: React.FC<HeaderProps> = memo(({
                                             </div>
                                         )}
                                         {(onOpenLiveMarket || (onOpenVisionData && hasVisionData)) && (
-                                            <div className="mt-3 flex items-center gap-3 border-t border-white/5 pt-2">
+                                            <div className="mt-3 flex items-center gap-3 border-t border-hairline pt-2">
                                                 {onOpenLiveMarket && (
                                                     <button type="button" data-testid="session-open-live-market"
                                                         onClick={() => { setIsSessionModalOpen(false); onOpenLiveMarket(); }}

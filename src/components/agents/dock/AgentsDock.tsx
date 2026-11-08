@@ -114,14 +114,14 @@ const AgentsDock: React.FC<AgentsDockProps> = ({ isOpen, onClose, symbol, interv
             onResizeReset={panel.resetWidth}
             label="Chat workspace"
             testId="agents-dock"
-            className="border-l border-white/[0.06] bg-zinc-900 lg:w-[var(--panel-w)]"
+            className="border-l border-hairline bg-zinc-900 lg:w-[var(--panel-w)]"
         >
             <div className="flex min-h-0 flex-1">
                 {/* Vertical icon rail — the active icon carries a filled state,
                     a ring and an ink mark, so it is unmistakable at 44px. */}
                 <div role="tablist" aria-orientation="vertical" aria-label="Workspace views"
                     data-testid="agents-dock-rail"
-                    className="flex w-11 shrink-0 flex-col items-center gap-1 border-r border-white/[0.06] py-2">
+                    className="flex w-11 shrink-0 flex-col items-center gap-1 border-r border-hairline py-2">
                     {DOCK_TABS.map(tab => {
                         const active = activeId === tab.id;
                         return (
@@ -144,7 +144,7 @@ const AgentsDock: React.FC<AgentsDockProps> = ({ isOpen, onClose, symbol, interv
                             </button>
                         );
                     })}
-                    <div className="mt-auto flex flex-col items-center gap-1 border-t border-white/[0.06] pt-2">
+                    <div className="mt-auto flex flex-col items-center gap-1 border-t border-hairline pt-2">
                         <button type="button" onClick={() => switchMode('all')}
                             aria-label="Open all tabs at once" aria-pressed={mode === 'all'}
                             title="All tabs open" data-testid="dock-mode-all"
@@ -166,7 +166,7 @@ const AgentsDock: React.FC<AgentsDockProps> = ({ isOpen, onClose, symbol, interv
 
                 {/* Panel */}
                 <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-                    <header className="flex shrink-0 items-center gap-2 border-b border-white/[0.06] px-3 py-2">
+                    <header className="flex shrink-0 items-center gap-2 border-b border-hairline px-3 py-2">
                         <div className="min-w-0 flex-1">
                             <p className="truncate text-ui-sm font-medium text-zinc-200">{activeDef.label}</p>
                             <p className="truncate text-ui-2xs text-zinc-500">{activeDef.description}</p>
@@ -183,7 +183,7 @@ const AgentsDock: React.FC<AgentsDockProps> = ({ isOpen, onClose, symbol, interv
                     {openIds.length > 1 && (
                         <div role="tablist" aria-label="Open workspace tabs"
                             data-testid="dock-open-tabs"
-                            className="flex shrink-0 items-center gap-1 overflow-x-auto border-b border-white/[0.06] px-2 py-1.5 custom-scrollbar">
+                            className="flex shrink-0 items-center gap-1 overflow-x-auto border-b border-hairline px-2 py-1.5 custom-scrollbar">
                             {openIds.map(id => {
                                 const def = DOCK_TABS.find(t => t.id === id);
                                 if (!def) return null;

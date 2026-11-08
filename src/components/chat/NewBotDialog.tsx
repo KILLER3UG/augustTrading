@@ -98,7 +98,7 @@ export const NewBotDialog: React.FC<NewBotDialogProps> = ({ open, onClose, onCre
 
     return (
         <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/60 p-4" ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label="New Bot">
-            <div className="max-h-[92vh] w-full max-w-lg overflow-y-auto rounded-bubble border border-white/10 bg-zinc-950 p-6 shadow-2xl" data-testid="new-bot-dialog">
+            <div className="max-h-[92vh] w-full max-w-lg overflow-y-auto rounded-bubble border border-hairline bg-zinc-950 p-6 shadow-2xl" data-testid="new-bot-dialog">
                 <div className="flex items-start justify-between">
                     <div>
                         <h2 className="text-lg font-semibold text-zinc-100">New Bot</h2>
@@ -152,7 +152,7 @@ export const NewBotDialog: React.FC<NewBotDialogProps> = ({ open, onClose, onCre
                                 data-testid="face-auto"
                                 aria-label="Auto face (follows the name)"
                                 className={`flex h-11 w-11 items-center justify-center rounded-control border text-ui-xs font-semibold uppercase tracking-wide ${
-                                    face === 'auto' ? 'border-zinc-400 bg-zinc-800 text-zinc-200' : 'border-white/10 text-zinc-500 hover:border-white/25'
+                                    face === 'auto' ? 'border-zinc-400 bg-zinc-800 text-zinc-200' : 'border-hairline text-zinc-500 hover:border-line'
                                 }`}
                             >
                                 Auto
@@ -167,7 +167,7 @@ export const NewBotDialog: React.FC<NewBotDialogProps> = ({ open, onClose, onCre
                                     className={`flex h-11 w-11 items-center justify-center rounded-control border ${
                                         face !== 'auto' && face.shape === spec.shape && face.hue === spec.hue
                                             ? 'border-zinc-400 bg-zinc-800'
-                                            : 'border-transparent hover:border-white/25'
+                                            : 'border-transparent hover:border-line'
                                     }`}
                                 >
                                     <BotFace face={spec} name={previewName} size={34} />
@@ -198,7 +198,7 @@ export const NewBotDialog: React.FC<NewBotDialogProps> = ({ open, onClose, onCre
                                     data-testid={`upload-shape-${spec.shape}`}
                                     aria-label={`${spec.shape} clip`}
                                     className={`flex h-11 w-11 items-center justify-center rounded-control border ${
-                                        uploadShape === spec.shape ? 'border-zinc-400 bg-zinc-800' : 'border-transparent hover:border-white/25'
+                                        uploadShape === spec.shape ? 'border-zinc-400 bg-zinc-800' : 'border-transparent hover:border-line'
                                     }`}
                                 >
                                     <BotFace face={spec} name={previewName} size={34} uploadSrc={uploadSrc ?? undefined} />
@@ -206,7 +206,7 @@ export const NewBotDialog: React.FC<NewBotDialogProps> = ({ open, onClose, onCre
                             ))}
                         </div>
                         <div className="mt-3 flex items-center justify-center">
-                            <label className="cursor-pointer rounded-control border border-white/10 bg-zinc-900 px-3 py-1.5 text-ui-sm font-medium text-zinc-300 hover:border-white/25 hover:text-zinc-100">
+                            <label className="cursor-pointer rounded-control border border-hairline bg-zinc-900 px-3 py-1.5 text-ui-sm font-medium text-zinc-300 hover:border-line hover:text-zinc-100">
                                 {uploadSrc ? 'Replace image…' : 'Upload image…'}
                                 <input
                                     type="file"
@@ -259,7 +259,7 @@ export const NewBotDialog: React.FC<NewBotDialogProps> = ({ open, onClose, onCre
                                     data-testid={`pixel-${role}`}
                                     aria-label={`Pixel ${role}`}
                                     className={`flex h-11 w-11 items-center justify-center rounded-control border ${
-                                        pixelRole === role ? 'border-zinc-400 bg-zinc-800' : 'border-transparent hover:border-white/25'
+                                        pixelRole === role ? 'border-zinc-400 bg-zinc-800' : 'border-transparent hover:border-line'
                                     }`}
                                 >
                                     <PixelAvatarFigure role={role} size={34} />
@@ -280,7 +280,7 @@ export const NewBotDialog: React.FC<NewBotDialogProps> = ({ open, onClose, onCre
                             onChange={e => setName(e.target.value)}
                             placeholder="inbox-triage"
                             data-testid="bot-name"
-                            className="w-full rounded-control border border-white/10 bg-zinc-900 px-3 py-2 text-ui-caption text-zinc-100 placeholder-zinc-600 outline-none focus:border-white/30"
+                            className="w-full rounded-control border border-hairline bg-zinc-900 px-3 py-2 text-ui-caption text-zinc-100 placeholder-zinc-600 outline-none focus:border-line"
                         />
                     </div>
                     <div>
@@ -290,7 +290,7 @@ export const NewBotDialog: React.FC<NewBotDialogProps> = ({ open, onClose, onCre
                             value={title}
                             onChange={e => setTitle(e.target.value)}
                             placeholder="Inbox Triage"
-                            className="w-full rounded-control border border-white/10 bg-zinc-900 px-3 py-2 text-ui-caption text-zinc-100 placeholder-zinc-600 outline-none focus:border-white/30"
+                            className="w-full rounded-control border border-hairline bg-zinc-900 px-3 py-2 text-ui-caption text-zinc-100 placeholder-zinc-600 outline-none focus:border-line"
                         />
                     </div>
                     <div>
@@ -301,14 +301,14 @@ export const NewBotDialog: React.FC<NewBotDialogProps> = ({ open, onClose, onCre
                             onChange={e => setDescription(e.target.value)}
                             placeholder="What should this Bot help with?"
                             rows={3}
-                            className="w-full resize-none rounded-control border border-white/10 bg-zinc-900 px-3 py-2 text-ui-caption text-zinc-100 placeholder-zinc-600 outline-none focus:border-white/30"
+                            className="w-full resize-none rounded-control border border-hairline bg-zinc-900 px-3 py-2 text-ui-caption text-zinc-100 placeholder-zinc-600 outline-none focus:border-line"
                         />
                     </div>
 
                     {/* Trader instructions — the bot's whole persona now: the
                         built-in analyst roles are gone, so what is written here
                         IS the mandate. Empty = the general-analyst default. */}
-                    <div className="space-y-3 rounded-control border border-white/10 bg-zinc-900/50 p-3">
+                    <div className="space-y-3 rounded-control border border-hairline bg-zinc-900/50 p-3">
                         <div>
                             <span className="mb-1 block text-ui-dense font-semibold uppercase tracking-widest text-zinc-500">Trader instructions</span>
                             <textarea
@@ -317,7 +317,7 @@ export const NewBotDialog: React.FC<NewBotDialogProps> = ({ open, onClose, onCre
                                 placeholder="Leave empty for the general-analyst default (full market analysis, web + tools)"
                                 rows={3}
                                 data-testid="bot-instructions"
-                                className="w-full resize-y rounded-control border border-white/10 bg-zinc-900 px-3 py-2 text-ui-sm leading-relaxed text-zinc-100 placeholder-zinc-600 outline-none focus:border-white/30"
+                                className="w-full resize-y rounded-control border border-hairline bg-zinc-900 px-3 py-2 text-ui-sm leading-relaxed text-zinc-100 placeholder-zinc-600 outline-none focus:border-line"
                             />
                             <p className="mt-1 text-ui-dense leading-snug text-zinc-600">
                                 Used as the bot persona wherever it answers. Empty means the general-analyst default.
@@ -335,7 +335,7 @@ export const NewBotDialog: React.FC<NewBotDialogProps> = ({ open, onClose, onCre
                         {advancedOpen ? '▾' : '▸'} Advanced
                     </button>
                     {advancedOpen && (
-                        <div className="space-y-3 rounded-control border border-white/10 bg-zinc-900/50 p-3">
+                        <div className="space-y-3 rounded-control border border-hairline bg-zinc-900/50 p-3">
                             <div>
                                 <span className="mb-1 block text-ui-dense font-semibold uppercase tracking-widest text-zinc-500">Shared notebook</span>
                                 <label className="flex items-start gap-2 text-ui-sm text-zinc-300">
@@ -359,7 +359,7 @@ export const NewBotDialog: React.FC<NewBotDialogProps> = ({ open, onClose, onCre
                                     value={providerId}
                                     onChange={setProviderId}
                                     options={readyProviders.map(p => ({ value: p.id, label: p.name }))}
-                                    triggerClassName="w-full rounded-control border border-white/10 bg-zinc-900 px-3 py-2 text-ui-caption hover:bg-zinc-800"
+                                    triggerClassName="w-full rounded-control border border-hairline bg-zinc-900 px-3 py-2 text-ui-caption hover:bg-zinc-800"
                                 />
                             </div>
                             <div>
@@ -370,7 +370,7 @@ export const NewBotDialog: React.FC<NewBotDialogProps> = ({ open, onClose, onCre
                                     value={effectiveModel}
                                     onChange={setModelId}
                                     options={(provider?.models ?? []).map(m => ({ value: m, label: formatModelDisplayName(m) }))}
-                                    triggerClassName="w-full rounded-control border border-white/10 bg-zinc-900 px-3 py-2 text-ui-caption hover:bg-zinc-800"
+                                    triggerClassName="w-full rounded-control border border-hairline bg-zinc-900 px-3 py-2 text-ui-caption hover:bg-zinc-800"
                                 />
                             </div>
                             <p className="text-ui-dense leading-snug text-zinc-600">

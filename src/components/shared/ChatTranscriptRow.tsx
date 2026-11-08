@@ -198,7 +198,7 @@ const ChatTranscriptRow: React.FC<ChatTranscriptRowProps> = ({
                    changing the words that produced the answer below them, and
                    sending them through the composer would ask a NEW question
                    while leaving this one's wording on screen. */
-                <div className="w-full rounded-bubble border border-white/[0.09] bg-surface-raised p-2.5">
+                <div className="w-full rounded-bubble border border-hairline bg-surface-raised p-2.5">
                     <textarea
                         autoFocus
                         rows={3}

@@ -125,7 +125,7 @@ export const DiagnosticsPanel: React.FC = () => {
             {leaks.length > 0 ? (
                 <ul className="space-y-2">
                     {leaks.map((entry, index) => (
-                        <li key={`${entry.at}-${index}`} className="rounded-bubble border border-white/10 bg-zinc-950/50 p-3">
+                        <li key={`${entry.at}-${index}`} className="rounded-bubble border border-hairline bg-zinc-950/50 p-3">
                             <p className="text-ui-xs text-zinc-600">
                                 {entry.at ? new Date(entry.at).toLocaleString() : 'Unknown time'}
                             </p>

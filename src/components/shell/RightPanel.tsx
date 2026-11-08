@@ -105,7 +105,7 @@ const RightPanel: React.FC<RightPanelProps> = ({
                     role="tablist"
                     aria-label={`${label} panels`}
                     data-testid="right-panel-tabs"
-                    className="flex shrink-0 items-center gap-1 border-b border-white/[0.06] px-2 pt-2"
+                    className="flex shrink-0 items-center gap-1 border-b border-hairline px-2 pt-2"
                 >
                     {openDocks.map(dock => {
                         const selected = dock.id === activeId;
@@ -154,7 +154,7 @@ const RightPanel: React.FC<RightPanelProps> = ({
                        the dock — and the chart side went flat in E-56, so the
                        two halves of one window no longer matched. The grab
                        target keeps its width; only the paint changes. */
-                    className="hidden w-1.5 shrink-0 cursor-col-resize touch-none items-center justify-center border-l border-white/[0.06] text-zinc-600 transition-colors hover:text-zinc-300 lg:flex"
+                    className="hidden w-1.5 shrink-0 cursor-col-resize touch-none items-center justify-center border-l border-hairline text-zinc-600 transition-colors hover:text-zinc-300 lg:flex"
                 >
                     <span aria-hidden className="block h-6 w-px bg-current opacity-60" />
                 </div>

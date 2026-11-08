@@ -154,7 +154,7 @@ export const ToolActionsRow: React.FC<ToolActionsRowProps> = ({ actions }) => {
                                 </span>
                             )}
                         </summary>
-                        <div className="mb-1 mt-1 space-y-0.5 border-l border-white/10 pl-4">
+                        <div className="mb-1 mt-1 space-y-0.5 border-l border-hairline pl-4">
                             {g.items.map((a, i) => {
                                 // The ONE undo the chip style carries: a memory
                                 // the model just saved can be taken back right
@@ -185,7 +185,7 @@ export const ToolActionsRow: React.FC<ToolActionsRowProps> = ({ actions }) => {
                                                         }
                                                     })();
                                                 }}
-                                                className="shrink-0 rounded-control border border-white/10 px-1.5 py-px text-ui-2xs font-bold uppercase tracking-wider text-zinc-400 transition-colors duration-[120ms] ease-[var(--ease-snappy)] hover:bg-zinc-800 hover:text-zinc-200 disabled:cursor-not-allowed disabled:opacity-40"
+                                                className="shrink-0 rounded-control border border-hairline px-1.5 py-px text-ui-2xs font-bold uppercase tracking-wider text-zinc-400 transition-colors duration-[120ms] ease-[var(--ease-snappy)] hover:bg-zinc-800 hover:text-zinc-200 disabled:cursor-not-allowed disabled:opacity-40"
                                             >
                                                 {undone ? 'Undone' : 'Undo'}
                                             </button>

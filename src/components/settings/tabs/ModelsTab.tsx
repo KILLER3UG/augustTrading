@@ -73,7 +73,7 @@ const ModelsTab: React.FC<{ tab: ModelsTabProps }> = ({ tab: props }) => {
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {readyConfigProviders.length > 0 && (
-                    <div className="rounded-bubble border border-white/[0.07] bg-zinc-900/50 p-4">
+                    <div className="rounded-bubble border border-hairline bg-zinc-900/50 p-4">
                         <div className="mb-2 text-ui-dense font-semibold uppercase tracking-[0.08em] text-zinc-500">
                             Vision Model
                         </div>
@@ -89,7 +89,7 @@ const ModelsTab: React.FC<{ tab: ModelsTabProps }> = ({ tab: props }) => {
                     </div>
                 )}
 
-                <div className="rounded-bubble border border-white/[0.07] bg-zinc-900/50 p-4">
+                <div className="rounded-bubble border border-hairline bg-zinc-900/50 p-4">
                     <div className="mb-2 text-ui-dense font-semibold uppercase tracking-[0.08em] text-zinc-500">
                         Memory Model
                     </div>

@@ -18,7 +18,7 @@ export const ProfileHeader: React.FC<{
     return (
         <>
             {/* Header */}
-            <div className="text-center pb-3 sm:pb-4 border-b border-white/5">
+            <div className="text-center pb-3 sm:pb-4 border-b border-hairline">
                 <h2 className="text-ui-lg sm:text-lg font-bold text-cyan-400 mb-1">AI Learning Profile</h2>
                 <p className="text-ui-xs sm:text-ui-sm text-zinc-500">
                     Based on {profile.totalAnalyzedTrades} analyzed trades

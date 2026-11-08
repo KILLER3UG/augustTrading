@@ -53,7 +53,7 @@ const FilesView: React.FC = () => {
     return (
         <div className="flex h-full min-h-0 flex-col">
             <div className="shrink-0 px-3 pb-2 pt-3">
-                <div className="flex items-center gap-2 rounded-control border border-white/[0.07] bg-zinc-800/70 px-2.5 py-1.5 transition-colors focus-within:border-white/20">
+                <div className="flex items-center gap-2 rounded-control border border-hairline bg-zinc-800/70 px-2.5 py-1.5 transition-colors focus-within:border-line">
                     <Search className="h-3.5 w-3.5 shrink-0 text-zinc-500" aria-hidden="true" />
                     <input value={query} onChange={e => setQuery(e.target.value)}
                         placeholder="Filter files" aria-label="Filter workspace files"
@@ -68,7 +68,7 @@ const FilesView: React.FC = () => {
                         title={needle ? 'No files match that filter' : 'No notebook files yet'}
                         description={needle ? 'Clear the filter to see every file.' : 'Notes the desk writes will appear here.'} />
                 ) : (
-                    <ul className="motion-list divide-y divide-dashed divide-white/[0.07] rounded-card border border-white/[0.06] bg-zinc-900/40">
+                    <ul className="motion-list divide-y divide-dashed divide-hairline rounded-card border border-hairline bg-zinc-900/40">
                         {visible.map(row => (
                             <li key={row.id}>
                                 <button type="button" onClick={() => setSelectedId(row.id)}
@@ -90,7 +90,7 @@ const FilesView: React.FC = () => {
                     </ul>
                 )}
                 {selected && (
-                    <div className="mt-3 motion-pop rounded-card border border-white/[0.06] bg-zinc-900/40 p-3">
+                    <div className="mt-3 motion-pop rounded-card border border-hairline bg-zinc-900/40 p-3">
                         <p className="mb-2 flex items-center gap-1.5 font-mono text-ui-xs uppercase tracking-[0.08em] text-zinc-500">
                             <FileText className="h-3 w-3" aria-hidden="true" /> {selected.name}
                         </p>
@@ -132,7 +132,7 @@ const ChartFallback: React.FC = () => (
 
 export const ChartView: React.FC<DockChartProps> = ({ symbol, interval, onIntervalChange }) => (
     <div className="flex h-full min-h-0 flex-col">
-        <div className="flex shrink-0 items-center gap-2 border-b border-white/[0.06] px-3 py-1.5">
+        <div className="flex shrink-0 items-center gap-2 border-b border-hairline px-3 py-1.5">
             <span className="font-mono text-ui-2xs text-zinc-400">{symbol}</span>
             <StatusPill tone="neutral" kicker>snapshot</StatusPill>
         </div>
@@ -149,7 +149,7 @@ export const LiveView: React.FC<DockChartProps> = ({ symbol, interval, onInterva
     const isLive = feed.status === 'live';
     return (
         <div className="flex h-full min-h-0 flex-col">
-            <div className="flex shrink-0 items-center gap-2 border-b border-white/[0.06] px-3 py-1.5">
+            <div className="flex shrink-0 items-center gap-2 border-b border-hairline px-3 py-1.5">
                 <span className="font-mono text-ui-2xs text-zinc-400">{symbol}</span>
                 <StatusPill tone={isLive ? 'up' : 'warn'} kicker>{isLive ? 'live' : feed.status}</StatusPill>
                 {feed.ticker && (
@@ -197,7 +197,7 @@ export const EvidenceView: React.FC<{ symbol: string }> = ({ symbol }) => {
     return (
         <div className="h-full overflow-y-auto p-3 custom-scrollbar">
             <p className="mb-2 font-mono text-ui-xs uppercase tracking-[0.08em] text-zinc-500">Desk state</p>
-            <div className="motion-list divide-y divide-dashed divide-white/[0.07] rounded-card border border-white/[0.06] bg-zinc-900/40 px-3">
+            <div className="motion-list divide-y divide-dashed divide-hairline rounded-card border border-hairline bg-zinc-900/40 px-3">
                 <div className="flex items-center justify-between gap-2 py-2.5">
                     <span className="text-ui-dense text-zinc-400">Active instrument</span>
                     <span className="font-mono text-ui-dense tabular-nums text-zinc-200">{symbol}</span>

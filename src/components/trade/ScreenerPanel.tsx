@@ -88,7 +88,7 @@ const ScreenerRowView = React.memo<ScreenerRowViewProps>(({
     <tr
         data-testid={`screener-row-${symbol}`}
         onClick={() => onSelect(symbol)}
-        className="cursor-pointer border-b border-white/[0.03] transition-colors hover:bg-white/[0.04]"
+        className="cursor-pointer border-b border-hairline transition-colors hover:bg-white/[0.04]"
     >
         <td className="px-4 py-1.5">
             <span className="font-mono font-bold text-zinc-100">{display}</span>
@@ -267,11 +267,11 @@ export const ScreenerPanel: React.FC<ScreenerPanelProps> = ({ open, onClose, onC
                 aria-label="Market screener"
                 tabIndex={-1}
                 data-testid="screener-panel"
-                className="fixed left-1/2 top-1/2 z-modal flex max-h-[82vh] w-[min(880px,94vw)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-bubble border border-white/10 bg-zinc-900 shadow-2xl focus:outline-none"
+                className="fixed left-1/2 top-1/2 z-modal flex max-h-[82vh] w-[min(880px,94vw)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-bubble border border-hairline bg-zinc-900 shadow-2xl focus:outline-none"
             >
-                <div className="flex shrink-0 items-center gap-3 border-b border-white/[0.06] px-4 py-2.5">
+                <div className="flex shrink-0 items-center gap-3 border-b border-hairline px-4 py-2.5">
                     <h2 className="text-ui-caption font-bold text-zinc-100">Screener</h2>
-                    <div className="flex min-w-0 flex-1 items-center gap-2 rounded-control border border-white/10 bg-zinc-800 px-2 py-1">
+                    <div className="flex min-w-0 flex-1 items-center gap-2 rounded-control border border-hairline bg-zinc-800 px-2 py-1">
                         <Search className="h-3 w-3 shrink-0 text-zinc-500" aria-hidden="true" />
                         <input
                             value={query}
@@ -285,7 +285,7 @@ export const ScreenerPanel: React.FC<ScreenerPanelProps> = ({ open, onClose, onC
                         type="button"
                         onClick={() => setSetupsOnly(s => !s)}
                         aria-pressed={setupsOnly}
-                        className={`shrink-0 rounded-full border px-2 py-0.5 text-ui-xs font-semibold transition-colors ${setupsOnly ? 'border-amber-500/40 bg-amber-500/10 text-amber-300' : 'border-white/10 text-zinc-400 hover:text-zinc-200'}`}
+                        className={`shrink-0 rounded-full border px-2 py-0.5 text-ui-xs font-semibold transition-colors ${setupsOnly ? 'border-amber-500/40 bg-amber-500/10 text-amber-300' : 'border-hairline text-zinc-400 hover:text-zinc-200'}`}
                     >
                         Setups only
                     </button>
@@ -300,7 +300,7 @@ export const ScreenerPanel: React.FC<ScreenerPanelProps> = ({ open, onClose, onC
                             setSetupsOnly(!on);
                             setSort(on ? { key: 'volume', desc: true } : { key: 'best', desc: true });
                         }}
-                        className={`shrink-0 rounded-full border px-2 py-0.5 text-ui-xs font-semibold transition-colors ${sort.key === 'best' ? 'border-amber-500/40 bg-amber-500/10 text-amber-300' : 'border-white/10 text-zinc-400 hover:text-zinc-200'}`}
+                        className={`shrink-0 rounded-full border px-2 py-0.5 text-ui-xs font-semibold transition-colors ${sort.key === 'best' ? 'border-amber-500/40 bg-amber-500/10 text-amber-300' : 'border-hairline text-zinc-400 hover:text-zinc-200'}`}
                     >
                         Best setups
                     </button>
@@ -312,7 +312,7 @@ export const ScreenerPanel: React.FC<ScreenerPanelProps> = ({ open, onClose, onC
                 <div className="min-h-0 flex-1 overflow-y-auto custom-scrollbar">
                     <table className="w-full border-collapse text-ui-dense">
                         <thead className="sticky top-0 bg-zinc-900">
-                            <tr className="border-b border-white/[0.06]">
+                            <tr className="border-b border-hairline">
                                 {sortTh('volume', 'Symbol', 'px-4 py-1.5')}
                                 {plainTh('Price')}
                                 {sortTh('movers', '24h')}
@@ -349,7 +349,7 @@ export const ScreenerPanel: React.FC<ScreenerPanelProps> = ({ open, onClose, onC
                         </tbody>
                     </table>
                 </div>
-                <div className="flex shrink-0 items-center gap-2 border-t border-white/[0.06] px-4 py-1.5 text-ui-xs text-zinc-500">
+                <div className="flex shrink-0 items-center gap-2 border-t border-hairline px-4 py-1.5 text-ui-xs text-zinc-500">
                     {running && <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />}
                     <span>
                         {running

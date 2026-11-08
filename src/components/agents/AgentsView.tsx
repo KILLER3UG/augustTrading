@@ -1191,7 +1191,7 @@ const AgentsView: React.FC<AgentsViewProps> = ({
                             message, so they live in the composer now. */}
                         <div
                             data-testid="chat-header"
-                            className="flex shrink-0 items-center gap-3 border-b border-white/[0.06] bg-zinc-900/25 px-4 py-2"
+                            className="flex shrink-0 items-center gap-3 border-b border-hairline bg-zinc-900/25 px-4 py-2"
                         >
                             {/* The shell's ONE rail toggle, on the title row
                                 like every other surface. It follows the WHOLE
@@ -1290,7 +1290,7 @@ const AgentsView: React.FC<AgentsViewProps> = ({
                         <div ref={scroller} onScroll={onScrollerScroll} className="h-full overflow-y-auto custom-scrollbar px-4">
                             {thread.length === 0 ? (
                                 <div className="chat-column flex flex-col items-center justify-center px-6 py-4 text-center">
-                                    <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-bubble border border-white/[0.08] bg-zinc-900/80 text-zinc-300 shadow-lg">
+                                    <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-bubble border border-hairline bg-zinc-900/80 text-zinc-300 shadow-lg">
                                         <Bot className="h-5 w-5" aria-hidden="true" />
                                     </div>
                                     <p className="mb-2 text-ui-2xs font-semibold uppercase tracking-[0.16em] text-zinc-500">Your market research desk</p>
@@ -1313,7 +1313,7 @@ const AgentsView: React.FC<AgentsViewProps> = ({
                                                     key={item.label}
                                                     type="button"
                                                     onClick={() => { setText(item.prompt); composerRef.current?.focus(); }}
-                                                    className="rounded-bubble border border-white/[0.07] bg-zinc-900/75 px-3.5 py-3 text-left shadow-sm transition-colors hover:border-white/[0.14] hover:bg-zinc-800/80"
+                                                    className="rounded-bubble border border-hairline bg-zinc-900/75 px-3.5 py-3 text-left shadow-sm transition-colors hover:border-line hover:bg-zinc-800/80"
                                                 >
                                                     <span className="block text-ui-caption font-medium text-zinc-200">{item.label}</span>
                                                     <span className="mt-1 block text-ui-dense text-zinc-500">{item.detail}</span>
@@ -1492,7 +1492,7 @@ const AgentsView: React.FC<AgentsViewProps> = ({
                                 <button type="button"
                                     onClick={() => { onRestoreParked(); }}
                                     aria-label="Bring the parked turns back"
-                                    className="shrink-0 rounded-full border border-white/10 px-2.5 py-1 text-ui-xs text-zinc-300 transition-colors hover:bg-white/[0.06] hover:text-zinc-100">
+                                    className="shrink-0 rounded-full border border-hairline px-2.5 py-1 text-ui-xs text-zinc-300 transition-colors hover:bg-white/[0.06] hover:text-zinc-100">
                                     Bring them back
                                 </button>
                             </div>
@@ -1530,7 +1530,7 @@ const AgentsView: React.FC<AgentsViewProps> = ({
                                     />
                                 </div>
                             </div>
-                            <div data-testid="chat-composer" className="rounded-bubble border border-white/[0.09] bg-surface-raised p-3 shadow-xl transition-colors focus-within:border-cyan-500/40">
+                            <div data-testid="chat-composer" className="rounded-bubble border border-hairline bg-surface-raised p-3 shadow-xl transition-colors focus-within:border-accent/40">
                                 <input type="file" multiple accept="image/*" className="hidden"
                                     ref={fileInputRef} data-testid="composer-file"
                                     onChange={e => { attachFiles(e.target.files); e.target.value = ''; }} />

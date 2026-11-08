@@ -147,7 +147,7 @@ export const DataCaptureModal: React.FC<DataCaptureModalProps> = ({
         <div ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label="Capture trade data" className=" fixed inset-0 bg-black/70 z-modal flex items-center justify-center p-4 outline-none">
             <div className={`bg-zinc-900 rounded-bubble shadow-2xl w-full max-w-lg border ${colors.border} animate-fade-in`}>
                 {/* Header */}
-                <div className={`p-5 border-b border-white/5 ${colors.bg}`}>
+                <div className={`p-5 border-b border-hairline ${colors.bg}`}>
                     <div className="flex items-center gap-3">
                         <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-control border ${colors.border} ${colors.bg}`}>
                             {isWin ? (
@@ -170,7 +170,7 @@ export const DataCaptureModal: React.FC<DataCaptureModalProps> = ({
                 </div>
 
                 {/* P/L Input Section */}
-                <div className="p-5 border-b border-white/5">
+                <div className="p-5 border-b border-hairline">
                     <div className="space-y-4">
                         {/* Main P/L Input */}
                         <div>
@@ -185,7 +185,7 @@ export const DataCaptureModal: React.FC<DataCaptureModalProps> = ({
                                     value={pnl}
                                     onChange={e => setPnl(e.target.value)}
                                     placeholder="250"
-                                    className="w-full bg-zinc-800 border border-white/10 rounded-control pl-8 pr-4 py-3 text-white font-mono text-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/50 focus:border-cyan-500/50 transition-colors duration-[150ms] ease-[var(--ease-snappy)]"
+                                    className="w-full bg-zinc-800 border border-hairline rounded-control pl-8 pr-4 py-3 text-white font-mono text-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50 focus:border-accent/50 transition-colors duration-[150ms] ease-[var(--ease-snappy)]"
                                     autoFocus
                                 />
                             </div>
@@ -196,7 +196,7 @@ export const DataCaptureModal: React.FC<DataCaptureModalProps> = ({
 
                         {/* Entry Point Selector - shown when multiple entries exist */}
                         {hasMultipleEntries && (
-                            <div className="pt-3 border-t border-white/5">
+                            <div className="pt-3 border-t border-hairline">
                                 <label className="block text-ui-base font-medium text-zinc-300 mb-2">
                                      Which entry was triggered?
                                 </label>
@@ -261,7 +261,7 @@ export const DataCaptureModal: React.FC<DataCaptureModalProps> = ({
                                     value={correctedValue}
                                     onChange={e => setCorrectedValue(e.target.value)}
                                     placeholder={content.advancedPlaceholder}
-                                    className="w-full bg-zinc-800 border border-white/10 rounded-control px-3 py-2 text-white text-ui-base focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/50"
+                                    className="w-full bg-zinc-800 border border-hairline rounded-control px-3 py-2 text-white text-ui-base focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/50"
                                 />
                                 <p className="mt-1.5 text-ui-sm text-zinc-500">{content.advancedHelp}</p>
                             </div>
@@ -309,7 +309,7 @@ export const DataCaptureModal: React.FC<DataCaptureModalProps> = ({
                     <button
                         onClick={handleSkip}
                         disabled={isCapturing || !isPnlValid}
-                        className="w-full p-3 rounded-control border border-white/5 bg-zinc-800 hover:bg-zinc-800 hover:border-white/10 transition-colors duration-[150ms] ease-[var(--ease-snappy)] text-center disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="w-full p-3 rounded-control border border-hairline bg-zinc-800 hover:bg-zinc-800 hover:border-line transition-colors duration-[150ms] ease-[var(--ease-snappy)] text-center disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                         <span className="text-ui-base text-zinc-500 hover:text-zinc-400 transition-colors">
                             Log without data capture →
@@ -318,7 +318,7 @@ export const DataCaptureModal: React.FC<DataCaptureModalProps> = ({
 
                     {/* Discipline quick-tags (Batch 5): optional — everything
                         here feeds the adherence/mistake-cost analytics. */}
-                    <div className="rounded-control border border-white/5 bg-zinc-900/60 px-3 py-2.5">
+                    <div className="rounded-control border border-hairline bg-zinc-900/60 px-3 py-2.5">
                         <div className="text-ui-2xs font-bold uppercase tracking-widest text-zinc-500 mb-1.5">Tags (optional)</div>
                         <div className="flex flex-wrap gap-1.5">
                             {MISTAKE_TAGS.map(t => (
@@ -328,8 +328,8 @@ export const DataCaptureModal: React.FC<DataCaptureModalProps> = ({
                                     onClick={() => toggleMistakeTag(t.id)}
                                     className={`rounded-control border px-2 py-0.5 text-ui-xs font-medium transition-colors ${
                                         mistakeTags.includes(t.id)
-                                            ? 'border-white/25 bg-zinc-700 text-zinc-100'
-                                            : 'border-white/10 bg-zinc-800 text-zinc-500 hover:text-zinc-300'
+                                            ? 'border-line bg-zinc-700 text-zinc-100'
+                                            : 'border-hairline bg-zinc-800 text-zinc-500 hover:text-zinc-300'
                                     }`}
                                 >
                                     {t.label}
@@ -345,8 +345,8 @@ export const DataCaptureModal: React.FC<DataCaptureModalProps> = ({
                                     onClick={() => setEmotionalState(cur => cur === s ? null : s)}
                                     className={`rounded-control border px-2 py-0.5 text-ui-xs font-medium capitalize transition-colors ${
                                         emotionalState === s
-                                            ? 'border-white/25 bg-zinc-700 text-zinc-100'
-                                            : 'border-white/10 bg-zinc-800 text-zinc-500 hover:text-zinc-300'
+                                            ? 'border-line bg-zinc-700 text-zinc-100'
+                                            : 'border-hairline bg-zinc-800 text-zinc-500 hover:text-zinc-300'
                                     }`}
                                 >
                                     {s}
@@ -362,8 +362,8 @@ export const DataCaptureModal: React.FC<DataCaptureModalProps> = ({
                                     onClick={() => setFollowedPlan(cur => cur === v ? null : v)}
                                     className={`rounded-control border px-2 py-0.5 text-ui-xs font-medium transition-colors ${
                                         followedPlan === v
-                                            ? 'border-white/25 bg-zinc-700 text-zinc-100'
-                                            : 'border-white/10 bg-zinc-800 text-zinc-500 hover:text-zinc-300'
+                                            ? 'border-line bg-zinc-700 text-zinc-100'
+                                            : 'border-hairline bg-zinc-800 text-zinc-500 hover:text-zinc-300'
                                     }`}
                                 >
                                     {v ? 'Yes' : 'No'}
@@ -385,8 +385,8 @@ export const DataCaptureModal: React.FC<DataCaptureModalProps> = ({
                                             onClick={() => toggleChecklistItem(item.id)}
                                             className={`flex items-center gap-2 rounded-control border px-2 py-1 text-left text-ui-xs font-medium transition-colors ${
                                                 checklistChecked.has(item.id)
-                                                    ? 'border-white/25 bg-zinc-700 text-zinc-100'
-                                                    : 'border-white/10 bg-zinc-800 text-zinc-500 hover:text-zinc-300'
+                                                    ? 'border-line bg-zinc-700 text-zinc-100'
+                                                    : 'border-hairline bg-zinc-800 text-zinc-500 hover:text-zinc-300'
                                             }`}
                                         >
                                             <span aria-hidden className="flex items-center">
@@ -402,7 +402,7 @@ export const DataCaptureModal: React.FC<DataCaptureModalProps> = ({
                 </div>
 
                 {/* Footer */}
-                <div className="px-5 py-4 border-t border-white/5 bg-zinc-950">
+                <div className="px-5 py-4 border-t border-hairline bg-zinc-950">
                     <div className="flex items-center justify-between">
                         <p className="text-ui-xs text-zinc-600 max-w-[200px]">
                             Trade will only be finalized after you confirm the capture method

@@ -244,26 +244,26 @@ const ProfileMemoryCard: React.FC<ProfileMemoryCardProps> = ({ memoryModel, onOp
                             <button
                                 type="button"
                                 onClick={() => startEdit(selectedEntry)}
-                                className="inline-flex items-center gap-1.5 rounded-control border border-zinc-800 px-3 py-1.5 text-ui-dense font-semibold text-zinc-300 transition-colors hover:border-white/25 hover:text-zinc-100"
+                                className="inline-flex items-center gap-1.5 rounded-control border border-zinc-800 px-3 py-1.5 text-ui-dense font-semibold text-zinc-300 transition-colors hover:border-line hover:text-zinc-100"
                             >
                                 <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
                                 Edit memory
                             </button>
                         ) : (
-                            <div className="space-y-2 rounded-bubble border border-white/10 bg-zinc-950/60 p-3" data-testid={`profile-memory-editor-${selectedEntry.slug}`}>
+                            <div className="space-y-2 rounded-bubble border border-hairline bg-zinc-950/60 p-3" data-testid={`profile-memory-editor-${selectedEntry.slug}`}>
                                 <input
                                     value={editing.description}
                                     onChange={ev => setEditing({ ...editing, description: ev.target.value })}
                                     aria-label="Memory summary"
                                     placeholder="One line: what this memory says"
-                                    className="w-full rounded-control border border-white/10 bg-zinc-900 px-2 py-1 text-ui-dense text-zinc-100 placeholder:text-zinc-600 focus:border-cyan-500/40 focus:outline-none"
+                                    className="w-full rounded-control border border-hairline bg-zinc-900 px-2 py-1 text-ui-dense text-zinc-100 placeholder:text-zinc-600 focus:border-accent/40 focus:outline-none"
                                 />
                                 <textarea
                                     value={editing.body}
                                     onChange={ev => setEditing({ ...editing, body: ev.target.value })}
                                     aria-label="Memory details"
                                     rows={5}
-                                    className="w-full resize-y rounded-control border border-white/10 bg-zinc-900 px-2 py-1 text-ui-dense text-zinc-100 focus:border-cyan-500/40 focus:outline-none"
+                                    className="w-full resize-y rounded-control border border-hairline bg-zinc-900 px-2 py-1 text-ui-dense text-zinc-100 focus:border-accent/40 focus:outline-none"
                                 />
                                 {editError && <p role="alert" className="text-ui-xs leading-snug text-rose-300">{editError}</p>}
                                 <div className="flex items-center gap-1.5">
@@ -382,10 +382,10 @@ const ProfileMemoryCard: React.FC<ProfileMemoryCardProps> = ({ memoryModel, onOp
                         <section
                             key={section.id}
                             data-testid={`memory-group-${section.id}`}
-                            className={`${index === 0 ? 'mt-4' : 'mt-6'} border-t border-white/[0.06] pt-4`}
+                            className={`${index === 0 ? 'mt-4' : 'mt-6'} border-t border-hairline pt-4`}
                         >
                             <h4 className="text-ui-sm font-medium text-zinc-200">{section.label}</h4>
-                            <ul className="mt-2.5 divide-y divide-white/[0.05]">
+                            <ul className="mt-2.5 divide-y divide-hairline">
                                 {section.rows.map(e => (
                                     <li key={e.slug} data-testid={`memory-entry-${e.slug}`}
                                         className="group relative rounded-control transition-colors hover:bg-white/[0.03]">
@@ -441,7 +441,7 @@ const ProfileMemoryCard: React.FC<ProfileMemoryCardProps> = ({ memoryModel, onOp
                                 <span className="shrink-0 text-ui-xs text-zinc-600">{String(e.deletedAt).slice(0, 10)}</span>
                                 <button type="button" onClick={() => restoreOne(e.slug)}
                                     aria-label={`Restore memory ${e.slug}`} title="Restore"
-                                    className="shrink-0 rounded-control border border-zinc-800 px-2 py-1 text-ui-2xs font-semibold text-zinc-300 transition-colors hover:border-white/25 hover:text-zinc-100">
+                                    className="shrink-0 rounded-control border border-zinc-800 px-2 py-1 text-ui-2xs font-semibold text-zinc-300 transition-colors hover:border-line hover:text-zinc-100">
                                     Restore
                                 </button>
                             </li>

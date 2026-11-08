@@ -176,7 +176,7 @@ const PricePath: React.FC<{ position: TrackedPosition }> = ({ position }) => {
     const area = `${line} L${x(last).toFixed(1)},${H - padY} L${x(first).toFixed(1)},${H - padY} Z`;
 
     return (
-        <div className="mt-3 overflow-hidden rounded-card border border-white/[0.06] bg-zinc-950/40">
+        <div className="mt-3 overflow-hidden rounded-card border border-hairline bg-zinc-950/40">
             <svg
                 viewBox={`0 0 ${W} ${H}`}
                 className="h-auto w-full"
@@ -397,7 +397,7 @@ const TrackedPostMortem: React.FC<TrackedPostMortemProps> = ({ trade, username, 
 
             <div className="mt-8">
                 <h4 className="text-ui-sm font-semibold text-zinc-200">Sequence</h4>
-                <ol className="mt-3 space-y-1.5 border-l border-white/[0.06] pl-4 text-ui-dense text-zinc-400">
+                <ol className="mt-3 space-y-1.5 border-l border-hairline pl-4 text-ui-dense text-zinc-400">
                     <li><span className="text-zinc-300">Opened</span> · {phtStamp(position.openedAt)}</li>
                     {position.entryBarTime !== undefined && (
                         <li><span className="text-zinc-300">Entry filled</span> · {phtStamp(position.entryBarTime)} at {trackedPrice(position.entry)}</li>
@@ -423,7 +423,7 @@ const TrackedPostMortem: React.FC<TrackedPostMortemProps> = ({ trade, username, 
                 </ol>
             </div>
 
-            <div className="mt-8 border-t border-white/[0.06] pt-6" data-testid="tracked-diagnosis">
+            <div className="mt-8 border-t border-hairline pt-6" data-testid="tracked-diagnosis">
                 <div className="flex flex-wrap items-baseline justify-between gap-3">
                     <h4 className="text-ui-sm font-semibold text-zinc-200">What the post-mortem said</h4>
                     {diagnosis && (
@@ -493,7 +493,7 @@ const TrackedPostMortem: React.FC<TrackedPostMortemProps> = ({ trade, username, 
                 )}
             </div>
 
-            <div className="mt-8 border-t border-white/[0.06] pt-6" data-testid="tracked-linked-skills">
+            <div className="mt-8 border-t border-hairline pt-6" data-testid="tracked-linked-skills">
                 <h4 className="text-ui-sm font-semibold text-zinc-200">Skills citing this trade</h4>
                 {skills.length === 0 ? (
                     <p className="mt-2 max-w-2xl text-ui-caption leading-relaxed text-zinc-500">
@@ -501,7 +501,7 @@ const TrackedPostMortem: React.FC<TrackedPostMortemProps> = ({ trade, username, 
                         setup — different trades, non-overlapping holding windows, and not the same setup on the same day.
                     </p>
                 ) : (
-                    <ul className="mt-3 divide-y divide-white/[0.04]">
+                    <ul className="mt-3 divide-y divide-hairline">
                         {skills.map(skill => (
                             <li key={skill.id} className="py-2.5">
                                 <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">

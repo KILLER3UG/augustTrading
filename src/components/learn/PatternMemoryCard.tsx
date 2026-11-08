@@ -52,7 +52,7 @@ const PatternMemoryCard: React.FC<PatternMemoryCardProps> = ({ trades, finalSumm
             className="rounded-control border border-zinc-800/80 bg-zinc-900/60"
             data-testid="pattern-memory-card"
         >
-            <div className="flex items-center justify-between gap-2 border-b border-white/5 px-4 py-3">
+            <div className="flex items-center justify-between gap-2 border-b border-hairline px-4 py-3">
                 <div className="flex min-w-0 items-center gap-2">
                     <FileTextIcon className="h-4 w-4 shrink-0 text-zinc-500" aria-hidden="true" />
                     <h3 className="truncate text-ui-sm font-semibold text-zinc-100" title="Pattern memory">Pattern memory</h3>

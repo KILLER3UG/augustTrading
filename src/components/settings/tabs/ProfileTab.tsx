@@ -53,7 +53,7 @@ const CheckForUpdatesRow: React.FC = () => {
             data-testid="profile-check-updates"
             disabled={busy || phase === 'checking' || phase === 'downloading' || phase === 'installing'}
             onClick={() => { setBusy(true); void checkForUpdates().finally(() => setBusy(false)); }}
-            className="motion-press rounded-control border border-white/10 px-1.5 py-0.5 text-ui-2xs text-zinc-400 transition-colors hover:border-white/25 hover:text-zinc-200 disabled:opacity-50"
+            className="motion-press rounded-control border border-hairline px-1.5 py-0.5 text-ui-2xs text-zinc-400 transition-colors hover:border-line hover:text-zinc-200 disabled:opacity-50"
         >
             {label}
         </button>
@@ -85,7 +85,7 @@ const ProfileTab: React.FC<{ tab: ProfileTabProps }> = ({ tab: props }) => {
                     { label: 'Providers connected', value: providerConfigsLoaded ? String(readyProviders) : '…' },
                     { label: 'Installed version', value: `v${APP_VERSION}` },
                 ].map(stat => (
-                    <div key={stat.label} className="rounded-card border border-white/[0.06] bg-zinc-900/40 px-4 py-3">
+                    <div key={stat.label} className="rounded-card border border-hairline bg-zinc-900/40 px-4 py-3">
                         <div className="font-mono text-ui-xs uppercase tracking-[0.08em] text-zinc-500">{stat.label}</div>
                         <div className="mt-1.5 font-mono text-ui-xl font-medium tabular-nums text-zinc-100">{stat.value}</div>
                     </div>
@@ -100,7 +100,7 @@ const ProfileTab: React.FC<{ tab: ProfileTabProps }> = ({ tab: props }) => {
                         description={`${APP_NAME} ${APP_VERSION} · local-first · no account or subscription`}
                         control={
                             <span className="flex shrink-0 items-center gap-2">
-                                <span aria-hidden="true" className="flex h-9 w-9 items-center justify-center rounded-full border border-white/10 bg-zinc-800 text-ui-base font-semibold text-zinc-100">
+                                <span aria-hidden="true" className="flex h-9 w-9 items-center justify-center rounded-full border border-hairline bg-zinc-800 text-ui-base font-semibold text-zinc-100">
                                     {initial}
                                 </span>
                                 <CheckForUpdatesRow />

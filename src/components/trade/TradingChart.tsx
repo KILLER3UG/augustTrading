@@ -1236,7 +1236,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                         }}
                         onBlur={() => finishTextEdit(false)}
                         placeholder="Type a note…"
-                        className="absolute z-20 w-40 rounded-control border border-white/15 bg-zinc-900 px-1.5 py-0.5 text-ui-dense text-zinc-100 focus:outline-none"
+                        className="absolute z-20 w-40 rounded-control border border-line bg-zinc-900 px-1.5 py-0.5 text-ui-dense text-zinc-100 focus:outline-none"
                         style={{
                             left: Math.min(textEdit.x + CHART_RAIL_WIDTH + 6, (hostRef.current?.clientWidth ?? 400) - 170),
                             top: Math.max(4, textEdit.y - 24),

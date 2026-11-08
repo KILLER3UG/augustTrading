@@ -268,7 +268,7 @@ export const ChartAiDockRail: React.FC<{
     live: boolean;
 }> = ({ onExpand, live }) => (
     <div
-        className="flex h-10 w-full shrink-0 flex-row items-center gap-3 border-l border-white/[0.06] bg-zinc-900/40 px-3 lg:h-full lg:w-10 lg:flex-col lg:py-3"
+        className="flex h-10 w-full shrink-0 flex-row items-center gap-3 border-l border-hairline bg-zinc-900/40 px-3 lg:h-full lg:w-10 lg:flex-col lg:py-3"
         data-testid="trade-chat-rail"
     >
         <button
@@ -939,12 +939,12 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
 
 
     return (
-        <div className="relative flex h-full min-h-0 flex-col border-l border-white/[0.06] bg-transparent" data-testid="trade-chat-panel">
+        <div className="relative flex h-full min-h-0 flex-col border-l border-hairline bg-transparent" data-testid="trade-chat-panel">
             {/* Header — the reference's Agent-panel cluster: wordmark left,
                 + / history / ⋯ / × right, nothing else. Conversations are
                 reached through the Past Conversations palette, not a tab
                 strip. */}
-            <div className="@container flex shrink-0 items-center gap-2.5 border-b border-white/[0.06] bg-zinc-900/30 px-5 py-3">
+            <div className="@container flex shrink-0 items-center gap-2.5 border-b border-hairline bg-zinc-900/30 px-5 py-3">
                 <span className={`h-2 w-2 shrink-0 rounded-full ${busy ? 'animate-pulse bg-cyan-400' : live ? 'bg-emerald-500' : 'bg-zinc-500'}`} aria-label={live ? 'live market feed connected' : 'market feed polling'} />
                 {/* The dock is narrow and user-dragged, so the brand never
                     yields: at 370px a squeezed "Chart AI" wrapped into two
@@ -973,7 +973,7 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
                         The title-bar switch carries it now — the Chat entry is
                         the same route, from the same place, for every surface. */}
                     {/* Segmented chat actions: new + history */}
-                    <div className="flex items-center rounded-control border border-white/[0.04] bg-white/[0.02] p-0.5">
+                    <div className="flex items-center rounded-control border border-hairline bg-white/[0.02] p-0.5">
                         <button type="button" onClick={() => addSession('solo')} aria-label="New chat" title="New chat"
                             className="hit-target rounded-control p-1 text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-zinc-100">
                             <Plus className="h-3.5 w-3.5" aria-hidden="true" />
@@ -992,7 +992,7 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
                         {showNewMenu && (
                             <>
                                 <div className="fixed inset-0 z-20" aria-hidden onClick={() => setShowNewMenu(false)} />
-                                <div className="absolute right-0 top-9 z-30 max-h-96 w-56 overflow-y-auto rounded-bubble border border-white/10 bg-zinc-900 p-1 shadow-xl" data-testid="chat-new-menu">
+                                <div className="absolute right-0 top-9 z-30 max-h-96 w-56 overflow-y-auto rounded-bubble border border-hairline bg-zinc-900 p-1 shadow-xl" data-testid="chat-new-menu">
                                     {isPanel && (
                                         <button type="button" onClick={() => { setShowNewMenu(false); setPanelPickerFor(activeId); }}
                                             className="block w-full rounded-control px-2 py-1.5 text-left text-ui-dense text-zinc-300 hover:bg-white/[0.06]">
@@ -1037,7 +1037,7 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
                                             Open in Agents
                                         </button>
                                     )}
-                                    <div className="my-1 border-t border-white/[0.06]" />
+                                    <div className="my-1 border-t border-hairline" />
                                     <p className="px-2 py-0.5 text-ui-2xs text-zinc-600">Start</p>
                                     <button type="button" onClick={() => addSession('panel')} className="block w-full rounded-control px-2 py-1.5 text-left text-ui-dense text-zinc-300 hover:bg-white/[0.06]">
                                         New panel <span className="text-zinc-600">· up to {PANEL_MAX_MODELS} models</span>
@@ -1105,11 +1105,11 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
 
             {/* Panel seat editor (while a panel is still short of 2 seats). */}
             {panelPickerFor && (
-                <div className="shrink-0 space-y-1.5 border-b border-white/[0.06] bg-zinc-900/70 px-3 py-2" data-testid="panel-picker">
+                <div className="shrink-0 space-y-1.5 border-b border-hairline bg-zinc-900/70 px-3 py-2" data-testid="panel-picker">
                     <p className="text-ui-xs text-zinc-500">Panel seats ({sessions.find(s => s.id === panelPickerFor)?.panelModels?.length ?? 0}/{PANEL_MAX_MODELS}) — pick up to {PANEL_MAX_MODELS} models or agents; they answer together and talk to each other</p>
                     <div className="flex flex-wrap items-center gap-1.5">
                         {(sessions.find(s => s.id === panelPickerFor)?.panelModels ?? []).map((m: PanelSeatRef) => (
-                            <span key={panelSeatKey(m)} className="flex items-center gap-1 rounded-full border border-white/10 bg-zinc-800 px-2 py-0.5 text-ui-xs text-zinc-200">
+                            <span key={panelSeatKey(m)} className="flex items-center gap-1 rounded-full border border-hairline bg-zinc-800 px-2 py-0.5 text-ui-xs text-zinc-200">
                                 {m.botId ? (bots.find(b => b.id === m.botId)?.name ?? formatModelDisplayName(m.modelId)) : formatModelDisplayName(m.modelId)}
                                 {m.botId && <span className="text-ui-2xs text-zinc-500">agent</span>}
                                 <button type="button" aria-label={`Remove ${panelSeatKey(m)}`}
@@ -1135,7 +1135,7 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
                                     .map(b => (
                                         <button key={b.id} type="button" data-testid={`panel-agent-${b.id}`}
                                             onClick={() => addPanelAgentSeat(b.id)}
-                                            className="rounded-full border border-white/10 bg-zinc-800 px-2 py-0.5 text-ui-xs text-zinc-300 hover:bg-zinc-700">
+                                            className="rounded-full border border-hairline bg-zinc-800 px-2 py-0.5 text-ui-xs text-zinc-300 hover:bg-zinc-700">
                                             + {b.name}
                                         </button>
                                     ))}

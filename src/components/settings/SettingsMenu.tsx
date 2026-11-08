@@ -468,7 +468,7 @@ const SettingsMenu: React.FC<SettingsMenuProps> = (props) => {
                 className="fixed inset-0 z-modal flex flex-col bg-zinc-950 motion-fade"
             >
                 {/* Top bar — sidebar toggle, back/forward, breadcrumb, close. */}
-                <div className="flex h-11 shrink-0 items-center gap-1.5 border-b border-white/[0.06] bg-zinc-900/40 px-3">
+                <div className="flex h-11 shrink-0 items-center gap-1.5 border-b border-hairline bg-zinc-900/40 px-3">
                     <button
                         type="button"
                         onClick={() => setSidebarCollapsed(v => !v)}
@@ -510,7 +510,7 @@ const SettingsMenu: React.FC<SettingsMenuProps> = (props) => {
                     <aside
                         data-testid="settings-sidebar"
                         aria-label="Settings sections"
-                        className={`shrink-0 overflow-hidden bg-zinc-950/60 ${sidebarCollapsed ? 'w-0' : 'w-64 border-r border-white/[0.06]'}`}
+                        className={`shrink-0 overflow-hidden bg-zinc-950/60 ${sidebarCollapsed ? 'w-0' : 'w-64 border-r border-hairline'}`}
                     >
                         <div className={`flex h-full w-64 flex-col transition-[opacity,transform] duration-[var(--motion-base)] ease-[var(--motion-ease)] ${
                             sidebarCollapsed ? 'pointer-events-none -translate-x-3 opacity-0' : 'translate-x-0 opacity-100'
@@ -523,7 +523,7 @@ const SettingsMenu: React.FC<SettingsMenuProps> = (props) => {
                                 </button>
                             </div>
                             <div className="px-3 pb-2 pt-3">
-                                <div className="flex items-center gap-2 rounded-control border border-white/[0.07] bg-zinc-800/80 px-2.5 py-2 transition-colors focus-within:border-white/20">
+                                <div className="flex items-center gap-2 rounded-control border border-hairline bg-zinc-800/80 px-2.5 py-2 transition-colors focus-within:border-line">
                                     <SearchIcon className="h-3.5 w-3.5 shrink-0 text-zinc-500" aria-hidden="true" />
                                     <input
                                         value={navQuery}
@@ -620,7 +620,7 @@ const SettingsMenu: React.FC<SettingsMenuProps> = (props) => {
                     >
                         <div
                             key={activeTab}
-                            className={`mx-auto w-full max-w-[940px] motion-page rounded-bubble border border-white/[0.06] bg-zinc-900/50 ${
+                            className={`mx-auto w-full max-w-[940px] motion-page rounded-bubble border border-hairline bg-zinc-900/50 ${
                                 FULL_BLEED_TABS.includes(activeTab) ? 'overflow-hidden' : 'p-6 md:p-8'
                             }`}
                         >
@@ -757,7 +757,7 @@ const SettingsMenu: React.FC<SettingsMenuProps> = (props) => {
                 <div className="pointer-events-none absolute bottom-4 right-4 z-10 flex flex-col items-end gap-2">
                     {helpOpen && (
                         <div role="dialog" aria-label="Settings help" data-testid="settings-help-panel"
-                            className="motion-pop pointer-events-auto w-72 rounded-bubble border border-white/[0.08] bg-zinc-900 p-4 shadow-2xl">
+                            className="motion-pop pointer-events-auto w-72 rounded-bubble border border-hairline bg-zinc-900 p-4 shadow-2xl">
                             <p className="text-ui-sm font-semibold text-zinc-100">Settings help</p>
                             <p className="mt-1.5 text-ui-dense leading-relaxed text-zinc-500">
                                 Search finds a control by name and jumps to it. Back and forward walk the pages
@@ -784,7 +784,7 @@ const SettingsMenu: React.FC<SettingsMenuProps> = (props) => {
                     )}
                     <button type="button" onClick={() => setHelpOpen(v => !v)}
                         aria-label="Settings help" aria-expanded={helpOpen} data-testid="settings-help"
-                        className="motion-press pointer-events-auto flex h-8 w-8 items-center justify-center rounded-full border border-white/[0.1] bg-zinc-800 text-ui-base font-semibold text-zinc-200 transition-colors hover:bg-zinc-700">
+                        className="motion-press pointer-events-auto flex h-8 w-8 items-center justify-center rounded-full border border-hairline bg-zinc-800 text-ui-base font-semibold text-zinc-200 transition-colors hover:bg-zinc-700">
                         ?
                     </button>
                 </div>
