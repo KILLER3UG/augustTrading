@@ -49,12 +49,14 @@ trader sends → surface prompt (mandate + skills index + strategies + profile m
 
 The loop, stage by stage: [docs/architecture/learning-loop.md](docs/architecture/learning-loop.md).
 
-## The four surfaces
+## The six surfaces
 
 **Analyze** (Alt+1) — the chart, the order book and the Chart AI dock. It reads; it never trades.
 **Journal** (Alt+2) — the record plus the review over it: history, stats, weekly/monthly reviews.
 **Agents** (Alt+4) — a roster of named bots, DMs and rooms over the same thread as the chart dock.
-**Learning** (Alt+5) — Skills → Memory → Health.
+**Learning** (Alt+5) — learning diagnostics: scorecards, harness lessons, versions, usage.
+**Skills** (Alt+3) — the skill library: document folders, search, read, edit, import.
+**Memory** (Alt+6) — the notebook, the pattern synthesis and the raw files.
 
 Anatomy and states: [docs/product/ux/surfaces.md](docs/product/ux/surfaces.md).
 

@@ -9,14 +9,19 @@ The surfaces themselves are described in [surfaces.md](surfaces.md); copy and na
 
 ## Colour
 
-- [ ] Page is `#0a0a0a`, panels `zinc-900`, raised surfaces `zinc-800`, hairlines
-      `zinc-700`/`zinc-800`. The neutrals carry **no hue** (2026-10-27): a tinted black —
-      blue-shifted or warm — is a second palette waiting to disagree with the first.
-- [ ] Semantic hues come from `index.css @theme` and mean one thing everywhere:
-      **emerald** = gain/up, **rose/red** = loss/down, **amber/yellow** = warning, **cyan** = info.
-      Never introduce a new hue for a new state.
-- [ ] Exactly **one cyan accent per view**. If you're adding a second cyan, something else in that
-      view should stop being cyan.
+- [ ] Page is `#0d0c0b`, panels `zinc-900`, raised surfaces `zinc-800`, hairlines
+      `zinc-700`/`zinc-800`. The neutrals are **warm** (owner ruling, 2026-11-08): the v4 mock's
+      palette was adopted as-is, reversing the 2026-10-27 hue-free ruling. `zinc-600` stays
+      hue-free `#858585` — v4's quietest step (#716d65) measures 3.80:1 on the page, a fill not text.
+- [ ] Semantic hues come from `index.css @theme`: **emerald** = gain/up, **rose/red** = loss/down,
+      **amber/yellow** = warning, **cyan** = info. Cyan is the INFO hue only.
+- [ ] The **accent is amber** (`--color-accent`, `#e8a33d`) and means INTERACTION — a solid button
+      fill, a focus ring, a toggle's on state. A fill wears `--color-accent-ink` (`#1c1508`,
+      8.39:1 on the fill); a warning is amber TEXT on the page. Same hue, two roles: that is the
+      v4 mock's rule, adopted 2026-11-08. It reverses "amber = warning only" and "one cyan accent
+      per view".
+- [ ] Exactly **one accent per view**. If you're adding a second amber fill, something else in
+      that view should stop being amber.
 - [ ] There is **no brand gradient** (deleted 2026-10-27). A hero moment earns size or weight, not a
       hue. Do not re-add one, and do not read a chrome token as a chart colour or a chart colour as
       chrome — that pair of mistakes is what turned a dashboard series white.
@@ -29,22 +34,26 @@ The surfaces themselves are described in [surfaces.md](surfaces.md); copy and na
 
 ## Shape and borders
 
-- [ ] `rounded-control` (6px) for inputs and buttons; `rounded-bubble` (12px) for chat bubbles. (Retuned by the quiet-desk layer, 2026-11-04 — the four tokens in `src/index.css` are the only radii; this page names them, `src/index.css` owns the numbers.)
-      Nothing else invents a radius.
-- [ ] Borders are hairlines: `border-zinc-800/80`. No double borders — a panel inside a panel does
-      not get a second frame.
+- [ ] `rounded-control` (10px) for inputs and buttons; `rounded-bubble` (18px) for chat bubbles;
+      `rounded-card` (12px); `rounded-composer` (16px). (Retuned to the v4 mock's radii,
+      2026-11-08 — the four tokens in `src/index.css` are the only radii; this page names them,
+      `src/index.css` owns the numbers.) Nothing else invents a radius.
+- [ ] Borders are hairlines, and there are exactly **two**: `border-hairline` (the resting step,
+      `#242220` — the reference's `--hair`) and `border-line` (`#33312d`, its `--hair-2`), which a
+      control wears while hovered, focused or selected. No opacity ladder — the 2026-11-08
+      border-token migration replaced 416 raw `border-white/N` utilities with these two, because 18
+      opacities were 18 ways to ask for one of two states. No double borders — a panel inside a
+      panel does not get a second frame.
+- [ ] Dividers inside one surface are `border-t border-hairline`, not a boxed sub-card.
       **Settings is the one boxed exception**: its pages are rounded cards with thin dashed
       dividers between rows (`divide-dashed divide-hairline`), composed through
       `src/components/settings/tabs/shared.tsx` › `SettingsGroup` / `SettingsRow`.
 
 ## Reuse — do not hand-roll these
-- [ ] Borders are hairlines, and there are exactly **two**: `border-hairline` (the resting step,
-      `#242220` — the reference's `--hair`) and `border-line` (`#33312d`, its `--hair-2`), which a
 
 | You need | Use |
 |---|---|
 | a state chip / pill | `StatusPill` (`tone: up \| down \| warn \| info \| neutral`, `kicker` for micro-caps) |
-- [ ] Dividers inside one surface are `border-t border-hairline`, not a boxed sub-card.
 | an empty view | `EmptyState` |
 | a tooltip | `Tip` (it carries `shortcut=`; the key hint must be in the accessible name too) |
 | a dropdown | `SelectMenu` |
@@ -64,8 +73,8 @@ container and it resolves against the nearest positioned ancestor and inflates t
 ## Type and numbers
 
 - [ ] **Sizes come from the `text-ui-*` ramp, never a `text-[Npx]` literal.** The ramp is
-      `--text-ui-{xl,lg,base,caption,sm,dense,xs,2xs}` (= 18/16/14/13/12/11/10/9px at the default
-      dial), every step an offset from one dial, `--ui-font-size` (14px). Roles, not sizes:
+      `--text-ui-{xl,lg,base,caption,sm,dense,xs,2xs}` (= 19/17/15/14/13/12/11/10/9px at the default
+      dial), every step an offset from one dial, `--ui-font-size` (15px). Roles, not sizes:
       `text-ui-xs` says "micro-label", `text-[10px]` says nothing and cannot be scaled.
       A pixel literal on any heading tag is banned the same way. Display roles exist
       (`display` = base + 12, `hero` = base + 18); name the role, or add a step deliberately.
@@ -98,11 +107,12 @@ container and it resolves against the nearest positioned ancestor and inflates t
 
 ## Structure
 
-- [ ] **A label names the function, never a capability the app lacks.** The four surfaces are
-      Analyze · Journal · Agents · Learning for exactly this reason ("Trade does not trade").
-- [ ] A surface's information architecture follows the thing it models. Learning is
-      Skills → Memory → Health because that is the loop's own order: where it lives, whether it's
-      sound, and your call — with the decisions themselves applying automatically.
+- [ ] **A label names the function, never a capability the app lacks.** The six surfaces are
+      Analyze · Journal · Agents · Learning · Skills · Memory for exactly this reason ("Trade does
+      not trade").
+- [ ] A surface's information architecture follows the thing it models. Skills → Memory → Learning
+      is the loop's own order — where it lives, what it reads, whether it's sound — and each is a
+      surface of its own (2026-11-08), with the decisions themselves applying automatically.
 - [ ] One home per concern. If a component appears in two surfaces, one of them mounts the other's
       component — nobody reimplements a table.
 - [ ] No dead-end state. A surface with nothing selected says something true and offers the next

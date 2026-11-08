@@ -10,7 +10,7 @@ One reading path. Everything else is evidence, kept where it belongs.
    P&L is not the product line until execution exists.
 3. [product/goal.md](product/goal.md) — what this is, who it's for, the loop, the non-goals.
 4. [product/ux/](product/ux/) — what the trader sees: the [charter](product/ux/charter.md), the
-   [four surfaces](product/ux/surfaces.md), the [voice](product/ux/voice.md).
+   [six surfaces](product/ux/surfaces.md), the [voice](product/ux/voice.md).
 5. [engineering/gates.md](engineering/gates.md) — how a change is proven, and what each gate cannot
    see. [engineering/conventions.md](engineering/conventions.md) — code style and the canonical
    single-source modules.

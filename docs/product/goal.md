@@ -41,7 +41,7 @@ improvement.
 - **Not multi-user, not a team product.** One trader, one seat, one notebook. No roles, no review
   queues for other people.
 - **Not a debate/ensemble system.** The tool-driven single seat replaced it; the deletion is final.
-- **Not a light theme.** Dark, hue-free neutrals, and colour only where it means data.
+- **Not a light theme.** Dark, warm neutrals, and colour only where it means data (the light mapping in `index.css` stays dormant).
 - **Not a data platform.** The journal, notebook and drawings stay on the trader's machine.
 
 ## What "working" means

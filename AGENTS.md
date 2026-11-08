@@ -51,7 +51,7 @@ npm run check:contracts     # the pure-logic contracts (node only, no suite)
 npm run check:boundaries    # the import edges the layer table promises
 npm run check:docs          # doc links + symbol citations + gate names
 npm run boot-probe          # the production bundle boots, zero pageerrors
-npm run render-probe        # rendered rows, inert controls, all four surfaces
+npm run render-probe        # rendered rows, inert controls, all six surfaces
 npm run installer-smoke     # the packaged Windows exe (release gate)
 npm run electron:dev        # Vite + Electron window
 npm run electron:build      # build + package the Windows installer
@@ -71,7 +71,7 @@ npm run electron:release    # REFUSES locally by design; releases run in CI
 | `check:boundaries` | no runtime import crosses the layer table; type-only imports stay legal where named | a string-built require, a bundler alias, or an edge the table does not name |
 | `check:docs` | links resolve, symbol citations exist, AGENTS' gate names exist | whether the prose is true |
 | `boot-probe` | the bundle starts and the first surface mounts | any interaction |
-| `render-probe` | rendered rows, send order, reload persistence, four surfaces, no inert controls, focus rings | a layout that breaks at 800px; a wrong number inside a counted row |
+| `render-probe` | rendered rows, send order, reload persistence, six surfaces, no inert controls, focus rings | a layout that breaks at 800px; a wrong number inside a counted row |
 | `installer-smoke` | the packaged exe launches and renders | anything after launch |
 
 **`render-probe` is the only gate that sees a rendered row.** A component that returns clean and

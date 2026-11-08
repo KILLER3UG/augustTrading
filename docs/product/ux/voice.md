@@ -5,11 +5,13 @@ followed them.
 
 ## Names
 
-- **A label is a promise.** The four surfaces are Analyze · Journal · Agents · Learning because
-  each names what the surface does — "Trade" promised execution the surface never performs.
-- The same thing has one name everywhere: surface labels, route hints ("Learning → Skills"),
+- **A label is a promise.** The six surfaces are Analyze · Journal · Agents · Learning · Skills ·
+  Memory because each names what the surface does — "Trade" promised execution the surface never
+  performs.
+- The same thing has one name everywhere: surface labels, route hints ("Skills", "Memory"),
   tooltips, and the accessible name a screen reader announces.
-- Ids and testids are not copy: they stay `trade` / `journal` / `agents` / `learn` when a label
+- Ids and testids are not copy: they stay `trade` / `journal` / `agents` / `learn` / `skills` /
+  `memory` when a label
   changes. Do not rename an id to match a label.
 - A row is labelled with human-readable text, never a key, a filename or a provider id.
 

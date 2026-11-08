@@ -664,7 +664,7 @@ where the spec and the code disagreed):
   notebook material only. Off still strips BOTH: the seat prompt's block by its
   own gate, and the slice by the `memoryEnabled` gate it keeps.
   Its ONE writer is the `Global memory` toggle in the notebook manager
-  (`src/components/learn/MemoryFilesManager.tsx › MemoryFilesManager`), on the Learning surface — Settings → Memory shows
+  (`src/components/learn/MemoryFilesManager.tsx › MemoryFilesManager`), on the Memory surface — Settings → Memory shows
   the LIST, not the switch, which is why a probe that looks for it there finds
   nothing. It is a per-profile setting
   (`src/hooks/useProfilePersistence.ts › useProfilePersistence` writes `settings.isGlobalMemoryEnabled`,
@@ -778,7 +778,7 @@ creates a new section) with `subject` as the fallback, and a row opening its own
 written from `remember.name` or the learner's name) and falls back to the humanized slug, so a fact
 whose slug is a whole sentence still shows a two-word name. The page is a full-width column inset from
 the pane edge, one hairline rule per category; the notebook is a separate store and stays one door
-away on the Learning surface. `memoryExport.ts` owns the export bytes; `ProfileMemoryCard.tsx` owns
+away on the Memory surface. `memoryExport.ts` owns the export bytes; `ProfileMemoryCard.tsx` owns
 the page.
 
 ### G.3 Skills are folders, not rows
