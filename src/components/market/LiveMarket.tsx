@@ -295,7 +295,7 @@ const [trendlineDrawings, setTrendlineDrawings] = useState<ChartDrawing[]>([]);
     return (
         <div ref={dialogRef} role="dialog" aria-modal={isEmbedded ? undefined : 'true'} aria-label="Live Market" className={` flex flex-col ${isEmbedded ? 'h-full' : 'fixed inset-0 bg-zinc-950 z-modal animate-fade-in pb-[env(safe-area-inset-bottom)]'}`}>
             {/* Header - 2 rows on mobile for spacious feel */}
-            <div className="bg-zinc-900 border-b border-hairline flex-shrink-0 shadow-lg shadow-black/20">
+            <div className="bg-zinc-900 border-b border-hairline flex-shrink-0">
                 {/* Top Row - Title, Price & Close */}
                 <div className="flex items-center justify-between px-4 sm:px-6 py-4 border-b border-hairline">
                     <div className="flex items-center gap-2 sm:gap-3">
@@ -379,7 +379,7 @@ const [trendlineDrawings, setTrendlineDrawings] = useState<ChartDrawing[]>([]);
                         <button
                             onClick={() => { void handleExtractAndAnalyze(); }}
                             disabled={!!analysisProgress}
-                            className="flex items-center justify-center gap-2 h-12 bg-accent hover:bg-amber-500 text-accent-ink text-ui-base font-bold px-6 rounded-control shadow-lg shadow-black/30 transition-[background-color,transform] duration-[150ms] ease-[var(--ease-snappy)] disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap active:scale-95"
+                            className="flex items-center justify-center gap-2 h-12 bg-accent hover:bg-amber-500 text-accent-ink text-ui-base font-bold px-6 rounded-control transition-[background-color,transform] duration-[150ms] ease-[var(--ease-snappy)] disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap active:scale-95"
                         >
                             {analysisProgress ? <LoadingIcon className="w-4 h-4" aria-hidden="true" /> : <CameraIcon className="w-4 h-4" aria-hidden="true" />}
                             <span>{analysisProgress || 'Analyze'}</span>
@@ -598,7 +598,7 @@ const [trendlineDrawings, setTrendlineDrawings] = useState<ChartDrawing[]>([]);
             {notification && (
                 <div
                     role={notification.tone === 'error' ? 'alert' : 'status'}
-                    className={`absolute top-28 left-4 right-4 sm:left-1/2 sm:right-auto sm:-translate-x-1/2 z-confirm px-5 py-3.5 rounded-bubble shadow-2xl flex items-center gap-3 animate-fade-in text-white ${
+                    className={`absolute top-28 left-4 right-4 sm:left-1/2 sm:right-auto sm:-translate-x-1/2 z-confirm px-5 py-3.5 rounded-bubble shadow-elevated flex items-center gap-3 animate-fade-in text-white ${
                         notification.tone === 'error' ? 'bg-rose-500/90' : 'bg-emerald-500/90'
                     }`}
                 >

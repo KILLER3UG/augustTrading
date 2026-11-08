@@ -98,7 +98,7 @@ export const NewBotDialog: React.FC<NewBotDialogProps> = ({ open, onClose, onCre
 
     return (
         <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/60 p-4" ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label="New Bot">
-            <div className="max-h-[92vh] w-full max-w-lg overflow-y-auto rounded-bubble border border-hairline bg-zinc-950 p-6 shadow-2xl" data-testid="new-bot-dialog">
+            <div className="max-h-[92vh] w-full max-w-lg overflow-y-auto rounded-bubble border border-hairline bg-zinc-950 p-6 shadow-elevated" data-testid="new-bot-dialog">
                 <div className="flex items-start justify-between">
                     <div>
                         <h2 className="text-lg font-semibold text-zinc-100">New Bot</h2>

@@ -57,7 +57,7 @@ export const NewGroupDialog: React.FC<NewGroupDialogProps> = ({ open, onClose, o
 
     return (
         <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/60 p-4" ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label="New Group Chat">
-            <div className="w-full max-w-md rounded-bubble border border-hairline bg-zinc-950 p-6 shadow-2xl" data-testid="new-group-dialog">
+            <div className="w-full max-w-md rounded-bubble border border-hairline bg-zinc-950 p-6 shadow-elevated" data-testid="new-group-dialog">
                 <div className="flex items-start justify-between">
                     <div>
                         <h2 className="text-lg font-semibold text-zinc-100">{editing ? 'Group Settings' : 'New Group Chat'}</h2>

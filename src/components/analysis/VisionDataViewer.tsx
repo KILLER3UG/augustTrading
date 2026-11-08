@@ -14,7 +14,7 @@ const VisionDataViewer: React.FC<VisionDataViewerProps> = ({ isVisible, onClose,
   return (
     <>
       <div className={`fixed inset-0 bg-black/60 z-40 transition-opacity duration-[150ms] ease-[var(--ease-snappy)] ${isVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'}`} onClick={onClose}></div>
-      <aside className={`fixed top-0 right-0 h-full w-full sm:max-w-xl bg-zinc-900 border-l border-hairline shadow-2xl z-drawer transform transition-transform duration-[150ms] ease-[var(--ease-snappy)] flex flex-col ${isVisible ? 'translate-x-0' : 'translate-x-full'}`}>
+      <aside className={`fixed top-0 right-0 h-full w-full sm:max-w-xl bg-zinc-900 border-l border-hairline shadow-elevated z-drawer transform transition-transform duration-[150ms] ease-[var(--ease-snappy)] flex flex-col ${isVisible ? 'translate-x-0' : 'translate-x-full'}`}>
         <header className="flex items-center justify-between p-5 border-b border-hairline bg-zinc-800">
           <div className="flex items-center gap-3 text-cyan-400">
             <CodeIcon />
@@ -35,7 +35,7 @@ const VisionDataViewer: React.FC<VisionDataViewerProps> = ({ isVisible, onClose,
             (visionData || []).map((data, index) => (
               <div key={index} className="animate-fade-in">
                 <h3 className="text-ui-sm font-bold text-zinc-500 uppercase tracking-widest mb-2 pl-1">Chart {index + 1} Extraction</h3>
-                <div className="bg-zinc-900 p-4 rounded-bubble border border-hairline overflow-x-auto shadow-inner">
+                <div className="bg-zinc-900 p-4 rounded-bubble border border-hairline overflow-x-auto">
                     <pre className="whitespace-pre-wrap text-ui-sm text-emerald-300/90 font-mono leading-relaxed">{data}</pre>
                 </div>
               </div>

@@ -122,7 +122,7 @@ export const VersionHistoryDashboard: React.FC = () => {
         relative overflow-hidden
         bg-gradient-to-br ${config.split(' ')[0]} ${config.split(' ')[1]}
         rounded-bubble border border-hairline
-        transition-[border-color,box-shadow,transform] duration-[150ms] ease-[var(--ease-snappy)] hover:shadow-2xl hover:border-line hover:-translate-y-1
+        transition-[border-color,box-shadow,transform] duration-[150ms] ease-[var(--ease-snappy)] hover:border-line hover:-translate-y-1
         ${large ? 'col-span-1 md:col-span-2 row-span-2' : 'col-span-1'}
         flex flex-col group
       `}>

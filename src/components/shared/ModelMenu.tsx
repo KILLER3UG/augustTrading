@@ -321,7 +321,7 @@ const ModelMenu: React.FC<ModelMenuProps> = ({
             onPointerDownCapture={(e) => e.stopPropagation()}
             onKeyDown={onProviderPanelKeyDown}
             style={{ top: providerPanelPos.top, left: providerPanelPos.left, width: PROVIDER_W }}
-            className="fixed z-flyout rounded-bubble border border-hairline bg-zinc-900 p-1 shadow-xl"
+            className="fixed z-flyout rounded-bubble border border-hairline bg-zinc-900 p-1 shadow-elevated"
         >
             <div className="custom-scrollbar max-h-64 overflow-y-auto">
                 {readyProviders.map(p => (
@@ -367,7 +367,7 @@ const ModelMenu: React.FC<ModelMenuProps> = ({
                 onPointerDownCapture={(e) => e.stopPropagation()}
                 onKeyDown={onMainKeyDown}
                 style={{ top: pos.top, left: pos.left, width: MAIN_W, maxHeight: pos.maxHeight }}
-                className="fixed z-flyout flex flex-col rounded-bubble border border-hairline bg-zinc-900 shadow-xl outline-none"
+                className="fixed z-flyout flex flex-col rounded-bubble border border-hairline bg-zinc-900 shadow-elevated outline-none"
             >
                 <button type="button" role="menuitem" aria-haspopup="menu" aria-expanded={providersOpen}
                     data-testid="model-menu-provider-row"

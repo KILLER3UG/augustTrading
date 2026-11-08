@@ -267,7 +267,7 @@ export const ScreenerPanel: React.FC<ScreenerPanelProps> = ({ open, onClose, onC
                 aria-label="Market screener"
                 tabIndex={-1}
                 data-testid="screener-panel"
-                className="fixed left-1/2 top-1/2 z-modal flex max-h-[82vh] w-[min(880px,94vw)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-bubble border border-hairline bg-zinc-900 shadow-2xl focus:outline-none"
+                className="fixed left-1/2 top-1/2 z-modal flex max-h-[82vh] w-[min(880px,94vw)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-bubble border border-hairline bg-zinc-900 shadow-elevated focus:outline-none"
             >
                 <div className="flex shrink-0 items-center gap-3 border-b border-hairline px-4 py-2.5">
                     <h2 className="text-ui-caption font-bold text-zinc-100">Screener</h2>

@@ -44,6 +44,12 @@ The surfaces themselves are described in [surfaces.md](surfaces.md); copy and na
       border-token migration replaced 416 raw `border-white/N` utilities with these two, because 18
       opacities were 18 ways to ask for one of two states. No double borders — a panel inside a
       panel does not get a second frame.
+- [ ] Elevation is **one shadow, for one kind of thing**: `shadow-elevated`, worn only by a
+      FLOATING layer — a menu, a dialog, a drawer, a toast, a popover, a tooltip, a floating
+      button. A card, a tab, a composer, a button or a toggle knob is a cut plane separated by
+      the hairline, not a raised surface; the 2026-11-08 pass removed 99 stock shadows for this
+      reason. A coloured glow on a status indicator (the beacon, the session dot, an outcome
+      chip) is STATE, not elevation, and keeps its own shadow.
 - [ ] Dividers inside one surface are `border-t border-hairline`, not a boxed sub-card.
       **Settings is the one boxed exception**: its pages are rounded cards with thin dashed
       dividers between rows (`divide-dashed divide-hairline`), composed through

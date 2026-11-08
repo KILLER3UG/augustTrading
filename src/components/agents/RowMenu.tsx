@@ -54,7 +54,7 @@ export const RowMenu: React.FC<{
     return createPortal(
         <div role="menu" data-testid="row-menu-popover"
             style={{ left, top, width: MENU_W }}
-            className="fixed z-drawer rounded-bubble border border-zinc-800/80 bg-zinc-900 p-1 shadow-lg shadow-black/40">
+            className="fixed z-drawer rounded-bubble border border-zinc-800/80 bg-zinc-900 p-1 shadow-elevated">
             {items.map(item => (
                 <button key={item.label} type="button" role="menuitem"
                     onClick={() => { item.onSelect(); onClose(); }}

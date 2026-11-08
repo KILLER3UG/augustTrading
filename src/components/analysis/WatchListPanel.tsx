@@ -53,7 +53,7 @@ const WatchListPanel: React.FC<WatchListPanelProps> = ({
     return (
         <div className="fixed inset-0 z-modal flex items-end justify-end bg-black/50 sm:items-stretch" role="dialog" aria-label="Pinned signals">
             <button type="button" className="absolute inset-0 cursor-default" aria-label="Close pinned signals overlay" onClick={onClose} />
-            <div ref={dialogRef} className="relative flex h-[85vh] w-full max-w-md flex-col overflow-hidden rounded-t-2xl border border-hairline bg-zinc-950 shadow-2xl sm:h-full sm:rounded-none sm:border-l sm:border-t-0 sm:border-b-0">
+            <div ref={dialogRef} className="relative flex h-[85vh] w-full max-w-md flex-col overflow-hidden rounded-t-2xl border border-hairline bg-zinc-950 shadow-elevated sm:h-full sm:rounded-none sm:border-l sm:border-t-0 sm:border-b-0">
                 <div className="flex items-center gap-2 border-b border-hairline px-4 py-3">
                     <PinIcon className="h-4 w-4 text-zinc-300" aria-hidden="true" />
                     <h2 className="text-ui-base font-semibold text-zinc-100">Pinned signals</h2>

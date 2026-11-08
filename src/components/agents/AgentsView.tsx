@@ -1290,7 +1290,7 @@ const AgentsView: React.FC<AgentsViewProps> = ({
                         <div ref={scroller} onScroll={onScrollerScroll} className="h-full overflow-y-auto custom-scrollbar px-4">
                             {thread.length === 0 ? (
                                 <div className="chat-column flex flex-col items-center justify-center px-6 py-4 text-center">
-                                    <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-bubble border border-hairline bg-zinc-900/80 text-zinc-300 shadow-lg">
+                                    <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-bubble border border-hairline bg-zinc-900/80 text-zinc-300">
                                         <Bot className="h-5 w-5" aria-hidden="true" />
                                     </div>
                                     <p className="mb-2 text-ui-2xs font-semibold uppercase tracking-[0.16em] text-zinc-500">Your market research desk</p>
@@ -1313,7 +1313,7 @@ const AgentsView: React.FC<AgentsViewProps> = ({
                                                     key={item.label}
                                                     type="button"
                                                     onClick={() => { setText(item.prompt); composerRef.current?.focus(); }}
-                                                    className="rounded-bubble border border-hairline bg-zinc-900/75 px-3.5 py-3 text-left shadow-sm transition-colors hover:border-line hover:bg-zinc-800/80"
+                                                    className="rounded-bubble border border-hairline bg-zinc-900/75 px-3.5 py-3 text-left transition-colors hover:border-line hover:bg-zinc-800/80"
                                                 >
                                                     <span className="block text-ui-caption font-medium text-zinc-200">{item.label}</span>
                                                     <span className="mt-1 block text-ui-dense text-zinc-500">{item.detail}</span>
@@ -1530,7 +1530,7 @@ const AgentsView: React.FC<AgentsViewProps> = ({
                                     />
                                 </div>
                             </div>
-                            <div data-testid="chat-composer" className="rounded-bubble border border-hairline bg-surface-raised p-3 shadow-xl transition-colors focus-within:border-accent/40">
+                            <div data-testid="chat-composer" className="rounded-bubble border border-hairline bg-surface-raised p-3 transition-colors focus-within:border-accent/40">
                                 <input type="file" multiple accept="image/*" className="hidden"
                                     ref={fileInputRef} data-testid="composer-file"
                                     onChange={e => { attachFiles(e.target.files); e.target.value = ''; }} />

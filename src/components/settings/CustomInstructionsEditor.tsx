@@ -33,7 +33,7 @@ const InstructionCard: React.FC<{
     const { confirm: confirmDelete, ConfirmDialogComponent } = useConfirmDialog();
 
     return (
-        <div className={`rounded-bubble border transition-[background-color,border-color,opacity,box-shadow] duration-[150ms] ease-[var(--ease-snappy)] ${instruction.isActive ? 'bg-zinc-900 border-zinc-600 shadow-[0_0_15px_-5px_rgba(176, 176, 182,0.1)]' : 'bg-zinc-800 border-hairline opacity-80 hover:opacity-100'}`}>
+        <div className={`rounded-bubble border transition-[background-color,border-color,opacity,box-shadow] duration-[150ms] ease-[var(--ease-snappy)] ${instruction.isActive ? 'bg-zinc-900 border-zinc-600' : 'bg-zinc-800 border-hairline opacity-80 hover:opacity-100'}`}>
             <div className="p-3 flex items-center justify-between gap-3">
                 <div className="flex-1 flex items-center gap-3 min-w-0">
                     <button
@@ -165,7 +165,7 @@ const CustomInstructionsEditor: React.FC<CustomInstructionsEditorProps> = ({
             <div className="flex space-x-1 bg-zinc-900 p-1 rounded-control border border-hairline">
                 <button
                     onClick={() => onTabChange('general')}
-                    className={`flex-1 py-1.5 text-ui-xs font-bold uppercase tracking-wider rounded-control transition-colors duration-[150ms] ease-[var(--ease-snappy)] ${activeTab === 'general' ? 'bg-zinc-700 text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-300'}`}
+                    className={`flex-1 py-1.5 text-ui-xs font-bold uppercase tracking-wider rounded-control transition-colors duration-[150ms] ease-[var(--ease-snappy)] ${activeTab === 'general' ? 'bg-zinc-700 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
                 >
                     Standard
                 </button>

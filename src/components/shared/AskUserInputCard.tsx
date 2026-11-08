@@ -55,7 +55,7 @@ export const AskUserInputCard: React.FC = () => {
             data-testid="ask-user-input"
             role="group"
             aria-label={`${request.asker} is asking`}
-            className="fixed bottom-24 left-1/2 z-drawer w-[min(34rem,calc(100vw-2rem))] -translate-x-1/2 rounded-bubble border border-line bg-zinc-900 p-3 shadow-2xl shadow-black/60"
+            className="fixed bottom-24 left-1/2 z-drawer w-[min(34rem,calc(100vw-2rem))] -translate-x-1/2 rounded-bubble border border-line bg-zinc-900 p-3 shadow-elevated"
         >
             <div className="flex items-baseline justify-between gap-2">
                 <p className="text-ui-2xs font-bold uppercase tracking-widest text-zinc-500">

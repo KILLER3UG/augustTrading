@@ -155,7 +155,7 @@ const UpdateOverlay: React.FC = () => {
             aria-live="assertive"
             aria-label="Application update in progress"
         >
-            <div className="relative w-full max-w-md mx-4 overflow-hidden border border-zinc-800 bg-zinc-900 shadow-2xl rounded-bubble p-8">
+            <div className="relative w-full max-w-md mx-4 overflow-hidden border border-zinc-800 bg-zinc-900 shadow-elevated rounded-bubble p-8">
                 {/* the same soft glow the splash carries, tucked inside the card */}
                 <div
                     aria-hidden="true"
@@ -214,7 +214,7 @@ const UpdateOverlay: React.FC = () => {
                             )}
                             <button
                                 onClick={installUpdate}
-                                className="w-full flex items-center justify-center gap-2 rounded-control bg-emerald-600 px-5 py-3 text-ui-base font-semibold text-white shadow-lg transition-[background-color,box-shadow,transform] duration-[150ms] ease-[var(--ease-snappy)] hover:bg-emerald-500 hover:shadow-emerald-500/25 active:scale-95"
+                                className="w-full flex items-center justify-center gap-2 rounded-control bg-emerald-600 px-5 py-3 text-ui-base font-semibold text-white transition-[background-color,box-shadow,transform] duration-[150ms] ease-[var(--ease-snappy)] hover:bg-emerald-500 hover:shadow-emerald-500/25 active:scale-95"
                                 aria-label={`Install update version ${version}`}
                             >
                                 <Zap className="h-4 w-4" aria-hidden="true" />

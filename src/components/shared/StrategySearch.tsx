@@ -179,7 +179,7 @@ const StrategySearch: React.FC<StrategySearchProps> = ({
         aria-hidden={!isVisible}
         inert={!isVisible}
         aria-label="Playbook & Strategy Search"
-        className={`fixed top-0 right-0 h-full w-full sm:w-[480px] bg-zinc-900 border-l border-hairline shadow-2xl z-drawer transform transition-transform duration-[150ms] ease-[var(--ease-snappy)] flex flex-col ${isVisible ? 'translate-x-0' : 'translate-x-full'}`}
+        className={`fixed top-0 right-0 h-full w-full sm:w-[480px] bg-zinc-900 border-l border-hairline shadow-elevated z-drawer transform transition-transform duration-[150ms] ease-[var(--ease-snappy)] flex flex-col ${isVisible ? 'translate-x-0' : 'translate-x-full'}`}
       >
         <div className="flex flex-col h-full">
           <header className="flex items-center justify-between p-4 sm:p-6 border-b border-hairline bg-zinc-800">
@@ -238,7 +238,7 @@ const StrategySearch: React.FC<StrategySearchProps> = ({
                                     className={`text-ui-xs sm:text-ui-sm font-bold uppercase tracking-wider py-2 px-4 rounded-control transition-colors ${
                                         (activeFrameworks || []).some(fw => fw.toLowerCase() === result.name.toLowerCase())
                                         ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 cursor-default'
-                                        : 'bg-accent text-accent-ink hover:bg-amber-500 shadow-lg shadow-black/30'
+                                        : 'bg-accent text-accent-ink hover:bg-amber-500'
                                     }`}
                                 >
                                     {(activeFrameworks || []).some(fw => fw.toLowerCase() === result.name.toLowerCase()) ? 'Active' : 'Add'}
@@ -331,7 +331,7 @@ const StrategySearch: React.FC<StrategySearchProps> = ({
                             const isViewing = viewingFramework === framework;
                             
                             return (
-                                <div key={index} className={`rounded-bubble overflow-hidden border transition-[border-color,box-shadow] duration-[150ms] ease-[var(--ease-snappy)] ${isViewing ? 'bg-zinc-800 border-cyan-500/30 shadow-lg' : 'bg-zinc-800 border-hairline hover:border-line'}`}>
+                                <div key={index} className={`rounded-bubble overflow-hidden border transition-[border-color,box-shadow] duration-[150ms] ease-[var(--ease-snappy)] ${isViewing ? 'bg-zinc-800 border-cyan-500/30' : 'bg-zinc-800 border-hairline hover:border-line'}`}>
                                     <div 
                                         className="p-3 sm:p-5 flex items-center justify-between cursor-pointer"
                                         role="button"

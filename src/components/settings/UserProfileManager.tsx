@@ -89,7 +89,7 @@ const UserProfileManager: React.FC<UserProfileManagerProps> = ({ isVisible, isLo
 
   return (
     <div ref={trapRef} className="fixed inset-0 bg-black z-modal flex items-center justify-center p-4 animate-fade-in" role="dialog" aria-modal="true" aria-label="User profile selection" aria-busy={isBusy} onClick={(e) => { if (e.target === e.currentTarget && canClose && !pendingRef.current) onClose?.(); }}>
-      <div className="relative w-full max-w-md bg-zinc-900 rounded-bubble border border-hairline shadow-2xl overflow-hidden">
+      <div className="relative w-full max-w-md bg-zinc-900 rounded-bubble border border-hairline shadow-elevated overflow-hidden">
           {/* Header */}
           <div className="relative px-8 py-10 text-center border-b border-hairline">
               {onClose && !isFreshBlank && (
@@ -104,7 +104,7 @@ const UserProfileManager: React.FC<UserProfileManagerProps> = ({ isVisible, isLo
                   </button>
               )}
               <div className="flex justify-center mb-6">
-                  <div className="w-20 h-20 bg-zinc-800 border border-zinc-700 rounded-control shadow-xl shadow-black/20 flex items-center justify-center text-zinc-200 transform rotate-3 hover:rotate-0 transition-transform duration-[150ms] ease-[var(--ease-snappy)]">
+                  <div className="w-20 h-20 bg-zinc-800 border border-zinc-700 rounded-control flex items-center justify-center text-zinc-200 transform rotate-3 hover:rotate-0 transition-transform duration-[150ms] ease-[var(--ease-snappy)]">
                       <BotIcon />
                   </div>
               </div>

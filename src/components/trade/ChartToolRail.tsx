@@ -174,7 +174,7 @@ export const ChartToolRail: React.FC<ChartToolRailProps> = ({
                 {trendFlyout && (
                     <>
                         <div className="fixed inset-0 z-30" aria-hidden onClick={() => setTrendFlyout(false)} />
-                        <div className="absolute left-9 top-0 z-40 flex flex-col gap-0.5 rounded-bubble border border-hairline bg-zinc-900 p-1 shadow-xl" data-testid="trend-flyout">
+                        <div className="absolute left-9 top-0 z-40 flex flex-col gap-0.5 rounded-bubble border border-hairline bg-zinc-900 p-1 shadow-elevated" data-testid="trend-flyout">
                             <RailButton title="Trendline — click start, click end" active={tool === 'trend'} onClick={() => pick('trend')}>
                                 <TrendIcon className="h-4 w-4" aria-hidden="true" />
                             </RailButton>
@@ -202,7 +202,7 @@ export const ChartToolRail: React.FC<ChartToolRailProps> = ({
                 {moreFlyout && (
                     <>
                         <div className="fixed inset-0 z-30" aria-hidden onClick={() => setMoreFlyout(false)} />
-                        <div className="absolute left-9 top-0 z-40 flex flex-col gap-0.5 rounded-bubble border border-hairline bg-zinc-900 p-1 shadow-xl" data-testid="more-tools-flyout">
+                        <div className="absolute left-9 top-0 z-40 flex flex-col gap-0.5 rounded-bubble border border-hairline bg-zinc-900 p-1 shadow-elevated" data-testid="more-tools-flyout">
                             <RailButton title="Fib retracement — click swing low, click swing high" active={tool === 'fib'} onClick={() => pick('fib')}>
                                 <FibIcon className="h-4 w-4" aria-hidden="true" />
                             </RailButton>
@@ -253,7 +253,7 @@ export const ChartToolRail: React.FC<ChartToolRailProps> = ({
                 {paletteOpen && (
                     <>
                         <div className="fixed inset-0 z-30" aria-hidden onClick={() => setPaletteOpen(false)} />
-                        <div className="absolute left-9 bottom-0 z-40 flex flex-col gap-1 rounded-bubble border border-hairline bg-zinc-900 p-2 shadow-xl" data-testid="rail-palette">
+                        <div className="absolute left-9 bottom-0 z-40 flex flex-col gap-1 rounded-bubble border border-hairline bg-zinc-900 p-2 shadow-elevated" data-testid="rail-palette">
                             {DRAW_COLORS.map(c => (
                                 <button key={c} type="button" aria-label={`Draw with ${c}`}
                                     onClick={() => { onColorChange(c); setPaletteOpen(false); }}

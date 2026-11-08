@@ -61,7 +61,7 @@ const JumpToLatestFab: React.FC<JumpToLatestFabProps> = ({ visible, running, onJ
             onClick={onJump}
             aria-label={name}
             title={name}
-            className="absolute bottom-3 left-1/2 z-10 flex h-8 w-8 -translate-x-1/2 items-center justify-center rounded-full border border-hairline bg-zinc-800/95 text-zinc-200 shadow-lg transition-colors duration-[120ms] ease-[var(--ease-snappy)] hover:bg-zinc-700 hover:text-zinc-100"
+            className="absolute bottom-3 left-1/2 z-10 flex h-8 w-8 -translate-x-1/2 items-center justify-center rounded-full border border-hairline bg-zinc-800/95 text-zinc-200 shadow-elevated transition-colors duration-[120ms] ease-[var(--ease-snappy)] hover:bg-zinc-700 hover:text-zinc-100"
         >
             {running ? (
                 // The INDETERMINATE ring: a dashed circle that turns. No

@@ -26,7 +26,7 @@ const ImagePreview: React.FC<ImagePreviewProps> = ({ images, onRemoveImage }) =>
             />
             <button
               onClick={() => onRemoveImage(index)}
-              className="absolute -top-2 -right-2 sm:top-0 sm:right-0 sm:-mt-1 sm:-mr-1 bg-rose-600 text-white rounded-full p-1 sm:p-0.5 hover:bg-rose-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-800 focus-visible:ring-white z-10 shadow-lg"
+              className="absolute -top-2 -right-2 sm:top-0 sm:right-0 sm:-mt-1 sm:-mr-1 bg-rose-600 text-white rounded-full p-1 sm:p-0.5 hover:bg-rose-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-800 focus-visible:ring-white z-10 shadow-elevated"
               aria-label={`Remove image ${index + 1}`}
             >
               <CloseIcon />

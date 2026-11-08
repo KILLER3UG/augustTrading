@@ -54,7 +54,7 @@ const ChatHistoryPalette: React.FC<ChatHistoryPaletteProps> = ({
     onQueryChange, onSelChange, onSelect, onDelete, onShowAll, onClose,
 }) => (
     <div className="absolute inset-0 z-40 flex items-start justify-center bg-black/50 px-6 pt-20" data-testid="chat-history-backdrop" onClick={onClose}>
-        <div className="w-full max-w-sm overflow-hidden rounded-bubble border border-hairline bg-zinc-900 shadow-2xl" data-testid="chat-history" onClick={e => e.stopPropagation()}>
+        <div className="w-full max-w-sm overflow-hidden rounded-bubble border border-hairline bg-zinc-900 shadow-elevated" data-testid="chat-history" onClick={e => e.stopPropagation()}>
             <input
                 autoFocus
                 value={query}

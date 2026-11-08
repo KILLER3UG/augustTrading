@@ -25,7 +25,7 @@ export const ToggleSwitch: React.FC<ToggleSwitchProps> = ({ checked, onChange, l
         } ${checked ? 'bg-accent' : 'bg-zinc-700'}`}
     >
         <div
-            className={`bg-white w-4 h-4 rounded-full shadow-md transform transition-transform duration-[150ms] ease-[var(--ease-snappy)] ${
+            className={`bg-white w-4 h-4 rounded-full transform transition-transform duration-[150ms] ease-[var(--ease-snappy)] ${
                 checked ? 'translate-x-5' : 'translate-x-0'
             }`}
         />

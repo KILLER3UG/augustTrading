@@ -85,7 +85,7 @@ const CONFIDENCE_COLORS: Record<string, string> = {
 const CustomTooltip = ({ active, payload, label }: any) => {
     if (active && payload && payload.length) {
         return (
-            <div className="bg-zinc-900 border border-hairline rounded-bubble px-3 py-2 shadow-xl">
+            <div className="bg-zinc-900 border border-hairline rounded-bubble px-3 py-2">
                 <p className="text-ui-xs text-zinc-400 uppercase tracking-wider mb-1">{label}</p>
                 {payload.map((entry: any, index: number) => (
                     <p key={index} className="text-ui-base font-bold" style={{ color: entry.color }}>
@@ -212,7 +212,7 @@ const WinRateDashboard: React.FC<WinRateDashboardProps> = ({ trades }) => {
                                 aria-pressed={!isCustomRange && selectedPreset === preset.days}
                                 aria-label={preset.days === 0 ? 'Show all-time performance' : `Show the last ${preset.days} days of performance`}
                                 className={`flex-1 sm:flex-none px-2 sm:px-3 py-1.5 text-ui-2xs sm:text-ui-xs font-bold uppercase tracking-wider rounded-control transition-colors duration-[150ms] ease-[var(--ease-snappy)] ${!isCustomRange && selectedPreset === preset.days
-                                    ? 'bg-zinc-800 text-zinc-100 shadow-md'
+                                    ? 'bg-zinc-800 text-zinc-100'
                                     : 'text-zinc-400 hover:text-white hover:bg-zinc-800'
                                     }`}
                             >

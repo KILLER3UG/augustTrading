@@ -165,7 +165,7 @@ const ShellRail: React.FC<ShellRailProps> = ({
                 }}
                 className={`flex h-full border-r border-hairline bg-zinc-950 ${
                     overlay
-                        ? 'fixed inset-y-0 left-0 z-40 shadow-2xl'
+                        ? 'fixed inset-y-0 left-0 z-40 shadow-elevated'
                         : 'relative shrink-0'
                 } ${isResizing ? '' : 'transition-[width] duration-150 ease-[var(--ease-snappy)]'}`}
             >

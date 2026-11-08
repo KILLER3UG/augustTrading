@@ -141,7 +141,7 @@ const NavTabButton: React.FC<{
         aria-current={active ? 'page' : undefined}
         className={`motion-press flex w-full items-center justify-between gap-2 rounded-control px-2.5 py-2 text-left text-ui-sm font-medium transition-colors ${
             active
-                ? 'bg-zinc-800 text-zinc-100 shadow-sm ring-1 ring-white/[0.09]'
+                ? 'bg-zinc-800 text-zinc-100 ring-1 ring-white/[0.09]'
                 : 'text-zinc-500 hover:bg-white/[0.04] hover:text-zinc-100'
         }`}
     >
@@ -763,7 +763,7 @@ const SettingsMenu: React.FC<SettingsMenuProps> = (props) => {
                 <div className="pointer-events-none absolute bottom-4 right-4 z-10 flex flex-col items-end gap-2">
                     {helpOpen && (
                         <div role="dialog" aria-label="Settings help" data-testid="settings-help-panel"
-                            className="motion-pop pointer-events-auto w-72 rounded-bubble border border-hairline bg-zinc-900 p-4 shadow-2xl">
+                            className="motion-pop pointer-events-auto w-72 rounded-bubble border border-hairline bg-zinc-900 p-4 shadow-elevated">
                             <p className="text-ui-sm font-semibold text-zinc-100">Settings help</p>
                             <p className="mt-1.5 text-ui-dense leading-relaxed text-zinc-500">
                                 Search finds a control by name and jumps to it. Back and forward walk the pages

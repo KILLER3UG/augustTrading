@@ -29,7 +29,7 @@ export const EntryNotHitCaptureModal: React.FC<EntryNotHitCaptureModalProps> = (
 
     return (
         <div ref={dialogRef} className="fixed inset-0 bg-black/70 z-modal flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label="Entry not hit capture">
-            <div className="bg-zinc-900 rounded-bubble shadow-2xl w-full max-w-lg border border-cyan-500/30 animate-fade-in max-h-[90vh] overflow-y-auto">
+            <div className="bg-zinc-900 rounded-bubble shadow-elevated w-full max-w-lg border border-cyan-500/30 animate-fade-in max-h-[90vh] overflow-y-auto">
                 {/* Header */}
                 <div className="p-5 border-b border-hairline bg-cyan-950/30">
                     <div className="flex items-center gap-3">

@@ -992,7 +992,7 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
                         {showNewMenu && (
                             <>
                                 <div className="fixed inset-0 z-20" aria-hidden onClick={() => setShowNewMenu(false)} />
-                                <div className="absolute right-0 top-9 z-30 max-h-96 w-56 overflow-y-auto rounded-bubble border border-hairline bg-zinc-900 p-1 shadow-xl" data-testid="chat-new-menu">
+                                <div className="absolute right-0 top-9 z-30 max-h-96 w-56 overflow-y-auto rounded-bubble border border-hairline bg-zinc-900 p-1 shadow-elevated" data-testid="chat-new-menu">
                                     {isPanel && (
                                         <button type="button" onClick={() => { setShowNewMenu(false); setPanelPickerFor(activeId); }}
                                             className="block w-full rounded-control px-2 py-1.5 text-left text-ui-dense text-zinc-300 hover:bg-white/[0.06]">

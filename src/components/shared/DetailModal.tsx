@@ -68,7 +68,7 @@ const DetailModal: React.FC<DetailModalProps> = ({
 
     return (
         <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/75 p-3 sm:p-6" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-            <div className=" flex max-h-[min(86vh,760px)] w-full max-w-3xl flex-col overflow-hidden rounded-bubble border border-cyan-400/20 bg-zinc-950 shadow-2xl" ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="detail-modal-title">
+            <div className=" flex max-h-[min(86vh,760px)] w-full max-w-3xl flex-col overflow-hidden rounded-bubble border border-cyan-400/20 bg-zinc-950 shadow-elevated" ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="detail-modal-title">
                 <div className="flex shrink-0 items-start justify-between gap-4 border-b border-hairline bg-zinc-900/90 px-4 py-4 sm:px-6">
                     <div className="flex min-w-0 items-start gap-3">
                         {icon ?? (

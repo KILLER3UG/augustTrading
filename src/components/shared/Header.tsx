@@ -204,7 +204,7 @@ export const Header: React.FC<HeaderProps> = memo(({
                             {/* Session Details Modal — a disclosure, not
                                 a modal: see the no-trap note above. */}
                             {isSessionModalOpen && (
-                                     <div id="session-details-popover" role="dialog" aria-label="Session details" className="absolute top-full left-0 sm:left-auto sm:right-0 mt-4 sm:mt-2 w-80 bg-zinc-900 border border-hairline rounded-bubble shadow-2xl overflow-hidden z-drawer animate-fade-in">
+                                     <div id="session-details-popover" role="dialog" aria-label="Session details" className="absolute top-full left-0 sm:left-auto sm:right-0 mt-4 sm:mt-2 w-80 bg-zinc-900 border border-hairline rounded-bubble shadow-elevated overflow-hidden z-drawer animate-fade-in">
                                     <div className="p-3 bg-zinc-900">
                                         {/* Live Market Conditions Section */}
                                         {liveMarketConditions && (

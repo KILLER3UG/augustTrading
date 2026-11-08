@@ -321,6 +321,16 @@
   --radius-control: 10px;
   --radius-composer: 16px;
   --ease-snappy: cubic-bezier(0.2, 0.8, 0.2, 1);
+  /* ELEVATION (v4): one shadow, for one kind of thing. The reference casts a
+     shadow on a FLOATING layer — a menu, a modal, a palette, a notice — and
+     nowhere else; its resting cards and controls are cut planes separated by
+     the hairline, exactly as the border tokens describe. The app had 99
+     shadows, most of them on inline cards, tabs, composers and a toggle knob:
+     nine ways of saying "this is raised" about things that are not. Every
+     floating layer wears this one token now. Coloured glows on status
+     indicators are STATE, not elevation, so they keep theirs — the beacon,
+     the session dot, the outcome chips. */
+  --shadow-elevated: 0 12px 32px rgba(0, 0, 0, .5);
   /* The curve a bare `transition-*` utility falls back to. Tailwind ships
      cubic-bezier(.4,0,.2,1) here, so every class that names a property but not
      an ease — the majority in this app — was easing on the Material curve while
@@ -713,7 +723,6 @@ body {
   border-radius: var(--radius-bubble);
   border: 1px solid var(--color-hairline);
   background: var(--color-surface-panel);
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.025);
 }
 /* The streamed text is written by `useLetterReveal` — 3 characters a frame
    (5 on a burst). The caret is the only extra furniture; there is no block
@@ -1214,7 +1223,7 @@ body.motion-reduced {
   font-size: var(--text-ui-dense);
   font-weight: 500;
   line-height: 1;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+  box-shadow: var(--shadow-elevated);
   opacity: 0;
   pointer-events: none;
   transition: opacity var(--motion-fast) var(--motion-ease) 0.28s;
@@ -1678,13 +1687,6 @@ code,
     border: 1px solid var(--color-zinc-800) !important;
   }
 
-  /* Disable heavy box-shadows on mobile */
-  .shadow-2xl,
-  .shadow-xl,
-  .shadow-lg {
-    box-shadow: none !important;
-    border: 1px solid var(--color-zinc-800);
-  }
 }
 
 .glass-panel {
@@ -2066,7 +2068,7 @@ select {
 .tip-label {
   border-color: var(--color-hairline);
   border-radius: var(--radius-control);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
+  box-shadow: var(--shadow-elevated);
 }
 .tool-row-body,
 .analyzed-row .reasoning-row-body {

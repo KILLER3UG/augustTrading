@@ -145,7 +145,7 @@ export const DataCaptureModal: React.FC<DataCaptureModalProps> = ({
 
     return (
         <div ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label="Capture trade data" className=" fixed inset-0 bg-black/70 z-modal flex items-center justify-center p-4 outline-none">
-            <div className={`bg-zinc-900 rounded-bubble shadow-2xl w-full max-w-lg border ${colors.border} animate-fade-in`}>
+            <div className={`bg-zinc-900 rounded-bubble shadow-elevated w-full max-w-lg border ${colors.border} animate-fade-in`}>
                 {/* Header */}
                 <div className={`p-5 border-b border-hairline ${colors.bg}`}>
                     <div className="flex items-center gap-3">

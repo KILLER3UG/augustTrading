@@ -117,7 +117,7 @@ export const UpdateButton: React.FC<{ className?: string }> = ({ className = '' 
                 </span>
                 <button
                     onClick={downloadUpdate}
-                    className={`${baseClasses} bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg hover:shadow-emerald-500/25 active:scale-95`}
+                    className={`${baseClasses} bg-emerald-600 hover:bg-emerald-500 text-white hover:shadow-emerald-500/25 active:scale-95`}
                     aria-label={`Download update version ${version}`}
                 >
                     <Download className="h-3.5 w-3.5" aria-hidden="true" />
@@ -148,7 +148,7 @@ export const UpdateButton: React.FC<{ className?: string }> = ({ className = '' 
             <div className={`flex items-center gap-1.5 ${className}`}>
                 <button
                     onClick={installUpdate}
-                    className={`${baseClasses} bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg hover:shadow-emerald-500/25 active:scale-95`}
+                    className={`${baseClasses} bg-emerald-600 hover:bg-emerald-500 text-white hover:shadow-emerald-500/25 active:scale-95`}
                     aria-label={`Restart to apply version ${version ?? ''}`}
                 >
                     <Download className="h-3.5 w-3.5" aria-hidden="true" />
