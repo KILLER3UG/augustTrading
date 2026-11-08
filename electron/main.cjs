@@ -1263,7 +1263,7 @@ async function createWindow() {
         // Electron's default white, so anything that paints behind the
         // renderer — the 4s fail-safe show, a failed load — still shows white.
         // This is the page color from index.css.
-        backgroundColor: '#0a0a0a',
+        backgroundColor: '#0d0c0b',
         show: false,
         // Keep renderer timers/rAF at full rate when the window is hidden or
         // occluded. Electron throttles backgrounded renderers to ~1 timer/min
