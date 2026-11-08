@@ -1261,7 +1261,7 @@ export const DESK_TOOL_DEFINITIONS: DeskToolDefinition[] = [
         function: {
             name: 'skill_view',
             description:
-                'Open ONE skill from the index and read it BEFORE acting on a task its description matches. '
+                'Read ONE skill before acting on a task its description matches: call with {"skill":"<slug>"}. '
                 + 'Without file_path: the skill\'s full body plus its bundled files (references/templates), ready to follow. '
                 + 'With file_path: ONE bundled file from the listed names. Skills carry instructions that are not in '
                 + 'your training data; reading one costs far less than redoing its work wrong.',
@@ -2508,6 +2508,10 @@ export const INITIAL_DESK_TOOL_NAMES: readonly string[] = [
     'get_session_context',
     'read_tool_output',
     'recall',
+    // The reader the skills index orders the seat to open BEFORE acting. A
+    // deferred reader made that instructed call an unloaded name on native
+    // seats, and a schema-free guess on text transports.
+    'skill_view',
     'web_search',
     'emit_signal',
     'ask_user_input',
@@ -3613,7 +3617,14 @@ ${hitContent}`, ...resolvedSymbolField(call, fallback) };
                 // resolves it against the skill's OWN files and nothing else.
                 const wanted = asString(call.arguments.skill).trim();
                 const filePath = asString(call.arguments.file_path || '').trim();
-                if (!wanted) return rejectedResult(call, 'skill_view rejected: skill is required');
+                if (!wanted) {
+                    // The refusal is the model's only feedback, so it has to
+                    // name the shape it missed. "skill is required" alone sent
+                    // a seat that had passed the slug under `slug` into a
+                    // retry loop against a schema it invented.
+                    const received = Object.keys(call.arguments ?? {}).join(', ') || 'no arguments';
+                    return rejectedResult(call, `skill_view rejected: pass {"skill":"<slug>"} — the slug exactly as skill_index lists it (got ${received}).`);
+                }
                 const { getSkill, skillPathOf } = await import('../learning/SkillFileService');
                 const skill = getSkill(wanted);
                 if (!skill) return rejectedResult(call, `skill_view rejected: no skill named "${wanted}" in the index`);
@@ -5120,6 +5131,56 @@ export function parseOpenAIToolCalls(message: unknown): DeskToolCall[] {
 }
 
 /**
+ * The one argument a bare (non-JSON) text body fills, or null when the tool's
+ * contract has no single string it could be. `web_search`'s whole argument IS
+ * the text; every other tool needs a named key.
+ *
+ * A bare slug used to be coerced to `{query}` for EVERY tool — the
+ * web_search-shaped fallback. `skill_view` then dispatched with no `skill`,
+ * refused with "skill is required", and the model had no way to see that its
+ * text had been reinterpreted.
+ */
+const bareTextArgumentFor = (toolName: string): string | null => {
+    if (toolName === 'web_search') return 'query';
+    const definition = [...DESK_TOOL_DEFINITIONS, ...CHART_ACTION_TOOL_DEFS]
+        .find(d => d.function.name === toolName);
+    const required = definition?.function.parameters.required ?? [];
+    if (required.length !== 1) return null;
+    const property = definition?.function.parameters.properties[required[0]] as { type?: unknown } | undefined;
+    return property?.type === 'string' ? required[0] : null;
+};
+
+const isJsonObjectText = (raw: string): boolean => {
+    try {
+        const parsed: unknown = JSON.parse(raw);
+        return !!parsed && typeof parsed === 'object' && !Array.isArray(parsed);
+    } catch {
+        return false;
+    }
+};
+
+/** One text-protocol argument body. A JSON object is the contract; a JSON
+ *  string or plain text fills the tool's ONE required string argument; any
+ *  other shape is null because it cannot be dispatched honestly. */
+const parseTextToolArguments = (toolName: string, raw: string): Record<string, unknown> | null => {
+    if (!raw) return {};
+    try {
+        const parsed: unknown = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+            return parsed as Record<string, unknown>;
+        }
+        if (typeof parsed === 'string') {
+            const only = bareTextArgumentFor(toolName);
+            return only ? { [only]: parsed } : null;
+        }
+        return null;
+    } catch {
+        const only = bareTextArgumentFor(toolName);
+        return only ? { [only]: raw } : null;
+    }
+};
+
+/**
  * Text-protocol fallback for formats without native tools.
  * `<tool_call name="web_search">{"query":"..."}</tool_call>`
  */
@@ -5130,17 +5191,16 @@ export function parseTextToolCalls(text: string): DeskToolCall[] {
     let match: RegExpExecArray | null;
     let i = 0;
     while ((match = re.exec(text)) && calls.length < 4) {
-        let args: Record<string, unknown>;
-        const raw = match[2].trim();
-        try {
-            args = raw ? JSON.parse(raw) : {};
-        } catch {
-            args = { query: raw };
-        }
+        const args = parseTextToolArguments(match[1], match[2].trim());
+        // One unreadable body makes the whole message a malformed call. Running
+        // the readable half and silently dropping this one would hide the
+        // mistake from the model; the loop's syntax bounce restates the JSON
+        // protocol for every block.
+        if (!args) return [];
         calls.push({
             id: `text_${i++}`,
             name: match[1],
-            arguments: args && typeof args === 'object' ? args : {},
+            arguments: args,
         });
     }
     return calls;
@@ -5168,6 +5228,10 @@ export const malformedToolCallReason = (text: string): string | null => {
     if (/<parameter(\s|=|\/)/i.test(text)) return 'a `<parameter=…>` block — parameters live INSIDE the JSON object: <tool_call name="TOOL_NAME">{"param":"value"}</tool_call>';
     if (/<tool_call\s*>/i.test(text)) return 'a `<tool_call>` block without a name attribute — emit <tool_call name="TOOL_NAME">{"arg":"value"}</tool_call>';
     if (/<tool_call\s/i.test(text) && !/<\/tool_call\s*>/i.test(text)) return 'an unclosed `<tool_call>` block — close it with </tool_call>';
+    const named = /<tool_call\s+name=["']([^"']+)["']\s*>([\s\S]*?)<\/tool_call\s*>/i.exec(text);
+    if (named && named[2].trim() && !isJsonObjectText(named[2].trim())) {
+        return `a <tool_call> for \`${named[1]}\` whose body is not a JSON object — arguments belong INSIDE the block, e.g. <tool_call name="${named[1]}">{"arg":"value"}</tool_call>`;
+    }
     return null;
 };
 

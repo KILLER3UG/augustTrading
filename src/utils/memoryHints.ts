@@ -86,7 +86,7 @@ export const buildMemoryHints = (
     const skills: string[] = [];
     for (const slug of skillSlugs.slice(0, 60)) {
         if (skills.length >= SKILL_HINT_MAX) break;
-        if (matches(msg, slug)) skills.push(`skill_view "${slug}" before acting — its description matches this task.`);
+        if (matches(msg, slug)) skills.push(`skill_view {"skill":"${slug}"} before acting — its description matches this task.`);
     }
     return [...lines, ...skills];
 };

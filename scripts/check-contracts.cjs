@@ -668,6 +668,23 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
     ok('desk budget: a seat restricted to initial tools has nothing to load',
         narrow.length === 0, JSON.stringify(narrow));
     ok('desk budget: a text-protocol turn never defers', text.length === 0);
+    ok('desk budget: the skill reader the prompt orders is on the initial wire',
+        initial.includes('skill_view'));
+    // Text-protocol seats carry no schemas, so a bare body must fill the
+    // tool's ONE string argument. Coercing every body to `{query}` dispatched
+    // skill_view with no `skill` and produced a refusal the model could not
+    // act on.
+    const bareSkill = desk.parseTextToolCalls('<tool_call name="skill_view">book-range-fade-boundaries</tool_call>');
+    ok('desk text calls: a bare skill body fills `skill`, never a web-shaped `query`',
+        bareSkill.length === 1 && bareSkill[0].arguments.skill === 'book-range-fade-boundaries'
+        && !('query' in bareSkill[0].arguments), JSON.stringify(bareSkill));
+    ok('desk text calls: a bare web search keeps `query`',
+        desk.parseTextToolCalls('<tool_call name="web_search">btc funding</tool_call>')[0]?.arguments.query === 'btc funding');
+    ok('desk text calls: explicit JSON is passed through unchanged',
+        desk.parseTextToolCalls('<tool_call name="skill_view">{"slug":"x"}</tool_call>')[0]?.arguments.slug === 'x');
+    ok('desk text calls: a multi-argument tool with a bare body is bounced, not guessed',
+        desk.parseTextToolCalls('<tool_call name="remember">a durable fact</tool_call>').length === 0
+        && /JSON object/.test(desk.malformedToolCallReason('<tool_call name="remember">a durable fact</tool_call>') || ''));
     ok('desk budget: the initial set is a minority of the schema bytes',
         initialChars * 2 < totalChars, `${initialChars}/${totalChars}`);
     // The write chip is the trader's visible record of a model write. It must
@@ -2829,6 +2846,10 @@ const checkSkillWrites = async () => {
     review.indexVersion = (await call('skill_index', {})).skillIndexVersion;
     const unreadUpdate = await call('skill_write', { ...input, slug: skill.slug, if_version: skill.version }, { skillReview: review });
     ok('pen runtime: editing requires opening the target, not only its index', !unreadUpdate.ok);
+    const wrongKey = await call('skill_view', { slug: skill.slug });
+    ok('pen runtime: a wrong argument key is refused with the shape the seat must send',
+        !wrongKey.ok && wrongKey.content.includes('{"skill":"<slug>"}') && wrongKey.content.includes('slug'),
+        wrongKey.content);
     const viewed = await call('skill_view', { skill: skill.slug });
     review.opened.set(viewed.skillRead.slug, viewed.skillRead.version);
     const longBody = 'Read the warehouse tape.\n'.repeat(700) + 'END OF UNCAPPED PROCEDURE';

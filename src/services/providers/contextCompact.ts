@@ -395,7 +395,7 @@ const clipBodyForBudget = (slug: string, body: string, tokens: number): string =
         source: `skill ${slug}`,
         kept: head.length,
         total: body.length,
-        guidance: 'call skill_view for this skill if the missing part matters',
+        guidance: `call skill_view {"skill":"${slug}"} if the missing part matters`,
     })}`;
 };
 

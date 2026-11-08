@@ -233,7 +233,7 @@ export const buildSkillsIndexForPrompt = (
     if (rows.length === 0) return '';
     const shown = rows.slice(0, max);
     return [
-        `## Skills library - ${rows.length} skill${rows.length === 1 ? '' : 's'}. Each line is WHEN to use it; the body is the procedure. Open one with skill_view before acting on it, and cite the slug you used. APPLY any that match ${where}.`,
+        `## Skills library - ${rows.length} skill${rows.length === 1 ? '' : 's'}. Each line is WHEN to use it; the body is the procedure. Open one with skill_view (pass {"skill": "<slug>"}) before acting on it, and cite the slug you used. APPLY any that match ${where}.`,
         ...shown.map(r => `- ${r.slug} - ${(r.description || r.name || '(no description)').trim()}`),
         rows.length > max ? `...and ${rows.length - max} more - skill_view reads any one by slug.` : '',
     ].filter(Boolean).join('\n');
