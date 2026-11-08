@@ -67,6 +67,7 @@ import { skillIndexRows } from '../../services/learning/SkillFileService';
 import { getMemoryFiles } from '../../services/learning/MemoryFilesService';
 import { buildNotebookTopicsIndex } from '../../services/learning/memoryTopics';
 import { indexBudgetFor } from '../../utils/promptIndexBudget';
+import { DEFAULT_CONTEXT_WINDOW_TOKENS, resolveContextWindow } from '../../utils/contextWindow';
 import { buildLearningRulesIndex } from '../../utils/learningRulesIndex';
 import { storageService } from '../../services/infrastructure/StorageService';
 import { buildProfileMemoryIndex } from '../../services/learning/profileMemory';
@@ -428,7 +429,7 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
             // the Agents surface (utils/promptIndexBudget), scaled to the seat's
             // context window, so a small local model gets small indexes in
             // both homes.
-            const budget = indexBudgetFor(config?.contextWindowTokens ?? 200_000);
+            const budget = indexBudgetFor(config ? resolveContextWindow(config).tokens : DEFAULT_CONTEXT_WINDOW_TOKENS);
             const store = getMemoryFiles();
             const topics = memoryEnabled !== false ? buildNotebookTopicsIndex(store.files, store.folders, budget.topics) : '';
             const goals = buildGoalsIndex(budget.goals);
@@ -479,7 +480,7 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
         // with the default row count on an 8k model, so the two homes disagreed
         // about both the toggle and the size (the 2026-10-27 audit M-3).
         const memoryBlock = memoryEnabled !== false
-            ? buildProfileMemoryIndex(undefined, indexBudgetFor(provider?.contextWindowTokens ?? 200_000).memory)
+            ? buildProfileMemoryIndex(undefined, indexBudgetFor(provider ? resolveContextWindow(provider).tokens : DEFAULT_CONTEXT_WINDOW_TOKENS).memory)
             : '';
         let agent: ResolvedAgentContext | null = null;
         if (bot) {

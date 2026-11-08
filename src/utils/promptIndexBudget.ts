@@ -11,6 +11,8 @@
  * Pure: a window size in, line caps out. Contract-tested.
  */
 
+import { DEFAULT_CONTEXT_WINDOW_TOKENS } from './contextWindow';
+
 export interface IndexBudget {
     /** Skills catalogue lines (L0). */
     skills: number;
@@ -33,7 +35,7 @@ const STEP = (
 /** The repo's defaults at ≥200k — the numbers the composition sites used
  *  before this budget existed, so big-window behaviour is unchanged. */
 export const indexBudgetFor = (windowTokens: number): IndexBudget => {
-    const w = Number.isFinite(windowTokens) ? Math.max(0, windowTokens) : 200_000;
+    const w = Number.isFinite(windowTokens) ? Math.max(0, windowTokens) : DEFAULT_CONTEXT_WINDOW_TOKENS;
     return {
         skills: STEP(w, 30, 20, 10, 4),
         memory: STEP(w, 30, 16, 8, 4),

@@ -42,6 +42,7 @@ import { buildNotebookTopicsIndex } from '../learning/memoryTopics';
 import { buildLearningRulesIndex } from '../../utils/learningRulesIndex';
 import { storageService } from '../infrastructure/StorageService';
 import { indexBudgetFor } from '../../utils/promptIndexBudget';
+import { DEFAULT_CONTEXT_WINDOW_TOKENS, resolveContextWindow } from '../../utils/contextWindow';
 import { activeStrategiesBlock } from '../learning/strategyStore';
 import { buildProfileMemoryIndex } from '../learning/profileMemory';
 import { buildGoalsIndex, focusedGoal, goalMatchesMessage, listGoals } from '../goals/GoalService';
@@ -147,7 +148,7 @@ export interface ChatSurfacePrompt {
  */
 export const surfacePromptWith = (mandate: string, where: string, opts: { memoryEnabled?: boolean; strategiesEnabled?: boolean; windowTokens?: number; matchText?: string } = {}): ChatSurfacePrompt => {
     const memoryEnabled = opts.memoryEnabled !== false;
-    const budget = indexBudgetFor(opts.windowTokens ?? 200_000);
+    const budget = indexBudgetFor(opts.windowTokens ?? DEFAULT_CONTEXT_WINDOW_TOKENS);
     let skillsBlock: string;
     let skills: string[];
     try {
@@ -478,7 +479,7 @@ export const runChatSurfaceTurn = async (req: ChatSurfaceTurnRequest): Promise<T
         : chatSurfaceSystemPrompt({
             memoryEnabled: req.memoryEnabled !== false,
             strategiesEnabled: req.strategiesEnabled !== false,
-            windowTokens: req.config?.contextWindowTokens,
+            windowTokens: req.config ? resolveContextWindow(req.config).tokens : undefined,
             // Only the trader's own line is matched — see the note in
             // `surfacePromptWith`. A caller that brought its own mandate gets
             // that mandate verbatim and no hint.

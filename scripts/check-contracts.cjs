@@ -555,6 +555,22 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
         JSON.stringify(pb.indexBudgetFor(Number.NaN)) === JSON.stringify(big));
 })();
 
+// ─── 10b. the default window is the owner's 1M for every model ────────────
+// The resolver, the index budget and the compactor must agree on the number an
+// unstated model gets. This is a default, not a cap: a user override, a
+// provider-stated limit or a discovered per-model window still wins.
+(() => {
+    const cw = loadModule('src/utils/contextWindow.ts');
+    const unstated = cw.resolveContextWindow({ id: 'p', name: 'P', selectedModel: 'any-model' });
+    ok('context window: an unstated model defaults to 1M',
+        cw.DEFAULT_CONTEXT_WINDOW_TOKENS === 1_000_000
+        && unstated.tokens === 1_000_000 && unstated.source === 'default',
+        JSON.stringify(unstated));
+    const pb = loadModule('src/utils/promptIndexBudget.ts');
+    ok('context window: the index budget treats an unstated model as 1M',
+        JSON.stringify(pb.indexBudgetFor(Number.NaN)) === JSON.stringify(pb.indexBudgetFor(cw.DEFAULT_CONTEXT_WINDOW_TOKENS)));
+})();
+
 // ─── 12. policy tables — what the agent may never move, what a goal may never grant
 // The "should this be a contract?" question, answered: the sections above pin
 // arithmetic, dialects and coercion. None of them pins a POLICY TABLE, and the
