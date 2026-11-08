@@ -51,6 +51,49 @@ export const missingSkillSections = (body: string): string[] => {
     return SKILL_BODY_SECTIONS.filter(section => !present.has(section.toLowerCase()));
 };
 
+/** What a SKILL.md must carry to BE a skill, as opposed to a stray markdown
+ *  file. One list, so the editor's create check, the card's indicator, the
+ *  detail banner and the model's rewrite all read the same definition instead
+ *  of four copies that drift. */
+export interface SkillFormatIssue {
+    kind: 'frontmatter' | 'name' | 'description' | 'body' | 'section';
+    what: string;
+}
+
+const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/;
+
+/** Every way this SKILL.md departs from the format, most fundamental first.
+ *  Empty means it conforms. Deliberately a CHECK and not a repair: the app
+ *  does not rewrite a trader's prose, so the answers are "show the trader"
+ *  and "ask the model", never "fix it silently". */
+export const skillFormatIssues = (content: string): SkillFormatIssue[] => {
+    const issues: SkillFormatIssue[] = [];
+    const text = content || '';
+    const match = FRONTMATTER_RE.exec(text);
+    if (!match) {
+        issues.push({ kind: 'frontmatter', what: 'no --- fence around a name and description' });
+    } else {
+        const head = match[1];
+        if (!/^\s*name\s*:/m.test(head)) issues.push({ kind: 'name', what: 'no name: in the frontmatter' });
+        if (!/^\s*description\s*:/m.test(head)) {
+            issues.push({ kind: 'description', what: 'no description: in the frontmatter' });
+        }
+    }
+    // A file with no fence is judged on its whole text: refusing it outright
+    // would report a missing body for a document that is nothing BUT body.
+    const body = (match ? match[2] : text).trim();
+    if (!body) {
+        issues.push({ kind: 'body', what: 'no body under the frontmatter' });
+    } else {
+        for (const section of missingSkillSections(body)) {
+            issues.push({ kind: 'section', what: `no ## ${section} heading` });
+        }
+    }
+    return issues;
+};
+
+export const skillIsFormatted = (content: string): boolean => skillFormatIssues(content).length === 0;
+
 /** How many siblings one URL import will fetch. */
 export const SKILL_SUPPORT_REF_MAX = 12;
 

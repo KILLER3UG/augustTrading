@@ -19,13 +19,20 @@ interface StrategyStudioProps {
     memoryConfig?: ProviderConfig | null;
     onOpenStrategySearch?: () => void;
     onClose?: () => void;
+    /** Configured providers, for the format-with-model picker. */
+    providers?: ProviderConfig[];
+    /** The model that reformats a skill, as `providerId::modelId`. */
+    formatModel?: string;
+    onFormatModelChange?: (value: string) => void;
 }
 
 /** The slug a skill-citation chip parked, or broadcast while this surface was
  *  already mounted. Tapping a citation has to open THAT document: App's own
  *  listener only changes the surface, and a parked value nobody consumes is a
  *  deep link that lands on the library and stops there. */
-const StrategyStudio: React.FC<StrategyStudioProps> = () => {
+const StrategyStudio: React.FC<StrategyStudioProps> = ({
+    providers, formatModel, onFormatModelChange,
+}) => {
     const [deepLink, setDeepLink] = useState<string | null>(() => consumePendingSkillOpen());
 
     useEffect(() => {
@@ -46,7 +53,12 @@ const StrategyStudio: React.FC<StrategyStudioProps> = () => {
                 </p>
             </header>
             <div className="min-h-0 flex-1">
-                <SkillLibrary initialSlug={deepLink} />
+                <SkillLibrary
+                    initialSlug={deepLink}
+                    providers={providers}
+                    formatModel={formatModel}
+                    onFormatModelChange={onFormatModelChange}
+                />
             </div>
         </div>
     );

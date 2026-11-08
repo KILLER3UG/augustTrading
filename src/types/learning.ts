@@ -132,7 +132,7 @@ export interface LearningRule {
 export type RootCauseClass = 'SETUP_EDGE_FAILURE' | 'EXECUTION_ERROR' | 'MACRO_SHOCK' | 'UNCLEAR';
 
 /**
- * A single markdown file in the Trader Notebook (Learning → Memory).
+ * A single markdown file in the Trader Notebook (the Memory surface).
  * The harness AND the user write these; matching enabled files are retrieved
  * into analyst, moderator, and post-mortem prompts (not a full dump).
  */

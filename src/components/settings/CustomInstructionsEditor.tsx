@@ -54,7 +54,7 @@ const InstructionCard: React.FC<{
                             />
                         ) : (
                             <div className="flex items-center gap-2">
-                                <span className={`text-ui-sm font-bold truncate ${instruction.isActive ? 'text-cyan-100' : 'text-zinc-400'}`} title={instruction.title || 'Untitled'}>{instruction.title || 'Untitled'}</span>
+                                <span className={`text-ui-sm font-bold truncate ${instruction.isActive ? 'text-zinc-100' : 'text-zinc-400'}`} title={instruction.title || 'Untitled'}>{instruction.title || 'Untitled'}</span>
                                 {instruction.isActive && <StatusPill tone="info" kicker>Active</StatusPill>}
                             </div>
                         )}
@@ -183,7 +183,7 @@ const CustomInstructionsEditor: React.FC<CustomInstructionsEditorProps> = ({
                     <div
                         // Data-value motion: this animates the token-usage bar's width,
                         // so the 500ms stays (ui-doctrine "Motion and density" exception).
-                        className={`h-full rounded-full transition-[width,background-color] duration-500 ease-[var(--ease-snappy)] ${totalWordCount > MAX_WORD_COUNT ? 'bg-rose-500' : 'bg-cyan-600'}`}
+                        className={`h-full rounded-full transition-[width,background-color] duration-500 ease-[var(--ease-snappy)] ${totalWordCount > MAX_WORD_COUNT ? 'bg-rose-500' : 'bg-accent'}`}
                         style={{ width: `${Math.min(100, (totalWordCount / MAX_WORD_COUNT) * 100)}%` }}
                     ></div>
                 </div>

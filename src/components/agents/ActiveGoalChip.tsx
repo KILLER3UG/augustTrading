@@ -48,7 +48,7 @@ const ActiveGoalChip: React.FC = () => {
     return (
         <span className="flex min-w-0 shrink-0 items-center gap-1" data-testid="active-goal-chip">
             <span
-                className="min-w-0 max-w-[180px] truncate rounded-full border border-cyan-500/30 bg-cyan-500/10 px-2 py-0.5 text-ui-dense text-cyan-300"
+                className="min-w-0 max-w-[180px] truncate rounded-full border border-zinc-700 bg-zinc-800 px-2 py-0.5 text-ui-dense text-zinc-100"
                 title={`Working inside "${title}" — its tool policy narrows this seat's tools from the next turn`}
                 data-testid="active-goal-name"
             >
@@ -60,7 +60,7 @@ const ActiveGoalChip: React.FC = () => {
                 disabled={busy}
                 aria-label={`Leave the goal ${title}`}
                 data-testid="active-goal-leave"
-                className="hit-target rounded-control p-1 text-cyan-400/70 transition-colors hover:bg-white/[0.06] hover:text-cyan-200 disabled:opacity-40"
+                className="hit-target rounded-control p-1 text-zinc-500 transition-colors hover:bg-white/[0.06] hover:text-zinc-200 disabled:opacity-40"
             >
                 <CloseIcon className="h-3 w-3" aria-hidden="true" />
             </button>

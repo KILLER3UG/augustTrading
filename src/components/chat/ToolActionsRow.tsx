@@ -40,16 +40,16 @@ const actionLabel = (tool: string, items: ToolAction[]): string => {
         case 'amend_memory':
             return `Memory amendment${plural} applied — the before/after and Undo are in Settings → Memory`;
         case 'forge_tool':
-            return `Desk tool${plural} proposed — review in Learning → Skills → Forged tools`;
+            return `Desk tool${plural} proposed — review in Skills → Forged tools`;
         case 'skill_write':
             return n === 1
-                ? `Skill saved — ${items[0].label} (Learning → Skills)`
-                : `${n} skills saved (Learning → Skills)`;
+                ? `Skill saved — ${items[0].label} (Skills)`
+                : `${n} skills saved (Skills)`;
         case 'propose_strategy':
             // Without this the row falls through to "Ran <slug>" and the trader
             // reads a plan awaiting their review as something already done.
             return n === 1
-                ? `Strategy plan proposed — ${items[0].label} (Learning → Skills → Trade plans; inactive until you activate it)`
+                ? `Strategy plan proposed — ${items[0].label} (Skills → Trade plans; inactive until you activate it)`
                 : `${n} strategy plans proposed — drafts, not active until you activate them`;
         case 'remember':
             return n === 1

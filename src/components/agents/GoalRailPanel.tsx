@@ -131,7 +131,7 @@ const GoalEditor: React.FC<{
                                 })}
                                 className={`hit-target rounded-control border px-1.5 py-0.5 text-ui-2xs transition-colors ${
                                     picked.has(name)
-                                        ? 'border-cyan-500/40 bg-cyan-500/10 text-cyan-200'
+                                        ? 'border-zinc-700 bg-zinc-800 text-zinc-100'
                                         : 'border-zinc-800 text-zinc-500 hover:border-zinc-700 hover:text-zinc-300'
                                 }`}
                             >
@@ -197,7 +197,7 @@ const GoalRow: React.FC<{
                     aria-pressed={goal.focused}
                     title={goal.focused ? 'Release this goal — the desk stops working inside it' : 'Work inside this goal'}
                     className={`mt-0.5 shrink-0 rounded-control p-1 transition-colors disabled:opacity-40 ${
-                        goal.focused ? 'text-cyan-300 hover:text-cyan-200' : 'text-zinc-600 hover:text-zinc-300'
+                        goal.focused ? 'text-zinc-100' : 'text-zinc-600 hover:text-zinc-300'
                     }`}
                 >
                     {goal.focused

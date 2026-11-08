@@ -24,4 +24,7 @@ export const TASK_BUDGETS = {
   chat: 8192,
   /** Post-mortem report (WIN/LOSS/ENTRY_NOT_HIT sections + the When/do clause). */
   postMortem: 8192,
+  /** Reformatting one skill: the SKILL.md it returns is the whole answer, so
+   *  the budget must hold a full procedure, not a summary of one. */
+  skillFormat: 4096,
 } as const;

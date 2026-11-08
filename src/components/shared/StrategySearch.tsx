@@ -201,7 +201,7 @@ const StrategySearch: React.FC<StrategySearchProps> = ({
                     />
                     <button
                         type="submit"
-                        className="absolute right-2 top-1/2 -translate-y-1/2 p-2 rounded-control text-zinc-400 hover:text-cyan-400 hover:bg-zinc-800 transition-colors"
+                        className="absolute right-2 top-1/2 -translate-y-1/2 p-2 rounded-control text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-colors"
                         disabled={isLoading || !searchQuery.trim()}
                         aria-label="Search strategies"
                     >
@@ -212,7 +212,7 @@ const StrategySearch: React.FC<StrategySearchProps> = ({
              <button
                 onClick={handleDiscover}
                 disabled={isLoading}
-                className="w-full flex items-center justify-center gap-2 sm:gap-3 bg-cyan-600/20 hover:bg-cyan-600/30 text-cyan-300 border border-cyan-500/30 font-bold py-3 sm:py-4 px-4 sm:px-5 rounded-control transition-colors duration-[150ms] ease-[var(--ease-snappy)] disabled:opacity-50 disabled:cursor-not-allowed text-ui-sm sm:text-ui-lg"
+                className="w-full flex items-center justify-center gap-2 sm:gap-3 bg-accent/15 hover:bg-accent/25 text-accent border border-accent/40 font-bold py-3 sm:py-4 px-4 sm:px-5 rounded-control transition-colors duration-[150ms] ease-[var(--ease-snappy)] disabled:opacity-50 disabled:cursor-not-allowed text-ui-sm sm:text-ui-lg"
              >
                 <BotIcon /> Auto-Discover Strategies
              </button>
@@ -238,7 +238,7 @@ const StrategySearch: React.FC<StrategySearchProps> = ({
                                     className={`text-ui-xs sm:text-ui-sm font-bold uppercase tracking-wider py-2 px-4 rounded-control transition-colors ${
                                         (activeFrameworks || []).some(fw => fw.toLowerCase() === result.name.toLowerCase())
                                         ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 cursor-default'
-                                        : 'bg-cyan-600 text-white hover:bg-cyan-500 shadow-lg shadow-cyan-900/20'
+                                        : 'bg-accent text-accent-ink hover:bg-amber-500 shadow-lg shadow-black/30'
                                     }`}
                                 >
                                     {(activeFrameworks || []).some(fw => fw.toLowerCase() === result.name.toLowerCase()) ? 'Active' : 'Add'}

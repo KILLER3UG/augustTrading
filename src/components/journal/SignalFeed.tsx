@@ -170,7 +170,7 @@ const SignalTableRow: React.FC<{ row: SignalRow; tracked?: TrackedPosition }> = 
                         aria-controls={detailId}
                         aria-label={`${open ? 'Hide' : 'Show'} details for ${s.coin} ${s.direction}`}
                         onClick={() => setOpen(v => !v)}
-                        className="rounded-control p-1 text-zinc-600 transition-colors hover:bg-white/[0.06] hover:text-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
+                        className="rounded-control p-1 text-zinc-600 transition-colors hover:bg-white/[0.06] hover:text-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
                     >
                         <ChevronDownIcon className={`h-3.5 w-3.5 transition-transform ${open ? 'rotate-180' : ''}`} aria-hidden="true" />
                     </button>
@@ -380,7 +380,7 @@ const SignalFeed: React.FC<SignalFeedProps> = ({ user }) => {
                         type="button"
                         onClick={refresh}
                         disabled={settling}
-                        className="inline-flex items-center gap-1.5 rounded-control px-2.5 py-1.5 text-ui-xs font-semibold text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-zinc-100 disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400"
+                        className="inline-flex items-center gap-1.5 rounded-control px-2.5 py-1.5 text-ui-xs font-semibold text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-zinc-100 disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
                         title="Re-check open signals against the tape"
                     >
                         <RefreshIcon className={`h-3.5 w-3.5 ${settling ? 'animate-spin' : ''}`} aria-hidden="true" />

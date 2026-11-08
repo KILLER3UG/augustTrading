@@ -216,7 +216,7 @@ export const DataCaptureModal: React.FC<DataCaptureModalProps> = ({
                                                         setSelectedEntryIndices(prev => [...prev, idx]);
                                                     }
                                                 }}
-                                                className="h-4 w-4 rounded-control border-zinc-600 bg-zinc-700 text-cyan-600 focus-visible:ring-cyan-500"
+                                                className="h-4 w-4 rounded-control border-zinc-600 bg-zinc-700 text-accent focus-visible:ring-accent"
                                             />
                                             <span className="ml-3 text-ui-base font-medium text-zinc-400 group-hover:text-zinc-300 transition-colors">
                                                 <span className="text-zinc-500">Entry {idx + 1}:</span>{' '}
@@ -241,7 +241,7 @@ export const DataCaptureModal: React.FC<DataCaptureModalProps> = ({
                                     type="checkbox"
                                     checked={isAdvanced}
                                     onChange={() => setIsAdvanced(!isAdvanced)}
-                                    className="h-4 w-4 rounded-control border-zinc-600 bg-zinc-700 text-cyan-600 focus-visible:ring-cyan-500"
+                                    className="h-4 w-4 rounded-control border-zinc-600 bg-zinc-700 text-accent focus-visible:ring-accent"
                                 />
                                 <span className="ml-3 text-ui-base font-medium text-zinc-400 group-hover:text-zinc-300 transition-colors">
                                     {content.advancedToggle}

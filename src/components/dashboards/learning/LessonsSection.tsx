@@ -72,7 +72,7 @@ export const LessonsSection: React.FC<LessonsSectionProps> = ({ topLessons, clos
                                         )}
                                         <button
                                             onClick={() => setExpandedLesson(isOpen ? null : i)}
-                                            className="text-ui-2xs font-bold uppercase tracking-widest text-zinc-500 hover:text-cyan-300 transition-colors flex items-center gap-1"
+                                            className="text-ui-2xs font-bold uppercase tracking-widest text-zinc-500 hover:text-zinc-200 transition-colors flex items-center gap-1"
                                         >
                                             View {matches.length} trades <ChevronDownIcon className={`w-3 h-3 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
                                         </button>

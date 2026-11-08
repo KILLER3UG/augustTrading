@@ -28,7 +28,6 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSurface, type AppSurface } from './useSurface';
 import { parseAppHash, serializeAppHash } from '../utils/appHash';
 import type { JournalUIState } from './useJournalUI';
-import type { LearnTab } from '../components/learn/LearnView';
 
 export interface SurfaceRouterOptions {
     isSettingsMenuVisible: boolean;
@@ -37,8 +36,6 @@ export interface SurfaceRouterOptions {
     setIsLiveMarketVisible: (visible: boolean) => void;
     isWatchListVisible: boolean;
     setIsWatchListVisible: (visible: boolean) => void;
-    /** The #/journal/learning bookmark used to land on the Learning surface. */
-    setLearnTab: (tab: LearnTab | null) => void;
 }
 
 export interface SurfaceRouter {
@@ -56,7 +53,6 @@ export const useSurfaceRouter = (opts: SurfaceRouterOptions): SurfaceRouter => {
         isSettingsMenuVisible, setIsSettingsMenuVisible,
         isLiveMarketVisible, setIsLiveMarketVisible,
         isWatchListVisible, setIsWatchListVisible,
-        setLearnTab,
     } = opts;
 
     // Top-level surfaces chosen from the header's hamburger menu
@@ -106,7 +102,6 @@ export const useSurfaceRouter = (opts: SurfaceRouterOptions): SurfaceRouter => {
                 // content actually lives now rather than a deleted tab. Matched
                 // on the RAW hash because parseAppHash folds dead tabs to the
                 // ledger — the fold must not strand this bookmark on Journal.
-                setLearnTab('health');
                 setSurface('learn');
                 setIsSettingsMenuVisible(false);
                 setIsLiveMarketVisible(false);
@@ -139,7 +134,7 @@ export const useSurfaceRouter = (opts: SurfaceRouterOptions): SurfaceRouter => {
         apply();
         window.addEventListener('hashchange', apply);
         return () => window.removeEventListener('hashchange', apply);
-    }, [setSurface, setIsSettingsMenuVisible, setIsLiveMarketVisible, setIsWatchListVisible, setLearnTab]);
+    }, [setSurface, setIsSettingsMenuVisible, setIsLiveMarketVisible, setIsWatchListVisible]);
 
     useEffect(() => {
         if (applyingHashRef.current) return;

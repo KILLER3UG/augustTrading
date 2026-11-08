@@ -204,7 +204,7 @@ export function useConfirmDialog() {
                                 data-testid="confirm-dialog-confirm"
                                 className={`px-4 py-2 text-ui-base font-semibold rounded-control transition-colors ${state.destructive
                                     ? 'bg-rose-500 enabled:hover:bg-rose-600 text-white disabled:bg-zinc-700 disabled:text-zinc-500'
-                                    : 'bg-cyan-500 enabled:hover:bg-cyan-600 text-white disabled:bg-zinc-700 disabled:text-zinc-500'
+                                    : 'bg-accent enabled:hover:bg-amber-500 text-accent-ink disabled:bg-zinc-700 disabled:text-zinc-500'
                                     }`}
                             >
                                 {state.confirmLabel}

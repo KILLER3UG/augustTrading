@@ -1,5 +1,5 @@
 /**
- * MemoryFilesService — the Trader Notebook (Learning → Memory).
+ * MemoryFilesService — the Trader Notebook (the Memory surface).
  *
  * What reaches a prompt is decided by `getMemoryFilesContext` (retrieval) and
  * the `recall` tool; there is no graph walk and no evidence gate — a skill is a

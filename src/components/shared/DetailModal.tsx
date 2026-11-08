@@ -79,7 +79,7 @@ const DetailModal: React.FC<DetailModalProps> = ({
                             {subtitle && <p className="mt-0.5 truncate text-ui-xs text-zinc-500" title={subtitle}>{subtitle}</p>}
                         </div>
                     </div>
-                    <button ref={closeButtonRef} type="button" onClick={onClose} className="shrink-0 rounded-control p-2 text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400" aria-label={closeName} title={closeName}><CloseIcon /></button>
+                    <button ref={closeButtonRef} type="button" onClick={onClose} className="shrink-0 rounded-control p-2 text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent" aria-label={closeName} title={closeName}><CloseIcon /></button>
                 </div>
                 <div className="min-h-0 flex-1 overflow-y-auto px-4 py-5 custom-scrollbar sm:px-6">
                     {children ?? (content ? <MarkdownContent content={content} className="text-ui-base leading-7 text-zinc-300" /> : <p className="text-ui-base italic text-zinc-600">This model did not return a separate reasoning trace.</p>)}

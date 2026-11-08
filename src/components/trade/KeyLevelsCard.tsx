@@ -156,7 +156,7 @@ const KeyLevelsCard: React.FC<KeyLevelsCardProps> = ({ levels, symbol, messageId
                         aria-label="Draw all key levels on the chart"
                         data-testid="key-levels-chart-toggle"
                     />
-                    <span className={`relative inline-block h-3.5 w-6 rounded-full transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-cyan-400/70 peer-focus-visible:ring-offset-2 peer-focus-visible:ring-offset-zinc-950 ${allOn ? 'bg-emerald-500/40' : 'bg-zinc-700'}`} aria-hidden="true">
+                    <span className={`relative inline-block h-3.5 w-6 rounded-full transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-accent/70 peer-focus-visible:ring-offset-2 peer-focus-visible:ring-offset-zinc-950 ${allOn ? 'bg-emerald-500/40' : 'bg-zinc-700'}`} aria-hidden="true">
                         <span className={`absolute left-0.5 top-0.5 h-2.5 w-2.5 rounded-full transition-[transform,background-color] duration-[150ms] ease-[var(--ease-snappy)] ${allOn ? 'translate-x-2.5 bg-emerald-400' : 'bg-zinc-500'}`} />
                     </span>
                     chart

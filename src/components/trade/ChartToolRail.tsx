@@ -12,7 +12,7 @@
 
 import React, { useState } from 'react';
 import {
-    Eraser, Eye, EyeOff, Minus, MousePointer2, Palette, Pencil, Square,
+    Eraser, Eye, EyeOff, Magnet, Minus, MousePointer2, Palette, Pencil, Square,
     Trash2, Type, Undo2, MoreHorizontal,
 } from '../shared/Icons';
 import { DRAW_COLORS, type DrawTool } from '../../services/trade/chartDrawings';
@@ -70,9 +70,11 @@ interface RailButtonProps {
     disabled?: boolean;
     onClick: () => void;
     children: React.ReactNode;
+    /** Stable handle for the gates; the title is the accessible name. */
+    testId?: string;
 }
 
-const RailButton: React.FC<RailButtonProps> = ({ title, active = false, disabled = false, onClick, children }) => (
+const RailButton: React.FC<RailButtonProps> = ({ title, active = false, disabled = false, onClick, children, testId }) => (
     <button
         type="button"
         title={title}
@@ -80,6 +82,7 @@ const RailButton: React.FC<RailButtonProps> = ({ title, active = false, disabled
         aria-pressed={active}
         disabled={disabled}
         onClick={onClick}
+        data-testid={testId}
         className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-control transition-colors ${
             active
                 ? 'bg-white/[0.09] text-zinc-100'
@@ -104,10 +107,17 @@ interface ChartToolRailProps {
     /** Hide-all toggle: every drawing layer off the canvas, nothing deleted. */
     hidden: boolean;
     onToggleHidden: () => void;
+    /** Magnet snap: pull each anchor onto the nearest candle's OHLC. */
+    magnet: boolean;
+    onToggleMagnet: () => void;
+    /** The stroke weight NEW shapes are drawn with (the control cycles it). */
+    lineWidth: number;
+    onCycleWidth: () => void;
 }
 
 export const ChartToolRail: React.FC<ChartToolRailProps> = ({
     tool, onSelectTool, color, onColorChange, canUndo, onUndo, onClear, hidden, onToggleHidden,
+    magnet, onToggleMagnet, lineWidth, onCycleWidth,
 }) => {
     const [trendFlyout, setTrendFlyout] = useState(false);
     // The mock's resting rail is four tools (cursor, trend, horizontal, zone);
@@ -152,7 +162,7 @@ export const ChartToolRail: React.FC<ChartToolRailProps> = ({
                     aria-label="More line tools"
                     aria-expanded={trendFlyout}
                     onClick={() => setTrendFlyout(v => !v)}
-                    className="hit-target group/caret absolute -right-2.5 -bottom-2 grid place-items-center rounded-full focus:outline-none focus-visible:ring-1 focus-visible:ring-cyan-400/60"
+                    className="hit-target group/caret absolute -right-2.5 -bottom-2 grid place-items-center rounded-full focus:outline-none focus-visible:ring-1 focus-visible:ring-accent/60"
                 >
                     {/* The caret stays a 10px corner glyph (TradingView's split-button
                         look); the button around it is the invisible 24px hit-target
@@ -210,6 +220,17 @@ export const ChartToolRail: React.FC<ChartToolRailProps> = ({
                     </>
                 )}
             </div>
+            {/* Magnet snap — the reference's tool. It changes WHERE an anchor
+                lands, not what is drawn: each click is pulled onto the nearest
+                candle's OHLC, so a trendline sits on the high it actually
+                means instead of three ticks above it. */}
+            <RailButton
+                title={magnet ? 'Magnet on — anchors snap to the nearest OHLC' : 'Magnet off — anchors land where you click'}
+                active={magnet}
+                onClick={onToggleMagnet}
+            >
+                <Magnet className="h-4 w-4" aria-hidden="true" />
+            </RailButton>
             <RailSep />
             <span className="flex-1" aria-hidden />
             <RailButton
@@ -243,6 +264,16 @@ export const ChartToolRail: React.FC<ChartToolRailProps> = ({
                     </>
                 )}
             </div>
+            {/* Line width — cycles the ladder. The glyph IS the stroke it will
+                draw, so the button shows its own state rather than a number the
+                trader has to interpret. */}
+            <RailButton
+                title={`Line width ${lineWidth} px — click for the next weight`}
+                onClick={onCycleWidth}
+                testId="rail-line-width"
+            >
+                <span aria-hidden="true" className="block w-4 rounded-full bg-current" style={{ height: Math.min(lineWidth, 4) }} />
+            </RailButton>
         </div>
     );
 };

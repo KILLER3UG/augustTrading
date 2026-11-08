@@ -1,23 +1,25 @@
 @import "tailwindcss";
 @plugin "@tailwindcss/typography";
 
-/* ===== NEUTRAL DARK — hue-free graphite, true semantics =====
-   2026-10-27 re-style (owner ruling): the screen and its ink carry NO hue.
-   The Minara-derived ramp before this was cool-tinted (page #0c0f13, panels
-   #13171c, hairline #303640 — all blue-shifted) and the brand gradient was
-   retired in the same ruling, so nothing in the chrome is coloured any more.
-   Ground #0a0a0a, panels #141414, raised #1d1d1d, hairline #262626, ink
-   #f4f4f4→#858585, and colour is reserved for DATA only: up-green #0bc67a,
-   down-red #f6465d, warning amber, info blue. The neutral utility names
-   (zinc-*) are deliberately kept so every existing component re-colors
-   through this one block — 881 chrome usages across 119 files, none of which
-   needed an edit to move. AGENTS.md documents the doctrine. */
+/* ===== NEUTRAL DARK — warm graphite, true semantics =====
+   2026-11-08 re-style (owner ruling, D1 of the v4 plan): the app adopts the
+   v4 mock's palette as-is. The neutrals are WARM (page #0d0c0b → ink #f4f1ea),
+   reversing the 2026-10-27 hue-free ruling, and the accent is AMBER #e8a33d,
+   reversing "amber = warning only". Colour still means data first: up #10b981,
+   down #f43f5e, warning amber, info blue #22d3ee.
+   Amber now carries BOTH the warning step and the primary-action fill; the
+   distinction is fill vs text — a solid amber control wears --color-accent-ink
+   (#1c1508, 8.39:1 on the fill), a warning is amber text on the page. That is
+   how the v4 mock uses one hue for both.
+   The neutral utility names (zinc-*) are deliberately kept so every existing
+   component re-colors through this one block. AGENTS.md documents the
+   doctrine. */
 @theme {
   /* Neutrals — hue-free graphite surfaces + hue-free ink. Class-name mapping
      kept stable: 950 page, 900 panels/rail, 800 raised surfaces, 700 hairline
      & active fills, 500/600 dim/faint text, 100/200/300 ink.
      The faint steps are MEASURED, not eyeballed, because the smallest running
-     text in this app is 10–12px (`--text-ui-2xs`/`xs`/`micro` off a 16px base)
+     text in this app is 9–11px (`--text-ui-2xs`/`xs`/`micro` off a 15px base)
      and AA does not care what a ramp is called:
        #858585 = 5.37:1 on page, 4.99:1 on panel, 4.57:1 on raised
        #9a9a9a = 7.04:1 / 6.55:1 / 5.99:1
@@ -26,45 +28,51 @@
      page and is NOT allowed for text; it survives only as a fill. This is the
      same discipline that had zinc-600 bumped off Minara's ramp end (#6e6e68,
      3.84:1) so ~250 micro-labels cleared AA. */
-  --color-zinc-50: #fafafa;
-  --color-zinc-100: #f4f4f4;
-  --color-zinc-200: #e6e6e6;
-  --color-zinc-300: #c9c9c9;
-  --color-zinc-400: #b6b6b6;
-  --color-zinc-500: #9a9a9a;
+  /* v4's warm ramp. zinc-600 stays #858585: v4's quietest step (#716d65)
+     measures 3.80:1 on this page and 3.54:1 on a panel — a fill, not text —
+     while #858585 measures 5.29 / 4.94 and is the step the charter already
+     tuned for micro-labels. */
+  --color-zinc-50: #faf8f5;
+  --color-zinc-100: #f4f1ea;
+  --color-zinc-200: #d4d0c7;
+  --color-zinc-300: #c9c5bc;
+  --color-zinc-400: #b6b2a9;
+  --color-zinc-500: #9d998f;
   --color-zinc-600: #858585;
-  --color-zinc-700: #262626;
-  --color-zinc-800: #1d1d1d;
-  --color-zinc-900: #141414;
-  --color-zinc-950: #0a0a0a;
+  --color-zinc-700: #242220;
+  --color-zinc-800: #232120;
+  --color-zinc-900: #161514;
+  --color-zinc-950: #0d0c0b;
 
   /* Accent / primary — info blue. 500 is the TEXT step (7.28:1 on page,
      6.77:1 on panel); 600 and up are fills and hover states, never running
      type. Re-pointed off Minara's cyan at the 2026-10-27 ruling so the app has
      one blue, and the name `cyan-*` stays as the historical alias for it. */
-  --color-cyan-100: #e4f0ff;
-  --color-cyan-200: #c6e0ff;
-  --color-cyan-300: #9ccaff;
-  --color-cyan-400: #6cb6ff;
-  --color-cyan-500: #4d9fff;
-  --color-cyan-600: #2f86e8;
-  --color-cyan-700: #2069c0;
-  --color-cyan-800: #1c5599;
-  --color-cyan-900: #1b487d;
-  --color-cyan-950: #12294a;
+  /* v4's info blue. Cyan is the INFO hue now, not the accent — the accent is
+     --color-accent below. */
+  --color-cyan-100: #cffafe;
+  --color-cyan-200: #a5f3fc;
+  --color-cyan-300: #67e8f9;
+  --color-cyan-400: #22d3ee;
+  --color-cyan-500: #06b6d4;
+  --color-cyan-600: #0891b2;
+  --color-cyan-700: #0e7490;
+  --color-cyan-800: #155e75;
+  --color-cyan-900: #164e63;
+  --color-cyan-950: #083344;
 
   /* Positive / gains — the brighter exchange green. Measured: 500 is 8.84:1 on
      page (the old #07b56a was 7.38:1), 400 is 9.78:1. 600/700 are fill steps. */
-  --color-emerald-100: #d6f5e6;
-  --color-emerald-200: #a8ebd0;
-  --color-emerald-300: #5fd9a5;
-  --color-emerald-400: #23cf8b;
-  --color-emerald-500: #0bc67a;
-  --color-emerald-600: #08a466;
-  --color-emerald-700: #078153;
-  --color-emerald-800: #066543;
-  --color-emerald-900: #054e35;
-  --color-emerald-950: #022c1f;
+  --color-emerald-100: #d1fae5;
+  --color-emerald-200: #a7f3d0;
+  --color-emerald-300: #6ee7b7;
+  --color-emerald-400: #34d399;
+  --color-emerald-500: #10b981;
+  --color-emerald-600: #059669;
+  --color-emerald-700: #047857;
+  --color-emerald-800: #065f46;
+  --color-emerald-900: #064e3b;
+  --color-emerald-950: #022c22;
 
   /* Negative / losses — the brighter exchange red. This is the ONE place the
      re-style costs contrast, and it is measured: 500 goes 6.30:1 → 5.61:1 on
@@ -74,25 +82,26 @@
      `text-rose-500` in the same change. The old ramp had the same defect
      (#e04447 measured 4.36:1 on the old panel, under AA); the re-style is what
      made it show up. */
-  --color-rose-100: #fee2e4;
-  --color-rose-200: #fcc9cd;
-  --color-rose-300: #fba1a8;
-  --color-rose-400: #f9808a;
-  --color-rose-500: #f6465d;
-  --color-rose-600: #dd2f47;
-  --color-rose-700: #b92639;
-  --color-rose-800: #992231;
-  --color-rose-900: #7c2029;
-  --color-rose-950: #420b12;
+  --color-rose-100: #ffe4e6;
+  --color-rose-200: #fecdd3;
+  --color-rose-300: #fda4af;
+  --color-rose-400: #fb7185;
+  --color-rose-500: #f43f5e;
+  --color-rose-600: #e11d48;
+  --color-rose-700: #be123c;
+  --color-rose-800: #9f1239;
+  --color-rose-900: #881337;
+  --color-rose-950: #4c0519;
 
   /* Warnings — amber. NOT re-hued by the 2026-10-27 ruling: both references
      keep amber for warning, 7.76:1 clears AA as text and dark ink on the badge
      fill measures 7.76:1 the other way, so moving it would repaint every
      pending and attention state for no measured gain. */
+  /* amber-400 is v4's warn/accent hue #e8a33d. */
   --color-yellow-100: #fdeccf;
   --color-yellow-200: #fbd9a0;
   --color-yellow-300: #f9c26b;
-  --color-yellow-400: #f7a83e;
+  --color-yellow-400: #e8a33d;
   --color-yellow-500: #f08800;
   --color-yellow-600: #cf6c03;
   --color-yellow-900: #5f310b;
@@ -100,7 +109,7 @@
   --color-amber-100: #fdeccf;
   --color-amber-200: #fbd9a0;
   --color-amber-300: #f9c26b;
-  --color-amber-400: #f7a83e;
+  --color-amber-400: #e8a33d;
   --color-amber-500: #f08800;
   --color-amber-600: #cf6c03;
   --color-amber-800: #7d3f0d;
@@ -108,20 +117,20 @@
   --color-amber-950: #331905;
 
   /* Destructive — red (mirrors rose, step for step) */
-  --color-red-200: #fcc9cd;
-  --color-red-300: #fba1a8;
-  --color-red-400: #f9808a;
-  --color-red-500: #f6465d;
-  --color-red-600: #dd2f47;
-  --color-red-700: #b92639;
-  --color-red-950: #420b12;
+  --color-red-200: #fecdd3;
+  --color-red-300: #fda4af;
+  --color-red-400: #fb7185;
+  --color-red-500: #f43f5e;
+  --color-red-600: #e11d48;
+  --color-red-700: #be123c;
+  --color-red-950: #4c0519;
 
   /* Secondary families — chart and identity hues (sparse use; intentionally
      coloured). blue-* mirrors the info ramp step for step, so a component that
      asks for blue-500 and one that asks for cyan-500 cannot draw two blues. */
-  --color-blue-100: #e4f0ff;   --color-blue-200: #c6e0ff;   --color-blue-300: #9ccaff;
-  --color-blue-400: #6cb6ff;   --color-blue-500: #4d9fff;   --color-blue-600: #2f86e8;
-  --color-blue-700: #2069c0;   --color-blue-900: #1b487d;   --color-blue-950: #12294a;
+  --color-blue-100: #cffafe;   --color-blue-200: #a5f3fc;   --color-blue-300: #67e8f9;
+  --color-blue-400: #22d3ee;   --color-blue-500: #06b6d4;   --color-blue-600: #0891b2;
+  --color-blue-700: #0e7490;   --color-blue-900: #164e63;   --color-blue-950: #083344;
   --color-purple-100: #f3e7ff; --color-purple-200: #e7cdff; --color-purple-300: #d3a1ff;
   --color-purple-400: #c26bff; --color-purple-500: #a142ff; --color-purple-600: #862ee0;
   --color-purple-900: #3a1a63; --color-purple-950: #2e0f52;
@@ -131,7 +140,7 @@
   --color-indigo-500: #4346d3; --color-indigo-600: #363ab0; --color-indigo-700: #2d3190;
   --color-indigo-950: #191a4a;
   --color-orange-100: #fdeccf; --color-orange-200: #fbd9a0; --color-orange-300: #f9c26b;
-  --color-orange-400: #f7a83e; --color-orange-500: #f08800; --color-orange-600: #cf6c03;
+  --color-orange-400: #e8a33d; --color-orange-500: #f08800; --color-orange-600: #cf6c03;
   --color-orange-950: #331905;
   --color-pink-100: #ffe6f0;   --color-pink-200: #ffcce0;   --color-pink-300: #ffa3c4;
   --color-pink-400: #ff7ba9;   --color-pink-500: #ff538e;
@@ -141,7 +150,7 @@
   --color-sky-100: #e2f8fd;    --color-sky-300: #9fe9f6;    --color-sky-400: #7fe1f2;    --color-sky-500: #5fd5ec;
   --color-sky-950: #123842;
   --color-fuchsia-300: #f5a6ff; --color-fuchsia-400: #f077ff; --color-fuchsia-500: #eb53ff;
-  --color-green-400: #23cf8b;  --color-green-500: #0bc67a;
+  --color-green-400: #34d399;  --color-green-500: #10b981;
 
   /* Brand gradient — DELETED (owner ruling, 2026-10-27). `--color-brand-start`,
      `--color-brand-mid` and `--color-brand-end` used to sit here and paint the
@@ -170,23 +179,33 @@
      These are the BASE step of each family. The full ramps (emerald-100…950,
      rose-100…950) stay above and remain the way to ask for a lighter or
      darker shade; these four name the meaning, not a shade list. */
-  --color-surface-page: #0a0a0a;    /* = zinc-950, the app's ground */
-  --color-surface-panel: #141414;   /* = zinc-900, panels and the rail */
-  --color-surface-raised: #1d1d1d;  /* = zinc-800, raised surfaces */
+  --color-surface-page: #0d0c0b;    /* = zinc-950, the app's ground */
+  --color-surface-panel: #161514;   /* = zinc-900, panels and the rail */
+  --color-surface-raised: #232120;  /* = zinc-800, raised surfaces */
+  --color-hairline: #242220;         /* = zinc-700 — borders/dividers. The spec
                                    names this --stroke-hairline; it lives in
                                    the --color-* namespace here so it also
                                    yields a `border-hairline` utility. Opaque
                                    rather than white-at-9% on purpose: a hex is
                                    what lets `${COLORS.x}15` string-alpha keep
                                    working in the dashboards. */
-  --color-ink-primary: #f4f4f4;     /* = zinc-100 */
-  --color-ink-secondary: #b6b6b6;   /* = zinc-400 (see note below) */
+  /* The STRONG step — the reference's `--hair-2`. Two line colours, not a
+     white-alpha ladder: the resting border and the border a control wears
+     while hovered, focused or selected. Every raw `border-white/N` in the
+     components maps onto one of these two; the ladder's 18 opacities were
+     18 ways to ask for one of two states. */
+  --color-line: #33312d;
+  --color-ink-primary: #f4f1ea;     /* = zinc-100 */
+  --color-ink-secondary: #b6b2a9;   /* = zinc-400 (see note below) */
   --color-ink-tertiary: #858585;    /* = zinc-600, the AA-tuned faint step */
-  --color-hairline: #242220;         /* = zinc-700 — borders/dividers. The spec
-  --color-trade-up: #0bc67a;         /* = emerald-500 — gains, up, Long, WIN */
-  --color-trade-down: #f6465d;       /* = rose-500 — losses, down, Short, LOSS */
+  --color-trade-up: #10b981;         /* = emerald-500 — gains, up, Long, WIN */
+  --color-trade-down: #f43f5e;       /* = rose-500 — losses, down, Short, LOSS */
   --color-warn: #f08800;             /* = amber-500 — warnings, watch */
-  --color-info: #4d9fff;             /* = cyan-500 — info / in-progress */
+  --color-info: #22d3ee;             /* = cyan-400 — info / in-progress */
+  /* v4's accent: the primary-action fill. Same hue as the warning step
+     (amber-400); the role differs — a fill wears --color-accent-ink. */
+  --color-accent: #e8a33d;
+  --color-accent-ink: #1c1508;
 
   /* Note on --color-ink-secondary: the design spec's C1 table names #a1a19b,
      which is not a step of this ramp — writing it here would have introduced
@@ -194,7 +213,6 @@
      occupies, so that is what the alias points at (it is #b6b6b6 as of the
      2026-10-27 neutral re-style; before it, #9aa6b5). */
 
-  --color-line: #33312d;
   /* Type + motion + radii — 14px base sans over the self-hosted stack (Geist),
      20px bubbles / 10px controls after the 2026-10-27 re-style (they were
      Minara's chat-v2 12px / 8px), .12s snaps.
@@ -298,11 +316,11 @@
      a consumer pill. 6/8/12 keeps a control recognisably clickable while the
      frame stays square-ish. These four tokens are the ONLY radii in the app;
      the utilities generated from them recolor every call site at once. */
-  --radius-bubble: 12px;
-  --radius-card: 8px;
-  --radius-control: 6px;
-  --radius-composer: 12px;
-  --ease-snappy: cubic-bezier(0.2, 0, 0, 1);
+  --radius-bubble: 18px;
+  --radius-card: 12px;
+  --radius-control: 10px;
+  --radius-composer: 16px;
+  --ease-snappy: cubic-bezier(0.2, 0.8, 0.2, 1);
   /* The curve a bare `transition-*` utility falls back to. Tailwind ships
      cubic-bezier(.4,0,.2,1) here, so every class that names a property but not
      an ease — the majority in this app — was easing on the Material curve while
@@ -336,6 +354,7 @@
   --color-surface-panel: #ffffff;
   --color-surface-raised: #f4f3ef;
   --color-hairline: #e2e0d8;
+  --color-line: #cfcdc4;
   --color-ink-primary: #141413;
   --color-ink-secondary: #57564f;
   --color-ink-tertiary: #8a897f;
@@ -348,14 +367,13 @@
 }
 
 /* The single dial every `text-ui-*` role is measured from. The 2026-10-10
-   redesign moved the default from Minara's 14px to 16px: 703 of ~1,500 type sites sat on the
-   two smallest steps, and the ramp is offset-based off this one var. Override
-   it here (or per subtree) and every labelled role moves together; the
-   hard-coded `text-[Npx]` sites will not, which is the argument for keeping
-   new UI on the roles. */
+   redesign moved the default from Minara's 14px to 16px; the 2026-11-08 v4
+   migration moved it to 15px to match the mock's body size. The ramp is
+   offset-based off this one var. Override it here (or per subtree) and every
+   labelled role moves together; the hard-coded `text-[Npx]` sites will not,
+   which is the argument for keeping new UI on the roles. */
 :root {
-  --color-line: #cfcdc4;
-  --ui-font-size: 16px;
+  --ui-font-size: 15px;
 
   /* ── The one motion clock ──────────────────────────────────────────────
      Three steps inside the 150–250ms window, ONE curve (the theme's existing
@@ -1691,9 +1709,10 @@ body,
 /* The focus ring, named once. Both the global outline below and the
    `focus-visible:ring-*` utilities across the tree are this one colour —
    previously each call site picked its own, so the same control could show a
-   cyan ring in one state and a zinc ring in another. */
+   amber ring in one state and a zinc ring in another. It is the ACCENT, not
+   the info hue: v4 rings focused controls in amber. */
 :root {
-  --focus-ring: var(--color-info);
+  --focus-ring: var(--color-accent);
   --focus-ring-width: 2px;
   --focus-ring-offset: 2px;
 }
@@ -1823,8 +1842,15 @@ select[class*="focus-visible:ring"]:focus-visible,
 /* High contrast mode support */
 @media (prefers-contrast: high) {
 
-  /* Target elements with low-contrast borders */
-  [class*="border-white"] {
+  /* Target elements with low-contrast borders. The old selector keyed on the
+     `border-white` CLASS NAME, which the border-token migration removed — it
+     went dead the day every raw white-alpha border became `border-hairline`.
+     Overriding the two TOKENS instead covers every border that uses them,
+     whether it arrives from a utility class or a stylesheet rule, and leaves
+     the semantic hues (trade-up/down, accent) alone. */
+  :root {
+    --color-hairline: rgba(255, 255, 255, 0.5);
+    --color-line: rgba(255, 255, 255, 0.7);
   }
 
   /* Improve text contrast */
@@ -1844,13 +1870,10 @@ select[class*="focus-visible:ring"]:focus-visible,
 .custom-scrollbar {
   scrollbar-width: thin;
   scrollbar-color: var(--color-zinc-700) transparent;
-     went dead the day every raw white-alpha border became `border-hairline`.
 }
 
 .custom-scrollbar::-webkit-scrollbar {
   width: 4px;
-    --color-hairline: rgba(255, 255, 255, 0.5);
-    --color-line: rgba(255, 255, 255, 0.7);
   height: 4px;
 }
 
@@ -1945,7 +1968,7 @@ select {
 
 /* ── The vocabulary ───────────────────────────────────────────────────────
    These are shared ROLES, not one-off styles: the rail, the content bar, the
-   four surfaces and the composer all reach for the same five names. */
+   six surfaces and the composer all reach for the same five names. */
 .qd-eyebrow {
   font-family: var(--font-mono);
   font-size: var(--text-ui-2xs);

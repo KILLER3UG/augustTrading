@@ -90,6 +90,10 @@ export const EFFORT_BY_TASK = {
     postMortem: 'medium',
     /** Vision/OCR structured extraction. */
     ocr: 'low',
+    /** Reformatting one skill into the SKILL.md shape — structured, and the
+     *  output is a document the model must reproduce faithfully, so it is not
+     *  a quick tier. */
+    skillFormat: 'medium',
 } as const;
 
 export type EffortTask = keyof typeof EFFORT_BY_TASK;

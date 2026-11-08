@@ -247,7 +247,7 @@ const JournalInner: React.FC<JournalProps> = ({
                             aria-controls={`journal-panel-${activeTab}`}
                             tabIndex={isActive ? 0 : -1}
                             onClick={() => setActiveTab(tab.id)}
-                            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-full text-ui-sm font-medium whitespace-nowrap transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 ${
+                            className={`flex items-center gap-2 px-3.5 py-1.5 rounded-full text-ui-sm font-medium whitespace-nowrap transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${
                                 isActive
                                     ? 'bg-zinc-800 text-zinc-100 shadow-sm ring-1 ring-white/[0.06]'
                                     : 'text-zinc-500 hover:text-zinc-200 hover:bg-zinc-900'

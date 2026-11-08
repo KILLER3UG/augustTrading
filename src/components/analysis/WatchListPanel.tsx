@@ -141,7 +141,7 @@ const WatchListPanel: React.FC<WatchListPanelProps> = ({
                                         </>
                                     )}
                                     {pending && resolution && onConfirmAutopilot && (
-                                        <button type="button" onClick={() => onConfirmAutopilot(signal.messageId, signal.conversationId)} className="rounded-control border border-cyan-500/40 bg-cyan-500/15 px-2.5 py-1 text-ui-dense font-semibold text-cyan-300">Confirm autopilot</button>
+                                        <button type="button" onClick={() => onConfirmAutopilot(signal.messageId, signal.conversationId)} className="rounded-control border border-accent/40 bg-accent/15 px-2.5 py-1 text-ui-dense font-semibold text-accent">Confirm autopilot</button>
                                     )}
                                     <button type="button" onClick={() => onOpenSignal(signal.conversationId, signal.messageId)} className="rounded-control border border-hairline px-2.5 py-1 text-ui-dense text-zinc-300 hover:text-zinc-100">
                                         {inThisChat ? 'Show in chat' : 'Open chat'}

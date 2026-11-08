@@ -221,13 +221,18 @@ const FundingCountdown: React.FC<{ nextFundingTime: number; fundingRate: number 
     const { frac, soon } = fundingProgress(nextFundingTime, nowMs);
     return (
         <>
-            <span className="flex items-baseline justify-between">
+            {/* A gap, not justify-between: the row's width IS its content, so
+                space-between had no free space to distribute and the funding
+                rate and the countdown touched. The bar sits UNDER the text
+                because the wrapper is a column (see chart-head-funding), not
+                because of a margin. */}
+            <span className="flex items-baseline gap-2">
                 <span className={`font-mono text-ui-sm font-medium tabular-nums ${fundingRate >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                     {fmtPercent(fundingRate * 100, 4)}
                 </span>
                 <span className="font-mono text-ui-dense tabular-nums text-zinc-400">{fundingCountdown(nextFundingTime, nowMs)}</span>
             </span>
-            <span className="mt-1 block h-[3px] overflow-hidden rounded-full bg-zinc-800" aria-hidden="true" data-testid="funding-bar">
+            <span className="block h-[3px] w-full overflow-hidden rounded-full bg-zinc-800" aria-hidden="true" data-testid="funding-bar">
                 {/* duration-300 is deliberate: the bar's width is a data value
                     (funding countdown), not chrome. ui-doctrine motion exception. */}
                 <span className={`block h-full rounded-full transition-[width,background-color] duration-300 ease-[var(--ease-snappy)] ${soon ? 'animate-pulse bg-amber-400 shadow-[0_0_6px_rgba(240,136,0,0.5)]' : 'bg-cyan-400/80'}`} style={{ width: `${Math.round(frac * 100)}%` }} />
@@ -337,19 +342,6 @@ const TradeView: React.FC<TradeViewProps> = ({
      *  not a second network call. 200 bars so a level drawn earlier has
      *  enough history to have been judged. */
     const [levelCandles, setLevelCandles] = useState<Kline[]>([]);
-    /** The head's sparkline (mock v3): the last 48 closes, scaled to 96x26.
-     *  Grey, not red/green — it is shape, not a second verdict; the change pill
-     *  already carries the sign. */
-    const spark = useMemo(() => {
-        const closes = levelCandles.slice(-48).map(c => c.close).filter(Number.isFinite);
-        if (closes.length < 2) return '';
-        const min = Math.min(...closes);
-        const max = Math.max(...closes);
-        const span = max - min || 1;
-        return closes
-            .map((c, i) => `${((i / (closes.length - 1)) * 96).toFixed(1)},${(24 - ((c - min) / span) * 20).toFixed(1)}`)
-            .join(' ');
-    }, [levelCandles]);
     /** The `<sid>:<symbol>` bucket modelDrawings CURRENTLY holds. A turn may
      *  only merge into React state when its bucket matches this stamp — a
      *  stream-chunk tool call landing between a session-switch store emit
@@ -931,14 +923,13 @@ const TradeView: React.FC<TradeViewProps> = ({
                                 {changePct! >= 0 ? '+' : ''}{fmtPercent(changePct!, 2)}
                             </span>
                         )}
-                        {spark && (
-                            <svg data-testid="chart-head-spark" width="96" height="26" viewBox="0 0 96 26" aria-hidden="true"
-                                className="hidden shrink-0 md:block">
-                                <polyline points={spark} fill="none" stroke="#a1a1aa" strokeWidth="1.2" />
-                            </svg>
-                        )}
-                        {/* Funding rides the chart head — the quiet line, not a band. */}
-                        <span className="hidden shrink-0 items-baseline gap-1.5 sm:flex" data-testid="chart-head-funding">
+                        {/* The sparkline is GONE (v4): the live chart sits
+                            directly below this row, and a second small chart of
+                            the same closes was the duplication the reference
+                            removes. `levelCandles` stays — it feeds level
+                            accuracy, not this head. Funding rides the chart
+                            head too: the quiet line, not a band. */}
+                        <span className="hidden shrink-0 flex-col gap-1 sm:flex" data-testid="chart-head-funding">
                             {Number.isFinite(fundingRate) ? (
                                 <FundingCountdown nextFundingTime={nextFundingTime ?? 0} fundingRate={fundingRate!} />
                             ) : <span className="font-mono text-ui-dense text-zinc-300">—</span>}

@@ -60,7 +60,7 @@ export const useUpdateStatusDot = (): React.ReactNode => {
         case 'downloading':
             return dot(
                 Number.isFinite(progress) && progress > 0 ? `Downloading — ${progress}%` : 'Downloading…',
-                'bg-cyan-500/30', true,
+                'bg-accent/30', true,
             );
         case 'upToDate':
             // The check ran and found nothing. Silent before this: the default
@@ -90,7 +90,7 @@ export const UpdateButton: React.FC<{ className?: string }> = ({ className = '' 
     }
 
     const baseClasses = 'inline-flex items-center justify-center gap-1.5 h-7 px-2.5 rounded-control text-ui-dense font-medium transition-[background-color,box-shadow,transform] duration-[150ms] ease-[var(--ease-snappy)]';
-    const iconButtonClasses = 'inline-flex items-center justify-center h-7 w-7 rounded-control text-zinc-400 hover:bg-zinc-800 hover:text-cyan-400 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-cyan-500';
+    const iconButtonClasses = 'inline-flex items-center justify-center h-7 w-7 rounded-control text-zinc-400 hover:bg-zinc-800 hover:text-cyan-400 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent';
 
     // Checking state — show spinner with text
     if (status === 'checking') {

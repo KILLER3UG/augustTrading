@@ -47,8 +47,8 @@ interface WinRateDashboardProps {
 // exactly as they were and still resolve at render time.
 const COLORS = {
     get cyan() { return chartColor('--color-teal-500', '#42d0ff'); },
-    get emerald() { return chartColor('--color-emerald-400', '#23cf8b'); },
-    get rose() { return chartColor('--color-rose-500', '#f6465d'); },
+    get emerald() { return chartColor('--color-emerald-400', '#34d399'); },
+    get rose() { return chartColor('--color-rose-500', '#f43f5e'); },
     get amber() { return chartColor('--color-amber-500', '#f08800'); },
     // Was `orange` reading `--color-brand-end` — a CHROME token doing data duty,
     // and it drew pink, not orange. The 2026-10-27 ruling flattened the brand
@@ -62,7 +62,7 @@ const COLORS = {
     // draws. Left literal on purpose; C9 settles the categorical palette in
     // Phase 4 rather than inventing a ramp step here.
     get blue() { return '#42a1ff'; },
-    get zinc() { return chartColor('--color-zinc-500', '#9a9a9a'); }
+    get zinc() { return chartColor('--color-zinc-500', '#9d998f'); }
 };
 
 // Lazy for the same reason as COLORS: these are read at render time from the
@@ -189,7 +189,7 @@ const WinRateDashboard: React.FC<WinRateDashboardProps> = ({ trades }) => {
             <div className="flex flex-col gap-2 sm:gap-3 border-b border-hairline pb-3 sm:pb-4">
                 <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2 sm:gap-3">
-                        <div className="w-1 h-6 sm:h-8 bg-cyan-500 rounded-full shadow-[0_0_10px_#4d9fff]"></div>
+                        <div className="w-1 h-6 sm:h-8 bg-cyan-500 rounded-full shadow-[0_0_10px_#22d3ee]"></div>
                         <h2 className="text-ui-lg sm:text-xl font-black text-white uppercase tracking-wide">Analytics</h2>
                     </div>
                     <span className="text-ui-xs text-zinc-500 font-mono tabular-nums">
@@ -212,7 +212,7 @@ const WinRateDashboard: React.FC<WinRateDashboardProps> = ({ trades }) => {
                                 aria-pressed={!isCustomRange && selectedPreset === preset.days}
                                 aria-label={preset.days === 0 ? 'Show all-time performance' : `Show the last ${preset.days} days of performance`}
                                 className={`flex-1 sm:flex-none px-2 sm:px-3 py-1.5 text-ui-2xs sm:text-ui-xs font-bold uppercase tracking-wider rounded-control transition-colors duration-[150ms] ease-[var(--ease-snappy)] ${!isCustomRange && selectedPreset === preset.days
-                                    ? 'bg-cyan-500 text-white shadow-md'
+                                    ? 'bg-zinc-800 text-zinc-100 shadow-md'
                                     : 'text-zinc-400 hover:text-white hover:bg-zinc-800'
                                     }`}
                             >
@@ -461,7 +461,7 @@ const WinRateDashboard: React.FC<WinRateDashboardProps> = ({ trades }) => {
                         <ResponsiveContainer width="100%" height="100%">
                             <BarChart data={confidenceChartData} layout="vertical">
                                 <XAxis type="number" domain={[0, 100]} tick={{ fontSize: 9, fill: chartColor('--color-zinc-600', '#858585') }} axisLine={false} tickLine={false} />
-                                <YAxis type="category" dataKey="level" tick={{ fontSize: 11, fill: chartColor('--color-zinc-500', '#9a9a9a'), fontWeight: 'bold' }} axisLine={false} tickLine={false} width={60} />
+                                <YAxis type="category" dataKey="level" tick={{ fontSize: 11, fill: chartColor('--color-zinc-500', '#9d998f'), fontWeight: 'bold' }} axisLine={false} tickLine={false} width={60} />
                                 <Tooltip content={<CustomTooltip />} />
                                 <Bar dataKey="winRate" radius={[0, 6, 6, 0]} barSize={20}>
                                     {confidenceChartData.map((entry, index) => (

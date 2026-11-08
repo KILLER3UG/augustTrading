@@ -1184,7 +1184,7 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
                             {QUICK_PROMPTS.map(({ text, Icon }) => (
                                 <button key={text} type="button" disabled={!ready} onClick={() => void send(text)}
                                     className="group inline-flex w-full items-center gap-2.5 rounded-control px-3 py-2 text-left text-ui-dense text-zinc-400 transition-colors hover:bg-white/[0.04] hover:text-zinc-100 disabled:opacity-40">
-                                    <Icon className="h-3.5 w-3.5 shrink-0 text-zinc-600 transition-colors group-hover:text-cyan-400" aria-hidden="true" />
+                                    <Icon className="h-3.5 w-3.5 shrink-0 text-zinc-600 transition-colors group-hover:text-zinc-200" aria-hidden="true" />
                                     {text}
                                 </button>
                             ))}

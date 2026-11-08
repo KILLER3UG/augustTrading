@@ -22,7 +22,7 @@ export const ToggleSwitch: React.FC<ToggleSwitchProps> = ({ checked, onChange, l
         disabled={disabled}
         className={`w-11 h-6 flex items-center rounded-full p-1 transition-colors duration-[150ms] ease-[var(--ease-snappy)] ${
             disabled ? 'opacity-50 cursor-not-allowed' : ''
-        } ${checked ? 'bg-cyan-500' : 'bg-zinc-700'}`}
+        } ${checked ? 'bg-accent' : 'bg-zinc-700'}`}
     >
         <div
             className={`bg-white w-4 h-4 rounded-full shadow-md transform transition-transform duration-[150ms] ease-[var(--ease-snappy)] ${

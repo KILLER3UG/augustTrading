@@ -379,7 +379,7 @@ const [trendlineDrawings, setTrendlineDrawings] = useState<ChartDrawing[]>([]);
                         <button
                             onClick={() => { void handleExtractAndAnalyze(); }}
                             disabled={!!analysisProgress}
-                            className="flex items-center justify-center gap-2 h-12 bg-gradient-to-r from-cyan-600 to-cyan-500 hover:from-cyan-500 hover:to-cyan-400 text-white text-ui-base font-bold px-6 rounded-control shadow-lg shadow-cyan-900/30 transition-[--tw-gradient-from,--tw-gradient-to,transform] duration-[150ms] ease-[var(--ease-snappy)] disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap active:scale-95"
+                            className="flex items-center justify-center gap-2 h-12 bg-accent hover:bg-amber-500 text-accent-ink text-ui-base font-bold px-6 rounded-control shadow-lg shadow-black/30 transition-[background-color,transform] duration-[150ms] ease-[var(--ease-snappy)] disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap active:scale-95"
                         >
                             {analysisProgress ? <LoadingIcon className="w-4 h-4" aria-hidden="true" /> : <CameraIcon className="w-4 h-4" aria-hidden="true" />}
                             <span>{analysisProgress || 'Analyze'}</span>

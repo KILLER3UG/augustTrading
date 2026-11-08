@@ -69,12 +69,12 @@ export const verdictLevels = (analysis: TradeAnalysis | null | undefined, symbol
     const entry = parsePrice(analysis.entryPoints?.[0]?.price);
     if (entry) levels.push({ label: 'Entry', price: entry, color: '#4d9fff', dashed: false });
     const sl = parsePrice(analysis.stopLoss);
-    if (sl) levels.push({ label: 'Stop', price: sl, color: '#f6465d', dashed: true });
+    if (sl) levels.push({ label: 'Stop', price: sl, color: '#f43f5e', dashed: true });
     // Four lines, as the mock draws them: entry, stop, and at most two
     // targets. A fifth line turned the tape into a ladder of labels.
     (analysis.takeProfit || []).slice(0, 2).forEach((tp, i) => {
         const p = parsePrice(tp.price);
-        if (p) levels.push({ label: `TP${i + 1}`, price: p, color: '#0bc67a', dashed: true });
+        if (p) levels.push({ label: `TP${i + 1}`, price: p, color: '#10b981', dashed: true });
     });
     return levels;
 };

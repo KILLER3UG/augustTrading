@@ -118,7 +118,7 @@ class ErrorBoundary extends Component<Props, State> {
                         <div className="flex flex-col gap-3">
                             <button
                                 onClick={this.handleReload}
-                                className="w-full py-3 px-4 bg-cyan-600 hover:bg-cyan-500 text-white font-bold rounded-control transition-colors"
+                                className="w-full py-3 px-4 bg-accent hover:bg-amber-500 text-accent-ink font-bold rounded-control transition-colors"
                             >
                                 Reload App
                             </button>

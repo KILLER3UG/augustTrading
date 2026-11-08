@@ -3,9 +3,9 @@
 //
 // It has had three homes. A full-screen surface in the rail (two ways to reach
 // one library with two chrome treatments), then Settings → Skills under a
-// "Customize" shortcut, and now the Skills tab of the Learning surface — which
-// is where the target plan recorded it (`docs/plan/open-items.md` §5 Q2:
-// one view, Skills and Learning as tabs, not two rail rows). The file moved out of
+// "Customize" shortcut, then a tab of the Learning surface — and it is a
+// SURFACE again since 2026-11-08 (v4 plan, D2), which reverses the removal
+// `docs/plan/open-items.md` §5 Q2 argued for. The file moved out of
 // `settings/tabs/` with it, because a component that belongs to no dialog
 // should not live in one.
 //
@@ -13,7 +13,7 @@
 // rather than the surrounding column's auto height — otherwise it collapses to
 // its own header.
 //
-// THE SHAPE, from the reference's Customize → Skills page: a page title, then
+// THE SHAPE, from the reference's Skills page: a page title, then
 // the primary list, then the SECONDARY groups as category rows — the group's
 // name in muted text with a raised pill beside it, saying what the group
 // actually holds. The reference's own second row ("Agentic-Trading" with a

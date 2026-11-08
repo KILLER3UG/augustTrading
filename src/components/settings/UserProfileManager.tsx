@@ -98,7 +98,7 @@ const UserProfileManager: React.FC<UserProfileManagerProps> = ({ isVisible, isLo
                       disabled={isBusy}
                       onClick={() => { if (!pendingRef.current) onClose(); }}
                       aria-label="Close user selection"
-                      className="absolute right-4 top-4 p-2 text-zinc-500 hover:text-white hover:bg-zinc-800 rounded-control transition-colors focus-visible:ring-2 focus-visible:ring-cyan-400"
+                      className="absolute right-4 top-4 p-2 text-zinc-500 hover:text-white hover:bg-zinc-800 rounded-control transition-colors focus-visible:ring-2 focus-visible:ring-accent"
                   >
                       <CloseIcon />
                   </button>
@@ -172,7 +172,7 @@ const UserProfileManager: React.FC<UserProfileManagerProps> = ({ isVisible, isLo
                     <button 
                         type="submit" 
                         disabled={isBusy || !newUsername.trim()}
-                        className="absolute right-2 top-2 bottom-2 px-4 bg-cyan-600 hover:bg-cyan-500 text-white font-bold rounded-control disabled:opacity-0 disabled:translate-x-4 transition-[background-color,opacity,transform] duration-[150ms] ease-[var(--ease-snappy)]"
+                        className="absolute right-2 top-2 bottom-2 px-4 bg-accent hover:bg-amber-500 text-accent-ink font-bold rounded-control disabled:opacity-0 disabled:translate-x-4 transition-[background-color,opacity,transform] duration-[150ms] ease-[var(--ease-snappy)]"
                     >
                         Enter
                     </button>
@@ -193,7 +193,7 @@ const UserProfileManager: React.FC<UserProfileManagerProps> = ({ isVisible, isLo
                     type="button"
                     disabled={isBusy}
                     onClick={handleImportClick} 
-                    className="flex items-center gap-2 text-ui-sm font-bold text-zinc-500 hover:text-cyan-400 uppercase tracking-widest transition-colors py-2 px-4 rounded-control hover:bg-zinc-800"
+                    className="flex items-center gap-2 text-ui-sm font-bold text-zinc-500 hover:text-zinc-100 uppercase tracking-widest transition-colors py-2 px-4 rounded-control hover:bg-zinc-800"
                  >
                      <UploadIcon /> Import Backup Data
                  </button>

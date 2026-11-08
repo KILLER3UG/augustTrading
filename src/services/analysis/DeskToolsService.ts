@@ -117,7 +117,7 @@ export const toolActionFromResult = (name: string, ok: boolean, content: string,
             verb = 'emitted';
         } else if (name === 'forge_tool') {
             label = String(parsed.id ?? parsed.name ?? 'tool');
-            review = 'Learning → Skills → Forged tools';
+            review = 'Skills → Forged tools';
             verb = 'proposed';
         } else if (name === 'amend_memory') {
             label = `notebook/${parsed.file ?? parsed.id ?? 'amendment'}`;
@@ -125,13 +125,13 @@ export const toolActionFromResult = (name: string, ok: boolean, content: string,
             verb = 'amended';
         } else if (name === 'skill_write') {
             label = String(parsed.slug ?? 'skill');
-            review = parsed.created ? 'Learning → Skills (created)' : 'Learning → Skills (updated)';
+            review = parsed.created ? 'Skills (created)' : 'Skills (updated)';
             verb = parsed.created ? 'created' : 'updated';
         } else if (name === 'propose_strategy') {
             // A plan is saved as a draft file, so the trader should be told
             // WHERE it went — otherwise a model can quietly fill the notebook.
             label = String(parsed.strategy ?? 'strategy');
-            review = 'Learning → Skills → Trade plans (draft — nothing acts on it until you activate it)';
+            review = 'Skills → Trade plans (draft — nothing acts on it until you activate it)';
         } else if (name === 'write_memory_note') {
             label = `${String(parsed.where ?? parsed.file ?? 'note')}${parsed.tag === 'observed' ? ' · observed' : ''}`;
             review = parsed.tag === 'observed'
@@ -3519,7 +3519,7 @@ ${hitContent}`, ...resolvedSymbolField(call, fallback) };
                         ),
                         extractPath: call.arguments.extractPath ? String(call.arguments.extractPath) : undefined,
                     }, 'model:desk');
-                    content = JSON.stringify({ proposed: true, id: tool.id, status: tool.status, note: 'Candidate stored. A human must approve it in Learning → Skills → Forged tools before it can run.' });
+                    content = JSON.stringify({ proposed: true, id: tool.id, status: tool.status, note: 'Candidate stored. A human must approve it in Skills → Forged tools before it can run.' });
                 } catch (err) {
                     return rejectedResult(call, `forge_tool rejected: ${err instanceof Error ? err.message : String(err)}`);
                 }

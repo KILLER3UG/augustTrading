@@ -393,7 +393,7 @@ const ProfileMemoryCard: React.FC<ProfileMemoryCardProps> = ({ memoryModel, onOp
                                             <button
                                                 type="button"
                                                 onClick={() => openEntry(e)}
-                                                className="min-w-0 flex-1 py-3.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/60"
+                                                className="min-w-0 flex-1 py-3.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
                                                 aria-label={`Open memory ${memoryEntryTitle(e)}`}
                                             >
                                                 <div className="flex flex-col gap-0.5 sm:grid sm:grid-cols-[minmax(0,200px)_minmax(0,1fr)_minmax(0,300px)] sm:items-baseline sm:gap-5">

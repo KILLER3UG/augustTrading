@@ -262,7 +262,7 @@ const StrategiesManager: React.FC<StrategiesManagerProps> = ({
                         type="button"
                         onClick={() => fileInputRef.current?.click()}
                         disabled={isProcessing}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-control bg-cyan-600 hover:bg-cyan-700 disabled:opacity-50 text-white text-ui-sm font-medium transition-colors"
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-control bg-accent hover:bg-amber-500 disabled:opacity-50 text-accent-ink text-ui-sm font-medium transition-colors"
                     >
                         <UploadIcon className="w-3.5 h-3.5" aria-hidden="true" />
                         {isProcessing ? 'Working…' : 'Upload PDF book'}
@@ -331,7 +331,7 @@ const StrategiesManager: React.FC<StrategiesManagerProps> = ({
                                         value={drafts[doc.id] ?? doc.summary}
                                         onChange={(e) => setDrafts(prev => ({ ...prev, [doc.id]: e.target.value }))}
                                         spellCheck={false}
-                                        className="w-full h-64 resize-y bg-zinc-950 border border-zinc-800 rounded-control p-3 font-mono text-ui-dense leading-relaxed text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-cyan-500/40 transition-colors whitespace-pre"
+                                        className="w-full h-64 resize-y bg-zinc-950 border border-zinc-800 rounded-control p-3 font-mono text-ui-dense leading-relaxed text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-accent/40 transition-colors whitespace-pre"
                                         placeholder="AI summary — edit freely; your text is what the models see."
                                         aria-label={`Edit strategies from ${doc.sourceName}`}
                                     />
@@ -340,7 +340,7 @@ const StrategiesManager: React.FC<StrategiesManagerProps> = ({
                                             <button
                                                 type="button"
                                                 onClick={() => handleSaveEdit(doc)}
-                                                className="px-3 py-1.5 rounded-control bg-cyan-600 hover:bg-cyan-700 text-white text-ui-xs font-bold uppercase tracking-widest transition-colors"
+                                                className="px-3 py-1.5 rounded-control bg-accent hover:bg-amber-500 text-accent-ink text-ui-xs font-bold uppercase tracking-widest transition-colors"
                                             >
                                                 Save
                                             </button>

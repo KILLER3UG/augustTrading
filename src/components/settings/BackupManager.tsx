@@ -260,7 +260,7 @@ export const BackupManager: React.FC<BackupManagerProps> = ({ username, onProfil
           <button
             onClick={handleCreate}
             disabled={isCreating}
-            className="flex items-center gap-2 px-3 py-2 rounded-control bg-cyan-600 hover:bg-cyan-500 text-white text-ui-sm font-bold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="flex items-center gap-2 px-3 py-2 rounded-control bg-accent hover:bg-amber-500 text-accent-ink text-ui-sm font-bold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isCreating ? <LoadingIcon className="w-4 h-4" aria-hidden="true" /> : <PlusIcon className="w-4 h-4" aria-hidden="true" />}
             {isCreating ? 'Backing up…' : 'Back up now'}
@@ -336,7 +336,7 @@ export const BackupManager: React.FC<BackupManagerProps> = ({ username, onProfil
                 <button
                   onClick={() => handleExport(backup.id)}
                   disabled={busyId === backup.id}
-                  className="p-2 rounded-control hover:bg-zinc-800 text-zinc-400 hover:text-cyan-400 transition-colors"
+                  className="p-2 rounded-control hover:bg-zinc-800 text-zinc-400 hover:text-zinc-100 transition-colors"
                   aria-label="Export backup as JSON"
                   title="Export"
                 >

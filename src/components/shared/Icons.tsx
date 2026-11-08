@@ -166,6 +166,7 @@ export {
   LogOut,
   UsersRound,
   Maximize2,
+  Magnet,
   MessageSquare,
   Mic,
   MicOff,

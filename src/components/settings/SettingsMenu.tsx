@@ -491,8 +491,14 @@ const SettingsMenu: React.FC<SettingsMenuProps> = (props) => {
                         <ArrowRight className="h-4 w-4" aria-hidden="true" />
                     </button>
                     <h2 id="settings-title" className="ml-2 min-w-0 flex-1 truncate text-ui-sm font-medium text-zinc-300">
-                        <span className="text-zinc-600">{activeGroup?.title ?? 'Settings'}</span>
-                        <span className="px-1.5 text-zinc-700">/</span>
+                        {/* The group segment is dropped when the page shares its
+                            name — "Analysis / Analysis" named nothing. */}
+                        {activeGroup?.title && activeGroup.title !== activeEntry?.label && (
+                            <span className="text-zinc-600">{activeGroup.title}</span>
+                        )}
+                        {activeGroup?.title && activeGroup.title !== activeEntry?.label && (
+                            <span className="px-1.5 text-zinc-700">/</span>
+                        )}
                         {activeEntry?.label ?? 'Settings'}
                     </h2>
                     <button

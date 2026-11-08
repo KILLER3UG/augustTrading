@@ -40,6 +40,7 @@ import { phtAxisTick } from '../../utils/timezone';
 import { toCandles, toVolumes, verdictLevels, VOLUME_UP, VOLUME_DOWN, type ChartLevel } from '../../services/trade/chartData';
 import {
     loadDrawings, saveDrawings, loadSessionDrawings, createDrawingId, pointsForKind, FIB_RATIOS,
+    drawWidthOf, nextDrawWidth, DRAW_WIDTH_DEFAULT,
     type ChartDrawing, type DrawKind, type DrawPoint, type DrawTool, DRAW_COLORS,
 } from '../../services/trade/chartDrawings';
 import { drawingsControl, capDrawings } from '../../services/trade/drawingsControl';
@@ -75,8 +76,8 @@ export { chartColor };
 /** Chart-internal palette: the semantic ramp, resolved from the theme at
  *  call time (never at module-eval time — in dev the style tag is injected
  *  by JS, so an import-time read could fall back forever). */
-const CANDLE_UP = (): string => chartColor('--color-emerald-500', '#0bc67a');
-const CANDLE_DOWN = (): string => chartColor('--color-rose-500', '#f6465d');
+const CANDLE_UP = (): string => chartColor('--color-emerald-500', '#10b981');
+const CANDLE_DOWN = (): string => chartColor('--color-rose-500', '#f43f5e');
 
 // ── The user's chosen timeframe bar (persisted per user, like dock width) ──
 const TF_BAR_KEY = 'trade_tf_bar_v1';
@@ -268,6 +269,14 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
     /** Hide-all (the rail's eye): every drawing layer off the canvas, nothing
      *  deleted — TradingView's "hide all objects" toggle. */
     const [drawingsHidden, setDrawingsHidden] = useState(false);
+    /** Magnet snap: each anchor is pulled onto the nearest candle's OHLC. A
+     *  drawing aid, not an edit — the trader still chooses WHERE, the magnet
+     *  only removes the few ticks of hand error. */
+    const [magnet, setMagnet] = useState(false);
+    /** Stroke weight for NEW shapes; the rail cycles the ladder. Committed
+     *  shapes keep the width they were drawn at, so changing the control does
+     *  not restyle the trader's existing work. */
+    const [lineWidth, setLineWidth] = useState<number>(DRAW_WIDTH_DEFAULT);
     const drawingsHiddenRef = useRef(drawingsHidden);
     drawingsHiddenRef.current = drawingsHidden;
     /** Live-editing a text note: which drawing id + where its input renders. */
@@ -333,7 +342,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
             autoSize: true,
             layout: {
                 background: { color: 'transparent' },
-                textColor: chartColor('--color-zinc-500', '#9a9a9a'),
+                textColor: chartColor('--color-zinc-500', '#9d998f'),
                 attributionLogo: false,
             },
             grid: {
@@ -572,7 +581,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
         }
         try {
             markLineRef.current = cs.createPriceLine({
-                price, color: chartColor('--color-cyan-500', '#4d9fff'), lineWidth: 1, lineStyle: 2,
+                price, color: chartColor('--color-cyan-500', '#06b6d4'), lineWidth: 1, lineStyle: 2,
                 axisLabelVisible: true, title: 'mark',
             }) ?? null;
         } catch { /* series without price-line support (test mock) */ }
@@ -652,6 +661,13 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                 priceLineVisible: false,
                 lastValueVisible: false,
                 crosshairMarkerVisible: false,
+                // A verdict's levels can sit far from the current price — a
+                // plan logged hours ago, a stale signal. fitContent() fits
+                // EVERY series, so leaving these in the autoscale zooms the
+                // chart out until the candles are a strip at the bottom.
+                // Returning null opts the line out: it still draws, but the
+                // price scale stays anchored to the candles.
+                autoscaleInfoProvider: () => null,
             });
             const data = (cs.data?.() ?? []) as readonly { time: number }[];
             if (data.length > 0) line.setData([{ time: data[0].time as UTCTimestamp, value: level.price }, { time: data[data.length - 1].time as UTCTimestamp, value: level.price }]);
@@ -747,6 +763,39 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
         return { t, p: Number(p) };
     }, [interval]);
 
+    /** Pull a screen point onto the nearest candle's OHLC — the rail's magnet.
+     *  The bar is chosen by TIME (the closest one to the click), and the price
+     *  is whichever of its four prints is nearest IN PIXELS, so a snap follows
+     *  the distance the trader actually sees rather than a price difference the
+     *  axis scale can distort. Returns the point unchanged when the chart
+     *  cannot answer (no candles, a hidden bar, a test mock): a magnet that
+     *  silently moved anchors would be worse than one that does nothing. */
+    const magnetPoint = useCallback((pt: { x: number; y: number }): { x: number; y: number } => {
+        const chart = chartRef.current;
+        const cs = candlesRef.current;
+        if (!chart || !cs || typeof cs.priceToCoordinate !== 'function') return pt;
+        const ts = chart.timeScale();
+        if (typeof ts.coordinateToLogical !== 'function') return pt;
+        const logical = ts.coordinateToLogical(pt.x);
+        if (logical === null || logical === undefined) return pt;
+        const data = (cs.data?.() ?? []) as readonly {
+            time: number; open: number; high: number; low: number; close: number;
+        }[];
+        if (data.length === 0) return pt;
+        const i = Math.min(Math.max(Math.round(logical), 0), data.length - 1);
+        const c = data[i];
+        let bestY = pt.y;
+        let best = Infinity;
+        for (const price of [c.open, c.high, c.low, c.close]) {
+            const y = cs.priceToCoordinate(price as never);
+            if (y === null || y === undefined) continue;
+            const d = Math.abs(Number(y) - pt.y);
+            if (d < best) { best = d; bestY = Number(y); }
+        }
+        const anchor = toScreen({ t: c.time, p: c.close });
+        return { x: anchor ? anchor.x : pt.x, y: bestY };
+    }, [toScreen]);
+
     // Paint committed drawings + the in-progress draft onto the overlay.
     const repaint = useCallback((): void => {
         const canvas = overlayRef.current;
@@ -797,22 +846,22 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
             ctx.fillText(dp >= 1000 ? dp.toFixed(0) : dp.toFixed(2), at.x + 1, at.y + 12);
         };
 
-        const drawShape = (kind: DrawKind, pts: { x: number; y: number }[], stroke: string, fill?: string, label?: string): void => {
+        const drawShape = (kind: DrawKind, pts: { x: number; y: number }[], stroke: string, fill?: string, label?: string, width = 1.6): void => {
             if (pts.length === 0) return;
             switch (kind) {
                 case 'hline':
-                    strokeLine([{ x: 0, y: pts[0].y }, { x: plotW, y: pts[0].y }], stroke, true);
+                    strokeLine([{ x: 0, y: pts[0].y }, { x: plotW, y: pts[0].y }], stroke, true, width);
                     break;
                 case 'trend':
-                    strokeLine(pts, stroke);
+                    strokeLine(pts, stroke, false, width);
                     break;
                 case 'ray': {
                     if (pts.length < 2) return;
                     const [a, b] = pts;
                     const dx = b.x - a.x;
-                    if (Math.abs(dx) < 0.001) { strokeLine([a, { x: a.x, y: plotH }], stroke); return; }
+                    if (Math.abs(dx) < 0.001) { strokeLine([a, { x: a.x, y: plotH }], stroke, false, width); return; }
                     const slope = (b.y - a.y) / dx;
-                    strokeLine([a, { x: plotW, y: a.y + slope * (plotW - a.x) }], stroke);
+                    strokeLine([a, { x: plotW, y: a.y + slope * (plotW - a.x) }], stroke, false, width);
                     break;
                 }
                 case 'rect': {
@@ -820,13 +869,13 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                     const [a, b] = pts;
                     ctx.fillStyle = fill ?? `${stroke}22`;
                     ctx.strokeStyle = stroke;
-                    ctx.lineWidth = 1.4;
+                    ctx.lineWidth = width;
                     ctx.fillRect(Math.min(a.x, b.x), Math.min(a.y, b.y), Math.abs(b.x - a.x), Math.abs(b.y - a.y));
                     ctx.strokeRect(Math.min(a.x, b.x), Math.min(a.y, b.y), Math.abs(b.x - a.x), Math.abs(b.y - a.y));
                     break;
                 }
                 case 'brush':
-                    strokeLine(pts, stroke, false, 2);
+                    strokeLine(pts, stroke, false, width);
                     break;
                 case 'fib': {
                     // Retracement levels between the two anchors — dashed
@@ -841,7 +890,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                     for (const r of FIB_RATIOS) {
                         const y = a.y + (b.y - a.y) * r;
                         ctx.strokeStyle = stroke;
-                        ctx.lineWidth = 1;
+                        ctx.lineWidth = Math.max(1, Math.min(width, 2));
                         ctx.setLineDash(r === 0 || r === 1 ? [] : [4, 3]);
                         ctx.beginPath();
                         ctx.moveTo(left, y);
@@ -866,7 +915,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                         return dp;
                     } });
                     if (!geo) return;
-                    for (const line of geo.lines) strokeLine(line, stroke);
+                    for (const line of geo.lines) strokeLine(line, stroke, false, width);
                     for (const poly of geo.fills) {
                         ctx.beginPath();
                         ctx.moveTo(poly.points[0].x, poly.points[0].y);
@@ -904,18 +953,18 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
         if (!drawingsHiddenRef.current) {
             for (const d of drawingsRef.current) {
                 const pts = project(d.points);
-                if (pts.length > 0) drawShape(d.kind, pts, d.color, undefined, d.label);
+                if (pts.length > 0) drawShape(d.kind, pts, d.color, undefined, d.label, drawWidthOf(d));
             }
             // The model's own shapes (draw_on_chart / mark_trade_levels) render
             // after the user's, same style — their labels ("Entry", "SL"…)
             // announce them. Not persisted into the user's drawing file.
             for (const d of modelDrawingsRef.current) {
                 const pts = project(d.points);
-                if (pts.length > 0) drawShape(d.kind, pts, d.color, undefined, d.label);
+                if (pts.length > 0) drawShape(d.kind, pts, d.color, undefined, d.label, drawWidthOf(d));
             }
             if (draft && draft.points.length > 0) {
                 const draftKind: DrawKind = tool === 'hline' ? 'hline' : tool === 'rect' ? 'rect' : tool === 'ray' ? 'ray' : tool === 'brush' ? 'brush' : tool === 'fib' ? 'fib' : 'trend';
-                drawShape(draftKind, draft.points, color, `${color}22`);
+                drawShape(draftKind, draft.points, color, `${color}22`, undefined, lineWidth);
             }
         }
         ctx.restore();
@@ -994,7 +1043,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
     const onPointerDown = (ev: React.PointerEvent): void => {
         if (tool === 'cursor') return;
         ev.preventDefault();
-        const pt = localPoint(ev);
+        const pt = magnet ? magnetPoint(localPoint(ev)) : localPoint(ev);
         if (tool === 'erase') {
             const hit = hitTestDrawing(pt.x, pt.y);
             if (hit) {
@@ -1010,7 +1059,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
         }
         if (tool === 'hline') {
             const dp = toData(pt.x, pt.y);
-            if (dp) publishDrawings([...drawingsRef.current, { id: createDrawingId(), kind: 'hline', points: [dp], color, createdAt: Date.now() }]);
+            if (dp) publishDrawings([...drawingsRef.current, { id: createDrawingId(), kind: 'hline', points: [dp], color, createdAt: Date.now(), width: lineWidth }]);
             return;
         }
         if (tool === 'text') {
@@ -1019,7 +1068,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
             const dp = toData(pt.x, pt.y);
             if (dp) {
                 const id = createDrawingId();
-                publishDrawings([...drawingsRef.current, { id, kind: 'text', points: [dp], color, createdAt: Date.now(), label: 'Note' }]);
+                publishDrawings([...drawingsRef.current, { id, kind: 'text', points: [dp], color, createdAt: Date.now(), label: 'Note', width: lineWidth }]);
                 setTextEdit({ id, x: pt.x, y: pt.y });
             }
             return;
@@ -1030,7 +1079,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
 
     const onPointerMove = (ev: React.PointerEvent): void => {
         if (!draft || tool === 'cursor' || tool === 'erase') return;
-        const pt = localPoint(ev);
+        const pt = magnet ? magnetPoint(localPoint(ev)) : localPoint(ev);
         if (tool === 'brush') {
             const last = draft.points[draft.points.length - 1];
             if (Math.hypot(pt.x - last.x, pt.y - last.y) < 3) return;
@@ -1051,7 +1100,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
         const dataPts = pts.map(p => toData(p.x, p.y)).filter((p): p is DrawPoint => p !== null);
         const finalPts = pointsForKind(kind, dataPts);
         if (!finalPts || finalPts.length < 2) return;
-        publishDrawings([...drawingsRef.current, { id: createDrawingId(), kind, points: finalPts, color, createdAt: Date.now() }]);
+        publishDrawings([...drawingsRef.current, { id: createDrawingId(), kind, points: finalPts, color, createdAt: Date.now(), width: lineWidth }]);
     };
 
     const undoDrawing = (): void => publishDrawings(drawings.slice(0, -1));
@@ -1084,7 +1133,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                     out.height = base.height;
                     const ctx = out.getContext('2d');
                     if (!ctx) return null;
-                    ctx.fillStyle = chartColor('--color-zinc-950', '#0a0a0a');
+                    ctx.fillStyle = chartColor('--color-zinc-950', '#0d0c0b');
                     ctx.fillRect(0, 0, out.width, out.height);
                     ctx.drawImage(base, 0, 0);
                     // The drawing overlay is a CSS-pixel canvas over the chart
@@ -1206,6 +1255,10 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                     onClear={clearDrawings}
                     hidden={drawingsHidden}
                     onToggleHidden={() => setDrawingsHidden(v => !v)}
+                    magnet={magnet}
+                    onToggleMagnet={() => setMagnet(v => !v)}
+                    lineWidth={lineWidth}
+                    onCycleWidth={() => setLineWidth(w => nextDrawWidth(w))}
                 />
                 <div ref={hostRef} className="absolute inset-y-0 right-0" style={{ left: CHART_RAIL_WIDTH }} />
                 {/* Drawing overlay: captures the pointer ONLY while a tool is

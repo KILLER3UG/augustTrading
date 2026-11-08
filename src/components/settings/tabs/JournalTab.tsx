@@ -63,8 +63,8 @@ const JournalTab: React.FC<{ tab: JournalTabProps }> = ({ tab: props }) => {
                     className="group flex flex-col rounded-bubble border border-hairline bg-zinc-800/30 p-4 text-left transition-colors hover:border-accent/40 hover:bg-zinc-800/60"
                 >
                     <div className="flex items-center justify-between w-full">
-                        <span className="font-semibold text-ui-sm text-zinc-200 group-hover:text-cyan-400 transition-colors">Trade Log</span>
-                        <ArrowUpRight className="h-3.5 w-3.5 text-zinc-500 group-hover:text-cyan-400 transition-colors" aria-hidden="true" />
+                        <span className="font-semibold text-ui-sm text-zinc-200 group-hover:text-accent transition-colors">Trade Log</span>
+                        <ArrowUpRight className="h-3.5 w-3.5 text-zinc-500 group-hover:text-accent transition-colors" aria-hidden="true" />
                     </div>
                     <p className="mt-1.5 text-ui-dense text-zinc-400">View and manage all recorded trades, outcomes, and screenshots.</p>
                 </button>
@@ -78,8 +78,8 @@ const JournalTab: React.FC<{ tab: JournalTabProps }> = ({ tab: props }) => {
                     className="group flex flex-col rounded-bubble border border-hairline bg-zinc-800/30 p-4 text-left transition-colors hover:border-accent/40 hover:bg-zinc-800/60"
                 >
                     <div className="flex items-center justify-between w-full">
-                        <span className="font-semibold text-ui-sm text-zinc-200 group-hover:text-cyan-400 transition-colors">Pattern Memory</span>
-                        <Brain className="h-3.5 w-3.5 text-zinc-500 group-hover:text-cyan-400 transition-colors" aria-hidden="true" />
+                        <span className="font-semibold text-ui-sm text-zinc-200 group-hover:text-accent transition-colors">Pattern Memory</span>
+                        <Brain className="h-3.5 w-3.5 text-zinc-500 group-hover:text-accent transition-colors" aria-hidden="true" />
                     </div>
                     <p className="mt-1.5 text-ui-dense text-zinc-400">Review lessons learned and recurring patterns identified across your trades.</p>
                 </button>

@@ -48,8 +48,8 @@ export const EquityCurveDashboard: React.FC<EquityCurveDashboardProps> = ({ trad
 
     const pnlPositive = totalPnl >= 0;
     const accent = pnlPositive
-        ? chartColor('--color-emerald-400', '#23cf8b')
-        : chartColor('--color-rose-400', '#f9808a');
+        ? chartColor('--color-emerald-400', '#34d399')
+        : chartColor('--color-rose-400', '#fb7185');
 
     return (
         <ChartFrame
@@ -76,11 +76,11 @@ export const EquityCurveDashboard: React.FC<EquityCurveDashboardProps> = ({ trad
                         </linearGradient>
                     </defs>
                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
-                    <XAxis dataKey="label" tick={{ fill: chartColor('--color-zinc-500', '#9a9a9a'), fontSize: 9 }} tickLine={false} axisLine={false} minTickGap={40} />
-                    <YAxis tick={{ fill: chartColor('--color-zinc-500', '#9a9a9a'), fontSize: 9 }} tickLine={false} axisLine={false} />
+                    <XAxis dataKey="label" tick={{ fill: chartColor('--color-zinc-500', '#9d998f'), fontSize: 9 }} tickLine={false} axisLine={false} minTickGap={40} />
+                    <YAxis tick={{ fill: chartColor('--color-zinc-500', '#9d998f'), fontSize: 9 }} tickLine={false} axisLine={false} />
                     <Tooltip
-                        contentStyle={{ background: chartColor('--color-zinc-900', '#141414'), border: '1px solid rgba(255,255,255,0.1)', borderRadius: 12, fontSize: 11 }}
-                        labelStyle={{ color: chartColor('--color-zinc-400', '#b6b6b6') }}
+                        contentStyle={{ background: chartColor('--color-zinc-900', '#161514'), border: '1px solid rgba(255,255,255,0.1)', borderRadius: 12, fontSize: 11 }}
+                        labelStyle={{ color: chartColor('--color-zinc-400', '#b6b2a9') }}
                     />
                     <ReferenceLine y={0} stroke="rgba(255,255,255,0.12)" />
                     <Area type="monotone" dataKey="equity" stroke={accent} strokeWidth={1.8} fill="url(#equityFill)" dot={false} name="Equity" />

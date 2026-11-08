@@ -61,7 +61,6 @@ const NewBotDialog = React.lazy(() => import('./components/chat/NewBotDialog'));
 const NewGroupDialog = React.lazy(() => import('./components/chat/NewGroupDialog'));
 const GroupChatView = React.lazy(() => import('./components/chat/GroupChatView'));
 const LearnView = React.lazy(() => import('./components/learn/LearnView'));
-import type { LearnTab } from './components/learn/LearnView';
 import SkillsLibrary from './components/skills/SkillsLibrary';
 const AgentsView = React.lazy(() => import('./components/agents/AgentsView'));
 import ModelChip from './components/shared/ModelChip';
@@ -280,6 +279,28 @@ const App: React.FC = () => {
         handleUpdateModel,
     } = useProviderConfigs();
 
+    // The model that reshapes a skill into the SKILL.md format (Skills surface).
+    // Persisted like every other model pick. It DEFAULTS to the first ready
+    // provider's selected model rather than to an empty field: the Format
+    // action is the answer to a skill that is already on screen, and a picker
+    // the trader must visit before it works is a control that changes nothing
+    // on first use. An explicit pick overrides the default.
+    const [skillFormatModel, setSkillFormatModel] = useState<string>(() => {
+        try { return localStorage.getItem('skill_format_model_v1') || ''; }
+        catch { return ''; }
+    });
+    const handleSkillFormatModelChange = useCallback((value: string) => {
+        setSkillFormatModel(value);
+        try { localStorage.setItem('skill_format_model_v1', value); } catch { /* private mode */ }
+    }, []);
+    const skillFormatPair = useMemo(() => {
+        if (skillFormatModel) return skillFormatModel;
+        const first = readyProviders[0];
+        if (!first) return '';
+        const model = first.selectedModel || first.models[0];
+        return model ? `${first.id}::${model}` : '';
+    }, [skillFormatModel, readyProviders]);
+
     // Background model-catalog refresh: every dropdown (composer, bots,
     // team seats) stays on the provider's CURRENT model list —
     // a quiet boot + 6h sweep merges freshly discovered ids per provider.
@@ -375,8 +396,8 @@ const App: React.FC = () => {
                 void runNotebookReview(username, config).then((wrote) => {
                     if (wrote) {
                         // NOT a misroute, verified: Settings → Memory carries an
-                        // "Open the notebook" button (Alt+5) that routes to
-                        // Learning → Memory, which is where Suggestions renders. The
+                        // "Open the notebook" button (Alt+6) that routes to the
+                        // Memory surface, which is where Suggestions renders. The
                         // signpost is the switches tab, the file is one hop on —
                         // the convention `tests/toolActions.test.tsx` pins.
                         toast.success('Memory reviewed', 'Open Suggestions in Settings → Memory.');
@@ -391,17 +412,8 @@ const App: React.FC = () => {
             if (timer) clearTimeout(timer);
         };
     }, [toast]);
-    /** Set when another surface asks to open Learning on a SPECIFIC tab
-     *  (Settings → "Open the notebook"). LearnView reports it consumed
-     *  (onInitialTabConsumed), so it navigates exactly once and the user's own
-     *  last tab survives the next mount — same contract as journalTab. */
-    const [learnTab, setLearnTab] = useState<LearnTab | null>(null);
-    const learnTabConsumed = useCallback(() => setLearnTab(null), []);
-
     // Surface + URL routing and the journal deep-link — one self-contained
-    // cluster, lifted out of this component (handoff 2.1). It owns `useSurface`
-    // and needs `setLearnTab` for the #/journal/learning bookmark, which is why
-    // it is called after that.
+    // cluster, lifted out of this component (handoff 2.1). It owns `useSurface`.
     const {
         surface, setSurface,
         journalTab,
@@ -411,19 +423,15 @@ const App: React.FC = () => {
         isSettingsMenuVisible, setIsSettingsMenuVisible,
         isLiveMarketVisible, setIsLiveMarketVisible,
         isWatchListVisible, setIsWatchListVisible,
-        setLearnTab,
     });
-    /** Every route that lands on Learning lands on the NOTEBOOK; Skills keeps the
-     *  library (see `openSkills`). Both rows are in the rail, and while Learning
-     *  inherited LearnView's library default the two rows drew one screen — the
-     *  owner named that twice ("why the customize is the same render for learning
-     *  tab?", then "the learning tabs and the skills tabs render the same"), so
-     *  the landing tab is part of the ROUTE, not a leftover preference. Declared
-     *  here because the Alt+N chords below read it during the same render. */
+    /** The rail's and the Alt+N chords' one entry point. Every surface is a
+     *  destination of its own now (Skills and Memory split off Learning,
+     *  2026-11-08), so there is no landing-tab to steer here — LearnView is
+     *  pinned per surface. Declared here because the Alt+N chords below read it
+     *  during the same render. */
     const selectSurface = useCallback((next: AppSurface) => {
-        if (next === 'learn') setLearnTab('memory');
         handleSurfaceSelect(next);
-    }, [handleSurfaceSelect, setLearnTab]);
+    }, [handleSurfaceSelect]);
     /** The Agents surface's switch: go and talk to the desk WITH the chart.
      *
      *  A route, not a mode. The Agents surface is the thread; the Chart AI
@@ -491,14 +499,12 @@ const App: React.FC = () => {
         return () => clearTimeout(t);
     }, [surface]);
 
-    /** The rail's Skills row / Alt+3: the skill library, which is the Learning
-     *  surface's Skills tab. It used to be labelled "Customize" and render the
-     *  Learning tab itself (owner: two labels, one render); the label now names
-     *  where it lands. */
+    /** The skill library, which is its own surface (2026-11-08). Alt+3 and the
+     *  Settings → Skills launcher still route through here, so the chord keeps
+     *  its meaning: "my skill library". */
     const openSkills = useCallback((): void => {
-        setLearnTab('skills');
-        handleSurfaceSelect('learn');
-    }, [handleSurfaceSelect, setLearnTab]);
+        handleSurfaceSelect('skills');
+    }, [handleSurfaceSelect]);
     // The trade surface's collapsible left panel: the order book, opened and
     // closed from the toggle in the Chart's own market row. Persisted so the
     // layout survives reloads like the dock width.
@@ -1333,34 +1339,23 @@ const App: React.FC = () => {
                 e.preventDefault();
                 chatStore.setActiveEffort(nextEffortTier(chatStore.getActiveEffort()));
             }
-            // Alt+1..5 jumps the nav-rail surfaces (Minara nav; Alt keeps
+            // Alt+1..6 jumps the nav-rail surfaces (Minara nav; Alt keeps
             // the browser/Electron Ctrl+number tab-switching intact).
             const SURFACE_KEYS: Record<string, AppSurface> = {
-                '1': 'trade', '2': 'journal', '4': 'agents', '5': 'learn',
+                '1': 'trade', '2': 'journal', '3': 'skills',
+                '4': 'agents', '5': 'learn', '6': 'memory',
             };
             if (e.altKey && !e.ctrlKey && !e.metaKey && SURFACE_KEYS[e.key]) {
+                // Alt+6 keeps its old Agents → Chart hop: the chord is muscle
+                // memory, and the hop BINDS the conversation, which Alt+1 does
+                // not. On every other surface Alt+6 is the Memory surface.
+                if (e.key === '6' && surface === 'agents') {
+                    e.preventDefault();
+                    openChartAi();
+                    return;
+                }
                 e.preventDefault();
                 selectSurface(SURFACE_KEYS[e.key]);
-            }
-            // Alt+3 is deliberately NOT deleted with the Skills surface: the
-            // chord is muscle memory for "my skill library", and the library
-            // still exists — it is the Skills SETTINGS tab now. A key that goes
-            // silently missing is the worse outcome.
-            // chord is muscle memory for "my skill library", and the library
-            // still exists — it is the Skills tab of the Learning surface now.
-            // A key that goes silently missing is the worse outcome.
-            if (e.altKey && !e.ctrlKey && !e.metaKey && e.key === '3') {
-                e.preventDefault();
-                openSkills();
-            }
-            // Alt+6 takes the Agents surface's question to the chart. Scoped to
-            // that surface: on any other one the chord would move something the
-            // user cannot see, and a key that silently does nothing is worse
-            // than one that is not bound — so it does not even preventDefault
-            // elsewhere.
-            if (e.altKey && !e.ctrlKey && !e.metaKey && e.key === '6' && surface === 'agents') {
-                e.preventDefault();
-                openChartAi();
             }
         };
         document.addEventListener('keydown', onKey);
@@ -1422,7 +1417,7 @@ const App: React.FC = () => {
     useEffect(() => {
         const onForged = (e: Event): void => {
             const d = (e as CustomEvent<{ id?: string; name?: string }>).detail;
-            toast.warning('New tool proposal', `${d?.name ?? 'A model'} proposed a desk tool — approve or retire it in Learning → Skills → Forged tools.`);
+            toast.warning('New tool proposal', `${d?.name ?? 'A model'} proposed a desk tool — approve or retire it in Skills → Forged tools.`);
         };
         const onAmendment = (e: Event): void => {
             const d = (e as CustomEvent<{ id?: string; fileName?: string }>).detail;
@@ -2128,7 +2123,11 @@ const App: React.FC = () => {
         ? 'Journal'
         : surface === 'learn'
             ? 'Learning'
-            : (surface === 'agents' ? 'Chat AI' : 'Chart AI');
+            : surface === 'skills'
+                ? 'Skills'
+                : surface === 'memory'
+                    ? 'Memory'
+                    : (surface === 'agents' ? 'Chat AI' : 'Chart AI');
     // Memoized because Header is memoized on purpose: a fresh element on every
     // price tick would re-render the whole bar for a label that has not moved.
     const shellContext = useMemo(
@@ -2203,7 +2202,16 @@ const App: React.FC = () => {
             <SettingsMenu
                 isVisible={isSettingsMenuVisible}
                 onClose={() => setIsSettingsMenuVisible(false)}
-                onOpenLearn={(tab) => { setLearnTab(tab ?? null); setSurface('learn'); setIsSettingsMenuVisible(false); }}
+                onOpenLearn={(tab) => {
+                    // The notebook and the library are surfaces now, so the
+                    // launcher routes by NAME rather than steering a tab.
+                    handleSurfaceSelect(
+                        tab === 'memory' ? 'memory'
+                            : tab === 'skills' ? 'skills'
+                                : 'learn',
+                    );
+                    setIsSettingsMenuVisible(false);
+                }}
                 summaryCharLimit={summaryCharLimit}
                 onUpdateSummaryCharLimit={handleUpdateSummaryCharLimit}
                 useAlgorithmicSummary={useAlgorithmicSummary}
@@ -2325,7 +2333,6 @@ const App: React.FC = () => {
                         onOpenConversation={openDeskConversation}
                         onDeleteConversation={handleDeleteConversationFromSidebar}
                         onClearConversation={(id) => { void handleClearChat(id); }}
-                        onOpenSkills={openSkills}
                         activeUsername={activeUsername}
                         onOpenSettings={() => setIsSettingsMenuVisible(true)}
                         width={railResize.width}
@@ -2435,6 +2442,10 @@ const App: React.FC = () => {
                                 />
                             </React.Suspense>
                         )}
+                        {/* Learning shows Health; Skills and Memory are surfaces
+                            of their own (2026-11-08). LearnView is pinned per
+                            surface, so the tab bar — chrome for a surface with
+                            three destinations — is gone. */}
                         {surface === 'learn' && (
                             <React.Suspense fallback={<SurfaceSkeleton />}>
                                 <LearnView
@@ -2443,12 +2454,21 @@ const App: React.FC = () => {
                                     memoryConfig={memoryConfig}
                                     isGlobalMemoryEnabled={isGlobalMemoryEnabled}
                                     setIsGlobalMemoryEnabled={setIsGlobalMemoryEnabled}
-                                    initialTab={learnTab}
-                                    onInitialTabConsumed={learnTabConsumed}
+                                    tab="health"
+                                />
+                            </React.Suspense>
+                        )}
+                        {surface === 'skills' && (
+                            <React.Suspense fallback={<SurfaceSkeleton />}>
+                                <LearnView
+                                    username={activeUsername || 'default'}
+                                    trades={loggedTrades}
+                                    memoryConfig={memoryConfig}
+                                    tab="skills"
                                     renderSkills={() => (
-                                        // Rendered lazily from the tab, not built
-                                        // as a node up top: the Studio reads the
-                                        // live regime, and a const here would
+                                        // Rendered lazily from the surface, not
+                                        // built as a node up top: the Studio reads
+                                        // the live regime, and a const here would
                                         // evaluate before those values exist.
                                         <SkillsLibrary studio={(
                                             <React.Suspense fallback={<SurfaceSkeleton />}>
@@ -2457,11 +2477,26 @@ const App: React.FC = () => {
                                                     onOpenStrategySearch={() => setIsStrategySearchVisible(true)}
                                                     username={activeUsername || undefined}
                                                     memoryConfig={memoryConfig}
+                                                    providers={providerConfigs}
+                                                    formatModel={skillFormatPair}
+                                                    onFormatModelChange={handleSkillFormatModelChange}
                                                     currentRegime={(currentHybridData as { regime?: { regime?: string } } | null)?.regime?.regime}
                                                 />
                                             </React.Suspense>
                                         )} />
                                     )}
+                                />
+                            </React.Suspense>
+                        )}
+                        {surface === 'memory' && (
+                            <React.Suspense fallback={<SurfaceSkeleton />}>
+                                <LearnView
+                                    username={activeUsername || 'default'}
+                                    trades={loggedTrades}
+                                    memoryConfig={memoryConfig}
+                                    isGlobalMemoryEnabled={isGlobalMemoryEnabled}
+                                    setIsGlobalMemoryEnabled={setIsGlobalMemoryEnabled}
+                                    tab="memory"
                                     reviewSummary={finalTradeSummary}
                                     reviewLoading={isLoading}
                                     onRegenerateReview={handleRegenerateFinalSummary}
@@ -2611,11 +2646,10 @@ const App: React.FC = () => {
                 conversation row menu, jump-to-latest into the transcript's
                 scroll-to-bottom pill. Every other entry was a duplicate. */}
 
-            {/* The Strategy Studio is no longer a surface and no longer a
-                SETTINGS tab either: it is mounted by the Learning surface's
-                Skills tab (see `renderSkills` on LearnView above), reached from
-                the sidebar's Skills row or Alt+3. No overlay state to manage
-                either way. */}
+            {/* The Strategy Studio is a SURFACE again (2026-11-08, v4 plan D2),
+                mounted by the Skills surface (see `renderSkills` on LearnView
+                above), reached from the rail's Skills row or Alt+3. No overlay
+                state to manage either way. */}
 
         </div>
         </React.Suspense>

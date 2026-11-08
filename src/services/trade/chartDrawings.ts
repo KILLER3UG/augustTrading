@@ -53,6 +53,9 @@ export interface ChartDrawing {
      * predate the stamp or were drawn with no live mark available.
      */
     drawnPrice?: number | null;
+    /** Stroke weight in CSS px. Optional so every shape saved before the rail
+     *  grew a width control still parses; `drawWidthOf` supplies the default. */
+    width?: number;
 }
 
 export const MAX_DRAWINGS_PER_SYMBOL = 40;
@@ -74,7 +77,23 @@ export const FIB_RATIOS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1] as const;
  *  up-green next to a live candle in the NEW one reads as two different
  *  meanings for the same colour, which is the one rule the semantic tokens
  *  exist to hold. */
-export const DRAW_COLORS = ['#0bc67a', '#f6465d', '#f08800', '#4d9fff', '#c084fc'] as const;
+export const DRAW_COLORS = ['#e8a33d', '#22d3ee', '#10b981', '#f43f5e', '#e879f9', '#f4f1ea'] as const;
+
+/** The stroke weights the rail's width control cycles through. A short ladder
+ *  rather than a free number, for the same reason the colour palette is a
+ *  fixed set: a drawing the trader cannot reproduce from the menu is a
+ *  drawing they cannot read later. `DRAW_WIDTHS[0]` is the hairline a fib's
+ *  interior levels keep, so the default sits one rung up. */
+export const DRAW_WIDTHS = [1, 2, 3, 4] as const;
+export const DRAW_WIDTH_DEFAULT = 2;
+
+export const nextDrawWidth = (current: number): number => {
+    const i = DRAW_WIDTHS.indexOf(current as (typeof DRAW_WIDTHS)[number]);
+    return DRAW_WIDTHS[(i < 0 ? 1 : i + 1) % DRAW_WIDTHS.length];
+};
+
+/** A shape's stroke weight, with the default a pre-width drawing reads at. */
+export const drawWidthOf = (d: ChartDrawing): number => d.width ?? DRAW_WIDTH_DEFAULT;
 
 /** What the tool rail's pointer flow puts on the overlay: 'cursor' is the
  *  chart's native pan/zoom, 'erase' deletes a user shape, the rest are the

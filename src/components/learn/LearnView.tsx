@@ -1,8 +1,15 @@
 /**
- * Learning — one surface for everything the system knows and how it decided that
- * (WS-5.1).
+ * Learning — the surface that shows how the system decided, and the home of the
+ * two panels split off from it (WS-5.1).
  *
- * The information architecture is the loop's own order:
+ * 2026-11-08 (v4 plan, D2): Skills and Memory became surfaces of their own, so
+ * this component now renders ONE panel per surface, chosen by the `tab` prop —
+ * the tab bar was chrome for a surface with three destinations, and a surface
+ * with one destination does not need it. Learning shows Health (scorecards,
+ * lessons, runtime telemetry); Skills shows the library; Memory shows the
+ * notebook.
+ *
+ * The order the tabs used to imply is the loop's own:
  *
  *   Skills → Memory → Health
  *   where it lives   what it reads   whether it's sound
@@ -21,7 +28,6 @@
  */
 
 import React, { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
-import { BookOpen, Gauge, Layers } from '../shared/Icons';
 import type { LoggedTrade } from '../../types';
 import type { ProviderConfig } from '../../types/provider';
 import PatternMemoryCard from './PatternMemoryCard';
@@ -46,22 +52,9 @@ type LearnTab = 'skills' | 'memory' | 'health';
 
 export type { LearnTab };
 
-const TAB_KEY = 'learn_tab_v1';
-
 /** The notebook entry's detail — the one dock this surface opens; the skill
- *  document reads in the Skills tab, not in a second viewer. */
+ *  document reads in the Skills surface, not in a second viewer. */
 const MEMORY_TOPIC_DOCK = 'memory-topic';
-
-const TABS: Array<{ id: LearnTab; label: string; Icon: React.FC<{ className?: string }> }> = [
-    // The library the desk learns FROM, moved here from Settings — one view for
-    // everything the app believes, rather than a tab in a dialog about the app.
-    // Leads the row since the Approvals tab's removal (2026-11-03): skills are
-    // what this surface is for.
-    { id: 'skills', label: 'Skills', Icon: Layers },
-    { id: 'memory', label: 'Memory', Icon: BookOpen },
-    { id: 'health', label: 'Health', Icon: Gauge },
-];
-
 
 const Fallback: React.FC = () => (
     <div className="p-6 text-ui-dense text-zinc-600">Loading…</div>
@@ -72,18 +65,12 @@ interface LearnViewProps {
     trades: LoggedTrade[];
     /** The global-memory switch's state, handed straight through to
      *  MemoryFilesManager — which is the ONE writer of this flag (Settings →
-     *  Memory kept only a link here). Both optional so the Memory tab still
+     *  Memory kept only a link here). Both optional so the Memory surface still
      *  mounts in tests that don't care; the switch itself only renders when the
      *  setter is supplied. */
     isGlobalMemoryEnabled?: boolean;
     setIsGlobalMemoryEnabled?: (enabled: boolean) => void;
     memoryConfig?: ProviderConfig | null;
-    /** Set by a caller that wants a SPECIFIC tab (Settings → "open the
-     *  notebook"). Cleared by onInitialTabConsumed once applied — same contract
-     *  the Journal uses for its deep link — so a later mount honours the user's
-     *  own last tab instead of re-firing a stale link. */
-    initialTab?: LearnTab | null;
-    onInitialTabConsumed?: () => void;
     /** The skill library (Studio + trade plans + forged tools). Handed in as a
      *  node because the Studio reads the live regime and owns the strategy
      *  search, neither of which this surface has. */
@@ -95,31 +82,17 @@ interface LearnViewProps {
     reviewSummary?: string | null;
     reviewLoading?: boolean;
     onRegenerateReview?: () => void;
+    /** Which panel this surface shows. Skills, Memory and Learning (Health) are
+     *  three surfaces of ONE component (2026-11-08): the surface, not a leftover
+     *  preference, decides what is on screen, so there is no tab bar to steer. */
+    tab: LearnTab;
 }
 
 const LearnView: React.FC<LearnViewProps> = ({
-    username, trades, isGlobalMemoryEnabled, setIsGlobalMemoryEnabled,
-    memoryConfig = null, initialTab, onInitialTabConsumed,
-    renderSkills, reviewSummary = null, reviewLoading = false, onRegenerateReview,
+    username, trades, tab, isGlobalMemoryEnabled, setIsGlobalMemoryEnabled,
+    memoryConfig = null, renderSkills, reviewSummary = null, reviewLoading = false,
+    onRegenerateReview,
 }) => {
-    const [tab, setTab] = useState<LearnTab>(() => {
-        const saved = typeof localStorage !== 'undefined' ? localStorage.getItem(TAB_KEY) : null;
-        // The notebook is this surface's own screen: Skills is a destination of
-        // its own (the rail's Skills row), so defaulting here would make the two
-        // rows render one view. A stored id from before the Approvals removal
-        // ('coach', or the older 'queue'/'system') falls through to here too.
-        return TABS.some(t => t.id === saved) ? (saved as LearnTab) : 'memory';
-    });
-
-    useEffect(() => {
-        if (!initialTab) return;
-        setTab(initialTab);
-        onInitialTabConsumed?.();
-    }, [initialTab, onInitialTabConsumed]);
-
-    useEffect(() => {
-        try { localStorage.setItem(TAB_KEY, tab); } catch { /* private mode */ }
-    }, [tab]);
 
     // ── The right-panel shell ─────────────────────────────────────────────
     // Right-panel contract: the hook owns geometry and lifecycle, the layout
@@ -147,25 +120,6 @@ const LearnView: React.FC<LearnViewProps> = ({
 
     return (
         <div className="flex h-full min-h-0 flex-col bg-surface-page" data-testid="learn-view">
-            <nav className="flex shrink-0 items-center gap-1.5 border-b border-zinc-800/80 bg-zinc-900/30 px-4 py-2" aria-label="Learning sections">
-                <span className="mr-3 hidden text-ui-caption font-semibold tracking-[-0.01em] text-zinc-200 lg:inline">Learning</span>
-                {TABS.map(({ id, label, Icon }) => {
-                    const active = tab === id;
-                    return (
-                        <button key={id} type="button" onClick={() => setTab(id)}
-                            aria-current={active ? 'true' : undefined} data-testid={`learn-tab-${id}`}
-                            className={`flex items-center gap-1.5 rounded-control px-3 py-1.5 text-ui-sm font-medium transition-colors duration-[120ms] ease-[var(--ease-snappy)] ${
-                                active
-                                    ? 'bg-zinc-800 text-zinc-100 ring-1 ring-white/[0.06]'
-                                    : 'text-zinc-500 hover:bg-white/[0.04] hover:text-zinc-300'
-                            }`}>
-                            <Icon className="h-3.5 w-3.5" aria-hidden="true" />
-                            {label}
-                        </button>
-                    );
-                })}
-            </nav>
-
             {/* `relative` anchors the panel's hidden (out-of-flow) state, which
                 is how the shell preserves a panel's scroll offset without a
                 closed one taking a column of width. */}
@@ -178,7 +132,7 @@ const LearnView: React.FC<LearnViewProps> = ({
                 )}
 
                 {tab === 'memory' && (
-                    <div className="mx-auto w-full max-w-4xl space-y-3 p-3">
+                    <div className="mx-auto w-full max-w-4xl space-y-3 p-3" data-testid="learn-memory">
                         {/* The synthesis first — it is what the memory is FOR;
                             the notebook browser below holds the raw files. */}
                             <PatternMemoryCard

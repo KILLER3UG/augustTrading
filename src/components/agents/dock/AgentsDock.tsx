@@ -61,7 +61,7 @@ const AgentsDock: React.FC<AgentsDockProps> = ({ isOpen, onClose, symbol, interv
     const switchMode = useCallback((next: DockMode): void => {
         setMode(next);
         writeDockMode(next);
-        setOpenIds(prev => next === 'all' ? DOCK_TABS.map(t => t.id) : [activeId]);
+        setOpenIds(next === 'all' ? DOCK_TABS.map(t => t.id) : [activeId]);
         setMounted(prev => next === 'all'
             ? DOCK_TABS.map(t => t.id)
             : (prev.includes(activeId) ? prev : [...prev, activeId]));
@@ -138,7 +138,7 @@ const AgentsDock: React.FC<AgentsDockProps> = ({ isOpen, onClose, symbol, interv
                                 }`}>
                                 {active && (
                                     <span aria-hidden="true"
-                                        className="absolute -left-1 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-full bg-cyan-400" />
+                                        className="absolute -left-1 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-full bg-zinc-100" />
                                 )}
                                 {TAB_ICONS[tab.id]}
                             </button>
