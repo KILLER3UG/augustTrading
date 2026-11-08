@@ -290,26 +290,23 @@
      labels that are too dense for `sm` and too important for `xs`. */
   --text-ui-dense: calc(var(--ui-font-size) - 3px);
   --text-ui-dense--line-height: 1.5;
-  /* Micro-labels: axis ticks, table headers, counts. The floor for running
-     text — `text-zinc-600` is bumped in this file specifically so ink at this
-     size clears WCAG AA on both surfaces. */
+  /* Axis ticks, table headers, counts — the step the 11px literal became.
+     `text-zinc-600` is bumped in this file specifically so ink at this size
+     clears WCAG AA on both surfaces. */
   --text-ui-xs: calc(var(--ui-font-size) - 4px);
   --text-ui-xs--line-height: 1.5;
-  /* The restricted exception, for dense data cells and chart ticks where 10px
-     still costs too much width. Not a body-text size, and nothing new should
-     reach for it without a reason — it exists so the ramp can express what the
-     app already draws rather than sending the next author back to `text-[9px]`. */
-  /* One step below `2xs`. Five decorative-data labels were drawing `text-[8px]`
-     with no role to name — the same gap `dense` closed for 11px and `lede`
-     closes for 15px: an unmapped size is invisible to the accessibility dial,
-     which multiplies each element's own font-size. Exact at the default base
-     (14 − 6), so converting them moved no pixels. This is the FLOOR, not a
-     body-text size: nothing new should reach for it, and running text at 8px
-     is a contrast failure waiting to be measured. */
-  --text-ui-micro: calc(var(--ui-font-size) - 6px);
-  --text-ui-micro--line-height: 1.4;
-  --text-ui-2xs: calc(var(--ui-font-size) - 5px);
+  /* The FLOOR, and the reference's own caption step. Both small roles land
+     here at 10.5px: the mock's smallest type is 10.5px, and the app had two
+     steps below it — `2xs` at 10px (245 uses) and `micro` at 9px (2). Two
+     roles, one size, because the reference has one caption step rather than
+     two and a 0.5px difference was never a hierarchy. Nothing in the app now
+     sets type below the reference's floor; the 11–13px band is untouched.
+     `micro` keeps its own name and its 1.4 line-height — a ROLE, not a size —
+     so the two decorative-data labels already on it did not have to move. */
+  --text-ui-2xs: calc(var(--ui-font-size) - 4.5px);
   --text-ui-2xs--line-height: 1.5;
+  --text-ui-micro: calc(var(--ui-font-size) - 4.5px);
+  --text-ui-micro--line-height: 1.4;
 
   /* QUIET DESK (v4): precision radii. A trading instrument is built from
      cut planes, not chat bubbles — 20/24px corners made every control read as
