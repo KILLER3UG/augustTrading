@@ -36,6 +36,47 @@ async function seed(page) {
         sessionStorage.clear();
         localStorage.setItem('august_surface_v1', 'trade');
         sessionStorage.setItem('activeUsername', 'Probe User');
+        // A skill FILE in the notebook store, so the Skills surface's catalog
+        // has a row to open: without it `ui-skill-reader` photographs an empty
+        // catalog, and the shot named for the reader is a picture of nothing.
+        // The folder table is required — `isSkillFile` resolves a file's folder
+        // BY ID, and a blob with `folders: []` lists no skill at all.
+        localStorage.setItem('memory_files_v1_Probe User', JSON.stringify({
+            version: 1,
+            folders: [
+                { id: 'profile', name: 'profile', order: 0 },
+                { id: 'trader-diary', name: 'trader-diary', order: 1 },
+                { id: 'market-conditions', name: 'market-conditions', order: 2 },
+                { id: 'rules', name: 'rules', order: 3 },
+                { id: 'skills', name: 'skills', order: 4 },
+                { id: 'bots', name: 'bots', order: 5 },
+                { id: 'lens', name: 'lens', order: 6 },
+                { id: 'settled-beliefs', name: 'settled-beliefs', order: 7 },
+                { id: 'distilled', name: 'distilled', order: 8 },
+                { id: 'strategies', name: 'strategies', order: 9 },
+            ],
+            files: [{
+                id: 'shot-skill-1',
+                name: 'fade-the-first-break.md',
+                content: [
+                    '---',
+                    'name: "Fade the first break"',
+                    'description: "Fade the first breakout of the session when volume is thin."',
+                    'kind: "repeat"',
+                    '# august:skill-ledger',
+                    'status: confirmed',
+                    'wins: 4',
+                    'losses: 1',
+                    '---',
+                    '**When:** the first breakout of the session on thin volume',
+                    '**What I do:** fade it back inside the range.',
+                ].join('\n'),
+                folderId: 'skills',
+                enabled: true,
+                createdAt: new Date(Date.now() - 1500 * 60000).toISOString(),
+                updatedAt: new Date(Date.now() - 1500 * 60000).toISOString(),
+            }],
+        }));
     });
     await page.evaluate(async ({ mockPort, empty }) => {        const db = await new Promise((resolve, reject) => {
             const request = indexedDB.open('FuturesAI-DB', 1);
@@ -156,7 +197,7 @@ async function main() {
         // Navigation lives in the rail; when it is put away the content bar's
         // expand button (or the Agents drawer's opener) is the way in. There is
         // no four-tab fallback to click.
-        const SWITCH_ID = { Analyze: 'trade', Journal: 'journal', Agents: 'agents', Learning: 'learn' };
+        const SWITCH_ID = { Analyze: 'trade', Journal: 'journal', Agents: 'agents', Learning: 'learn', Skills: 'skills', Memory: 'memory' };
         const navTo = async (name) => {
             const id = SWITCH_ID[name] || name;
             const clickSwitch = () => page.evaluate((surfaceId) => {
@@ -195,14 +236,18 @@ async function main() {
             return 'not found';
         };
 
-        // 'Skills' is gone from the rail — it is a tab of the Learning surface,
-        // shot below through the Customize row that reaches it. The surface row
-        // itself is named 'Learning' now, and the sweep must ask for that: a
-        // label that no longer matches returns 'not found' and re-shoots whatever
-        // surface happened to be open, which is the vacuous read every gate here
-        // exists to catch.
-        for (const surface of ['Analyze', 'Journal', 'Agents', 'Learning']) {
+        // The six surfaces, in the rail's own order. Skills and Memory joined
+        // the sweep when they became surfaces (2026-11-08); a label that no
+        // longer matches returns 'not found' and re-shoots whatever surface
+        // happened to be open, which is the vacuous read every gate here exists
+        // to catch.
+        for (const surface of ['Analyze', 'Journal', 'Agents', 'Learning', 'Skills', 'Memory']) {
             const how = await navTo(surface);
+            // A failed navigation must THROW, not re-shoot whatever surface
+            // happened to be open: the sweep would otherwise file a capture of
+            // the wrong screen under the right name, the vacuous read the census
+            // documents for every other surface.
+            if (how === 'not found') throw new Error(`surface-shots: no route to ${surface}`);
             await sleep(2500); // let lazy chunks + data settle
             await page.screenshot({ path: path.join(SHOTS, `surface-${surface.toLowerCase()}.png`) });
             console.log(`  ${surface}: ${how} -> surface-${surface.toLowerCase()}.png`);
@@ -233,25 +278,9 @@ async function main() {
         await sleep(1500);
         await page.screenshot({ path: path.join(SHOTS, 'surface-settings.png') });
         console.log('  Settings -> surface-settings.png');
-        // The skill library, shot through the row that promises it — Customize
-        // lands on the Learning surface's Skills tab.
+        // The skill library is the Skills surface now, shot in the sweep above.
         await page.keyboard.press('Escape');
         await sleep(800);
-        const tabbed = await page.evaluate(() => {
-            // Dismiss anything floating above the app first: this step used to
-            // run while the Settings dialog was still open, so the click landed
-            // on the sidebar BEHIND the overlay and the "Learning → Skills"
-            // screenshot was a picture of the Settings dialog.
-            const dlg = document.querySelector('[aria-labelledby="settings-title"]');
-            if (dlg) return 'settings dialog still open';
-            const hit = document.querySelector('[data-testid="nav-customize"]');
-            if (!hit) return 'no Customize row';
-            hit.click();
-            return 'clicked';
-        });
-        await sleep(2500);
-        await page.screenshot({ path: path.join(SHOTS, 'surface-learning-skills.png') });
-        console.log(`  Learning → Skills: ${tabbed} -> surface-learning-skills.png`);
 
         // ── The states the reference is drawn in, not just the surfaces ──
         // Comparing "is this Claude" against four root screenshots misses the
@@ -275,10 +304,11 @@ async function main() {
             return hit;
         };
 
-        // A skill document, read in the Skills tab's library — the reference's
-        // SKILL.md view. The library is the one skill surface now, so this
-        // selects the tab and presses a row.
-        await press('[data-testid="learn-tab-skills"]', 1800);
+        // A skill document, read in the Skills surface's library — the
+        // reference's SKILL.md view. The surface is navigated to, then a row is
+        // pressed.
+        await navTo('Skills');
+        await sleep(1800);
         let how = await press('[data-testid="skills-catalog-card"]', 1500);
         await shoot('ui-skill-reader', how);
 
@@ -299,7 +329,7 @@ async function main() {
         await sleep(500);
 
         // Settings on a section that is not the first — the reference's Memory
-        // list is what the Learning surface's own tabs are compared against.
+        // list is what the Memory surface's own notebook is compared against.
         // The gear now lives only in the Agents account row (the title-bar gear
         // was removed) and Ctrl+, is the global route; a selector list keeps
         // this from silently shooting the open surface again.

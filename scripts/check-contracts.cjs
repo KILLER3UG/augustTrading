@@ -2268,12 +2268,14 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
         (read('src/components/shell/ConversationGroups.tsx').match(/data-testid="conversation-row"/g) || []).length === 1
             && /<ConversationGroups/.test(agents) && /<ConversationGroups/.test(read('src/components/shell/ShellRail.tsx')),
         'two row implementations is how the two lists drift apart');
-    // Two rows, two screens. The landing tab belongs to the ROUTE.
-    ok('learning lands on the notebook, skills on the library',
-        /if \(next === 'learn'\) setLearnTab\('memory'\)/.test(app)
-            && /setLearnTab\('skills'\)/.test(app)
-            && /:\s*'memory';/.test(read('src/components/learn/LearnView.tsx')),
-        'both entries inheriting the library default renders one view twice');
+    // Three surfaces, three screens. Skills and Memory left Learning's tab row
+    // (2026-11-08, v4 plan D2), so the landing panel belongs to the SURFACE.
+    ok('skills and memory are surfaces, and LearnView is pinned per surface',
+        /surface-switch-skills/.test(read('src/components/shell/ShellRail.tsx'))
+            && /surface-switch-memory/.test(read('src/components/shell/ShellRail.tsx'))
+            && /tab="skills"/.test(app) && /tab="memory"/.test(app) && /tab="health"/.test(app)
+            && /tab: LearnTab;/.test(read('src/components/learn/LearnView.tsx')),
+        'one panel per surface, not a shared default behind two entries');
 })();
 
 // ─── the v3 chrome: fewer controls, each with one door ─────────────────────

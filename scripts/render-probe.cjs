@@ -720,6 +720,14 @@ async function main() {
         activePage = page;
         const pageErrors = [];
         page.on('pageerror', (err) => pageErrors.push(String(err && err.stack || err)));
+        // A NATIVE dialog (window.confirm/alert) is the one thing the sweep's
+        // DOM measurements cannot see: it leaves no text, no field, no hash and
+        // no overlay, so a control whose whole job is to open one reads as
+        // inert. Playwright dismisses dialogs by default; record that one
+        // appeared and dismiss it, so the press is credited WITHOUT letting a
+        // destructive confirm (the skill reader's Delete) actually run.
+        let nativeDialogSeen = false;
+        page.on('dialog', async (d) => { nativeDialogSeen = true; await d.dismiss(); });
         // "Connection error" from the app is a summary of a fetch that failed;
         // the reason is on the wire, so keep it. Without this a probe failure
         // forces a choice between guessing and a second debugging harness.
@@ -745,7 +753,7 @@ async function main() {
         // composer, phone) are the expensive, optional ones. Unset (or `all`) =
         // the full run, which stays the release gate.
         const STOP_AT = (process.env.PROBE_ONLY || 'all').trim().toLowerCase();
-        const PHASES = ['core', 'settings', 'stale', 'sweep', 'skilldoc', 'postmortem', 'journal', 'composer', 'phone'];
+        const PHASES = ['core', 'settings', 'stale', 'skilldoc', 'sweep', 'postmortem', 'journal', 'composer', 'phone'];
         if (STOP_AT !== 'all' && !PHASES.includes(STOP_AT)) {
             console.error(`RENDER PROBE: unknown PROBE_ONLY "${STOP_AT}" — expected one of ${PHASES.join(', ')} (or all)`);
             process.exitCode = 1;
@@ -1745,7 +1753,7 @@ async function main() {
             await sleep(120);
         };
         const navTo = async (label) => {
-            const IDS = { Analyze: 'trade', Journal: 'journal', Agents: 'agents', Learning: 'learn' };
+            const IDS = { Analyze: 'trade', Journal: 'journal', Agents: 'agents', Learning: 'learn', Skills: 'skills', Memory: 'memory' };
             const id = IDS[label];
             if (!id) return 'not found';
             const clickSwitch = () => page.evaluate((surfaceId) => {
@@ -1791,7 +1799,7 @@ async function main() {
         };
         /** Wait for the route the switch promises, instead of a fixed sleep. */
         const settleSurface = async (label) => {
-            const sel = { Analyze: 'trade-view', Journal: 'journal-view', Agents: 'agents-view', Learning: 'learn-view' }[label];
+            const sel = { Analyze: 'trade-view', Journal: 'journal-view', Agents: 'agents-view', Learning: 'learn-view', Skills: 'learn-view', Memory: 'learn-view' }[label];
             if (sel) await page.waitForSelector(`[data-testid="${sel}"]`, { timeout: 8000 }).catch(() => null);
         };
         /** The rail width animates (150ms); the surface mounts before it lands.
@@ -1961,16 +1969,23 @@ async function main() {
                     switchTop: sw.length ? Math.round(sw[0].getBoundingClientRect().top) : -1,
                     marked: sw.filter(b => b.getAttribute('aria-current') === 'page')
                         .map(b => b.getAttribute('data-testid')).join(','),
-                    // The mock's rail is icons only (Analyze/Agents/Chats |
-                    // Journal/Learning), so the Customize ROW is gone — Skills
-                    // is a tab of Learning now. What must exist is the rail
-                    // itself and its column toggle.
+                    // The mock's rail is icons only, and since 2026-11-08 it is
+                    // SIX: Analyze, Agents, Journal, Learning, Skills, Memory.
+                    // What must exist is the rail itself and its column toggle.
                     railIcons: !!document.querySelector('[data-testid="shell-surface-rail"]')
                         && !!document.querySelector('[data-testid="shell-rail-collapse"]'),
                     railTop: rail ? Math.round(rail.getBoundingClientRect().top) : -1,
                     // No global band on this surface: AgentsView's own bar is
-                    // the content bar, so nothing stacks above the rail.
-                    headerAbove: !!document.querySelector('header'),
+                    // the content bar, so nothing stacks above the rail. The
+                    // proxy is a FULL-WIDTH header at the top of the window —
+                    // a panel's own <header> (the Agents dock's, 415px wide)
+                    // is not a band stacked above the rail, and treating it as
+                    // one failed this check on a correct layout.
+                    headerAbove: [...document.querySelectorAll('header')]
+                        .some(h => {
+                            const r = h.getBoundingClientRect();
+                            return r.height > 0 && r.top < 1 && r.width >= window.innerWidth - 1;
+                        }),
                     accountName: !!rail?.querySelector('[data-testid="nav-account-name"]'),
                     switchUserButton: !!rail?.querySelector('[data-testid="nav-switch-user"]'),
                     railAccount: !!document.querySelector('[data-testid="shell-account"]'),
@@ -1982,7 +1997,7 @@ async function main() {
                 };
             });
             check('every surface is reachable from the shell rail with no menu to open',
-                nav.switchCount === 4, `${nav.switchCount} entries in the rail switch`);
+                nav.switchCount === 6, `${nav.switchCount} entries in the rail switch`);
             check('the switch marks the screen you are actually on',
                 nav.marked === 'surface-switch-agents', nav.marked || 'nothing marked');
             // The mock's rail is icons only and Skills is a TAB of Learning, so
@@ -2372,8 +2387,8 @@ async function main() {
         {
             await openMenu(); await sleep(300);
             await navTo('Learning'); await settleSurface('Learning');
-            const coachTab = page.locator('[data-testid="learn-tab-health"]');
-            if (await coachTab.count() === 1) await coachTab.click();
+            // Learning IS the Health panel now (2026-11-08): Skills and Memory
+            // are surfaces of their own, so there is no tab to press.
             await sleep(1200);
             const shown = await page.locator('[data-testid="learn-system"]').count();
             const resting = await page.locator('[data-testid="learn-resting"]').count();
@@ -2396,21 +2411,15 @@ async function main() {
 
         if (stopAfterPhase('core')) { await finishPartial('core'); return; }
 
-        // ── The Health tab is where the learning surface's read-only panels
-        //    live. They mount lazily behind a tab, so this is the check that
-        //    notices a wiring that only exists in code.
-        const healthTab = page.locator('[data-testid="learn-tab-health"]');
-        if (await healthTab.count()) {
-            await page.evaluate(() => document
-                .querySelector('[data-testid="learn-tab-health"]')?.click());
-            const hasAnalytics = await pollFor(async () => (await page.locator('[data-testid="learn-analytics"]').count()) > 0);
-            const hasDiagnostics = await pollFor(async () => (await page.locator('[data-testid="learn-system"]').count()) > 0);
-            check('Learning → Health opens the analytics and diagnostics panels',
-                hasAnalytics === true && hasDiagnostics === true,
-                `analytics=${hasAnalytics} diagnostics=${hasDiagnostics}`);
-        } else {
-            check('Learning → Health tab is reachable', false, 'no learn-tab-health control');
-        }
+        // ── The Learning surface IS the Health panel now, and its read-only
+        //    panels mount lazily. This is the check that notices a wiring that
+        //    only exists in code.
+        await navTo('Learning'); await settleSurface('Learning');
+        const hasAnalytics = await pollFor(async () => (await page.locator('[data-testid="learn-analytics"]').count()) > 0);
+        const hasDiagnostics = await pollFor(async () => (await page.locator('[data-testid="learn-system"]').count()) > 0);
+        check('the Learning surface opens the analytics and diagnostics panels',
+            hasAnalytics === true && hasDiagnostics === true,
+            `analytics=${hasAnalytics} diagnostics=${hasDiagnostics}`);
 
         // ── The validation gate and the analytics panel are DAILY paths with no
         //    render guard. runValidationGate runs inside analysisResultProcessor
@@ -2741,19 +2750,22 @@ async function main() {
             await page.locator('[data-testid="agent-message"]').count() >= 4,
             `${await page.locator('[data-testid="agent-message"]').count()} rows`);
 
-        // ── Skills is a TAB of Learning in the mock's shell (no rail row).
-        //    The documented route is Alt+3, so press the chord and assert the
-        //    Studio's OWN root mounted — a route that opens the wrong tab would
-        //    otherwise pass every gate.
-        const noCustomizeRow = await page.evaluate(() =>
-            !document.querySelector('[data-testid="nav-customize"]'));
-        check('the shell has no Customize row — Skills is a tab of Learning',
-            noCustomizeRow, noCustomizeRow ? 'row gone' : 'row still there');
+        // ── Skills and Memory are SURFACES now (2026-11-08), so the rail rows
+        //    are the documented route and Alt+3 keeps its meaning. Assert the
+        //    Studio's OWN root mounted — a route that opens the wrong surface
+        //    would otherwise pass every gate.
+        const railRows = await page.evaluate(() => ({
+            skills: !!document.querySelector('[data-testid="surface-switch-skills"]'),
+            memory: !!document.querySelector('[data-testid="surface-switch-memory"]'),
+        }));
+        check('the rail has Skills and Memory rows — both are surfaces',
+            railRows.skills && railRows.memory,
+            `skills=${railRows.skills} memory=${railRows.memory}`);
         await page.keyboard.press('Alt+3');
         const customize = 'alt+3';
-        // The Studio rides a React.lazy chunk behind a Suspense, so the Skills
-        // tab appears BEFORE the Studio mounts. A fixed 1.5s wait sampled once
-        // and raced the chunk — the merge that deleted the automation chunk
+        // The Studio rides a React.lazy chunk behind a Suspense, so the surface
+        // appears BEFORE the Studio mounts. A fixed 1.5s wait sampled once and
+        // raced the chunk — the merge that deleted the automation chunk
         // re-chunked the bundle enough to lose. Poll for the Studio's own
         // root: the claim is the route MOUNTS it, not that it lands within a
         // hard-coded window. The fallthrough re-samples once at the deadline
@@ -2772,9 +2784,9 @@ async function main() {
                 studio: !!document.querySelector('[data-testid="studio-view"]'),
             }));
         // Three things, because landing on the right SURFACE is not the claim —
-        // the row promises the library, so the Skills tab must be the one showing
-        // and the Studio must actually be mounted inside it.
-        check('Alt+3 lands on the Skills tab of the Learning surface',
+        // the row promises the library, so the Skills panel must be the one
+        // showing and the Studio must actually be mounted inside it.
+        check('Alt+3 lands on the Skills surface with the Studio mounted',
             customize === 'alt+3' && reached.knowledge && reached.skillsTab && reached.studio,
             `${customize} knowledge=${reached.knowledge} skills=${reached.skillsTab} studio=${reached.studio}`);
         await page.waitForTimeout(600);
@@ -3122,6 +3134,7 @@ async function main() {
                 // clicking it later measured nothing on a tabbed surface: half
                 // the names had unmounted by the time their turn came, and a
                 // sweep that clicks nothing reports "zero inert controls".
+                nativeDialogSeen = false;
                 const picked = await page.evaluate((skip) => {
                     const main = document.querySelector('main') || document.body;
                     const nameOf = b => (b.getAttribute('aria-label') || b.textContent || '').trim();
@@ -3170,9 +3183,12 @@ async function main() {
                         // drawer is listed by its root because it carries no
                         // role=dialog; without it the sweep called the drawer's
                         // only opener inert the moment the title bar moved inside
-                        // <main> and the sweep reached it.
+                        // <main> and the sweep reached it. The model picker's
+                        // flyout is a `role="menu"` portaled to <body> for the
+                        // same reason, and it was judged inert until it was
+                        // listed too.
                         overlay: !!document.querySelector(
-                            '[role="dialog"], [role="alertdialog"], [data-testid="activity-drawer"]'),
+                            '[role="dialog"], [role="alertdialog"], [role="menu"], [data-testid="activity-drawer"]'),
                     });
                     const before = state();
                     // A switch's OWN state flip is movement no text change can
@@ -3190,12 +3206,22 @@ async function main() {
                     // flip still fails, exactly as a switch's must.
                     const ownChecked = btn.getAttribute('aria-checked');
                     const ownPressed = btn.getAttribute('aria-pressed');
+                    // The arm/confirm pattern RENAMES the control on its first
+                    // press ("Delete X" → "Confirm delete X"), so a lookup by
+                    // its own name after the press can no longer find it.
+                    // Capture the handle the after-snapshot needs: its label
+                    // and its testid (the index fallback would point at
+                    // whatever button now sits there).
+                    const ownLabel = nameOf(btn);
+                    const ownTestId = btn.getAttribute('data-testid');
                     btn.click();
                     return {
                         name: nameOf(btn),
                         before,
                         ownChecked,
                         ownPressed,
+                        ownLabel,
+                        ownTestId,
                         // Reported with any finding, so a failure says what the
                         // control was rather than making the next reader guess.
                         ctx: `${btn.tagName.toLowerCase()}${btn.type ? `[type=${btn.type}]` : ''}`
@@ -3222,13 +3248,22 @@ async function main() {
                     moved = await page.evaluate((p) => {
                         const main = document.querySelector('main') || document.body;
                         const overlay = !!document.querySelector(
-                            '[role="dialog"], [role="alertdialog"], [data-testid="activity-drawer"]');
+                            '[role="dialog"], [role="alertdialog"], [role="menu"], [data-testid="activity-drawer"]');
+                        // A rename is movement: the arm/confirm delete changes
+                        // its own label and nothing else, so the poll has to
+                        // look for it or it waits out its whole deadline.
+                        let renamed = false;
+                        if (p.ownTestId) {
+                            const byId = main.querySelector(`[data-testid="${p.ownTestId}"]`);
+                            if (byId) renamed = (byId.getAttribute('aria-label') || byId.textContent || '').trim() !== p.ownLabel;
+                        }
                         return (main.innerText || '').trim() !== p.before.text
                             || main.querySelectorAll('input, textarea, [contenteditable="true"]').length !== p.before.fields
                             || window.location.hash !== p.before.hash
-                            || (overlay && !p.before.overlay);
+                            || (overlay && !p.before.overlay)
+                            || renamed;
                     }, picked);
-                    if (moved) break;
+                    if (moved || nativeDialogSeen) break;
                 }
                 if (!moved) await sleep(600); // one last frame before the verdict
                 const after = await page.evaluate((p) => {
@@ -3242,7 +3277,7 @@ async function main() {
                         // sweep called its opener inert: two halves of one
                         // comparison measuring different things.
                         overlay: !!document.querySelector(
-                            '[role="dialog"], [role="alertdialog"], [data-testid="activity-drawer"]'),
+                            '[role="dialog"], [role="alertdialog"], [role="menu"], [data-testid="activity-drawer"]'),
                     };
                     // The toggle check: the pressed control's aria-checked or
                     // aria-pressed flipped. Only a control that HAD one of those
@@ -3257,15 +3292,22 @@ async function main() {
                             if (!flipped && p.ownPressed !== null) flipped = again.getAttribute('aria-pressed') !== p.ownPressed;
                         }
                     }
+                    // The same rename check, mirrored in the verdict snapshot.
+                    let renamed = false;
+                    if (p.ownTestId) {
+                        const byId = main.querySelector(`[data-testid="${p.ownTestId}"]`);
+                        if (byId) renamed = (byId.getAttribute('aria-label') || byId.textContent || '').trim() !== p.ownLabel;
+                    }
                     return {
                         moved: now.text !== p.before.text
                             || now.fields !== p.before.fields
                             || (now.hash !== p.before.hash)
                             || (now.overlay && !p.before.overlay)
-                            || flipped,
+                            || flipped
+                            || renamed,
                     };
                 }, picked);
-                if (!after.moved) {
+                if (!after.moved && !nativeDialogSeen) {
                     const viaBrowserChrome = /export|import|download|copy|save|print/i
                         .test(picked.name);
                     if (viaBrowserChrome) unverifiable.push(picked.name);
@@ -3282,10 +3324,9 @@ async function main() {
                                     dialogNow: !!document.querySelector('[role="dialog"]'),
                                     openDialogs: [...document.querySelectorAll('[role="dialog"]')]
                                         .map(d => d.getAttribute('aria-label') || d.textContent?.slice(0, 40) || 'unlabelled'),
-                                    activeTab: document.querySelector('[aria-current="page"]')?.textContent
-                                        || [...document.querySelectorAll('[data-testid^="learn-tab-"]')]
-                                            .find(b => b.className.includes('bg-zinc-800'))?.textContent
-                                        || 'n/a',
+                                    activeTab: [...document.querySelectorAll('[data-testid^="surface-switch-"]')]
+                                        .find(b => b.getAttribute('aria-current') === 'page')
+                                        ?.getAttribute('aria-label')?.split(' · ')[0] || 'n/a',
                                 };
                             })
                             : null;
@@ -3305,16 +3346,6 @@ async function main() {
                 `${inert.join(' | ')}${unverifiable.length ? `   [not judgeable: ${unverifiable.join(', ')}]` : ''}`
                     .slice(0, 400));
         };
-        // Learn is tabbed three ways. Sweeping only the default tab left the
-        // others unjudged — the gate could not see a dead control inside Memory
-        // or Health. 18 rounds, because the Health tab stacks several panels
-        // and a sweep that runs out before the last one leaves controls unjudged.
-        // The Approvals tab is gone (owner 2026-11-03): its queues apply themselves,
-        // so the sweep names the three tabs that exist.
-        await sweepSurface('Learning', 18, [
-            'learn-tab-skills', 'learn-tab-memory', 'learn-tab-health',
-        ]);
-        if (stopAfterPhase('sweep')) { await finishPartial('sweep'); return; }
 
         // ── The skill document round trip ────────────────────────────────
         // The sweep presses a library row and credits it if the surface moved.
@@ -3325,14 +3356,12 @@ async function main() {
         // A unit test mounts the component in jsdom and passes; only this can
         // see the document actually appear.
         {
-            let how = await navTo('Learning');
+            let how = await navTo('Skills');
             if (how === 'not found') {
                 await openMenu();
                 await sleep(400);
-                how = await navTo('Learning');
+                how = await navTo('Skills');
             }
-            await page.evaluate(() => document
-                .querySelector('[data-testid="learn-tab-skills"]')?.click());
             const rowPressed = await pollFor(async () => page.evaluate(() => {
                 const row = [...document.querySelectorAll('[data-testid="skills-catalog-grid"] button')]
                     .find(b => /read fade the first break/i.test(b.getAttribute('aria-label') || ''));
@@ -3381,6 +3410,17 @@ async function main() {
             }), 6000).then(v => v === 1);
             check('Cancel returns to the reader with the document still rendered', backToReader === true, `${backToReader}`);
         }
+
+        // Skills, Memory and Learning (Health) are three surfaces now, so each
+        // is swept on its own; the old tab list was three views of ONE surface,
+        // and sweeping only the default left the others unjudged. 18 rounds for
+        // Learning, because it stacks several panels and a sweep that runs out
+        // before the last one leaves controls unjudged.
+        await sweepSurface('Skills', 12, []);
+        await sweepSurface('Memory', 12, []);
+        await sweepSurface('Learning', 18, []);
+        if (stopAfterPhase('sweep')) { await finishPartial('sweep'); return; }
+
         // Precondition, checked not assumed: if the seeded journal had not
         // loaded, every filter chip would look inert and the sweep would fail
         // for the wrong reason — or worse, pass by skipping everything.
@@ -3706,7 +3746,7 @@ async function main() {
         {
             const goSurface = async (name) => {
                 return page.evaluate((n) => {
-                    const IDS = { Analyze: 'trade', Journal: 'journal', Agents: 'agents', Learning: 'learn' };
+                    const IDS = { Analyze: 'trade', Journal: 'journal', Agents: 'agents', Learning: 'learn', Skills: 'skills', Memory: 'memory' };
                     const sw = document.querySelector(`[data-testid="surface-switch-${IDS[n] || ''}"]`);
                     if (sw) { sw.click(); return 'clicked'; }
                     const hit = [...document.querySelectorAll('[data-testid="surface-menu"] button')]
@@ -4116,7 +4156,7 @@ async function main() {
         });
         check('the phone rail opens as a drawer and carries every route',
             phoneRailOpen === 'clicked' && phoneRail.rail && phoneRail.backdrop
-                && phoneRail.position === 'fixed' && phoneRail.switches === 4,
+                && phoneRail.position === 'fixed' && phoneRail.switches === 6,
             `${phoneRailOpen} rail=${phoneRail.rail} backdrop=${phoneRail.backdrop} `
             + `position=${phoneRail.position} tabs=${phoneRail.switches}`);
         const phoneRailClosed = await page.evaluate(() => {
@@ -4163,7 +4203,7 @@ async function main() {
     }
     console.log('\nRENDER PROBE OK — every exchange renders and keeps the earlier rows in both'
         + ' conversation surfaces, settled verdicts and malformed persisted audit data render without'
-        + ' dropping a row, all four nav surfaces mount, the desk pane keeps the'
+        + ' dropping a row, all six nav surfaces mount, the desk pane keeps the'
         + ' trader’s own rows, Settings → Data can back up, export and import a journal file, the skill'
         + ' library reads, writes and deletes a bundled folder, the health tab mounts its panels, and the'
         + ' run produced zero pageerrors.');

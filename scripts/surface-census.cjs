@@ -203,7 +203,7 @@ async function main() {
         // by surface id, and a miss throws: this loop used to ignore navTo's
         // return value, which meant a broken route measured whichever surface
         // happened to be mounted and still reported a number.
-        const SWITCH_ID = { Analyze: 'trade', Journal: 'journal', Agents: 'agents', Learning: 'learn' };
+        const SWITCH_ID = { Analyze: 'trade', Journal: 'journal', Agents: 'agents', Learning: 'learn', Skills: 'skills', Memory: 'memory' };
         const navTo = async (name) => page.evaluate((id) => {
             const hit = document.querySelector(`[data-testid="surface-switch-${id}"]`);
             if (!hit) return false;
@@ -218,10 +218,13 @@ async function main() {
             chat: '[data-testid="agents-view"]',
             agents: '[data-testid="agents-view"]',
             learn: '[data-testid="learn-view"]',
+            // Skills and Memory are surfaces now (2026-11-08). All three panels
+            // mount the SAME LearnView root, so the census measures the panel:
+            // Skills at the Studio it promises, Memory at its notebook.
+            skills: '[data-testid="studio-view"]',
+            memory: '[data-testid="learn-memory"]',
         };
-        // 'Skills' is gone from the rail sweep — the Studio is measured under
-        // Settings below, where it now actually lives.
-        for (const surface of ['Analyze', 'Journal', 'Agents', 'Learning']) {
+        for (const surface of ['Analyze', 'Journal', 'Agents', 'Learning', 'Skills', 'Memory']) {
             if (!await navTo(surface)) throw new Error(`no switch entry for ${surface}`);
             const sel = ROOTS[surface.toLowerCase()];
             const ok = await page.waitForSelector(sel, { timeout: 15000 })
@@ -243,26 +246,6 @@ async function main() {
         out.settings = await page.evaluate(census, dlgOk ? dlg : 'main');
         await page.keyboard.press('Escape');
         await sleep(800);
-        // The Strategy Studio is reached from the Customize row, and that row now
-        // lives in the Agents surface's sidebar — so go back to Chat first. Pressing
-        // a row that is not mounted would fall through to `main` and report
-        // whatever surface happened to be open, the vacuous read this census
-        // documents for every other surface.
-        if (!await navTo('Agents')) throw new Error('no switch entry back to Agents');
-        await page.waitForSelector('[data-testid="nav-customize"]', { timeout: 15000 })
-            .then(() => true).catch(() => false);
-        const studioOpened = await page.evaluate(() => {
-            const hit = document.querySelector('[data-testid="nav-customize"]');
-            if (!hit) return false;
-            hit.click();
-            return true;
-        });
-        const studioOk = studioOpened
-            && await page.waitForSelector('[data-testid="studio-view"]', { timeout: 15000 })
-                .then(() => true).catch(() => false);
-        await sleep(1500);
-        out.skills = await page.evaluate(census, studioOk ? '[data-testid="studio-view"]' : 'main');
-
         const { writeFileSync, mkdirSync } = require('fs');
         mkdirSync(OUT, { recursive: true });
         writeFileSync(path.join(OUT, 'census-1440.json'), JSON.stringify(out, null, 2));
