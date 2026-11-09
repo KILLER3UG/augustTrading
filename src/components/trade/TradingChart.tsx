@@ -239,6 +239,22 @@ interface TradingChartProps {
     } | null;
 }
 
+/** Seconds to the close of the bar that opened at `barTime`, as m:ss. Ticks
+ *  itself so a countdown does not re-render the whole chart every second. */
+const BarCountdown = ({ barTime, interval }: { barTime: number; interval: ChartInterval }): React.ReactElement => {
+    const [now, setNow] = useState(() => Date.now());
+    useEffect(() => {
+        const t = window.setInterval(() => setNow(Date.now()), 1000);
+        return () => window.clearInterval(t);
+    }, []);
+    const left = Math.max(0, Math.ceil(barTime + intervalSeconds(interval) - now / 1000));
+    return (
+        <span className="font-mono text-ui-micro text-zinc-400">
+            {`${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`}
+        </span>
+    );
+};
+
 /** The sub-pane studies, in the order OKX stacks them. Fixed, so pane indices
  *  are deterministic and the legend rows can be laid out in the same order. */
 const SUB_PANE_ORDER = ['rsi', 'macd', 'tsi'] as const satisfies readonly ChartIndicatorId[];
@@ -275,6 +291,28 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
      *  computed series the lines are drawn from. */
     const [legendBar, setLegendBar] = useState<LegendBar | null>(null);
     const legendTimeRef = useRef<number | null>(null);
+    /** The last-price tag on the axis: price, its screen Y, the bar's open time
+     *  (for the countdown) and the bar's direction (for the colour). */
+    const [lastTag, setLastTag] = useState<{ y: number; price: number; up: boolean; barTime: number } | null>(null);
+    /** The price under the crosshair, with its % from the last price — OKX's
+     *  crosshair label. Main pane only; a sub-pane has its own scale. */
+    const [crossPrice, setCrossPrice] = useState<{ y: number; price: number; pct: number } | null>(null);
+    const lastTagRef = useRef<{ y: number; price: number } | null>(null);
+    /** Position the tag. Guarded, so panning within a pixel of the same price
+     *  does not re-render the whole chart. */
+    const updateLastTag = useCallback((): void => {
+        const cs = candlesRef.current;
+        if (!cs) { setLastTag(null); return; }
+        const data = (cs.data?.() ?? []) as readonly { time: number; open: number; close: number }[];
+        const last = data[data.length - 1];
+        if (!last) { lastTagRef.current = null; setLastTag(null); return; }
+        const y = typeof cs.priceToCoordinate === 'function' ? cs.priceToCoordinate(last.close as never) : null;
+        if (y === null || y === undefined || !Number.isFinite(Number(y))) { setLastTag(null); return; }
+        const prev = lastTagRef.current;
+        if (prev && Math.abs(prev.y - Number(y)) < 1 && prev.price === last.close) return;
+        lastTagRef.current = { y: Number(y), price: last.close };
+        setLastTag({ y: Number(y), price: last.close, up: last.close >= last.open, barTime: last.time });
+    }, []);
     const candlesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
     const volumeRef = useRef<ISeriesApi<'Histogram'> | null>(null);
     /** The main-pane indicator overlays, so the mount cleanup can drop them. */
@@ -298,6 +336,8 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
     } | null>(null);
     const levelLinesRef = useRef<ISeriesApi<'Line'>[]>([]);
     const markLineRef = useRef<IPriceLine | null>(null);
+    /** The chart's own dotted last-price line (the library's is replaced). */
+    const lastLineRef = useRef<IPriceLine | null>(null);
     /** Key-level lines the DOCK pushed (message card + chart toggle) — id →
      *  price line, diffed on every push. Transient view state, never saved. */
     const chatLevelLinesRef = useRef<Map<string, IPriceLine>>(new Map());
@@ -496,7 +536,12 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
             upColor: CANDLE_UP(), downColor: CANDLE_DOWN(),
             borderUpColor: CANDLE_UP(), borderDownColor: CANDLE_DOWN(),
             wickUpColor: CANDLE_UP(), wickDownColor: CANDLE_DOWN(),
-            priceLineSource: 1, // last price line
+            // The last-price line and its axis tag are drawn by the chart
+            // itself instead: OKX's line is DOTTED and coloured by the last
+            // candle's direction, and the tag carries a countdown the library
+            // cannot render. The library's solid fixed-colour line is replaced.
+            priceLineVisible: false,
+            lastValueVisible: false,
         });
         const volume = chart.addSeries(HistogramSeries, {
             priceFormat: { type: 'volume' },
@@ -515,6 +560,22 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
             const data = legendRef.current;
             // The legend follows the crosshair's BAR, so it only re-renders when
             // the bar changes — not on every pixel of pointer movement.
+            const point = param?.point;
+            const cs = candlesRef.current;
+            if (!point || param?.paneIndex !== 0 || !cs || typeof cs.coordinateToPrice !== 'function') {
+                setCrossPrice(null);
+            } else {
+                const price = cs.coordinateToPrice(point.y as never);
+                const bars = (cs.data?.() ?? []) as readonly { close: number }[];
+                const lastClose = bars[bars.length - 1]?.close;
+                if (price === null || price === undefined || !Number.isFinite(Number(price)) || !lastClose) {
+                    setCrossPrice(null);
+                } else {
+                    const p = Number(price);
+                    const pct = ((p - lastClose) / lastClose) * 100;
+                    setCrossPrice(prev => (prev && Math.abs(prev.y - point.y) < 1 && prev.price === p ? prev : { y: point.y, price: p, pct }));
+                }
+            }
             if (typeof t !== 'number' || !data) {
                 if (legendTimeRef.current !== null) { legendTimeRef.current = null; setLegendBar(null); }
                 return;
@@ -703,6 +764,34 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
             }).catch(() => { /* the next tick or the watchdog covers it */ });
         }
     }, [liveKline, symbol, interval]);
+
+    // The last-price line: DOTTED and coloured by the last candle's direction,
+    // which is what OKX draws. Re-created rather than restyled because the
+    // colour changes with every tick.
+    useEffect(() => {
+        const cs = candlesRef.current;
+        if (!cs) return;
+        const removeLine = (): void => {
+            if (lastLineRef.current) {
+                try { cs.removePriceLine?.(lastLineRef.current); } catch { /* already gone */ }
+                lastLineRef.current = null;
+            }
+        };
+        const data = (cs.data?.() ?? []) as readonly { open: number; close: number }[];
+        const last = data[data.length - 1];
+        if (!last) { removeLine(); return; }
+        const up = last.close >= last.open;
+        const color = up ? chartColor('--color-emerald-500', '#10b981') : chartColor('--color-rose-500', '#f43f5e');
+        const opts = { price: last.close, color, lineWidth: 1 as const, lineStyle: 1 as const };
+        if (lastLineRef.current) {
+            try { lastLineRef.current.applyOptions(opts); return; } catch { removeLine(); }
+        }
+        try {
+            // No axis label: the chart draws its own tag with a countdown.
+            lastLineRef.current = cs.createPriceLine({ ...opts, axisLabelVisible: false }) ?? null;
+        } catch { /* series without price-line support (test mock) */ }
+        updateLastTag();
+    }, [lastPrice, markPrice, status, interval, liveKline, updateLastTag]);
 
     // Realtime price line: the live ticker/mark price gets its own dashed
     // "mark" line updated on every tick — visible immediately, unlike the
@@ -1106,6 +1195,53 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
         const project = (list: ChartDrawing['points']): { x: number; y: number }[] =>
             list.map(pt => toScreen(pt)).filter((s): s is { x: number; y: number } => s !== null);
 
+        // Visible-range high/low markers, OKX's "← 76,216.8" tags. They track the
+        // visible bars only, so a marker is a statement about what is on screen
+        // rather than about the whole loaded history. Painted last, under the
+        // trader's shapes (those are painted after this block).
+        const markRange = candlesRef.current;
+        const markTs = chartRef.current?.timeScale();
+        if (markRange && markTs && typeof markTs.getVisibleLogicalRange === 'function') {
+            const range = markTs.getVisibleLogicalRange();
+            const bars = (markRange.data?.() ?? []) as readonly { high: number; low: number }[];
+            if (range && bars.length > 0) {
+                const first = Math.max(0, Math.floor(Number(range.from)));
+                const last = Math.min(bars.length - 1, Math.ceil(Number(range.to)));
+                let hi = -1;
+                let lo = -1;
+                for (let i = first; i <= last; i += 1) {
+                    if (hi < 0 || bars[i].high > bars[hi].high) hi = i;
+                    if (lo < 0 || bars[i].low < bars[lo].low) lo = i;
+                }
+                const tag = (idx: number, price: number, kind: 'high' | 'low'): void => {
+                    const x = markTs.logicalToCoordinate(idx as never);
+                    const y = markRange.priceToCoordinate(price as never);
+                    if (x === null || x === undefined || y === null || y === undefined) return;
+                    const label = price >= 1000 ? price.toFixed(1) : price.toFixed(2);
+                    ctx.font = '9px ui-monospace, monospace';
+                    const w = ctx.measureText(label).width + 16;
+                    const top = kind === 'high' ? Number(y) - 16 : Number(y) + 4;
+                    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+                    ctx.fillRect(Number(x) - w - 6, top, w, 12);
+                    ctx.fillStyle = kind === 'high' ? '#f472b6' : '#34d399';
+                    ctx.fillText(label, Number(x) - w + 2, top + 9);
+                    // A drawn triangle, not a glyph: a monospace canvas font has
+                    // no guarantee of an arrow, and a missing glyph prints as a
+                    // box or a fallback that reads as a plus sign.
+                    const ax = Number(x) - 5;
+                    const ay = top + 6;
+                    ctx.beginPath();
+                    ctx.moveTo(ax + 4, ay - 3);
+                    ctx.lineTo(ax, ay);
+                    ctx.lineTo(ax + 4, ay + 3);
+                    ctx.closePath();
+                    ctx.fill();
+                };
+                if (hi >= 0) tag(hi, bars[hi].high, 'high');
+                if (lo >= 0) tag(lo, bars[lo].low, 'low');
+            }
+        }
+
         const strokeLine = (pts: { x: number; y: number }[], stroke: string, dashed = false, width = 1.6): void => {
             if (pts.length < 2) return;
             ctx.strokeStyle = stroke;
@@ -1267,7 +1403,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
         repaintRef.current();
         const chart = chartRef.current;
         if (!chart) return;
-        const handler = (): void => repaintRef.current();
+        const handler = (): void => { repaintRef.current(); updateLastTag(); };
         const ts = chart.timeScale();
         // Test mocks may omit the subscription API — painting still works,
         // only pan/zoom repaint is skipped there.
@@ -1282,7 +1418,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
             if (unsub) { try { unsub(handler); } catch { /* chart removed */ } }
             ro?.disconnect();
         };
-    }, [drawings, modelDrawings, status, interval]);
+    }, [drawings, modelDrawings, status, interval, updateLastTag]);
 
     // The in-progress DRAFT preview repaints on every pointermove — but it
     // must not re-run the subscription effect above (that was the churn:
@@ -1563,6 +1699,38 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                             );
                         })()}
                         {legendSettingsRows(legendBar)}
+                    </div>
+                )}
+                {/* The last-price tag on the axis: price, coloured by the last
+                    candle's direction, with the countdown to that bar's close
+                    beneath it — the two things the library's own tag cannot
+                    carry. */}
+                {lastTag && (
+                    <div
+                        data-testid="last-price-tag"
+                        className="pointer-events-none absolute z-10 flex flex-col items-end"
+                        style={{ top: lastTag.y - 16, right: 58 }}
+                    >
+                        <span className={`rounded-sm px-1 font-mono text-ui-dense ${lastTag.up ? 'bg-emerald-500/20 text-emerald-300' : 'bg-rose-500/20 text-rose-300'}`}>
+                            {fmtPriceForChart(lastTag.price)}
+                        </span>
+                        <BarCountdown barTime={lastTag.barTime} interval={interval} />
+                    </div>
+                )}
+                {/* The price under the crosshair, with its distance from the last
+                    price — OKX's crosshair label. Main pane only. */}
+                {crossPrice && (
+                    <div
+                        data-testid="crosshair-price-tag"
+                        className="pointer-events-none absolute z-10 flex flex-col items-end"
+                        style={{ top: crossPrice.y - 16, right: 58 }}
+                    >
+                        <span className="rounded-sm bg-zinc-700/80 px-1 font-mono text-ui-dense text-zinc-100">
+                            {fmtPriceForChart(crossPrice.price)}
+                        </span>
+                        <span className={`font-mono text-ui-micro ${crossPrice.pct >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                            {`${crossPrice.pct >= 0 ? '+' : ''}${crossPrice.pct.toFixed(2)}%`}
+                        </span>
                     </div>
                 )}
                 {ohlcvRow && overPlot && (
