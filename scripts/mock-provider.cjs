@@ -181,6 +181,31 @@ const SLOW_FILLER = 'The desk is up and the feed is live, so this sentence keeps
  *  answer text, so both homes show the live "Thinking · Ns" row long enough
  *  to cross a surface hop. The timer check is a claim about the same turn
  *  continuing, which cannot be measured on a trace that settles in 60 ms. */
+/** A MARKDOWN answer, streamed slowly. The streaming row must render the
+ *  formatting AS IT ARRIVES — bold, lists and a table are the three the
+ *  transcript actually uses — not only once the turn settles. Same
+ *  opt-in-marker pattern as SLOW_MARK: it arms one message and cannot leak
+ *  into another phase's turn. */
+const MARKDOWN_MARK = 'PROBE_MARKDOWN_STREAM';
+const MARKDOWN_REPLY = [
+    '## Bias into the reclaim',
+    '',
+    '**Long** into the reclaim, stop below the shelf. The `key-levels` block',
+    'below is the receipt, not a second opinion.',
+    '',
+    '- Entry: 84,210',
+    '- Stop: 83,100',
+    '- Target: 87,900',
+    '',
+    '| Level | Price | Note |',
+    '| --- | --- | --- |',
+    '| Entry | 84,210 | break of the session high |',
+    '| Stop | 83,100 | below the shelf |',
+    '',
+    'Risk is **2.1%** of equity, and the invalidation is a close back under',
+    'the shelf. That is the whole plan.',
+].join(String.fromCharCode(10));
+
 const REASONING_MARK = 'PROBE_REASONING_STREAM';
 const REASONING_FILLER = 'The desk is checking structure, liquidity and the tape before it commits to a direction. '.repeat(20);
 
@@ -292,10 +317,12 @@ const server = http.createServer((req, res) => {
         if (body.stream) {
             const serialized = JSON.stringify((body && body.messages) || []);
             const slow = serialized.includes(SLOW_MARK);
+            const markdown = serialized.includes(MARKDOWN_MARK);
             const reasoning = serialized.includes(REASONING_MARK) ? REASONING_FILLER : '';
             if (slow) console.log('[mock-provider] slow-stream scenario');
+            if (markdown) console.log('[mock-provider] markdown-stream scenario');
             if (reasoning) console.log('[mock-provider] reasoning-clock scenario');
-            stream(res, slow ? `${text} ${SLOW_FILLER}` : text, slow ? 90 : 12, reasoning);
+            stream(res, markdown ? MARKDOWN_REPLY : slow ? `${text} ${SLOW_FILLER}` : text, (slow || markdown) ? 90 : 12, reasoning);
             return;
         }
         res.writeHead(200, { 'Content-Type': 'application/json' });

@@ -241,14 +241,28 @@ export const ThinkingTierChip: React.FC<{ effort: ReasoningEffort; className?: s
  *  a long text — the three ways the old rAF prefix reveal used to strand a
  *  tail. Copy and the action chips read the source text, never this prefix.
  *
- *  While streaming the text is rendered RAW and parsed as markdown once at
- *  settle: re-parsing markdown on every letter would be the expensive,
- *  flickering version of this effect. The answer's voice (size, reading role,
- *  colour) is the same in both states. */
+ *  The revealed prefix is rendered as MARKDOWN while it arrives, through the
+ *  same `MarkdownContent` the settled answer uses and with the same classes,
+ *  so nothing reflows at settle. It used to be raw pre-wrapped text, which
+ *  meant a bold level, a table or a list only appeared once the turn was over
+ *  — the formatting the trader was waiting for arrived as a jump. The parse is
+ *  bucketed (below) rather than per letter: react-markdown on every frame is
+ *  the expensive, flickering version of this effect, and 24 characters is
+ *  short enough that the formatting still keeps up with the writing.
+ */
+const PARSE_STEP = 24;
+
 export const FadingText: React.FC<{ text: string; streaming: boolean; className?: string }> = ({ text, streaming, className }) => {
     const visible = useLetterReveal(text, streaming);
     const typingRef = useRef<HTMLDivElement>(null);
     const scrollerRef = useRef<HTMLElement | null>(null);
+    // The last parsed slice, rebuilt only every PARSE_STEP received
+    // characters. Writing this ref during render is the repo's accepted idiom
+    // (`conventions.md` › "Two idioms that look like mistakes"): the value is
+    // derived from committed props and a later hook in this same render must
+    // already see it. `visible.length < len` is the reset for a NEW turn, whose
+    // text starts over from empty and would otherwise reuse the old node.
+    const parsedRef = useRef<{ len: number; node: React.ReactNode }>({ len: -1, node: null });
 
     // Keep the transcript pinned while letters grow the answer. The check is a
     // live distance, not a flag: a reader who scrolled up stays where they are.
@@ -276,12 +290,24 @@ export const FadingText: React.FC<{ text: string; streaming: boolean; className?
     }, [visible, streaming]);
 
     if (streaming) {
+        const last = parsedRef.current;
+        if (last.len < 0 || visible.length < last.len || visible.length - last.len >= PARSE_STEP) {
+            parsedRef.current = {
+                len: visible.length,
+                node: (
+                    <MarkdownContent
+                        content={visible}
+                        className={`!text-ui-base [&_p]:my-1 [&_li]:text-ui-base ${className ?? ''}`}
+                    />
+                ),
+            };
+        }
+        /* The reveal caret belonged to the raw-text state. Markdown owns its
+           own block spacing now, and a caret after a partial list or table
+           would sit in the wrong place. */
         return (
-            <div
-                ref={typingRef}
-                className={`stream-typing whitespace-pre-wrap text-ui-base leading-relaxed text-zinc-200 ${className ?? ''}`}
-            >
-                {visible}
+            <div ref={typingRef} className={`stream-typing text-ui-base leading-relaxed text-zinc-200 ${className ?? ''}`}>
+                {parsedRef.current.node}
             </div>
         );
     }
