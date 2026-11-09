@@ -66,6 +66,20 @@ export interface PresentTradeSink {
     /** A Stop on this turn cancels its own scan: a late answer must not
      *  resurrect a card the trader already cancelled. */
     onAbort?(fn: () => void): void;
+    /** Training-corpus tee (O-46): the plan's STRUCTURED identity — the id
+     *  this function minted and the playbook stamp it verified — reported the
+     *  moment both exist. The recorder joins outcomes on this id; mining it
+     *  out of the receipt prose was how a join could silently miss. */
+    onCapturePlan?(plan: { planId: string; symbol: string; playbookId: string | null }): void;
+    /** The decision snapshot, when its fetch lands (it is not awaited). The
+     *  turn may have settled by then; the recorder is fire-and-forget and
+     *  accepts it late. */
+    onCaptureSnapshot?(snapshot: {
+        regimeId: string | null; regimeText: string | null;
+        atr: number | null; atrTf: string;
+        prevDayHigh: number | null; prevDayLow: number | null;
+        sessionVwap: number | null; capturedAt: string;
+    }): void;
 }
 
 const receipt = (call: DeskToolCall, name: string, ok: boolean, content: string): DeskToolResult =>
@@ -98,6 +112,9 @@ export const runPresentTrade = (ctx: PresentTradeContext, sink: PresentTradeSink
     // one in-flight gate scan for this plan.
     const planId = mintPlanId(proposal.symbol);
     proposal.planId = planId;
+    // The corpus tee hears it from the STRUCTURED path, not from a regex over
+    // the receipt prose.
+    sink.onCapturePlan?.({ planId, symbol: proposal.symbol, playbookId: proposal.playbookId ?? null });
 
     // The O-46 decision snapshot starts NOW, like the gate scan: not awaited
     // (the card draws first), attached to the same proposal object when it
@@ -105,7 +122,12 @@ export const runPresentTrade = (ctx: PresentTradeContext, sink: PresentTradeSink
     // measured state at decision time. A failed fetch leaves the snapshot
     // absent — the dashes stay, which is honest.
     void import('../analysis/marketTools').then(mt => mt.buildDecisionSnapshot(proposal.symbol))
-        .then(snap => { if (snap) proposal.decisionSnapshot = snap; })
+        .then(snap => {
+            if (snap) {
+                proposal.decisionSnapshot = snap;
+                sink.onCaptureSnapshot?.(snap);
+            }
+        })
         .catch(() => { /* absent snapshot is the honest state */ });
 
     // The scan starts NOW but is not awaited here. Awaiting it put a

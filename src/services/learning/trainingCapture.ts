@@ -160,6 +160,17 @@ export const captureStatus = async (): Promise<CaptureStatus> => {
     }
 };
 
+/** The last append that did not land, this SESSION. It cannot live in the
+ *  corpus — a dead store is exactly the failure it would have to record — so
+ *  it is process memory the Settings card reads, and a dead store now reads
+ *  as "0 records + a failure", not as an empty corpus. */
+let lastCaptureFailure: { at: string; reason: string } | null = null;
+export const lastCaptureFailureInfo = (): { at: string; reason: string } | null => lastCaptureFailure;
+export const noteCaptureFailure = (reason: string): void => {
+    lastCaptureFailure = { at: new Date().toISOString(), reason };
+    console.warn('[trainingCapture] a turn was NOT recorded:', reason);
+};
+
 export interface TurnCaptureInput {
     surface: 'dock' | 'chat';
     symbol: string | null;

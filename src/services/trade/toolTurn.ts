@@ -31,6 +31,7 @@ import type { ChatMessage } from '../providers/GenericProviderService';
 import type { ToolAction } from '../../types/message';
 const deskService = (): Promise<typeof import('../analysis/DeskToolsService')> => import('../analysis/DeskToolsService');
 const captureTurn = (input: Parameters<typeof import('../learning/trainingCapture').captureTurn>[0]) => import('../learning/trainingCapture').then(m => m.captureTurn(input));
+const noteCaptureFailure = (reason: string) => import('../learning/trainingCapture').then(m => m.noteCaptureFailure(reason));
 import type { StreamWithDeskToolsOptions } from '../analysis/DeskToolsService';
 import { emptyTokenUsage, mergeTokenUsage } from '../../utils/tokenUsage';
 import type { TokenUsage } from '../../utils/tokenUsage';
@@ -121,7 +122,24 @@ export interface ToolTurnRequest {
     memoryEnabled?: boolean;
     /** The trader's latest message, for the forget guard. */
     lastUserMessage?: string;
+    /** Training-corpus tee, read at turn end: the STRUCTURED plan a
+     *  `present_trade` minted this turn — id, symbol, verified playbook stamp
+     *  — and the O-46 snapshot when its fetch landed. The dispatcher owns the
+     *  state (its `PresentTradeSink` receives it from the structured path)
+     *  and hands it over here; the recorder reads what the STRUCTURED path
+     *  reported instead of mining plan ids out of tool prose (a receipt
+     *  reworded, a card cancelled, and the regex join silently missed). */
+    capturePlan?: () => { planId: string; symbol: string; playbookId: string | null; snapshot?: CaptureSnapshot | null } | null;
 }
+
+/** The O-46 snapshot shape the recorder stores — structurally what
+ *  `buildDecisionSnapshot` returns (see `trainingCapture.DecisionSnapshot`). */
+export type CaptureSnapshot = {
+    regimeId: string | null; regimeText: string | null;
+    atr: number | null; atrTf: string | null;
+    prevDayHigh: number | null; prevDayLow: number | null;
+    sessionVwap: number | null; capturedAt: string;
+};
 
 /** What the turn produced before usage is folded in. */
 type InnerOutcome = Omit<ToolTurnOutcome, 'usage' | 'usageCalls' | 'effort' | 'wireAudit'>;
@@ -181,9 +199,10 @@ export const runToolTurn = async (req: ToolTurnRequest): Promise<ToolTurnOutcome
     // rides out beside it, for the same reason.
     // Fire-and-forget: OFF means a no-op inside the recorder, and a failure
     // is data the Settings card shows — never a turn that breaks.
+    const capturedPlan = req.capturePlan?.() ?? null;
     void captureTurn({
         surface: 'chat',
-        symbol: null,
+        symbol: capturedPlan?.symbol ?? null,
         model: { provider: req.config.name || 'unknown', model: req.config.selectedModel },
         effort: req.effort ?? null,
         userText: req.lastUserMessage ?? '',
@@ -191,9 +210,17 @@ export const runToolTurn = async (req: ToolTurnRequest): Promise<ToolTurnOutcome
         reasoning: outcome.reasoning ?? '',
         toolEvents: capturedToolLines,
         actions: capturedActions.flat(),
-        planId: (capturedToolLines.join('\n').match(/([a-z0-9-]{6,}):ENTRY/) ?? [])[1] ?? null,
-        snapshot: null,
-    }).catch(() => undefined);
+        // The STRUCTURED plan, not a regex over the receipt prose — and the
+        // snapshot rides with it when the fetch beat the turn's end.
+        planId: capturedPlan?.planId ?? null,
+        snapshot: capturedPlan?.snapshot ?? null,
+    }).then(result => {
+        if (!result.ok && result.reason !== 'disabled' && result.reason !== 'desktop-only') {
+            noteCaptureFailure(result.reason);
+        }
+    }).catch(e => {
+        noteCaptureFailure(e instanceof Error ? e.message : String(e));
+    });
 
     return {
         ...outcome,

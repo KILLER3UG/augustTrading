@@ -46,7 +46,7 @@ import {
 // though the drawer names its anchor unions in two casts.
 import type { ProfileAnchor, VwapAnchor } from '../analysis/marketTools';
 import { runPresentTrade } from './presentTradeTool';
-import { runToolTurn, type ToolTurnEvents, type ToolTurnRequest } from './toolTurn';
+import { runToolTurn, type CaptureSnapshot, type ToolTurnEvents, type ToolTurnRequest } from './toolTurn';
 import { scoreDrawnLevel, levelAccuracy, describeLevelAccuracyForModel } from './tradePlanLevels';
 import * as levelWatch from './levelWatchService';
 import { describePlanForModel, type WatchPlan } from './tradePlanLevels';
@@ -350,7 +350,11 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
      *  the stream starts) — every attach/persist keys off it, never off
      *  the view state, so a background or harness turn's output lands in
      *  ITS OWN session even after the user switched away. */
-    const executePanelTool = async (call: DeskToolCall, turn: PanelTurnContext): Promise<DeskToolResult | null> => {
+    /** `planCapture` — the per-turn holder for the plan a `present_trade`
+     *  minted, written by the structured sink callbacks and read by
+     *  `ToolTurnRequest.capturePlan` at turn end (the training recorder's
+     *  join key, from the structured path). */
+    const executePanelTool = async (call: DeskToolCall, turn: PanelTurnContext, planCapture?: { planId: string | null; symbol: string | null; playbookId: string | null; snapshot: CaptureSnapshot | null }): Promise<DeskToolResult | null> => {
         const name = call.name;
         if (name !== 'draw_on_chart' && name !== 'draw_detected' && name !== 'draw_tool_levels' && name !== 'mark_trade_levels' && name !== 'clear_chart_drawings'
             && name !== 'present_trade' && name !== 'watch_price' && name !== 'wake_me' && name !== 'cancel_watch') return null;
@@ -460,6 +464,17 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
                     // A Stop on this run kills the scan too: an answer that arrives for a
                     // turn the user already cancelled must not resurrect its card.
                     onAbort: fn => { chatStore.getController(turn.sid)?.signal.addEventListener('abort', fn, { once: true }); },
+                    // The training corpus hears the plan from the structured
+                    // path (see ToolTurnRequest.capturePlan) — not from a regex
+                    // over this receipt's prose.
+                    ...(planCapture ? {
+                        onCapturePlan: p => {
+                            planCapture.planId = p.planId;
+                            planCapture.symbol = p.symbol;
+                            planCapture.playbookId = p.playbookId;
+                        },
+                        onCaptureSnapshot: snap => { planCapture.snapshot = snap; },
+                    } : {}),
                 },
             );
         }
@@ -743,6 +758,9 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
         // loop, the reasoning/echo/peel repair and the settle live in
         // services/trade/toolTurn so the Agents surface can run the same turn
         // against a canonical row instead of copying that logic.
+        // The training recorder's plan tee: filled by the structured
+        // present_trade sink (below), read by runToolTurn at turn end.
+        const planCapture: { planId: string | null; symbol: string | null; playbookId: string | null; snapshot: CaptureSnapshot | null } = { planId: null, symbol: null, playbookId: null, snapshot: null };
         const transport: ToolTurnRequest['transport'] = {
             defaultSymbol: symbol,
             allowedTools: TRADE_TOOLS,
@@ -764,7 +782,7 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
                 const cs = getChartSnapshot?.()?.candles ?? [];
                 return cs.length > 0 ? cs[cs.length - 1] : null;
             },
-            executePanelTool: call => executePanelTool(call, turnCtx),
+            executePanelTool: call => executePanelTool(call, turnCtx, planCapture),
             trades,
             mailbox,
             mailboxSeat,
@@ -836,6 +854,9 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
             events,
             memoryEnabled: deps.memoryEnabled !== false,
             lastUserMessage,
+            capturePlan: () => (planCapture.planId
+                ? { planId: planCapture.planId, symbol: planCapture.symbol ?? '', playbookId: planCapture.playbookId, snapshot: planCapture.snapshot }
+                : null),
         }));
         recordToolTurnUsage({
             startedAt: turnStartedAt,

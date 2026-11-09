@@ -46,7 +46,7 @@ import { DEFAULT_CONTEXT_WINDOW_TOKENS, resolveContextWindow } from '../../utils
 import { activeStrategiesBlock } from '../learning/strategyStore';
 import { buildProfileMemoryIndex } from '../learning/profileMemory';
 import { buildGoalsIndex, focusedGoal, goalMatchesMessage, listGoals } from '../goals/GoalService';
-import { runToolTurn, type ToolTurnEvents, type ToolTurnOutcome, type ToolTurnRequest } from './toolTurn';
+import { runToolTurn, type CaptureSnapshot, type ToolTurnEvents, type ToolTurnOutcome, type ToolTurnRequest } from './toolTurn';
 import { isMarketReadTool } from '../analysis/deskToolShared';
 import { runPresentTrade } from './presentTradeTool';
 import { userContentWithImage } from './chatTurnRunner';
@@ -430,6 +430,9 @@ export const runChatSurfaceTurn = async (req: ChatSurfaceTurnRequest): Promise<T
         addAction: action => req.patch(m => appendToolActions([m], m.id, [{ ...action, speaker: action.speaker || DESK_SPEAKER }])[0]),
     };
 
+    // The training recorder's plan tee: filled by the structured present_trade
+    // sink (in the transport below), read by runToolTurn at turn end.
+    const planCapture: { planId: string | null; symbol: string | null; playbookId: string | null; snapshot: CaptureSnapshot | null } = { planId: null, symbol: null, playbookId: null, snapshot: null };
     const transport: ToolTurnRequest['transport'] = {
         defaultSymbol: req.symbol ?? null,
         allowedTools: CHAT_SURFACE_TOOLS,
@@ -468,6 +471,14 @@ export const runChatSurfaceTurn = async (req: ChatSurfaceTurnRequest): Promise<T
                     // that arrives for a run the trader cut must not resurrect
                     // the card it was capped for.
                     onAbort: fn => req.signal.addEventListener('abort', fn, { once: true }),
+                    // The training corpus hears the plan from the structured
+                    // path (see ToolTurnRequest.capturePlan).
+                    onCapturePlan: p => {
+                        planCapture.planId = p.planId;
+                        planCapture.symbol = p.symbol;
+                        planCapture.playbookId = p.playbookId;
+                    },
+                    onCaptureSnapshot: snap => { planCapture.snapshot = snap; },
                 },
             );
         },
@@ -535,6 +546,9 @@ export const runChatSurfaceTurn = async (req: ChatSurfaceTurnRequest): Promise<T
         events: tracked,
         memoryEnabled: req.memoryEnabled !== false,
         lastUserMessage: typeof req.prompt === 'string' ? req.prompt : undefined,
+        capturePlan: () => (planCapture.planId
+            ? { planId: planCapture.planId, symbol: planCapture.symbol ?? '', playbookId: planCapture.playbookId, snapshot: planCapture.snapshot }
+            : null),
     }));
     recordToolTurnUsage({
         startedAt: req.startedAt,

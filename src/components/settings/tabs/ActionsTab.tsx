@@ -7,7 +7,7 @@ import { BackupManager } from '../BackupManager';
 import { StorageLocationCard } from '../StorageLocationCard';
 import { SettingsPageHeader } from './shared';
 import { exportTrainingDataJSONL, trainingRecordFor } from '../../../utils/reportExport';
-import { captureStatus, exportCorpusJsonl, setCaptureEnabled, isCaptureEnabled, TRAINING_CAPTURE_MAX_RECORDS } from '../../../services/learning/trainingCapture';
+import { captureStatus, exportCorpusJsonl, setCaptureEnabled, isCaptureEnabled, lastCaptureFailureInfo, TRAINING_CAPTURE_MAX_RECORDS } from '../../../services/learning/trainingCapture';
 import type { SettingsTabProps } from './types';
 
 export interface ActionsTabProps extends SettingsTabProps {
@@ -118,6 +118,11 @@ const ActionsTab: React.FC<{ tab: ActionsTabProps }> = ({ tab: props }) => {
                                 ? `Recording ON · ${capture.recordCount} turn${capture.recordCount === 1 ? '' : 's'} stored${capture.refusedOnce ? ` · store FULL (${TRAINING_CAPTURE_MAX_RECORDS} cap reached — export and archive to keep recording)` : ''}${capture.lastAt ? ` · last ${capture.lastAt}` : ''}`
                                 : `Recording OFF · ${capture.recordCount} turn${capture.recordCount === 1 ? '' : 's'} already stored${capture.refusedOnce ? ' · store FULL' : ''}`}
                 </p>
+                {lastCaptureFailureInfo() && (
+                    <p className="mt-1 text-ui-xs leading-4 text-rose-400" data-testid="training-capture-failure" role="alert">
+                        {`Last append FAILED (${lastCaptureFailureInfo()!.reason} at ${lastCaptureFailureInfo()!.at}) — that turn is not in the corpus. Check the desktop store; this resets on restart.`}
+                    </p>
+                )}
                 <button
                     type="button"
                     data-testid="export-training-corpus"
