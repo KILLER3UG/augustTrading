@@ -67,6 +67,7 @@ import {
     macdSeries,
     rsiSeries,
     tsiSeries,
+    type BollingerSeries,
     type Series,
 } from '../../services/trade/chartIndicators';
 import {
@@ -96,6 +97,11 @@ export { chartColor };
  *  by JS, so an import-time read could fall back forever). */
 const CANDLE_UP = (): string => chartColor('--color-emerald-500', '#10b981');
 const CANDLE_DOWN = (): string => chartColor('--color-rose-500', '#f43f5e');
+/** The MACD histogram's sign colours — the volume series' own rgba
+ *  convention (chartData.VOLUME_UP/DOWN), which a hex token cannot carry an
+ *  alpha into. Same two hues, one step more opaque than the volume bars. */
+const MACD_HIST_UP = 'rgba(7,181,106,0.55)';
+const MACD_HIST_DOWN = 'rgba(247,93,95,0.55)';
 
 // ── The user's chosen timeframe bar (persisted per user, like dock width) ──
 const TF_BAR_KEY = 'trade_tf_bar_v1';
@@ -298,9 +304,27 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
      *  crosshair label. Main pane only; a sub-pane has its own scale. */
     const [crossPrice, setCrossPrice] = useState<{ y: number; price: number; pct: number } | null>(null);
     const lastTagRef = useRef<{ y: number; price: number } | null>(null);
+    /** The right price-axis gutter, MEASURED, not assumed. The axis is
+     *  content-sized (`autoSize`, labels vary — a titled 'mark' label is wider
+     *  than a bare number), so a hardcoded 58px put the custom tags and the
+     *  band fill's clip under the axis labels. Measured on the same paths
+     *  that already touch layout (tag/crosshair updates); the canvas reads the
+     *  ref, the DOM tags read the state, and both lag one event at worst. */
+    const [axisW, setAxisW] = useState(58);
+    const axisWRef = useRef(58);
+    const measureAxis = useCallback((): void => {
+        const ps = chartRef.current?.priceScale('right') as { width?: () => number } | undefined;
+        const w = typeof ps?.width === 'function' ? ps.width() : 58;
+        const next = Number.isFinite(w) && w > 0 ? Math.round(w) : 58;
+        if (Math.abs(next - axisWRef.current) >= 1) {
+            axisWRef.current = next;
+            setAxisW(next);
+        }
+    }, []);
     /** Position the tag. Guarded, so panning within a pixel of the same price
      *  does not re-render the whole chart. */
     const updateLastTag = useCallback((): void => {
+        measureAxis();
         const cs = candlesRef.current;
         if (!cs) { setLastTag(null); return; }
         const data = (cs.data?.() ?? []) as readonly { time: number; open: number; close: number }[];
@@ -312,7 +336,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
         if (prev && Math.abs(prev.y - Number(y)) < 1 && prev.price === last.close) return;
         lastTagRef.current = { y: Number(y), price: last.close };
         setLastTag({ y: Number(y), price: last.close, up: last.close >= last.open, barTime: last.time });
-    }, []);
+    }, [measureAxis]);
     const candlesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
     const volumeRef = useRef<ISeriesApi<'Histogram'> | null>(null);
     /** The main-pane indicator overlays, so the mount cleanup can drop them. */
@@ -323,9 +347,30 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
      *  trader's own shapes — which keeps it clipped to the plot and makes it
      *  survive zoom and pan for free. */
     const bandRef = useRef<{ times: number[]; upper: Series; lower: Series } | null>(null);
+    /** How to recompute the band from a candle array — REFRESH re-runs it so
+     *  the shaded fill tracks the live tape with the lines. */
+    const bandCalcRef = useRef<((cs: readonly { close: number }[]) => BollingerSeries) | null>(null);
     /** Every series living on a SUB-pane (RSI / MACD / TSI), so the mount
      *  cleanup can drop them and the rebuild can start from pane 1. */
     const subPaneSeriesRef = useRef<ISeriesApi<SeriesType>[]>([]);
+    /** One descriptor per drawn study: its chart series, how to recompute its
+     *  values from a candle array (`calc`), and its legend key. The BUILD
+     *  effect creates the series once; REFRESH re-runs every `calc` against
+     *  the CURRENT candles and pushes the new values into the SAME series —
+     *  so the studies track the live tape without the teardown/flicker of a
+     *  rebuild per tick. */
+    const indicatorDefsRef = useRef<{
+        series: ISeriesApi<SeriesType>;
+        kind: 'line' | 'hist';
+        /** Legend key, when the study has a legend row. */
+        name?: string;
+        calc: (cs: readonly { close: number }[]) => Series;
+    }[]>([]);
+    /** Re-run every study compute and push the results into the live series.
+     *  `full` (a bar closed, or a settings change) rewrites whole series;
+     *  otherwise only each series' LAST point moves, which is exact for every
+     *  recursive study — past values cannot change from a forming bar. */
+    const refreshIndicatorsRef = useRef<(full: boolean) => void>(() => {});
     /** The bars and the computed studies, so the legend under the crosshair
      *  reads the SAME series the lines are drawn from. */
     const legendRef = useRef<{
@@ -344,9 +389,10 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
     const [status, setStatus] = useState<'loading' | 'live' | 'unavailable'>('loading');
     const [levels, setLevels] = useState<ChartLevel[]>([]);
     /** Which studies are drawn, per user. The SERIES come from
-     *  `chartIndicators.ts` — the same module the prompt reads — so a line on
-     *  the screen is the number in the model's context. This state only says
-     *  which of them are visible; it cannot change a value. */
+     *  `chartIndicators.ts` — the one series module (the desk tools migrate
+     *  onto it per O-150) — so a line on the screen and the desk's numbers
+     *  share one computation. This state only says which of them are
+     *  visible; it cannot change a value. */
     const [indicatorSettings, setIndicatorSettings] = useState<ChartIndicatorSettings>(
         () => readChartIndicatorSettings(getActiveUsername() || 'default'),
     );
@@ -556,6 +602,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
         volumeRef.current = volume;
         const onCrosshair = (param: Parameters<Parameters<IChartApi['subscribeCrosshairMove']>[0]>[0]) => {
             setOverPlot(!!param?.time);
+            measureAxis();
             const t = param?.time;
             const data = legendRef.current;
             // The legend follows the crosshair's BAR, so it only re-renders when
@@ -600,11 +647,12 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
             subPaneSeriesRef.current = [];
             levelLinesRef.current = [];
             markLineRef.current = null;
+            lastLineRef.current = null;
             // The chat-level lines died with the chart — forget them so the
             // next mount's diff recreates instead of applyOptions-ing ghosts.
             chatLevelLinesRef.current = new Map();
         };
-    }, []);
+    }, [measureAxis]);
 
     // Data lifecycle: the history load always runs (the stream only pushes
     // the CURRENT bar). Refresh cadence after that: while live the websocket
@@ -663,6 +711,16 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                 try { candlesRef.current?.removePriceLine(markLineRef.current); } catch { /* series gone */ }
                 markLineRef.current = null;
             }
+            // The custom last-price line is a price line too — without this,
+            // the previous coin's dotted line persisted onto the new chart
+            // until a prop ticked (the mark line got this cleanup on day one;
+            // the last-price line was added later and missed it).
+            if (lastLineRef.current) {
+                try { candlesRef.current?.removePriceLine(lastLineRef.current); } catch { /* series gone */ }
+                lastLineRef.current = null;
+            }
+            setLastTag(null);
+            lastTagRef.current = null;
             candlesRef.current?.setData([]);
             volumeRef.current?.setData([]);
             lastTickRef.current = Date.now();
@@ -761,7 +819,12 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                 if (kl.length === 0 || cs.data().length === 0) return;
                 const last = kl[kl.length - 1];
                 cs.update({ time: Math.floor(last.time / 1000) as UTCTimestamp, open: last.open, high: last.high, low: last.low, close: last.close });
+                // The finalized OHLC can differ from the tick's last print, so
+                // the just-closed bar's study values move too — full rewrite.
+                refreshIndicatorsRef.current(true);
             }).catch(() => { /* the next tick or the watchdog covers it */ });
+            // And a full rewrite now, for the bar close THIS tick carried.
+            refreshIndicatorsRef.current(true);
         }
     }, [liveKline, symbol, interval]);
 
@@ -791,7 +854,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
             lastLineRef.current = cs.createPriceLine({ ...opts, axisLabelVisible: false }) ?? null;
         } catch { /* series without price-line support (test mock) */ }
         updateLastTag();
-    }, [lastPrice, markPrice, status, interval, liveKline, updateLastTag]);
+    }, [symbol, lastPrice, markPrice, status, interval, liveKline, updateLastTag]);
 
     // Realtime price line: the live ticker/mark price gets its own dashed
     // "mark" line updated on every tick — visible immediately, unlike the
@@ -821,120 +884,151 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
     }, [lastPrice, markPrice, status]);
 
     // Indicator overlays. Every series comes from `chartIndicators`, the ONE
-    // module the prompt reads, so the line the trader sees and the number the
-    // model is given are the same computation. The hand-rolled `sma()` is
-    // retired with it. Main-pane studies only for now — RSI/MACD/TSI need their
-    // own panes, which is the next step.
+    // series module: the chart's lines, this legend, and — as the desk tools
+    // migrate onto it (O-150) — the prompt's numbers share one computation.
+    // The hand-rolled `sma()` is retired with it.
+    //
+    // Two phases, deliberately split:
+    // · BUILD (this effect) tears down and re-creates the series, wired to
+    //   the pane layout — only when the symbol, the interval, the visible
+    //   studies or the chart's readiness change (removePane shifts every pane
+    //   above it, so a stale index would put the wrong study in the wrong
+    //   pane; hence the whole-set rebuild here and nowhere else);
+    // · REFRESH (`refreshIndicatorsRef`) recomputes every study against the
+    //   CURRENT candles and pushes values into the SAME series, so the lines
+    //   track the live tape instead of freezing at load — a live 1m chart
+    //   used to leave the EMA20 ending about an hour back while OKX keeps
+    //   recomputing. Recursive studies only ever move their LAST point on a
+    //   forming bar, so a forming tick is one `update` per series and a
+    //   closed bar is one full `setData` per series.
     useEffect(() => {
         const chart = chartRef.current;
         if (!chart) return;
         for (const s of indicatorSeriesRef.current) { try { chart.removeSeries(s); } catch { /* already gone */ } }
         indicatorSeriesRef.current = [];
+        indicatorDefsRef.current = [];
         const candles = (candlesRef.current?.data?.() ?? []) as readonly { time: number; open: number; high: number; low: number; close: number }[];
-        if (candles.length === 0) return;
-        const times = candles.map(c => c.time as UTCTimestamp);
-        const closes = candles.map(c => c.close);
-        const addLine = (values: Series, color: string) => {
+        if (candles.length === 0) { refreshIndicatorsRef.current = () => {}; return; }
+        const closesOf = (cs: readonly { close: number }[]): number[] => cs.map(c => c.close);
+        /** Register a main-pane line study: create the series now, remember
+         *  how to recompute its values from any later candle array, and file
+         *  the raw series under its legend key. */
+        const addLine = (calc: (cs: readonly { close: number }[]) => Series, color: string, name?: string): void => {
             const series = chart.addSeries(LineSeries, {
                 color, lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
             });
-            series.setData(times
-                .map((t, i) => (values[i] === null ? null : { time: t, value: values[i] as number }))
-                .filter((p): p is { time: UTCTimestamp; value: number } => p !== null));
             indicatorSeriesRef.current.push(series);
+            indicatorDefsRef.current.push({ series, kind: 'line', name, calc });
         };
         const visible = indicatorSettings.visible;
         bandRef.current = null;
-        // Each study is computed ONCE and shared by the series and the legend,
-        // so the number under the crosshair is the number on the line.
-        const legendSeries: Record<string, Series> = {};
-        if (visible.ema20) { legendSeries.ema20 = emaSeries(closes, 20); addLine(legendSeries.ema20, chartColor('--color-amber-500', '#f59e0b')); }
-        if (visible.ema200) { legendSeries.ema200 = emaSeries(closes, 200); addLine(legendSeries.ema200, chartColor('--color-purple-400', '#a78bfa')); }
+        bandCalcRef.current = null;
+        if (visible.ema20) addLine(cs => emaSeries(closesOf(cs), 20), chartColor('--color-amber-500', '#f59e0b'), 'ema20');
+        if (visible.ema200) addLine(cs => emaSeries(closesOf(cs), 200), chartColor('--color-purple-400', '#a78bfa'), 'ema200');
         if (visible.boll) {
-            const band = bollingerSeries(closes, 20, 2);
-            legendSeries.bollMid = band.mid;
-            legendSeries.bollUpper = band.upper;
-            legendSeries.bollLower = band.lower;
-            addLine(band.mid, chartColor('--color-cyan-500', '#06b6d4'));
-            addLine(band.upper, chartColor('--color-cyan-500', '#06b6d4'));
-            addLine(band.lower, chartColor('--color-cyan-500', '#06b6d4'));
-            bandRef.current = { times: candles.map(c => c.time), upper: band.upper, lower: band.lower };
+            const bollColor = chartColor('--color-cyan-500', '#06b6d4');
+            addLine(cs => bollingerSeries(closesOf(cs), 20, 2).mid, bollColor, 'bollMid');
+            addLine(cs => bollingerSeries(closesOf(cs), 20, 2).upper, bollColor, 'bollUpper');
+            addLine(cs => bollingerSeries(closesOf(cs), 20, 2).lower, bollColor, 'bollLower');
+            bandCalcRef.current = (cs) => bollingerSeries(closesOf(cs), 20, 2);
         }
-        if (visible.rsi) legendSeries.rsi = rsiSeries(closes, 14);
-        if (visible.macd) { const m = macdSeries(closes); legendSeries.macd = m.macd; legendSeries.macdSignal = m.signal; }
-        if (visible.tsi) { const t = tsiSeries(closes); legendSeries.tsi = t.tsi; legendSeries.tsiSignal = t.signal; }
-        // Sub-panes, in a FIXED order so the indices are deterministic. The
-        // whole set is torn down and rebuilt on every change: `removePane`
-        // shifts every pane above it, so a stale index would put the wrong
-        // study in the wrong pane.
+        // Sub-panes, in a FIXED order so the indices are deterministic.
         for (const s of subPaneSeriesRef.current) { try { chart.removeSeries(s); } catch { /* already gone */ } }
         subPaneSeriesRef.current = [];
         while (chart.panes().length > 1) {
             try { chart.removePane(chart.panes().length - 1); } catch { break; }
         }
         const addSub = (series: ISeriesApi<SeriesType>): void => { subPaneSeriesRef.current.push(series); };
-        const putLine = (pane: number, values: Series, color: string, scaleId?: string): void => {
+        const putLine = (pane: number, calc: (cs: readonly { close: number }[]) => Series, color: string, scaleId?: string, name?: string): void => {
             const s = chart.addSeries(LineSeries, {
                 color, lineWidth: 1, priceLineVisible: false, lastValueVisible: false,
                 crosshairMarkerVisible: false, ...(scaleId ? { priceScaleId: scaleId } : {}),
             }, pane);
-            s.setData(times.map((t, i) => (values[i] === null ? null : { time: t, value: values[i] as number }))
-                .filter((p): p is { time: UTCTimestamp; value: number } => p !== null));
             addSub(s);
+            indicatorDefsRef.current.push({ series: s, kind: 'line', name, calc });
         };
-        const putHist = (pane: number, values: Series): void => {
+        const putHist = (pane: number, calc: (cs: readonly { close: number }[]) => Series, name?: string): void => {
             const s = chart.addSeries(HistogramSeries, {
                 priceLineVisible: false, lastValueVisible: false,
             }, pane);
-            s.setData(times.map((t, i) => {
-                const v = values[i];
-                return v === null ? null : {
-                    time: t, value: v,
-                    color: v >= 0 ? 'rgba(7,181,106,0.55)' : 'rgba(247,93,95,0.55)',
-                };
-            }).filter((p): p is { time: UTCTimestamp; value: number; color: string } => p !== null));
             addSub(s);
+            indicatorDefsRef.current.push({ series: s, kind: 'hist', name, calc });
         };
         let paneIndex = 1;
         for (const id of SUB_PANE_ORDER) {
             if (!visible[id]) continue;
             const pane = paneIndex;
             if (id === 'rsi') {
-                legendSeries.rsi6 = rsiSeries(closes, 6);
-                legendSeries.rsi14 = rsiSeries(closes, 14);
-                legendSeries.rsi24 = rsiSeries(closes, 24);
-                putLine(pane, legendSeries.rsi6, '#f08800', 'rsi');
-                putLine(pane, legendSeries.rsi14, '#facc15', 'rsi');
-                putLine(pane, legendSeries.rsi24, '#a3e635', 'rsi');
+                putLine(pane, cs => rsiSeries(closesOf(cs), 6), chartColor('--color-orange-400', '#f08800'), 'rsi', 'rsi6');
+                putLine(pane, cs => rsiSeries(closesOf(cs), 14), chartColor('--color-yellow-400', '#facc15'), 'rsi', 'rsi14');
+                putLine(pane, cs => rsiSeries(closesOf(cs), 24), chartColor('--color-lime-400', '#a3e635'), 'rsi', 'rsi24');
                 chart.priceScale('rsi', pane).applyOptions({ visible: false });
             } else if (id === 'macd') {
-                const m = macdSeries(closes);
-                legendSeries.macd = m.macd;
-                legendSeries.macdSignal = m.signal;
-                putHist(pane, m.histogram);
-                putLine(pane, m.macd, '#06b6d4');
-                putLine(pane, m.signal, '#f472b6');
+                putHist(pane, cs => macdSeries(closesOf(cs)).histogram, 'macdHist');
+                putLine(pane, cs => macdSeries(closesOf(cs)).macd, chartColor('--color-cyan-500', '#06b6d4'), undefined, 'macd');
+                putLine(pane, cs => macdSeries(closesOf(cs)).signal, chartColor('--color-pink-400', '#f472b6'), undefined, 'macdSignal');
             } else if (id === 'tsi') {
-                const t = tsiSeries(closes);
-                legendSeries.tsi = t.tsi;
-                legendSeries.tsiSignal = t.signal;
-                putLine(pane, t.tsi, '#f59e0b', 'tsi');
-                putLine(pane, t.signal, '#f472b6', 'tsi');
+                putLine(pane, cs => tsiSeries(closesOf(cs)).tsi, chartColor('--color-amber-500', '#f59e0b'), 'tsi', 'tsi');
+                putLine(pane, cs => tsiSeries(closesOf(cs)).signal, chartColor('--color-pink-400', '#f472b6'), 'tsi', 'tsiSignal');
                 chart.priceScale('tsi', pane).applyOptions({ visible: false });
             }
             const paneApi = chart.panes()[pane];
             if (paneApi) paneApi.setHeight(110);
             paneIndex += 1;
         }
-        legendRef.current = {
-            times: candles.map(c => c.time),
-            bars: candles.map(c => ({ open: c.open, high: c.high, low: c.low, close: c.close })),
-            volumes: new Map(((volumeRef.current?.data?.() ?? []) as readonly { time: number; value: number }[])
-                .map(p => [p.time, p.value] as const)),
-            series: legendSeries,
+        // REFRESH: recompute every registered study from the current candles
+        // and push into the SAME series — no teardown, no flicker. `full`
+        // rewrites whole series (a bar closed, so past points moved too);
+        // otherwise only each series' last point moves.
+        refreshIndicatorsRef.current = (full: boolean): void => {
+            const cs = (candlesRef.current?.data?.() ?? []) as readonly { time: number; open: number; high: number; low: number; close: number }[];
+            if (cs.length === 0) return;
+            const times = cs.map(c => c.time as UTCTimestamp);
+            const legendSeries: Record<string, Series> = {};
+            for (const def of indicatorDefsRef.current) {
+                const values = def.calc(cs);
+                if (def.name) legendSeries[def.name] = values;
+                const points = times
+                    .map((t, i) => {
+                        const v = values[i];
+                        if (v === null) return null;
+                        return def.kind === 'hist'
+                            ? { time: t, value: v, color: v >= 0 ? MACD_HIST_UP : MACD_HIST_DOWN }
+                            : { time: t, value: v };
+                    })
+                    .filter((p): p is { time: UTCTimestamp; value: number; color?: string } => p !== null);
+                try {
+                    if (full || points.length === 0) def.series.setData(points);
+                    else def.series.update(points[points.length - 1]);
+                } catch { /* a probe mock without the real series API */ }
+            }
+            const bandCalc = bandCalcRef.current;
+            if (bandCalc) {
+                const band = bandCalc(cs);
+                bandRef.current = { times: cs.map(c => c.time), upper: band.upper, lower: band.lower };
+                legendSeries.bollMid = band.mid;
+                legendSeries.bollUpper = band.upper;
+                legendSeries.bollLower = band.lower;
+            }
+            legendRef.current = {
+                times: cs.map(c => c.time),
+                bars: cs.map(c => ({ open: c.open, high: c.high, low: c.low, close: c.close })),
+                volumes: new Map(((volumeRef.current?.data?.() ?? []) as readonly { time: number; value: number }[])
+                    .map(p => [p.time, p.value] as const)),
+                series: legendSeries,
+            };
+            repaintRef.current();
         };
-        repaintRef.current();
+        refreshIndicatorsRef.current(true);
     }, [symbol, interval, indicatorSettings, status]);
+
+    // The live tape drives REFRESH: every tick re-places the studies' last
+    // point, and a closed bar rewrites them whole (the Bollinger window
+    // slides, so past points legitimately move on a close).
+    useEffect(() => {
+        if (!liveKline) return;
+        refreshIndicatorsRef.current(liveKline.closed === true);
+    }, [liveKline]);
 
     /** At rest the legend describes the LAST bar, as OKX's does. While the
      *  pointer is over the plot the crosshair handler owns it. */
@@ -1159,8 +1253,9 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
         if (!ctx) return;
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         ctx.clearRect(0, 0, w, h);
-        // Never paint over the price-axis gutter (right ~58px) or time axis.
-        const plotW = Math.max(0, w - 58);
+        // Never paint over the price-axis gutter (MEASURED — it is
+        // content-sized and moves when a label widens) or the time axis.
+        const plotW = Math.max(0, w - axisWRef.current);
         const plotH = Math.max(0, h - 28);
         ctx.save();
         ctx.beginPath();
@@ -1223,7 +1318,9 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                     const top = kind === 'high' ? Number(y) - 16 : Number(y) + 4;
                     ctx.fillStyle = 'rgba(0,0,0,0.6)';
                     ctx.fillRect(Number(x) - w - 6, top, w, 12);
-                    ctx.fillStyle = kind === 'high' ? '#f472b6' : '#34d399';
+                    ctx.fillStyle = kind === 'high'
+                        ? chartColor('--color-pink-400', '#f472b6')
+                        : chartColor('--color-emerald-400', '#34d399');
                     ctx.fillText(label, Number(x) - w + 2, top + 9);
                     // A drawn triangle, not a glyph: a monospace canvas font has
                     // no guarantee of an arrow, and a missing glyph prints as a
@@ -1709,7 +1806,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                     <div
                         data-testid="last-price-tag"
                         className="pointer-events-none absolute z-10 flex flex-col items-end"
-                        style={{ top: lastTag.y - 16, right: 58 }}
+                        style={{ top: lastTag.y - 16, right: axisW }}
                     >
                         <span className={`rounded-sm px-1 font-mono text-ui-dense ${lastTag.up ? 'bg-emerald-500/20 text-emerald-300' : 'bg-rose-500/20 text-rose-300'}`}>
                             {fmtPriceForChart(lastTag.price)}
@@ -1723,7 +1820,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                     <div
                         data-testid="crosshair-price-tag"
                         className="pointer-events-none absolute z-10 flex flex-col items-end"
-                        style={{ top: crossPrice.y - 16, right: 58 }}
+                        style={{ top: crossPrice.y - 16, right: axisW }}
                     >
                         <span className="rounded-sm bg-zinc-700/80 px-1 font-mono text-ui-dense text-zinc-100">
                             {fmtPriceForChart(crossPrice.price)}
