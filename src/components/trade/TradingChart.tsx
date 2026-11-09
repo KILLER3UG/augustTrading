@@ -63,6 +63,9 @@ import { shapeGeometry } from './drawingGeometry';
 import {
     bollingerSeries,
     emaSeries,
+    macdSeries,
+    rsiSeries,
+    tsiSeries,
     type Series,
 } from '../../services/trade/chartIndicators';
 import {
@@ -235,6 +238,16 @@ interface TradingChartProps {
     } | null;
 }
 
+/** One bar as the legend describes it: OHLC plus the study values at that bar. */
+interface LegendBar {
+    time: number;
+    open: number;
+    high: number;
+    low: number;
+    close: number;
+    values: Record<string, number | null>;
+}
+
 /** Distance from a point to a segment — the eraser's hit test (screen px). */
 const distToSegment = (px: number, py: number, ax: number, ay: number, bx: number, by: number): number => {
     const dx = bx - ax;
@@ -252,10 +265,29 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
     // pointer is over the plot and leave with it, so the resting chart is the
     // tape and nothing else.
     const [overPlot, setOverPlot] = useState(false);
+    /** The bar the legend describes: the crosshair's bar while the pointer is
+     *  over the plot, otherwise the last bar. The values come from the same
+     *  computed series the lines are drawn from. */
+    const [legendBar, setLegendBar] = useState<LegendBar | null>(null);
+    const legendTimeRef = useRef<number | null>(null);
     const candlesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
     const volumeRef = useRef<ISeriesApi<'Histogram'> | null>(null);
     /** The main-pane indicator overlays, so the mount cleanup can drop them. */
     const indicatorSeriesRef = useRef<ISeriesApi<'Line'>[]>([]);
+    /** The Bollinger band, for the shaded fill the overlay canvas paints.
+     *  `lightweight-charts` has no band series, so the fill is a polygon
+     *  between the upper and lower lines drawn on the same canvas as the
+     *  trader's own shapes — which keeps it clipped to the plot and makes it
+     *  survive zoom and pan for free. */
+    const bandRef = useRef<{ times: number[]; upper: Series; lower: Series } | null>(null);
+    /** The bars and the computed studies, so the legend under the crosshair
+     *  reads the SAME series the lines are drawn from. */
+    const legendRef = useRef<{
+        times: number[];
+        bars: { open: number; high: number; low: number; close: number }[];
+        volumes: Map<number, number>;
+        series: Record<string, Series>;
+    } | null>(null);
     const levelLinesRef = useRef<ISeriesApi<'Line'>[]>([]);
     const markLineRef = useRef<IPriceLine | null>(null);
     /** Key-level lines the DOCK pushed (message card + chart toggle) — id →
@@ -280,6 +312,57 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
             writeChartIndicatorSettings(getActiveUsername() || 'default', next);
             return next;
         });
+    };
+
+    /** One legend row per visible study, OKX's order and names. Reads the same
+     *  computed series the lines are drawn from, so a legend value can never
+     *  disagree with the line it describes. */
+    const legendSettingsRows = (bar: LegendBar): React.ReactNode => {
+        const v = indicatorSettings.visible;
+        const fmt = (x: number | null): string => (x === null ? '—' : fmtPriceForChart(x));
+        const num = (x: number | null, dp = 2): string => (x === null ? '—' : x.toFixed(dp));
+        const rows: React.ReactNode[] = [];
+        if (v.ema20 || v.ema200) {
+            rows.push((
+                <div key="ema" className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                    {v.ema20 && <span>EMA(20) <span className="text-amber-300">{fmt(bar.values.ema20 ?? null)}</span></span>}
+                    {v.ema200 && <span>EMA(200) <span className="text-purple-300">{fmt(bar.values.ema200 ?? null)}</span></span>}
+                </div>
+            ));
+        }
+        if (v.boll) {
+            rows.push((
+                <div key="boll" className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                    <span>BOLL <span className="text-cyan-300">{fmt(bar.values.bollMid ?? null)}</span></span>
+                    <span>UB <span className="text-cyan-300">{fmt(bar.values.bollUpper ?? null)}</span></span>
+                    <span>LB <span className="text-cyan-300">{fmt(bar.values.bollLower ?? null)}</span></span>
+                </div>
+            ));
+        }
+        if (v.rsi) {
+            rows.push((
+                <div key="rsi" className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                    <span>RSI(14) <span className="text-yellow-200">{num(bar.values.rsi ?? null)}</span></span>
+                </div>
+            ));
+        }
+        if (v.macd) {
+            // OKX's row is DIF / DEA / MACD where DIF is the MACD line, DEA its
+            // signal and MACD the histogram DOUBLED (the Chinese convention:
+            // MACD = 2·(DIF−DEA)). `chartIndicators` keeps the histogram at 1×
+            // for library parity, so the doubling happens here, in the display.
+            const dif = bar.values.macd ?? null;
+            const dea = bar.values.macdSignal ?? null;
+            const hist = dif !== null && dea !== null ? dif - dea : null;
+            rows.push((
+                <div key="macd" className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                    <span>MACD <span className="text-cyan-300">{num(hist === null ? null : 2 * hist, 1)}</span></span>
+                    <span>DIF <span className="text-amber-300">{num(dif, 1)}</span></span>
+                    <span>DEA <span className="text-rose-300">{num(dea, 1)}</span></span>
+                </div>
+            ));
+        }
+        return rows;
     };
 
     // ─── Drawings state ─────────────────────────────────────────────────────
@@ -407,6 +490,22 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
         volumeRef.current = volume;
         const onCrosshair = (param: Parameters<Parameters<IChartApi['subscribeCrosshairMove']>[0]>[0]) => {
             setOverPlot(!!param?.time);
+            const t = param?.time;
+            const data = legendRef.current;
+            // The legend follows the crosshair's BAR, so it only re-renders when
+            // the bar changes — not on every pixel of pointer movement.
+            if (typeof t !== 'number' || !data) {
+                if (legendTimeRef.current !== null) { legendTimeRef.current = null; setLegendBar(null); }
+                return;
+            }
+            if (t === legendTimeRef.current) return;
+            legendTimeRef.current = t;
+            const idx = data.times.indexOf(t);
+            const bar = idx >= 0 ? data.bars[idx] : undefined;
+            if (!bar) { setLegendBar(null); return; }
+            const values: Record<string, number | null> = {};
+            for (const [k, s] of Object.entries(data.series)) values[k] = s[idx] ?? null;
+            setLegendBar({ time: t, ...bar, values });
         };
         chart.subscribeCrosshairMove(onCrosshair);
         return () => {
@@ -620,7 +719,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
         if (!chart) return;
         for (const s of indicatorSeriesRef.current) { try { chart.removeSeries(s); } catch { /* already gone */ } }
         indicatorSeriesRef.current = [];
-        const candles = (candlesRef.current?.data?.() ?? []) as readonly { time: number; close: number }[];
+        const candles = (candlesRef.current?.data?.() ?? []) as readonly { time: number; open: number; high: number; low: number; close: number }[];
         if (candles.length === 0) return;
         const times = candles.map(c => c.time as UTCTimestamp);
         const closes = candles.map(c => c.close);
@@ -634,15 +733,48 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
             indicatorSeriesRef.current.push(series);
         };
         const visible = indicatorSettings.visible;
-        if (visible.ema20) addLine(emaSeries(closes, 20), chartColor('--color-amber-500', '#f59e0b'));
-        if (visible.ema200) addLine(emaSeries(closes, 200), chartColor('--color-purple-400', '#a78bfa'));
+        bandRef.current = null;
+        // Each study is computed ONCE and shared by the series and the legend,
+        // so the number under the crosshair is the number on the line.
+        const legendSeries: Record<string, Series> = {};
+        if (visible.ema20) { legendSeries.ema20 = emaSeries(closes, 20); addLine(legendSeries.ema20, chartColor('--color-amber-500', '#f59e0b')); }
+        if (visible.ema200) { legendSeries.ema200 = emaSeries(closes, 200); addLine(legendSeries.ema200, chartColor('--color-purple-400', '#a78bfa')); }
         if (visible.boll) {
             const band = bollingerSeries(closes, 20, 2);
+            legendSeries.bollMid = band.mid;
+            legendSeries.bollUpper = band.upper;
+            legendSeries.bollLower = band.lower;
             addLine(band.mid, chartColor('--color-cyan-500', '#06b6d4'));
             addLine(band.upper, chartColor('--color-cyan-500', '#06b6d4'));
             addLine(band.lower, chartColor('--color-cyan-500', '#06b6d4'));
+            bandRef.current = { times: candles.map(c => c.time), upper: band.upper, lower: band.lower };
         }
+        if (visible.rsi) legendSeries.rsi = rsiSeries(closes, 14);
+        if (visible.macd) { const m = macdSeries(closes); legendSeries.macd = m.macd; legendSeries.macdSignal = m.signal; }
+        if (visible.tsi) { const t = tsiSeries(closes); legendSeries.tsi = t.tsi; legendSeries.tsiSignal = t.signal; }
+        legendRef.current = {
+            times: candles.map(c => c.time),
+            bars: candles.map(c => ({ open: c.open, high: c.high, low: c.low, close: c.close })),
+            volumes: new Map(((volumeRef.current?.data?.() ?? []) as readonly { time: number; value: number }[])
+                .map(p => [p.time, p.value] as const)),
+            series: legendSeries,
+        };
+        repaintRef.current();
     }, [symbol, interval, indicatorSettings, status]);
+
+    /** At rest the legend describes the LAST bar, as OKX's does. While the
+     *  pointer is over the plot the crosshair handler owns it. */
+    useEffect(() => {
+        if (overPlot) return;
+        const data = legendRef.current;
+        if (!data || data.times.length === 0) return;
+        const idx = data.times.length - 1;
+        const bar = data.bars[idx];
+        if (!bar) return;
+        const values: Record<string, number | null> = {};
+        for (const [k, s] of Object.entries(data.series)) values[k] = s[idx] ?? null;
+        setLegendBar({ time: data.times[idx], ...bar, values });
+    }, [overPlot, indicatorSettings, symbol, interval, status]);
 
     // ─── Chat key-level lines (the message card's chart toggle) ────────────
     // The dock owns the whole interaction model (master show-all switch,
@@ -860,6 +992,31 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
         ctx.beginPath();
         ctx.rect(0, 0, plotW, plotH);
         ctx.clip();
+
+        // Bollinger band fill: upper forward, lower backward, closed. Painted
+        // BEFORE the drawings so a shape the trader drew on the band still
+        // reads on top of the shade.
+        const band = bandRef.current;
+        if (band) {
+            const top: { x: number; y: number }[] = [];
+            const bottom: { x: number; y: number }[] = [];
+            for (let i = 0; i < band.upper.length; i += 1) {
+                if (band.upper[i] === null || band.lower[i] === null) continue;
+                const hi = toScreen({ t: band.times[i], p: band.upper[i] as number });
+                const lo = toScreen({ t: band.times[i], p: band.lower[i] as number });
+                if (hi) top.push(hi);
+                if (lo) bottom.push(lo);
+            }
+            if (top.length > 1 && bottom.length > 1) {
+                ctx.beginPath();
+                ctx.moveTo(top[0].x, top[0].y);
+                for (let i = 1; i < top.length; i += 1) ctx.lineTo(top[i].x, top[i].y);
+                for (let i = bottom.length - 1; i >= 0; i -= 1) ctx.lineTo(bottom[i].x, bottom[i].y);
+                ctx.closePath();
+                ctx.fillStyle = 'rgba(6, 182, 212, 0.09)';
+                ctx.fill();
+            }
+        }
 
         const project = (list: ChartDrawing['points']): { x: number; y: number }[] =>
             list.map(pt => toScreen(pt)).filter((s): s is { x: number; y: number } => s !== null);
@@ -1290,10 +1447,44 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                 bodyClassName="min-h-0 flex-1 bg-zinc-950"
                 testId="trading-chart-plot"
             >
+                {/* The legend: timestamp, O/H/L/C, Change (value + %) and Range,
+                    then VOL as contracts and USDT, then one row per visible
+                    study. It follows the crosshair's bar and rests on the last
+                    bar, so the numbers under the pointer ARE the numbers on the
+                    lines — both come from `chartIndicators`. */}
+                {legendBar && (
+                    <div
+                        data-testid="chart-legend"
+                        className="pointer-events-none absolute left-2 top-1.5 z-10 max-w-[calc(100%-16px)] rounded-control bg-zinc-950/80 px-2 py-1 font-mono text-ui-dense text-zinc-500"
+                    >
+                        <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                            <span>{phtAxisTick(legendBar.time, 'full')}</span>
+                            {(['open', 'high', 'low', 'close'] as const).map(k => (
+                                <span key={k}>{k[0].toUpperCase()} <span className="text-zinc-300">{fmtPriceForChart(legendBar[k])}</span></span>
+                            ))}
+                            <span>Change <span className={legendBar.close >= legendBar.open ? 'text-emerald-400' : 'text-rose-400'}>
+                                {fmtPriceForChart(legendBar.close - legendBar.open)} ({(((legendBar.close - legendBar.open) / legendBar.open) * 100).toFixed(2)}%)
+                            </span></span>
+                            <span>Range <span className="text-zinc-300">{(((legendBar.high - legendBar.low) / legendBar.open) * 100).toFixed(2)}%</span></span>
+                        </div>
+                        {(() => {
+                            const vol = legendRef.current?.volumes.get(legendBar.time);
+                            if (vol === undefined) return null;
+                            return (
+                                <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                                    <span>VOL(Contracts) <span className="text-amber-300">{vol >= 1000 ? `${(vol / 1000).toFixed(3)}K` : vol.toFixed(3)}</span></span>
+                                    <span>VOL(USDT) <span className="text-amber-300">{fmtUsdForChart(vol * legendBar.close)}</span></span>
+                                </div>
+                            );
+                        })()}
+                        {legendSettingsRows(legendBar)}
+                    </div>
+                )}
                 {ohlcvRow && overPlot && (
                     <div
                         data-testid="ohlcv-row"
-                        className="pointer-events-none absolute left-2 top-1.5 z-10 flex max-w-[calc(100%-16px)] items-center gap-3 overflow-hidden rounded-control bg-zinc-950/80 px-2 py-0.5 text-ui-dense text-zinc-500"
+                        className="pointer-events-none absolute left-2 z-10 flex max-w-[calc(100%-16px)] items-center gap-3 overflow-hidden rounded-control bg-zinc-950/80 px-2 py-0.5 text-ui-dense text-zinc-500"
+                        style={{ top: legendBar ? '5.5rem' : '0.375rem' }}
                     >
                         <span className="font-mono tabular-nums">H <span className="text-zinc-300">{ohlcvRow.high24h ? fmtPriceForChart(ohlcvRow.high24h) : '—'}</span></span>
                         <span className="font-mono tabular-nums">L <span className="text-zinc-300">{ohlcvRow.low24h ? fmtPriceForChart(ohlcvRow.low24h) : '—'}</span></span>
