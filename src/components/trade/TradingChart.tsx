@@ -33,6 +33,7 @@ import {
     type IChartApi,
     type IPriceLine,
     type ISeriesApi,
+    type SeriesType,
     type UTCTimestamp,
 } from 'lightweight-charts';
 import { fetchKlines } from '../../services/analysis/KlineService';
@@ -238,6 +239,10 @@ interface TradingChartProps {
     } | null;
 }
 
+/** The sub-pane studies, in the order OKX stacks them. Fixed, so pane indices
+ *  are deterministic and the legend rows can be laid out in the same order. */
+const SUB_PANE_ORDER = ['rsi', 'macd', 'tsi'] as const satisfies readonly ChartIndicatorId[];
+
 /** One bar as the legend describes it: OHLC plus the study values at that bar. */
 interface LegendBar {
     time: number;
@@ -280,6 +285,9 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
      *  trader's own shapes — which keeps it clipped to the plot and makes it
      *  survive zoom and pan for free. */
     const bandRef = useRef<{ times: number[]; upper: Series; lower: Series } | null>(null);
+    /** Every series living on a SUB-pane (RSI / MACD / TSI), so the mount
+     *  cleanup can drop them and the rebuild can start from pane 1. */
+    const subPaneSeriesRef = useRef<ISeriesApi<SeriesType>[]>([]);
     /** The bars and the computed studies, so the legend under the crosshair
      *  reads the SAME series the lines are drawn from. */
     const legendRef = useRef<{
@@ -342,7 +350,9 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
         if (v.rsi) {
             rows.push((
                 <div key="rsi" className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                    <span>RSI(14) <span className="text-yellow-200">{num(bar.values.rsi ?? null)}</span></span>
+                    <span>RSI(6) <span className="text-amber-300">{num(bar.values.rsi6 ?? null)}</span></span>
+                    <span>RSI(14) <span className="text-yellow-200">{num(bar.values.rsi14 ?? null)}</span></span>
+                    <span>RSI(24) <span className="text-lime-300">{num(bar.values.rsi24 ?? null)}</span></span>
                 </div>
             ));
         }
@@ -359,6 +369,14 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                     <span>MACD <span className="text-cyan-300">{num(hist === null ? null : 2 * hist, 1)}</span></span>
                     <span>DIF <span className="text-amber-300">{num(dif, 1)}</span></span>
                     <span>DEA <span className="text-rose-300">{num(dea, 1)}</span></span>
+                </div>
+            ));
+        }
+        if (v.tsi) {
+            rows.push((
+                <div key="tsi" className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                    <span>TSI(25, 13, 13) <span className="text-amber-300">{num(bar.values.tsi ?? null)}</span></span>
+                    <span>Signal <span className="text-rose-300">{num(bar.values.tsiSignal ?? null)}</span></span>
                 </div>
             ));
         }
@@ -483,6 +501,9 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
         const volume = chart.addSeries(HistogramSeries, {
             priceFormat: { type: 'volume' },
             priceScaleId: 'volume',
+            // The tag would otherwise print on the divider between the main
+            // pane and the first sub-pane once a study is open.
+            lastValueVisible: false,
         });
         chart.priceScale('volume').applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
         chartRef.current = chart;
@@ -515,6 +536,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
             candlesRef.current = null;
             volumeRef.current = null;
             indicatorSeriesRef.current = [];
+            subPaneSeriesRef.current = [];
             levelLinesRef.current = [];
             markLineRef.current = null;
             // The chat-level lines died with the chart — forget them so the
@@ -752,6 +774,69 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
         if (visible.rsi) legendSeries.rsi = rsiSeries(closes, 14);
         if (visible.macd) { const m = macdSeries(closes); legendSeries.macd = m.macd; legendSeries.macdSignal = m.signal; }
         if (visible.tsi) { const t = tsiSeries(closes); legendSeries.tsi = t.tsi; legendSeries.tsiSignal = t.signal; }
+        // Sub-panes, in a FIXED order so the indices are deterministic. The
+        // whole set is torn down and rebuilt on every change: `removePane`
+        // shifts every pane above it, so a stale index would put the wrong
+        // study in the wrong pane.
+        for (const s of subPaneSeriesRef.current) { try { chart.removeSeries(s); } catch { /* already gone */ } }
+        subPaneSeriesRef.current = [];
+        while (chart.panes().length > 1) {
+            try { chart.removePane(chart.panes().length - 1); } catch { break; }
+        }
+        const addSub = (series: ISeriesApi<SeriesType>): void => { subPaneSeriesRef.current.push(series); };
+        const putLine = (pane: number, values: Series, color: string, scaleId?: string): void => {
+            const s = chart.addSeries(LineSeries, {
+                color, lineWidth: 1, priceLineVisible: false, lastValueVisible: false,
+                crosshairMarkerVisible: false, ...(scaleId ? { priceScaleId: scaleId } : {}),
+            }, pane);
+            s.setData(times.map((t, i) => (values[i] === null ? null : { time: t, value: values[i] as number }))
+                .filter((p): p is { time: UTCTimestamp; value: number } => p !== null));
+            addSub(s);
+        };
+        const putHist = (pane: number, values: Series): void => {
+            const s = chart.addSeries(HistogramSeries, {
+                priceLineVisible: false, lastValueVisible: false,
+            }, pane);
+            s.setData(times.map((t, i) => {
+                const v = values[i];
+                return v === null ? null : {
+                    time: t, value: v,
+                    color: v >= 0 ? 'rgba(7,181,106,0.55)' : 'rgba(247,93,95,0.55)',
+                };
+            }).filter((p): p is { time: UTCTimestamp; value: number; color: string } => p !== null));
+            addSub(s);
+        };
+        let paneIndex = 1;
+        for (const id of SUB_PANE_ORDER) {
+            if (!visible[id]) continue;
+            const pane = paneIndex;
+            if (id === 'rsi') {
+                legendSeries.rsi6 = rsiSeries(closes, 6);
+                legendSeries.rsi14 = rsiSeries(closes, 14);
+                legendSeries.rsi24 = rsiSeries(closes, 24);
+                putLine(pane, legendSeries.rsi6, '#f08800', 'rsi');
+                putLine(pane, legendSeries.rsi14, '#facc15', 'rsi');
+                putLine(pane, legendSeries.rsi24, '#a3e635', 'rsi');
+                chart.priceScale('rsi', pane).applyOptions({ visible: false });
+            } else if (id === 'macd') {
+                const m = macdSeries(closes);
+                legendSeries.macd = m.macd;
+                legendSeries.macdSignal = m.signal;
+                putHist(pane, m.histogram);
+                putLine(pane, m.macd, '#06b6d4');
+                putLine(pane, m.signal, '#f472b6');
+            } else if (id === 'tsi') {
+                const t = tsiSeries(closes);
+                legendSeries.tsi = t.tsi;
+                legendSeries.tsiSignal = t.signal;
+                putLine(pane, t.tsi, '#f59e0b', 'tsi');
+                putLine(pane, t.signal, '#f472b6', 'tsi');
+                chart.priceScale('tsi', pane).applyOptions({ visible: false });
+            }
+            const paneApi = chart.panes()[pane];
+            if (paneApi) paneApi.setHeight(110);
+            paneIndex += 1;
+        }
         legendRef.current = {
             times: candles.map(c => c.time),
             bars: candles.map(c => ({ open: c.open, high: c.high, low: c.low, close: c.close })),
