@@ -36,7 +36,7 @@ export interface AgentsDockProps extends DockChartProps {
     onClose: () => void;
 }
 
-const AgentsDock: React.FC<AgentsDockProps> = ({ isOpen, onClose, symbol, interval, onIntervalChange }) => {
+const AgentsDock: React.FC<AgentsDockProps> = ({ isOpen, onClose, symbol, interval, onIntervalChange, sessionId }) => {
     const panel = useRightPanel({
         surface: 'agents',
         defaultWidth: 460,
@@ -91,8 +91,8 @@ const AgentsDock: React.FC<AgentsDockProps> = ({ isOpen, onClose, symbol, interv
     const renderView = (id: DockTabId): React.ReactNode => {
         switch (id) {
             case 'files': return <FilesView />;
-            case 'chart': return <ChartView symbol={symbol} interval={interval} onIntervalChange={onIntervalChange} />;
-            case 'live': return <LiveView symbol={symbol} interval={interval} onIntervalChange={onIntervalChange} />;
+            case 'chart': return <ChartView symbol={symbol} interval={interval} onIntervalChange={onIntervalChange} sessionId={sessionId} />;
+            case 'live': return <LiveView symbol={symbol} interval={interval} onIntervalChange={onIntervalChange} sessionId={sessionId} />;
             case 'evidence': return <EvidenceView symbol={symbol} />;
             default: return null;
         }

@@ -22,6 +22,11 @@ import type { ChartInterval } from '../../../utils/chartIntervals';
 const TradingChart = React.lazy(() => import('../../trade/TradingChart'));
 
 export interface DockChartProps {
+    /** The active chat session. The dock's chart draws into the SAME session
+     *  bucket as the Analyze chart — two charts of one instrument keeping two
+     *  drawing stores meant a shape drawn in the dock never appeared on the
+     *  main chart, and vice versa. */
+    sessionId?: string;
     symbol: string;
     interval: ChartInterval;
     onIntervalChange: (interval: ChartInterval) => void;
@@ -130,7 +135,7 @@ const ChartFallback: React.FC = () => (
     </ChartFrame>
 );
 
-export const ChartView: React.FC<DockChartProps> = ({ symbol, interval, onIntervalChange }) => (
+export const ChartView: React.FC<DockChartProps> = ({ symbol, interval, onIntervalChange, sessionId }) => (
     <div className="flex h-full min-h-0 flex-col">
         <div className="flex shrink-0 items-center gap-2 border-b border-hairline px-3 py-1.5">
             <span className="font-mono text-ui-2xs text-zinc-400">{symbol}</span>
@@ -138,13 +143,13 @@ export const ChartView: React.FC<DockChartProps> = ({ symbol, interval, onInterv
         </div>
         <div className="min-h-0 flex-1">
             <Suspense fallback={<ChartFallback />}>
-                <TradingChart symbol={symbol} interval={interval} onIntervalChange={onIntervalChange} />
+                <TradingChart symbol={symbol} interval={interval} onIntervalChange={onIntervalChange} sessionId={sessionId} />
             </Suspense>
         </div>
     </div>
 );
 
-export const LiveView: React.FC<DockChartProps> = ({ symbol, interval, onIntervalChange }) => {
+export const LiveView: React.FC<DockChartProps> = ({ symbol, interval, onIntervalChange, sessionId }) => {
     const feed = useFuturesLiveFeed(symbol, interval);
     const isLive = feed.status === 'live';
     return (
@@ -170,6 +175,7 @@ export const LiveView: React.FC<DockChartProps> = ({ symbol, interval, onInterva
                             symbol={symbol}
                             interval={interval}
                             onIntervalChange={onIntervalChange}
+                            sessionId={sessionId}
                             live={isLive}
                             liveKline={feed.kline}
                             lastPrice={feed.ticker?.lastPrice ?? null}
