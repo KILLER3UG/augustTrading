@@ -397,6 +397,11 @@ const [trendlineDrawings, setTrendlineDrawings] = useState<ChartDrawing[]>([]);
                         symbol={symbol}
                         interval={chartInterval}
                         onIntervalChange={setChartInterval}
+                        // No conversation exists on the Market surface: a STABLE
+                        // scope id, so its drawings persist per coin in the one
+                        // session-shaped store instead of falling back to the
+                        // legacy per-symbol bucket (which no chart reads).
+                        sessionId="market"
                         live={live}
                         liveKline={feed.kline}
                         lastPrice={Number.isFinite(lastPrice) ? lastPrice : null}

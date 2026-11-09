@@ -22,11 +22,12 @@ import type { ChartInterval } from '../../../utils/chartIntervals';
 const TradingChart = React.lazy(() => import('../../trade/TradingChart'));
 
 export interface DockChartProps {
-    /** The active chat session. The dock's chart draws into the SAME session
-     *  bucket as the Analyze chart — two charts of one instrument keeping two
-     *  drawing stores meant a shape drawn in the dock never appeared on the
-     *  main chart, and vice versa. */
-    sessionId?: string;
+    /** The drawing scope — REQUIRED. The dock's chart draws into the SAME
+     *  session bucket as the Analyze chart (the active conversation id), or
+     *  the stable 'dock' scope when no conversation is running; two charts of
+     *  one instrument keeping two drawing stores meant a shape drawn in the
+     *  dock never appeared on the main chart, and vice versa. */
+    sessionId: string;
     symbol: string;
     interval: ChartInterval;
     onIntervalChange: (interval: ChartInterval) => void;

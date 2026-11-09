@@ -1035,7 +1035,7 @@ const TradeView: React.FC<TradeViewProps> = ({
                          * viewport and clip the dock's right edge. */
                         : 'min-h-[420px] flex-1 lg:min-h-0 lg:min-w-0'}
                 >
-                    <TradingChart symbol={symbol} interval={interval} onIntervalChange={changeInterval} sessionId={chatSnap.activeId} verdict={chartVerdict} live={live} liveKline={feed.kline}
+                    <TradingChart symbol={symbol} interval={interval} onIntervalChange={changeInterval} sessionId={chatSnap.activeId ?? 'analyze'} verdict={chartVerdict} live={live} liveKline={feed.kline}
                         lastPrice={Number.isFinite(lastPrice) ? lastPrice : null}
                         markPrice={Number.isFinite(markPrice) ? markPrice : null}
                         chatLevels={chatLevels}

@@ -145,16 +145,6 @@ export const loadDrawings = (symbol: string, username = getActiveUsername()): Ch
     }
 };
 
-export const saveDrawings = (symbol: string, drawings: ChartDrawing[], username = getActiveUsername()): void => {
-    try {
-        const trimmed = drawings.slice(-MAX_DRAWINGS_PER_SYMBOL)
-            .map(d => ({ ...d, points: d.points.slice(0, MAX_POINTS_PER_DRAWING) }));
-        localStorage.setItem(storageKey(username, symbol), JSON.stringify(trimmed));
-    } catch {
-        /* quota / private mode — drawings stay in memory this session */
-    }
-};
-
 /** Shared validation/bounding for a parsed drawing array (garbage → []). */
 const sanitizeDrawings = (parsed: unknown): ChartDrawing[] => {
     if (!Array.isArray(parsed)) return [];
@@ -293,6 +283,33 @@ export const readSessionDrawingsSync = (bucket: 'user' | 'model', sessionId: str
  */
 export const loadSessionDrawings = async (sessionId: string, symbol: string, username = getActiveUsername()): Promise<ChartDrawing[]> =>
     (await loadCoinMap(sessionStorageKey(username, sessionId)))[symbol.toUpperCase()] ?? [];
+
+/**
+ * The ONE load a chart uses: the scope's session bucket, plus a ONE-TIME
+ * import of the legacy per-symbol bucket (`trade_drawings_v1_<user>_<sym>`)
+ * for a coin the session bucket has never seen. Before sessions existed the
+ * charts saved there, and no session chart ever read those keys again —
+ * orphaned bytes (779cb746's bug was two live buckets; those were a third,
+ * unread one). Rules:
+ *  · a session bucket that already has shapes for the coin is left alone —
+ *    the trader drew there after the legacy window, and overwriting would be
+ *    data loss;
+ *  · the legacy key is deleted only AFTER the session write flushes, so the
+ *    bytes are verified in the new home before the old one is cleared.
+ */
+export const loadSessionDrawingsWithLegacy = async (sessionId: string, symbol: string, username = getActiveUsername()): Promise<ChartDrawing[]> => {
+    const wanted = symbol.toUpperCase();
+    const sessionKey = sessionStorageKey(username, sessionId);
+    const existing = (await loadCoinMap(sessionKey))[wanted];
+    if (existing && existing.length > 0) return existing;
+    const legacy = loadDrawings(symbol, username);
+    if (legacy.length === 0) return existing ?? [];
+    saveCoinMap(sessionKey, wanted, legacy);
+    void flushCoinMap(sessionKey).then(() => {
+        try { localStorage.removeItem(storageKey(username, wanted)); } catch { /* nothing left to clean */ }
+    });
+    return legacy;
+};
 
 export const saveSessionDrawings = (sessionId: string, symbol: string, drawings: ChartDrawing[], username = getActiveUsername()): void =>
     saveCoinMap(sessionStorageKey(username, sessionId), symbol, drawings);

@@ -4277,6 +4277,27 @@ const runCaptureChecks = async () => {
          && cs.readChartIndicatorSettings('bad').visible.ema20 === true));
 })();
 
+// ─── 47. one drawing store: the chart cannot fall back to the legacy bucket ─
+(() => {
+    const chartSrc = fs.readFileSync(path.join(ROOT, 'src/components/trade/TradingChart.tsx'), 'utf8');
+    const liveSrc = fs.readFileSync(path.join(ROOT, 'src/components/market/LiveMarket.tsx'), 'utf8');
+    const dockSrc = fs.readFileSync(path.join(ROOT, 'src/components/agents/dock/AgentDockViews.tsx'), 'utf8');
+    const tradeSrc = fs.readFileSync(path.join(ROOT, 'src/components/trade/TradeView.tsx'), 'utf8');
+    ok('drawings: the chart never reads or writes the legacy per-symbol bucket (779cb746 was two live buckets)',
+        !chartSrc.includes('loadDrawings(') && !chartSrc.includes('saveDrawings('));
+    ok('drawings: TradingChartProps.sessionId is REQUIRED, not optional',
+        /sessionId: string;/.test(chartSrc) && !/sessionId\?: string;/.test(chartSrc));
+    ok('drawings: the Market surface pins a STABLE scope, so it cannot fall through to legacy',
+        /sessionId="market"/.test(liveSrc));
+    ok('drawings: the dock chart has a required scope and no `?? undefined` escape at the call site',
+        /sessionId: string;/.test(dockSrc)
+        && !/sessionId=\{activeConversationId \?\? undefined\}/.test(fs.readFileSync(path.join(ROOT, 'src/components/agents/AgentsView.tsx'), 'utf8')));
+    ok('drawings: the Analyze chart scopes to the active conversation with a stable fallback',
+        /sessionId=\{chatSnap\.activeId \?\? 'analyze'\}/.test(tradeSrc));
+})();
+
+// ─── report ────────────────────────────────────────────────────────────────
+
 // ─── report ────────────────────────────────────────────────────────────────
 const finishReport = () => {
     console.log(`contracts: ${passed} passed, ${failures.length} failed`);

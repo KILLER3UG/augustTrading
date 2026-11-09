@@ -1625,7 +1625,10 @@ const AgentsView: React.FC<AgentsViewProps> = ({
                 symbol={sessionSymbol}
                 interval={sessionInterval}
                 onIntervalChange={setSessionInterval}
-                sessionId={activeConversationId ?? undefined}
+                // 'dock' when no conversation is active: a STABLE scope, so the
+                // dock's drawings persist — the old `?? undefined` is what let
+                // the chart fall through to the legacy bucket silently.
+                sessionId={activeConversationId ?? 'dock'}
             />
             </div>
             {/* The agent's FULL card — the reader the launch list opens. It

@@ -40,11 +40,11 @@ import { fetchKlines } from '../../services/analysis/KlineService';
 import { phtAxisTick } from '../../utils/timezone';
 import { toCandles, toVolumes, verdictLevels, VOLUME_UP, VOLUME_DOWN, type ChartLevel } from '../../services/trade/chartData';
 import {
-    loadDrawings, saveDrawings, loadSessionDrawings, createDrawingId, pointsForKind, FIB_RATIOS,
+    loadSessionDrawingsWithLegacy, createDrawingId, pointsForKind, FIB_RATIOS,
     drawWidthOf, nextDrawWidth, DRAW_WIDTH_DEFAULT,
     type ChartDrawing, type DrawKind, type DrawPoint, type DrawTool, DRAW_COLORS,
 } from '../../services/trade/chartDrawings';
-import { drawingsControl, capDrawings } from '../../services/trade/drawingsControl';
+import { drawingsControl } from '../../services/trade/drawingsControl';
 import type { LiveKline } from '../../services/trade/futuresStreams';
 import type { MessageLevelLines } from '../../services/trade/keyLevels';
 import { getActiveUsername } from '../../utils/activeUser';
@@ -191,10 +191,13 @@ interface TradingChartProps {
     symbol: string;
     interval: ChartInterval;
     onIntervalChange: (interval: ChartInterval) => void;
-    /** The ACTIVE Chart AI session — when set, drawings are SESSION-scoped
-     *  (each session is its own chart with its own shapes) instead of
-     *  shared per symbol. */
-    sessionId?: string;
+    /** The drawing scope, REQUIRED. Every chart draws into a session-shaped
+     *  bucket (`trade_session_drawings_v1_<user>_<scope>`), so two charts of
+     *  one instrument can never silently keep two stores — the bug class
+     *  where a shape drawn in the dock went nowhere visible. A chart with no
+     *  conversation passes a STABLE scope id ('analyze', 'market', 'dock');
+     *  only a real conversation id gives that conversation its own canvas. */
+    sessionId: string;
     /** The current verdict (optional): its Entry/SL/TP lines are drawn on the
      *  candles when it belongs to this symbol. */
     verdict?: TradeAnalysis | null;
@@ -503,19 +506,20 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
     // manual pan). Synced below once repaint exists.
     const repaintRef = useRef<() => void>(() => {});
 
-    // Load the persisted shapes whenever the chart (session + symbol)
-    // changes: session-scoped when the active session is known, legacy
-    // per-symbol otherwise. The session load is async (a file read on
-    // desktop), so the cancelled guard is what makes a rapid session/coin
+    // Load the persisted shapes whenever the chart (scope + symbol) changes.
+    // ONE store: the session bucket for this scope — there is no legacy
+    // fallback chart-side any more, because a fallback IS the two-bucket bug
+    // (779cb746). The one-time legacy import lives in the store module; the
+    // async load means the cancelled guard is what makes a rapid scope/coin
     // switch settle on the LAST switch's shapes — a slower stale read must
-    // never land after a newer one and paint the wrong session's shapes.
+    // never land after a newer one and paint the wrong scope's shapes.
     useEffect(() => {
         let cancelled = false;
         setDraft(null);
         setTool('cursor');
         setTextEdit(null);
         const load = async (): Promise<void> => {
-            const list = sessionId ? await loadSessionDrawings(sessionId, symbol) : loadDrawings(symbol);
+            const list = await loadSessionDrawingsWithLegacy(sessionId, symbol);
             if (!cancelled) setDrawings(list);
         };
         void load();
@@ -537,9 +541,8 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
         setDrawings(next);
         // Through the control, so the USER's bucket gets the same cap the store
         // enforces as the model's — this path used to save directly and relied
-        // on every save remembering to trim.
-        if (sessionId) drawingsControl('user', sessionId, symbol).replace(next);
-        else saveDrawings(symbol, capDrawings(next));
+        // on every save remembering to trim. The one store, no fallback.
+        drawingsControl('user', sessionId, symbol).replace(next);
         onDrawingsChange?.(next);
     }, [symbol, sessionId, onDrawingsChange]);
 
