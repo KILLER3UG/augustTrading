@@ -824,13 +824,27 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
 (() => {
     const tc = loadModule('src/services/trade/tradeChatContext.ts');
     const text = tc.buildSkillsIndexForPrompt([
-        { slug: 'breakout-retest', name: 'Breakout retest', description: 'Use when a 1h close clears the prior high.' },
-        { slug: 'funding-fade', name: 'Funding fade', description: 'Use when funding is stretched.' },
+        { slug: 'breakout-retest', name: 'Breakout retest', description: 'Use when a 1h close clears the prior high.', formatIssues: [] },
+        { slug: 'funding-fade', name: 'Funding fade', description: 'Use when funding is stretched.', formatIssues: [] },
     ], 30, 'this chart');
     ok('index: every skill is listed by slug and description',
         text.includes('breakout-retest') && text.includes('funding-fade'), text);
     ok('index: no lifecycle words leaked into the index',
         !/confirmed|candidate|TENTATIVE|\d+W\/\d+L/.test(text), text);
+    // A skill that fails the format is a note, not procedure: the next read is
+    // not built on one, so it is dropped here rather than listed and applied.
+    const withBad = tc.buildSkillsIndexForPrompt([
+        { slug: 'breakout-retest', name: 'Breakout retest', description: 'Use when a 1h close clears the prior high.', formatIssues: [] },
+        { slug: 'stray-notes', name: 'Stray notes', description: 'A paragraph the model wrote with no headings.', formatIssues: ['no ## Steps heading', 'no ## Pitfalls heading'] },
+    ], 30, 'this chart');
+    ok('index: an out-of-format skill is NOT loaded into the prompt',
+        withBad.includes('breakout-retest') && !withBad.includes('stray-notes'), withBad);
+    ok('index: the count follows the skills that were loaded, not the library',
+        withBad.includes('1 skill') && !withBad.includes('2 skills'), withBad);
+    ok('index: an all-bad library loads nothing rather than an empty header',
+        tc.buildSkillsIndexForPrompt([
+            { slug: 'stray-notes', name: 'Stray notes', description: 'No headings.', formatIssues: ['no ## Steps heading'] },
+        ], 30, 'this chart') === '');
 })();
 
 // ─── 17. trade provenance defaults ─────────────────────────────────────────
@@ -2855,8 +2869,20 @@ const checkSkillWrites = async () => {
     ok('pen runtime: a current prior index permits a new skill', created.ok, created.content);
     const skill = sf.listSkillFiles()[0];
     if (!skill) throw new Error('skill create control failed');
+    // A browser textarea hands back \r\n for every newline, so a document typed
+    // in the library arrives with CRLF inside an otherwise LF file. The stored
+    // bytes are the app's own, so the ENDINGS are folded — the words are not.
+    const folded = await sf.writeSkillFile(
+        { ...input, slug: skill.slug, ifVersion: skill.version, body: 'Read the curve.\r\nThen check the spread.\r\n' },
+        'skill-contract');
+    const foldedSkill = sf.getSkill(skill.slug);
+    ok('pen runtime: a CRLF body is stored with LF endings and its words intact',
+        folded.ok && foldedSkill.file.content.includes('Read the curve.\nThen check the spread.')
+        && !foldedSkill.file.content.includes('\r'),
+        JSON.stringify(folded.ok ? foldedSkill.file.content.slice(0, 140) : folded));
+    skill.version = foldedSkill.version;
     const collision = await sf.writeSkillFile({ ...input, body: 'Unversioned overwrite.' }, 'skill-contract');
-    ok('pen runtime: New skill cannot overwrite a title collision', !collision.ok && sf.getSkill(skill.slug).body === input.body);
+    ok('pen runtime: New skill cannot overwrite a title collision', !collision.ok && sf.getSkill(skill.slug).body === foldedSkill.body);
     const staleIndex = await call('skill_write', { name: 'gold vault', description: 'Gold vault delivery changes.', body: 'Read delivery notices.' }, { skillReview: review });
     ok('pen runtime: a changed library requires a fresh review', !staleIndex.ok, staleIndex.content);
     review.indexVersion = (await call('skill_index', {})).skillIndexVersion;

@@ -4218,7 +4218,7 @@ ${body}`);
                     count: rows.length,
                     skills: rows,
                     version,
-                    note: 'Review every description. Open related skills with skill_view before updating or merging them. Create only when none covers the procedure.',
+                    note: 'Review every description. Open related skills with skill_view before updating or merging them. Create only when none covers the procedure. A row whose formatIssues is non-empty is out of format — it is NOT loaded into the prompt and must not be applied; open it with skill_view and repair it, or leave it to the trader.',
                 });
                 return { toolCallId: call.id, name: call.name, ok: true, content, skillIndexVersion: version };
             }

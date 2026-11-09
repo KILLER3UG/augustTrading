@@ -231,11 +231,22 @@ export const buildSkillsIndexForPrompt = (
     where = 'this chart',
 ): string => {
     if (rows.length === 0) return '';
-    const shown = rows.slice(0, max);
+    // A skill that fails the format is a NOTE, not procedure: the next read is
+    // not built on one. It is dropped HERE, not from the index — the desk
+    // index and the trader's library still list it, with the reasons, because
+    // a writer that cannot see a skill cannot repair it. The drop is logged
+    // once per build so it is not silent.
+    const usable = rows.filter(r => {
+        if (r.formatIssues.length === 0) return true;
+        console.warn(`[skillIndex] "${r.slug}" is out of format and was NOT loaded into the prompt: ${r.formatIssues.join('; ')}`);
+        return false;
+    });
+    if (usable.length === 0) return '';
+    const shown = usable.slice(0, max);
     return [
-        `## Skills library - ${rows.length} skill${rows.length === 1 ? '' : 's'}. Each line is WHEN to use it; the body is the procedure. Open one with skill_view (pass {"skill": "<slug>"}) before acting on it, and cite the slug you used. APPLY any that match ${where}.`,
+        `## Skills library - ${usable.length} skill${usable.length === 1 ? '' : 's'}. Each line is WHEN to use it; the body is the procedure. Open one with skill_view (pass {"skill": "<slug>"}) before acting on it, and cite the slug you used. APPLY any that match ${where}.`,
         ...shown.map(r => `- ${r.slug} - ${(r.description || r.name || '(no description)').trim()}`),
-        rows.length > max ? `...and ${rows.length - max} more - skill_view reads any one by slug.` : '',
+        usable.length > max ? `...and ${usable.length - max} more - skill_view reads any one by slug.` : '',
     ].filter(Boolean).join('\n');
 };
 

@@ -120,7 +120,7 @@ const buildFileRows = (): FileRow[] => {
     const skills: FileRow[] = skillIndexRows().map((s: SkillIndexRow) => ({
         id: `skill:${s.slug}`,
         name: `${s.slug}/SKILL.md`,
-        detail: `${s.name} · v${s.version}${s.files.length ? ` · ${s.files.length} files` : ''}`,
+        detail: `${s.name} · v${s.version}${s.files.length ? ` · ${s.files.length} files` : ''}${s.formatIssues.length ? ' · out of format' : ''}`,
         content: s.description,
         kind: 'skill',
     }));

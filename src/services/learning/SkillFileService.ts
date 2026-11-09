@@ -31,7 +31,7 @@ import {
     withNotebookWriteLock,
 } from './MemoryFilesService';
 import { getActiveUsername } from '../../utils/activeUser';
-import { missingSkillSections, SKILL_BODY_SECTIONS, SKILL_SUPPORT_ROLES } from '../../utils/skillFrontmatter';
+import { missingSkillSections, skillFormatIssues, SKILL_BODY_SECTIONS, SKILL_SUPPORT_ROLES } from '../../utils/skillFrontmatter';
 import type { MemoryFile } from '../../types';
 
 export const SKILL_FOLDER = 'skills';
@@ -71,6 +71,14 @@ export interface SkillIndexRow {
     name: string;
     description: string;
     version: string;
+    /** Every way this SKILL.md departs from the format (empty when it
+     *  conforms), from `utils/skillFrontmatter` — the same check the editor
+     *  and the Format action use, so the index cannot disagree with either.
+     *  The PROMPT drops a row that carries any: a note is not procedure, and
+     *  the next read must not be built on one. The desk index keeps the row
+     *  and shows the reasons, because a writer that cannot see a skill cannot
+     *  repair it. */
+    formatIssues: string[];
     /** The skill's own bundled files, as paths relative to its folder. A
      *  merge DELETES these, so a writer that never saw them cannot know what
      *  it is destroying. The desk tool's index carries them; the prompt index
@@ -260,6 +268,13 @@ export function parseSkillMarkdown(content: string): ParsedSkillMarkdown | null 
     return { name, description, body };
 }
 
+/** A browser textarea hands back \r\n for every newline, so a document typed
+ *  in the library arrives with CRLF inside an otherwise LF document, and a
+ *  merged skill can end up with both. Line endings are not prose: the service
+ *  never rewrites a trader's words, but one skill's endings must not depend on
+ *  which surface wrote it. */
+const normalizeLineEndings = (text: string): string => text.replace(/\r\n?/g, '\n');
+
 /** The exact bytes a write produces. No ledger, no app keys, no rewrites. */
 export const composeSkillMarkdown = (name: string, description: string, body: string): string => [
     '---',
@@ -391,6 +406,7 @@ export const skillIndexRows = (): SkillIndexRow[] => listSkillFiles().map(s => (
     name: s.name,
     description: s.description,
     version: s.version,
+    formatIssues: skillFormatIssues(s.file.content).map(i => i.what),
     files: s.bundled.map(f => skillPathOf(f)?.slice(s.slug.length + 1) ?? f.name),
 }));
 
@@ -534,7 +550,7 @@ export const writeSkillFile = async (
     const description = (input.description || '').trim();
     if (!description) return invalid('A skill needs a description: what it does and when to use it.');
     if (description.length > SKILL_DESCRIPTION_MAX) return invalid(`The description is over ${SKILL_DESCRIPTION_MAX} characters.`);
-    const body = (input.body || '').trim();
+    const body = normalizeLineEndings(input.body || '').trim();
     if (!body) return invalid('A skill needs a procedure body.');
     const supersedes = [...new Set((input.supersedes ?? []).map(s => slugifyName(s)))];
     if (supersedes.some(s => !s)) return invalid('Every supersedes entry must name a skill slug.');
@@ -635,7 +651,7 @@ export const writeSkillFile = async (
             if (support.some(s => s.rel.toLowerCase() === rel.toLowerCase())) {
                 return invalid(`Support path "${rel}" appears twice in one write.`);
             }
-            support.push({ rel, content: file.content });
+            support.push({ rel, content: normalizeLineEndings(file.content) });
         }
 
         const writtenPaths: string[] = [];
