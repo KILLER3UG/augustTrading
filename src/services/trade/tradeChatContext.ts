@@ -217,13 +217,13 @@ export const TRADE_CHAT_SYSTEM_PROMPT = [
     'Analysis, not financial advice — never promise outcomes.',
 ].join(' ');
 
-/** The rows a prompt may carry: a skill that fails the format is a note, not
- *  procedure. The prompt block AND the turn's `injectedSkills` record read
- *  THIS one list, so the record cannot name a skill the model was not shown —
- *  a record that disagrees with the prompt is how a downstream block ends up
- *  asserting "SKILLS INJECTED ON THAT TURN" for a skill that never arrived. */
-export const usableSkillRows = (rows: SkillIndexRow[]): SkillIndexRow[] =>
-    rows.filter(r => r.formatIssues.length === 0);
+/** The rows a prompt may carry. ONE definition, in `SkillFileService`, next to
+ *  `skillIndexRows` — the prompt block, the turn's `injectedSkills` record,
+ *  and every model-facing pointer (recall, scan_setups, memory hints) filter
+ *  through it, so a record cannot name a skill the model was not shown and a
+ *  pointer cannot point at a note. Re-exported here for the prompt layer. */
+export { usableSkillRows } from '../learning/SkillFileService';
+import { usableSkillRows } from '../learning/SkillFileService';
 
 /**
  * Compact skills-library index for a seat's system prompt: a plain list of

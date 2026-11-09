@@ -6392,7 +6392,7 @@ export async function* streamChatWithDeskTools(
     if (options?.memoryEnabled !== false) {
         try {
             const { listProfileMemories } = await import('../learning/profileMemory');
-            const { skillIndexRows } = await import('../learning/SkillFileService');
+            const { usableSkillRows, skillIndexRows } = await import('../learning/SkillFileService');
             const last = messages[messages.length - 1];
             const lastText = typeof last?.content === 'string' ? last.content : '';
             const hints = buildMemoryHints(
@@ -6403,8 +6403,12 @@ export async function* streamChatWithDeskTools(
                 })),
                 // A candidate hypothes is not a rule: memoryHints must never
                 // tell the seat to open one as if its description were a task
-                // match. Only confirmed skills are named here.
-                skillIndexRows().map(r => r.slug),
+                // match. Only confirmed skills are named here — and only
+                // in-format ones: "open `slug` before acting" is a POINTER,
+                // the same class b194652c gated in scan_setups, so it goes
+                // through the same `usableSkillRows` predicate and never
+                // points at a note.
+                usableSkillRows(skillIndexRows()).map(r => r.slug),
             );
             if (hints.length > 0 && last) {
                 outbound = messages.slice(0, -1).concat([{

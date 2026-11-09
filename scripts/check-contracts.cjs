@@ -1261,6 +1261,76 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
     const skillWrite = desk.DESK_TOOL_DEFINITIONS.find(d => d.function.name === 'skill_write');
     ok('skill document: the skill_write schema asks the model for the same headings the editor hints',
         !!skillWrite && sf.SKILL_BODY_SECTIONS.every(s => skillWrite.function.parameters.properties.body.description.includes(`## ${s}`)));
+
+    // ── parseSkillMarkdown, the tolerance family ─────────────────────────
+    // Every case here is a file this app did not write. The contract: the
+    // parse serves what it can, and the FORMAT GATE (not the parser) decides
+    // what reaches the model — so a salvage must never also be a silent
+    // pass, and a well-formed variant must never fail.
+    const fmt = loadModule('src/utils/skillFrontmatter.ts');
+    const parseCase = (label, content, expect) => {
+        const p = sf.parseSkillMarkdown(content);
+        ok(label, !!p && expect(p), JSON.stringify(p));
+        return p;
+    };
+
+    // 1 + 2: the head's first line is not a key — a comment or a blank. The
+    // key-line probe runs over the WHOLE head, so these must still parse
+    // (the m-flag regression: without it the frontmatter was served as body).
+    parseCase('skill parse: frontmatter preceded by a comment still parses',
+        ['---', '# a note the exporter left', 'name: "Cmt"', 'description: "d"', '---', '', 'body text'].join('\n'),
+        p => p.name === 'Cmt' && p.description === 'd' && p.body === 'body text');
+    parseCase('skill parse: frontmatter preceded by a blank line still parses',
+        ['---', '', 'name: "Blank"', 'description: "d"', '---', '', 'body text'].join('\n'),
+        p => p.name === 'Blank' && p.body === 'body text');
+
+    // 3 + 4: block scalars are decoded, not served raw.
+    parseCase('skill parse: a folded block scalar decodes to one line',
+        ['---', 'name: "Fold"', 'description: >-', '  first clause', '  second clause', '---', '', 'body'].join('\n'),
+        p => p.description === 'first clause second clause' && p.body === 'body');
+    parseCase('skill parse: a literal block scalar keeps its lines',
+        ['---', 'name: "Lit"', 'description: |', '  line one', '  line two', '---', '', 'body'].join('\n'),
+        p => p.description === 'line one\nline two' && p.body === 'body');
+
+    // 5 + 6: an unclosed fence is salvaged — the head ends at the first
+    // non-key line, block-scalar continuations included.
+    parseCase('skill parse: an unclosed fence splits at the first non-key line',
+        ['---', 'name: "Unclosed"', 'description: "d"', '## When to use', '', 'body text'].join('\n'),
+        p => p.name === 'Unclosed' && p.description === 'd' && /^## When to use/.test(p.body));
+    parseCase('skill parse: an unclosed fence with a block scalar keeps the block in the head',
+        ['---', 'name: "Unc"', 'description: >', '  folded words', 'body line'].join('\n'),
+        p => p.name === 'Unc' && p.description === 'folded words' && p.body === 'body line');
+
+    // 7 + 8: never-frontmatter and bare text are bodies, not garbage.
+    parseCase('skill parse: a leading hr pair with no key lines is body, not frontmatter',
+        ['---', 'a rule', '---', '', 'real body'].join('\n'),
+        p => p.name === undefined && p.description === undefined && p.body.includes('real body'));
+    parseCase('skill parse: bare text is the body',
+        'Just prose, no fence at all.',
+        p => p.name === undefined && p.body === 'Just prose, no fence at all.');
+
+    // 9: compose → parse is the identity for well-formed content.
+    const round = sf.parseSkillMarkdown(sf.composeSkillMarkdown('Round', 'the description', '## When to use\n\nnow.'));
+    ok('skill parse: compose then parse round-trips name, description and body',
+        !!round && round.name === 'Round' && round.description === 'the description' && /^## When to use/.test(round.body),
+        JSON.stringify(round));
+
+    // 10: the salvage is LOUD — an unclosed fence parses, but the format gate
+    // still refuses to load it, so display-repair and model-load cannot
+    // disagree about which is which.
+    const unclosed = ['---', 'name: "Unclosed2"', 'description: "d"', '## When to use', '', 'x'].join('\n');
+    const closedComment = [
+        '---', '# exporter note', 'name: "Cmt2"', 'description: "d"', '---', '',
+        '## When to use', '', 'when it applies.', '',
+        '## Steps', '', '1. do it.', '',
+        '## Pitfalls', '', 'watch out.', '',
+        '## Verification', '', 'checked like this.', '',
+    ].join('\n');
+    ok('skill parse: an unclosed fence parses but still fails the format gate',
+        sf.parseSkillMarkdown(unclosed)?.name === 'Unclosed2'
+        && fmt.skillFormatIssues(unclosed).length > 0
+        && fmt.skillFormatIssues(closedComment).length === 0,
+        JSON.stringify(fmt.skillFormatIssues(unclosed)));
 })();
 
 // ─── 24. the journal-rules store: when + action, normalized on read/write ──

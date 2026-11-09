@@ -202,7 +202,11 @@ const scalarOf = (head: string[], key: string): string | undefined => {
 
 const FRONTMATTER = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/;
 const OPEN_FENCE = /^---\r?\n/;
-const KEY_LINE = /^[A-Za-z][\w-]*[ \t]*:/;
+// The `m` flag is load-bearing: KEY_LINE is tested against the WHOLE head
+// (`match[1]`), not one line, so without it a head whose first line is a
+// comment or a blank fails the test and the file's frontmatter is served as
+// body. Anchored at any line, not at string start.
+const KEY_LINE = /^[A-Za-z][\w-]*[ \t]*:/m;
 const BLOCK_OPENER_LINE = /^[A-Za-z][\w-]*:[ \t]*[>|](?:[+-][1-9]|[1-9][+-]|[+-]|[1-9])?[ \t]*$/;
 
 export interface ParsedSkillMarkdown {
@@ -409,6 +413,16 @@ export const skillIndexRows = (): SkillIndexRow[] => listSkillFiles().map(s => (
     formatIssues: skillFormatIssues(s.file.content).map(i => i.what),
     files: s.bundled.map(f => skillPathOf(f)?.slice(s.slug.length + 1) ?? f.name),
 }));
+
+/** The rows a prompt OR a pointer may carry: a skill that fails the format is
+ *  a note, not procedure. This lives next to `skillIndexRows` — the predicate
+ *  is a property of the rows, not of any one prompt — so every surface that
+ *  points the model at a skill (prompt index, recall, scan_setups, memory
+ *  hints) filters through the SAME one function. A new pointer that forgets
+ *  to call this is reviewable as the bug it is; a predicate re-derived at
+ *  each call site was how a pointer class survived one commit. */
+export const usableSkillRows = (rows: SkillIndexRow[]): SkillIndexRow[] =>
+    rows.filter(r => r.formatIssues.length === 0);
 
 export const skillLibraryVersion = (skills: SkillFile[] = listSkillFiles()): string => contentVersion(
     JSON.stringify(skills.map(s => [s.slug, s.version, s.bundled.map(f => [skillPathOf(f), contentVersion(f.content)])])
