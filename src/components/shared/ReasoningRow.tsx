@@ -83,6 +83,12 @@ const ReasoningRow: React.FC<ReasoningRowProps> = ({
             const start = startedAtRef.current;
             setSettledSeconds(start !== null ? Math.max(0, Math.round((Date.now() - start) / 1000)) : null);
             startedAtRef.current = null;
+            /* The trace folds itself away the moment it settles. A row left
+               open during the run was being WATCHED, and once it is complete
+               the answer is the thing to read — leaving the trace open hid it
+               behind a wall of reasoning. A row opened AFTER the settle is
+               untouched: the transition has already fired. */
+            setOpen(false);
         }
         wasRunningRef.current = running;
     }, [running, turnStartMs]);
