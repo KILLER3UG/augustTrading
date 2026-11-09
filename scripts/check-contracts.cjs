@@ -4095,6 +4095,118 @@ const runCaptureChecks = async () => {
         delete global.window.electronAPI;
 };
 
+// ─── 45. chart indicators: one module, pinned conventions, library parity ───
+(() => {
+    const ci = loadModule('src/services/trade/chartIndicators.ts');
+    const ti = require(path.join(ROOT, 'node_modules', 'technicalindicators'));
+    // Deterministic candles: a sine plus a drift, so no two bars are equal and
+    // every warm-up path is exercised.
+    const closes = [];
+    let p = 100;
+    for (let i = 0; i < 90; i += 1) { p = +(p + Math.sin(i / 3) * 3 + (i % 7) * 0.2).toFixed(4); closes.push(p); }
+    const highs = closes.map((c, i) => c + 1 + (i % 3));
+    const lows = closes.map((c, i) => c - 1 - (i % 4));
+    const near = (a, b, tol = 1e-6) => Number.isFinite(a) && Number.isFinite(b)
+        && Math.abs(a - b) <= tol * Math.max(1, Math.abs(b));
+
+    const libEma = ti.EMA.calculate({ values: closes, period: 20 });
+    const myEma = ci.emaSeries(closes, 20);
+    ok('chartIndicators: EMA20 is null until bar 19 and seeds with the SMA of the first 20',
+        myEma[18] === null && near(myEma[19], closes.slice(0, 20).reduce((a, b) => a + b, 0) / 20));
+    ok('chartIndicators: EMA20 matches technicalindicators bar for bar',
+        libEma.length === myEma.filter(v => v !== null).length
+        && libEma.every((v, k) => near(myEma[k + 19], v)));
+
+    const libSma = ti.SMA.calculate({ values: closes, period: 20 });
+    const mySma = ci.smaSeries(closes, 20);
+    ok('chartIndicators: SMA20 matches technicalindicators bar for bar',
+        libSma.every((v, k) => near(mySma[k + 19], v)));
+
+    const libRsi = ti.RSI.calculate({ values: closes, period: 14 });
+    const myRsi = ci.rsiSeries(closes, 14);
+    // `technicalindicators` RSI rounds every value to 2dp (RSI.js:33
+    // `parseFloat(...toFixed(2))`), so the reference itself is quantised. The
+    // parity bar is half that quantum — enough to catch a different seed or a
+    // different alpha, which diverge by whole points, not by a cent.
+    const nearRounded = (a, b) => Number.isFinite(a) && Number.isFinite(b) && Math.abs(a - b) <= 0.005 + 1e-9;
+    ok('chartIndicators: RSI14 warms up at bar 14 and matches the library (which rounds to 2dp)',
+        myRsi[13] === null && libRsi.every((v, k) => nearRounded(myRsi[k + 14], v)));
+
+    const libAtr = ti.ATR.calculate({ high: highs, low: lows, close: closes, period: 14 });
+    const myAtr = ci.atrSeries(highs, lows, closes, 14);
+    ok('chartIndicators: ATR14 is Wilder (true range, alpha=1/14), warms up at bar 14, matches the library',
+        myAtr[13] === null && libAtr.every((v, k) => near(myAtr[k + 14], v)));
+
+    const libBb = ti.BollingerBands.calculate({ values: closes, period: 20, stdDev: 2 });
+    const myBb = ci.bollingerSeries(closes, 20, 2);
+    ok('chartIndicators: Bollinger(20,2) mid/upper/lower match the library',
+        libBb.every((row, k) => near(myBb.mid[k + 19], row.middle)
+            && near(myBb.upper[k + 19], row.upper) && near(myBb.lower[k + 19], row.lower)));
+
+    const libMacd = ti.MACD.calculate({
+        values: closes, fastPeriod: 12, slowPeriod: 26, signalPeriod: 9,
+        SimpleMAOscillator: false, SimpleMASignal: false,
+    });
+    const myMacd = ci.macdSeries(closes, 12, 26, 9);
+    ok('chartIndicators: MACD(12,26,9) matches the library on macd, signal and histogram',
+        libMacd.every((row, k) => near(myMacd.macd[k + 25], row.MACD)
+            && (row.signal === undefined || row.signal === null
+                ? myMacd.signal[k + 25] === null
+                : near(myMacd.signal[k + 25], row.signal))
+            && (row.histogram === undefined || row.histogram === null
+                ? myMacd.histogram[k + 25] === null
+                : near(myMacd.histogram[k + 25], row.histogram))));
+
+    // Lookahead: a value at bar i must not move when bars after i change.
+    const prefix = closes.slice(0, 60);
+    const extended = prefix.concat([prefix[59] + 50, prefix[59] - 80]);
+    const before = ci.rsiSeries(prefix, 14);
+    const after = ci.rsiSeries(extended, 14);
+    ok('chartIndicators: no lookahead — a value at bar i is unchanged by later bars',
+        before.every((v, i) => v === after[i]));
+
+    // Degenerate input returns nulls, never NaN, and never throws.
+    ok('chartIndicators: too few bars returns nulls, never NaN or a throw',
+        ci.rsiSeries(closes.slice(0, 5), 14).every(v => v === null)
+        && ci.emaSeries([], 20).length === 0
+        && ci.bollingerSeries(closes, 0, 2).upper.every(v => v === null)
+        && ci.macdSeries(closes.slice(0, 10), 12, 26, 9).macd.every(v => v === null));
+
+    // TSI: no library reference, so the contract is the definition — the
+    // smoothed ratio must be bounded and warm up after long+short bars.
+    const tsi = ci.tsiSeries(closes);
+    ok('chartIndicators: TSI(25,13,13) warms up after long+short and stays bounded',
+        tsi.tsi.slice(0, 36).every(v => v === null)
+        && tsi.tsi.slice(37).every(v => v === null || (v >= -100 && v <= 100)));
+})();
+
+// ─── 46. chart indicator settings: per-user, defaulted, round-tripped ──────
+(() => {
+    const cs = loadModule('src/services/trade/chartIndicatorSettings.ts');
+    const store = new Map();
+    global.localStorage = {
+        getItem: k => store.get(k) ?? null,
+        setItem: (k, v) => store.set(k, String(v)),
+        removeItem: k => store.delete(k),
+        key: i => [...store.keys()][i] ?? null,
+        get length() { return store.size; },
+    };
+    const d = cs.DEFAULT_CHART_INDICATOR_SETTINGS.visible;
+    ok('chartIndicators: the default set is OKX’s six studies, everything else off',
+        d.volume && d.ema20 && d.ema200 && d.boll && d.rsi && d.macd
+        && !d.tsi && !d.vwap && !d.volumeProfile && !d.sessionLevels && !d.swings && !d.cvd && !d.funding);
+    ok('chartIndicators: a fresh user reads the default set',
+        cs.readChartIndicatorSettings('new-user').visible.boll === true);
+    cs.writeChartIndicatorSettings('u1', { visible: { ...d, boll: false } });
+    ok('chartIndicators: a write round-trips per user and does not leak across users',
+        cs.readChartIndicatorSettings('u1').visible.boll === false
+        && cs.readChartIndicatorSettings('u2').visible.boll === true);
+    ok('chartIndicators: a malformed blob falls back to the default, not a half-initialised chart',
+        (store.set('chart_indicators_v1_bad', '{"visible":{"boll":"yes","ema20":true}}'),
+         cs.readChartIndicatorSettings('bad').visible.boll === true
+         && cs.readChartIndicatorSettings('bad').visible.ema20 === true));
+})();
+
 // ─── report ────────────────────────────────────────────────────────────────
 const finishReport = () => {
     console.log(`contracts: ${passed} passed, ${failures.length} failed`);

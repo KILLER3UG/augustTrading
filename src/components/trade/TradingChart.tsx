@@ -60,6 +60,20 @@ import { TradeAnalysis } from '../../types';
 import { ChartToolRail, CHART_RAIL_WIDTH } from './ChartToolRail';
 import ChartFrame from '../shared/ChartFrame';
 import { shapeGeometry } from './drawingGeometry';
+import {
+    bollingerSeries,
+    emaSeries,
+    type Series,
+} from '../../services/trade/chartIndicators';
+import {
+    CHART_INDICATOR_IDS,
+    CHART_INDICATOR_LABELS,
+    CHART_INDICATOR_PANE,
+    readChartIndicatorSettings,
+    writeChartIndicatorSettings,
+    type ChartIndicatorId,
+    type ChartIndicatorSettings,
+} from '../../services/trade/chartIndicatorSettings';
 
 /**
  * Resolve one of index.css's `@theme` CSS custom properties to a concrete
@@ -221,13 +235,6 @@ interface TradingChartProps {
     } | null;
 }
 
-const sma = (closes: number[], period: number): (number | null)[] => closes.map((_, i) => {
-    if (i < period - 1) return null;
-    let sum = 0;
-    for (let j = i - period + 1; j <= i; j += 1) sum += closes[j];
-    return sum / period;
-});
-
 /** Distance from a point to a segment — the eraser's hit test (screen px). */
 const distToSegment = (px: number, py: number, ax: number, ay: number, bx: number, by: number): number => {
     const dx = bx - ax;
@@ -247,7 +254,8 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
     const [overPlot, setOverPlot] = useState(false);
     const candlesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
     const volumeRef = useRef<ISeriesApi<'Histogram'> | null>(null);
-    const smaRef = useRef<ISeriesApi<'Line'> | null>(null);
+    /** The main-pane indicator overlays, so the mount cleanup can drop them. */
+    const indicatorSeriesRef = useRef<ISeriesApi<'Line'>[]>([]);
     const levelLinesRef = useRef<ISeriesApi<'Line'>[]>([]);
     const markLineRef = useRef<IPriceLine | null>(null);
     /** Key-level lines the DOCK pushed (message card + chart toggle) — id →
@@ -255,9 +263,24 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
     const chatLevelLinesRef = useRef<Map<string, IPriceLine>>(new Map());
     const [status, setStatus] = useState<'loading' | 'live' | 'unavailable'>('loading');
     const [levels, setLevels] = useState<ChartLevel[]>([]);
-    /** The "ƒ Indicators" toolbar toggle (the prototype's Add-studies button):
-     *  ORs with the showSma prop so callers can force it on programmatically. */
-    const [indicatorsOn, setIndicatorsOn] = useState(false);
+    /** Which studies are drawn, per user. The SERIES come from
+     *  `chartIndicators.ts` — the same module the prompt reads — so a line on
+     *  the screen is the number in the model's context. This state only says
+     *  which of them are visible; it cannot change a value. */
+    const [indicatorSettings, setIndicatorSettings] = useState<ChartIndicatorSettings>(
+        () => readChartIndicatorSettings(getActiveUsername() || 'default'),
+    );
+    /** Back-compat with the old single `ƒSMA` toggle: on when ANY study is on,
+     *  so a caller forcing `showSma` still lights the button. */
+    const indicatorsOn = Object.values(indicatorSettings.visible).some(Boolean) || showSma;
+    const [indicatorMenuOpen, setIndicatorMenuOpen] = useState(false);
+    const toggleIndicator = (id: ChartIndicatorId) => {
+        setIndicatorSettings(prev => {
+            const next: ChartIndicatorSettings = { visible: { ...prev.visible, [id]: !prev.visible[id] } };
+            writeChartIndicatorSettings(getActiveUsername() || 'default', next);
+            return next;
+        });
+    };
 
     // ─── Drawings state ─────────────────────────────────────────────────────
     const overlayRef = useRef<HTMLCanvasElement | null>(null);
@@ -392,7 +415,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
             chartRef.current = null;
             candlesRef.current = null;
             volumeRef.current = null;
-            smaRef.current = null;
+            indicatorSeriesRef.current = [];
             levelLinesRef.current = [];
             markLineRef.current = null;
             // The chat-level lines died with the chart — forget them so the
@@ -587,21 +610,39 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
         } catch { /* series without price-line support (test mock) */ }
     }, [lastPrice, markPrice, status]);
 
-    // SMA overlay.
+    // Indicator overlays. Every series comes from `chartIndicators`, the ONE
+    // module the prompt reads, so the line the trader sees and the number the
+    // model is given are the same computation. The hand-rolled `sma()` is
+    // retired with it. Main-pane studies only for now — RSI/MACD/TSI need their
+    // own panes, which is the next step.
     useEffect(() => {
         const chart = chartRef.current;
         if (!chart) return;
-        if (!showSma && !indicatorsOn) {
-            if (smaRef.current) { chart.removeSeries(smaRef.current); smaRef.current = null; }
-            return;
-        }
-        if (!smaRef.current) smaRef.current = chart.addSeries(LineSeries, { color: chartColor('--color-yellow-500', '#f08800'), lineWidth: 1, priceLineVisible: false, lastValueVisible: false });
+        for (const s of indicatorSeriesRef.current) { try { chart.removeSeries(s); } catch { /* already gone */ } }
+        indicatorSeriesRef.current = [];
         const candles = (candlesRef.current?.data?.() ?? []) as readonly { time: number; close: number }[];
-        if (candles.length > 0 && smaRef.current) {
-            const values = sma(candles.map(c => c.close), 20);
-            smaRef.current.setData(candles.map((c, i) => (values[i] === null ? null : { time: c.time as UTCTimestamp, value: values[i] as number })).filter(Boolean) as { time: UTCTimestamp; value: number }[]);
+        if (candles.length === 0) return;
+        const times = candles.map(c => c.time as UTCTimestamp);
+        const closes = candles.map(c => c.close);
+        const addLine = (values: Series, color: string) => {
+            const series = chart.addSeries(LineSeries, {
+                color, lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+            });
+            series.setData(times
+                .map((t, i) => (values[i] === null ? null : { time: t, value: values[i] as number }))
+                .filter((p): p is { time: UTCTimestamp; value: number } => p !== null));
+            indicatorSeriesRef.current.push(series);
+        };
+        const visible = indicatorSettings.visible;
+        if (visible.ema20) addLine(emaSeries(closes, 20), chartColor('--color-amber-500', '#f59e0b'));
+        if (visible.ema200) addLine(emaSeries(closes, 200), chartColor('--color-purple-400', '#a78bfa'));
+        if (visible.boll) {
+            const band = bollingerSeries(closes, 20, 2);
+            addLine(band.mid, chartColor('--color-cyan-500', '#06b6d4'));
+            addLine(band.upper, chartColor('--color-cyan-500', '#06b6d4'));
+            addLine(band.lower, chartColor('--color-cyan-500', '#06b6d4'));
         }
-    }, [showSma, indicatorsOn, status]);
+    }, [symbol, interval, indicatorSettings, status]);
 
     // ─── Chat key-level lines (the message card's chart toggle) ────────────
     // The dock owns the whole interaction model (master show-all switch,
@@ -1193,15 +1234,45 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                     line itself wears. The reference's toolbars are a row of
                     flat controls, and a bordered box on every one of them is
                     what made this row read as a stack of chips. */}
-                <button type="button" onClick={() => setIndicatorsOn(v => !v)} aria-pressed={indicatorsOn}
-                    title="Toggle the SMA-20 overlay"
-                    className={`ml-1.5 rounded-control px-2 py-1 text-ui-dense font-medium transition-colors ${
-                        indicatorsOn
-                            ? 'bg-amber-500/10 text-amber-300'
-                            : 'text-zinc-500 hover:bg-white/[0.05] hover:text-zinc-200'
-                    }`}>
-                    ƒSMA
-                </button>
+                {/* The studies menu. One toggle per study; every SERIES comes from
+                    chartIndicators, so the label on the line is the number in the
+                    prompt. Studies that need their own pane are marked — the
+                    toggle persists the choice until the pane lands. */}
+                <div className="relative ml-1.5">
+                    <button type="button" onClick={() => setIndicatorMenuOpen(v => !v)} aria-pressed={indicatorsOn}
+                        aria-expanded={indicatorMenuOpen} title="Chart studies"
+                        className={`rounded-control px-2 py-1 text-ui-dense font-medium transition-colors ${
+                            indicatorsOn
+                                ? 'bg-amber-500/10 text-amber-300'
+                                : 'text-zinc-500 hover:bg-white/[0.05] hover:text-zinc-200'
+                        }`}>
+                        ƒ Studies
+                    </button>
+                    {indicatorMenuOpen && (
+                        <>
+                            <button type="button" aria-hidden="true" tabIndex={-1}
+                                onClick={() => setIndicatorMenuOpen(false)}
+                                className="fixed inset-0 z-20 cursor-default" />
+                            <div role="menu" data-testid="chart-indicator-menu"
+                                className="absolute left-0 top-full z-30 mt-1 w-44 rounded-control border border-hairline bg-zinc-900 py-1 shadow-elevated">
+                                {CHART_INDICATOR_IDS.filter(id => CHART_INDICATOR_PANE[id]).map(id => {
+                                    const on = indicatorSettings.visible[id];
+                                    return (
+                                        <button key={id} type="button" role="menuitemcheckbox" aria-checked={on}
+                                            onClick={() => toggleIndicator(id)}
+                                            className="flex w-full items-center gap-2 px-2 py-1 text-left text-ui-dense text-zinc-300 hover:bg-white/[0.05]">
+                                            <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${on ? 'bg-amber-400' : 'bg-zinc-700'}`} />
+                                            <span className="flex-1">{CHART_INDICATOR_LABELS[id]}</span>
+                                            {CHART_INDICATOR_PANE[id] === 'sub' && (
+                                                <span className="text-ui-micro text-zinc-600">pane</span>
+                                            )}
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        </>
+                    )}
+                </div>
                 {/* Drawing tools live in the TradingView-style LEFT RAIL over
                     the plot (ChartToolRail) — the top bar keeps timeframes. */}
                     <span className="ml-auto flex items-center gap-2 pr-1">
