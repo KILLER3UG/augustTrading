@@ -42,6 +42,19 @@
  *     AUGUST_EVAL_BASE_URL=https://api.x.com/v1 \
  *     AUGUST_EVAL_API_KEY=... AUGUST_EVAL_MODEL=... \
  *     node scripts/ablation.cjs --samples 40
+ *   Reproduce an earlier run's exact population (the artifact records its
+ *   anchor and sample list — same seed + same anchor = same samples):
+ *     node scripts/ablation.cjs --samples 40 --seed <seed> --anchor <iso>
+ *
+ * SAMPLING RULES (read before editing)
+ *   - Every processed sample yields ONE ROW PER ARM. A model failure or an
+ *     abstain is a row in that arm and `continue`s to the next arm — never a
+ *     `return`, which would censor the remaining arms for that sample.
+ *   - A pack line must not hand the model a decision: no entry/stop/target
+ *     bracket, no direction. trade_math prints COSTS only.
+ *   - Skips (fetch loss, thin tape, integrity) are recorded in the artifact.
+ *   - `--anchor` pins the grid's wall-clock anchor; without it the anchor is
+ *     "now" and the artifact says so (anchorIsDefault).
  */
 'use strict';
 
@@ -193,10 +206,13 @@ const buildRegimePack = (m, tape, atr, symbol) => {
         const lo = Math.min(...prevDay.map(c => c.low));
         lines.push(`levels: prev_utc_day high ${fmtPx(hi)} (${fmtPx(Math.abs(last - hi) / atr)} ATR), low ${fmtPx(lo)} (${fmtPx(Math.abs(last - lo) / atr)} ATR)`);
     }
-    const fib = m.levels; // fib lives in swingStructureCore — via levels? kept minimal: round numbers
-    const rounds = (r => r)(null);
-    void fib; void rounds;
-    lines.push(`trade_math(1R stop / 2R target bracket): entry ${fmtPx(last)}, stop ${fmtPx(last - atr)}, target ${fmtPx(last + 2 * atr)} — R:R 2.0 gross, cost ${'~'}${m.nrr.roundTripCostR({ stopDistancePct: (atr / last) * 100 }).costR}R net per side`);
+    // COSTS, not a bracket. This pack must not print a ready-made
+    // entry/stop/target: the arm would be scored partly on parroting the
+    // harness's own numbers (the N=80 run's regime comparison was confounded
+    // by exactly that line). What belongs here is what trade-math KNOWS —
+    // what a round trip costs at a given stop distance — direction-agnostic.
+    const cost = m.nrr.roundTripCostR({ stopDistancePct: (atr / last) * 100 });
+    lines.push(`trade_math: a 1R-stop round trip costs ~${cost.costR}R per side at the current 14-bar ATR stop distance${cost.known ? '' : ' (cost model incomplete)'}`);
     return lines;
 };
 
@@ -297,6 +313,17 @@ const main = async () => {
         ? String(args[armsIdx + 1] ?? '').split(',').filter(Boolean)
         : ['baseline', 'volume', 'regime'];
     for (const a of armNames) if (!ARMS[a]) { console.error(`unknown arm "${a}"`); process.exit(1); }
+    if (armNames.length === 0) { console.error('ablation: --arms resolved to zero arms (use --arms baseline,volume,regime)'); process.exit(1); }
+    // `--arms baseline volume` (space-separated) would silently drop `volume`
+    // — only the first token is read. Any non-flag token right after the
+    // comma list is almost certainly that mistake, so refuse loudly.
+    if (armsIdx >= 0) {
+        const afterList = args[armsIdx + 2];
+        if (afterList !== undefined && !afterList.startsWith('--')) {
+            console.error(`ablation: unexpected token "${afterList}" after --arms ${args[armsIdx + 1]} — --arms takes ONE comma-separated list (e.g. --arms baseline,volume)`);
+            process.exit(1);
+        }
+    }
 
     const cfg = {
         baseUrl: process.env.AUGUST_EVAL_BASE_URL,
@@ -312,7 +339,20 @@ const main = async () => {
     const rng = mulberry32(seed);
 
     // ── sample grid: time-blocked, seeded, arm-agnostic ────────────────
-    const now = Date.now();
+    // The grid is anchored to a wall-clock `now`. `--anchor <iso|ms>` pins
+    // that anchor so a re-run with the same seed walks the SAME population —
+    // "same seed" alone does not, because Date.now() moves. The chosen anchor
+    // and the full sample list go into the artifact either way, so any run is
+    // reproducible from its own file.
+    const anchorIdx = args.indexOf('--anchor');
+    const anchorArg = anchorIdx >= 0 ? args[anchorIdx + 1] : undefined;
+    let anchorMs = Date.now();
+    if (anchorArg !== undefined && !String(anchorArg).startsWith('--')) {
+        const parsed = /^\d+$/.test(String(anchorArg)) ? Number(anchorArg) : Date.parse(anchorArg);
+        if (!Number.isFinite(parsed)) { console.error(`ablation: --anchor needs an ISO date or epoch ms, got "${anchorArg}"`); process.exit(1); }
+        anchorMs = parsed;
+    }
+    const now = anchorMs;
     const gridStart = now - LOOKBACK_DAYS * 24 * HOUR;
     const horizonEnd = now - HORIZON_HOURS * HOUR; // a sample needs its horizon resolved
     const slots = [];
@@ -335,6 +375,10 @@ const main = async () => {
     const results = {}; // arm -> array of per-sample outcomes
     for (const a of armNames) results[a] = [];
     let integrityFailures = 0;
+    // Every skipped sample lands here — a run that lost half its fetches must
+    // not be able to report its n without the loss being in the artifact.
+    const skipLog = [];
+    const skip = (si, symbol, reason) => { skipLog.push({ sample: si, symbol, reason }); };
 
     const concurrency = Math.max(1, Math.min(12, flag2(args, '--concurrency', 6)));
     let cursor = 0;
@@ -347,20 +391,22 @@ const main = async () => {
             tape = await asOfTape(m.md, s.symbol, s.decisionTime);
         } catch (e) {
             console.log(`  ⚠ sample ${si} ${s.symbol}: tape fetch failed (${e.message}) — skipped`);
+            skip(si, s.symbol, `tape fetch failed: ${e.message}`);
             return;
         }
-        if (tape.length < 30) { console.log(`  ⚠ sample ${si} ${s.symbol}: thin tape (${tape.length}) — skipped`); return; }
+        if (tape.length < 30) { console.log(`  ⚠ sample ${si} ${s.symbol}: thin tape (${tape.length}) — skipped`); skip(si, s.symbol, `thin tape (${tape.length})`); return; }
 
         // INTEGRITY: no closed bar at/after the decision.
         if (tape.some(c => c.time + HOUR > s.decisionTime)) {
             integrityFailures += 1;
             console.log(`  ⚠ sample ${si}: LOOK-AHEAD detected in the as-of tape — skipped and counted`);
+            skip(si, s.symbol, 'look-ahead in as-of tape');
             return;
         }
         const closes = tape.map(c => c.close);
         const atrSeries = m.regime.atrSeries(tape, 14);
         const atr = atrSeries.length ? atrSeries[atrSeries.length - 1] : 0;
-        if (!(atr > 0)) { console.log(`  ⚠ sample ${si}: ATR not measurable — skipped`); return; }
+        if (!(atr > 0)) { console.log(`  ⚠ sample ${si}: ATR not measurable — skipped`); skip(si, s.symbol, 'ATR not measurable'); return; }
 
         // The regime tag (the per-regime breakdown depends on it).
         const reg = m.regime.regimeRead(tape);
@@ -377,6 +423,7 @@ const main = async () => {
             post = await postTape(m.md, s.symbol, s.decisionTime, HORIZON_HOURS);
         } catch (e) {
             console.log(`  ⚠ sample ${si}: post tape failed (${e.message}) — skipped`);
+            skip(si, s.symbol, `post tape failed: ${e.message}`);
             return;
         }
 
@@ -403,13 +450,19 @@ const main = async () => {
                     console.log(`  ⚠ sample ${si} ${arm}: model call failed (${e.message})`);
                 }
             }
+            // A non-decision is a ROW, not an exit: `continue` advances to the
+            // next ARM. A `return` here would abandon the remaining arms for
+            // this sample, and the per-arm stats would be censored by whatever
+            // the baseline happened to do — exactly the bug the N=80 run had
+            // (an abstaining/failing baseline silently removed the sample from
+            // every later arm). Every processed sample yields one row per arm.
             if (!decision) {
                 results[arm].push({ sample: si, symbol: s.symbol, regimeId, outcome: 'unparseable', netR: null, brier: null, hallucination: null, tokens });
-                return;
+                continue;
             }
             if (decision.direction === 'abstain') {
                 results[arm].push({ sample: si, symbol: s.symbol, regimeId, outcome: 'abstain', netR: null, brier: null, hallucination: 0, tokens });
-                return;
+                continue;
             }
 
             // Grounding: a stated level counts as grounded when it sits
@@ -542,9 +595,26 @@ const main = async () => {
     }
 
     console.log(`\nintegrity: ${integrityFailures} look-ahead detections (must be 0)`);
+    if (skipLog.length) {
+        const byReason = skipLog.reduce((acc, s) => { const key = s.reason.split(':')[0].split('(')[0].trim(); acc[key] = (acc[key] || 0) + 1; return acc; }, {});
+        console.log(`skipped: ${skipLog.length}/${samples.length} samples never reached the arms — ${Object.entries(byReason).map(([r, n]) => `${r} ×${n}`).join(', ')}`);
+    } else {
+        console.log('skipped: 0');
+    }
     console.log('multiple-testing control: exactly the three comparisons declared in docs/plans/tools-upgrade.md §8 were computed.');
 
-    const artifact = { seed, perArm, arms: armNames, samples: samples.length, integrityFailures, results: Object.fromEntries(armNames.map(a => [a, results[a]])) };
+    const artifact = {
+        seed,
+        anchor: new Date(now).toISOString(),
+        anchorIsDefault: anchorArg === undefined,
+        perArm,
+        arms: armNames,
+        samples: samples.length,
+        sampleList: samples.map(s => ({ symbol: s.symbol, decisionTime: s.decisionTime })),
+        integrityFailures,
+        skipped: skipLog,
+        results: Object.fromEntries(armNames.map(a => [a, results[a]])),
+    };
     const dir = path.join(ROOT, '.probe-artifacts');
     try { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, `ablation-${Date.now()}.json`), JSON.stringify(artifact, null, 1)); } catch { /* best effort */ }
     if (dryRun) console.log('\nDRY RUN COMPLETE — the harness, packs and labels work; a real run needs the AUGUST_EVAL_* env.');
