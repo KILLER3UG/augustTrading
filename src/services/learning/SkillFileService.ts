@@ -316,8 +316,8 @@ const updateSkillMarkdown = (content: string, name: string, description: string,
     for (const [field, value] of fields) {
         if (!seen.has(field)) kept.push(`${field}: ${yamlString(value)}`);
     }
-    const newline = content.startsWith('---\r\n') ? '\r\n' : '\n';
-    const updatedBody = parsed?.body === body ? match[2] : `${newline}${body}${newline}`;
+    const newline = '\n';
+    const updatedBody = parsed?.body === body ? normalizeLineEndings(match[2]) : `${newline}${body}${newline}`;
     return `---${newline}${kept.join(newline)}${newline}---${newline}${updatedBody}`;
 };
 
@@ -821,9 +821,9 @@ export const importSkillToLibrary = async (
         let slug = base;
         for (let i = 2; existing.has(slug) || names.has(`${slug}.md`); i += 1) slug = `${base}-${i}`;
         try {
-            const head = await createMemoryFileUnlocked(folderId, `${slug}.md`, input.content, user, false, `${slug}/${SKILL_HEAD}`);
+            const head = await createMemoryFileUnlocked(folderId, `${slug}.md`, normalizeLineEndings(input.content), user, false, `${slug}/${SKILL_HEAD}`);
             const readBack = getMemoryFiles().files.find(f => f.id === head.id);
-            if (!readBack || readBack.content !== input.content || readBack.path !== `${slug}/${SKILL_HEAD}`) {
+            if (!readBack || readBack.content !== normalizeLineEndings(input.content) || readBack.path !== `${slug}/${SKILL_HEAD}`) {
                 return { ok: false, reason: `The head write for "${slug}" could not be verified in the notebook; no support files were imported.` };
             }
         } catch (e) {
@@ -844,10 +844,10 @@ export const importSkillToLibrary = async (
             }
             try {
                 const file = await createMemoryFileUnlocked(
-                    folderId, bundleStorageName(folderId, slug, rel), item.content, user, false, `${slug}/${rel}`,
+                    folderId, bundleStorageName(folderId, slug, rel), normalizeLineEndings(item.content), user, false, `${slug}/${rel}`,
                 );
                 const saved = getMemoryFiles().files.find(f => f.id === file.id);
-                if (!saved || saved.content !== item.content || saved.path !== `${slug}/${rel}`) {
+                if (!saved || saved.content !== normalizeLineEndings(item.content) || saved.path !== `${slug}/${rel}`) {
                     failures.push(`${item.path}: the support write could not be verified in the notebook.`);
                     continue;
                 }

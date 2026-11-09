@@ -32,6 +32,7 @@ import {
 import { getMemoryFiles, searchNotebookNotes } from './MemoryFilesService';
 import { findRelevantTrades } from './PatternMemorySynthesisService';
 import { contentWords, isSkillFile, jaccard, listSkillFiles, type SkillFile } from './SkillFileService';
+import { skillFormatIssues } from '../../utils/skillFrontmatter';
 import { type MemoryRetrievalQuery } from './MemoryGraph';
 import { charsForTokens, windowBudgetTokens } from '../../utils/tokenEstimate';
 
@@ -114,7 +115,10 @@ export const skillSetupScore = (skill: SkillFile, query: MemoryRetrievalQuery): 
 };
 
 /** Enabled skills whose own words describe this setup, best first. There is
- *  no approval, status or evidence gate: a file in the library is a skill. */
+ *  no approval, status or evidence gate: a file in the library is a skill.
+ *  The ONE format gate is `skillFormatIssues` — recall must not hand the model
+ *  a body the catalogue deliberately did not show it. The reasons reach the
+ *  writer through `skill_index`, so a dropped skill can still be repaired. */
 export const rankedMatchedSkills = (
     query?: MemoryRetrievalQuery,
     asOfMs?: number,
@@ -122,6 +126,7 @@ export const rankedMatchedSkills = (
     if (!query) return [];
     return listSkillFiles()
         .filter(s => s.file.enabled && (asOfMs === undefined || s.file.createdAt <= asOfMs))
+        .filter(s => skillFormatIssues(s.file.content).length === 0)
         .map(skill => ({ skill, score: skillSetupScore(skill, query) }))
         .filter(m => m.score >= DESCRIPTION_MATCH_MIN)
         .sort((a, b) => b.score - a.score);

@@ -9,7 +9,7 @@ import type { ProviderConfig } from '../../types/provider';
 import type { SkillWriteReview } from '../learning/SkillFileService';
 import type { Kline } from '../../types/message';
 import { getHarnessSettings } from '../../utils/harnessSettings';
-import { SKILL_BODY_SECTIONS } from '../../utils/skillFrontmatter';
+import { skillFormatIssues, SKILL_BODY_SECTIONS } from '../../utils/skillFrontmatter';
 import { baseOf } from '../../utils/symbol';
 import { phtStamp } from '../../utils/timezone';
 import { compactKlineRow, fullKlineRow } from '../../utils/klineRows';
@@ -3653,6 +3653,16 @@ ${hitContent}`, ...resolvedSymbolField(call, fallback) };
                 }
                 content = `# ${skill.slug}\nName: ${skill.name}\nDescription: ${skill.description}\nVersion: ${skill.version}\n\n${substitute(skill.body)}`
                     + (bundled.length ? `\n\n## Bundled files (open one with file_path)\n${bundled.map(b => `- ${b}`).join('\n')}` : '');
+                // `skill_view` is the REPAIR path, so an out-of-format skill is
+                // still readable — but the reader must be told what it is
+                // holding. Without this the only warning is the prompt note,
+                // which by definition the model did not see for this skill.
+                const formatIssues = skillFormatIssues(skill.file.content);
+                if (formatIssues.length > 0) {
+                    content = `Out of format — this skill is NOT loaded into the prompt and must not be applied as procedure. `
+                        + `Missing: ${formatIssues.map(i => i.what).join('; ')}. `
+                        + `Repair it with skill_write against this slug (read skill_index first), not a new skill.\n\n` + content;
+                }
                 return { toolCallId: call.id, name: call.name, ok: true, content, skillRead: { slug: skill.slug, version: skill.version } };
             }
             case 'emit_signal': {
@@ -4654,8 +4664,13 @@ ${body}`);
                 let skillIndex: Array<{ slug: string; description?: string; enabled: boolean }> = [];
                 try {
                     const { listSkillFiles } = await import('../learning/SkillFileService');
+                    const { skillFormatIssues } = await import('../../utils/skillFrontmatter');
                     skillIndex = listSkillFiles()
                         .filter(s => s.file.enabled)
+                        // The same gate as the catalogue and recall: this line is
+                        // a pointer the model follows with `skill_view`, so it
+                        // must not point at a note.
+                        .filter(s => skillFormatIssues(s.file.content).length === 0)
                         .map(s => ({ slug: s.slug, description: s.description, enabled: true }));
                 } catch { /* skill cross-ref is best-effort */ }
                 if (setups.length === 0) {

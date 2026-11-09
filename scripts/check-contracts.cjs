@@ -2851,6 +2851,8 @@ const checkSkillWrites = async () => {
         skills: 'src/services/learning/SkillFileService.ts',
         notebook: 'src/services/learning/MemoryFilesService.ts',
         amendments: 'src/services/learning/memoryAmendments.ts',
+        // Same bundle, so `recall` reads the SAME notebook the pen writes to.
+        recall: 'src/services/learning/MemoryRetrievalService.ts',
     });
     const sf = desk.skills;
     await desk.notebook.initMemoryFiles('skill-contract');
@@ -2881,8 +2883,35 @@ const checkSkillWrites = async () => {
         && !foldedSkill.file.content.includes('\r'),
         JSON.stringify(folded.ok ? foldedSkill.file.content.slice(0, 140) : folded));
     skill.version = foldedSkill.version;
+    // The store→builder seam: nothing else pins that `skillIndexRows` reads the
+    // format issues out of the STORED content. A regression returning
+    // `formatIssues: []` would pass every other contract and silently disable
+    // the load gate end-to-end.
+    const badRow = sf.skillIndexRows().find(r => r.slug === skill.slug);
+    ok('pen runtime: skillIndexRows carries the format issues read from the stored content',
+        badRow && badRow.formatIssues.length > 0 && badRow.formatIssues.some(i => i.includes('## Steps')),
+        JSON.stringify(badRow));
+    // The recall pull is the second door: it pushes the top match's FULL body,
+    // so it must apply the same format gate as the catalogue or a skill the
+    // prompt refused to show still reaches the model in full. Captured while
+    // the skill is still malformed.
+    const recallQuery = { pattern: 'copper warehouse inventory shocks' };
+    const whileBad = desk.recall.rankedMatchedSkills(recallQuery);
+    ok('pen runtime: recall drops an out-of-format skill body',
+        whileBad.length === 0, JSON.stringify(whileBad.map(m => m.skill.slug)));
+    const repaired = await sf.writeSkillFile(
+        { ...input, slug: skill.slug, ifVersion: skill.version, body: '## When to use\nA setup.\n\n## Steps\n1. Read the curve.\n\n## Pitfalls\nA spoofed wall.\n\n## Verification\nQuote the prices.' },
+        'skill-contract');
+    const repairedRow = sf.skillIndexRows().find(r => r.slug === skill.slug);
+    ok('pen runtime: a repaired skill clears its format issues in the index',
+        repaired.ok && repairedRow.formatIssues.length === 0, JSON.stringify(repairedRow));
+    skill.version = repairedRow.version;
+    const onceGood = desk.recall.rankedMatchedSkills(recallQuery);
+    ok('pen runtime: recall serves the same skill once it conforms',
+        onceGood.some(m => m.skill.slug === skill.slug), JSON.stringify(onceGood.map(m => m.skill.slug)));
+    const bodyBeforeCollision = sf.getSkill(skill.slug).body;
     const collision = await sf.writeSkillFile({ ...input, body: 'Unversioned overwrite.' }, 'skill-contract');
-    ok('pen runtime: New skill cannot overwrite a title collision', !collision.ok && sf.getSkill(skill.slug).body === foldedSkill.body);
+    ok('pen runtime: New skill cannot overwrite a title collision', !collision.ok && sf.getSkill(skill.slug).body === bodyBeforeCollision);
     const staleIndex = await call('skill_write', { name: 'gold vault', description: 'Gold vault delivery changes.', body: 'Read delivery notices.' }, { skillReview: review });
     ok('pen runtime: a changed library requires a fresh review', !staleIndex.ok, staleIndex.content);
     review.indexVersion = (await call('skill_index', {})).skillIndexVersion;

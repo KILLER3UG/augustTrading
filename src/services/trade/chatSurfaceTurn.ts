@@ -35,7 +35,7 @@ import { MessageRole } from '../../types';
 import { CASUAL_CHAT_SYSTEM_PROMPT, CHAT_SURFACE_SYSTEM_PROMPT } from '../../constants/prompts/chatPrompts';
 import { TASK_BUDGETS } from '../providers/taskBudgets';
 import { resolveComposerEffort, type ReasoningEffort } from '../providers/reasoningControls';
-import { buildSkillsIndexForPrompt } from './tradeChatContext';
+import { buildSkillsIndexForPrompt, usableSkillRows } from './tradeChatContext';
 import { skillIndexRows } from '../learning/SkillFileService';
 import { getMemoryFiles } from '../learning/MemoryFilesService';
 import { buildNotebookTopicsIndex } from '../learning/memoryTopics';
@@ -153,10 +153,12 @@ export const surfacePromptWith = (mandate: string, where: string, opts: { memory
     let skills: string[];
     try {
         const rows = skillIndexRows();
-        // The SAME ranked list the prompt carries, so the row's `injectedSkills`
-        // names exactly the skills the model was shown. Ranking it twice (here
-        // and inside the builder) is idempotent — the sort is stable.
-        skills = rows.slice(0, budget.skills).map(r => r.slug);
+        // The SAME filtered list the prompt carries (`usableSkillRows`), so the
+        // row's `injectedSkills` names exactly the skills the model was shown.
+        // Ranking it twice (here and inside the builder) is idempotent — the
+        // sort is stable, and both read one filter rather than two that can
+        // drift apart.
+        skills = usableSkillRows(rows).slice(0, budget.skills).map(r => r.slug);
         skillsBlock = buildSkillsIndexForPrompt(rows, budget.skills, where);
     } catch {
         skills = [];

@@ -217,6 +217,14 @@ export const TRADE_CHAT_SYSTEM_PROMPT = [
     'Analysis, not financial advice — never promise outcomes.',
 ].join(' ');
 
+/** The rows a prompt may carry: a skill that fails the format is a note, not
+ *  procedure. The prompt block AND the turn's `injectedSkills` record read
+ *  THIS one list, so the record cannot name a skill the model was not shown —
+ *  a record that disagrees with the prompt is how a downstream block ends up
+ *  asserting "SKILLS INJECTED ON THAT TURN" for a skill that never arrived. */
+export const usableSkillRows = (rows: SkillIndexRow[]): SkillIndexRow[] =>
+    rows.filter(r => r.formatIssues.length === 0);
+
 /**
  * Compact skills-library index for a seat's system prompt: a plain list of
  * slug + description, exactly as Claude lists a skill. The model opens any
@@ -236,11 +244,14 @@ export const buildSkillsIndexForPrompt = (
     // index and the trader's library still list it, with the reasons, because
     // a writer that cannot see a skill cannot repair it. The drop is logged
     // once per build so it is not silent.
-    const usable = rows.filter(r => {
-        if (r.formatIssues.length === 0) return true;
-        console.warn(`[skillIndex] "${r.slug}" is out of format and was NOT loaded into the prompt: ${r.formatIssues.join('; ')}`);
-        return false;
-    });
+    const usable = usableSkillRows(rows);
+    if (usable.length < rows.length) {
+        for (const r of rows) {
+            if (r.formatIssues.length > 0) {
+                console.warn(`[skillIndex] "${r.slug}" is out of format and was NOT loaded into the prompt: ${r.formatIssues.join('; ')}`);
+            }
+        }
+    }
     if (usable.length === 0) return '';
     const shown = usable.slice(0, max);
     return [
