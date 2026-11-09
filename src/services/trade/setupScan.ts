@@ -8,9 +8,13 @@
  * this to the model, and each setup carries keywords so the tool can also
  * name the library skills that speak to it.
  *
- * Pure + dependency-free (like candleFormations): unit-testable, no React,
- * no network. Windows are in BARS, newest last.
+ * Pure: unit-testable, no React, no network. The one import is
+ * `chartIndicators` — a pure, import-free math module — so the scanner's
+ * series agree bar-for-bar with what the chart draws and what the desk
+ * prints (the audit's one-module rule). Windows are in BARS, newest last.
  */
+
+import { emaSeries } from './chartIndicators';
 
 export interface ScanCandle {
     time: number;
@@ -292,19 +296,26 @@ export const scanSetups = (candles: ScanCandle[]): LiveSetup[] => {
     }
 
     // --- Trend pullback second entry (Al Brooks — Trading Price Action Trends).
-    const ema20 = smaSeries(closes, 20);
-    if (!Number.isNaN(ema20[n - 6])) {
-        const rising = ema20[n - 1] > ema20[n - 6];
-        const pullback = candles.slice(-4).some(c => c.low <= ema20[n - 1] * 1.002);
-        if (rising && pullback && isBull(last) && last.close > ema20[n - 1]) {
+    // A REAL EMA20 now, from chartIndicators — the one series module. This
+    // detector computed SMA20 and called it EMA20 (audit item D4): the SMA
+    // lags the EMA it was named after, so the evidence line disagreed with
+    // the same EMA20 drawn on the chart. Series entries are `null` before
+    // the warm-up, so the guard is a null check, not Number.isNaN.
+    const ema20 = emaSeries(closes, 20);
+    const emaNow = ema20[n - 1];
+    const emaPast = ema20[n - 6];
+    if (typeof emaNow === 'number' && typeof emaPast === 'number') {
+        const rising = emaNow > emaPast;
+        const pullback = candles.slice(-4).some(c => c.low <= emaNow * 1.002);
+        if (rising && pullback && isBull(last) && last.close > emaNow) {
             out.push({ id: 'trend-pullback-long', title: 'Trend pullback to rising EMA20 + bullish close — second entry', side: 'long', barsAgo: 0,
-                evidence: [`EMA20 rising ${fmt(ema20[n - 6])} → ${fmt(ema20[n - 1])}`, 'dip tagged the EMA and closed back above'],
+                evidence: [`EMA20 rising ${fmt(emaPast)} → ${fmt(emaNow)}`, 'dip tagged the EMA and closed back above'],
                 keywords: ['pullback', 'trend'] });
         }
-        const falling = ema20[n - 1] < ema20[n - 6];
-        if (falling && pullback && !isBull(last) && last.close < ema20[n - 1]) {
+        const falling = emaNow < emaPast;
+        if (falling && pullback && !isBull(last) && last.close < emaNow) {
             out.push({ id: 'trend-pullback-short', title: 'Trend rally to falling EMA20 + bearish close — second entry short', side: 'short', barsAgo: 0,
-                evidence: [`EMA20 falling ${fmt(ema20[n - 6])} → ${fmt(ema20[n - 1])}`, 'rally tagged the EMA and closed back below'],
+                evidence: [`EMA20 falling ${fmt(emaPast)} → ${fmt(emaNow)}`, 'rally tagged the EMA and closed back below'],
                 keywords: ['pullback', 'trend'] });
         }
     }

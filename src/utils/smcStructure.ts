@@ -14,26 +14,27 @@
  */
 
 import { Kline } from '../types';
+import { atrSeries, lastOf } from '../services/trade/chartIndicators';
 
 /**
  * ATR(14) over completed candles — the standard stop-math yardstick.
- * NOTE: this is a SIMPLE moving average of true range, not Wilder's
- * smoothing (α=1/14). The two converge over long windows but diverge on
- * short/volatile ones; consumers here (structure clustering, stop math)
- * only need a stable volatility yardstick, so the SMA form is kept and
- * named honestly rather than pretending to be Wilder's.
+ * WILDER's smoothing (α=1/period), from `chartIndicators.atrSeries` — the
+ * one series module the chart draws from. This used to be a simple average
+ * of the trailing true ranges, which read as a DIFFERENT number than the
+ * chart's ATR over the same bars (audit item D1): a stop the desk sized at
+ * "1×ATR" and the line the trader saw at "1×ATR" were two distances. The
+ * forming candle is still dropped first, and the warm-up still returns 0.
  */
 export const atr14 = (klines: Kline[], period = 14): number => {
     const ks = klines.slice(0, -1); // drop the forming candle
-    if (ks.length < period + 1) return 0;
-    let sum = 0;
-    for (let i = ks.length - period; i < ks.length; i++) {
-        const prev = ks[i - 1];
-        const k = ks[i];
-        const tr = Math.max(k.high - k.low, Math.abs(k.high - prev.close), Math.abs(k.low - prev.close));
-        sum += tr;
-    }
-    return sum / period;
+    if (ks.length <= period) return 0;
+    const atr = lastOf(atrSeries(
+        ks.map(k => k.high),
+        ks.map(k => k.low),
+        ks.map(k => k.close),
+        period,
+    ));
+    return typeof atr === 'number' && Number.isFinite(atr) ? atr : 0;
 };
 
 // ─── a) Equal highs/lows (liquidity pools) ───────────────────────────────────
