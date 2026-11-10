@@ -1338,25 +1338,51 @@ body.motion-reduced {
 /* Shared column for messages + composer so they share one width. */
 .chat-column {
   width: 100%;
-  /* The reference's conversation is a narrow reading column with air on both
-     sides. 840px keeps the trading tables usable while the prose sits on the
-     42rem measure inside it. */
-  max-width: 840px;
+  /* The conversation is a reading column with air on both sides, but 840px was
+     a PHONE-width decision kept on a desktop: on a 1440 screen it left ~300px
+     of dead margin per side, and the analysis tables it also carries wrapped
+     numbers the window had room to show. The column now follows the window —
+     78vw, capped at 1180px — and MEASURED (not computed) it is 960px at 1280,
+     1120px at 1440 and 1180px at 1920; the first two are the surface's own
+     content region, which is the constraint before the clamp is. 1024 is
+     unchanged at 704 for that same reason (its region, not this rule, is the
+     limit). The clamp FLOOR (680px) is the width below which the column stops
+     being the constraint: `width:100%` wins there — an 800px window gets 680px
+     and 60px of air per side. Wall-to-wall at any size would be a different
+     defect, so the gutter is also enforced INSIDE the column (below). */
+  max-width: clamp(680px, 78vw, 1180px);
   margin-left: auto;
   margin-right: auto;
+  /* The column can be the viewport width minus its parents' padding, and 16px
+     against 1024 is not a margin, it is an edge. This is the surface's own
+     gutter: 8px on a 1024 laptop, 20px once the window is wide enough for the
+     clamp to stop binding. It overrides the call sites' px-5/px-6 deliberately
+     — one column, one gutter, so the thread, the composer and the parked
+     notice share the same left edge instead of three near-misses. */
+  padding-inline: clamp(0.5rem, 1vw, 1.25rem);
 }
 
 /* The PROSE measure inside that column — the model's answer only.
-   920px was chosen for the thing this column also carries: order-book dumps,
-   key-level tables and the verdict card need the width, and they got it. But
-   the same 920px is what makes a written analysis run ~100 characters per line
-   at 15px, which is past the point where a reader's eye tracks back. Both
-   references settle near 66–72 characters; 42rem at the 16px base is 672px and
-   lands there. In rem rather than px on purpose, so the accessibility dial
-   moves the measure with the type instead of holding the line length fixed.
+   This has always been the narrowest thing in the window: an analysis reads
+   better at a bounded measure than at the full panel width, and the data rows
+   around it (order-book dumps, key-level tables, the verdict card) keep the
+   whole column. What changed is the column got wider, and the answer has to
+   take some of that or the width is pure gutter.
+   42rem → 48rem, and NOT the 52rem the column's growth would suggest, because
+   the measure was measured rather than assumed: at the shipped 15px answer
+   size, 42rem (672px) already renders ~82 characters per line on this screen
+   (Range-measured in the browser, 1440 viewport). 52rem renders ~101 — a 23%
+   jump, past the point where the eye returns cleanly — while 48rem renders
+   ~94, i.e. ~14% more text width for a 12-character stretch. A true 75-char
+   line would be ~38rem, NARROWER than what ships today and would leave ~450px
+   of empty column: the 75-char ideal is simply not reachable at this type size
+   in a column this wide, so this stops at the largest value that keeps the
+   line length close to what the product already prints.
+   In rem rather than px on purpose, so the accessibility dial moves the
+   measure with the type instead of holding the line length fixed.
    Data keeps the wide column: this caps the answer, never the evidence. */
 .chat-prose {
-  max-width: 42rem;
+  max-width: 48rem;
 }
 
 /* Quiet identity and depth for the conversation's empty state. The gradients

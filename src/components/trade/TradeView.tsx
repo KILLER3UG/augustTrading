@@ -37,6 +37,7 @@ import { useFuturesLiveFeed } from '../../hooks/useFuturesLiveFeed';
 import { useSharedTicker } from '../../hooks/useSharedTicker';
 import { useSymbolUniverse } from '../../hooks/useSymbolUniverse';
 import TradingChart, { type ChartHandle } from './TradingChart';
+import ErrorBoundary from '../shared/ErrorBoundary';
 import { toKlineInterval, type ChartInterval } from '../../utils/chartIntervals';
 import type { MessageLevelLines } from '../../services/trade/keyLevels';
 import { fetchKlines } from '../../services/analysis/KlineService';
@@ -175,11 +176,20 @@ interface StripData {
 
 /** Chart AI dock geometry — persisted like a panel, clamped to sane widths.
  *  The dock lives at the RIGHT of the chart, so dragging the separator LEFT
- *  grows it: width = startWidth - (clientX - startX). */
+ *  grows it: width = startWidth - (clientX - startX).
+ *  2026-11: the dock is a chat surface, and at 364px it was narrower than a
+ *  phone — an answer wrapped every seven words beside a chart nobody was
+ *  looking at. Default is now 460 (364 × 1.25 = 455, so this is a real +26%,
+ *  not the +21% a round 440 would have been) and the ceiling is 1000, which is
+ *  what the persisted-width clamp accepts. A stored 1000 does not get to sit
+ *  edge-to-edge on a 1024 laptop: the `calc(100% - 420px)` cap applies to the
+ *  collapsed state as well as the expanded one, so the chart keeps its 420px
+ *  floor at every window size.
+ *  DOCK_MIN stays 300: below that the composer's own controls stop fitting. */
 const DOCK_WIDTH_KEY = 'trade_dock_width_v1';
 const DOCK_MIN = 300;
-const DOCK_MAX = 820;
-const DOCK_DEFAULT = 364;
+const DOCK_MAX = 1000;
+const DOCK_DEFAULT = 460;
 /** Registry id of the Chart AI dock inside the shared right-panel contract. */
 const DOCK_ID = 'chart-ai';
 
@@ -1035,6 +1045,7 @@ const TradeView: React.FC<TradeViewProps> = ({
                          * viewport and clip the dock's right edge. */
                         : 'min-h-[420px] flex-1 lg:min-h-0 lg:min-w-0'}
                 >
+                    <ErrorBoundary pane label="The chart" resetKey={`${symbol}:${interval}`}>
                     <TradingChart symbol={symbol} interval={interval} onIntervalChange={changeInterval} sessionId={chatSnap.activeId ?? 'analyze'} verdict={chartVerdict} live={live} liveKline={feed.kline}
                         lastPrice={Number.isFinite(lastPrice) ? lastPrice : null}
                         markPrice={Number.isFinite(markPrice) ? markPrice : null}
@@ -1044,6 +1055,7 @@ const TradeView: React.FC<TradeViewProps> = ({
                         onDrawingsChange={setChartDrawings}
                         modelDrawings={modelDrawings}
                         onRemoveModelShape={removeModelShape} />
+                    </ErrorBoundary>
                     <LevelAccuracyBadge
                         drawings={modelDrawings}
                         candles={levelCandles}
@@ -1110,7 +1122,16 @@ const TradeView: React.FC<TradeViewProps> = ({
                     offset and any in-flight turn died with it. Collapsing the dock
                     to look at the chart is an ordinary thing to do mid-analysis,
                     and coming back to an empty dock was data loss wearing a UI
-                    costume. The shell keeps it mounted and makes it inert. */}
+                    costume. The shell keeps it mounted and makes it inert.
+
+                    The `calc(100% - 420px)` cap is on BOTH states now, not just
+                    the expanded one. With DOCK_MAX raised to 1000 a stored width
+                    can be wider than the row it sits in on a 1024 laptop, and
+                    without the cap the dock's right edge ran 24px past the window
+                    (measured) — the chart survived but the header's close button
+                    did not. 420 is kept as the chart's floor for the same reason
+                    it was chosen for the expanded state: the ladder and the mode
+                    switcher are unusable below it. */}
                 <RightPanel
                     presentation="push"
                     isResizing={rightPanel.isResizing}
@@ -1128,7 +1149,7 @@ const TradeView: React.FC<TradeViewProps> = ({
                     testId="trade-dock"
                     className={isBelowLg
                         ? (mode === 'ai' ? 'min-h-0 w-full flex-1' : 'hidden')
-                        : `h-96 w-full shrink-0 lg:h-auto lg:w-[var(--panel-w)] lg:min-w-[300px] ${dockExpanded ? 'lg:!w-1/2 xl:!w-7/12 lg:!max-w-[calc(100%_-_420px)]' : ''}`}
+                        : `h-96 w-full shrink-0 lg:h-auto lg:w-[var(--panel-w)] lg:min-w-[300px] ${dockExpanded ? 'lg:!w-1/2 xl:!w-7/12 lg:!max-w-[calc(100%_-_420px)]' : 'lg:max-w-[calc(100%_-_420px)]'}`}
                 >
                     <TradeChatPanel
                         {...dockProps}
