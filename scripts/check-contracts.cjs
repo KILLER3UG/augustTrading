@@ -4248,6 +4248,29 @@ const runCaptureChecks = async () => {
     ok('chartIndicators: TSI(25,13,13) warms up after long+short and stays bounded',
         tsi.tsi.slice(0, 36).every(v => v === null)
         && tsi.tsi.slice(37).every(v => v === null || (v >= -100 && v <= 100)));
+
+    // VWAP: session mode resets at the UTC day; anchored mode is null before
+    // the anchor; a zero-volume bar carries the cumulative and yields null.
+    const UTC_DAY_S = 86_400;
+    const mkBar = (t, h, l, c, v) => ({ time: t, high: h, low: l, close: c, volume: v });
+    const day1 = 1_700_000_000 - (1_700_000_000 % UTC_DAY_S);
+    const vwapCandles = [
+        mkBar(day1, 101, 99, 100, 2),            // typical 100 → vwap 100
+        mkBar(day1 + 3600, 103, 101, 102, 2),    // cum (100·2 + 102·2)/4 = 101
+        mkBar(day1 + 7200, 104, 100, 102, 0),    // zero volume → null, cum kept
+        mkBar(day1 + UTC_DAY_S, 105, 101, 103, 2), // next UTC day → resets → 103
+    ];
+    const sv = ci.vwapSeries(vwapCandles, null);
+    ok('chartIndicators: session VWAP accumulates the typical price and resets at the UTC day',
+        sv[0] === 100 && sv[1] === 101 && sv[2] === null && sv[3] === 103,
+        JSON.stringify(sv));
+    const av = ci.vwapSeries(vwapCandles, day1 + 3600);
+    ok('chartIndicators: anchored VWAP is null before the anchor and starts the accumulation there',
+        av[0] === null && av[1] === 102 && av[3] === 102.5,
+        JSON.stringify(av));
+    ok('chartIndicators: VWAP needs volume — a volume-less row yields null and cannot reset the day',
+        ci.vwapSeries([{ time: day1, high: 101, low: 99, close: 100 }, mkBar(day1 + 3600, 103, 101, 102, 4)], null)[0] === null
+        && ci.vwapSeries([{ time: day1, high: 101, low: 99, close: 100 }, mkBar(day1 + 3600, 103, 101, 102, 4)], null)[1] === 102);
 })();
 
 // ─── 46. chart indicator settings: per-user, defaulted, round-tripped ──────

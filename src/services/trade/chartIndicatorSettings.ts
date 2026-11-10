@@ -21,6 +21,7 @@ export type ChartIndicatorId =
     | 'macd'
     | 'tsi'
     | 'vwap'
+    | 'avwap'
     | 'volumeProfile'
     | 'sessionLevels'
     | 'swings'
@@ -35,7 +36,7 @@ export interface ChartIndicatorSettings {
 
 export const CHART_INDICATOR_IDS = [
     'volume', 'ema20', 'ema200', 'boll', 'rsi', 'macd',
-    'tsi', 'vwap', 'volumeProfile', 'sessionLevels', 'swings', 'cvd', 'funding',
+    'tsi', 'vwap', 'avwap', 'volumeProfile', 'sessionLevels', 'swings', 'cvd', 'funding',
 ] as const satisfies readonly ChartIndicatorId[];
 
 /** OKX's out-of-the-box set. */
@@ -49,6 +50,7 @@ export const DEFAULT_CHART_INDICATOR_SETTINGS: ChartIndicatorSettings = {
         macd: true,
         tsi: false,
         vwap: false,
+        avwap: false,
         volumeProfile: false,
         sessionLevels: false,
         swings: false,
@@ -69,7 +71,8 @@ export const CHART_INDICATOR_LABELS: Record<ChartIndicatorId, string> = {
     rsi: 'RSI(14)',
     macd: 'MACD(12, 26, 9)',
     tsi: 'TSI(25, 13, 13)',
-    vwap: 'VWAP',
+    vwap: 'VWAP (session)',
+    avwap: 'Anchored VWAP (Alt+click to anchor)',
     volumeProfile: 'Volume profile',
     sessionLevels: 'Session levels',
     swings: 'Swings / BOS',
@@ -88,6 +91,7 @@ export const CHART_INDICATOR_PANE: Partial<Record<ChartIndicatorId, 'main' | 'su
     macd: 'sub',
     tsi: 'sub',
     vwap: 'main',
+    avwap: 'main',
     volumeProfile: 'sub',
     cvd: 'sub',
     funding: 'sub',

@@ -49,6 +49,10 @@ export interface Kline {
     low: number;
     close: number;
     volume: number;
+    /** Taker-buy base-asset volume (Binance kline field 9) — the REAL delta
+     *  input for the CVD studies. Set by the kline parsers below; absent on
+     *  synthetic rows and pre-CVD cached pages. */
+    takerBuyVolume?: number;
 }
 
 export interface MarketData {

@@ -16,6 +16,14 @@ export interface CandlePoint {
     high: number;
     low: number;
     close: number;
+    /** Base-asset volume, when the source kline carried it. The volume
+     *  SERIES is separate, but the volume-WEIGHTED studies (VWAP, CVD) read
+     *  their weight from the candle row — a chart study and its weight in
+     *  one place, so they cannot disagree. */
+    volume?: number;
+    /** Taker-buy volume (Binance kline field 9), when present: the REAL
+     *  delta for the CVD study. Absent on old cached rows and test fixtures. */
+    takerBuyVolume?: number;
 }
 
 export interface VolumePoint {
@@ -29,7 +37,12 @@ export const VOLUME_DOWN = 'rgba(247, 93, 95, 0.45)'; // theme red
 
 export const toCandles = (klines: Kline[]): CandlePoint[] => klines
     .filter(k => Number.isFinite(k.open) && Number.isFinite(k.high) && Number.isFinite(k.low) && Number.isFinite(k.close))
-    .map(k => ({ time: Math.floor(k.time / 1000), open: k.open, high: k.high, low: k.low, close: k.close }));
+    .map(k => ({
+        time: Math.floor(k.time / 1000),
+        open: k.open, high: k.high, low: k.low, close: k.close,
+        ...(Number.isFinite(k.volume) ? { volume: k.volume } : {}),
+        ...(typeof k.takerBuyVolume === 'number' && Number.isFinite(k.takerBuyVolume) ? { takerBuyVolume: k.takerBuyVolume } : {}),
+    }));
 
 export const toVolumes = (klines: Kline[]): VolumePoint[] => klines
     .filter(k => Number.isFinite(k.volume))

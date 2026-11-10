@@ -231,3 +231,56 @@ export const lastOf = (series: Series): number | null => {
     }
     return null;
 };
+
+// ─── VWAP ────────────────────────────────────────────────────────────────────
+
+export interface VwapCandle {
+    time: number;
+    high: number;
+    low: number;
+    close: number;
+    /** A bar with no volume (or zero) cannot move a volume-weighted average:
+     *  its own entry is `null` and the cumulative carries through untouched. */
+    volume?: number;
+}
+
+/** Per-bar VWAP, bar-aligned: the volume-weighted typical price
+ *  ((H+L+C)/3) accumulated from an anchor. TWO anchor modes, one function:
+ *  · `anchorTime === null` — SESSION VWAP: the accumulation RESETS at every
+ *    UTC day boundary, which is what OKX draws by default and what
+ *    `sessionConvention.utcDayStart` means elsewhere in this app;
+ *  · `anchorTime` set — ANCHORED VWAP: every bar before the anchor is `null`;
+ *    the accumulation starts at the anchor bar.
+ *  The cumulative itself is exact recursion: cumPV and cumV grow, and each
+ *  bar's value is cumPV/cumV — a forming bar changes only its own entry. */
+export const vwapSeries = (candles: readonly VwapCandle[], anchorTime: number | null = null): Series => {
+    const out: Series = new Array(candles.length).fill(null);
+    const UTC_DAY_MS = 86_400_000;
+    let cumPV = 0;
+    let cumV = 0;
+    let currentDay: number | null = null;
+    let anchored = anchorTime === null;
+    for (let i = 0; i < candles.length; i += 1) {
+        const c = candles[i];
+        if (anchorTime !== null) {
+            if (!anchored) {
+                if (c.time < anchorTime) continue; // before the anchor: no value
+                anchored = true; // the anchor bar itself is the first accumulated
+            }
+        } else {
+            const day = Math.floor(c.time * 1000 / UTC_DAY_MS);
+            if (day !== currentDay) {
+                currentDay = day;
+                cumPV = 0;
+                cumV = 0;
+            }
+        }
+        const vol = typeof c.volume === 'number' && Number.isFinite(c.volume) && c.volume > 0 ? c.volume : null;
+        if (vol === null) continue; // carry the cumulative; this bar has no VWAP
+        const typical = (c.high + c.low + c.close) / 3;
+        cumPV += typical * vol;
+        cumV += vol;
+        out[i] = cumV > 0 ? cumPV / cumV : null;
+    }
+    return out;
+};

@@ -67,6 +67,7 @@ import {
     macdSeries,
     rsiSeries,
     tsiSeries,
+    vwapSeries,
     type BollingerSeries,
     type Series,
 } from '../../services/trade/chartIndicators';
@@ -248,9 +249,23 @@ interface TradingChartProps {
     } | null;
 }
 
+/** The chart's own candle row, WITH its weight fields. `series.data()` is not
+ *  contractually required to return fields the chart library does not know,
+ *  so the volume/taker-buy weights the VWAP and CVD studies read live in THIS
+ *  mirror — set at the history load, extended by every live tick, read by the
+ *  indicator BUILD/REFRESH. One mirror, never recomputed from the series. */
+type ChartRow = {
+    time: number;
+    open: number;
+    high: number;
+    low: number;
+    close: number;
+    volume?: number;
+    takerBuyVolume?: number;
+};
+
 /** Seconds to the close of the bar that opened at `barTime`, as m:ss. Ticks
- *  itself so a countdown does not re-render the whole chart every second. */
-const BarCountdown = ({ barTime, interval }: { barTime: number; interval: ChartInterval }): React.ReactElement => {
+ *  itself so a countdown does not re-render the whole chart every second. */const BarCountdown = ({ barTime, interval }: { barTime: number; interval: ChartInterval }): React.ReactElement => {
     const [now, setNow] = useState(() => Date.now());
     useEffect(() => {
         const t = window.setInterval(() => setNow(Date.now()), 1000);
@@ -352,7 +367,16 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
     const bandRef = useRef<{ times: number[]; upper: Series; lower: Series } | null>(null);
     /** How to recompute the band from a candle array — REFRESH re-runs it so
      *  the shaded fill tracks the live tape with the lines. */
-    const bandCalcRef = useRef<((cs: readonly { close: number }[]) => BollingerSeries) | null>(null);
+    const bandCalcRef = useRef<((cs: readonly ChartRow[]) => BollingerSeries) | null>(null);
+    /** The candle rows WITH their weight fields (volume, taker-buy) — see the
+     *  ChartRow type. The history load fills it, every live tick extends it,
+     *  and the indicator BUILD/REFRESH read it instead of `series.data()`. */
+    const chartRowsRef = useRef<ChartRow[]>([]);
+    /** The anchored-VWAP anchor: the bar TIME the trader Alt+clicked. View
+     *  state, not settings — an anchor is a question about THIS chart read,
+     *  not a preference. Toggling the study off clears it. */
+    const [avwapAnchor, setAvwapAnchor] = useState<number | null>(null);
+    const avwapAnchorRef = useRef<number | null>(null);
     /** Every series living on a SUB-pane (RSI / MACD / TSI), so the mount
      *  cleanup can drop them and the rebuild can start from pane 1. */
     const subPaneSeriesRef = useRef<ISeriesApi<SeriesType>[]>([]);
@@ -367,7 +391,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
         kind: 'line' | 'hist';
         /** Legend key, when the study has a legend row. */
         name?: string;
-        calc: (cs: readonly { close: number }[]) => Series;
+        calc: (cs: readonly ChartRow[]) => Series;
     }[]>([]);
     /** Re-run every study compute and push the results into the live series.
      *  `full` (a bar closed, or a settings change) rewrites whole series;
@@ -399,6 +423,10 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
     const [indicatorSettings, setIndicatorSettings] = useState<ChartIndicatorSettings>(
         () => readChartIndicatorSettings(getActiveUsername() || 'default'),
     );
+    /** What is visible, readable from non-React callbacks (the canvas repaint
+     *  runs on subscriptions, not renders — a state read there goes stale).
+     *  The BUILD effect refreshes it on every settings change. */
+    const visibleRef = useRef(indicatorSettings.visible);
     /** Back-compat with the old single `ƒSMA` toggle: on when ANY study is on,
      *  so a caller forcing `showSma` still lights the button. */
     const indicatorsOn = Object.values(indicatorSettings.visible).some(Boolean) || showSma;
@@ -407,6 +435,12 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
         setIndicatorSettings(prev => {
             const next: ChartIndicatorSettings = { visible: { ...prev.visible, [id]: !prev.visible[id] } };
             writeChartIndicatorSettings(getActiveUsername() || 'default', next);
+            // Turning the anchored VWAP off also drops its anchor: re-toggling
+            // starts a fresh read, not a silent revival of an old one.
+            if (id === 'avwap' && !next.visible.avwap) {
+                avwapAnchorRef.current = null;
+                setAvwapAnchor(null);
+            }
             return next;
         });
     };
@@ -433,6 +467,14 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                     <span>BOLL <span className="text-cyan-300">{fmt(bar.values.bollMid ?? null)}</span></span>
                     <span>UB <span className="text-cyan-300">{fmt(bar.values.bollUpper ?? null)}</span></span>
                     <span>LB <span className="text-cyan-300">{fmt(bar.values.bollLower ?? null)}</span></span>
+                </div>
+            ));
+        }
+        if (v.vwap || v.avwap) {
+            rows.push((
+                <div key="vwap" className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                    {v.vwap && <span>VWAP <span className="text-sky-300">{fmt(bar.values.vwap ?? null)}</span></span>}
+                    {v.avwap && <span>aVWAP <span className="text-violet-300">{avwapAnchor === null ? '(Alt+click a bar)' : fmt(bar.values.avwap ?? null)}</span></span>}
                 </div>
             ));
         }
@@ -646,6 +688,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
             chartRef.current = null;
             candlesRef.current = null;
             volumeRef.current = null;
+            chartRowsRef.current = [];
             indicatorSeriesRef.current = [];
             subPaneSeriesRef.current = [];
             levelLinesRef.current = [];
@@ -726,6 +769,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
             lastTagRef.current = null;
             candlesRef.current?.setData([]);
             volumeRef.current?.setData([]);
+            chartRowsRef.current = [];
             lastTickRef.current = Date.now();
         }
         let cancelled = false;
@@ -748,6 +792,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                 const vs = volumeRef.current;
                 if (!cs || !vs || klines.length === 0) { setStatus('unavailable'); timer = window.setTimeout(() => void load(false), 4000); return; }
                 const candles = toCandles(klines);
+                chartRowsRef.current = candles;
                 cs.setData(candles.map(c => ({ ...c, time: c.time as UTCTimestamp })));
                 vs.setData(toVolumes(klines).map(v => ({ ...v, time: v.time as UTCTimestamp })));
                 setStatus('live');
@@ -807,6 +852,15 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
             time: t as UTCTimestamp,
             open: liveKline.open, high: liveKline.high, low: liveKline.low, close: liveKline.close,
         });
+        // The weight mirror rides the same tick: the forming bar's VWAP/CVD
+        // move with its volume, and a new bar opens a fresh row.
+        {
+            const rows = chartRowsRef.current;
+            const lastRow = rows[rows.length - 1];
+            const row: ChartRow = { time: t, open: liveKline.open, high: liveKline.high, low: liveKline.low, close: liveKline.close, volume: liveKline.volume };
+            if (lastRow && lastRow.time === t) rows[rows.length - 1] = row;
+            else rows.push(row);
+        }
         volumeRef.current.update({
             time: t as UTCTimestamp,
             value: liveKline.volume,
@@ -821,7 +875,14 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
             void fetchKlines(symbol, toKlineInterval(interval), 3, { noCache: true }).then(kl => {
                 if (kl.length === 0 || cs.data().length === 0) return;
                 const last = kl[kl.length - 1];
-                cs.update({ time: Math.floor(last.time / 1000) as UTCTimestamp, open: last.open, high: last.high, low: last.low, close: last.close });
+                const tClosed = Math.floor(last.time / 1000);
+                cs.update({ time: tClosed as UTCTimestamp, open: last.open, high: last.high, low: last.low, close: last.close });
+                {
+                    const rows = chartRowsRef.current;
+                    const row: ChartRow = { time: tClosed, open: last.open, high: last.high, low: last.low, close: last.close, volume: last.volume, takerBuyVolume: last.takerBuyVolume };
+                    if (rows.length && rows[rows.length - 1].time === tClosed) rows[rows.length - 1] = row;
+                    else rows.push(row);
+                }
                 // The finalized OHLC can differ from the tick's last print, so
                 // the just-closed bar's study values move too — full rewrite.
                 refreshIndicatorsRef.current(true);
@@ -910,13 +971,15 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
         for (const s of indicatorSeriesRef.current) { try { chart.removeSeries(s); } catch { /* already gone */ } }
         indicatorSeriesRef.current = [];
         indicatorDefsRef.current = [];
-        const candles = (candlesRef.current?.data?.() ?? []) as readonly { time: number; open: number; high: number; low: number; close: number }[];
+        const candles = chartRowsRef.current.length > 0
+            ? chartRowsRef.current
+            : (candlesRef.current?.data?.() ?? []) as readonly ChartRow[];
         if (candles.length === 0) { refreshIndicatorsRef.current = () => {}; return; }
-        const closesOf = (cs: readonly { close: number }[]): number[] => cs.map(c => c.close);
+        const closesOf = (cs: readonly ChartRow[]): number[] => cs.map(c => c.close);
         /** Register a main-pane line study: create the series now, remember
          *  how to recompute its values from any later candle array, and file
          *  the raw series under its legend key. */
-        const addLine = (calc: (cs: readonly { close: number }[]) => Series, color: string, name?: string): void => {
+        const addLine = (calc: (cs: readonly ChartRow[]) => Series, color: string, name?: string): void => {
             const series = chart.addSeries(LineSeries, {
                 color, lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
             });
@@ -924,6 +987,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
             indicatorDefsRef.current.push({ series, kind: 'line', name, calc });
         };
         const visible = indicatorSettings.visible;
+        visibleRef.current = visible;
         bandRef.current = null;
         bandCalcRef.current = null;
         if (visible.ema20) addLine(cs => emaSeries(closesOf(cs), 20), chartColor('--color-amber-500', '#f59e0b'), 'ema20');
@@ -935,6 +999,12 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
             addLine(cs => bollingerSeries(closesOf(cs), 20, 2).lower, bollColor, 'bollLower');
             bandCalcRef.current = (cs) => bollingerSeries(closesOf(cs), 20, 2);
         }
+        // VWAP: session (UTC-day reset) by default; the ANCHORED variant runs
+        // from the bar the trader Alt+clicked (avwapAnchorRef), which is a
+        // question about THIS read, not a preference — so it lives in view
+        // state and a new anchor just re-runs REFRESH, no rebuild.
+        if (visible.vwap) addLine(cs => vwapSeries(cs, null), chartColor('--color-sky-400', '#38bdf8'), 'vwap');
+        if (visible.avwap) addLine(cs => vwapSeries(cs, avwapAnchorRef.current), chartColor('--color-violet-400', '#c084fc'), 'avwap');
         // Sub-panes, in a FIXED order so the indices are deterministic.
         for (const s of subPaneSeriesRef.current) { try { chart.removeSeries(s); } catch { /* already gone */ } }
         subPaneSeriesRef.current = [];
@@ -942,7 +1012,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
             try { chart.removePane(chart.panes().length - 1); } catch { break; }
         }
         const addSub = (series: ISeriesApi<SeriesType>): void => { subPaneSeriesRef.current.push(series); };
-        const putLine = (pane: number, calc: (cs: readonly { close: number }[]) => Series, color: string, scaleId?: string, name?: string): void => {
+        const putLine = (pane: number, calc: (cs: readonly ChartRow[]) => Series, color: string, scaleId?: string, name?: string): void => {
             const s = chart.addSeries(LineSeries, {
                 color, lineWidth: 1, priceLineVisible: false, lastValueVisible: false,
                 crosshairMarkerVisible: false, ...(scaleId ? { priceScaleId: scaleId } : {}),
@@ -950,7 +1020,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
             addSub(s);
             indicatorDefsRef.current.push({ series: s, kind: 'line', name, calc });
         };
-        const putHist = (pane: number, calc: (cs: readonly { close: number }[]) => Series, name?: string): void => {
+        const putHist = (pane: number, calc: (cs: readonly ChartRow[]) => Series, name?: string): void => {
             const s = chart.addSeries(HistogramSeries, {
                 priceLineVisible: false, lastValueVisible: false,
             }, pane);
@@ -984,7 +1054,9 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
         // rewrites whole series (a bar closed, so past points moved too);
         // otherwise only each series' last point moves.
         refreshIndicatorsRef.current = (full: boolean): void => {
-            const cs = (candlesRef.current?.data?.() ?? []) as readonly { time: number; open: number; high: number; low: number; close: number }[];
+            const cs = chartRowsRef.current.length > 0
+                ? chartRowsRef.current
+                : (candlesRef.current?.data?.() ?? []) as readonly ChartRow[];
             if (cs.length === 0) return;
             const times = cs.map(c => c.time as UTCTimestamp);
             const legendSeries: Record<string, Series> = {};
@@ -1290,6 +1362,24 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
             }
         }
 
+        // The anchored VWAP's anchor: a thin vertical marker on the bar the
+        // trader Alt+clicked, so the anchor is a visible fact, not a guess
+        // about where the average starts. Repaint keeps it under pan/zoom.
+        if (visibleRef.current.avwap && avwapAnchorRef.current !== null) {
+            const ax = toScreen({ t: avwapAnchorRef.current, p: 0 });
+            if (ax) {
+                ctx.save();
+                ctx.strokeStyle = chartColor('--color-violet-400', '#c084fc');
+                ctx.setLineDash([3, 3]);
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.moveTo(ax.x, 0);
+                ctx.lineTo(ax.x, plotH);
+                ctx.stroke();
+                ctx.restore();
+            }
+        }
+
         const project = (list: ChartDrawing['points']): { x: number; y: number }[] =>
             list.map(pt => toScreen(pt)).filter((s): s is { x: number; y: number } => s !== null);
 
@@ -1560,7 +1650,26 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
     };
 
     const onPointerDown = (ev: React.PointerEvent): void => {
-        if (tool === 'cursor') return;
+        if (tool === 'cursor') {
+            // Alt+click anchors the VWAP to the bar under the pointer — OKX's
+            // anchored-VWAP gesture. Alt+clicking the CURRENT anchor clears it.
+            // Only while the study is on: otherwise Alt+click (a browser
+            // modifier users press for other reasons) would leave invisible
+            // state behind.
+            if (ev.altKey && indicatorSettings.visible.avwap) {
+                const ts = chartRef.current?.timeScale();
+                const logical = typeof ts?.coordinateToLogical === 'function' ? ts.coordinateToLogical(localPoint(ev).x) : null;
+                const idx = logical === null || logical === undefined ? -1 : Math.round(Number(logical));
+                const row = chartRowsRef.current[idx];
+                if (row) {
+                    const next = avwapAnchorRef.current === row.time ? null : row.time;
+                    avwapAnchorRef.current = next;
+                    setAvwapAnchor(next);
+                    refreshIndicatorsRef.current(true);
+                }
+            }
+            return;
+        }
         ev.preventDefault();
         const pt = magnet ? magnetPoint(localPoint(ev)) : localPoint(ev);
         if (tool === 'erase') {
