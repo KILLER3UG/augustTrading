@@ -71,6 +71,7 @@ import {
     type BollingerSeries,
     type Series,
 } from '../../services/trade/chartIndicators';
+import { candleDelta } from '../../services/market/orderFlowCore';
 import {
     CHART_INDICATOR_IDS,
     CHART_INDICATOR_LABELS,
@@ -281,7 +282,7 @@ type ChartRow = {
 
 /** The sub-pane studies, in the order OKX stacks them. Fixed, so pane indices
  *  are deterministic and the legend rows can be laid out in the same order. */
-const SUB_PANE_ORDER = ['rsi', 'macd', 'tsi'] as const satisfies readonly ChartIndicatorId[];
+const SUB_PANE_ORDER = ['rsi', 'macd', 'tsi', 'cvd'] as const satisfies readonly ChartIndicatorId[];
 
 /** One bar as the legend describes it: OHLC plus the study values at that bar. */
 interface LegendBar {
@@ -508,6 +509,14 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                 <div key="tsi" className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
                     <span>TSI(25, 13, 13) <span className="text-amber-300">{num(bar.values.tsi ?? null)}</span></span>
                     <span>Signal <span className="text-rose-300">{num(bar.values.tsiSignal ?? null)}</span></span>
+                </div>
+            ));
+        }
+        if (v.cvd) {
+            rows.push((
+                <div key="cvd" className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                    <span>CVD <span className="text-teal-300">{bar.values.cvd === null || bar.values.cvd === undefined ? '—' : Math.round(bar.values.cvd).toLocaleString()}</span></span>
+                    <span className="text-zinc-500">taker volume</span>
                 </div>
             ));
         }
@@ -1044,6 +1053,27 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                 putLine(pane, cs => tsiSeries(closesOf(cs)).tsi, chartColor('--color-amber-500', '#f59e0b'), 'tsi', 'tsi');
                 putLine(pane, cs => tsiSeries(closesOf(cs)).signal, chartColor('--color-pink-400', '#f472b6'), 'tsi', 'tsiSignal');
                 chart.priceScale('tsi', pane).applyOptions({ visible: false });
+            } else if (id === 'cvd') {
+                // REAL taker delta — the delta DEFINITION is orderFlowCore's
+                // candleDelta (one source with the desk; family 36 pins it),
+                // but the cumulative is built bar-robustly here: a forming
+                // live bar has no taker-buy field yet, and deltaSeries' whole-
+                // window all-or-null rule (right for the desk's read) would
+                // collapse the chart's CVD to nothing on every live tick. A
+                // bar without taker-buy yields null and the cumulative carries.
+                putHist(pane, cs => cs.map(c => {
+                    const d = candleDelta({ ...c, volume: c.volume ?? 0 });
+                    return d;
+                }), 'cvdDelta');
+                putLine(pane, cs => {
+                    let cum = 0;
+                    return cs.map(c => {
+                        const d = candleDelta({ ...c, volume: c.volume ?? 0 });
+                        if (d === null) return null;
+                        cum += d;
+                        return cum;
+                    });
+                }, chartColor('--color-teal-300', '#5eead4'), undefined, 'cvd');
             }
             const paneApi = chart.panes()[pane];
             if (paneApi) paneApi.setHeight(110);
