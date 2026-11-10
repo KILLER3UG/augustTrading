@@ -24,7 +24,6 @@ const coercedStringRecord = z.record(z.string(), z.unknown()).transform((rec) =>
 export const GlobalMemorySchema = z.object({
   totalTradesAnalyzed: z.number().default(0),
   familyPerformance: coercedStringRecord.default({}),
-  aiPatternMemory: coercedStringArray.default([]),
   userPreferences: z.object({
     leverageDefault: z.number().default(100),
     favoriteAssets: coercedStringArray.default([]),

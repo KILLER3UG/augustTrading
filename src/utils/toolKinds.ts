@@ -221,6 +221,9 @@ export const intersectGoalPolicy = (
 export const DESK_TOOL_NAMES: readonly string[] = [
     'get_price_snapshot', 'get_order_book', 'get_derivatives',
     'get_liquidations', 'get_session_context', 'get_market_packet', 'get_all_timeframes', 'get_chart_view',
+    // The values on the chart's own lines — the chart and the seat read the
+    // same cores, so a study on screen is a study the model can quote.
+    'get_chart_studies',
     'get_key_levels',
     // The P0 market-structure family (docs/plans/tools-upgrade.md): volume,
     // auction and regime reads computed from closed candles, plus the plan's

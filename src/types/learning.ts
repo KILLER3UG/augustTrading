@@ -92,7 +92,6 @@ export interface AttributedInsight {
 export interface GlobalMemory {
   totalTradesAnalyzed: number;
   familyPerformance: Record<string, string>;
-  aiPatternMemory: string[];
   userPreferences: {
     leverageDefault: number;
     favoriteAssets: string[];

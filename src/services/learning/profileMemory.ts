@@ -26,6 +26,8 @@
 import { getActiveUsername } from '../../utils/activeUser';
 import { filterMemoryWrite } from '../../utils/memoryWriteFilters';
 import { getHarnessSettings } from '../../utils/harnessSettings';
+import { contentWords, jaccard, overlap } from '../../utils/textOverlap';
+import { UNBOUNDED_INDEX_LINES } from '../../utils/promptIndexBudget';
 import { memorySectionOf, normalizeMemorySection, orderMemorySections } from './memorySections';
 
 export type ProfileMemoryKind = 'user' | 'feedback' | 'project' | 'reference';
@@ -103,12 +105,12 @@ export interface ProfileMemoryEntry {
 }
 
 const KEY_PREFIX = 'profile_memory_v1';
-/** The store's hard limits. Exported so the consolidation pass and the UI use
- *  the same numbers the write path enforces. */
-export const PROFILE_MEMORY_MAX_ENTRIES = 40;
-export const PROFILE_MEMORY_MAX_BODY_CHARS = 2_000;
-const MAX_ENTRIES = PROFILE_MEMORY_MAX_ENTRIES;
-const MAX_BODY_CHARS = PROFILE_MEMORY_MAX_BODY_CHARS;
+/** The store's SOFT thresholds. Neither refuses a write any more: the owner's
+ *  ruling is that capacity must not limit the model, so a large store is a
+ *  warning a person can act on, never a wall. Exported so the UI and the
+ *  background consolidation pass read the same numbers. */
+export const PROFILE_MEMORY_SOFT_ENTRY_COUNT = 200;
+export const PROFILE_MEMORY_MAX_BODY_CHARS = 20_000;
 const MAX_DESC_CHARS = 160;
 const MAX_TITLE_CHARS = 60;
 
@@ -173,6 +175,30 @@ const writeAll = (user: string, entries: ProfileMemoryEntry[]): void => {
     }
     // Nudge any open Settings → Memory card to re-read.
     if (typeof window !== 'undefined') window.dispatchEvent(new Event('august-profile-memory'));
+};
+
+/** How full the store is, as a WARNING (never a refusal). The UI and the
+ *  background consolidation pass read this; the write path does not. */
+export interface ProfileMemoryPressure {
+    entries: number;
+    bytes: number;
+    /** 'ok' below the soft count, 'soft' at or above it. */
+    level: 'ok' | 'soft';
+    /** One plain-English line, or '' when there is nothing to say. */
+    message: string;
+}
+
+export const profileMemoryPressure = (username?: string): ProfileMemoryPressure => {
+    const user = username || getActiveUsername();
+    let raw = '';
+    try { raw = localStorage.getItem(storageKey(user)) ?? ''; } catch { /* unreadable counts as empty */ }
+    const entries = listProfileMemories(user).length;
+    const bytes = raw.length * 2;
+    if (entries < PROFILE_MEMORY_SOFT_ENTRY_COUNT) return { entries, bytes, level: 'ok', message: '' };
+    return {
+        entries, bytes, level: 'soft',
+        message: `Memory holds ${entries} entries — nothing is blocked, but consolidating or forgetting a few near-duplicates keeps the index readable.`,
+    };
 };
 
 /** All entries for the active user, oldest first. */
@@ -257,7 +283,7 @@ ${input.body}`);
         ...(titleField ? { title: titleField.slice(0, MAX_TITLE_CHARS) } : {}),
         description: input.description.trim().slice(0, MAX_DESC_CHARS),
         kind: input.kind,
-        body: input.body.trim().slice(0, MAX_BODY_CHARS),
+        body: input.body.trim().slice(0, PROFILE_MEMORY_MAX_BODY_CHARS),
         ...(input.source ? { source: input.source } : {}),
         ...(input.tag ? { tag: input.tag } : {}),
         ...(input.author ? { author: input.author } : {}),
@@ -296,16 +322,10 @@ ${input.body}`);
             error: 'this fact is in a sensitive category and sensitive memory is off — nothing was written',
         };
     }
-    if (created && all.filter(e => !e.deletedAt).length >= MAX_ENTRIES) {
-        // The ceiling refuses instead of evicting. `rememberWithConsolidation`
-        // frees room first (merge the two oldest non-sensitive rows) and is the
-        // path the `remember` tool takes; a caller that skips it gets this
-        // refusal rather than a silent drop of the trader's oldest fact.
-        return {
-            entry, created: true, persisted: false,
-            error: `the memory is full (${all.length} facts, cap ${MAX_ENTRIES}) and nothing was written — forget a fact, or let consolidation merge two`,
-        };
-    }
+    // NO ENTRY CAP. A hard ceiling used to refuse the write once the store held
+    // 40 facts; capacity must never be the reason the seat cannot remember
+    // something the trader told it. A large store is reported as pressure (see
+    // `profileMemoryPressure`) so a person can merge or forget, not blocked.
     if (created) {
         all.push(entry);
     } else {
@@ -439,9 +459,231 @@ export const retireMergedMemory = (slug: string, username?: string): boolean => 
     }
 };
 
-/** How many index lines a prompt gets (capped; older entries fall off — the
- *  newest remember more, like this environment trimming its index). */
-const INDEX_MAX_LINES = 30;
+// ─── Search, update, similarity (the memory_* tools) ────────────────────────
+
+export interface ProfileMemorySearchHit {
+    entry: ProfileMemoryEntry;
+    /** Relevance, higher is better. Deterministic — no model, no embeddings. */
+    score: number;
+    /** Which fields matched, so the tool can say WHY a row came back. */
+    matchedIn: Array<'slug' | 'title' | 'description' | 'alias' | 'body'>;
+}
+
+export interface ProfileMemorySearchOptions {
+    /** Free-text query. Empty returns everything (the full index read). */
+    query?: string;
+    /** Restrict to a display section ("Trading", "Risk", …). Case-insensitive. */
+    section?: string;
+    /** Restrict to one of the four provenance kinds. */
+    kind?: ProfileMemoryKind;
+    limit?: number;
+    /** Include rows a reader would normally keep out of a bulk pull — sensitive
+     *  rows and observed/inferred context. Off by default, exactly like
+     *  `read_memory`'s bulk read. */
+    includeRestricted?: boolean;
+}
+
+const SEARCH_DEFAULT_LIMIT = 12;
+
+/**
+ * Ranked search over slug, title, description, aliases and body.
+ *
+ * The index alone could not answer "what do you know about my risk rules?"
+ * unless the caller already knew a slug, so every recall question cost a full
+ * `read_memory(["all"])` dump. Weights put identity first (an exact slug is
+ * almost certainly the row the caller meant), then the words chosen to be
+ * findable (title, aliases, description), then the body. Recency breaks ties,
+ * because two rows matching equally usually means the newer one is the intent.
+ */
+export const searchProfileMemories = (
+    options: ProfileMemorySearchOptions = {},
+    username?: string,
+): ProfileMemorySearchHit[] => {
+    const query = (options.query ?? '').trim();
+    const wanted = contentWords(query);
+    const section = normalizeMemorySection(options.section);
+    const limit = Math.max(1, Math.min(200, options.limit ?? SEARCH_DEFAULT_LIMIT));
+    const pool = listProfileMemories(username).filter(e => {
+        if (!options.includeRestricted && (e.sensitive || e.tag === 'observed' || e.tag === 'inferred')) return false;
+        if (options.kind && e.kind !== options.kind) return false;
+        if (section && memorySectionOf(e).toLowerCase() !== section.toLowerCase()) return false;
+        return true;
+    });
+    const newest = Date.now();
+    const scored: ProfileMemorySearchHit[] = [];
+    for (const entry of pool) {
+        const matchedIn: ProfileMemorySearchHit['matchedIn'] = [];
+        let score = 0;
+        if (wanted.size === 0) {
+            score = 1;
+        } else {
+            if (wanted.has(slugify(entry.slug)) || entry.slug === slugify(query)) { score += 1000; matchedIn.push('slug'); }
+            const slugHits = countShared(wanted, contentWords(entry.slug.replace(/-/g, ' ')));
+            if (slugHits) { score += slugHits * 40; if (!matchedIn.includes('slug')) matchedIn.push('slug'); }
+            const aliasHits = (entry.aliases ?? []).reduce(
+                (sum, a) => sum + (a.trim() && wanted.has(a.trim().toLowerCase()) ? 3 : countShared(wanted, contentWords(a))),
+                0,
+            );
+            if (aliasHits) { score += aliasHits * 25; matchedIn.push('alias'); }
+            const titleHits = countShared(wanted, contentWords(entry.title ?? ''));
+            if (titleHits) { score += titleHits * 20; matchedIn.push('title'); }
+            const descHits = countShared(wanted, contentWords(entry.description));
+            if (descHits) { score += descHits * 12; matchedIn.push('description'); }
+            const bodyHits = Math.min(10, countShared(wanted, contentWords(entry.body)));
+            if (bodyHits) { score += bodyHits * 3; matchedIn.push('body'); }
+        }
+        if (wanted.size > 0 && score === 0) continue;
+        // Recency: at most 5 points, so it can only order rows that already matched.
+        const ageDays = Math.max(0, (newest - Date.parse(entry.updatedAt || entry.createdAt || '')) / 86_400_000);
+        score += Math.max(0, 5 - ageDays / 30);
+        scored.push({ entry, score: Math.round(score * 100) / 100, matchedIn });
+    }
+    return scored.sort((a, b) => b.score - a.score || String(b.entry.updatedAt).localeCompare(String(a.entry.updatedAt))).slice(0, limit);
+};
+
+const countShared = (a: Set<string>, b: Set<string>): number => {
+    if (a.size === 0 || b.size === 0) return 0;
+    let shared = 0;
+    for (const word of a) if (b.has(word)) shared += 1;
+    return shared;
+};
+
+/** The thresholds the create-path similarity refusal is built on. Exported so a
+ *  contract pins the same numbers the write path enforces. */
+export const MEMORY_DUPLICATE_SCORE_MIN = 0.62;
+
+export interface MemoryDuplicateMatch {
+    slug: string;
+    title?: string;
+    description: string;
+    score: number;
+    reason: string;
+}
+
+/**
+ * Is this candidate already said by an existing row? Containment in either
+ * direction (`overlap`), weighted like the skill redundancy scan: the
+ * description decides relevance, the body carries the fact, the title is a
+ * label. A row that already CONTAINS the candidate is the one to update — the
+ * refusal names it so the model merges instead of minting a twin.
+ */
+export const findSimilarMemory = (
+    candidate: { title?: string; description: string; body: string },
+    username?: string,
+    excludeSlug?: string,
+): MemoryDuplicateMatch | null => {
+    const desc = contentWords(candidate.description);
+    const title = contentWords(candidate.title ?? '');
+    const body = contentWords(candidate.body);
+    let best: MemoryDuplicateMatch | null = null;
+    for (const entry of listProfileMemories(username)) {
+        if (excludeSlug && entry.slug === excludeSlug) continue;
+        const descScore = overlap(desc, contentWords(entry.description));
+        const bodyScore = overlap(body, contentWords(entry.body));
+        const titleScore = jaccard(title, contentWords(entry.title ?? entry.slug.replace(/-/g, ' ')));
+        const score = descScore * 0.5 + bodyScore * 0.35 + titleScore * 0.15;
+        if (score < MEMORY_DUPLICATE_SCORE_MIN) continue;
+        const reason = descScore >= 0.6
+            ? 'the description names the same fact'
+            : bodyScore >= 0.6
+                ? 'the body already carries this'
+                : 'the title and description overlap';
+        if (!best || score > best.score) {
+            best = { slug: entry.slug, ...(entry.title ? { title: entry.title } : {}), description: entry.description, score: Math.round(score * 100) / 100, reason };
+        }
+    }
+    return best;
+};
+
+export type MemoryUpdateMode = 'replace' | 'append' | 'patch';
+
+export type MemoryUpdateResult =
+    | { ok: true; entry: ProfileMemoryEntry; mode: MemoryUpdateMode; previous?: ProfileMemoryEntry['previous'] }
+    | { ok: false; reason: string; current?: ProfileMemoryEntry };
+
+/**
+ * Edit an existing row. Three modes, one write path:
+ *
+ *  · replace — the whole body becomes `body`.
+ *  · append  — `body` is added as a new paragraph; the old text is kept.
+ *  · patch   — `oldStr` must occur EXACTLY ONCE in the body and is replaced by
+ *              `newStr`. Zero or several occurrences refuse: a blind replace
+ *              would silently rewrite a fact the caller never named.
+ *
+ * Version-checked when `ifVersion` is supplied, and the version it read comes
+ * back on conflict so the caller can merge and retry in the same turn. It never
+ * overwrites blindly.
+ */
+export const updateProfileMemory = (
+    input: {
+        slug: string;
+        mode: MemoryUpdateMode;
+        body?: string;
+        oldStr?: string;
+        newStr?: string;
+        title?: string;
+        description?: string;
+        aliases?: string[];
+        section?: string;
+        ifVersion?: number;
+    },
+    username?: string,
+): MemoryUpdateResult => {
+    const user = username || getActiveUsername();
+    const all = readAll(user);
+    const idx = all.findIndex(e => e.slug === input.slug.trim() && !e.deletedAt);
+    if (idx < 0) return { ok: false, reason: `no memory with slug "${input.slug}"` };
+    const prior = all[idx];
+    if (typeof input.ifVersion === 'number' && (prior.version ?? 1) !== input.ifVersion) {
+        return { ok: false, reason: 'version conflict — nothing was written', current: prior };
+    }
+    let nextBody: string;
+    if (input.mode === 'replace') {
+        if (typeof input.body !== 'string') return { ok: false, reason: 'replace needs `body`', current: prior };
+        nextBody = input.body.trim();
+    } else if (input.mode === 'append') {
+        if (typeof input.body !== 'string' || !input.body.trim()) return { ok: false, reason: 'append needs `body`', current: prior };
+        nextBody = `${prior.body.trimEnd()}\n\n${input.body.trim()}`;
+    } else {
+        const oldStr = input.oldStr ?? '';
+        const newStr = input.newStr ?? '';
+        if (!oldStr) return { ok: false, reason: 'patch needs `old_str`', current: prior };
+        const occurrences = prior.body.split(oldStr).length - 1;
+        if (occurrences === 0) return { ok: false, reason: 'patch: `old_str` does not occur in the body — read it and copy the text exactly', current: prior };
+        if (occurrences > 1) return { ok: false, reason: `patch: \`old_str\` occurs ${occurrences} times — include more surrounding text so exactly one match is replaced`, current: prior };
+        nextBody = prior.body.replace(oldStr, newStr);
+    }
+    if (!nextBody.trim()) return { ok: false, reason: 'the edit would leave an empty body', current: prior };
+    if (nextBody.length > PROFILE_MEMORY_MAX_BODY_CHARS) {
+        return { ok: false, reason: `the edited body is ${nextBody.length} chars, over the ${PROFILE_MEMORY_MAX_BODY_CHARS} limit — split it or trim it`, current: prior };
+    }
+    const now = new Date().toISOString();
+    const titleField = (input.title ?? '').trim().replace(/\s+/g, ' ');
+    const sectionField = normalizeMemorySection(input.section);
+    const entry: ProfileMemoryEntry = {
+        ...prior,
+        body: nextBody,
+        updatedAt: now,
+        version: (prior.version ?? 1) + 1,
+        ...(titleField ? { title: titleField.slice(0, MAX_TITLE_CHARS) } : {}),
+        ...(input.description?.trim() ? { description: input.description.trim().slice(0, MAX_DESC_CHARS) } : {}),
+        ...(input.aliases ? { aliases: input.aliases.map(a => a.trim()).filter(Boolean).slice(0, 8) } : {}),
+        ...(sectionField ? { section: sectionField } : {}),
+        ...(prior.body !== nextBody
+            ? { previous: { body: prior.body, description: prior.description, updatedAt: prior.updatedAt } }
+            : {}),
+    };
+    all[idx] = entry;
+    try {
+        writeAll(user, all);
+    } catch (err) {
+        return { ok: false, reason: err instanceof Error ? err.message : String(err), current: prior };
+    }
+    return { ok: true, entry, mode: input.mode, ...(entry.previous ? { previous: entry.previous } : {}) };
+};
+
+/** A one-line index entry is shortened only when a caller explicitly passes a
+ *  small cap; with the cap lifted, the description rides whole. */
 const INDEX_LINE_MAX = 150;
 /** Two aliases, twenty characters each: enough to carry the trader's own word
  *  for a fact, not enough to turn the index into a keyword dump. */
@@ -458,35 +700,52 @@ const INDEX_ALIAS_CHARS = 20;
  * read_memory; the line stays inside INDEX_LINE_MAX by shortening the
  * description, not the aliases, so the added words never grow the block.
  */
-export const buildProfileMemoryIndex = (username?: string, maxLines = INDEX_MAX_LINES): string => {
+export const buildProfileMemoryIndex = (username?: string, maxLines = UNBOUNDED_INDEX_LINES): string => {
     // A sensitive fact never rides the always-on index: this block is injected
     // into every turn, including turns that have nothing to do with health,
     // money or identity. It stays readable by explicit slug when the trader
     // asks; it is not advertised to every future prompt.
     // Observed/inferred rows are CONTEXT, not instructions: they never ride the
-    // always-on index. A reader that wants them asks by slug (read_memory), and
+    // always-on index. A reader that wants them asks by slug (memory_read), and
     // the row itself carries its tag.
     const visible = listProfileMemories(username)
         .filter(e => !e.sensitive && e.tag !== 'observed' && e.tag !== 'inferred');
     if (visible.length === 0) return '';
-    const newest = visible.slice(-maxLines);
+    const capped = Number.isFinite(maxLines) && maxLines > 0 ? maxLines : UNBOUNDED_INDEX_LINES;
+    const newest = capped === UNBOUNDED_INDEX_LINES ? visible : visible.slice(-capped);
+    // GROUPED BY SECTION, not one flat list. The section is the tool-facing
+    // category (memory_read filters on it, memory_add writes it), so the index
+    // has to show the same grouping the tools use or the model has to invent a
+    // name and hope it matches.
     const sections = orderMemorySections(visible.map(memorySectionOf));
     const sectionLine = sections.length
         ? `SECTIONS (display groups; reuse one, or pass a concise new name like "Trading" or "Risk"): ${sections.slice(0, 6).map(s => s.slice(0, 20)).join(' · ')}`
         : '';
-    const lines = newest.map(e => {
+    const lineFor = (e: ProfileMemoryEntry): string => {
         const tagMark = e.tag === 'observed' ? ' ·observed' : e.tag === 'inferred' ? ' ·inferred' : '';
         const aliasSource = (e.aliases ?? []).map(a => a.trim()).filter(Boolean);
         const aliasMark = aliasSource.length
             ? ` ~${aliasSource.slice(0, INDEX_ALIAS_MAX).map(a => a.slice(0, INDEX_ALIAS_CHARS)).join(', ')}`
             : '';
-        const descMax = Math.max(40, INDEX_LINE_MAX - aliasMark.length);
+        const descMax = capped === UNBOUNDED_INDEX_LINES ? Number.MAX_SAFE_INTEGER : Math.max(40, INDEX_LINE_MAX - aliasMark.length);
         const desc = e.description.length > descMax ? `${e.description.slice(0, descMax - 1)}…` : e.description;
         return `- [${e.kind}] ${e.slug}${tagMark}${aliasMark} — ${desc}`;
-    });
+    };
+    const bySection = new Map<string, ProfileMemoryEntry[]>();
+    for (const entry of newest) {
+        const label = memorySectionOf(entry);
+        bySection.set(label, [...(bySection.get(label) ?? []), entry]);
+    }
+    const lines: string[] = [];
+    for (const label of orderMemorySections([...bySection.keys()])) {
+        const rows = bySection.get(label) ?? [];
+        if (rows.length === 0) continue;
+        lines.push(`### ${label}`);
+        for (const row of rows) lines.push(lineFor(row));
+    }
     const dropped = visible.length - newest.length;
     return [
-        `## Your memory about this user — ${visible.length} entr${visible.length === 1 ? 'y' : 'ies'}. These are collaboration facts (who they are, how they want you to work, their trading habits and ongoing context); market lessons belong in the notebook. When one matters, pull its full body with read_memory(slug). If this session teaches you something durable about the USER, save it with remember (update an existing slug rather than duplicating), and pass the section it belongs in.`,
+        `## Your memory about this user — ${visible.length} entr${visible.length === 1 ? 'y' : 'ies'}. These are collaboration facts (who they are, how they want you to work, their trading habits and ongoing context); market lessons belong in the notebook. When one matters, pull its full body with memory_read. When you do not know a slug or a category, call memory_read with a query or a section — it searches slug, title, description, aliases and body. If this session teaches you something durable about the USER, save it with memory_add (it refuses a near-duplicate and names the row to edit instead), and EDIT an existing row with memory_update, which needs the version memory_read shows you.`,
         sectionLine,
         ...lines,
         dropped > 0 ? `…${dropped} older entr${dropped === 1 ? 'y' : 'ies'} not listed — read_memory with slug "all" shows every entry.` : '',

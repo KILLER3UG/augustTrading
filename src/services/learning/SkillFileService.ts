@@ -31,6 +31,9 @@ import {
     withNotebookWriteLock,
 } from './MemoryFilesService';
 import { getActiveUsername } from '../../utils/activeUser';
+// The token-overlap vocabulary the skill redundancy scan and the memory
+// similarity check share — one stopword list, one containment rule.
+import { contentWords, jaccard, overlap } from '../../utils/textOverlap';
 import { missingSkillSections, skillFormatIssues, SKILL_BODY_SECTIONS, SKILL_SUPPORT_ROLES } from '../../utils/skillFrontmatter';
 import type { MemoryFile } from '../../types';
 
@@ -92,38 +95,7 @@ export interface SkillWriteReview {
     opened: ReadonlyMap<string, string>;
 }
 
-// ─── Text helpers (pure) ────────────────────────────────────────────────────
-
-const STOPWORDS = new Set([
-    'a', 'an', 'and', 'are', 'as', 'at', 'be', 'been', 'but', 'by', 'can', 'could',
-    'did', 'do', 'does', 'for', 'from', 'had', 'has', 'have', 'if', 'in', 'into',
-    'is', 'it', 'its', 'not', 'of', 'on', 'once', 'only', 'or', 'should', 'so',
-    'than', 'that', 'the', 'their', 'then', 'there', 'these', 'this', 'to', 'was',
-    'were', 'when', 'where', 'which', 'while', 'who', 'will', 'with', 'would',
-    'you', 'your',
-    // The scaffolding words every skill sentence carries. Left in, a library of
-    // "use this skill whenever…" boilerplate looked mutually similar and the
-    // real signal — the trigger's own nouns — was diluted.
-    'use', 'used', 'uses', 'using', 'skill', 'skills', 'note', 'notes',
-]);
-
-export const contentWords = (text: string): Set<string> => {
-    const out = new Set<string>();
-    for (const raw of (text || '').toLowerCase().split(/[^a-z0-9%$.-]+/)) {
-        const word = raw.replace(/^[.-]+|[.-]+$/g, '');
-        if (word.length >= 2 && !STOPWORDS.has(word)) out.add(word);
-    }
-    return out;
-};
-
-export const jaccard = (a: Set<string>, b: Set<string>): number => {
-    if (a.size === 0 || b.size === 0) return 0;
-    let shared = 0;
-    for (const word of a) if (b.has(word)) shared += 1;
-    const union = a.size + b.size - shared;
-    return union === 0 ? 0 : shared / union;
-};
-
+export { contentWords, jaccard, overlap } from '../../utils/textOverlap';
 /** FNV-1a. The version a caller passes back is the bytes it read. */
 export const contentVersion = (content: string): string => {
     let hash = 2166136261;
@@ -457,19 +429,6 @@ export interface DuplicateMatch {
     score: number;
     reason: string;
 }
-
-/** Overlap in EITHER direction. Plain Jaccard divides by the UNION, so a short
- *  trigger that names exactly what a longer description already covers scores
- *  low and passes — the reworded duplicate the rule below promises to catch.
- *  `shared / min(|a|,|b|)` asks the question the refusal is actually built on:
- *  is everything this text says already said there? Empty on either side is 0,
- *  never a division by zero. */
-export const overlap = (a: Set<string>, b: Set<string>): number => {
-    if (a.size === 0 || b.size === 0) return 0;
-    let shared = 0;
-    for (const word of a) if (b.has(word)) shared += 1;
-    return shared / Math.min(a.size, b.size);
-};
 
 /** Score a candidate against every existing skill. Deterministic, pure over
  *  the given corpus, so a contract can pin the threshold. Description overlap

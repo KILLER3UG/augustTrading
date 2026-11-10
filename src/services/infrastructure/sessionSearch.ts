@@ -112,10 +112,20 @@ export const invalidateChatHistoryIndex = (username?: string): void => {
 };
 
 /** Search every stored conversation's messages for a query. Returns top N. */
+export interface ChatSearchOptions {
+    /** Only messages at or after this instant. Filters the ROWS, not the hits:
+     *  dropping hits afterwards would let a date window silently empty a result
+     *  set the ranker had already capped. */
+    sinceMs?: number;
+    /** Only messages at or before this instant. */
+    untilMs?: number;
+}
+
 export const searchChatHistory = async (
     query: string,
     username?: string,
     limit = 5,
+    options: ChatSearchOptions = {},
 ): Promise<ChatSearchHit[]> => {
     const terms = tokenize(query);
     if (terms.length === 0) return [];
@@ -134,9 +144,17 @@ export const searchChatHistory = async (
     const fingerprint = fingerprintOf(conversations);
     const cached = indexByUser.get(user);
     const index = cached && cached.fingerprint === fingerprint ? cached : buildIndex(user, conversations);
+    const inWindow = (at: string | undefined, fallbackMs: number): boolean => {
+        const ms = at ? Date.parse(at) : fallbackMs;
+        if (!Number.isFinite(ms)) return true;
+        if (typeof options.sinceMs === 'number' && ms < options.sinceMs) return false;
+        if (typeof options.untilMs === 'number' && ms > options.untilMs) return false;
+        return true;
+    };
 
     const hits: ChatSearchHit[] = [];
     for (const row of index.rows) {
+        if (!inWindow(row.createdAt, row.conv.timestamp)) continue;
         const { lower, text } = row;
         let score = 0;
         for (const term of terms) {

@@ -26,7 +26,6 @@ export const updateGlobalMemoryAlgorithmically = (
     const memory: GlobalMemory = currentMemory ? { ...currentMemory } : {
         totalTradesAnalyzed: 0,
         familyPerformance: {},
-        aiPatternMemory: [],
         userPreferences: {
             leverageDefault: 0,
             favoriteAssets: [],

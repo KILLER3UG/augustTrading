@@ -21,7 +21,7 @@ import { getQuickResponse } from '../providers/GenericProviderService';
 import { getReadyProviders, loadProviderConfigs } from '../infrastructure/ProviderConfigService';
 import {
     listProfileMemories, rememberProfileMemory, retireMergedMemory, slugify,
-    PROFILE_MEMORY_MAX_BODY_CHARS, PROFILE_MEMORY_MAX_ENTRIES,
+    PROFILE_MEMORY_MAX_BODY_CHARS,
     type ProfileMemoryEntry, type ProfileMemoryKind, type RememberResult,
 } from './profileMemory';
 import { filterMemoryWrite } from '../../utils/memoryWriteFilters';
@@ -61,6 +61,9 @@ export interface ConsolidationInput {
     section?: string;
     sourceSession?: string;
     ifVersion?: number;
+    /** Ask the merge path to absorb the oldest rows. Only the background
+     *  consolidation pass sets this — a normal write never merges. */
+    forceMerge?: boolean;
 }
 
 export interface ConsolidationDeps {
@@ -127,14 +130,18 @@ export const rememberWithConsolidation = async (
         return { ok: true, result: rememberProfileMemory({ ...input, slug }, user) };
     }
     const needsCompression = input.body.trim().length > PROFILE_MEMORY_MAX_BODY_CHARS;
-    const needsSlot = !existing && all.length >= PROFILE_MEMORY_MAX_ENTRIES;
+    // MERGING IS NO LONGER A SIDE EFFECT OF A FULL STORE. The entry cap is gone
+    // (a soft warning now), so nothing has to be absorbed for a write to land.
+    // The merge machinery stays reachable for the background consolidation pass
+    // (section F.4), which asks for it explicitly.
+    const needsSlot = input.forceMerge === true && !existing;
     if (!needsCompression && !needsSlot) {
         return { ok: true, result: rememberProfileMemory({ ...input, slug }, user) };
     }
 
     const complete = deps.complete ?? await resolveComplete();
     if (!complete) {
-        return { ok: false, error: 'the memory is full (or the fact is too long) and no model is available to consolidate it' };
+        return { ok: false, error: 'the fact is too long to store as written and no model is available to compress it' };
     }
 
     let body = input.body;
@@ -219,9 +226,6 @@ export const rememberWithConsolidation = async (
             if (retireMergedMemory(candidate.slug, user)) outcome.removed.push(candidate.slug);
         }
         outcome.merged = keeper.slug;
-        if (listProfileMemories(user).length >= PROFILE_MEMORY_MAX_ENTRIES && !existing) {
-            return { ok: false, error: `consolidation freed no room (merged ${outcome.merged}); nothing new was saved` };
-        }
     }
 
     const result = rememberProfileMemory({ ...input, slug, body }, user);
