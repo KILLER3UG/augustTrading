@@ -540,17 +540,72 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
     }
 })();
 
+// ─── 10c. silent 80% compaction: the digest must be safe to inject ────────
+(() => {
+    const cj = loadModule('src/services/trade/contextCompactionJob.ts');
+    const msg = (role, content) => ({ role, content });
+    ok('compaction: the trigger is 80% of the window, not the ceiling',
+        cj.COMPACTION_TRIGGER_RATIO === 0.8
+        && cj.shouldCompact({ tokens: 799_000, windowTokens: 1_000_000, ratio: 0.799 }) === false
+        && cj.shouldCompact({ tokens: 800_000, windowTokens: 1_000_000, ratio: 0.8 }) === true);
+    ok('compaction: usage is a ratio of the real window, clamped to 1',
+        Math.abs(cj.compactionUsage([msg('user', 'x'.repeat(400))], 50).ratio - 1) <= 1e-9
+        && cj.compactionUsage([msg('user', 'x'.repeat(400))], 10_000).ratio < 0.5,
+        String(cj.compactionUsage([msg('user', 'x'.repeat(400))], 10_000).ratio));
+
+    const many = [msg('system', 'SYSTEM INSTRUCTIONS')];
+    for (let i = 0; i < 20; i += 1) many.push(msg(i % 2 ? 'assistant' : 'user', `turn ${i} about BTCUSDT`));
+    const split = cj.summarizableSlice(many, 8);
+    ok('compaction: the recent tail is untouched and the system block is never summarized',
+        split.recent.length === 8 && split.older.length === 12
+        && split.older.every(m => m.role !== 'system'),
+        `older=${split.older.length} recent=${split.recent.length}`);
+
+    ok('compaction: an empty or refusal answer is discarded, not stored',
+        cj.sanitizeSummary('', many) === null
+        && cj.sanitizeSummary('I cannot summarize that.', many) === null);
+    ok('compaction: a digest that loses the symbols the session was about is discarded',
+        cj.sanitizeSummary('## Symbols\n(none)\n## Decisions\n(none)\n## Open tasks\n(none)\n## Other context\n' + 'filler '.repeat(20), many) === null);
+    const good = '## Symbols\n- BTCUSDT: watching the 74k reclaim\n## Decisions\n- no entry until a BOS\n## Open tasks\n- wait for London\n## Other context\n' + 'detail '.repeat(20);
+    ok('compaction: a digest that keeps the symbols survives',
+        typeof cj.sanitizeSummary(good, many) === 'string');
+    ok('compaction: the prompt demands the four headings the owner asked for',
+        ['## Symbols', '## Decisions', '## Open tasks', '## Other context']
+            .every(h => cj.buildCompactionPrompt(split.older).includes(h)));
+    ok('compaction: the digest rides as a SYSTEM message ahead of history, never as an assistant turn',
+        (() => {
+            const out = cj.withCompactionSummary([msg('user', 'hi')], '## Symbols\n- BTCUSDT');
+            return out.length === 2 && out[0].role === 'system' && out[1].role === 'user'
+                && out[0].content.includes('EARLIER IN THIS SESSION');
+        })());
+    ok('compaction: no summary means the array is returned unchanged',
+        cj.withCompactionSummary([msg('user', 'hi')], '   ').length === 1);
+})();
+
 // ─── 10. the shared index budget — one table, scaled to the window ─────────
+// Owner ruling (2026-11-10): 131k is the smallest window this app designs for,
+// and at or above it the index is UNBOUNDED. The old table shrank the memory
+// index to four lines under 32k and to thirty at 1M; both are gone.
 (() => {
     const pb = loadModule('src/utils/promptIndexBudget.ts');
     const big = pb.indexBudgetFor(1_000_000);
+    const floor = pb.indexBudgetFor(131_000);
     const small = pb.indexBudgetFor(8_000);
-    ok('budget: big windows keep the pre-budget defaults',
-        big.skills === 30 && big.memory === 30 && big.topics === 12);
-    ok('budget: a small local model shrinks all three',
-        small.skills === 4 && small.memory === 4 && small.topics === 2);
-    ok('budget: monotonic between the steps',
-        pb.indexBudgetFor(100_000).skills <= big.skills && pb.indexBudgetFor(32_000).skills <= pb.indexBudgetFor(100_000).skills);
+    const smallish = pb.indexBudgetFor(32_000);
+    ok('budget: at the 1M default every index is unbounded',
+        big.skills === pb.UNBOUNDED_INDEX_LINES && big.memory === pb.UNBOUNDED_INDEX_LINES
+        && big.topics === pb.UNBOUNDED_INDEX_LINES && big.goals === pb.UNBOUNDED_INDEX_LINES,
+        JSON.stringify(big));
+    ok('budget: the 131k floor is already unbounded (the floor is where caps stop, not start)',
+        floor.memory === pb.UNBOUNDED_INDEX_LINES && floor.skills === pb.UNBOUNDED_INDEX_LINES);
+    ok('budget: below the floor the caps scale instead of collapsing to four lines',
+        small.memory < smallish.memory && small.memory >= 8 && smallish.memory >= 20,
+        `${small.memory} → ${smallish.memory}`);
+    ok('budget: no tier anywhere returns fewer than 8 lines',
+        [1, 100, 1_000, 8_000, 32_000, 131_000, 1_000_000].every(w => pb.indexBudgetFor(w).memory >= 8));
+    ok('budget: monotonic — a bigger window never gets a smaller index',
+        [1, 100, 1_000, 8_000, 32_000, 131_000, 1_000_000, 2_000_000]
+            .every((w, i, arr) => i === 0 || pb.indexBudgetFor(arr[i - 1]).memory <= pb.indexBudgetFor(w).memory));
     ok('budget: junk input falls back to the big defaults',
         JSON.stringify(pb.indexBudgetFor(Number.NaN)) === JSON.stringify(big));
 })();
@@ -1503,9 +1558,16 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
     ok('memory export: the entry heading uses that title, not the slug',
         me.memoryExportMarkdown(titled, Date.now()).includes('### August signals'),
         me.memoryExportMarkdown(titled, Date.now()).slice(0, 160));
+    // The PROPERTY: the row's label is the model's own short title, from
+    // whichever argument that tool exposes (`remember.name`, `memory_add.title`).
+    // The old check pinned the exact expression text, so adding the second
+    // argument read as a regression even though the stored value got BETTER.
+    const deskTitleLine = read('src/services/analysis/DeskToolsService.ts')
+        .split('\n').find(l => /^\s*title: asString\(call\.arguments\./.test(l)) || '';
     ok('memory writes: both model paths store the short title',
-        /title: asString\(call\.arguments\.name\)/.test(read('src/services/analysis/DeskToolsService.ts'))
-        && /title: memoryEntryLabel\(fact\.data\.name\)/.test(read('src/services/learning/traderLearner.ts')));
+        /call\.arguments\.name/.test(deskTitleLine) && /call\.arguments\.title/.test(deskTitleLine)
+        && /title: memoryEntryLabel\(fact\.data\.name\)/.test(read('src/services/learning/traderLearner.ts')),
+        deskTitleLine.trim());
 
     const card = read('src/components/settings/ProfileMemoryCard.tsx');
     ok('memory page: the two switches are the reference labels',
@@ -1523,6 +1585,139 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
         /exportTextAsFile\(memoryExportMarkdown\(entries\)/.test(card));
     ok('memory page: the notebook is one door, not a second browser',
         /onOpenNotebook/.test(read('src/components/settings/tabs/MemoryTab.tsx')));
+
+    // ── memory_read ranked search + memory_update modes ────────────────────
+    // Retrieval used to be slug-only, so "what do you know about risk?" cost a
+    // full dump. These pin the ranked read and the edit contract that replaced
+    // blind overwrites.
+    {
+        const pm = loadModule('src/services/learning/profileMemory.ts');
+        const store = new Map();
+        global.localStorage = {
+            getItem: k => (store.has(k) ? store.get(k) : null),
+            setItem: (k, v) => store.set(k, String(v)),
+            removeItem: k => store.delete(k),
+            key: i => [...store.keys()][i] ?? null,
+            get clear() { return () => store.clear(); },
+            get length() { return store.size; },
+        };
+        const U = 'contract-user';
+        pm.rememberProfileMemory({ slug: 'risk-per-trade', title: 'One percent risk', section: 'Risk', kind: 'user', description: 'Maximum risk taken on any single trade', body: 'Never risk more than 1% of the account on one trade.' }, U);
+        pm.rememberProfileMemory({ slug: 'london-sweep-bos', title: 'London sweep then BOS', section: 'Trading', kind: 'project', description: 'A London liquidity sweep followed by a BOS sets the day bias', body: 'When London sweeps the Asian low and prints a bullish BOS on 15m, the day tends to run.' }, U);
+
+        const bySlug = pm.searchProfileMemories({ query: 'risk-per-trade' }, U);
+        ok('memory_read: an exact slug outranks every other row',
+            bySlug.length > 0 && bySlug[0].entry.slug === 'risk-per-trade', JSON.stringify(bySlug.map(h => h.entry.slug)));
+
+        const byWord = pm.searchProfileMemories({ query: 'London sweep bias' }, U);
+        ok('memory_read: a word query finds the row whose body and description carry it',
+            byWord.length === 1 && byWord[0].entry.slug === 'london-sweep-bos', JSON.stringify(byWord.map(h => h.entry.slug)));
+
+        const bySection = pm.searchProfileMemories({ section: 'Risk' }, U);
+        ok('memory_read: a section filter returns only that section',
+            bySection.length === 1 && bySection[0].entry.slug === 'risk-per-trade', JSON.stringify(bySection.map(h => h.entry.slug)));
+
+        const none = pm.searchProfileMemories({ query: 'zzz-not-present' }, U);
+        ok('memory_read: a query that matches nothing returns nothing (no padded results)',
+            none.length === 0, JSON.stringify(none.map(h => h.entry.slug)));
+
+        const hit = pm.getProfileMemory('risk-per-trade', U);
+        const v = hit.version ?? 1;
+
+        const stale = pm.updateProfileMemory({ slug: 'risk-per-trade', mode: 'append', body: 'Second rule.', ifVersion: v + 5 }, U);
+        ok('memory_update: a version mismatch writes nothing and hands back the current row',
+            stale.ok === false && stale.current && stale.current.body.includes('Never risk more than 1%')
+            && !stale.current.body.includes('Second rule.'), JSON.stringify(stale && stale.reason));
+
+        // A one-letter old_str occurs many times in any sentence — the case a
+        // blind replace would corrupt.
+        const ambiguous = pm.updateProfileMemory({ slug: 'risk-per-trade', mode: 'patch', oldStr: 'e', newStr: 'E', ifVersion: v }, U);
+        ok('memory_update: a patch whose old_str occurs more than once is refused, not guessed',
+            ambiguous.ok === false && /occurs \d+ times/.test(ambiguous.reason), ambiguous.reason);
+
+        const missing = pm.updateProfileMemory({ slug: 'risk-per-trade', mode: 'patch', oldStr: 'not-in-the-body', newStr: 'x', ifVersion: v }, U);
+        ok('memory_update: a patch whose old_str occurs zero times is refused',
+            missing.ok === false && /does not occur/.test(missing.reason), missing.reason);
+
+        // Both refusals above must leave the version alone.
+        const afterRefusals = pm.getProfileMemory('risk-per-trade', U);
+        ok('memory_update: a refused patch does not bump the version or touch the body',
+            (afterRefusals.version ?? 1) === v && afterRefusals.body.includes('Never risk more than 1%'),
+            String(afterRefusals && afterRefusals.version));
+
+        const appended = pm.updateProfileMemory({ slug: 'risk-per-trade', mode: 'append', body: 'Second rule.', ifVersion: v }, U);
+        ok('memory_update: append keeps the old text and adds the new paragraph',
+            appended.ok && appended.entry.body.includes('Never risk more than 1%') && appended.entry.body.includes('Second rule.')
+            && (appended.entry.version ?? 0) === v + 1, JSON.stringify(appended.ok));
+
+        const patched = pm.updateProfileMemory({ slug: 'risk-per-trade', mode: 'patch', oldStr: 'Second rule.', newStr: 'Never add to a loser.', ifVersion: v + 1 }, U);
+        ok('memory_update: a unique old_str is replaced and the previous value is kept as provenance',
+            patched.ok && patched.entry.body.includes('Never add to a loser.')
+            && !patched.entry.body.includes('Second rule.')
+            && !!patched.previous && patched.previous.body.includes('Second rule.'),
+            JSON.stringify(patched.ok && patched.entry.body));
+
+        // SIMILARITY, on create. A reworded copy is refused and names the row;
+        // a genuinely new fact passes. Two arms over one candidate shape — a
+        // green in both would prove the check is decorative.
+        const dup = pm.findSimilarMemory({
+            title: 'One percent risk per trade',
+            description: 'Maximum risk taken on any single trade',
+            body: 'Never risk more than 1% of the account on any one trade.',
+        }, U);
+        ok('memory_add: a reworded duplicate is refused and names the existing slug',
+            !!dup && dup.slug === 'risk-per-trade' && dup.score >= pm.MEMORY_DUPLICATE_SCORE_MIN, JSON.stringify(dup));
+
+        const fresh = pm.findSimilarMemory({
+            title: 'Funding exhaustion fade',
+            description: 'Very high positive funding with falling open interest marks a crowded long',
+            body: 'When funding prints in the 99th percentile while OI falls, the long side is trapped.',
+        }, U);
+        ok('memory_add: a genuinely new fact is NOT refused (the check can pass)',
+            fresh === null, JSON.stringify(fresh));
+
+        const selfEdit = pm.findSimilarMemory({
+            title: 'One percent risk', description: 'Maximum risk taken on any single trade', body: 'Never risk more than 1%.',
+        }, U, 'risk-per-trade');
+        ok('memory_add: editing a row does not count as duplicating itself',
+            selfEdit === null, JSON.stringify(selfEdit));
+
+        // ── caps are gone (owner ruling: capacity must not limit the model) ──
+        const longBody = 'x'.repeat(9_000);
+        const longWrite = pm.rememberProfileMemory({
+            slug: 'long-body', description: 'A nine thousand character fact', kind: 'reference', body: longBody,
+        }, U);
+        ok('memory caps: a 9 000-char body is stored whole (the old 2 000 cap is gone)',
+            longWrite.persisted === true && longWrite.entry.body.length === 9_000,
+            String(longWrite.entry.body.length));
+
+        for (let i = 0; i < 45; i += 1) {
+            pm.rememberProfileMemory({
+                slug: `bulk-${i}`, description: `Bulk fact number ${i} about the trader`, kind: 'user',
+                body: `Distinct body text for bulk entry ${i} with topic ${i}.`,
+            }, U);
+        }
+        ok('memory caps: the 41st+ entry is accepted (the 40-entry hard refusal is gone)',
+            pm.listProfileMemories(U).length >= 46 && pm.getProfileMemory('bulk-44', U) !== undefined,
+            String(pm.listProfileMemories(U).length));
+
+        const pressure = pm.profileMemoryPressure(U);
+        ok('memory caps: a large store reports SOFT pressure and still writes',
+            pressure.level === 'ok' || (pressure.level === 'soft' && pressure.message.length > 0),
+            JSON.stringify(pressure));
+
+        // The always-on index: full, section-grouped, and not cut at 30 lines.
+        for (let i = 0; i < 10; i += 1) {
+            pm.rememberProfileMemory({ slug: `risk-extra-${i}`, section: 'Risk', description: `Risk rule ${i}`, kind: 'user', body: `Risk body ${i}` }, U);
+        }
+        const idx = pm.buildProfileMemoryIndex(U);
+        const idxLines = idx.split('\n').filter(l => l.startsWith('- ['));
+        ok('memory index: it is grouped by section (a heading per display category)',
+            idx.includes('### Risk') && idx.includes('### Trading'), idx.split('\n').filter(l => l.startsWith('###')).join(','));
+        ok('memory index: every visible entry is listed (no 30-line cap)',
+            idxLines.length === pm.listProfileMemories(U).filter(e => !e.sensitive && e.tag !== 'observed' && e.tag !== 'inferred').length,
+            `${idxLines.length} listed`);
+    }
 })();
 
 // ─── 27. signal protections ───────────────────────────────────────────────
@@ -3391,6 +3586,94 @@ const checkSkillWrites = async () => {
             { label: 'c', price: 102, distance: 0, distanceAtr: 0, touches: 0, side: 'above' },
         ], 0.2).map(r => r.label).join(',') === 'a,c');
 
+    // SESSION IDENTITY. Three sessions trading the same high is ordinary, and
+    // the generic price dedupe (correct above) used to drop London and New
+    // York behind Asia's label — the chart showed ONE session where three had
+    // traded, which the trader read as "the sessions disappeared".
+    {
+        const sc = loadModule('src/services/market/sessionConvention');
+        const nowMs = Date.now();
+        const today = sc.utcDayStart(nowMs);
+        const mk15 = (time, high, low) => ({ time, open: 100, high, low, close: 100, volume: 1 });
+        const same = [];
+        for (let d = 1; d >= 0; d -= 1) {
+            const dayStart = today - d * 86_400_000;
+            for (let i = 0; i < 96; i += 1) same.push(mk15(dayStart + i * 900_000, 105, 95));
+        }
+        const merged = lv.sessionLevelRows(same, nowMs, 100, 1, 0.01);
+        // YESTERDAY, not today: the run can happen before London or New York
+        // have opened, and a window with no candles is correctly absent. The
+        // completed day is the one where all three have printed.
+        const yHigh = merged.find(r => r.label.includes('high') && r.label.includes('yesterday'));
+        ok('levels: one price printed by all three sessions yields ONE row naming all three',
+            !!yHigh && yHigh.label.includes('Asia')
+            && yHigh.label.includes('London') && yHigh.label.includes('New York'),
+            yHigh && yHigh.label);
+        ok('levels: the merged row keeps a single line (no duplicate price inside the tolerance)',
+            merged.filter(r => Math.abs(r.price - 105) <= 0.01 && r.label.includes('yesterday')).length === 1,
+            JSON.stringify(merged.map(r => r.label)));
+
+        // A high only ONE session printed must not borrow another's name. The
+        // windows OVERLAP (London/NY share 14:00–17:00), so the highs are put
+        // in each window's EXCLUSIVE stretch: Asia 00–08, London 08–14,
+        // New York 17–23. Overlap bars sit below all three so they cannot
+        // become anybody's high.
+        const distinct = [];
+        for (let d = 1; d >= 0; d -= 1) {
+            const dayStart = today - d * 86_400_000;
+            const windows = sc.sessionWindowsForDay(dayStart);
+            const inWin = (lo, name) => windows.find(w => w.session === name).startMs <= lo
+                && lo < windows.find(w => w.session === name).endMs;
+            for (let i = 0; i < 96; i += 1) {
+                const lo = dayStart + i * 900_000;
+                const nyOnly = inWin(lo, 'new_york') && !inWin(lo, 'london');
+                const ldnOnly = inWin(lo, 'london') && !inWin(lo, 'asian') && !inWin(lo, 'new_york');
+                distinct.push(mk15(lo, nyOnly ? 120 : ldnOnly ? 110 : 105, 95));
+            }
+        }
+        const split = lv.sessionLevelRows(distinct, nowMs, 100, 1, 0.01);
+        const highOf = (name) => split.find(r => r.label.startsWith(name) && r.label.includes('high') && r.label.includes('yesterday'));
+        ok('levels: a high only New York printed is labelled New York alone',
+            !!highOf('New York') && highOf('New York').label === 'New York high (yesterday)',
+            JSON.stringify(split.map(r => r.label)));
+        ok('levels: a high only London printed is labelled London alone (no Asia borrow)',
+            !!highOf('London') && highOf('London').label === 'London high (yesterday)',
+            JSON.stringify(split.map(r => r.label)));
+        ok('levels: a high only Asia printed is labelled Asia alone',
+            !!highOf('Asia') && highOf('Asia').label === 'Asia high (yesterday)',
+            JSON.stringify(split.map(r => r.label)));
+        ok('levels: a LOW all three sessions printed still names all three',
+            split.some(r => r.label === 'Asia · London · New York low (yesterday)'),
+            JSON.stringify(split.map(r => r.label)));
+        ok('levels: labels are human text, not the old machine identifiers',
+            merged.every(r => !/_(high|low)\b/.test(r.label) && !r.label.includes('new_york')),
+            JSON.stringify(merged.map(r => r.label)));
+    }
+
+    // BIAS CHIPS render with `key={text}`. On the daily chart `current` IS the
+    // daily series, so the 1D chip was emitted twice with identical text —
+    // React logs "two children with the same key" and may drop a row.
+    {
+        const regime = loadModule('src/services/trade/regime');
+        const bars = [];
+        for (let i = 0; i < 60; i += 1) {
+            const c = 100 + i;
+            bars.push({ time: i * 86_400_000, open: c - 1, high: c + 1, low: c - 2, close: c, volume: 10 });
+        }
+        const dayChips = regime.biasChips(bars, '1D', bars);
+        const texts = dayChips.map(c => c.text);
+        ok('regime: the daily chart emits each bias chip once (no duplicate key)',
+            new Set(texts).size === texts.length, JSON.stringify(texts));
+        ok('regime: a daily chart still reports the 1D bias and the VWAP position',
+            texts.some(t => t.startsWith('1D ')) && texts.some(t => t.includes('VWAP')),
+            JSON.stringify(texts));
+        const h1Chips = regime.biasChips(bars, '1h', bars);
+        ok('regime: a non-daily chart still reports BOTH the 1D and the current-bar bias',
+            h1Chips.map(c => c.text).includes('1D Bullish')
+            && h1Chips.map(c => c.text).includes('1h Bullish'),
+            JSON.stringify(h1Chips.map(c => c.text)));
+    }
+
     // regimeCore — a constructed trend must classify trend; a flat tape,
     // range; and the two vol percentiles move together.
     const rg = loadModule('src/services/market/regimeCore');
@@ -4249,6 +4532,66 @@ const runCaptureChecks = async () => {
         tsi.tsi.slice(0, 36).every(v => v === null)
         && tsi.tsi.slice(37).every(v => v === null || (v >= -100 && v <= 100)));
 
+    // THE property this whole change exists for: the MODEL's read and the
+    // CHART's lines are the SAME numbers. `readChartStudies` is what
+    // `get_chart_studies` serves; `chartIndicators` is what the chart draws.
+    // Same closes in, same values out — asserted here so a future divergence
+    // (a second implementation, a retuned parameter) fails a gate rather than
+    // quietly showing the trader one number and telling the model another.
+    const sr = loadModule('src/services/trade/chartStudiesRead.ts');
+    const klinesForRead = closes.map((c, i) => ({
+        time: 1600000000 + i * 900, open: c, high: c + 1, low: c - 1, close: c, volume: 10,
+    }));
+    const studyRead = sr.readChartStudies(klinesForRead, 'BTCUSDT', '15m');
+    const f2 = (x) => x.toFixed(2);
+    // 90 bars warms EMA(20) but not EMA(200): the read must SAY the latter is
+    // absent rather than invent a number, and the warmed study must match.
+    ok('studies: a window too short for EMA(200) reports it absent, and EMA(20) still matches',
+        studyRead.ema.ema200 === '—'
+        && studyRead.ema.ema20 === f2(myEma[myEma.length - 1]));
+    // A deeper window (260 bars) warms every study; the model's read must then
+    // equal the chart's lines exactly.
+    const longCloses = [];
+    let lp = 100;
+    for (let i = 0; i < 260; i += 1) { lp = +(lp + Math.sin(i / 3) * 3 + (i % 7) * 0.2).toFixed(4); longCloses.push(lp); }
+    const longKlines = longCloses.map((c, i) => ({
+        time: 1600000000 + i * 900, open: c, high: c + 1, low: c - 1, close: c, volume: 10,
+    }));
+    const longRead = sr.readChartStudies(longKlines, 'BTCUSDT', '15m');
+    const longEma20 = ci.emaSeries(longCloses, 20);
+    const longEma200 = ci.emaSeries(longCloses, 200);
+    const longRsi = ci.rsiSeries(longCloses, 14);
+    const longBb = ci.bollingerSeries(longCloses, 20, 2);
+    ok('studies: the model read equals the chart lines (EMA20/EMA200, BOLL mid, RSI14)',
+        longRead.ema.ema20 === f2(longEma20[longEma20.length - 1])
+        && longRead.ema.ema200 === f2(longEma200[longEma200.length - 1])
+        && longRead.bollinger.mid === f2(longBb.mid[longBb.mid.length - 1])
+        && longRead.rsi.rsi14 === f2(longRsi[longRsi.length - 1]));
+    ok('studies: the model read names the session levels and the structure it reports',
+        Array.isArray(studyRead.sessionLevels)
+        && studyRead.structure !== null
+        && ['uptrend', 'downtrend', 'range'].includes(studyRead.structure.trend));
+    // UNITS: the chart's rows are SECONDS, `Kline.time` is MS. When they
+    // disagree, `sessionLevelRows` matches nothing — the chart draws no levels
+    // while the `session_levels` tool happily reports them, which is exactly
+    // the chart/model split this module exists to prevent. Pin it with a
+    // two-UTC-day window around NOW (the core reads the two most recent days).
+    const nowMs = Date.now();
+    const todayStartMs = Math.floor(nowMs / 86400000) * 86400000;
+    const twoDayKlines = [];
+    for (let d = 1; d >= 0; d -= 1) {
+        const dayStart = todayStartMs - d * 86400000;
+        for (let i = 0; i < 24; i += 1) {
+            twoDayKlines.push({
+                time: dayStart + i * 3600000,
+                open: 100, high: 100 + (2 - d), low: 99 - (2 - d), close: 100, volume: 10,
+            });
+        }
+    }
+    const twoDayRead = sr.readChartStudies(twoDayKlines, 'BTCUSDT', '1h');
+    ok('studies: a two-UTC-day window yields session levels (ms and seconds agree)',
+        twoDayRead.sessionLevels.length > 0);
+
     // VWAP: session mode resets at the UTC day; anchored mode is null before
     // the anchor; a zero-volume bar carries the cumulative and yields null.
     const UTC_DAY_S = 86_400;
@@ -4298,6 +4641,31 @@ const runCaptureChecks = async () => {
         (store.set('chart_indicators_v1_bad', '{"visible":{"boll":"yes","ema20":true}}'),
          cs.readChartIndicatorSettings('bad').visible.boll === true
          && cs.readChartIndicatorSettings('bad').visible.ema20 === true));
+    // The menu used to filter on a pane entry, so an id WITHOUT one was
+    // silently un-toggleable (sessionLevels and swings were unreachable that
+    // way). That check only proved reachability of the MENU ENTRY, not that
+    // the entry draws anything: `funding` carried a pane entry and a toggle
+    // while no branch in BUILD ever read it, so flipping it did nothing and
+    // the contract stayed green. The registry declares the delivery — draw
+    // path and teardown — and the menu offers only what has one.
+    const reg = loadModule('src/services/trade/chartIndicatorRegistry.ts');
+    const specs = reg.CHART_INDICATOR_REGISTRY;
+    ok('chartIndicators: every indicator id has a registry spec (delivery is exhaustive)',
+        cs.CHART_INDICATOR_IDS.every(id => specs[id] && typeof specs[id].delivery === 'string'));
+    ok('chartIndicators: the menu offers only studies with a real draw path',
+        reg.offerableIndicatorIds.every(id => specs[id].delivery !== 'unimplemented')
+        && reg.offerableIndicatorIds.length > 0);
+    ok('chartIndicators: a declared-but-undrawn study is NOT offered (funding has no branch)',
+        !reg.offerableIndicatorIds.includes('funding')
+        && specs.funding.delivery === 'unimplemented');
+    ok('chartIndicators: every series study names its legend keys, so a drawn line is always described',
+        reg.seriesIndicatorIds.every(id => specs[id].legendKeys.length > 0));
+    ok('chartIndicators: overlay studies are exactly the ones with no legend keys',
+        reg.overlayIndicatorIds.every(id => specs[id].legendKeys.length === 0));
+    ok('chartIndicators: the two delivery sets partition the offerable ids',
+        reg.offerableIndicatorIds.length === reg.seriesIndicatorIds.length + reg.overlayIndicatorIds.length);
+    ok('chartIndicators: every id is either series, overlay, or unimplemented',
+        cs.CHART_INDICATOR_IDS.every(id => ['main-series', 'sub-series', 'overlay', 'unimplemented'].includes(specs[id].delivery)));
 })();
 
 // ─── 47. one drawing store: the chart cannot fall back to the legacy bucket ─
@@ -4317,11 +4685,63 @@ const runCaptureChecks = async () => {
         && !/sessionId=\{activeConversationId \?\? undefined\}/.test(fs.readFileSync(path.join(ROOT, 'src/components/agents/AgentsView.tsx'), 'utf8')));
     ok('drawings: the Analyze chart scopes to the active conversation with a stable fallback',
         /sessionId=\{chatSnap\.activeId \?\? 'analyze'\}/.test(tradeSrc));
+    // The chart's phase-3 studies read the DESK's cores, not reimplementations:
+    // one POC/VAH/VAL, one delta definition, one structure read.
+    ok('studies: the chart consumes the desk cores (volumeProfileCore, orderFlowCore) instead of copying them',
+        /from '\.\.\/\.\.\/services\/market\/volumeProfileCore'/.test(chartSrc)
+        && /from '\.\.\/\.\.\/services\/market\/orderFlowCore'/.test(chartSrc));
+})();
+
+// ─── 48. the model names the chat — sanitized, never over a trader ────────
+(() => {
+    const ct = loadModule('src/utils/conversationTitle.ts');
+    ok('session title: wrapping quotes and markdown are stripped',
+        ct.sanitizeSessionTitle('"BTC funding exhaustion short"') === 'BTC funding exhaustion short'
+        && ct.sanitizeSessionTitle('**ETH sweep reclaim long**') === 'ETH sweep reclaim long',
+        String(ct.sanitizeSessionTitle('"BTC funding exhaustion short"')));
+    ok('session title: a label or a "Session"/"Chat" prefix is not part of the name',
+        ct.sanitizeSessionTitle('Title: "BTC funding exhaustion short"') === 'BTC funding exhaustion short'
+        && ct.sanitizeSessionTitle('Session: BTC funding exhaustion short') === 'BTC funding exhaustion short'
+        && ct.sanitizeSessionTitle('Chat BTC funding exhaustion short') === 'BTC funding exhaustion short'
+        && ct.sanitizeSessionTitle('Here is a title:\nBTC funding exhaustion short') === 'BTC funding exhaustion short',
+        String(ct.sanitizeSessionTitle('Session: BTC funding exhaustion short')));
+    ok('session title: trailing punctuation is dropped',
+        ct.sanitizeSessionTitle('BTC funding exhaustion short.') === 'BTC funding exhaustion short',
+        String(ct.sanitizeSessionTitle('BTC funding exhaustion short.')));
+    ok('session title: the 3–6 word brief is enforced, not trusted',
+        ct.sanitizeSessionTitle('BTC long') === null
+        && ct.sanitizeSessionTitle('one two three four five six seven') === null
+        && ct.sanitizeSessionTitle('BTC funding exhaustion short') !== null,
+        String(ct.sanitizeSessionTitle('one two three four five six seven')));
+    ok('session title: an empty or over-long answer is discarded (the fallback stays)',
+        ct.sanitizeSessionTitle('') === null
+        && ct.sanitizeSessionTitle(undefined) === null
+        && ct.sanitizeSessionTitle('abcdefghijklmnop qrstuvwxyzabcdef ghijklmnopqrstuv wxyzabcdefghijkl') === null,
+        String(ct.sanitizeSessionTitle('abcdefghijklmnop qrstuvwxyzabcdef ghijklmnopqrstuv wxyzabcdefghijkl')));
+    ok('session title: a model name never replaces a user rename (nor its own earlier one)',
+        ct.modelTitleMayReplace(undefined) === true
+        && ct.modelTitleMayReplace('default') === true
+        && ct.modelTitleMayReplace('message') === true
+        && ct.modelTitleMayReplace('model') === false
+        && ct.modelTitleMayReplace('user') === false,
+        `user=${ct.modelTitleMayReplace('user')} model=${ct.modelTitleMayReplace('model')}`);
 })();
 
 // ─── report ────────────────────────────────────────────────────────────────
+// SESSION SEARCH runs on the same persisted-profile store every platform has
+// (IndexedDB on web and desktop, SQLite on native — `dbService` picks). The
+// date window is applied to the ROWS before ranking, so a filter can never
+// empty a result set the ranker had already capped.
+const checkSessionSearch = async () => {
+    const ss = loadModule('src/services/infrastructure/sessionSearch.ts');
+    ok('session search: a stopword-only query returns nothing (no full dump)',
+        (await ss.searchChatHistory('the and of')).length === 0);
+    ok('session search: a full window is accepted and returns an array',
+        Array.isArray(await ss.searchChatHistory('anything', undefined, 5, { sinceMs: 0, untilMs: Date.now() + 86_400_000 })));
+    ok('session search: a window before every stored message returns nothing',
+        (await ss.searchChatHistory('anything', undefined, 5, { untilMs: Date.parse('2000-01-01') })).length === 0);
+};
 
-// ─── report ────────────────────────────────────────────────────────────────
 const finishReport = () => {
     console.log(`contracts: ${passed} passed, ${failures.length} failed`);
     for (const f of failures) console.log(`  FAIL ${f}`);
@@ -4337,5 +4757,6 @@ const finishReport = () => {
 // a crashed check must never print as a green one.
 checkSkillWrites()
     .then(runCaptureChecks)
+    .then(checkSessionSearch)
     .catch(e => { failures.push(`async runtime checks threw: ${e instanceof Error ? e.stack : String(e)}`); })
     .then(finishReport);
