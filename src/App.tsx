@@ -316,7 +316,7 @@ const App: React.FC = () => {
         conversationHistory, setConversationHistory,
         activeConversationId, setActiveConversationId,
         activeConversation, messages, messagesRef,
-        updateMessages, updateActiveConversation,
+        updateMessages, updateActiveConversation, setThreadSummary,
         selectedOcrModel,
         moderatorProviderId, moderatorModel,
 
@@ -2604,6 +2604,7 @@ const App: React.FC = () => {
                                     onDeleteConversation={handleDeleteConversationFromSidebar}
                                     onClearConversation={(id) => { void handleClearChat(id); }}
                                     onNewChat={handleStartNewConversation}
+                                    onSetThreadSummary={setThreadSummary}
                                 />
                             </React.Suspense>
                         )}

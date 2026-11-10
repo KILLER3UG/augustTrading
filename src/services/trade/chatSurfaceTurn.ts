@@ -309,12 +309,23 @@ export const chatSurfaceTurnMessages = (
     image: string | undefined,
     selectedModel: string,
     systemPrompt?: string,
+    /** The 80%-trigger digest for turns this request no longer carries. Rides
+     *  as a SECOND system message, after the standing instructions, so it can
+     *  never displace them. Empty/absent changes nothing. */
+    threadSummary?: string,
 ): ChatMessage[] => {
     const messages: ChatMessage[] = (history || []).map(m => ({
         role: m.role === MessageRole.AI ? 'assistant' : m.role === MessageRole.SYSTEM ? 'system' : 'user',
         content: m.text,
     }));
     messages.unshift({ role: 'system', content: systemPrompt || CASUAL_CHAT_SYSTEM_PROMPT });
+    const digest = (threadSummary ?? '').trim();
+    if (digest) {
+        messages.splice(1, 0, {
+            role: 'system',
+            content: `EARLIER IN THIS SESSION (summarized as the context window filled; the most recent turns follow verbatim):\n${digest}`,
+        });
+    }
     const attachment = image ? { kind: 'image' as const, payload: image } : undefined;
     const last = messages[messages.length - 1];
     if (last?.content !== prompt) {
@@ -351,6 +362,10 @@ export interface ChatSurfaceTurnRequest {
     extraContext?: string;
     symbol?: string | null;
     interval?: string;
+    /** The silent 80% digest for turns this request has outgrown. Written by
+     *  the background summarizer and stored on the conversation; never awaited
+     *  here. */
+    threadSummary?: string;
     trades: LoggedTrade[];
     signal: AbortSignal;
     /** When the bubble was painted — every settle path reports from here. */
@@ -538,7 +553,7 @@ export const runChatSurfaceTurn = async (req: ChatSurfaceTurnRequest): Promise<T
     // reset this one's counters (the 2026-10-27 audit L-7).
     const { value: out, summary } = await withTruncationWindow(async (recordFinishReason) => await runToolTurn({
         config: req.config,
-        messages: chatSurfaceTurnMessages(req.history, req.prompt, req.image, req.config.selectedModel, systemText),
+        messages: chatSurfaceTurnMessages(req.history, req.prompt, req.image, req.config.selectedModel, systemText, req.threadSummary),
         signal: req.signal,
         startedAt: req.startedAt,
         effort: resolveComposerEffort(req.effort, 'tradingDecision'),

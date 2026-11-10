@@ -1184,6 +1184,10 @@ export function useAnalysisPipeline(params: UseAnalysisPipelineParams) {
                     config: provider.config,
                     history: currentMessages,
                     prompt: promptToSend,
+                    // The silent 80% digest for turns this request has outgrown.
+                    // Stored by the background summarizer; absent until then, and
+                    // a stale digest is bounded by the summarizer's size cap.
+                    threadSummary: activeConversation?.threadSummary,
                     memoryEnabled: isGlobalMemoryEnabled !== false,
                     strategiesEnabled: isStrategiesEnabled !== false,
                     extraContext,
