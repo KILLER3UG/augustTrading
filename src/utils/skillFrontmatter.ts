@@ -4,7 +4,9 @@
  *
  * The old module also owned a frontmatter key registry, compatibility gates,
  * body caps and a format repair pass. All of that went with the skill ledger:
- * a skill is a document, and the app does not rewrite one.
+ * a skill is a document, and the app does not rewrite one ON ITS OWN — the
+ * one rewrite path is `services/learning/SkillFormatService.ts`, at the
+ * trader's explicit request and still through the store's write path.
  */
 
 /** Exfiltration and destructive-command patterns a skill body or bundled file

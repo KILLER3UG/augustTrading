@@ -13,9 +13,11 @@
  *  · a remount with an existing long text starts at the end (no replay);
  *  · copy/action chips read the source text, never the revealed prefix.
  *
- * It intentionally reveals a STRING. The answer is rendered as plain text
- * while streaming and parsed as markdown once at settle — re-parsing markdown
- * on every letter would be the expensive, flickering version of this effect.
+ * It intentionally reveals a STRING. Callers decide what the string is:
+ * `FadingText` re-parses the revealed prefix as markdown in buckets
+ * (PARSE_STEP), so the answer formats as it arrives; the thinking trace in
+ * `ReasoningRow` parses at settle. Re-parsing on EVERY letter is the
+ * expensive, flickering version — the bucket bounds the frequency.
  */
 
 import { useEffect, useRef, useState } from 'react';

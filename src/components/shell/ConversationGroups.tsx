@@ -1,11 +1,14 @@
 /**
  * ConversationGroups — the shell's shared conversation list.
  *
- * One component, two homes: ShellRail (Analyze) and AgentsView (Chat) render
- * the same rows so a conversation reads identically on either surface.
+ * ONE home since 4217c135: AgentsView (the Chat surface) renders it. The
+ * shell column mounts only on the record surfaces — Analyze has NO
+ * conversation column (the icon rail alone), and the ownership test is
+ * pinned in render-probe (`newChats === 1 && !shellColumn && agentsColumn`).
  * Sparse: New chat + Ctrl K, Pinned (only when there are pinned rows),
- * Recent (always). Rows: hollow dot (filled active, amber pulsing running),
- * truncated title, mono age from `workspaceAgeLabel` (single source).
+ * Recent (always, and the RECENT heading is the hide control). Rows: hollow
+ * dot (filled active, amber pulsing running), truncated title, mono age
+ * from `workspaceAgeLabel` (single source).
  *
  * This file did NOT exist on clean HEAD — created for mock-redesign-v3.
  * The age helper lives here; nothing else defines it.

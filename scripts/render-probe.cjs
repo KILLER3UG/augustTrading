@@ -1380,6 +1380,63 @@ async function main() {
         });
         await page.locator('[data-testid="trade-view"]').waitFor({ timeout: 8000 }).catch(() => {});
 
+        // ── THE STREAMING ANSWER FORMATS AS IT ARRIVES ────────────────────
+        // ba2a4911: the streamed prefix renders through the SAME MarkdownContent
+        // the settled answer uses, bucketed at PARSE_STEP — so mid-stream the
+        // row already carries a heading, bold and list items instead of raw
+        // pre-wrapped text that jumps at settle. The mock's request-scoped
+        // PROBE_MARKDOWN_STREAM streams a markdown-rich document at the slow
+        // cadence; the measurement is taken WHILE the run is up, so a parse-
+        // once-at-settle regression fails this loudly instead of silently.
+        await page.evaluate((needle) => {
+            const ta = document.querySelector('textarea');
+            if (!ta || ta.disabled) return;
+            Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')
+                .set.call(ta, needle);
+            ta.dispatchEvent(new Event('input', { bubbles: true }));
+            const btn = [...document.querySelectorAll('button')].find(b => !b.disabled && /send/i.test(
+                `${b.getAttribute('aria-label') || ''} ${b.title || ''} ${b.textContent || ''}`));
+            if (btn) btn.click();
+        }, 'PROBE_MARKDOWN_STREAM formats while arriving');
+        let mdStreaming = false;
+        for (let i = 0; i < 25 && !mdStreaming; i++) {
+            mdStreaming = await page.evaluate(() => [...document.querySelectorAll('button')]
+                .some(b => !b.disabled && /stop/i.test(`${b.getAttribute('aria-label') || ''} ${b.title || ''}`)));
+            if (!mdStreaming) await sleep(100);
+        }
+        // Sample REPEATEDLY while the run is up: the reveal is 3 chars/16ms and
+        // the mock's slow cadence paces ARRIVAL, so the bold mark lands only
+        // once its closing `**` has arrived and the list once its items have —
+        // a single early sample measures the pace, not the behaviour. Pass
+        // when the three are all rendered at some point BEFORE the settle.
+        let midStreamMd = null;
+        for (let i = 0; i < 30 && !midStreamMd; i++) {
+            midStreamMd = await page.evaluate(() => {
+                const rows = [...document.querySelectorAll('[data-testid="chat-entry-ai"]')];
+                const row = rows[rows.length - 1];
+                if (!row) return null;
+                const stillStreaming = [...document.querySelectorAll('button')]
+                    .some(b => !b.disabled && /stop/i.test(`${b.getAttribute('aria-label') || ''} ${b.title || ''}`));
+                const seen = {
+                    h2: !!row.querySelector('h2'),
+                    strong: !!row.querySelector('strong'),
+                    li: row.querySelectorAll('li').length,
+                };
+                return stillStreaming && seen.h2 && seen.strong && seen.li >= 3 ? seen : null;
+            });
+            if (!midStreamMd) await sleep(150);
+        }
+        check('mid-stream, the row already renders markdown (h2 + strong + list)',
+            mdStreaming && !!midStreamMd,
+            `streaming=${mdStreaming} sample=${JSON.stringify(midStreamMd)}`);
+        // Let it settle so the next phase starts from a quiet composer.
+        for (let i = 0; i < 150; i++) {
+            const settled = await page.evaluate(() => ![...document.querySelectorAll('button')]
+                .some(b => /stop/i.test(`${b.getAttribute('aria-label') || ''} ${b.title || ''}`)));
+            if (settled) break;
+            await sleep(200);
+        }
+
         // ── THE THINKING CLOCK CROSSES THE HOP ────────────────────────────
         // The bug was a remount: each surface's row started its clock at mount,
         // so Agents → Analyze showed 0s for a turn that had been thinking for
@@ -1693,11 +1750,11 @@ async function main() {
         const surfaces = [
             { label: 'Analyze', switchId: 'trade', expect: '[data-testid="trade-view"]' },
             { label: 'Journal', switchId: 'journal', expect: null },
-            // 'Skills' is gone from this list because it is gone from the rail:
-            // the Strategy Studio is the Skills SETTINGS tab now. The rail row
-            // that replaced it is Customize, which opens an overlay rather than
-            // switching a surface, so it cannot be measured here — the Studio's
-            // render is covered by the Settings sweep instead.
+            // Skills IS in the rail now — the b3d830c9 v4 migration re-added it
+            // as a real surface (the check at switchCount === 6 below counts
+            // it). The Strategy Studio remains the Skills SETTINGS tab inside
+            // it; the older note here that said 'Skills is gone from the rail'
+            // described the pre-v4 IA and contradicted the count it sat over.
             { label: 'Agents', switchId: 'agents', expect: '[data-testid="agents-view"]' },
             // The Approvals row used to open a fixed OVERLAY mounted outside
             // <main>, which is why an entry like this asserts the overlay's own
@@ -2000,9 +2057,9 @@ async function main() {
                 nav.switchCount === 6, `${nav.switchCount} entries in the rail switch`);
             check('the switch marks the screen you are actually on',
                 nav.marked === 'surface-switch-agents', nav.marked || 'nothing marked');
-            // The mock's rail is icons only and Skills is a TAB of Learning, so
-            // the row is gone on purpose; what must survive is the icon rail
-            // itself and its column toggle.
+            // The rail is icons only; Skills is one of the six (see the count
+            // above), not a tab of Learning — the pre-v4 note that said
+            // otherwise sat directly above the count it contradicted.
             check('the shell keeps the icon rail and the column toggle',
                 !!nav.railIcons, `rail=${nav.railIcons}`);
             check('the account row says who is signed in and carries no avatar',

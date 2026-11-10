@@ -322,7 +322,13 @@ const server = http.createServer((req, res) => {
             if (slow) console.log('[mock-provider] slow-stream scenario');
             if (markdown) console.log('[mock-provider] markdown-stream scenario');
             if (reasoning) console.log('[mock-provider] reasoning-clock scenario');
-            stream(res, markdown ? MARKDOWN_REPLY : slow ? `${text} ${SLOW_FILLER}` : text, (slow || markdown) ? 90 : 12, reasoning);
+            // The markdown scenario paces itself at 350ms/tick (~14 ticks ≈ 5s):
+            // the render-probe's mid-stream check needs a window where h2, bold
+            // and list items are all rendered BEFORE the settle, and at the old
+            // 90ms the whole reply arrived in ~1.3s — a window smaller than the
+            // probe's own polling step, which measured the pace and failed the
+            // behaviour. The reveal (187 chars/s) stays ahead of this arrival.
+            stream(res, markdown ? MARKDOWN_REPLY : slow ? `${text} ${SLOW_FILLER}` : text, markdown ? 350 : (slow ? 90 : 12), reasoning);
             return;
         }
         res.writeHead(200, { 'Content-Type': 'application/json' });
