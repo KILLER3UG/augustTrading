@@ -65,6 +65,7 @@ import { isPassReply } from '../agents/groupRounds';
 import {
     titleFromMessage, entriesForSession, PANEL_MAX_MODELS,
 } from './chatSessions';
+import { generateSessionTitle, modelTitleMayReplace } from './sessionTitle';
 import { saveToolPayload } from './toolPayloadStore';
 import * as chatStore from './chatStore';
 import type { LiveEntry, LiveSession } from './chatStore';
@@ -316,6 +317,15 @@ export const harnessNoticeLine = (signalText: string): string => {
     return sentence.trim();
 };
 
+/**
+ * Sessions this page has already asked a model to name. ONE attempt per
+ * session: the immediate `titleFromMessage` fallback is good enough to keep,
+ * and a provider that cannot answer must not be re-asked after every turn.
+ * Module-level because the runner is rebuilt on every composer change; a
+ * per-runner set would spend a call per rebuild.
+ */
+const titleAsked = new Set<string>();
+
 export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner => {
     const {
         symbol, interval, effort, selectedChatModel, chartLevels, allDrawings, trades,
@@ -340,6 +350,44 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
      *  itself lives in chatStore beside the controller map it reads, because a
      *  queued harness flush racing this run can REPLACE the slot. */
     const endRunOwned = chatStore.endRunOwned;
+
+    /**
+     * AFTER a turn has settled: ask the configured background model to name
+     * this chat, in the background. Fire-and-forget by construction — this
+     * returns void, nothing awaits it, and both the `.then` and the `.catch`
+     * leave the row alone when the answer is unusable or the call dies. The
+     * instant `titleFromMessage` fallback is already on the row.
+     *
+     * The apply is guarded AGAIN at resolve time: a trader who renamed the
+     * chat while the call was in flight wins, and a model that already named
+     * this chat is never renamed by a later exchange.
+     */
+    const suggestSessionTitle = (sid: string): void => {
+        if (titleAsked.has(sid)) return;
+        const session = chatStore.getSnapshot().sessions.find(s => s.id === sid);
+        // A group room's title is the GROUP's name, not this chat's; the model
+        // must not rename someone else's room.
+        if (!session || session.kind === 'group' || session.groupId) return;
+        if (!modelTitleMayReplace(session.titleSource)) return;
+        const answerAt = session.entries.findIndex(e => e.role === 'ai' && !e.notice && !e.streaming && e.text.trim());
+        if (answerAt < 0) return;
+        // The question that produced that answer — the nearest user row before
+        // it, not merely the first, so a retried first turn names the right pair.
+        const question = [...session.entries.slice(0, answerAt)]
+            .reverse()
+            .find(e => e.role === 'user' && e.text.trim() && !e.notice)?.text ?? '';
+        const answer = session.entries[answerAt].text;
+        if (!question || !answer) return;
+        titleAsked.add(sid);
+        void generateSessionTitle({ question, answer, fallback: provider })
+            .then(title => {
+                if (!title) return;
+                chatStore.mutate(sid, s => (modelTitleMayReplace(s.titleSource)
+                    ? { ...s, title, titleSource: 'model' as const }
+                    : s));
+            })
+            .catch(() => { /* the message-derived title stays */ });
+    };
 
     /** Desk-tool drawing surface. draw_on_chart / mark_trade_levels /
      *  clear_chart_drawings land here — the market executor never sees
@@ -1044,7 +1092,13 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
         const soloStartedAt: number | undefined = soloAiEntry.at;
         mutate(sid, s => ({
             ...s,
-            title: s.entries.some(e => e.role === 'user') ? s.title : titleFromMessage(text),
+            // The INSTANT fallback, first line of the question — the model's
+            // own name replaces it a moment later (suggestSessionTitle). A
+            // trader's rename is never overwritten, and a later turn keeps
+            // whatever name the row already carries.
+            ...(s.titleSource === 'user' || s.entries.some(e => e.role === 'user')
+                ? {}
+                : { title: titleFromMessage(text), titleSource: 'message' as const }),
             updatedAt: Date.now(),
             // Bind the session to the chart + composer state it was asked
             // under, so re-opening it later restores exactly this setup.
@@ -1215,6 +1269,9 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
                     // in the meantime keeps its own registration.
                     chatStore.endConversationRunOwned(turnConversationId, controller);
                 }
+                // The exchange has settled (the row above is `streaming: false`).
+                // This only STARTS the model-title call; it returns immediately.
+                suggestSessionTitle(sid);
                 if (bot && usernameNow) {
                     const answered = chatStore.getSnapshot().sessions
                         .find(x => x.id === sid)?.entries.find(en => en.id === aiEntry.id)?.text ?? '';
@@ -1385,6 +1442,8 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
         } finally {
             endRunOwned(sid, controller);
             maybeReviewSessions(learnerCfg);
+            // The room has settled: start the (fire-and-forget) title call.
+            suggestSessionTitle(sid);
         }
     };
 

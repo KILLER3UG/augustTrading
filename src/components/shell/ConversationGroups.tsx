@@ -18,6 +18,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { PanelLeftClose } from '../shared/Icons';
 import type { Conversation } from '../../types';
 import { conversationTitle } from '../../utils/conversationTitle';
+import { renameConversationRow } from '../../hooks/useConversations';
 import { signalIdFromActions, signalRowById } from '../trade/SignalCard';
 
 /** The side of the thread's latest signal — the mock's `Long` tag. Read from
@@ -73,9 +74,28 @@ const ConversationRow: React.FC<{
     onClear: (id: string) => void;
 }> = ({ conversation, selected, running, onOpen, onDelete, onClear }) => {
     const [menuOpen, setMenuOpen] = useState(false);
+    // Inline rename: the row's own name becomes an input. Enter commits,
+    // Escape cancels, a blur commits (unless Escape already cancelled it).
+    const [renaming, setRenaming] = useState(false);
+    const [draft, setDraft] = useState('');
+    const renameCancelled = useRef(false);
     const menuRef = useRef<HTMLDivElement | null>(null);
     const title = conversationTitle(conversation);
     const side = conversationSide(conversation);
+
+    /** Commit a manual name through the store that owns the list (the row is
+     *  rendered by two surfaces and receives the list read-only). Stamps
+     *  `titleSource: 'user'`, which the model-title path can never replace. */
+    const commitRename = (): void => {
+        if (!renaming) return;
+        setRenaming(false);
+        if (renameCancelled.current) {
+            renameCancelled.current = false;
+            return;
+        }
+        const next = draft.replace(/\s+/g, ' ').trim();
+        if (next && next !== title) renameConversationRow(conversation.id, next);
+    };
     // The actions menu FLOATS above the list instead of pushing rows down:
     // an inline strip re-flowed every row under the opened one, which read
     // as the list jumping. Dismisses on Escape and on a click outside — the
@@ -99,37 +119,57 @@ const ConversationRow: React.FC<{
         <div className={`group relative flex items-center rounded-control ${
             selected ? 'bg-white/[0.06] text-zinc-100' : 'text-zinc-500'
         }`}>
-            <button
-                type="button"
-                onClick={() => onOpen(conversation.id)}
-                title={title}
-                aria-current={selected ? 'page' : undefined}
-                data-testid="conversation-row"
-                className={`flex min-w-0 flex-1 items-center gap-2 py-1.5 pl-2.5 text-left text-ui-caption transition-colors hover:text-zinc-100 ${
-                    selected ? 'pr-8' : 'pr-2.5'
-                }`}
-            >
-                <span
-                    aria-hidden="true"
-                    title={running ? 'running' : selected ? 'active' : undefined}
-                    className={`h-1.5 w-1.5 shrink-0 rounded-full ${running ? 'animate-pulse bg-amber-400' : selected ? 'bg-zinc-100' : 'border border-zinc-600/60'}`}
+            {renaming ? (
+                <input
+                    autoFocus
+                    value={draft}
+                    onChange={e => setDraft(e.target.value)}
+                    onBlur={commitRename}
+                    onKeyDown={e => {
+                        if (e.key === 'Enter') { e.preventDefault(); commitRename(); }
+                        else if (e.key === 'Escape') {
+                            e.preventDefault();
+                            renameCancelled.current = true;
+                            setRenaming(false);
+                        }
+                    }}
+                    aria-label="Conversation title"
+                    data-testid="conversation-rename-input"
+                    className="min-w-0 flex-1 rounded-control border border-hairline bg-zinc-900 px-2 py-1 text-ui-caption text-zinc-100 focus:border-zinc-600 focus:outline-none"
                 />
-                <span className="min-w-0 flex-1 truncate">{title}</span>
-                {side && (
-                    <span data-testid="conversation-side"
-                        className={`shrink-0 font-mono text-ui-2xs uppercase tracking-wide ${side === 'Long' ? 'text-emerald-400' : 'text-rose-400'}`}>
-                        {side}
-                    </span>
-                )}
-                <span
-                    className="shrink-0 font-mono tabular-nums text-ui-2xs text-zinc-600"
-                    data-testid="conversation-age"
-                    aria-hidden="true"
+            ) : (
+                <button
+                    type="button"
+                    onClick={() => onOpen(conversation.id)}
+                    title={title}
+                    aria-current={selected ? 'page' : undefined}
+                    data-testid="conversation-row"
+                    className={`flex min-w-0 flex-1 items-center gap-2 py-1.5 pl-2.5 text-left text-ui-caption transition-colors hover:text-zinc-100 ${
+                        selected ? 'pr-8' : 'pr-2.5'
+                    }`}
                 >
-                    {workspaceAgeLabel(conversation.timestamp)}
-                </span>
-            </button>
-            {selected && (
+                    <span
+                        aria-hidden="true"
+                        title={running ? 'running' : selected ? 'active' : undefined}
+                        className={`h-1.5 w-1.5 shrink-0 rounded-full ${running ? 'animate-pulse bg-amber-400' : selected ? 'bg-zinc-100' : 'border border-zinc-600/60'}`}
+                    />
+                    <span className="min-w-0 flex-1 truncate">{title}</span>
+                    {side && (
+                        <span data-testid="conversation-side"
+                            className={`shrink-0 font-mono text-ui-2xs uppercase tracking-wide ${side === 'Long' ? 'text-emerald-400' : 'text-rose-400'}`}>
+                            {side}
+                        </span>
+                    )}
+                    <span
+                        className="shrink-0 font-mono tabular-nums text-ui-2xs text-zinc-600"
+                        data-testid="conversation-age"
+                        aria-hidden="true"
+                    >
+                        {workspaceAgeLabel(conversation.timestamp)}
+                    </span>
+                </button>
+            )}
+            {selected && !renaming && (
                 <button
                     type="button"
                     aria-label={`Conversation actions for ${title}`}
@@ -146,6 +186,13 @@ const ConversationRow: React.FC<{
                     ref={menuRef}
                     className="absolute right-1 top-full z-20 mt-0.5 flex flex-col rounded-control border border-hairline bg-zinc-900 py-1 shadow-elevated"
                 >
+                    <button
+                        type="button"
+                        onClick={() => { setMenuOpen(false); setDraft(title); setRenaming(true); }}
+                        className="whitespace-nowrap px-3 py-1.5 text-left text-ui-xs text-zinc-400 transition-colors hover:bg-white/[0.05] hover:text-zinc-200"
+                    >
+                        Rename
+                    </button>
                     <button
                         type="button"
                         onClick={() => { setMenuOpen(false); onClear(conversation.id); }}

@@ -331,10 +331,29 @@ export interface TradeSummary {
   timestamp: string;
 }
 
+/**
+ * WHO named a conversation or a dock chat — the guard that keeps a manual
+ * rename final.
+ *
+ * - `'default'` — the fresh-row placeholder (`New chat` / `New panel`);
+ * - `'message'` — the first-line fallback (`titleFromMessage` /
+ *   `conversationTitle`);
+ * - `'model'` — the background model's own name for the thread;
+ * - `'user'` — the trader typed it, and nothing may replace it.
+ *
+ * Absent on legacy rows and read as `'message'`: before this field existed
+ * every title came from the first message, so that is what those rows are.
+ */
+export type SessionTitleSource = 'default' | 'message' | 'model' | 'user';
+
 export interface Conversation {
   id: string;
   timestamp: number;
   title?: string;
+  /** Who named this conversation (see {@link SessionTitleSource}). Absent ⇒
+   *  `'message'`. A manual rename stamps `'user'`, which the model-title path
+   *  refuses to overwrite. */
+  titleSource?: SessionTitleSource;
   messages: Message[];
   /** Turns taken off the live thread by a revert, oldest tail first, each one
    *  tagged with the message it was cut AFTER so it can go back where it came

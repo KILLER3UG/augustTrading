@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Conversation, Message, MessageRole } from '../types';
 import { messageTraceText } from '../utils/traceText';
+import { MANUAL_TITLE_MAX_CHARS } from '../utils/conversationTitle';
+import { generateSessionTitle, modelTitleMayReplace } from '../services/trade/sessionTitle';
 import {
     activeIndex,
     hasVersions,
@@ -24,6 +26,29 @@ import {
 // The one limit that remains on this path is the storage quota itself, and a
 // refused write is reported (MemoryFilesService.getNotebookWriteFailure), not
 // swallowed.
+
+/** A manual title is a NAME, not a message: whitespace is collapsed and the
+ *  shared ceiling stops a paste from becoming the whole row. No word-count
+ *  brief — a trader may call a thread "ETH" if that is what it is. */
+
+type ConversationRenameApplier = (id: string, title: string) => void;
+
+/** The mounted store's rename writer. `ConversationGroups` renders rows for
+ *  two surfaces and receives the list READ-ONLY, so the write goes through
+ *  this one binding rather than a second copy of the list (the same reason the
+ *  dock's rows write through chatStore). */
+let applyConversationRename: ConversationRenameApplier | null = null;
+
+/**
+ * Rename one conversation from a shared row menu (`ConversationGroups`).
+ *
+ * A manual rename stamps `titleSource: 'user'`, which the model-title path
+ * refuses to overwrite — so the trader's name is final from then on. No-op
+ * when no store is mounted (a bare row/test render).
+ */
+export const renameConversationRow = (id: string, title: string): void => {
+    applyConversationRename?.(id, title);
+};
 
 export function useConversations() {
     // Master state for all conversation data.
@@ -71,6 +96,90 @@ export function useConversations() {
             c.id === activeConversationId ? updater(c) : c
         ));
     }, [activeConversationId]);
+
+    /* ── Titles: the model names a thread once, the trader can name it for good
+       ────────────────────────────────────────────────────────────────────────
+       The fallback needs no write — `conversationTitle` derives it from the
+       first question. These three pieces are the OTHER half: the trader's
+       rename (which must win forever) and the one background model call that
+       replaces that fallback. */
+
+    // Bound while the store is mounted; `renameConversationRow` is how the
+    // shared row menu reaches it.
+    useEffect(() => {
+        applyConversationRename = (id, title) => {
+            const clean = title.replace(/\s+/g, ' ').trim().slice(0, MANUAL_TITLE_MAX_CHARS);
+            if (!clean) return;
+            setConversationHistory(prev => prev.map(c => (
+                c.id === id ? { ...c, title: clean, titleSource: 'user' as const } : c
+            )));
+        };
+        return () => { applyConversationRename = null; };
+    }, []);
+
+    /** Apply a model title ONLY while the row still carries its fallback — a
+     *  manual rename and an earlier model name both refuse it. */
+    const applyModelTitle = useCallback((conversationId: string, title: string): void => {
+        setConversationHistory(prev => prev.map(c => (
+            c.id === conversationId && modelTitleMayReplace(c.titleSource)
+                ? { ...c, title, titleSource: 'model' as const }
+                : c
+        )));
+    }, []);
+
+    /** One attempt per conversation per mount. A provider that cannot answer
+     *  must not be re-asked after every later turn. */
+    const titledConversations = useRef<Set<string>>(new Set());
+
+    /** Conversations whose last row this mount has SEEN streaming. A title is
+     *  generated only for a turn that settled HERE; without this, opening the
+     *  app would spend one background call per legacy thread at once. */
+    const sawStreaming = useRef<Set<string>>(new Set());
+
+    /** The SETTLE boundary, cheap to compare: a turn finishing flips the last
+     *  row's `isStreaming`, a new row changes the length. Streaming text churn
+     *  changes neither, so the effect below does not run per token. */
+    const settleSignature = useMemo(
+        () => conversationHistory.map(c => (
+            `${c.id}:${c.messages.length}:${c.messages[c.messages.length - 1]?.isStreaming ? 'live' : 'idle'}:${c.titleSource ?? ''}`
+        )).join('|'),
+        [conversationHistory],
+    );
+
+    // After the FIRST exchange settles, ask the background model for a name.
+    // Fire-and-forget: the promise is never awaited and a null/throw leaves
+    // the first-message fallback exactly as it was.
+    useEffect(() => {
+        for (const conv of conversationHistory) {
+            if (conv.messages[conv.messages.length - 1]?.isStreaming) sawStreaming.current.add(conv.id);
+        }
+        for (const conv of conversationHistory) {
+            if (!sawStreaming.current.has(conv.id)) continue;
+            // Only at a SETTLE — never rename a thread under a live answer.
+            if (conv.messages[conv.messages.length - 1]?.isStreaming) continue;
+            if (!modelTitleMayReplace(conv.titleSource)) continue;
+            if (titledConversations.current.has(conv.id)) continue;
+            const questionAt = conv.messages.findIndex(m => m.role === MessageRole.USER && (m.text || '').trim());
+            if (questionAt < 0) continue;
+            const answer = conv.messages.slice(questionAt + 1).find(m => (
+                m.role === MessageRole.AI && !m.isStreaming && (m.text || '').trim().length > 0
+            ))?.text;
+            if (!answer) continue;
+            titledConversations.current.add(conv.id);
+            void generateSessionTitle({ question: conv.messages[questionAt].text, answer })
+                .then(title => { if (title) applyModelTitle(conv.id, title); })
+                .catch(() => { /* the first-message fallback stays */ });
+        }
+    }, [settleSignature, applyModelTitle]);
+
+    /** Store the silent compaction digest. Keyed by id, not by "active": the
+     *  summary finishes on an idle callback and the trader may well have
+     *  switched conversations by then. */
+    const setThreadSummary = useCallback((conversationId: string, threadSummary: string) => {
+        setConversationHistory(prev => prev.map(c =>
+            c.id === conversationId ? { ...c, threadSummary } : c
+        ));
+    }, []);
 
     const handleSetVisionModel = (modelId: string) => updateActiveConversation(c => ({ ...c, ocrModel: modelId }));
     const handleSetSelectedOcrModel = (id: string) => updateActiveConversation(c => ({ ...c, ocrModel: id }));
@@ -218,6 +327,7 @@ export function useConversations() {
         messagesRef,
         updateMessages,
         updateActiveConversation,
+        setThreadSummary,
         selectedOcrModel,
         moderatorProviderId,
         moderatorModel,

@@ -18,6 +18,7 @@ import { getActiveUsername } from '../../utils/activeUser';
 import type { Message, ToolAction } from '../../types/message';
 import { MessageRole } from '../../types/enums';
 import type { ReasoningEffort, WireAuditEntry } from '../../types/provider';
+import type { SessionTitleSource } from '../../types/trade';
 import { messageTraceText } from '../../utils/traceText';
 
 /** One turn in a session. `role` stays 'user' | 'ai' for storage
@@ -124,6 +125,12 @@ export type ProjectedChatEntry = StoredChatEntry & { streaming?: boolean };
 export interface ChatSession {
     id: string;
     title: string;
+    /** WHO named this chat (see `SessionTitleSource`). Missing on legacy rows ⇒
+     *  `'message'` — every title before this field existed came from the first
+     *  message. A trader's rename stamps `'user'` and the model-title path
+     *  refuses to overwrite it. A SESSION field, so `loadSessions` must carry
+     *  it explicitly (see the field-level asymmetry note on `workedMs`). */
+    titleSource?: SessionTitleSource;
     createdAt: number;
     updatedAt: number;
     entries: StoredChatEntry[];
@@ -213,6 +220,7 @@ export const createSession = (kind: SessionKind = 'solo', panelModels: PanelSeat
     return {
         id: `s-${now}-${Math.random().toString(36).slice(2, 8)}`,
         title: kind === 'panel' ? 'New panel' : 'New chat',
+        titleSource: 'default',
         createdAt: now,
         updatedAt: now,
         entries: [],
@@ -267,6 +275,14 @@ const validPanelModel = (m: unknown): m is PanelSeatRef => {
 
 const VALID_EFFORTS = new Set<ReasoningEffort>(['off', 'low', 'medium', 'high', 'max', 'auto']);
 
+const VALID_TITLE_SOURCES = new Set<SessionTitleSource>(['default', 'message', 'model', 'user']);
+
+/** A stored title source is only usable if it is one this build knows;
+ *  anything else is dropped, which means "legacy row" (= the first-message
+ *  fallback) rather than trusting a value no writer here produces. */
+const isTitleSource = (v: unknown): v is SessionTitleSource =>
+    typeof v === 'string' && VALID_TITLE_SOURCES.has(v as SessionTitleSource);
+
 /** A stored tier is only usable if it is one of the wire tiers; anything else
  *  (a future tier written by a newer build) is dropped, which means `'auto'`,
  *  i.e. the task default — not a knob the transport has never seen. */
@@ -317,6 +333,7 @@ export const loadSessions = (): ChatSession[] => {
             .map(s => ({
                 id: s.id,
                 title: typeof s.title === 'string' && s.title.trim() ? s.title : 'New chat',
+                titleSource: isTitleSource(s.titleSource) ? s.titleSource : undefined,
                 createdAt: Number.isFinite(s.createdAt) ? s.createdAt : now,
                 updatedAt: Number.isFinite(s.updatedAt) ? s.updatedAt : now,
                 kind: s.kind === 'panel' || s.kind === 'group' ? s.kind : 'solo' as const,
