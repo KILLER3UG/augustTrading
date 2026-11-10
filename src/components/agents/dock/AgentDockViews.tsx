@@ -10,6 +10,7 @@
 import React, { Suspense, useEffect, useState } from 'react';
 import { Search, FileText, BookOpen, Info } from '../../shared/Icons';
 import ChartFrame from '../../shared/ChartFrame';
+import ErrorBoundary from '../../shared/ErrorBoundary';
 import { EmptyState } from '../../ui/EmptyState';
 import StatusPill from '../../ui/StatusPill';
 import { useFuturesLiveFeed } from '../../../hooks/useFuturesLiveFeed';
@@ -143,9 +144,11 @@ export const ChartView: React.FC<DockChartProps> = ({ symbol, interval, onInterv
             <StatusPill tone="neutral" kicker>snapshot</StatusPill>
         </div>
         <div className="min-h-0 flex-1">
+            <ErrorBoundary pane label="The chart" resetKey={`${symbol}:${interval}`}>
             <Suspense fallback={<ChartFallback />}>
                 <TradingChart symbol={symbol} interval={interval} onIntervalChange={onIntervalChange} sessionId={sessionId} />
             </Suspense>
+            </ErrorBoundary>
         </div>
     </div>
 );
@@ -171,6 +174,7 @@ export const LiveView: React.FC<DockChartProps> = ({ symbol, interval, onInterva
                         <div className="h-full w-full" />
                     </ChartFrame>
                 ) : (
+                    <ErrorBoundary pane label="The chart" resetKey={`${symbol}:${interval}`}>
                     <Suspense fallback={<ChartFallback />}>
                         <TradingChart
                             symbol={symbol}
@@ -183,6 +187,7 @@ export const LiveView: React.FC<DockChartProps> = ({ symbol, interval, onInterva
                             markPrice={feed.markIndex?.markPrice ?? null}
                         />
                     </Suspense>
+                    </ErrorBoundary>
                 )}
             </div>
         </div>

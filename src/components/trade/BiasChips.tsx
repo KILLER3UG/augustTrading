@@ -53,7 +53,7 @@ const BiasChips: React.FC<{ symbol: string; interval: ChartInterval }> = ({ symb
            the furniture it just shed. */
         <div className="flex shrink-0 items-center gap-2 overflow-hidden whitespace-nowrap px-5 pb-2 pt-3 text-ui-dense text-zinc-500" data-testid="bias-chips">
             {chips.map((c, i) => (
-                <span key={c.text} className="inline-flex min-w-0 items-center gap-1.5">
+                <span key={`${c.text}-${i}`} className="inline-flex min-w-0 items-center gap-1.5">
                     {i > 0 && <span aria-hidden className="text-zinc-700">·</span>}
                     <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${TONE[c.tone]}`} aria-hidden="true" />
                     <span className="truncate" title={`${c.text} — Code-calculated from klines: EMA9/21 + RSI-14 trend, session VWAP`}>{c.text}</span>

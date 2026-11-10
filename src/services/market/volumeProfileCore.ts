@@ -61,10 +61,16 @@ export const buildVolumeProfile = (
     if (candles.length < 5) return null;
     const binCount = Math.max(8, Math.min(options.bins ?? 48, 200));
 
-    const lows = candles.map(c => c.low);
-    const highs = candles.map(c => c.high);
-    const min = Math.min(...lows);
-    const max = Math.max(...highs);
+    // Loop, not spread: the chart calls this on every pan frame, and a
+    // spread over a multi-thousand-bar window both allocates an args array
+    // per call and hits the engine's argument-count limit far below what a
+    // year of 1m bars weighs.
+    let min = Infinity;
+    let max = -Infinity;
+    for (const c of candles) {
+        if (c.low < min) min = c.low;
+        if (c.high > max) max = c.high;
+    }
     if (!(max > min)) return null; // degenerate: every trade at one price
 
     const binHeight = (max - min) / binCount;

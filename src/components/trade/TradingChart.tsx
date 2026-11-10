@@ -37,6 +37,10 @@ import {
     type UTCTimestamp,
 } from 'lightweight-charts';
 import { fetchKlines } from '../../services/analysis/KlineService';
+import type { Kline } from '../../services/analysis/MarketDataService';
+import { sessionLevelRows, type LevelRow } from '../../services/market/levelsCore';
+import { readStructure, type StructureRead } from '../../services/market/swingStructureCore';
+import { lastOf } from '../../services/trade/chartIndicators';
 import { phtAxisTick } from '../../utils/timezone';
 import { toCandles, toVolumes, verdictLevels, VOLUME_UP, VOLUME_DOWN, type ChartLevel } from '../../services/trade/chartData';
 import {
@@ -62,6 +66,7 @@ import { ChartToolRail, CHART_RAIL_WIDTH } from './ChartToolRail';
 import ChartFrame from '../shared/ChartFrame';
 import { shapeGeometry } from './drawingGeometry';
 import {
+    atrSeries,
     bollingerSeries,
     emaSeries,
     macdSeries,
@@ -72,15 +77,15 @@ import {
     type Series,
 } from '../../services/trade/chartIndicators';
 import { candleDelta } from '../../services/market/orderFlowCore';
+import { buildVolumeProfile } from '../../services/market/volumeProfileCore';
 import {
-    CHART_INDICATOR_IDS,
     CHART_INDICATOR_LABELS,
-    CHART_INDICATOR_PANE,
     readChartIndicatorSettings,
     writeChartIndicatorSettings,
     type ChartIndicatorId,
     type ChartIndicatorSettings,
 } from '../../services/trade/chartIndicatorSettings';
+import { CHART_INDICATOR_REGISTRY, offerableIndicatorIds } from '../../services/trade/chartIndicatorRegistry';
 
 /**
  * Resolve one of index.css's `@theme` CSS custom properties to a concrete
@@ -265,8 +270,18 @@ type ChartRow = {
     takerBuyVolume?: number;
 };
 
+/** The chart's rows carry `time` in SECONDS (lightweight-charts'
+ *  UTCTimestamp), while `Kline.time` is MILLISECONDS (Binance). The desk cores
+ *  compare candle times against ms bounds, so this converts — without it
+ *  `sessionLevelRows` matches nothing and the chart draws no levels while the
+ *  `session_levels` tool happily reports them. `volume` is added explicitly to
+ *  keep ONE shape for both. */
+const klinesOf = (rows: readonly ChartRow[]): Kline[] =>
+    rows.map(c => ({ ...c, time: c.time * 1000, volume: c.volume ?? 0 }));
+
 /** Seconds to the close of the bar that opened at `barTime`, as m:ss. Ticks
- *  itself so a countdown does not re-render the whole chart every second. */const BarCountdown = ({ barTime, interval }: { barTime: number; interval: ChartInterval }): React.ReactElement => {
+ *  itself so a countdown does not re-render the whole chart every second. */
+const BarCountdown = ({ barTime, interval }: { barTime: number; interval: ChartInterval }): React.ReactElement => {
     const [now, setNow] = useState(() => Date.now());
     useEffect(() => {
         const t = window.setInterval(() => setNow(Date.now()), 1000);
@@ -310,7 +325,12 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
     // The 24h fields are a CROSSHAIR readout (v3): they appear while the
     // pointer is over the plot and leave with it, so the resting chart is the
     // tape and nothing else.
+    /** Mirror of `overPlot`, so the per-tick refresh (which runs outside any
+     *  hover handler) can tell whether the legend belongs to the crosshair or
+     *  to the last bar. */
+    const overPlotRef = useRef(false);
     const [overPlot, setOverPlot] = useState(false);
+    overPlotRef.current = overPlot;
     /** The bar the legend describes: the crosshair's bar while the pointer is
      *  over the plot, otherwise the last bar. The values come from the same
      *  computed series the lines are drawn from. */
@@ -381,6 +401,10 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
     /** Every series living on a SUB-pane (RSI / MACD / TSI), so the mount
      *  cleanup can drop them and the rebuild can start from pane 1. */
     const subPaneSeriesRef = useRef<ISeriesApi<SeriesType>[]>([]);
+    /** Session levels and the swing read, painted by `repaint` from the DESK's
+     *  cores. Recomputed on every refresh so a tick moves them too. */
+    const sessionLevelsRef = useRef<LevelRow[]>([]);
+    const swingsRef = useRef<StructureRead | null>(null);
     /** One descriptor per drawn study: its chart series, how to recompute its
      *  values from a candle array (`calc`), and its legend key. The BUILD
      *  effect creates the series once; REFRESH re-runs every `calc` against
@@ -408,7 +432,6 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
         series: Record<string, Series>;
     } | null>(null);
     const levelLinesRef = useRef<ISeriesApi<'Line'>[]>([]);
-    const markLineRef = useRef<IPriceLine | null>(null);
     /** The chart's own dotted last-price line (the library's is replaced). */
     const lastLineRef = useRef<IPriceLine | null>(null);
     /** Key-level lines the DOCK pushed (message card + chart toggle) — id →
@@ -520,6 +543,30 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                 </div>
             ));
         }
+        // Session levels and the structure read are not per-bar studies, so
+        // they are reported as the nearest levels and the last structural
+        // break — the same rows the desk tools print.
+        if (v.sessionLevels && sessionLevelsRef.current.length > 0) {
+            const nearest = [...sessionLevelsRef.current].sort((a, b) => a.distance - b.distance).slice(0, 3);
+            rows.push((
+                <div key="sessionLevels" className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                    {nearest.map(l => (
+                        <span key={l.label}>{l.label} <span className="text-zinc-300">{fmt(l.price)}</span></span>
+                    ))}
+                </div>
+            ));
+        }
+        if (v.swings && swingsRef.current) {
+            const s = swingsRef.current;
+            rows.push((
+                <div key="swings" className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                    <span>Structure <span className="text-zinc-300">{s.trend}</span></span>
+                    {s.lastBreak && (
+                        <span>{s.lastBreak.kind} <span className={s.lastBreak.direction === 'bullish' ? 'text-emerald-300' : 'text-rose-300'}>{s.lastBreak.direction}</span></span>
+                    )}
+                </div>
+            ));
+        }
         return rows;
     };
 
@@ -556,6 +603,20 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
     // but, with status already 'live', nothing repaints them (invisible until a
     // manual pan). Synced below once repaint exists.
     const repaintRef = useRef<() => void>(() => {});
+    /** Repaint at most once per FRAME. Pan/zoom fires the visible-range
+     *  subscription many times per frame, and each repaint walks the visible
+     *  bars through coordinate conversions — uncoalesced, a fast pan paid for
+     *  two or three full repaints per frame and the chart lagged with a lot
+     *  of data loaded. Everything schedules; the last schedule in a frame
+     *  wins. The ResizeObserver rides the same lane. */
+    const repaintFrameRef = useRef<number | null>(null);
+    const scheduleRepaint = useCallback((): void => {
+        if (repaintFrameRef.current !== null) return;
+        repaintFrameRef.current = window.requestAnimationFrame(() => {
+            repaintFrameRef.current = null;
+            repaintRef.current();
+        });
+    }, []);
 
     // Load the persisted shapes whenever the chart (scope + symbol) changes.
     // ONE store: the session bucket for this scope — there is no legacy
@@ -701,7 +762,6 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
             indicatorSeriesRef.current = [];
             subPaneSeriesRef.current = [];
             levelLinesRef.current = [];
-            markLineRef.current = null;
             lastLineRef.current = null;
             // The chat-level lines died with the chart — forget them so the
             // next mount's diff recreates instead of applyOptions-ing ghosts.
@@ -757,19 +817,15 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
     };
     useEffect(() => {
         // Symbol switch: drop the PREVIOUS coin's artifacts immediately —
-        // candles, volume and the mark price line — so no stale price prints
-        // on the new chart during the history fetch (the "BTC mark on a ZEN
+        // candles, volume and the price lines — so no stale price prints on
+        // the new chart during the history fetch (the "BTC mark on a ZEN
         // chart" data-discrepancy flag).
         if (dataSymbolRef.current !== symbol) {
             dataSymbolRef.current = symbol;
-            if (markLineRef.current) {
-                try { candlesRef.current?.removePriceLine(markLineRef.current); } catch { /* series gone */ }
-                markLineRef.current = null;
-            }
             // The custom last-price line is a price line too — without this,
             // the previous coin's dotted line persisted onto the new chart
-            // until a prop ticked (the mark line got this cleanup on day one;
-            // the last-price line was added later and missed it).
+            // until a prop ticked (the last-price line was added later and
+            // missed this cleanup).
             if (lastLineRef.current) {
                 try { candlesRef.current?.removePriceLine(lastLineRef.current); } catch { /* series gone */ }
                 lastLineRef.current = null;
@@ -927,34 +983,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
             lastLineRef.current = cs.createPriceLine({ ...opts, axisLabelVisible: false }) ?? null;
         } catch { /* series without price-line support (test mock) */ }
         updateLastTag();
-    }, [symbol, lastPrice, markPrice, status, interval, liveKline, updateLastTag]);
-
-    // Realtime price line: the live ticker/mark price gets its own dashed
-    // "mark" line updated on every tick — visible immediately, unlike the
-    // built-in last-close line which only moves when the open bar updates.
-    useEffect(() => {
-        const cs = candlesRef.current;
-        if (!cs) return;
-        const removeLine = (): void => {
-            if (markLineRef.current) {
-                try { cs.removePriceLine?.(markLineRef.current); } catch { /* already gone */ }
-                markLineRef.current = null;
-            }
-        };
-        // The line is titled 'mark', so prefer the real mark price; lastPrice
-        // remains the fallback (e.g. feeds where markPrice@1s is unavailable).
-        const price = markPrice ?? lastPrice;
-        if (price == null || !Number.isFinite(price)) { removeLine(); return; }
-        if (markLineRef.current) {
-            try { markLineRef.current.applyOptions({ price }); return; } catch { removeLine(); }
-        }
-        try {
-            markLineRef.current = cs.createPriceLine({
-                price, color: chartColor('--color-cyan-500', '#06b6d4'), lineWidth: 1, lineStyle: 2,
-                axisLabelVisible: true, title: 'mark',
-            }) ?? null;
-        } catch { /* series without price-line support (test mock) */ }
-    }, [lastPrice, markPrice, status]);
+    }, [symbol, lastPrice, status, interval, liveKline, updateLastTag]);
 
     // Indicator overlays. Every series comes from `chartIndicators`, the ONE
     // series module: the chart's lines, this legend, and — as the desk tools
@@ -983,7 +1012,15 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
         const candles = chartRowsRef.current.length > 0
             ? chartRowsRef.current
             : (candlesRef.current?.data?.() ?? []) as readonly ChartRow[];
-        if (candles.length === 0) { refreshIndicatorsRef.current = () => {}; return; }
+        // The visibility mirror is refreshed BEFORE the empty-candles return:
+        // `repaint` reads it from a non-React callback, and leaving it on the
+        // previous set made a toggle that landed during a load paint the OLD
+        // studies until the next tick.
+        const visible = indicatorSettings.visible;
+        visibleRef.current = visible;
+        bandRef.current = null;
+        bandCalcRef.current = null;
+        if (candles.length === 0) { refreshIndicatorsRef.current = () => {}; scheduleRepaint(); return; }
         const closesOf = (cs: readonly ChartRow[]): number[] => cs.map(c => c.close);
         /** Register a main-pane line study: create the series now, remember
          *  how to recompute its values from any later candle array, and file
@@ -995,10 +1032,6 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
             indicatorSeriesRef.current.push(series);
             indicatorDefsRef.current.push({ series, kind: 'line', name, calc });
         };
-        const visible = indicatorSettings.visible;
-        visibleRef.current = visible;
-        bandRef.current = null;
-        bandCalcRef.current = null;
         if (visible.ema20) addLine(cs => emaSeries(closesOf(cs), 20), chartColor('--color-amber-500', '#f59e0b'), 'ema20');
         if (visible.ema200) addLine(cs => emaSeries(closesOf(cs), 200), chartColor('--color-purple-400', '#a78bfa'), 'ema200');
         if (visible.boll) {
@@ -1090,6 +1123,27 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
             if (cs.length === 0) return;
             const times = cs.map(c => c.time as UTCTimestamp);
             const legendSeries: Record<string, Series> = {};
+            // SESSION LEVELS and SWINGS are not series — levels are horizontal
+            // lines and swings are point markers — so they are computed here and
+            // painted by `repaint` from these refs. Both read the DESK's cores
+            // (levelsCore, swingStructureCore), never a reimplementation: the
+            // same levels the `session_levels` tool reports.
+            sessionLevelsRef.current = [];
+            swingsRef.current = null;
+            const closesNow = closesOf(cs);
+            const reference = closesNow[closesNow.length - 1];
+            const visibleNow = visibleRef.current;
+            if (visibleNow.sessionLevels && Number.isFinite(reference)) {
+                const atr = lastOf(atrSeries(cs.map(c => c.high), cs.map(c => c.low), closesNow, 14));
+                // Half an ATR is the desk's touch tolerance: tight enough that
+                // two sessions' lines do not collapse into one, loose enough
+                // that a near-miss still counts as the same level.
+                const tolerance = (atr ?? Math.abs(reference) * 0.002) * 0.5;
+                sessionLevelsRef.current = sessionLevelRows(klinesOf(cs), Date.now(), reference, atr, tolerance);
+            }
+            if (visibleNow.swings) {
+                swingsRef.current = readStructure(klinesOf(cs), 2);
+            }
             for (const def of indicatorDefsRef.current) {
                 const values = def.calc(cs);
                 if (def.name) legendSeries[def.name] = values;
@@ -1115,17 +1169,54 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                 legendSeries.bollUpper = band.upper;
                 legendSeries.bollLower = band.lower;
             }
-            legendRef.current = {
-                times: cs.map(c => c.time),
-                bars: cs.map(c => ({ open: c.open, high: c.high, low: c.low, close: c.close })),
-                volumes: new Map(((volumeRef.current?.data?.() ?? []) as readonly { time: number; value: number }[])
-                    .map(p => [p.time, p.value] as const)),
-                series: legendSeries,
-            };
-            repaintRef.current();
+            // The legend mirror: a forming tick changes exactly ONE row — the
+            // last — so on `full === false` only that row (and its volume) is
+            // patched instead of rebuilding a 1000-entry array triple plus a
+            // Map on every tick. A full refresh (bar closed, settings change,
+            // reload) rebuilds wholesale, because past rows legitimately move.
+            const lastRow = cs[cs.length - 1];
+            const prevLegend = legendRef.current;
+            if (!full && prevLegend && prevLegend.times.length === cs.length && prevLegend.bars.length === cs.length) {
+                prevLegend.times[cs.length - 1] = lastRow.time;
+                prevLegend.bars[cs.length - 1] = { open: lastRow.open, high: lastRow.high, low: lastRow.low, close: lastRow.close };
+                prevLegend.volumes.set(lastRow.time, (volumeRef.current?.data?.() as readonly { time: number; value: number }[] | undefined)?.slice(-1)[0]?.value ?? 0);
+                prevLegend.series = legendSeries;
+            } else {
+                legendRef.current = {
+                    times: cs.map(c => c.time),
+                    bars: cs.map(c => ({ open: c.open, high: c.high, low: c.low, close: c.close })),
+                    volumes: new Map(((volumeRef.current?.data?.() ?? []) as readonly { time: number; value: number }[])
+                        .map(p => [p.time, p.value] as const)),
+                    series: legendSeries,
+                };
+            }
+            // SCHEDULED, not synchronous. A toggle goes through BUILD, which
+            // has just removed and re-added series; the price scale and the
+            // pane heights are invalidated but NOT re-laid-out until
+            // lightweight-charts' next frame. Painting here converted prices
+            // through the stale space, so the canvas studies (swings, session
+            // levels, volume profile, the Bollinger fill) drew at yesterday's
+            // coordinates or not at all — the "some indicators don't update
+            // visually" report. Deferring to the next frame paints against the
+            // space the trader is about to see.
+            scheduleRepaint();
+            // too. Without this the legend froze at the last effect run: the
+            // refresh mutated the mirror but never told React, and no dep of the
+            // at-rest effect changes on a tick. Guarded on (time, close) so a
+            // tick that did not move the bar does not re-render.
+            if (!overPlotRef.current && cs.length > 0) {
+                const lastIdx = cs.length - 1;
+                const row = cs[lastIdx];
+                const values: Record<string, number | null> = {};
+                for (const [k, s] of Object.entries(legendSeries)) values[k] = s[lastIdx] ?? null;
+                setLegendBar(prev => (prev && prev.time === row.time && prev.close === row.close
+                    && JSON.stringify(prev.values) === JSON.stringify(values)
+                    ? prev
+                    : { time: row.time, open: row.open, high: row.high, low: row.low, close: row.close, values }));
+            }
         };
         refreshIndicatorsRef.current(true);
-    }, [symbol, interval, indicatorSettings, status]);
+    }, [symbol, interval, indicatorSettings, status, scheduleRepaint]);
 
     // The live tape drives REFRESH: every tick re-places the studies' last
     // point, and a closed bar rewrites them whole (the Bollinger window
@@ -1369,12 +1460,21 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
 
         // Bollinger band fill: upper forward, lower backward, closed. Painted
         // BEFORE the drawings so a shape the trader drew on the band still
-        // reads on top of the shade.
+        // reads on top of the shade. Only the VISIBLE bars are converted —
+        // each bar costs two coordinate transforms, and with 1000 bars loaded
+        // the off-screen ~90% were pure per-frame waste (the plot clip already
+        // discarded their pixels; this discards their work too).
         const band = bandRef.current;
         if (band) {
+            const bandTs = chartRef.current?.timeScale();
+            const bandRange = bandTs && typeof bandTs.getVisibleLogicalRange === 'function'
+                ? bandTs.getVisibleLogicalRange()
+                : null;
+            const firstIdx = bandRange ? Math.max(0, Math.floor(Number(bandRange.from)) - 2) : 0;
+            const lastIdx = bandRange ? Math.min(band.upper.length - 1, Math.ceil(Number(bandRange.to)) + 2) : band.upper.length - 1;
             const top: { x: number; y: number }[] = [];
             const bottom: { x: number; y: number }[] = [];
-            for (let i = 0; i < band.upper.length; i += 1) {
+            for (let i = firstIdx; i <= lastIdx; i += 1) {
                 if (band.upper[i] === null || band.lower[i] === null) continue;
                 const hi = toScreen({ t: band.times[i], p: band.upper[i] as number });
                 const lo = toScreen({ t: band.times[i], p: band.lower[i] as number });
@@ -1408,6 +1508,142 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                 ctx.stroke();
                 ctx.restore();
             }
+        }
+
+        // THE VOLUME PROFILE: the desk's ONE buildVolumeProfile (family 36 pins
+        // its math), drawn as a horizontal histogram hugging the right edge with
+        // POC/VAH/VAL lines. A right-edge histogram is geometry, not a series,
+        // so this is canvas work beside the fill, not a chartIndicators entry.
+        // Two anchorings, because the spec asked for both: the VISIBLE range
+        // (OKX's VPVR, recomputed per pan) and the current UTC SESSION.
+        const paintProfile = (rows: ChartRow[], tone: 'range' | 'session'): void => {
+            if (rows.length === 0) return;
+            const prof = buildVolumeProfile(
+                rows.map(c => ({ ...c, volume: c.volume ?? 0 })),
+                { bins: 48 },
+            );
+            if (!prof) return;
+            const vpPriceY = (p: number): number | null => {
+                const y = candlesRef.current?.priceToCoordinate?.(p as never);
+                return y === null || y === undefined || !Number.isFinite(Number(y)) ? null : Number(y);
+            };
+            const maxBin = Math.max(...prof.bins.map(b => b.volume));
+            const maxW = plotW * 0.22;
+            const barColor = tone === 'range' ? 'rgba(148, 163, 184, 0.30)' : 'rgba(180, 130, 220, 0.26)';
+            ctx.save();
+            for (const b of prof.bins) {
+                if (b.volume <= 0) continue;
+                const yTop = vpPriceY(b.priceHigh);
+                const yBot = vpPriceY(b.priceLow);
+                if (yTop === null || yBot === null) continue;
+                const w = (b.volume / maxBin) * maxW;
+                ctx.fillStyle = barColor;
+                ctx.fillRect(plotW - w, yTop, w, Math.max(1, yBot - yTop - 1));
+            }
+            // POC (solid amber) and the value-area bounds (dashed).
+            const hline = (price: number, color: string, dashed: boolean, label: string): void => {
+                const y = vpPriceY(price);
+                if (y === null) return;
+                ctx.strokeStyle = color;
+                ctx.setLineDash(dashed ? [4, 4] : []);
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(plotW, y);
+                ctx.stroke();
+                ctx.setLineDash([]);
+                ctx.font = '9px ui-monospace, monospace';
+                ctx.fillStyle = color;
+                ctx.fillText(label, plotW - ctx.measureText(label).width - 4, y - 3);
+            };
+            const pocColor = chartColor('--color-amber-400', '#fbbf24');
+            const vaColor = chartColor('--color-zinc-500', '#71717a');
+            hline(prof.valueAreaHigh, vaColor, true, 'VAH');
+            hline(prof.valueAreaLow, vaColor, true, 'VAL');
+            hline(prof.poc, pocColor, false, 'POC');
+            ctx.restore();
+        };
+        if (visibleRef.current.volumeProfile) {
+            const vpTs = chartRef.current?.timeScale();
+            const vpRows = chartRowsRef.current;
+            const vpRange = vpTs && typeof vpTs.getVisibleLogicalRange === 'function' ? vpTs.getVisibleLogicalRange() : null;
+            if (vpRange && vpRows.length > 0) {
+                const first = Math.max(0, Math.floor(Number(vpRange.from)));
+                const last = Math.min(vpRows.length - 1, Math.ceil(Number(vpRange.to)));
+                paintProfile(vpRows.slice(first, last + 1), 'range');
+            }
+        }
+        if (visibleRef.current.volumeProfileSession) {
+            // The current UTC day, up to the last loaded bar.
+            const all = chartRowsRef.current;
+            if (all.length > 0) {
+                const dayStart = Math.floor(all[all.length - 1].time / 86400) * 86400;
+                const session = all.filter(c => c.time >= dayStart);
+                paintProfile(session, 'session');
+            }
+        }
+
+        // SESSION LEVELS: dashed horizontal lines with their tag on the right
+        // edge, from the DESK's levelsCore — the same rows the
+        // `session_levels` tool reports, so the chart and the model cannot
+        // disagree about where Asia's high is.
+        const levels = sessionLevelsRef.current;
+        if (levels.length > 0) {
+            ctx.save();
+            ctx.font = '9px ui-monospace, monospace';
+            for (const row of levels) {
+                const y = candlesRef.current?.priceToCoordinate?.(row.price as never);
+                if (y === null || y === undefined || !Number.isFinite(Number(y))) continue;
+                const above = row.side === 'above';
+                ctx.strokeStyle = above ? 'rgba(244, 63, 94, 0.40)' : 'rgba(16, 185, 129, 0.40)';
+                ctx.lineWidth = 1;
+                ctx.setLineDash([5, 4]);
+                ctx.beginPath();
+                ctx.moveTo(0, Number(y));
+                ctx.lineTo(plotW, Number(y));
+                ctx.stroke();
+                ctx.setLineDash([]);
+                ctx.fillStyle = above ? 'rgba(244, 63, 94, 0.80)' : 'rgba(16, 185, 129, 0.80)';
+                ctx.fillText(row.label, plotW - ctx.measureText(row.label).width - 4, Number(y) - 3);
+            }
+            ctx.restore();
+        }
+
+        // SWINGS: a triangle on each swing high/low, and the last structural
+        // break labelled. From swingStructureCore — the desk's own read.
+        const structure = swingsRef.current;
+        if (structure) {
+            ctx.save();
+            ctx.font = '9px ui-monospace, monospace';
+            const swTs = chartRef.current?.timeScale();
+            for (const sw of structure.swings) {
+                const x = swTs?.logicalToCoordinate(sw.index as never);
+                const y = candlesRef.current?.priceToCoordinate?.(sw.price as never);
+                if (x === null || x === undefined || y === null || y === undefined) continue;
+                ctx.fillStyle = sw.kind === 'high' ? '#f472b6' : '#34d399';
+                const yy = sw.kind === 'high' ? Number(y) - 6 : Number(y) + 6;
+                ctx.beginPath();
+                if (sw.kind === 'high') {
+                    ctx.moveTo(Number(x), yy - 4);
+                    ctx.lineTo(Number(x) - 3.5, yy + 2);
+                    ctx.lineTo(Number(x) + 3.5, yy + 2);
+                } else {
+                    ctx.moveTo(Number(x), yy + 4);
+                    ctx.lineTo(Number(x) - 3.5, yy - 2);
+                    ctx.lineTo(Number(x) + 3.5, yy - 2);
+                }
+                ctx.closePath();
+                ctx.fill();
+            }
+            if (structure.lastBreak) {
+                const b = structure.lastBreak;
+                const y = candlesRef.current?.priceToCoordinate?.(b.level as never);
+                if (y !== null && y !== undefined && Number.isFinite(Number(y))) {
+                    ctx.fillStyle = b.kind === 'BOS' ? '#fbbf24' : '#f472b6';
+                    ctx.fillText(`${b.kind} ${b.direction}`, 6, Number(y) - 4);
+                }
+            }
+            ctx.restore();
         }
 
         const project = (list: ChartDrawing['points']): { x: number; y: number }[] =>
@@ -1623,7 +1859,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
         repaintRef.current();
         const chart = chartRef.current;
         if (!chart) return;
-        const handler = (): void => { repaintRef.current(); updateLastTag(); };
+        const handler = (): void => { scheduleRepaint(); updateLastTag(); };
         const ts = chart.timeScale();
         // Test mocks may omit the subscription API — painting still works,
         // only pan/zoom repaint is skipped there.
@@ -1632,13 +1868,17 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
         if (sub) sub(handler);
         // jsdom (and older webviews) have no ResizeObserver — painting on
         // pan/zoom still works via the range subscription alone.
-        const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => repaintRef.current()) : null;
+        const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => scheduleRepaint()) : null;
         if (ro && hostRef.current) ro.observe(hostRef.current);
         return () => {
             if (unsub) { try { unsub(handler); } catch { /* chart removed */ } }
             ro?.disconnect();
+            if (repaintFrameRef.current !== null) {
+                window.cancelAnimationFrame(repaintFrameRef.current);
+                repaintFrameRef.current = null;
+            }
         };
-    }, [drawings, modelDrawings, status, interval, updateLastTag]);
+    }, [drawings, modelDrawings, status, interval, updateLastTag, scheduleRepaint]);
 
     // The in-progress DRAFT preview repaints on every pointermove — but it
     // must not re-run the subscription effect above (that was the churn:
@@ -1872,7 +2112,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                                 className="fixed inset-0 z-20 cursor-default" />
                             <div role="menu" data-testid="chart-indicator-menu"
                                 className="absolute left-0 top-full z-30 mt-1 w-44 rounded-control border border-hairline bg-zinc-900 py-1 shadow-elevated">
-                                {CHART_INDICATOR_IDS.filter(id => CHART_INDICATOR_PANE[id]).map(id => {
+                                {offerableIndicatorIds.map(id => {
                                     const on = indicatorSettings.visible[id];
                                     return (
                                         <button key={id} type="button" role="menuitemcheckbox" aria-checked={on}
@@ -1880,7 +2120,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                                             className="flex w-full items-center gap-2 px-2 py-1 text-left text-ui-dense text-zinc-300 hover:bg-white/[0.05]">
                                             <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${on ? 'bg-amber-400' : 'bg-zinc-700'}`} />
                                             <span className="flex-1">{CHART_INDICATOR_LABELS[id]}</span>
-                                            {CHART_INDICATOR_PANE[id] === 'sub' && (
+                                            {CHART_INDICATOR_REGISTRY[id].delivery === 'sub-series' && (
                                                 <span className="text-ui-micro text-zinc-600">pane</span>
                                             )}
                                         </button>

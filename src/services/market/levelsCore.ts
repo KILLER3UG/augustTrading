@@ -87,10 +87,22 @@ export const priorPeriodLevels = (
     return rows;
 };
 
+/** Session names as a person reads them, in the order the day runs. */
+const SESSION_DISPLAY: Record<string, string> = { asian: 'Asia', london: 'London', new_york: 'New York' };
+const SESSION_ORDER = ['asian', 'london', 'new_york'] as const;
+
 /**
  * Session highs/lows for the named windows of the two most recent days
  * (today's completed windows + yesterday's). Only windows with candles are
  * reported.
+ *
+ * COINCIDENT PRICES MERGE INTO ONE ROW NAMING EVERY SESSION. Two sessions
+ * frequently print the same high or low — on a quiet day all three can. The
+ * generic price-only `dedupeLevels` kept the FIRST row and dropped the rest, so
+ * London and New York silently vanished behind Asia's label and the chart
+ * showed one session where three had traded. Here the cluster keeps one line
+ * (no eight overlapping dashes) but its label names every session that printed
+ * it, so the price and the provenance both survive.
  */
 export const sessionLevelRows = (
     allCandles: Kline[],
@@ -99,19 +111,43 @@ export const sessionLevelRows = (
     atr: number | null,
     tolerance: number,
 ): LevelRow[] => {
-    const rows: LevelRow[] = [];
+    type Raw = { day: 'today' | 'yesterday'; session: string; side: 'high' | 'low'; row: LevelRow };
+    const raw: Raw[] = [];
     const days = [utcDayStart(asofMs), utcDayStart(asofMs) - UTC_DAY_MS];
-    for (const day of days) {
+    days.forEach((day, dayIndex) => {
         for (const w of sessionWindowsForDay(day)) {
             const candles = allCandles.filter(c => c.time >= w.startMs && c.time < Math.min(w.endMs, asofMs) && c.time < asofMs);
             const hl = highLow(candles);
             if (!hl) continue;
-            const tag = w.startMs >= utcDayStart(asofMs) ? 'today' : 'yesterday';
-            pushLevel(rows, `${tag}_${w.session}_high`, hl.high, reference, atr, tolerance, allCandles);
-            pushLevel(rows, `${tag}_${w.session}_low`, hl.low, reference, atr, tolerance, allCandles);
+            const tag: Raw['day'] = dayIndex === 0 ? 'today' : 'yesterday';
+            const push = (side: Raw['side'], price: number): void => {
+                const rows: LevelRow[] = [];
+                pushLevel(rows, `${tag}_${w.session}_${side}`, price, reference, atr, tolerance, allCandles);
+                if (rows[0]) raw.push({ day: tag, session: w.session, side, row: rows[0] });
+            };
+            push('high', hl.high);
+            push('low', hl.low);
+        }
+    });
+    const out: LevelRow[] = [];
+    for (const day of ['today', 'yesterday'] as const) {
+        for (const side of ['high', 'low'] as const) {
+            const group = raw.filter(r => r.day === day && r.side === side).sort((a, b) => a.row.price - b.row.price);
+            const clusters: Raw[][] = [];
+            for (const item of group) {
+                const hit = clusters.find(cl => Math.abs(cl[0].row.price - item.row.price) <= tolerance);
+                if (hit) hit.push(item);
+                else clusters.push([item]);
+            }
+            for (const cluster of clusters) {
+                const names = SESSION_ORDER
+                    .filter(s => cluster.some(item => item.session === s))
+                    .map(s => SESSION_DISPLAY[s]);
+                out.push({ ...cluster[0].row, label: `${names.join(' · ')} ${side} (${day})` });
+            }
         }
     }
-    return rows;
+    return out;
 };
 
 /**

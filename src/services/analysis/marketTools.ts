@@ -795,9 +795,12 @@ export const buildSessionLevels = async (
             range,
             candles: candles.filter(c => c.time >= range.startMs && c.time < range.endMs),
         }));
+    // Session rows FIRST: the generic dedupe keeps the first row within
+    // tolerance, and a round number sitting on a session high must not erase
+    // the session's name from the read.
     const rows = dedupeLevels([
-        ...priorPeriodLevels(periodCandles, last, atr, tolerance, candles),
         ...sessionLevelRows(candles, asofMs, last, atr, tolerance),
+        ...priorPeriodLevels(periodCandles, last, atr, tolerance, candles),
         ...roundNumberRows(last, atr, tolerance, candles, 2),
     ], tolerance);
     return {

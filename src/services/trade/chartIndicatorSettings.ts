@@ -23,6 +23,7 @@ export type ChartIndicatorId =
     | 'vwap'
     | 'avwap'
     | 'volumeProfile'
+    | 'volumeProfileSession'
     | 'sessionLevels'
     | 'swings'
     | 'cvd'
@@ -36,7 +37,7 @@ export interface ChartIndicatorSettings {
 
 export const CHART_INDICATOR_IDS = [
     'volume', 'ema20', 'ema200', 'boll', 'rsi', 'macd',
-    'tsi', 'vwap', 'avwap', 'volumeProfile', 'sessionLevels', 'swings', 'cvd', 'funding',
+    'tsi', 'vwap', 'avwap', 'volumeProfile', 'volumeProfileSession', 'sessionLevels', 'swings', 'cvd', 'funding',
 ] as const satisfies readonly ChartIndicatorId[];
 
 /** OKX's out-of-the-box set. */
@@ -52,6 +53,7 @@ export const DEFAULT_CHART_INDICATOR_SETTINGS: ChartIndicatorSettings = {
         vwap: false,
         avwap: false,
         volumeProfile: false,
+        volumeProfileSession: false,
         sessionLevels: false,
         swings: false,
         cvd: false,
@@ -74,16 +76,19 @@ export const CHART_INDICATOR_LABELS: Record<ChartIndicatorId, string> = {
     vwap: 'VWAP (session)',
     avwap: 'Anchored VWAP (Alt+click to anchor)',
     volumeProfile: 'Volume profile',
+    volumeProfileSession: 'Volume profile (session)',
     sessionLevels: 'Session levels',
     swings: 'Swings / BOS',
     cvd: 'CVD',
     funding: 'Funding & OI',
 };
 
-/** Studies that need their own pane. They are listed and can be toggled now,
- *  but the pane itself lands with the sub-pane step — the toggle persists the
- *  choice so nothing is lost when the pane arrives. */
+/** Where each study DRAWS. 'sub' entries that appear in `SUB_PANE_ORDER`
+ *  (TradingChart) get their own pane; 'main' entries draw on the price pane —
+ *  the volume profile is a right-edge canvas overlay, not a series, so it is
+ *  'main' with no pane. Everything listed here is toggleable in the menu. */
 export const CHART_INDICATOR_PANE: Partial<Record<ChartIndicatorId, 'main' | 'sub'>> = {
+    volume: 'main',
     ema20: 'main',
     ema200: 'main',
     boll: 'main',
@@ -92,7 +97,11 @@ export const CHART_INDICATOR_PANE: Partial<Record<ChartIndicatorId, 'main' | 'su
     tsi: 'sub',
     vwap: 'main',
     avwap: 'main',
-    volumeProfile: 'sub',
+    volumeProfile: 'main',
+    volumeProfileSession: 'main',
+    // Canvas overlays drawn by `repaint`, not series — still 'main'.
+    sessionLevels: 'main',
+    swings: 'main',
     cvd: 'sub',
     funding: 'sub',
 };

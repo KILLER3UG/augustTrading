@@ -100,7 +100,10 @@ export const biasChips = (
         const t = trendBias(daily.map(k => k.close));
         chips.push({ text: `1D ${word(t)}`, tone: t });
     }
-    if (current.length >= 30) {
+    // On the daily chart `current` IS the daily series, so this would emit a
+    // second "1D Bearish" — two chips with identical text, which React renders
+    // as duplicate keys and can drop a row. One bar length, one chip.
+    if (current.length >= 30 && currentLabel !== '1D') {
         const t = trendBias(current.map(k => k.close));
         chips.push({ text: `${currentLabel} ${word(t)}`, tone: t });
     }

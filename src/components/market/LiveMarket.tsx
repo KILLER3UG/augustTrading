@@ -39,6 +39,7 @@ import { analyzeWithAI, convertToLineData, MarketInsights, TrendlineResult } fro
 import { buildTimeframeSnapshot, formatLiveMarketPrompt, type LiveMarketSnapshot } from '../../services/analysis/marketSnapshot';
 import { fetchKlines } from '../../services/analysis/KlineService';
 import TradingChart from '../trade/TradingChart';
+import ErrorBoundary from '../shared/ErrorBoundary';
 import type { ChartInterval } from '../../utils/chartIntervals';
 import { MODEL_COLOR_NAMES, type ChartDrawing } from '../../services/trade/chartDrawings';
 import { useFuturesLiveFeed } from '../../hooks/useFuturesLiveFeed';
@@ -393,6 +394,7 @@ const [trendlineDrawings, setTrendlineDrawings] = useState<ChartDrawing[]>([]);
                 gets a real box (it measures, it does not self-size). */}
             <div className="flex-1 min-h-[360px] lg:min-h-[500px] flex flex-col relative bg-zinc-900 overflow-hidden">
                 <div className="min-h-0 flex-1">
+                    <ErrorBoundary pane label="The chart" resetKey={`${symbol}:${chartInterval}`}>
                     <TradingChart
                         symbol={symbol}
                         interval={chartInterval}
@@ -408,6 +410,7 @@ const [trendlineDrawings, setTrendlineDrawings] = useState<ChartDrawing[]>([]);
                         markPrice={Number.isFinite(markPrice) ? markPrice : null}
                         modelDrawings={trendlineDrawings}
                     />
+                    </ErrorBoundary>
                 </div>
 
                         {/* AI Analysis Overlay */}

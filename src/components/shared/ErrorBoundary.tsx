@@ -4,12 +4,22 @@ interface Props {
     children: ReactNode;
     /** Compact inline fallback (e.g. per-message) instead of the full-screen one. */
     compact?: boolean;
+    /** A surface-sized fallback: fills its own box instead of the viewport, so
+     *  a chart that throws leaves the rest of the screen usable. */
+    pane?: boolean;
+    /** What failed, for the fallback's heading ("The chart"). */
+    label?: string;
+    /** Changing this clears the error. A chart is remounted on every symbol and
+     *  interval change, so the same boundary must survive one bad render and
+     *  try again for the next — without it the fallback becomes permanent. */
+    resetKey?: string;
 }
 
 interface State {
     hasError: boolean;
     error: Error | null;
     errorInfo: ErrorInfo | null;
+    resetKey?: string;
 }
 
 /**
@@ -26,6 +36,12 @@ class ErrorBoundary extends Component<Props, State> {
     static getDerivedStateFromError(error: Error): Partial<State> {
         // Update state so the next render shows the fallback UI
         return { hasError: true, error };
+    }
+
+    componentDidUpdate(prevProps: Props): void {
+        if (this.state.hasError && prevProps.resetKey !== this.props.resetKey) {
+            this.setState({ hasError: false, error: null, errorInfo: null, resetKey: this.props.resetKey });
+        }
     }
 
     componentDidCatch(error: Error, errorInfo: ErrorInfo): void {
@@ -74,6 +90,27 @@ class ErrorBoundary extends Component<Props, State> {
 
     render(): ReactNode {
         if (this.state.hasError) {
+            if (this.props.pane) {
+                // Surface-sized fallback. The chart owns a flex box of its own;
+                // a full-screen overlay from a study that threw would take the
+                // trader's whole workspace down for one broken line.
+                return (
+                    <div role="alert" data-testid="pane-error-boundary" className="flex h-full min-h-[240px] w-full flex-col items-center justify-center gap-3 rounded-control border border-rose-500/25 bg-rose-500/5 p-6 text-center">
+                        <div className="text-ui-sm font-bold uppercase tracking-widest text-rose-300">
+                            {this.props.label ?? 'This panel'} failed to render
+                        </div>
+                        <div className="max-w-md truncate text-ui-sm text-rose-300/70" title={this.state.error?.message || 'Unknown error'}>
+                            {this.state.error?.message || 'Unknown error'}
+                        </div>
+                        <button
+                            onClick={this.handleReset}
+                            className="rounded-control bg-zinc-800 px-3 py-1.5 text-ui-xs font-bold uppercase tracking-widest text-zinc-300 transition-colors hover:bg-zinc-700"
+                        >
+                            Retry
+                        </button>
+                    </div>
+                );
+            }
             if (this.props.compact) {
                 // Inline fallback — one bad message must not take down the app.
                 return (
