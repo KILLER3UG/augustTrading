@@ -96,12 +96,34 @@ android {
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
             // Signed ONLY when android/keystore.properties was complete at
             // configuration time; otherwise the release build keeps the AGP
-            // default (unsigned) exactly as before.
+            // default (unsigned) - and the check below refuses to produce it.
             if (releaseSigningReady) {
                 signingConfig signingConfigs.release
             }
         }
     }
+}
+
+// FAIL CLOSED on an unsigned RELEASE build.
+//
+// An unsigned APK cannot be verified as the publisher's: nothing in it says
+// who built it, so whoever served it could have built it. The Electron side
+// already refuses to publish an unsigned installer unless the release asks for
+// it by name (ALLOW_UNSIGNED_RELEASE in the release workflow); this is the
+// same rule for Android, and it is NOT a purchase - an Android signing key is
+// a key pair the owner creates (keytool) and stores as a secret.
+//
+// The check fires only for a RELEASE task, so a debug build is unaffected, and
+// `-PallowUnsignedRelease` is the deliberate escape for a build the owner
+// wants unsigned.
+def releaseRequested = gradle.startParameter.taskNames.any { it.toLowerCase().contains('release') }
+if (releaseRequested && !releaseSigningReady && !project.hasProperty('allowUnsignedRelease')) {
+    throw new GradleException(
+        "Refusing to build an UNSIGNED release APK: an unsigned APK cannot be verified as the publisher's.\n" +
+        "Create a signing key (keytool -genkeypair -keystore release.keystore -alias release ...) and put it\n" +
+        "in android/keystore.properties (storeFile, storePassword, keyAlias, keyPassword) - the file is\n" +
+        "gitignored - or pass -PallowUnsignedRelease=true to build unsigned on purpose."
+    )
 }
 
 repositories {
