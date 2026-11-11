@@ -2169,7 +2169,11 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                 {legendBar && (
                     <div
                         data-testid="chart-legend"
-                        className="pointer-events-none absolute left-2 top-1.5 z-10 max-w-[calc(100%-16px)] rounded-control bg-zinc-950/80 px-2 py-1 font-mono text-ui-dense text-zinc-500"
+                        /* The drawing rail owns the plot's left 40px (w-10, z-20,
+                           rendered unconditionally), so the legend starts right of
+                           it — left-2 sat underneath the rail's icon column and
+                           the first characters of every row were unreadable. */
+                        className="pointer-events-none absolute left-12 top-1.5 z-10 max-w-[calc(100%-56px)] rounded-control bg-zinc-950/80 px-2 py-1 font-mono text-ui-dense text-zinc-500"
                     >
                         <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
                             <span>{phtAxisTick(legendBar.time, 'full')}</span>
@@ -2229,7 +2233,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                 {ohlcvRow && overPlot && (
                     <div
                         data-testid="ohlcv-row"
-                        className="pointer-events-none absolute left-2 z-10 flex max-w-[calc(100%-16px)] items-center gap-3 overflow-hidden rounded-control bg-zinc-950/80 px-2 py-0.5 text-ui-dense text-zinc-500"
+                        className="pointer-events-none absolute left-12 z-10 flex max-w-[calc(100%-56px)] items-center gap-3 overflow-hidden rounded-control bg-zinc-950/80 px-2 py-0.5 text-ui-dense text-zinc-500"
                         style={{ top: legendBar ? '5.5rem' : '0.375rem' }}
                     >
                         <span className="font-mono tabular-nums">H <span className="text-zinc-300">{ohlcvRow.high24h ? fmtPriceForChart(ohlcvRow.high24h) : '—'}</span></span>
