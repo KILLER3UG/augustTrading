@@ -37,6 +37,8 @@ const SHARED_POLICY_EXPORTS = [
   'anthropicCachedSystem',
   'geminiThinkingParams',
   'isPrivateOrLoopbackHost',
+  'isLinkLocalHost',
+  'hostAddresses',
   'httpAllowedForHost',
   'isSafeProviderTargetUrl',
   'isLocalBaseUrl',

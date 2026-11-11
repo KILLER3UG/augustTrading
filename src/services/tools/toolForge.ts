@@ -12,6 +12,7 @@
 
 import type { DeskToolDefinition, DeskToolCall, DeskToolResult } from '../analysis/DeskToolsService';
 import { neutralizeHarnessNotes } from '../../utils/harnessMarks';
+import { hostAddresses } from '../../../shared/providerRequestPolicy.cjs';
 
 /** ToolForge request — what a model submits. */
 export interface ToolForgeProposal {
@@ -77,18 +78,27 @@ const isBlockedHost = (hostname: string): boolean => {
     const h = hostname.toLowerCase().replace(/^\[(.*)\]$/, '$1');
     if (!h) return true;
     if (h === 'localhost' || h.endsWith('.localhost')) return true;
-    const mapped = h.match(/^::ffff:(.+)$/);
-    if (mapped) return isBlockedHost(mapped[1]);
-    if (h === '::1' || h === '::' || h.startsWith('fe80') || /^f[cd]/.test(h)) return true;
-    const octets = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-    if (octets) {
-        const a = Number(octets[1]);
-        const b = Number(octets[2]);
+    // The address is read NUMERICALLY, through the shared policy's
+    // `hostAddresses`, and NOT by matching the hostname string: the WHATWG
+    // URL parser rewrites an IPv4-embedded IPv6 literal into hex before this
+    // code ever sees it (`https://[::ffff:127.0.0.1]/` arrives as
+    // `[::ffff:7f00:1]`), so a string-matching blacklist classified loopback
+    // and cloud-metadata hosts as ordinary public ones.
+    const { ipv4, ipv6 } = hostAddresses(h);
+    if (ipv4) {
+        const a = Number(ipv4.split('.')[0]);
+        const b = Number(ipv4.split('.')[1]);
         if (a === 0 || a === 10 || a === 127) return true; // 0/8, 10/8, loopback
         if (a === 169 && b === 254) return true;           // link-local
         if (a === 172 && b >= 16 && b <= 31) return true;  // 172.16/12
         if (a === 192 && b === 168) return true;           // 192.168/16
         if (a >= 224) return true;                         // multicast/reserved
+        return false;
+    }
+    if (ipv6) {
+        if ((ipv6[0] & 0xffc0) === 0xfe80) return true;    // fe80::/10 link-local
+        if ((ipv6[0] & 0xfe00) === 0xfc00) return true;    // fc00::/7 unique-local
+        if (ipv6[0] === 0xff) return true;                 // ff00::/8 multicast
         return false;
     }
     return false;

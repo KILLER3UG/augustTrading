@@ -317,6 +317,130 @@ function geminiThinkingBudget(effort, maxOutputTokens) {
     return Math.min(requested, maxOutputTokens - 1);
 }
 
+// ─── Address canonicalization ───────────────────────────────────────────────
+//
+// ONE rule, asked by every host filter in the app: what ADDRESS is this
+// hostname? The filters used to answer it by matching the hostname STRING
+// with IPv4 dotted-decimal regexes, and the WHATWG URL parser defeats that —
+// it rewrites an IPv4-embedded IPv6 literal into pure hex BEFORE the filter
+// ever sees it:
+//
+//     new URL('https://[::ffff:127.0.0.1]/').hostname  ===  '[::ffff:7f00:1]'
+//
+// `::ffff:127.0.0.1` and `::ffff:7f00:1` are the SAME address (127.0.0.1),
+// but only the first one matches a dotted-quad regex — so every filter built
+// on those regexes classified loopback, RFC1918 and cloud-metadata hosts as
+// ordinary public ones. The decimal form (`https://2130706433/`) is parsed
+// back to dotted form and was caught; the IPv6 form was not, which is how a
+// single spelling of a blocked address walked straight through the gate.
+//
+// So the address is parsed NUMERICALLY, once, here, and the filters ask this
+// module for the answer instead of re-deriving it from text.
+
+/** A dotted-quad IPv4 literal. */
+const IPV4_LITERAL_RE = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
+
+/**
+ * Expand an IPv6 literal to its eight hextets, or null when it is not one.
+ * Handles the `::` gap, an embedded IPv4 tail and a zone index.
+ *
+ * @param {string} host
+ * @returns {number[]|null} eight hextets, most significant first
+ */
+function expandIpv6(host) {
+    let h = String(host == null ? '' : host).trim().toLowerCase();
+    if (h.startsWith('[')) h = h.slice(1);
+    if (h.endsWith(']')) h = h.slice(0, -1);
+    if (!h.includes(':')) return null;
+    const zone = h.indexOf('%');
+    if (zone >= 0) h = h.slice(0, zone);
+
+    // An embedded IPv4 tail (`::ffff:127.0.0.1`) contributes the last two
+    // hextets. The tail is cut BEFORE the gap is read, so the `::` that
+    // precedes it is still visible.
+    const tail = [];
+    const v4 = h.match(/(\d{1,3}(?:\.\d{1,3}){3})$/);
+    if (v4) {
+        const octets = v4[1].split('.').map(Number);
+        if (octets.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return null;
+        tail.push((octets[0] << 8) | octets[1], (octets[2] << 8) | octets[3]);
+        h = h.slice(0, v4.index);
+        // The separator before the tail is not part of the gap: `::ffff:` is
+        // `::` + `ffff`, not `::` + `ffff:`.
+        if (h.endsWith(':') && h.slice(0, -1).includes('::')) h = h.slice(0, -1);
+    }
+
+    const gap = h.indexOf('::');
+    const headText = gap >= 0 ? h.slice(0, gap) : h;
+    const rearText = gap >= 0 ? h.slice(gap + 2) : '';
+    const wordsOf = (text) => {
+        const out = [];
+        for (const part of text.split(':')) {
+            if (part === '') continue;
+            if (!/^[0-9a-f]{1,4}$/.test(part)) return null;
+            out.push(parseInt(part, 16));
+        }
+        return out;
+    };
+    const head = wordsOf(headText);
+    const rear = wordsOf(rearText);
+    if (!head || !rear) return null;
+
+    if (gap < 0) {
+        // No gap: the literal must be exactly eight hextets.
+        if (head.length + tail.length !== 8) return null;
+        return [...head, ...tail];
+    }
+    const fill = 8 - head.length - rear.length - tail.length;
+    if (fill < 0) return null;
+    return [...head, ...new Array(fill).fill(0), ...rear, ...tail];
+}
+
+/**
+ * The IPv4 address an IPv6 literal carries, or null when it carries none.
+ *
+ * `::ffff:a.b.c.d` (IPv4-mapped, RFC 4291) and `::a.b.c.d` (IPv4-compatible)
+ * are the same IPv4 address wearing an IPv6 hat — and the hat is what the URL
+ * parser leaves behind.
+ *
+ * @param {number[]} words eight hextets
+ * @returns {string|null} dotted-quad
+ */
+function ipv4FromIpv6(words) {
+    if (!words || words.length !== 8) return null;
+    const mapped = words.slice(0, 5).every((w) => w === 0) && words[5] === 0xffff;
+    const compatible = words.slice(0, 6).every((w) => w === 0);
+    if (!mapped && !compatible) return null;
+    return `${words[6] >> 8}.${words[6] & 255}.${words[7] >> 8}.${words[7] & 255}`;
+}
+
+/**
+ * The canonical numeric forms of a URL hostname.
+ *
+ * `ipv4` is set for a dotted-quad host AND for an IPv6 literal that carries
+ * one (so `::ffff:127.0.0.1` answers `127.0.0.1`). `ipv6` is set for an IPv6
+ * literal. A NAME answers neither — a hostname is resolved by the transport,
+ * not by this module, and a name that resolves inward is a separate question
+ * (see `docs/plan/open-items.md`).
+ *
+ * @param {string} hostname
+ * @returns {{ipv4: string|null, ipv6: number[]|null}}
+ */
+function hostAddresses(hostname) {
+    const bare = String(hostname == null ? '' : hostname).trim().toLowerCase()
+        .replace(/^\[/, '').replace(/\]$/, '');
+    if (!bare) return { ipv4: null, ipv6: null };
+    const v4 = bare.match(IPV4_LITERAL_RE);
+    if (v4) {
+        const octets = v4.slice(1).map(Number);
+        if (octets.some((n) => n > 255)) return { ipv4: null, ipv6: null };
+        return { ipv4: octets.join('.'), ipv6: null };
+    }
+    const words = expandIpv6(bare);
+    if (!words) return { ipv4: null, ipv6: null };
+    return { ipv4: ipv4FromIpv6(words), ipv6: words };
+}
+
 // ─── Provider URL host policy ───────────────────────────────────────────────
 
 /** Named loopback hosts accepted for plain-HTTP local model servers. */
@@ -330,7 +454,10 @@ const isPrivateIp = (hostname) =>
 const isLinkLocalIp = (hostname) => /^169\.254\.\d{1,3}\.\d{1,3}$/.test(hostname);
 /** IPv6 link-local — fe80::/10. The WHATWG URL parser hands the hostname over
  *  in brackets, so both forms are matched. */
-const isIpv6LinkLocal = (hostname) => /^fe[89ab][0-9a-f]:/i.test(String(hostname || '').replace(/^\[|\]$/g, ''));
+const isIpv6LinkLocalWords = (words) => Boolean(words) && (words[0] & 0xffc0) === 0xfe80;
+/** IPv6 loopback - ::1. */
+const isIpv6LoopbackWords = (words) =>
+    Boolean(words) && words.slice(0, 7).every((w) => w === 0) && words[7] === 1;
 
 /**
  * The CLOUD-METADATA range, refused outright.
@@ -353,8 +480,10 @@ const isIpv6LinkLocal = (hostname) => /^fe[89ab][0-9a-f]:/i.test(String(hostname
  * @returns {boolean}
  */
 function isLinkLocalHost(hostname) {
-    const host = String(hostname || '').toLowerCase();
-    return isLinkLocalIp(host) || isIpv6LinkLocal(host);
+    const { ipv4, ipv6 } = hostAddresses(hostname);
+    if (ipv4) return isLinkLocalIp(ipv4);
+    if (ipv6) return isIpv6LinkLocalWords(ipv6);
+    return false;
 }
 
 /**
@@ -372,7 +501,14 @@ function isLinkLocalHost(hostname) {
 function isPrivateOrLoopbackHost(hostname) {
     const host = String(hostname || '').toLowerCase();
     if (!host) return false;
-    return LOCAL_HOSTS.has(host) || isLoopbackIp(host) || isPrivateIp(host);
+    if (LOCAL_HOSTS.has(host)) return true;
+    const { ipv4, ipv6 } = hostAddresses(host);
+    // The IPv4 answer comes first because an IPv4-mapped literal IS that IPv4
+    // address; the IPv6 test still runs for the loopback spelling, whose
+    // embedded IPv4 (0.0.0.1) is not a loopback address in IPv4 terms.
+    if (ipv4 && (isLoopbackIp(ipv4) || isPrivateIp(ipv4))) return true;
+    if (ipv6 && isIpv6LoopbackWords(ipv6)) return true;
+    return false;
 }
 
 /**
@@ -588,6 +724,7 @@ const PROVIDER_REQUEST_POLICY = {
     geminiThinkingBudget,
     isPrivateOrLoopbackHost,
     isLinkLocalHost,
+    hostAddresses,
     httpAllowedForHost,
     isSafeProviderTargetUrl,
     isLocalBaseUrl,
