@@ -65,9 +65,6 @@ import {
     type AgentThreadOpenedMap, type ThreadSelection,
 } from '../../utils/agentThreads';
 import { MessageRole } from '../../types/enums';
-import { useBackgroundCompaction } from '../../hooks/useBackgroundCompaction';
-import { resolveCompactionComplete } from '../../services/trade/contextCompactionJob';
-import { DEFAULT_CONTEXT_WINDOW_TOKENS } from '../../utils/contextWindow';
 import type { Message } from '../../types/message';
 import { messageTraceText } from '../../utils/traceText';
 import { ageMinutes, minuteBucket, shortAgeLabel } from '../../utils/relativeTime';
@@ -215,10 +212,6 @@ interface AgentsViewProps {
     onClearConversation?: (id: string) => void;
     /** Start a new App conversation (the old nav-rail "New chat" row). */
     onNewChat?: () => void;
-    /** Store the silent 80% compaction digest for a conversation. Called from
-     *  an idle callback, so it may name a conversation that is no longer the
-     *  active one. */
-    onSetThreadSummary?: (id: string, summary: string) => void;
 }
 
 const PIN_KEY = (user: string): string => `agent_pins_v1_${user}`;
@@ -523,7 +516,6 @@ const AgentsView: React.FC<AgentsViewProps> = ({
     botStats,
     onRenameBot,
     conversations = [], activeConversationId = null, onLoadConversation, onDeleteConversation, onClearConversation, onNewChat,
-    onSetThreadSummary,
 }) => {
     const [pins, setPins] = useState<string[]>(() => loadPins(username));
     const [query, setQuery] = useState('');
@@ -863,40 +855,6 @@ const AgentsView: React.FC<AgentsViewProps> = ({
     );
 
     const lastThreadRole = thread[thread.length - 1]?.role;
-
-    // ── Silent context compaction ─────────────────────────────────────────
-    // At 80% of the window the OLDER turns are summarized on an idle callback
-    // and the digest is stored on the conversation. Nothing here blocks a send:
-    // the hook returns immediately, the model call happens off the paint path,
-    // and a failure just leaves the next turn to compact structurally. The
-    // digest is injected on the NEXT request (see chatSurfaceTurn), never shown.
-    const [compactionModel, setCompactionModel] = useState<((prompt: string) => Promise<string>) | null>(null);
-    useEffect(() => {
-        let alive = true;
-        void resolveCompactionComplete().then(fn => { if (alive) setCompactionModel(() => fn); });
-        return () => { alive = false; };
-    }, []);
-    const compactionMessages = useMemo(
-        () => thread.map(m => ({
-            role: m.role === MessageRole.AI ? 'assistant' : m.role === MessageRole.SYSTEM ? 'system' : 'user',
-            content: typeof m.text === 'string' ? m.text : '',
-        })),
-        [thread],
-    );
-    const activeConversationForCompaction = conversations.find(c => c.id === activeConversationId);
-    const handleThreadSummary = useCallback(
-        (summary: string, id: string) => onSetThreadSummary?.(id, summary),
-        [onSetThreadSummary],
-    );
-    useBackgroundCompaction({
-        conversationId: activeConversationId ?? null,
-        messages: compactionMessages,
-        windowTokens: DEFAULT_CONTEXT_WINDOW_TOKENS,
-        busy: dockRunning || busy,
-        existingSummary: activeConversationForCompaction?.threadSummary,
-        complete: compactionModel,
-        onSummary: handleThreadSummary,
-    });
 
     useEffect(() => {
         const el = scroller.current;

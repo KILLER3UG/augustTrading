@@ -202,11 +202,16 @@ const flushCoinMap = (storeKey: string): Promise<boolean> => {
     }
     return readStore(storeKey).then(res => {
         if (deletedStores.has(storeKey)) return false; // deleted mid-read
-        const merged = { ...parseCoinMap(res.ok ? res.value : null), ...mirror };
+        // A read we could not complete is NOT an empty map. Writing the
+        // partial mirror here would drop the file's other coins, and the
+        // caller would then delete the legacy key on a "successful" write.
+        // Leave the bytes alone; a later load retries.
+        if (!res.ok) return false;
+        const merged = { ...parseCoinMap(res.value), ...mirror };
         mirrorLoaded.add(storeKey);
         coinMapMirror.set(storeKey, merged);
         return writeStore(storeKey, JSON.stringify(merged)).then(r => r.ok);
-    });
+    }).catch(() => false);
 };
 
 /** Push every pending drawing write to the store NOW — on session switches
@@ -303,6 +308,8 @@ export const loadSessionDrawings = async (sessionId: string, symbol: string, use
  *  · the legacy key is deleted only after the session write reports SUCCESS,
  *    so the bytes are verified in the new home before the old one is cleared.
  *    A failed or skipped write keeps the legacy key — the next load retries.
+ *    A read that fails is a skipped write: the partial mirror is never written
+ *    over the store, and the legacy key survives.
  */
 export const loadSessionDrawingsWithLegacy = async (sessionId: string, symbol: string, username = getActiveUsername()): Promise<ChartDrawing[]> => {
     const wanted = symbol.toUpperCase();

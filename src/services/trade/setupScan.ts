@@ -14,7 +14,12 @@
  * prints (the audit's one-module rule). Windows are in BARS, newest last.
  */
 
-import { emaSeries } from './chartIndicators';
+import {
+    bollingerSeries,
+    emaSeries,
+    rsiSeries as rsiSeriesCore,
+    smaSeries as smaSeriesCore,
+} from './chartIndicators';
 
 export interface ScanCandle {
     time: number;
@@ -56,52 +61,23 @@ const isBull = (c: ScanCandle): boolean => c.close >= c.open;
 const fmt = (v: number): string => v.toLocaleString('en-US', { maximumFractionDigits: v >= 1000 ? 0 : 2 });
 
 /** Standard Wilder RSI(14) over closes; returns a series aligned to candles
- *  (NaN until the seed period completes). */
-export const rsiSeries = (candles: ScanCandle[], period = 14): number[] => {
-    const out: number[] = candles.map(() => NaN);
-    if (candles.length <= period) return out;
-    let gain = 0;
-    let loss = 0;
-    for (let i = 1; i <= period; i += 1) {
-        const d = candles[i].close - candles[i - 1].close;
-        if (d >= 0) gain += d; else loss -= d;
-    }
-    let avgGain = gain / period;
-    let avgLoss = loss / period;
-    out[period] = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
-    for (let i = period + 1; i < candles.length; i += 1) {
-        const d = candles[i].close - candles[i - 1].close;
-        avgGain = (avgGain * (period - 1) + Math.max(d, 0)) / period;
-        avgLoss = (avgLoss * (period - 1) + Math.max(-d, 0)) / period;
-        out[i] = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
-    }
-    return out;
-};
+ *  (NaN until the seed period completes). The arithmetic is `chartIndicators`';
+ *  this wrapper keeps the scanner's NaN-aligned shape for its callers. */
+export const rsiSeries = (candles: ScanCandle[], period = 14): number[] =>
+    rsiSeriesCore(candles.map(c => c.close), period).map(v => v ?? NaN);
 
 /** NaN until the window fills. */
 export const smaSeries = (values: number[], period: number): number[] =>
-    values.map((_, i) => {
-        if (i < period - 1) return NaN;
-        let s = 0;
-        for (let j = i - period + 1; j <= i; j += 1) s += values[j];
-        return s / period;
-    });
+    smaSeriesCore(values, period).map(v => v ?? NaN);
 
-/** Bollinger bands (20, 2) over closes. */
+/** Bollinger bands (20, 2) over closes — population SD, same as the chart. */
 export const bollinger = (candles: ScanCandle[], period = 20, mult = 2): { mid: number[]; upper: number[]; lower: number[] } => {
-    const closes = candles.map(c => c.close);
-    const mid = smaSeries(closes, period);
-    const upper: number[] = [];
-    const lower: number[] = [];
-    for (let i = 0; i < closes.length; i += 1) {
-        if (Number.isNaN(mid[i])) { upper.push(NaN); lower.push(NaN); continue; }
-        let v = 0;
-        for (let j = i - period + 1; j <= i; j += 1) v += (closes[j] - mid[i]) ** 2;
-        const sd = Math.sqrt(v / period);
-        upper.push(mid[i] + mult * sd);
-        lower.push(mid[i] - mult * sd);
-    }
-    return { mid, upper, lower };
+    const bands = bollingerSeries(candles.map(c => c.close), period, mult);
+    return {
+        mid: bands.mid.map(v => v ?? NaN),
+        upper: bands.upper.map(v => v ?? NaN),
+        lower: bands.lower.map(v => v ?? NaN),
+    };
 };
 
 /**

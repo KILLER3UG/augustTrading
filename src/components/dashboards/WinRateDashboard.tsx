@@ -12,6 +12,7 @@ import { BarChart3 } from '../shared/Icons';
 import { LoggedTrade, TradeOutcome } from '../../types';
 import { decidedAtOf } from '../../utils/journalAnalytics';
 import { EmptyState } from '../ui/EmptyState';
+import ChartFrame from '../shared/ChartFrame';
 import StatusPill from '../ui/StatusPill';
 import { buildCalibrationLedger, ledgerFramingLine, brierQuality } from '../../services/validation/CalibrationLedgerService';
 import { buildDisciplineAnalytics } from '../../utils/disciplineAnalytics';
@@ -424,7 +425,7 @@ const WinRateDashboard: React.FC<WinRateDashboardProps> = ({ trades }) => {
             <div className="glass-panel p-3 sm:p-4 rounded-bubble border border-hairline bg-zinc-800">
                 <div className="text-ui-2xs sm:text-ui-xs text-zinc-500 uppercase font-bold tracking-widest mb-2 sm:mb-3">Win Rate Trend</div>
                 {trendData.length > 1 ? (
-                    <div className="h-32">
+                    <ChartFrame variant="plain" state="ready" bodyClassName="h-32" testId="win-rate-trend-chart">
                         <ResponsiveContainer width="100%" height="100%">
                             <AreaChart data={trendData}>
                                 <defs>
@@ -445,7 +446,7 @@ const WinRateDashboard: React.FC<WinRateDashboardProps> = ({ trades }) => {
                                 />
                             </AreaChart>
                         </ResponsiveContainer>
-                    </div>
+                    </ChartFrame>
                 ) : (
                     <div className="h-32 flex items-center justify-center text-zinc-600 text-ui-base">
                         Need more data to show trends
@@ -457,7 +458,7 @@ const WinRateDashboard: React.FC<WinRateDashboardProps> = ({ trades }) => {
             <div className="glass-panel p-3 sm:p-4 rounded-bubble border border-hairline bg-zinc-800">
                 <div className="text-ui-2xs sm:text-ui-xs text-zinc-500 uppercase font-bold tracking-widest mb-2 sm:mb-3">By Confidence</div>
                 {confidenceChartData.length > 0 ? (
-                    <div className="h-40">
+                    <ChartFrame variant="plain" state="ready" bodyClassName="h-40" testId="win-rate-confidence-chart">
                         <ResponsiveContainer width="100%" height="100%">
                             <BarChart data={confidenceChartData} layout="vertical">
                                 <XAxis type="number" domain={[0, 100]} tick={{ fontSize: 9, fill: chartColor('--color-zinc-600', '#858585') }} axisLine={false} tickLine={false} />
@@ -470,7 +471,7 @@ const WinRateDashboard: React.FC<WinRateDashboardProps> = ({ trades }) => {
                                 </Bar>
                             </BarChart>
                         </ResponsiveContainer>
-                    </div>
+                    </ChartFrame>
                 ) : (
                     <EmptyState
                         compact

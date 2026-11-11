@@ -1249,6 +1249,41 @@ async function main() {
             }
         }
 
+        // Drawing drag: a trendline is the one shape that must survive a real
+        // pointer gesture, and the store is the only proof it reached the
+        // session bucket. The rail's Undo is the DOM-observable proxy: disabled
+        // at zero drawings, enabled the moment one lands. Needs the tape (a
+        // shape is anchored in DATA space), so it skips with a reason on CI.
+        {
+            const overlay = page.locator('[data-testid="draw-overlay"]');
+            const undo = page.locator('button[title="Undo last drawing"]');
+            const trend = page.locator('button[title="Trendline — click start, click end"]');
+            const box = await overlay.boundingBox();
+            if (!chartHead.heroIsPrice) {
+                console.log('  skip  drawing drag — no tape in this environment (CI has no Binance reach); a shape needs bars to anchor to');
+            } else if (!box || (await trend.count()) === 0 || (await undo.count()) === 0) {
+                check('a trend drag creates a drawing (undo becomes available)', false,
+                    `overlay=${!!box} trend=${await trend.count()} undo=${await undo.count()}`);
+            } else {
+                const before = await undo.isDisabled();
+                await trend.first().click();
+                await page.mouse.move(box.x + box.width * 0.3, box.y + box.height * 0.35);
+                await page.mouse.down();
+                await page.mouse.move(box.x + box.width * 0.65, box.y + box.height * 0.65, { steps: 10 });
+                await page.mouse.up();
+                await sleep(250);
+                const after = await undo.isDisabled();
+                check('a trend drag creates a drawing (undo becomes available)',
+                    before === true && after === false,
+                    `beforeDisabled=${before} afterDisabled=${after} box=${JSON.stringify(box)}`);
+                if (before === true && after === false) {
+                    await undo.click();
+                    await sleep(200);
+                    check('undo removes the drawn shape (undo disables again)', await undo.isDisabled());
+                }
+            }
+        }
+
         // Order-book drawer: 30px strip closed by default, name + live state + spread.
         const drawer = await page.evaluate(() => {
             const strip = document.querySelector('[data-testid="orderbook-drawer-strip"]');
@@ -1616,6 +1651,35 @@ async function main() {
                 `${b.getAttribute('aria-label') || ''} ${b.title || ''} ${b.textContent || ''}`));
             if (btn) btn.click();
         }, 'PROBE_SLOW_STREAM does the answer cross the hop');
+        // At or below 1280 the rail is an OVERLAY, so the surface switch is not
+        // in the title bar — open the rail from its header toggle first. One
+        // helper for every hop to Agents so a layout change cannot silently
+        // turn a click into a no-op.
+        const openAgentsSurface = async () => {
+            const clickSwitch = () => page.evaluate(() => {
+                const hit = document.querySelector('[data-testid="surface-switch-agents"]');
+                if (!hit) return false;
+                hit.click();
+                return true;
+            });
+            const closeRail = () => page.evaluate(() => {
+                // Overlay mode: the rail leaves a backdrop that would intercept
+                // every later click. A rail-row click is supposed to close it;
+                // close it explicitly so a programmatic click cannot leave it up.
+                const b = document.querySelector('[data-testid="shell-rail-backdrop"]');
+                if (b) b.click();
+            });
+            if (await clickSwitch()) { await closeRail(); await sleep(250); return true; }
+            await page.evaluate(() => {
+                const t = document.querySelector('[data-testid="nav-rail-toggle-header"], [data-testid="rail-open"]');
+                if (t) t.click();
+            });
+            await sleep(400);
+            const clicked = await clickSwitch();
+            if (clicked) { await closeRail(); await sleep(250); }
+            return clicked;
+        };
+
         // The dock has to be visibly working BEFORE the switch, or the phase
         // measures a turn that already finished and reports a pass it did not earn.
         let stillStreaming = false;
@@ -1626,10 +1690,7 @@ async function main() {
         }
         check('the dock turn is still generating before the hop', stillStreaming,
             stillStreaming ? 'Stop was offered while the answer was arriving' : 'no Stop button within 2.5s of sending — the mock answered too fast to measure a live turn');
-        await page.evaluate(() => {
-            const hit = document.querySelector('[data-testid="surface-switch-agents"]');
-            if (hit) hit.click();
-        });
+        await openAgentsSurface();
         await page.waitForSelector('main textarea', { timeout: 20000 });
         await sleep(400);
         // Two measurements on the OTHER home, both taken while the run is up:
@@ -1824,17 +1885,10 @@ async function main() {
             // accessible name in BOTH rail widths (the collapsed 56px row has
             // no visible label at all), so matching on aria-label is what makes
             // one click work at any width.
-            await page.evaluate(() => {
-                const hit = document.querySelector('[data-testid="surface-switch-agents"]');
-                if (!hit) throw new Error('no Chat entry in the title-bar switch');
-                hit.click();
-            });
-            // The transcript container only exists once the thread has a row —
-            // an empty thread renders the greeting hero instead. Wait for the
-            // composer, which is present either way.
-            await page.waitForSelector('main textarea', { timeout: 20000 });
-            await sleep(800);
-        };
+        await openAgentsSurface();
+        await page.waitForSelector('main textarea', { timeout: 20000 });
+        await sleep(800);
+    };
         await openAgents();
         // This check used to assert the desk thread was EMPTY, which was a
         // description of the SPLIT (two stores, two transcripts) rather than of

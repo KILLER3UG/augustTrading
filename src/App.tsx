@@ -87,6 +87,10 @@ import { useConversations } from './hooks/useConversations';
 import { useMarketData } from './hooks/useMarketData';
 import { useTradeLogging } from './hooks/useTradeLogging';
 import { useAnalysisPipeline } from './hooks/useAnalysisPipeline';
+import { useBackgroundCompaction } from './hooks/useBackgroundCompaction';
+import { resolveCompactionComplete } from './services/trade/contextCompactionJob';
+import { resolveContextWindow } from './utils/contextWindow';
+import type { ChatMessage } from './services/providers/GenericProviderService';
 import { useUserProfiles } from './hooks/useUserProfiles';
 import { offlineQueue } from './services/infrastructure/OfflineQueueService';
 import { getPreference, setPreference, removePreference, PREF_KEYS } from './services/infrastructure/PreferencesService';
@@ -879,6 +883,51 @@ const App: React.FC = () => {
         onBotReply: handleBotReplyForPipeline,
         toast,
         confirmDialog,
+    });
+
+    // Background compaction lives HERE, not on one surface: the conversation
+    // store is global, and the dock (Analyze) and the Chat surface both read
+    // `threadSummary` on their next send. A hook mounted only in AgentsView
+    // never wrote a digest for a trader who only used the dock. The window is
+    // the selected model's resolved window, so a 128k model compacts at 80% of
+    // 128k — not 80% of the 1M default.
+    const [compactionComplete, setCompactionComplete] = useState<((prompt: string) => Promise<string>) | null>(null);
+    useEffect(() => {
+        let alive = true;
+        void resolveCompactionComplete().then(fn => { if (alive) setCompactionComplete(() => fn); });
+        return () => { alive = false; };
+    }, []);
+    const compactionMessages = useMemo<ChatMessage[]>(
+        () => messages.map(m => ({
+            role: m.role === MessageRole.AI ? 'assistant' : m.role === MessageRole.SYSTEM ? 'system' : 'user',
+            content: typeof m.text === 'string' ? m.text : '',
+        })),
+        [messages],
+    );
+    const compactionOwner = useMemo(
+        () => readyProviders.find(p => p.selectedModel === selectedChatModel)
+            ?? readyProviders.find(p => p.models.includes(selectedChatModel))
+            ?? readyProviders[0],
+        [readyProviders, selectedChatModel],
+    );
+    const compactionWindowTokens = useMemo(
+        () => resolveContextWindow({
+            id: compactionOwner?.id,
+            name: compactionOwner?.name,
+            selectedModel: selectedChatModel,
+            contextWindowTokens: compactionOwner?.contextWindowTokens,
+            modelContextWindows: compactionOwner?.modelContextWindows,
+        }).tokens,
+        [compactionOwner, selectedChatModel],
+    );
+    useBackgroundCompaction({
+        conversationId: activeConversationId ?? null,
+        messages: compactionMessages,
+        windowTokens: compactionWindowTokens,
+        busy: isAnalysisInProgress,
+        existingSummary: activeConversation?.threadSummary,
+        complete: compactionComplete,
+        onSummary: setThreadSummary,
     });
 
     // Regime-matched provider win rates for the CURRENT market regime — feeds
@@ -2605,7 +2654,6 @@ const App: React.FC = () => {
                                     onDeleteConversation={handleDeleteConversationFromSidebar}
                                     onClearConversation={(id) => { void handleClearChat(id); }}
                                     onNewChat={handleStartNewConversation}
-                                    onSetThreadSummary={setThreadSummary}
                                 />
                             </React.Suspense>
                         )}
