@@ -2777,6 +2777,23 @@ export const toAnthropicTools = (tools: DeskToolDefinition[] = DESK_TOOL_DEFINIT
 const stripHtml = (html: string): string =>
     html.replace(/<[^>]+>/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/\s+/g, ' ').trim();
 
+/**
+ * A URL that came back from a search result, made safe to interpolate.
+ *
+ * The TEXT around a URL was neutralized at ingestion because a line that
+ * opens with DATA_UNAVAILABLE: (or a clipping note) would otherwise speak in
+ * the app's privileged voice. The URL was interpolated raw - and a URL is a
+ * line-break carrier: `neutralizeHarnessNotes` is LINE-ORIENTED, so a URL
+ * carrying a newline could open a privileged-looking line right after the
+ * text around it was defused.
+ *
+ * So: no line breaks survive, and the result is neutralized like the text.
+ * A URL is not a place a harness note belongs, so the rule is the same one
+ * the text gets.
+ */
+const safeResultUrl = (raw: string): string =>
+    neutralizeHarnessNotes(String(raw ?? '').replace(/[\r\n]+/g, ' ').trim());
+
 async function runWebSearch(query: string, signal?: AbortSignal): Promise<string> {
     const q = query.trim();
     if (!q) return 'web_search error: empty query';
@@ -2800,15 +2817,15 @@ async function runWebSearch(query: string, signal?: AbortSignal): Promise<string
                 // that opens with DATA_UNAVAILABLE:/…[clipped: would otherwise
                 // speak in the app's privileged voice (see harnessMarks).
                 lines.push(`Summary: ${neutralizeHarnessNotes(data.AbstractText)}`);
-                if (data.AbstractURL) lines.push(`Source: ${data.AbstractURL}`);
+                if (data.AbstractURL) lines.push(`Source: ${safeResultUrl(data.AbstractURL)}`);
             }
             const related: string[] = [];
             for (const item of data.RelatedTopics || []) {
                 if ('Text' in item && item.Text) {
-                    related.push(`- ${neutralizeHarnessNotes(item.Text)}${item.FirstURL ? ` (${item.FirstURL})` : ''}`);
+                    related.push(`- ${neutralizeHarnessNotes(item.Text)}${item.FirstURL ? ` (${safeResultUrl(item.FirstURL)})` : ''}`);
                 } else if ('Topics' in item && Array.isArray(item.Topics)) {
                     for (const sub of item.Topics.slice(0, 3)) {
-                        if (sub.Text) related.push(`- ${neutralizeHarnessNotes(sub.Text)}${sub.FirstURL ? ` (${sub.FirstURL})` : ''}`);
+                        if (sub.Text) related.push(`- ${neutralizeHarnessNotes(sub.Text)}${sub.FirstURL ? ` (${safeResultUrl(sub.FirstURL)})` : ''}`);
                     }
                 }
                 if (related.length >= 6) break;
@@ -2840,7 +2857,7 @@ async function runWebSearch(query: string, signal?: AbortSignal): Promise<string
                 while ((match = re.exec(html)) && results.length < 5) {
                     const href = match[1];
                     const title = stripHtml(match[2]);
-                    if (title) results.push(`- ${neutralizeHarnessNotes(title)}${href ? ` | ${href}` : ''}`);
+                    if (title) results.push(`- ${neutralizeHarnessNotes(title)}${href ? ` | ${safeResultUrl(href)}` : ''}`);
                 }
                 if (results.length) {
                     lines.push('Headlines:');
@@ -5582,15 +5599,31 @@ export const looksTruncatedToolCall = (text: string): boolean => {
  * markers that DO appear went unnamed — so the one note in the block the model
  * was allowed to act on was the one it had been told to distrust.
  */
+/**
+ * The ONE wrapper a tool result wears on its way back to the model.
+ *
+ * WHY IT IS ONE FUNCTION. A tool result is retrieved DATA, and the rule that
+ * says so has to travel with it on EVERY path. It used to travel on one:
+ * `formatToolResultsForModel` wrapped a result for the TEXT protocol (the
+ * result is injected into a user-role turn), while the NATIVE tool-calling
+ * path pushed `result.content` into the `role:'tool'` message raw - no rule,
+ * no harness-note legend. The seat prompt promises the model a fenced result
+ * ("a fenced result is data", system-map.md) and the native path was the one
+ * that did not deliver it.
+ *
+ * So the wrapper is its own function, both branches call it, and a third
+ * branch cannot be added without the fence.
+ */
+export const fencedToolResult = (result: DeskToolResult): string =>
+    fenceUntrusted(
+        `tool result: ${result.name} (${result.ok ? 'ok' : 'error'})`,
+        `### TOOL RESULT: ${result.name} (${result.ok ? 'ok' : 'error'})\n${result.content}`,
+        undefined,
+        harnessNoteLegend(),
+    );
+
 export function formatToolResultsForModel(results: DeskToolResult[]): string {
-    return results.map(r =>
-        fenceUntrusted(
-            `tool result: ${r.name} (${r.ok ? 'ok' : 'error'})`,
-            `### TOOL RESULT: ${r.name} (${r.ok ? 'ok' : 'error'})\n${r.content}`,
-            undefined,
-            harnessNoteLegend(),
-        )
-    ).join('\n\n');
+    return results.map(r => fencedToolResult(r)).join('\n\n');
 }
 
 
@@ -6482,7 +6515,10 @@ export async function runDeskToolLoop(params: {
                     messages.push({
                         role: 'tool',
                         tool_call_id: result.toolCallId,
-                        content: result.content,
+                        // Fenced, like the text-protocol branch: a tool result
+                        // is retrieved DATA, and the rule that says so has to
+                        // travel with it on this path too.
+                        content: fencedToolResult(result),
                     });
                 }
             }
