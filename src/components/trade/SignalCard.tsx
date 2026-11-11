@@ -19,6 +19,7 @@ import { scoreSignals } from '../../services/signals/signalAccuracy';
 import { plannedRiskReward } from '../../utils/riskReward';
 import { convictionLabel, type Conviction } from '../../utils/convictionScale';
 import { fmtPrice } from '../../utils/formatters';
+import { ageMinutes, floorAgoLabel } from '../../utils/relativeTime';
 import type { ToolAction } from '../../types/message';
 
 /** Resolve the signal id an emit_signal ToolAction recorded. The action's
@@ -57,15 +58,7 @@ const PERSONA_LABEL: Record<Conviction, string> = {
 
 const shortId = (id: string): string => id.length > 8 ? id.slice(0, 8) : id;
 
-const ago = (at: number): string => {
-    const ms = Date.now() - at;
-    if (ms < 60_000) return 'now';
-    const min = Math.floor(ms / 60_000);
-    if (min < 60) return `${min}m ago`;
-    const h = Math.floor(min / 60);
-    if (h < 24) return `${h}h ago`;
-    return `${Math.floor(h / 24)}d ago`;
-};
+const ago = (at: number): string => floorAgoLabel(ageMinutes(at));
 
 const timeLeft = (expiresAt: number): string => {
     const left = expiresAt - Date.now();

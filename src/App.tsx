@@ -663,12 +663,13 @@ const App: React.FC = () => {
     const appRef = useRef<HTMLDivElement>(null);
     // ── Scroll-to-message bridge (audit UI-shell fix, 2026-09-15) ──────────
     // The main transcript lives in the trade surface's Chart AI dock
-    // (TradeChatPanel renders a plain scroll container, NOT a Virtuoso), so
-    // the old virtuosoRef could never be attached and both scroll affordances
-    // were silent no-ops. The dock now registers a scrollToMessage(id)
-    // function here on mount (and null on unmount); "Jump to latest
-    // analysis" and the gallery's Locate call it. Ids are the chatStore
-    // entry ids stamped as `data-message-id` on each rendered entry.
+    // (TradeChatPanel owns the scroll box and renders the rows through
+    // react-virtuoso), so the old virtuosoRef App held could never be attached
+    // and both scroll affordances were silent no-ops. The dock registers a
+    // scrollToMessage(id) function here on mount (and null on unmount); "Jump
+    // to latest analysis" and the gallery's Locate call it. Ids are the
+    // chatStore entry ids, which the dock resolves to a row INDEX — the row
+    // being located is usually outside the mounted window.
     const scrollToMessageRef = useRef<((messageId: string) => void) | null>(null);
     // A "Show the trade" pressed from another surface can only land the user
     // on Trade — the dock that owns the scroller is not mounted yet. The id

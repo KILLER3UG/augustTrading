@@ -70,6 +70,7 @@ import { resolveCompactionComplete } from '../../services/trade/contextCompactio
 import { DEFAULT_CONTEXT_WINDOW_TOKENS } from '../../utils/contextWindow';
 import type { Message } from '../../types/message';
 import { messageTraceText } from '../../utils/traceText';
+import { ageMinutes, minuteBucket, shortAgeLabel } from '../../utils/relativeTime';
 import { activeIndex, versionCount } from '../../utils/messageVersions';
 import StatusPill from '../ui/StatusPill';
 // The shell's own column width, imported rather than repeated: this surface's
@@ -80,8 +81,6 @@ import SidebarToggle from '../shell/SidebarToggle';
 import { ConversationGroups } from '../shell/ConversationGroups';
 import { conversationTitle } from '../../utils/conversationTitle';
 import AgentsDock from './dock/AgentsDock';
-import InlineVerdict from '../analysis/InlineVerdict';
-import TradeProposalCard, { TradeProposalLoggedRow } from '../trade/panels/TradeProposalCard';
 import { proposalStateOf, rememberProposalState } from '../../services/trade/proposalDisposition';
 import type { TradeProposal } from '../../services/trade/proposedTrade';
 import { mintPlanId } from '../../services/trade/proposedTrade';
@@ -228,31 +227,16 @@ const loadPins = (user: string): string[] => {
     try { return JSON.parse(localStorage.getItem(PIN_KEY(user)) || '[]') as string[]; } catch { return []; }
 };
 
-/** The ONE duration formatter: elapsed milliseconds → the compact label the
- *  rail prints (`now`, `45m`, `6h`, `8d`).
- *
- *  It takes a DURATION, never a stamp. The bug this replaces subtracted
- *  `Date.now()` twice — `relTime` computed `Date.now() - Date.parse(iso)` and
- *  handed that duration to `relTimeMs`, which subtracted `Date.now()` again,
- *  so an 8-day-old row printed `20731d` (the epoch leaking through). Every
- *  elapsed label on this surface must come from here so there is exactly one
- *  place a duration is turned into text. */
-const durationLabel = (ms: number): string => {
-    if (!Number.isFinite(ms) || ms < 0) return '';
-    const m = Math.round(ms / 60000);
-    if (m < 1) return 'now';
-    if (m < 60) return `${m}m`;
-    const h = Math.round(m / 60);
-    if (h < 24) return `${h}h`;
-    return `${Math.round(h / 24)}d`;
-};
-
-/** Elapsed since an ISO stamp; '' when the stamp is missing or unparseable. */
+/** Elapsed since an ISO stamp; '' when the stamp is missing, unparseable or in
+ *  the future. The ladder and the single subtraction live in
+ *  `utils/relativeTime` — the formatter takes minutes and never sees a clock,
+ *  which is what makes the old double-subtraction (`20731d` for an 8-day-old
+ *  row) inexpressible. */
 const relTime = (iso: string | null | undefined): string => {
     if (!iso) return '';
     const at = Date.parse(iso);
     if (!Number.isFinite(at)) return '';
-    return durationLabel(Date.now() - at);
+    return shortAgeLabel(ageMinutes(at));
 };
 
 /** Adapt a pipeline `Message` onto the shared row view, so this surface and
@@ -261,8 +245,11 @@ const relTime = (iso: string | null | undefined): string => {
  *  Everything here is data the pipeline already wrote: the thought trace, the
  *  tool side-effects, attached images, the analysis. The trace is joined by
  *  `messageTraceText` — ONE seam that folds the deleted debate engine's
- *  legacy lane in, so this surface and the dock read the same trace. */
-const chatRowFrom = (m: Message, username: string, deskName: string): ChatRowView => {
+ *  legacy lane in, so this surface and the dock read the same trace.
+ *
+ *  `askedPrompt` is the user turn this answer replies to — only the thread map
+ *  knows it, and the interrupted-run notice prefills the composer with it. */
+const chatRowFrom = (m: Message, username: string, deskName: string, askedPrompt: string): ChatRowView => {
     const trace = messageTraceText(m);
     // The trail, one line per entry. `liveToolEvents` is the capped,
     // newline-JOINED live feed — read as a list it is ONE row holding every
@@ -310,7 +297,75 @@ const chatRowFrom = (m: Message, username: string, deskName: string): ChatRowVie
         // PROBABILITY card a second time in the same turn. One fact, one
         // carrier: the card belongs to the answer, not to its receipt.
         analysis: m.planId ? undefined : m.analysis,
+        // The prompt an interrupted answer was answering, so the recovery card
+        // can prefill the composer. Absent (not '') when there is no user turn
+        // before it — the notice then offers no prefill, exactly as before.
+        interruptedPrompt: askedPrompt || undefined,
     };
+};
+
+/** The row cache. `ChatTranscriptRow` is `React.memo`, and a fresh row object
+ *  per parent render defeated it: every streaming chunk repainted every row
+ *  in the thread. This hands an UNCHANGED message the SAME row reference.
+ *
+ *  WHY IT CANNOT SERVE A STALE ROW. Every writer in the app replaces the
+ *  `Message` object when any field changes (`updateMessages` updaters map with
+ *  spreads; the pipeline's `patch` is `prev.map(m => m.id === id ? fn(m) : m)`
+ *  and every `fn` spreads). A changed message is therefore a DIFFERENT WeakMap
+ *  key — a miss — and the row is rebuilt from the new fields. The text and
+ *  streaming comparisons below are a cheap backstop against an in-place write
+ *  ever sneaking in: the two fields a stream touches most, checked by value.
+ *  The inputs the builder reads from OUTSIDE the message (speaker names, the
+ *  minute bucket, the asked prompt) are compared on every hit, so a rename, a
+ *  minute rollover or an edited prompt rebuilds the rows they change.
+ *
+ *  Weak-keyed on purpose: an entry lives exactly as long as its message, so a
+ *  long session cannot accumulate rows for turns that no longer exist. */
+interface CachedChatRow {
+    row: ChatRowView;
+    username: string;
+    deskName: string;
+    minute: number;
+    askedPrompt: string;
+}
+const chatRowCache = new WeakMap<Message, CachedChatRow>();
+
+const chatRowFor = (
+    m: Message,
+    username: string,
+    deskName: string,
+    minute: number,
+    askedPrompt: string,
+): ChatRowView => {
+    const hit = chatRowCache.get(m);
+    if (hit
+        && hit.username === username
+        && hit.deskName === deskName
+        && hit.minute === minute
+        && hit.askedPrompt === askedPrompt
+        && hit.row.text === (m.text || '')
+        && hit.row.streaming === !!m.isStreaming) {
+        return hit.row;
+    }
+    const row = chatRowFrom(m, username, deskName, askedPrompt);
+    chatRowCache.set(m, { row, username, deskName, minute, askedPrompt });
+    return row;
+};
+
+/** The prose-plan detector, cached per message for the same reason the row is:
+ *  `planFromProse` builds a NEW plan object per call, and handing the memo a
+ *  fresh `prosePlan` reference every render would repaint every row that
+ *  describes a plan. The parse reads only `m.text` and `m.analysis.coinName`,
+ *  so the message object is a sound cache key — an edited answer is a new
+ *  object and re-parses. Weak-keyed, so it cannot outlive the turn. */
+const prosePlanCache = new WeakMap<Message, TradeProposal | null>();
+const prosePlanFor = (m: Message): TradeProposal | null => {
+    if (m.proposal) return null;
+    const hit = prosePlanCache.get(m);
+    if (hit !== undefined) return hit;
+    const plan = planFromProse(m.text, m.analysis?.coinName ?? null);
+    prosePlanCache.set(m, plan);
+    return plan;
 };
 
 /** Time-aware, per the reference's greeting — this surface is otherwise empty
@@ -562,12 +617,6 @@ const AgentsView: React.FC<AgentsViewProps> = ({
         void proposalTick;
         return proposalStateOf(id);
     };
-    /** The plan this row's PROSE describes, when the seat never called
-     *  present_trade. Computed per render (the detector is regex over one row,
-     *  and the transcript is capped), and gated by the same disposition store
-     *  the card uses, so a dismissed chip stays dismissed. */
-    const prosePlanFor = (m: Message): TradeProposal | null =>
-        m.proposal ? null : planFromProse(m.text, m.analysis?.coinName ?? null);
     const onScrollerScroll = useCallback((): void => {
         const el = scroller.current;
         if (!el) return;
@@ -589,6 +638,79 @@ const AgentsView: React.FC<AgentsViewProps> = ({
     const composerRef = useRef<HTMLTextAreaElement | null>(null);
     const searchRef = useRef<HTMLInputElement | null>(null);
     const [searchFocusNonce, setSearchFocusNonce] = useState(0);
+
+    // ── Transcript row handlers ────────────────────────────────────────────
+    // `ChatTranscriptRow` is React.memo. Every handler it receives must keep
+    // its identity across the parent's streaming re-renders, or the memo never
+    // holds and every chunk repaints the whole thread. The composer prefills
+    // close over nothing but a state setter and a ref, so they are born once.
+    // The store-backed handlers take the store's own callbacks as deps — those
+    // are useCallback'd in useConversations and only change when the active
+    // conversation does (which changes the whole thread anyway).
+    const handleEditPromptPrefill = useCallback((prompt: string): void => {
+        setText(prompt);
+        composerRef.current?.focus();
+    }, []);
+    const handleEditPromptMessage = useCallback((id: string, newText: string): void => {
+        onEditPromptMessage?.(id, newText);
+        /* The edited wording goes into the composer rather than straight into
+           a run: saving an edit and spending a model call are two decisions,
+           and the row's version history is already written by the time this
+           returns. */
+        setText(newText);
+        composerRef.current?.focus();
+    }, [onEditPromptMessage]);
+    const handleStepVersion = useCallback((id: string, delta: number): void => {
+        onStepVersion?.(id, delta);
+    }, [onStepVersion]);
+
+    // App's `handleLogProposedTrade` closes over `messages`, so its identity
+    // changes on EVERY streaming chunk. The row handlers read it through a
+    // latest-ref (the house idiom — KeyLevelsCard.pushRef, Toast.onDismissRef)
+    // so their own identity never moves while the answer streams.
+    const onLogProposedTradeRef = useRef(onLogProposedTrade);
+    onLogProposedTradeRef.current = onLogProposedTrade;
+    /** The awaiting guard, readable at click time without re-binding the
+     *  handlers: the state drives the disabled props, the ref drives the
+     *  double-click guard, and both are written together so they cannot
+     *  disagree. Written only from the log handler below — never in render. */
+    const awaitingProposalRef = useRef<string | null>(null);
+    /** ONE log path for both cards. `kind` says which asked: a prose plan may
+     *  still need its planId minted, a presented one already carries it. */
+    const handleLogProposal = useCallback(async (messageId: string, plan: TradeProposal, kind: 'presented' | 'prose'): Promise<void> => {
+        const log = onLogProposedTradeRef.current;
+        if (!log) return;
+        if (proposalStateOf(messageId) || awaitingProposalRef.current) return;
+        // The ONE plan-id shape, so a plan logged from prose dedupes against
+        // the same plan presented by the tool on another row.
+        const stamped: TradeProposal = kind === 'prose'
+            ? { ...plan, planId: plan.planId ?? mintPlanId(plan.symbol) }
+            : plan;
+        awaitingProposalRef.current = messageId;
+        setAwaitingProposalRowId(messageId);
+        let logged: boolean;
+        // A log that threw is NOT a log: the card stays live so the trader can
+        // retry instead of seeing ✓ Logged over a missing row.
+        try { logged = (await log(stamped)) !== false; }
+        catch { logged = false; }
+        finally { awaitingProposalRef.current = null; setAwaitingProposalRowId(null); }
+        if (!logged) return;
+        rememberProposalState(messageId, 'logged');
+        setProposalTick(t => t + 1);
+    }, []);
+    const handleDismissProposal = useCallback((messageId: string): void => {
+        if (proposalStateOf(messageId)) return;
+        rememberProposalState(messageId, 'dismissed');
+        setProposalTick(t => t + 1);
+    }, []);
+
+    /** Minute bucket for the rows' relative-time labels — a CACHE KEY, not a
+     *  new clock. An unchanged message reuses its cached row, and therefore its
+     *  cached label, until this number rolls over, at which point the label is
+     *  recomputed from a fresh `Date.now()`. Reading the clock once per render
+     *  instead of once per row also keeps every row in one pass on the same
+     *  minute. */
+    const minuteKey = minuteBucket();
 
     // `/` focuses the rail search. Nothing else claims it: the app-wide handler
     // that used to looked up #chat-composer, an id deleted in 78bc027.
@@ -1379,8 +1501,6 @@ const AgentsView: React.FC<AgentsViewProps> = ({
                                     aria-label="Conversation">
                                     {thread.map((m, i) => {
                                         const isUser = m.role === MessageRole.USER;
-                                        const row = chatRowFrom(m, username, activeBot?.name ?? 'desk');
-                                        const vCount = versionCount(m);
                                         /* The prompt an interrupted answer was answering,
                                            so the row's recovery card can prefill the
                                            composer with what was actually asked. The
@@ -1389,10 +1509,22 @@ const AgentsView: React.FC<AgentsViewProps> = ({
                                         const askedPrompt = !isUser && i > 0 && thread[i - 1].role === MessageRole.USER
                                             ? thread[i - 1].text
                                             : '';
+                                        // An unchanged message yields the SAME row
+                                        // reference (weak-keyed cache), so the memo
+                                        // holds while a sibling streams.
+                                        const row = chatRowFor(m, username, activeBot?.name ?? 'desk', minuteKey, askedPrompt);
+                                        const vCount = versionCount(m);
+                                        const proposalState = proposalStateFor(m.id);
+                                        // Parsed only where the chip could draw, and
+                                        // cached per message so the prop reference is
+                                        // stable across renders.
+                                        const prosePlan = !isUser && !m.proposal && proposalState === undefined
+                                            ? prosePlanFor(m)
+                                            : null;
                                         return (
                                             <ChatTranscriptRow
                                                 key={m.id}
-                                                row={askedPrompt ? { ...row, interruptedPrompt: askedPrompt } : row}
+                                                row={row}
                                                 /* How many turns sit below this one — the
                                                    restore control is only drawn where
                                                    restoring would actually take something
@@ -1402,111 +1534,29 @@ const AgentsView: React.FC<AgentsViewProps> = ({
                                                 /* The recovery card needs at least one handler
                                                    or it renders nothing; a prefill is the
                                                    honest action here (re-asking from a row
-                                                   belongs to the dock's own retry). */
-                                                onEditPrompt={askedPrompt
-                                                    ? prompt => { setText(prompt); composerRef.current?.focus(); }
-                                                    : undefined}
-                                                onEditPromptMessage={onEditPromptMessage ? (id, text) => {
-                                                    onEditPromptMessage(id, text);
-                                                    /* The edited wording goes into the
-                                                       composer rather than straight into
-                                                       a run: saving an edit and spending
-                                                       a model call are two decisions, and
-                                                       the row's version history is already
-                                                       written by the time this returns. */
-                                                    setText(text);
-                                                    composerRef.current?.focus();
-                                                } : undefined}
+                                                   belongs to the dock's own retry). The handler
+                                                   is always wired — the notice only offers it
+                                                   when the row carries an interruptedPrompt. */
+                                                onEditPrompt={handleEditPromptPrefill}
+                                                onEditPromptMessage={onEditPromptMessage ? handleEditPromptMessage : undefined}
                                                 priorPrompts={m.edits}
-                                                versions={vCount > 1 && onStepVersion ? {
-                                                    index: activeIndex(m),
-                                                    total: vCount,
-                                                    onStep: (delta) => onStepVersion(m.id, delta),
-                                                } : undefined}
-                                            >
-                                                {/* The decision card is fed from the ROW MODEL, never from the
-                                                    raw message: a "Logged from Chart AI" receipt carries a copy
-                                                    of the plan's analysis for the journal row and the autopilot,
-                                                    and reading it here drew the identical ENTRY/STOP/TARGET/
-                                                    PROBABILITY card a second time in the same turn.
-                                                    `chatRowFrom` is the one place that decides. */}
-                                                {!isUser && <InlineVerdict analysis={row.analysis} />}
-                                                {/* A plan the model PRESENTED here gets the SAME decision card the
-                                                    dock renders, fed off the canonical row. One disposition store,
-                                                    keyed by the row id both homes share: logging on the chart marks
-                                                    this card logged, and a re-click is a no-op rather than a second
-                                                    journal row. */}
-                                                {!isUser && m.proposal && proposalStateFor(m.id) === undefined && (
-                                                    <TradeProposalCard
-                                                        proposal={m.proposal}
-                                                        canLog={!!onLogProposedTrade}
-                                                        awaitingLog={awaitingProposalRowId === m.id}
-                                                        onLog={async () => {
-                                                            if (!onLogProposedTrade) return;
-                                                            if (proposalStateOf(m.id) || awaitingProposalRowId) return;
-                                                            const stamped = m.proposal!;
-                                                            setAwaitingProposalRowId(m.id);
-                                                            let logged: boolean;
-                                                            // A log that threw is NOT a log: the card stays live so the
-                                                            // trader can retry instead of seeing ✓ Logged over a missing row.
-                                                            try { logged = (await onLogProposedTrade(stamped)) !== false; }
-                                                            catch { logged = false; }
-                                                            finally { setAwaitingProposalRowId(null); }
-                                                            if (!logged) return;
-                                                            rememberProposalState(m.id, 'logged');
-                                                            setProposalTick(t => t + 1);
-                                                        }}
-                                                        onCancel={() => {
-                                                            if (proposalStateOf(m.id)) return;
-                                                            rememberProposalState(m.id, 'dismissed');
-                                                            setProposalTick(t => t + 1);
-                                                        }}
-                                                    />
-                                                )}
-                                                {!isUser && m.proposal && proposalStateFor(m.id) === 'logged' && <TradeProposalLoggedRow />}
-                                                {/* Stage 20d — the seat DESCRIBED a plan and never called
-                                                    present_trade. The prose carries the same three numbers, so
-                                                    the row offers the same decision instead of leaving the plan
-                                                    in a sentence the journal never sees. Validation is NOT
-                                                    re-implemented here: planFromProse hands the numbers to
-                                                    parseTradeProposal, which already refuses a long whose stop
-                                                    sits above its entry. */}
-                                                {!isUser && !m.proposal && proposalStateFor(m.id) === undefined && prosePlanFor(m) && (
-                                                    <div className="mt-1 flex items-center gap-2" data-testid="prose-plan-chip">
-                                                        <button type="button" disabled={!onLogProposedTrade || awaitingProposalRowId !== null}
-                                                            className="rounded-control border border-emerald-500/40 bg-emerald-500/10 px-2 py-1 text-ui-dense font-medium text-emerald-300 transition-colors hover:bg-emerald-500/20 disabled:opacity-50"
-                                                            onClick={async () => {
-                                                                const plan = prosePlanFor(m);
-                                                                if (!plan || !onLogProposedTrade) return;
-                                                                if (proposalStateOf(m.id) || awaitingProposalRowId) return;
-                                                                // The ONE plan-id shape, so a plan logged from
-                                                                // prose dedupes against the same plan presented by
-                                                                // the tool on another row.
-                                                                const stamped: TradeProposal = { ...plan, planId: plan.planId ?? mintPlanId(plan.symbol) };
-                                                                setAwaitingProposalRowId(m.id);
-                                                                let logged: boolean;
-                                                                try { logged = (await onLogProposedTrade(stamped)) !== false; }
-                                                                catch { logged = false; }
-                                                                finally { setAwaitingProposalRowId(null); }
-                                                                if (!logged) return;
-                                                                rememberProposalState(m.id, 'logged');
-                                                                setProposalTick(t => t + 1);
-                                                            }}>
-                                                            Log this? {prosePlanFor(m)!.direction} {prosePlanFor(m)!.symbol} @ {prosePlanFor(m)!.entry}
-                                                        </button>
-                                                        <button type="button" aria-label="Not this plan"
-                                                            className="text-ui-dense text-zinc-500 transition-colors hover:text-zinc-300"
-                                                            onClick={() => {
-                                                                if (proposalStateOf(m.id)) return;
-                                                                rememberProposalState(m.id, 'dismissed');
-                                                                setProposalTick(t => t + 1);
-                                                            }}>
-                                                            dismiss
-                                                        </button>
-                                                    </div>
-                                                )}
-                                                {!isUser && !m.proposal && proposalStateFor(m.id) === 'logged' && <TradeProposalLoggedRow />}
-                                            </ChatTranscriptRow>
+                                                versionIndex={activeIndex(m)}
+                                                versionTotal={vCount}
+                                                onStepVersion={onStepVersion ? handleStepVersion : undefined}
+                                                /* The decision cards as DATA, not children JSX:
+                                                   the row draws the same verdict / proposal /
+                                                   prose-plan cards from these values and the
+                                                   stable handlers above, so the memo boundary
+                                                   is props-pure. */
+                                                proposal={m.proposal}
+                                                prosePlan={prosePlan}
+                                                proposalState={proposalState}
+                                                canLogProposal={!!onLogProposedTrade}
+                                                awaitingProposalLog={awaitingProposalRowId === m.id}
+                                                proposalLogBusy={awaitingProposalRowId !== null}
+                                                onLogProposal={handleLogProposal}
+                                                onDismissProposal={handleDismissProposal}
+                                            />
                                         );
                                     })}
                                 </div>

@@ -38,8 +38,9 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import type { FollowOutput, VirtuosoHandle } from 'react-virtuoso';
 import { Activity, Compass, Crosshair, Eye, History, MoreHorizontal, PanelRightOpen, Plus, X } from '../shared/Icons';
-import JumpToLatestFab, { JUMP_AWAY_PX } from '../shared/JumpToLatestFab';
+import JumpToLatestFab from '../shared/JumpToLatestFab';
 import { ProviderConfig } from '../../types/provider';
 import type { LoggedTrade } from '../../types';
 import type { Message } from '../../types/message';
@@ -183,10 +184,10 @@ interface TradeChatPanelProps {
     /** Imperative scroll-to-entry bridge for App-level affordances ("Jump to
      *  latest analysis", the saved-analyses gallery's Locate). This dock is
      *  the app's only real transcript scroller, so it hands App a function
-     *  that scrolls the entry whose `data-message-id` matches the given id
-     *  into view; the cleanup passes null so App never calls into an
-     *  unmounted dock. (Replaces the old virtuosoRef, which pointed at a
-     *  list this panel never rendered as a Virtuoso.) */
+     *  that brings the entry with that id to the middle of the view; the
+     *  cleanup passes null so App never calls into an unmounted dock. The
+     *  transcript is virtualized, so the lookup runs over the CONVERSATION and
+     *  scrolls by index — the row being asked for is usually not mounted. */
     registerScrollToMessage?: (fn: ((messageId: string) => void) | null) => void;
     /** Dock geometry controls, hoisted to the trade layout (drag handle).
      *  There is deliberately no `collapsed` prop: the dock is HIDDEN, not
@@ -329,7 +330,21 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
     const [showAttachMenu, setShowAttachMenu] = useState(false);
     const [showNewBot, setShowNewBot] = useState(false);
     const [panelPickerFor, setPanelPickerFor] = useState<string | null>(null);
+    /** The transcript's scroll box. TWO readers, one node: the imperative
+     *  jumps below read the ref, and the virtualized list needs the real
+     *  HTMLElement as a PROP (`customScrollParent`) — a ref is null on the
+     *  first render and never re-renders anything when it fills, so a callback
+     *  ref feeds state as well. The list is mounted only once that state holds
+     *  the node; Virtuoso is never handed a null parent to guess about. */
     const scrollRef = useRef<HTMLDivElement | null>(null);
+    const [scrollEl, setScrollEl] = useState<HTMLDivElement | null>(null);
+    const setScrollerRef = useCallback((node: HTMLDivElement | null): void => {
+        scrollRef.current = node;
+        setScrollEl(node);
+    }, []);
+    /** The transcript list's own handle — the only way to reach a row that is
+     *  NOT mounted, which is most of a long conversation now. */
+    const virtuosoRef = useRef<VirtuosoHandle | null>(null);
     /** Which Key Levels card currently owns the shared chart-levels channel
      *  (message id of the card that last PUSHED). Its unmount may clear the
      *  layer; any other card's clear is dropped — see handleCardLevels. */
@@ -637,6 +652,22 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
     // Follow the bottom while the answer streams — UNLESS the user scrolled
     // up to read. Wheel/touch position wins over the auto-follow: scrolling
     // up unpins (returning near the bottom, or sending a message, re-pins).
+    //
+    // ONE authority: Virtuoso. It measures the box it renders into and reports
+    // the bottom on the SAME JUMP_AWAY_PX threshold the FAB uses, so the pin,
+    // the control and the scroll can no longer disagree. The hand-rolled
+    // ResizeObserver + MutationObserver pair this replaces existed for a real
+    // bug — rows grow AFTER the last entry patch (the Key Levels card mounts,
+    // markdown and fonts settle, a disclosure opens) and the newest lines were
+    // left clipped below the fold with no way back, so the answer read as
+    // truncated until a reload. That growth is still followed, from three
+    // sides: Virtuoso re-arms its own follow on every output change and on a
+    // viewport the composer shrinks; `onAtBottomChange` below catches growth
+    // that crosses JUMP_AWAY_PX with no render at all; and
+    // `onTotalHeightChanged` catches the growth too small to cross it. What
+    // must NOT come back is the MutationObserver: it fires on every RECYCLED
+    // row now, so it would fight Virtuoso for the same scrollTop on every
+    // flick.
     const stickToBottomRef = useRef(true);
     /** The trader has scrolled away from the newest row — the one state the
      *  follow-the-bottom behaviour will NOT fix on its own, because a
@@ -646,13 +677,78 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
      *  one rule for both homes, so neither yanks a reader the other one
      *  offered a button for. */
     const [scrolledAway, setScrolledAway] = useState(false);
-    const onChatScroll = useCallback((): void => {
-        const el = scrollRef.current;
-        if (!el) return;
-        const away = el.scrollHeight - el.scrollTop - el.clientHeight > JUMP_AWAY_PX;
-        stickToBottomRef.current = !away;
-        setScrolledAway(away);
+    /** The scroll offset at the last observation — what tells the two reasons
+     *  for leaving the bottom apart. A reader who scrolls up MOVES scrollTop;
+     *  content that grows underneath leaves it where it was. */
+    const lastScrollTopRef = useRef(0);
+    /** Newest row, now. 'LAST' resolves against the whole conversation, so
+     *  this reaches a row that is not mounted — which a DOM query cannot. */
+    const scrollToNewest = useCallback((behavior: 'auto' | 'smooth' = 'auto'): void => {
+        virtuosoRef.current?.scrollToIndex({ index: 'LAST', align: 'end', behavior });
     }, []);
+    /** ONE definition of "the reader moved", asked by both follow paths, and it
+     *  records the observation so the next question compares against now. The
+     *  height path needs it as much as the bottom path: Virtuoso reports a
+     *  height change for every RE-MEASURE, including rows mounting under an
+     *  upward flick, and the pin can still be true at that moment — a move
+     *  inside JUMP_AWAY_PX never flips the bottom state, so `onAtBottomChange`
+     *  has not run to clear it. Reading the box here is what keeps that flick
+     *  from being yanked back. */
+    const readerMoved = useCallback((): boolean => {
+        const top = scrollRef.current?.scrollTop ?? 0;
+        const moved = Math.abs(top - lastScrollTopRef.current) > 1;
+        lastScrollTopRef.current = top;
+        return moved;
+    }, []);
+    const onAtBottomChange = useCallback((atBottom: boolean): void => {
+        const moved = readerMoved();
+        if (atBottom) {
+            stickToBottomRef.current = true;
+            setScrolledAway(false);
+            return;
+        }
+        // Left the bottom while pinned, with the offset untouched: the CONTENT
+        // grew, or the dock was expanded out of its rail. Follow it — this is
+        // the clipped-answer case, and the reader never asked to move.
+        if (stickToBottomRef.current && !moved) {
+            scrollToNewest();
+            return;
+        }
+        // The reader scrolled away. Their position wins; the FAB is the way back.
+        stickToBottomRef.current = false;
+        setScrolledAway(true);
+    }, [readerMoved, scrollToNewest]);
+    /** Virtuoso's own follow, as a VALUE rather than a callback, and that is
+     *  deliberate. Internally Virtuoso arms a "scroll back to the bottom if the
+     *  content just grew" trap whenever `followOutput !== false` — and a
+     *  function is never `false`, so the callback form keeps that trap armed
+     *  even while the reader is scrolled up, which is exactly the yank the
+     *  pinned flag exists to prevent. As a scalar it means what it says: follow
+     *  the newest output while pinned, and while away do not touch the box at
+     *  all. Virtuoso applies its own `isAtBottom` (on JUMP_AWAY_PX) on top, and
+     *  the forced re-pins below are imperative because they must move a box
+     *  that is NOT at the bottom. */
+    const followOutput: FollowOutput = scrolledAway ? false : 'auto';
+    /** The third follow path: growth that never crosses JUMP_AWAY_PX. A Key
+     *  Levels card mounting, a disclosure opening, markdown and fonts settling
+     *  — each adds less than the threshold, so `atBottom` stays true, no state
+     *  change is published, and Virtuoso's own size-increase trap (which arms
+     *  only on that flip, and only for 100ms after an output change) never
+     *  runs. The newest lines drift below the fold with no FAB to bring them
+     *  back: the clipped answer this follow exists to prevent. Follow the
+     *  height itself, on the same two conditions — pinned, and the reader has
+     *  not moved the box. */
+    const onTotalHeightChanged = useCallback((): void => {
+        const el = scrollRef.current;
+        // A collapsed rail is a zero-height box. Nothing is clipped because
+        // nothing is shown, and Virtuoso's initial-location handshake is
+        // waiting for a scroll such a box cannot make; the re-pin above lands
+        // on the newest row when the dock is expanded.
+        if (!el || el.clientHeight === 0) return;
+        const moved = readerMoved();
+        if (moved || !stickToBottomRef.current) return;
+        scrollToNewest();
+    }, [readerMoved, scrollToNewest]);
     /** The newest-message count and session the transcript last followed.
      *  A NEW trader message re-pins the follow even if they had scrolled up
      *  to read — sending is an action, and the answer must not land where
@@ -662,15 +758,13 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
     const prevUserCountRef = useRef(0);
     const prevActiveIdRef = useRef(activeId);
     useEffect(() => {
-        const el = scrollRef.current;
-        if (!el) return;
+        let repin = false;
         const userCount = entries.reduce((n, e) => n + (e.role === 'user' ? 1 : 0), 0);
-        if (userCount > prevUserCountRef.current) stickToBottomRef.current = true;
+        if (userCount > prevUserCountRef.current) repin = true;
         prevUserCountRef.current = userCount;
         if (prevActiveIdRef.current !== activeId) {
             prevActiveIdRef.current = activeId;
-            stickToBottomRef.current = true;
-            setScrolledAway(false);
+            repin = true;
         }
         // A retry re-uses the user's row (so the count above does not move) and
         // then paints a fresh empty AI placeholder after it. That is a new
@@ -679,89 +773,51 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
         const last = entries[entries.length - 1];
         const beforeLast = entries[entries.length - 2];
         if (last?.role === 'ai' && last.streaming && !last.text?.trim() && beforeLast?.role === 'user') {
-            stickToBottomRef.current = true;
+            repin = true;
         }
-        if (stickToBottomRef.current) el.scrollTop = el.scrollHeight;
-    }, [entries, activeId]);
-    // Following only on `entries` was not enough: the transcript's own height
-    // changes when the composer grows (its context stamp / warning line), and
-    // rows grow AFTER the last entry patch (the Key Levels card mounts, fonts
-    // and markdown settle, a disclosure opens). Either growth left the newest
-    // lines clipped below the fold with no jump control to reach them — the
-    // answer read as truncated until a reload re-scrolled the conversation
-    // from the top. So watch BOTH the box's size and its content, and after
-    // every change either re-pin (the reader is at the bottom) or re-measure
-    // whether the newest row is now out of reach (so the control appears).
-    useEffect(() => {
-        const el = scrollRef.current;
-        if (!el) return undefined;
-        let frame = 0;
-        const settle = (): void => {
-            frame = 0;
-            const box = scrollRef.current;
-            if (!box) return;
-            if (stickToBottomRef.current) {
-                box.scrollTop = box.scrollHeight;
-                return;
-            }
-            setScrolledAway(box.scrollHeight - box.scrollTop - box.clientHeight > JUMP_AWAY_PX);
-        };
-        const schedule = (): void => {
-            if (frame) return;
-            frame = typeof requestAnimationFrame === 'function'
-                ? requestAnimationFrame(settle)
-                : window.setTimeout(settle, 0);
-        };
-        const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(schedule) : null;
-        ro?.observe(el);
-        const mo = typeof MutationObserver !== 'undefined'
-            ? new MutationObserver(schedule)
-            : null;
-        mo?.observe(el, { childList: true, subtree: true, characterData: true });
-        window.addEventListener('resize', schedule);
-        return () => {
-            ro?.disconnect();
-            mo?.disconnect();
-            window.removeEventListener('resize', schedule);
-            if (frame) {
-                if (typeof cancelAnimationFrame === 'function') cancelAnimationFrame(frame);
-                else window.clearTimeout(frame);
-            }
-        };
-    }, [activeId, activeSession.kind]);
+        if (!repin) return;
+        stickToBottomRef.current = true;
+        lastScrollTopRef.current = scrollRef.current?.scrollTop ?? 0;
+        setScrolledAway(false);
+        // The jump is imperative because Virtuoso evaluates `followOutput`
+        // while publishing the new rows — before this effect can say the
+        // reader's position no longer counts.
+        scrollToNewest();
+    }, [entries, activeId, scrollToNewest]);
     /** One click returns to the newest row, and re-pins the follow so the next
      *  streamed line keeps arriving where the trader is looking. */
     const jumpToLatest = useCallback((): void => {
-        const el = scrollRef.current;
-        if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'auto' });
         stickToBottomRef.current = true;
+        lastScrollTopRef.current = scrollRef.current?.scrollTop ?? 0;
         setScrolledAway(false);
-    }, []);
+        scrollToNewest();
+    }, [scrollToNewest]);
 
     // ── Imperative scroll-to-entry bridge (see registerScrollToMessage) ────
     // The dock owns the only real transcript scroller, so App's affordances
-    // ("Jump to latest analysis", the gallery's Locate) route the scroll
-    // through this registered function instead of a never-attached handle.
-    // Entries are stamped `data-entry-id` (the chatStore entry id — what
-    // jump-to-latest resolves from the store) and `data-message-id` (the
-    // App-side analysis message id when this entry carries one, else the
-    // entry id — what the gallery's Locate passes). A miss is a deliberate
-    // no-op: the group room renders no transcript, and an analysis
-    // card that isn't in THIS dock's session must not yank the user
-    // somewhere unrelated.
+    // ("Jump to latest analysis", the saved-analyses gallery's Locate) route
+    // the scroll through this registered function instead of a never-attached
+    // handle. It resolves the id against the CONVERSATION and scrolls by index:
+    // a `querySelectorAll('[data-entry-id]')` walk only ever saw the mounted
+    // window, so Locate on an older analysis silently did nothing — the row it
+    // wanted was the one Virtuoso had recycled. Ids are the chatStore entry id
+    // (`data-entry-id`) and the App-side analysis message id (`data-message-id`),
+    // which `entriesForSession` makes the same string. A miss is a deliberate
+    // no-op: the group room renders no transcript, and an analysis card that
+    // isn't in THIS dock's session must not yank the user somewhere unrelated.
+    //
+    // Written during render on purpose (see conventions › two idioms that look
+    // like mistakes): App replays a parked Locate the instant this registers,
+    // which is before any effect of this pass would have filled the ref.
+    const entriesRef = useRef(entries);
+    entriesRef.current = entries;
     useEffect(() => {
         if (!registerScrollToMessage) return;
         registerScrollToMessage((messageId: string): void => {
-            const container = scrollRef.current;
-            if (!container || !messageId) return;
-            const nodes = container.querySelectorAll<HTMLElement>('[data-entry-id]');
-            for (const node of Array.from(nodes)) {
-                if (node.getAttribute('data-entry-id') === messageId
-                    || node.getAttribute('data-message-id') === messageId) {
-                    node.scrollIntoView({ block: 'center', behavior: 'smooth' });
-                    return;
-                }
-            }
+            if (!messageId) return;
+            const index = entriesRef.current.findIndex(e => e.id === messageId);
+            if (index < 0) return;
+            virtuosoRef.current?.scrollToIndex({ index, align: 'center', behavior: 'smooth' });
         });
         return () => { registerScrollToMessage(null); };
     }, [registerScrollToMessage]);
@@ -1167,13 +1223,19 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
             {/* The transcript's own box, so the jump control floats over the
                 transcript's bottom-right corner and not over the composer. */}
             <div className="relative min-h-0 flex-1">
-            <div ref={scrollRef} onScroll={onChatScroll} className="h-full space-y-6 overflow-y-auto overscroll-contain custom-scrollbar px-5 py-6"
+            <div ref={setScrollerRef} className="h-full overflow-y-auto overscroll-contain custom-scrollbar px-5 py-6"
                 // The dock's transcript root is the one element a screen reader
                 // needs to name for an answer to be heard at all: rows append and
                 // old ones scroll away, which is exactly `role="log"`. Held busy
                 // while any row streams so the token-by-token rewrite is not
                 // announced dozens of times; it flips off when the answer settles
                 // and the finished reply is read once. (O-65)
+                //
+                // This stays the scroller under virtualization — Virtuoso renders
+                // INTO it (`customScrollParent`), so the log semantics, the custom
+                // scrollbar and the FAB's anchor are unchanged. The row gap that
+                // `space-y-6` used to give these children now rides each row's own
+                // padding, because the rows are no longer siblings of this box.
                 role="log" aria-live="polite" aria-busy={entries.some(e => e.streaming)}
                 aria-label="Chart AI conversation">
                 {entries.length === 0 && !panelPickerFor && (
@@ -1192,19 +1254,32 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
                         </div>
                     </div>
                 )}
-                <ChatTranscriptList
-                    entries={entries}
-                    send={send}
-                    setDraftText={setDraft}
-                    getAnalysisMessage={getAnalysisMessage}
-                    resolveVerdictByIdentity={!!activeSession.conversationId}
-                    symbol={symbol}
-                    getMark={getMarkForDist}
-                    onChatLevels={handleCardLevels}
-                    onToggleWatch={onToggleWatch}
-                    pinnedMessageIds={pinnedMessageIds}
-                    onLogProposedTrade={onLogProposedTrade}
-                />
+                {/* Mounted only once the callback ref has handed over the real
+                    node: `customScrollParent` is a prop, and a null one would
+                    leave Virtuoso scrolling a box it made up. Keyed by session
+                    so a switch opens a fresh window on the newest row rather
+                    than reusing the last thread's measured heights. */}
+                {scrollEl && entries.length > 0 && (
+                    <ChatTranscriptList
+                        key={activeId}
+                        entries={entries}
+                        scrollParent={scrollEl}
+                        virtuosoRef={virtuosoRef}
+                        followOutput={followOutput}
+                        onAtBottomChange={onAtBottomChange}
+                        onTotalHeightChanged={onTotalHeightChanged}
+                        send={send}
+                        setDraftText={setDraft}
+                        getAnalysisMessage={getAnalysisMessage}
+                        resolveVerdictByIdentity={!!activeSession.conversationId}
+                        symbol={symbol}
+                        getMark={getMarkForDist}
+                        onChatLevels={handleCardLevels}
+                        onToggleWatch={onToggleWatch}
+                        pinnedMessageIds={pinnedMessageIds}
+                        onLogProposedTrade={onLogProposedTrade}
+                    />
+                )}
             </div>
             {/* The jump control: it appears when the trader has scrolled away
                 from the newest row, and while a turn is running it shows the

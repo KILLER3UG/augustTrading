@@ -16,6 +16,7 @@ import { discoverProviderModelCatalog, discoverProviderModels } from '../../serv
 import { resetProviderHealth, getProviderHealth, providerCooldownRemainingMs } from '../../services/infrastructure/ProviderHealthService';
 import { probeAndLearn } from '../../services/learning/harnessLessons';
 import { validateProviderUrl } from '../../utils/providerUrlValidation';
+import { ageMinutes, healthLabel } from '../../utils/relativeTime';
 import { findProviderById, mergeDiscoveredModels, mergeModelContextWindows, sameModelContextWindows, sortModelsFreeFirst, isProviderReady } from '../../utils/providerUtils';
 import { resolveContextWindow } from '../../utils/contextWindow';
 import { useConfirmDialog } from '../shared/ConfirmDialog';
@@ -102,10 +103,9 @@ const ProviderHealthBlock: React.FC<{ providerId: string }> = ({ providerId }) =
     }
     const fmtAgo = (iso?: string): string => {
         if (!iso) return '—';
-        const mins = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 60000));
-        if (mins < 1) return 'just now';
-        if (mins < 60) return `${mins}m ago`;
-        return `${Math.round(mins / 60)}h ago`;
+        const at = Date.parse(iso);
+        if (!Number.isFinite(at)) return '—';
+        return healthLabel(ageMinutes(at));
     };
     return (
         <div className=" rounded-control border border-zinc-800 bg-zinc-950/60 px-3 py-2">

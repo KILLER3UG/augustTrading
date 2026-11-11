@@ -30,7 +30,11 @@ import ChatFailureRow from './ChatFailureRow';
 import { BotFace } from '../chat/BotFace';
 import KeyLevelsCard from '../trade/KeyLevelsCard';
 import SignalCard, { signalIdFromActions, signalRowById } from '../trade/SignalCard';
+import InlineVerdict from '../analysis/InlineVerdict';
+import TradeProposalCard, { TradeProposalLoggedRow } from '../trade/panels/TradeProposalCard';
 import { parseKeyLevels, type ModelKeyLevel } from '../../services/trade/keyLevels';
+import type { TradeProposal } from '../../services/trade/proposedTrade';
+import type { ProposalState } from '../../services/trade/proposalDisposition';
 import type { PromptEdit } from '../../utils/messageVersions';
 import type { TradeAnalysis } from '../../types';
 import type { ToolAction } from '../../types/message';
@@ -114,17 +118,52 @@ export interface ChatTranscriptRowProps {
     /** How many turns live after this row. 0 hides the restore control — a
      *  button that parks nothing is a button that lies. */
     turnsAfter?: number;
-    /** The answer's versions, when it has more than one. */
-    versions?: { index: number; total: number; onStep: (delta: number) => void };
+    /** Which generation of this answer is on screen, and how many exist.
+     *  Scalars plus ONE stable callback rather than a `{index,total,onStep}`
+     *  object: the object was rebuilt on every parent render, so React.memo
+     *  compared a fresh reference every time and never held. The stepper draws
+     *  only where there is a choice (total > 1) and a host wired the step. */
+    versionIndex?: number;
+    versionTotal?: number;
+    onStepVersion?: (messageId: string, delta: number) => void;
     /** Wordings this prompt carried before the current one. */
     priorPrompts?: PromptEdit[];
-    /** Extra chrome the caller renders under the bubble (the verdict card). */
-    children?: React.ReactNode;
+    /** ── The decision cards under the answer ──
+     *  These used to be `children`: JSX the parent rebuilt on every render,
+     *  which defeated the memo even when every other prop was stable. They are
+     *  DATA now — plain values and stable callbacks the row renders into the
+     *  same cards, in the same place, so an unchanged row is a shallow-equal
+     *  row. The verdict table needs no prop of its own: it reads `row.analysis`,
+     *  the one projection that already decides whether this turn carries a
+     *  plan (a planId-stamped receipt carries none, so it draws none). */
+    /** The plan this row PRESENTED via the present_trade tool. */
+    proposal?: TradeProposal;
+    /** The plan this row's PROSE describes, when the seat never called the
+     *  tool. The caller caches it per message — a fresh parse per render is a
+     *  fresh object, and a fresh object is a re-render. */
+    prosePlan?: TradeProposal | null;
+    /** The trader's recorded disposition on this row's plan, from the ONE
+     *  module store both transcript homes share. */
+    proposalState?: ProposalState;
+    /** A journal is attached — without it the card hides Log and the prose
+     *  chip disables it, rather than drawing a button that clicks into nothing. */
+    canLogProposal?: boolean;
+    /** THIS row's Log click is awaiting the gate stamp. */
+    awaitingProposalLog?: boolean;
+    /** ANY row's Log click is in flight — the prose chip waits for it too. */
+    proposalLogBusy?: boolean;
+    /** Log the plan this row carries. `kind` names the card that asked: a
+     *  prose plan may still need its planId minted, a presented one has it. */
+    onLogProposal?: (messageId: string, plan: TradeProposal, kind: 'presented' | 'prose') => void;
+    /** Dismiss the plan — the card/chip never comes back. */
+    onDismissProposal?: (messageId: string) => void;
 }
 
 const ChatTranscriptRow: React.FC<ChatTranscriptRowProps> = ({
     row, symbol, getMark, onChatLevels, onRetry, onEditPrompt, pinned, onTogglePin, onLogTrade, canLogTrade,
-    onEditPromptMessage, onRevertTo, turnsAfter = 0, versions, priorPrompts, children,
+    onEditPromptMessage, onRevertTo, turnsAfter = 0, versionIndex, versionTotal, onStepVersion, priorPrompts,
+    proposal, prosePlan, proposalState, canLogProposal, awaitingProposalLog, proposalLogBusy,
+    onLogProposal, onDismissProposal,
 }) => {
     const isUser = row.role === 'user';
     const deskSpeaker = !row.speaker || row.speaker.trim().toLowerCase() === 'desk';
@@ -267,7 +306,54 @@ const ChatTranscriptRow: React.FC<ChatTranscriptRowProps> = ({
                            numbers. One row, two widths, on purpose. */
                         ? <div className="chat-prose"><AnswerBody text={body} streaming={!!row.streaming} /></div>
                         : <span className="text-zinc-500">{row.analysis ? 'Analysis' : '…'}</span>}
-                    {children}
+                    {/* The decision cards, fed from DATA props rather than children
+                        JSX, so the memo boundary stays props-pure. The verdict is
+                        fed from the ROW MODEL, never from the raw message: a
+                        "Logged from Chart AI" receipt carries a copy of the plan's
+                        analysis for the journal row and the autopilot, and reading
+                        it here drew the identical ENTRY/STOP/TARGET/PROBABILITY
+                        card a second time in the same turn. `chatRowFrom` is the
+                        one place that decides. */}
+                    <InlineVerdict analysis={row.analysis} />
+                    {/* A plan the model PRESENTED gets the SAME decision card the
+                        dock renders. One disposition store, keyed by the row id
+                        both homes share: logging on the chart marks this card
+                        logged, and a re-click is a no-op rather than a second
+                        journal row. */}
+                    {proposal && proposalState === undefined && (
+                        <TradeProposalCard
+                            proposal={proposal}
+                            canLog={!!canLogProposal}
+                            awaitingLog={!!awaitingProposalLog}
+                            onLog={() => onLogProposal?.(row.id, proposal, 'presented')}
+                            onCancel={() => onDismissProposal?.(row.id)}
+                        />
+                    )}
+                    {/* The seat DESCRIBED a plan and never called present_trade.
+                        The prose carries the same three numbers, so the row offers
+                        the same decision instead of leaving the plan in a sentence
+                        the journal never sees. Validation is NOT re-implemented
+                        here: the caller's planFromProse hands the numbers to
+                        parseTradeProposal, which already refuses a long whose stop
+                        sits above its entry. */}
+                    {!proposal && proposalState === undefined && prosePlan && (
+                        <div className="mt-1 flex items-center gap-2" data-testid="prose-plan-chip">
+                            <button type="button" disabled={!canLogProposal || !!proposalLogBusy}
+                                className="rounded-control border border-emerald-500/40 bg-emerald-500/10 px-2 py-1 text-ui-dense font-medium text-emerald-300 transition-colors hover:bg-emerald-500/20 disabled:opacity-50"
+                                onClick={() => onLogProposal?.(row.id, prosePlan, 'prose')}>
+                                Log this? {prosePlan.direction} {prosePlan.symbol} @ {prosePlan.entry}
+                            </button>
+                            <button type="button" aria-label="Not this plan"
+                                className="text-ui-dense text-zinc-500 transition-colors hover:text-zinc-300"
+                                onClick={() => onDismissProposal?.(row.id)}>
+                                dismiss
+                            </button>
+                        </div>
+                    )}
+                    {/* A logged plan — presented OR prose — leaves the receipt.
+                        The two old branches (with/without a presented proposal)
+                        render the identical row, so one condition covers both. */}
+                    {proposalState === 'logged' && <TradeProposalLoggedRow />}
                 </div>
             )}
 
@@ -327,8 +413,12 @@ const ChatTranscriptRow: React.FC<ChatTranscriptRowProps> = ({
                 {/* Which answer you are looking at, when this row has been
                     re-run. Placed with the actions because stepping one is a
                     choice the trader makes, not a property of the turn. */}
-                {!isUser && versions && (
-                    <VersionStepper index={versions.index} total={versions.total} onStep={versions.onStep} />
+                {!isUser && onStepVersion && (versionTotal ?? 0) > 1 && (
+                    <VersionStepper
+                        index={versionIndex ?? 0}
+                        total={versionTotal ?? 0}
+                        onStep={delta => onStepVersion(row.id, delta)}
+                    />
                 )}
                 {!editing && onRevertTo && (
                     <RevertChip onRevert={() => onRevertTo(row.id)} after={turnsAfter} />

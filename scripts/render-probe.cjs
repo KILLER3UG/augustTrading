@@ -119,9 +119,22 @@ async function seed(page) {
 const waitStableAnswer = async (page) => {
     let prev = -1;
     for (let i = 0; i < 60; i++) {
-        const len = await page.evaluate(() => [...document.querySelectorAll(
-            '[data-testid="chat-entry-ai"], [data-testid="agent-message"][data-role="ai"]',
-        )].reduce((n, e) => n + (e.textContent || '').length, 0));
+        const len = await page.evaluate(() => {
+            // The STREAMING row is the newest one. With a virtualized transcript
+            // it is also the only honest thing to measure: older rows mount and
+            // unmount as the box follows the answer, so a sum over the mounted
+            // window can repeat itself mid-stream and read as "settled".
+            const ais = [...document.querySelectorAll('[data-testid="chat-entry-ai"]')];
+            let newest = null;
+            for (const el of ais) {
+                const index = Number(el.getAttribute('data-entry-index'));
+                if (!Number.isFinite(index)) continue;
+                if (!newest || index > newest.index) newest = { index, el };
+            }
+            const row = newest ? newest.el
+                : [...document.querySelectorAll('[data-testid="agent-message"][data-role="ai"]')].pop();
+            return row ? (row.textContent || '').length : 0;
+        });
         if (len > 0 && len === prev) return true;
         prev = len;
         await sleep(200);
@@ -197,6 +210,28 @@ const overflowIsClean = (m) => m.scrollW <= m.vw + 2 && m.worst.length === 0;
 const overflowWhy = (m) => `vw=${m.vw} scrollW=${m.scrollW}`
     + (m.worst.length ? ` worst=${JSON.stringify(m.worst[0])}` : '');
 
+/** True when a MOUNTED transcript row carrying `needle` overlaps the dock's
+ *  visible fold.
+ *
+ *  This is the follow contract, and the reason it is not `textContent.includes`:
+ *  once the transcript is virtualized, "the text is somewhere in the DOM" is
+ *  satisfied by an ancestor, and "a row with that text exists" is satisfied by
+ *  an overscan row parked thousands of pixels below the fold. Neither says the
+ *  trader can read what they just sent. Serialized into the page by Playwright,
+ *  so it closes over nothing. */
+function promptRowInFold(needle) {
+    const log = document.querySelector('[data-testid="trade-chat-panel"] [role="log"]');
+    if (!log) return false;
+    const box = log.getBoundingClientRect();
+    for (const el of log.querySelectorAll('[data-entry-id]')) {
+        if (!(el.textContent || '').includes(needle)) continue;
+        const r = el.getBoundingClientRect();
+        // ANY overlap counts: a row taller than the fold is still on screen.
+        if (r.bottom > box.top + 1 && r.top < box.bottom - 1) return true;
+    }
+    return false;
+}
+
 async function sendInDock(page, text, netIssues = [], expectedAi = 1) {
     if (!(await waitSendable(page))) {
         // Say what is actually true, rather than blaming a control that is
@@ -229,55 +264,76 @@ async function sendInDock(page, text, netIssues = [], expectedAi = 1) {
     // any wait failure, dump what the dock actually holds before throwing.
     const awaitRow = async (ms) => {
         try {
-            await page.waitForFunction(
-                (needle) => [...document.querySelectorAll('[data-entry-id]')]
-                    .some(e => (e.textContent || '').includes(needle)),
-                text,
-                { timeout: ms },
-            );
+            await page.waitForFunction(promptRowInFold, text, { timeout: ms });
         } catch (err) {
-            const diag = await page.evaluate((needle) => ({
-                entries: [...document.querySelectorAll('[data-entry-id]')]
-                    .map(e => (e.textContent || '').replace(/\s+/g, ' ').slice(0, 80)),
-                taValue: (document.querySelector('textarea') || {}).value,
-                taDisabled: !!(document.querySelector('textarea') || {}).disabled,
-                modal: !!document.querySelector('input[placeholder="Create New Workspace"]'),
-                dockText: ((document.querySelector('[data-testid="trade-chat-panel"]')
-                    || document.body).textContent || '').replace(/\s+/g, ' ').slice(0, 400),
-                wanted: needle,
-            }), text);
+            const diag = await page.evaluate((needle) => {
+                const log = document.querySelector('[data-testid="trade-chat-panel"] [role="log"]');
+                const box = log ? log.getBoundingClientRect() : null;
+                return {
+                    // Index + text + where the row sits, because with a
+                    // virtualized transcript "the row is missing" and "the row
+                    // is mounted 4000px below the fold" are different bugs and
+                    // this is the line that tells them apart.
+                    mounted: [...document.querySelectorAll('[data-entry-id]')].map((e) => {
+                        const r = e.getBoundingClientRect();
+                        return `${e.getAttribute('data-entry-index')} `
+                            + `${(e.textContent || '').replace(/\s+/g, ' ').slice(0, 60)}`
+                            + ` @${Math.round(r.top)}..${Math.round(r.bottom)}`;
+                    }),
+                    fold: box ? `${Math.round(box.top)}..${Math.round(box.bottom)}` : 'no log',
+                    scrollTop: log ? Math.round(log.scrollTop) : -1,
+                    scrollHeight: log ? log.scrollHeight : -1,
+                    taValue: (document.querySelector('textarea') || {}).value,
+                    taDisabled: !!(document.querySelector('textarea') || {}).disabled,
+                    modal: !!document.querySelector('input[placeholder="Create New Workspace"]'),
+                    dockText: ((document.querySelector('[data-testid="trade-chat-panel"]')
+                        || document.body).textContent || '').replace(/\s+/g, ' ').slice(0, 400),
+                    wanted: needle,
+                };
+            }, text);
             // The Playwright error is the CAUSE; the DOM dump is the context.
             // Discarding `err` (as this used to) threw away the one line that
             // says whether it was a timeout, a missing element or a detached
             // handle — which is what you actually need when a gate fails.
-            throw new Error(`sendInDock("${text}") never rendered a row`
+            throw new Error(`sendInDock("${text}") never rendered a row in the visible fold`
                 + `${err instanceof Error ? ` — ${err.message}` : ''}.\n    `
                 + JSON.stringify(diag).replace(/","/g, '",\n    "'));
         }
     };
     await awaitRow(30000);
-    // Wait for the ANSWER, by settled AI-bubble count — not by matching the
-    // prompt text inside it. The dock prefixes the message with live chart
-    // context, so the mock's echo of the user's own words routinely falls past
-    // the reply's 160-char window; matching it there tested the fixture, not
-    // the app. `expectedAi` is the honest signal: one more settled answer.
+    // Wait for the ANSWER on the newest MOUNTED AI row — not on a count of
+    // rows. Only a window is in the DOM, so `ais.length` is a window size that
+    // can shrink as the reply grows; it says nothing about the conversation.
+    // The dock prefixes the message with live chart context, so the mock's echo
+    // of the user's own words routinely falls past the reply's 160-char window;
+    // matching it there tested the fixture, not the app. "The newest answer
+    // carries the mock's marker AND the box followed it to the bottom" tests
+    // the app; the conversation-wide count is the census below.
     try {
-        await page.waitForFunction(
-            (expected) => {
-                const ais = [...document.querySelectorAll('[data-testid="chat-entry-ai"]')];
-                return ais.length >= expected
-                    && ais.every(e => /MOCK REPLY|could not answer/.test(e.textContent || ''));
-            },
-            expectedAi,
-            { timeout: 30000 },
-        );
+        await page.waitForFunction((awayPx) => {
+            const log = document.querySelector('[data-testid="trade-chat-panel"] [role="log"]');
+            if (!log) return false;
+            let newest = null;
+            for (const el of log.querySelectorAll('[data-testid="chat-entry-ai"]')) {
+                const index = Number(el.getAttribute('data-entry-index'));
+                if (!newest || index > newest.index) newest = { index, el };
+            }
+            if (!newest) return false;
+            if (!/MOCK REPLY|could not answer/.test(newest.el.textContent || '')) return false;
+            return log.scrollHeight - log.scrollTop - log.clientHeight <= awayPx;
+        }, JUMP_AWAY_PX, { timeout: 30000 });
     } catch (err) {
-        const diag = await page.evaluate(() => ({
-            aiBubbles: [...document.querySelectorAll('[data-testid="chat-entry-ai"]')]
-                .map(e => (e.textContent || '').replace(/\s+/g, ' ').slice(0, 160)),
-            entryCount: document.querySelectorAll('[data-entry-id]').length,
-        }));
-        throw new Error(`sendInDock("${text}"): user row rendered, no settled reply.`
+        const diag = await page.evaluate(() => {
+            const log = document.querySelector('[data-testid="trade-chat-panel"] [role="log"]');
+            return {
+                aiBubbles: [...document.querySelectorAll('[data-testid="chat-entry-ai"]')]
+                    .map(e => `${e.getAttribute('data-entry-index')} `
+                        + `${(e.textContent || '').replace(/\s+/g, ' ').slice(0, 160)}`),
+                mounted: document.querySelectorAll('[data-entry-id]').length,
+                away: log ? Math.round(log.scrollHeight - log.scrollTop - log.clientHeight) : -1,
+            };
+        });
+        throw new Error(`sendInDock("${text}"): user row rendered, no settled reply at the bottom.`
             + `${err instanceof Error ? ` — ${err.message}` : ''}`
             + `\n    ${JSON.stringify(diag).replace(/","/g, '",\n    "')}`
             + `\n    wire: ${netIssues.slice(0, 6).join(' | ') || 'no failing request on the mock port'}`);
@@ -285,21 +341,205 @@ async function sendInDock(page, text, netIssues = [], expectedAi = 1) {
     if (!(await waitStableAnswer(page))) {
         throw new Error(`sendInDock("${text}"): reply never stopped streaming`);
     }
+    // The count the full-DOM census used to give, earned by walking the whole
+    // conversation. A dropped older row still fails this. The walk ends at the
+    // bottom, so the next send starts pinned exactly as a trader's would.
+    const census = await transcriptCensus(page);
+    if (!census.ok || census.ai < expectedAi) {
+        throw new Error(`sendInDock("${text}"): expected at least ${expectedAi} AI rows in the`
+            + ` whole conversation — ${censusWhy(census)}`
+            + `\n    wire: ${netIssues.slice(0, 6).join(' | ') || 'no failing request on the mock port'}`);
+    }
+    return census;
 }
 
-/** Count what a human would count: rows on screen, per role. */
+/** The dock's transcript box. The transcript is VIRTUALIZED (react-virtuoso
+ *  with `customScrollParent`), but this is still the one element that scrolls,
+ *  the one `role="log"` a screen reader reads, and the one the jump FAB is
+ *  anchored to — so it is still the right thing to measure. */
+const DOCK_LOG = '[data-testid="trade-chat-panel"] [role="log"]';
+/** The follow distance, from components/shared/JumpToLatestFab.tsx. "At the
+ *  bottom" means within this many pixels of it, in the app and in this probe. */
+const JUMP_AWAY_PX = 240;
+
+/** What is MOUNTED in the transcript window, and where the box sits.
+ *
+ *  READ THIS BEFORE ASSERTING ON IT. Only the rows near the fold exist in the
+ *  DOM now, so `user`/`ai`/`entries` are a WINDOW SIZE, not a conversation
+ *  length — a census of them says nothing about whether an older row survived.
+ *  Two honest signals come back instead:
+ *   - `total`: the newest mounted row's `data-entry-index` + 1, i.e. how many
+ *     rows the CONVERSATION has. Only meaningful while the box is at the bottom
+ *     (`atBottom`), which is why both are returned together.
+ *   - `newestRole` / `newestText`: what the trader is actually looking at.
+ *  A dropped row shifts every later index, so `total` still fails on one. */
 async function counts(page, scope) {
-    return page.evaluate((sel) => {
+    return page.evaluate(({ sel, awayPx }) => {
         const root = sel ? document.querySelector(sel) : document;
         const q = (s) => [...(root || document).querySelectorAll(s)];
+        const log = document.querySelector('[data-testid="trade-chat-panel"] [role="log"]');
+        const rows = log ? [...log.querySelectorAll('[data-entry-index]')] : [];
+        let newest = null;
+        for (const el of rows) {
+            const index = Number(el.getAttribute('data-entry-index'));
+            if (!Number.isFinite(index)) continue;
+            if (!newest || index > newest.index) {
+                newest = {
+                    index,
+                    role: (el.getAttribute('data-testid') || '').replace('chat-entry-', ''),
+                    text: (el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 120),
+                };
+            }
+        }
+        const away = log ? log.scrollHeight - log.scrollTop - log.clientHeight : -1;
         return {
             user: q('[data-testid="chat-entry-user"]').length,
             ai: q('[data-testid="chat-entry-ai"]').length,
             entries: q('[data-entry-id]').length,
             treeAlive: q('[data-testid="trade-view"]').length,
+            logPresent: !!log,
+            quickPrompts: !!document.querySelector('[data-testid="dock-quick-prompts"]'),
+            total: newest ? newest.index + 1 : 0,
+            newestRole: newest ? newest.role : null,
+            newestText: newest ? newest.text : null,
+            away: Math.round(away),
+            atBottom: !!log && away <= awayPx,
         };
-    }, scope);
+    }, { sel: scope, awayPx: JUMP_AWAY_PX });
 }
+
+/** The WHOLE conversation, by scrolling it — the virtualization-correct census.
+ *
+ *  A full-DOM count is meaningless once only a window is mounted, and "the text
+ *  is somewhere on the page" is satisfied by an ancestor. So walk the box from
+ *  the top to the bottom in half-viewport steps, collect every row once by its
+ *  entry id, and report them in CONVERSATION ORDER (each row stamps its own
+ *  `data-entry-index`, so the order does not depend on the walk).
+ *
+ *  It ends at the bottom, which is where the app follows from, so the next send
+ *  starts pinned. `contiguous` is the structural half: indices must be 0..n-1
+ *  with no hole and no duplicate, which is what a dropped or doubled row breaks.
+ *  `cards` counts the decision cards the rows carry, for the same reason. */
+async function transcriptCensus(page) {
+    const census = await page.evaluate(async ({ sel, awayPx }) => {
+        const nap = (ms) => new Promise((r) => setTimeout(r, ms));
+        const log = document.querySelector(sel);
+        if (!log) return { ok: false, why: 'no dock transcript scroller', rows: [] };
+        const found = new Map();
+        const collect = () => {
+            for (const el of log.querySelectorAll('[data-entry-id]')) {
+                const id = el.getAttribute('data-entry-id');
+                const index = Number(el.getAttribute('data-entry-index'));
+                if (!id || !Number.isFinite(index)) continue;
+                found.set(id, {
+                    index,
+                    id,
+                    role: (el.getAttribute('data-testid') || '').replace('chat-entry-', ''),
+                    text: (el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 200),
+                    verdicts: el.querySelectorAll('[data-testid="inline-verdict"]').length,
+                });
+            }
+        };
+        const step = Math.max(120, Math.floor(log.clientHeight * 0.5));
+        let steps = 0;
+        let stalls = 0;
+        // Wait for the box to STOP MOVING before walking it. A follow-driven
+        // scroll is still in flight for a few frames after the answer settles:
+        // the Key Levels card mounts on the settled row, the transcript re-pins,
+        // and Virtuoso re-applies that scroll until the list stops changing. A
+        // walk that starts inside that window has the box moved out from under
+        // it and censuses the newest window twice — which reads as a dropped
+        // row. Three identical samples of BOTH height and offset is the end of
+        // the settle, and it is bounded so a runaway scroll still reports.
+        let quiet = 0;
+        let lastH = -1;
+        let lastTop = -1;
+        for (let i = 0; i < 25 && quiet < 3; i++) {
+            const h = log.scrollHeight;
+            const top = log.scrollTop;
+            quiet = h === lastH && Math.abs(top - lastTop) < 1 ? quiet + 1 : 0;
+            lastH = h;
+            lastTop = top;
+            await nap(120);
+        }
+        // Take the top, and CONFIRM it took: a pending follow scroll can undo
+        // it. A box that will not stay at the top is a real defect (the reader
+        // cannot reach their own history), so it fails the census rather than
+        // silently measuring the bottom half again.
+        let atTop = false;
+        for (let i = 0; i < 6 && !atTop; i++) {
+            log.scrollTop = 0;
+            // Virtuoso mounts and measures on the next frames, not synchronously
+            // with the scroll — sample after it has caught up, every step.
+            await nap(220);
+            atTop = log.scrollTop <= 1;
+        }
+        if (!atTop) {
+            return {
+                ok: false,
+                why: `the transcript would not stay at the top (scrollTop=${Math.round(log.scrollTop)})`,
+                rows: [],
+            };
+        }
+        collect();
+        for (let i = 0; i < 80; i++) {
+            const before = log.scrollTop;
+            log.scrollTop = before + step;
+            await nap(220);
+            collect();
+            steps++;
+            if (log.scrollTop + log.clientHeight >= log.scrollHeight - 2) break;
+            // A box that stops moving before its own bottom is a broken
+            // scroller, not the end of the conversation. Two chances, because
+            // a row measuring taller can push the offset back once.
+            stalls = log.scrollTop <= before + 1 ? stalls + 1 : 0;
+            if (stalls >= 2) break;
+        }
+        await nap(220);
+        collect();
+        const rows = [...found.values()].sort((a, b) => a.index - b.index);
+        const away = log.scrollHeight - log.scrollTop - log.clientHeight;
+        return {
+            ok: true,
+            rows,
+            steps,
+            scrollHeight: log.scrollHeight,
+            clientHeight: log.clientHeight,
+            atBottom: away <= awayPx,
+            reachedBottom: log.scrollTop + log.clientHeight >= log.scrollHeight - 2,
+        };
+    }, { sel: DOCK_LOG, awayPx: JUMP_AWAY_PX });
+    const rows = census.rows || [];
+    return {
+        ...census,
+        rows,
+        user: rows.filter((r) => r.role === 'user').length,
+        ai: rows.filter((r) => r.role === 'ai').length,
+        cards: rows.reduce((n, r) => n + r.verdicts, 0),
+        contiguous: rows.every((r, i) => r.index === i),
+        prompts: rows.filter((r) => r.role === 'user').map((r) => r.text),
+        roles: rows.map((r) => r.role).join(','),
+    };
+}
+
+/** One line a failed census can be read from. */
+const censusWhy = (c) => (c.ok
+    ? `${c.rows.length} rows [${c.roles}] contiguous=${c.contiguous} cards=${c.cards}`
+        + ` bottom=${c.reachedBottom} steps=${c.steps} h=${c.scrollHeight}/${c.clientHeight}`
+        + ` prompts=${JSON.stringify(c.prompts)}`
+    : `census failed: ${c.why}`);
+
+/** Every needle present, in this order. Order is the point: a transcript that
+ *  re-orders or duplicates rows still contains all three prompts. */
+const inOrder = (haystack, needles) => {
+    let at = -1;
+    return needles.every((n) => {
+        const i = haystack.indexOf(n, at + 1);
+        if (i < 0) return false;
+        at = i;
+        return true;
+    });
+};
 
 /**
  * Write a profile whose ACTIVE conversation already contains settled verdicts.
@@ -794,27 +1034,42 @@ async function main() {
         await sleep(500);
 
         // ── The regression this probe was written for ────────────────────
-        // Two exchanges, counted after EACH one. A transcript that loses a row
-        // when a later one arrives passes "is the text anywhere" and fails this.
+        // Three exchanges, censused after EACH one. A transcript that loses a
+        // row when a later one arrives passes "is the text anywhere" and fails
+        // this. The census WALKS the box top to bottom, so it measures the
+        // CONVERSATION: the transcript is virtualized, and a full-DOM count is
+        // a window size that stays flat while older rows are dropped — exactly
+        // the failure this probe exists to catch.
         const before = await counts(page, null);
-        check('dock starts empty', before.entries === 0, JSON.stringify(before));
+        check('dock starts empty',
+            before.treeAlive === 1 && before.logPresent && before.entries === 0 && before.quickPrompts,
+            JSON.stringify(before));
 
-        await sendInDock(page, 'ROW ONE', netIssues, 1);
+        const first = await sendInDock(page, 'ROW ONE', netIssues, 1);
         const afterFirst = await counts(page, null);
-        check('first exchange renders', afterFirst.user === 1 && afterFirst.ai === 1,
-            JSON.stringify(afterFirst));
+        check('first exchange renders',
+            first.rows.length === 2 && first.user === 1 && first.ai === 1 && first.contiguous
+            && first.roles === 'user,ai'
+            && afterFirst.total === 2 && afterFirst.newestRole === 'ai' && afterFirst.atBottom,
+            `${censusWhy(first)} | ${JSON.stringify(afterFirst)}`);
 
-        await sendInDock(page, 'ROW TWO', netIssues, 2);
+        const second = await sendInDock(page, 'ROW TWO', netIssues, 2);
         const afterSecond = await counts(page, null);
         check('SECOND exchange renders AND the first survives it',
-            afterSecond.user === 2 && afterSecond.ai === 2,
-            JSON.stringify(afterSecond));
+            second.rows.length === 4 && second.user === 2 && second.ai === 2 && second.contiguous
+            && second.roles === 'user,ai,user,ai'
+            && inOrder(second.prompts.join('\n'), ['ROW ONE', 'ROW TWO'])
+            && afterSecond.total === 4,
+            `${censusWhy(second)} | ${JSON.stringify(afterSecond)}`);
 
-        await sendInDock(page, 'ROW THREE', netIssues, 3);
+        const third = await sendInDock(page, 'ROW THREE', netIssues, 3);
         const afterThird = await counts(page, null);
         check('third exchange renders and all earlier rows persist',
-            afterThird.user === 3 && afterThird.ai === 3,
-            JSON.stringify(afterThird));
+            third.rows.length === 6 && third.user === 3 && third.ai === 3 && third.contiguous
+            && third.roles === 'user,ai,user,ai,user,ai'
+            && inOrder(third.prompts.join('\n'), ['ROW ONE', 'ROW TWO', 'ROW THREE'])
+            && afterThird.total === 6,
+            `${censusWhy(third)} | ${JSON.stringify(afterThird)}`);
         check('trade surface still mounted', afterThird.treeAlive === 1);
         // ── 20p: a tool round in the transcript, across a reload, and stopped ──
         // Desk tools are the app's only way to look anything up and every send now
@@ -824,9 +1079,27 @@ async function main() {
         // The marker below is what arms the mock's tool scenario for THIS request
         // only: a second mock instance was tried first and rejected, because it
         // answers boot-time calls too and the app never reaches the trade screen.
-        const toolLineCount = () => page.locator('[data-testid="tool-actions-row"]').count();
-        const toolLineText = () => page.locator('[data-testid="tool-actions-row"]').allTextContents()
-            .then(a => a.join(' | ').replace(/\s+/g, ' ').slice(0, 220));
+        // Scoped to the NEWEST answer row, which is always mounted while the
+        // box follows the bottom. A page-wide `[data-testid]` count would be a
+        // window count: it can fall when a tall new answer pushes older rows
+        // out of the mounted range, and "more tool lines than before" would
+        // then fail on a transcript that is working perfectly.
+        const newestAnswer = () => page.evaluate(() => {
+            const log = document.querySelector('[data-testid="trade-chat-panel"] [role="log"]');
+            let newest = null;
+            for (const el of (log || document).querySelectorAll('[data-testid="chat-entry-ai"]')) {
+                const index = Number(el.getAttribute('data-entry-index'));
+                if (!newest || index > newest.index) newest = { index, el };
+            }
+            const lines = newest ? [...newest.el.querySelectorAll('[data-testid="tool-actions-row"]')] : [];
+            return {
+                index: newest ? newest.index : -1,
+                count: lines.length,
+                text: lines.map(r => r.textContent || '').join(' | ').replace(/\s+/g, ' ').slice(0, 220),
+            };
+        });
+        const toolLineCount = async () => (await newestAnswer()).count;
+        const toolLineText = async () => (await newestAnswer()).text;
         // Any key carrying the ledger's name: Preferences owns the exact spelling on
         // web, and the native store may prefix it.
         const usageBytes = () => page.evaluate(() => {
@@ -863,7 +1136,14 @@ async function main() {
         await page.waitForSelector('[data-testid="trade-view"]', { timeout: 25000 });
         await sleep(800);
 
-        const aiBefore = (await counts(page, null)).ai;
+        // The conversation's AI total, walked — the mounted window is not a
+        // count of anything, and `aiBefore + 1` is the claim being made.
+        const restored = await transcriptCensus(page);
+        const aiBefore = restored.ai;
+        check('the three exchanges survive the reload, in order',
+            restored.ok && restored.contiguous && restored.user >= 3 && restored.ai >= 3
+            && inOrder(restored.prompts.join('\n'), ['ROW ONE', 'ROW TWO', 'ROW THREE']),
+            censusWhy(restored));
         const linesBefore = await toolLineCount();
         const ledgerBefore = await usageBytes();
         await sendInDock(page, 'PROBE_TOOL_ROUND report the price', netIssues, aiBefore + 1);
@@ -1027,16 +1307,27 @@ async function main() {
         const aiTabB = page.locator('[role="tab"]', { hasText: /^AI$/ }).first();
         if (await aiTabB.count()) await aiTabB.click();
         await sleep(900);
-        const linesReloaded = await toolLineCount();
-        const reloadedText = await toolLineText();
-        check('the tool line survives a reload', linesReloaded >= linesAfter,
-            `${linesAfter} before the reload, ${linesReloaded} after`);
+        const reloaded = await newestAnswer();
+        const linesReloaded = reloaded.count;
+        const reloadedText = reloaded.text;
+        check('the tool line survives a reload',
+            linesReloaded >= linesAfter && reloaded.index >= 0,
+            `${linesAfter} before the reload, ${linesReloaded} after (newest answer index ${reloaded.index})`);
         check('it still names the same call after the reload',
             namesTheCall(reloadedText), `rendered: ${reloadedText || '(none)'}`);
+        // The tool round must not have cost the chat rows either: a transcript
+        // that restores only its newest turn is the same bug one layer down.
+        const afterToolReload = await transcriptCensus(page);
+        check('the whole conversation survives the tool round and its reload',
+            afterToolReload.ok && afterToolReload.contiguous
+            && afterToolReload.ai >= aiBefore + 1 && afterToolReload.user >= 4
+            && inOrder(afterToolReload.prompts.join('\n'),
+                ['ROW ONE', 'ROW TWO', 'ROW THREE', 'PROBE_TOOL_ROUND']),
+            censusWhy(afterToolReload));
 
         // Stop while a round is in flight: the abort has to reach the tool call and
         // the row must settle instead of streaming forever.
-        const stopBefore = await page.locator('[data-testid="chat-entry-ai"]').count();
+        const stopBefore = afterToolReload.ai;
         await page.evaluate((needle) => {
             const ta = document.querySelector('textarea');
             if (!ta || ta.disabled) return;
@@ -1063,7 +1354,7 @@ async function main() {
         const settled = await waitSendable(page, 20000);
         check('the stopped turn settles instead of streaming forever', settled,
             settled ? 'the composer became sendable again after the abort' : 'the composer never became sendable again after Stop');
-        const stopAfter = await page.locator('[data-testid="chat-entry-ai"]').count();
+        const stopAfter = (await transcriptCensus(page)).ai;
         check('a stopped turn leaves one row, not a placeholder beside an answer',
             stopAfter <= stopBefore + 1, `${stopBefore} -> ${stopAfter} answer rows`);
 
@@ -1412,8 +1703,16 @@ async function main() {
         let midStreamMd = null;
         for (let i = 0; i < 30 && !midStreamMd; i++) {
             midStreamMd = await page.evaluate(() => {
-                const rows = [...document.querySelectorAll('[data-testid="chat-entry-ai"]')];
-                const row = rows[rows.length - 1];
+                // The NEWEST answer, by conversation index — not the last node
+                // in the DOM, which in a virtualized transcript is just the
+                // last row of the mounted window.
+                const log = document.querySelector('[data-testid="trade-chat-panel"] [role="log"]');
+                let row = null;
+                let newest = -1;
+                for (const el of (log || document).querySelectorAll('[data-testid="chat-entry-ai"]')) {
+                    const index = Number(el.getAttribute('data-entry-index'));
+                    if (index > newest) { newest = index; row = el; }
+                }
                 if (!row) return null;
                 const stillStreaming = [...document.querySelectorAll('button')]
                     .some(b => !b.disabled && /stop/i.test(`${b.getAttribute('aria-label') || ''} ${b.title || ''}`));
@@ -1954,12 +2253,14 @@ async function main() {
                     swTop: swBox ? Math.round(swBox.top) : -1,
                     railLeft: box ? Math.round(box.left) : -1,
                     railRight: box ? Math.round(box.right) : -1,
-                    rows: document.querySelectorAll(
-                        '[data-testid="trade-chat-panel"] [data-entry-id]').length,
-                    cards: document.querySelectorAll(
-                        '[data-testid="trade-chat-panel"] [data-testid="inline-verdict"]').length,
                 };
             }) : null;
+            // The dock's rows are counted by WALKING it, not by querying the
+            // document: the transcript is virtualized, so a mounted-window
+            // count is a viewport size and `dock >= thread` would pass with a
+            // tall viewport and fail with a short one — measuring the window,
+            // not the conversation the hop was supposed to carry.
+            const dockCensus = pressed === 'clicked' ? await transcriptCensus(page) : null;
             check('the pill takes the Agents surface to the chart AND the Chart AI dock',
                 !!hop && hop.chart && hop.dock && !hop.chat,
                 hop ? `chart=${hop.chart} dock=${hop.dock} chatStillMounted=${hop.chat}` : String(pressed));
@@ -1968,11 +2269,12 @@ async function main() {
             // used. Compared by row count — the two homes chrome a turn
             // differently, so a text match measures formatting, not memory.
             check('the hop carries the conversation into the dock',
-                before.rows > 0 && !!hop && hop.rows >= before.rows,
-                `thread=${before.rows} dock=${hop ? hop.rows : 'n/a'}`);
+                before.rows > 0 && !!dockCensus && dockCensus.ok
+                    && dockCensus.rows.length >= before.rows && dockCensus.contiguous,
+                `thread=${before.rows} dock=${dockCensus ? censusWhy(dockCensus) : 'n/a'}`);
             check('the dock draws the same decision cards as the thread',
-                before.cards > 0 && !!hop && hop.cards === before.cards,
-                `thread=${before.cards} dock=${hop ? hop.cards : 'n/a'}`);
+                before.cards > 0 && !!dockCensus && dockCensus.cards === before.cards,
+                `thread=${before.cards} dock=${dockCensus ? dockCensus.cards : 'n/a'}`);
             // The reference's chat ⇄ code switch changes the content and nothing
             // else — including nothing about where the switch is. Chat's column
             // header and Trade's title bar both start at the window's left edge,

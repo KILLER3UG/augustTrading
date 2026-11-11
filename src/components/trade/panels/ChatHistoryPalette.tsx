@@ -18,20 +18,14 @@ import { Pencil, Trash2 } from '../../shared/Icons';
 import * as chatStore from '../../../services/trade/chatStore';
 import type { LiveSession } from '../../../services/trade/chatStore';
 import { MANUAL_TITLE_MAX_CHARS } from '../../../utils/conversationTitle';
+import { ageMinutes, agoLabel } from '../../../utils/relativeTime';
 
 /** "2 days ago" style relative time — the palette's right column, copied from
  *  the reference's recency labels. Shared with the dock header's "answered"
- *  meta, which is why it is exported here. */
-export const relTime = (ts: number): string => {
-    const mins = Math.max(0, Math.round((Date.now() - ts) / 60_000));
-    if (mins < 1) return 'now';
-    if (mins < 60) return `${mins}m ago`;
-    const hours = Math.round(mins / 60);
-    if (hours < 24) return `${hours}h ago`;
-    const days = Math.round(hours / 24);
-    if (days < 7) return `${days} ${days === 1 ? 'day' : 'days'} ago`;
-    return `${Math.round(days / 7)} wk ago`;
-};
+ *  meta, which is why it is exported here. The ladder and the one subtraction
+ *  are `utils/relativeTime`'s, so the palette, the header and the transcript's
+ *  prov line cannot disagree about how old a turn is. */
+export const relTime = (ts: number): string => agoLabel(ageMinutes(ts));
 
 export interface ChatHistoryPaletteProps {
     /** Title-filtered, newest-first, already capped by the show-all toggle. */
