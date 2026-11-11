@@ -37,20 +37,36 @@ function getCryptoBridge(): CryptoBridge | null {
 
 const isEncrypted = (value: string): boolean => value.startsWith('enc:v1:');
 
-async function encryptKey(apiKey: string): Promise<string> {
-    if (!apiKey || isEncrypted(apiKey)) return apiKey;
+/**
+ * Encrypt a key for storage, and SAY whether it could be.
+ *
+ * The failure mode is deliberate: on a system without a working OS keyring
+ * (e.g. Linux without gnome-keyring/kwallet) `encryptSecret` returns null,
+ * and throwing there made EVERY provider save fail with no recovery path. So
+ * the key is stored as plaintext - and the only record of that was a console
+ * line the trader never sees.
+ *
+ * So the caller is told, and the flag rides on the provider record so the
+ * UI can stop calling it "encrypted at rest".
+ *
+ * @returns the value to store, and whether it is stored in the clear
+ */
+async function encryptKey(apiKey: string): Promise<{ value: string; plaintext: boolean }> {
+    if (!apiKey || isEncrypted(apiKey)) return { value: apiKey, plaintext: false };
     const bridge = getCryptoBridge();
-    if (!bridge) return apiKey;
+    // No bridge at all: the web and Capacitor builds have never encrypted.
+    if (!bridge) return { value: apiKey, plaintext: true };
     const encrypted = await bridge.encryptSecret(apiKey);
     if (!encrypted) {
         // Fail open (matching decryptKey): on systems without a working OS
         // keyring (e.g. Linux without gnome-keyring/kwallet) encryptSecret
         // returns null — throwing here made EVERY provider save fail with no
-        // recovery path. Store plaintext so the app stays usable.
+        // recovery path. Store plaintext so the app stays usable, and let the
+        // caller say so out loud.
         console.warn('[ProviderConfigService] safeStorage unavailable — storing API key as plaintext.');
-        return apiKey;
+        return { value: apiKey, plaintext: true };
     }
-    return encrypted;
+    return { value: encrypted, plaintext: false };
 }
 
 async function decryptKey(stored: string): Promise<string> {
@@ -163,6 +179,9 @@ export async function loadProviderConfigs(): Promise<ProviderConfig[]> {
             id,
             name: typeof config.name === 'string' ? config.name : 'Unnamed provider',
             apiKey: decryptedKey,
+            // Whether the STORED key is in the clear: no OS keyring on this
+            // machine, so the key was stored as plaintext. The UI shows it.
+            apiKeyPlaintext: storedKey ? !isEncrypted(storedKey) : undefined,
             baseUrl: typeof config.baseUrl === 'string' ? config.baseUrl : '',
             apiFormat,
             isEnabled: config.isEnabled === true,
@@ -209,11 +228,13 @@ export async function saveProviderConfigs(configs: ProviderConfig[]): Promise<vo
         // the OS keyring was briefly unavailable.
         const preserved = c.apiKey ? undefined : undecryptableCiphertexts.get(c.id);
         if (preserved !== undefined) return { ...c, apiKey: preserved };
-        const apiKey = await encryptKey(c.apiKey || '');
+        const { value: apiKey, plaintext } = await encryptKey(c.apiKey || '');
         // The key was re-entered (or the provider carries no key) — the
         // preserved copy is superseded either way.
         undecryptableCiphertexts.delete(c.id);
-        return { ...c, apiKey };
+        // The record says whether the key it holds is encrypted at rest, so
+        // the Settings surface can say so instead of assuming it.
+        return { ...c, apiKey, apiKeyPlaintext: plaintext || undefined };
     }));
     await setPreferenceObject(STORAGE_KEY, encrypted);
     // Drop ciphertexts for providers that no longer exist.

@@ -751,6 +751,17 @@ const ProviderManager: React.FC<ProviderManagerProps> = ({
                                         {showKey ? <EyeOff className="h-4 w-4" aria-hidden="true" /> : <Eye className="h-4 w-4" aria-hidden="true" />}
                                     </button>
                                 </div>
+                                {/* The key is stored in the clear when this
+                                    machine has no working OS keyring (e.g.
+                                    Linux without gnome-keyring/kwallet) or on
+                                    the web/Capacitor builds. The store knows
+                                    which; say it rather than let the UI keep
+                                    implying "encrypted at rest". */}
+                                {selected.apiKeyPlaintext && (
+                                    <p className="mt-1 text-ui-sm text-amber-300" data-testid="provider-key-plaintext-warning">
+                                        This key is stored unencrypted on this machine: no OS keyring is available to protect it. Anyone with access to this device or its backup can read it.
+                                    </p>
+                                )}
                             </div>
                             {draftFormat === 'messages' && (
                                 <div>

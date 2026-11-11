@@ -75,6 +75,13 @@ export interface ProviderConfig {
   id: string;                    // Unique ID (e.g., 'gemini', 'custom-1720000000')
   name: string;                  // Display name (e.g., 'Gemini', 'My Local LLM')
   apiKey: string;                // User-entered API key; encrypted at rest on Electron when safeStorage is available
+  /**
+   * True when the stored key is NOT encrypted at rest - no working OS
+   * keyring on this machine (e.g. Linux without gnome-keyring/kwallet), or a
+   * web/Capacitor build that never encrypted. Set by the store, shown by the
+   * provider editor, so "encrypted at rest" is a claim the app can back.
+   */
+  apiKeyPlaintext?: boolean;
   baseUrl: string;               // API base URL (e.g., 'https://api.openai.com/v1')
   apiFormat: ApiFormat;          // Which API format to use
   isEnabled: boolean;            // Whether this provider is active
