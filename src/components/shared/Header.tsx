@@ -260,7 +260,7 @@ export const Header: React.FC<HeaderProps> = memo(({
                                                             }`}>
                                                              {session.volatility}
                                                         </span>
-                                                        <div className="text-right w-20 whitespace-nowrap relative">
+                                                        <div className="text-right w-28 whitespace-nowrap relative">
                                                             {session.isOpen ? (
                                                                 <span className="text-ui-xs text-emerald-400 font-mono">
                                                                     Closes in {formatDuration(session.closesInMinutes)}
