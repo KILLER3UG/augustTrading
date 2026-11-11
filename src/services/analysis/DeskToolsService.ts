@@ -2791,7 +2791,7 @@ const stripHtml = (html: string): string =>
  * A URL is not a place a harness note belongs, so the rule is the same one
  * the text gets.
  */
-const safeResultUrl = (raw: string): string =>
+export const safeResultUrl = (raw: string): string =>
     neutralizeHarnessNotes(String(raw ?? '').replace(/[\r\n]+/g, ' ').trim());
 
 async function runWebSearch(query: string, signal?: AbortSignal): Promise<string> {
