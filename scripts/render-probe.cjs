@@ -4149,6 +4149,42 @@ async function main() {
             await sleep(250);
         }
 
+        // ── The session chip names the region and opens the disclosure ────
+        // A session indicator that only ever said "Live" answered the wrong
+        // question: the trader asks "is it Asia or London right now". The chip
+        // beside the instrument line names the region (SessionService's own
+        // enum via SESSION_CHIP_LABEL), and the disclosure it opens is
+        // interactive: Escape and a click outside both put it away.
+        {
+            const chipInfo = await page.evaluate(() => {
+                const chip = document.querySelector('[data-testid="session-chip"]');
+                return chip ? { label: chip.textContent.replace(/\s+/g, ' ').trim() } : null;
+            });
+            const KNOWN_REGIONS = ['Asia', 'London', 'New York', 'London · NY', 'Off hours'];
+            const namesARegion = !!chipInfo
+                && KNOWN_REGIONS.some(r => chipInfo.label === r || chipInfo.label.startsWith(r + ' '));
+            await page.evaluate(() => document.querySelector('[data-testid="session-chip"]')?.click());
+            await sleep(350);
+            const opened = await page.evaluate(() => {
+                const pop = document.getElementById('session-details-popover');
+                return {
+                    mounted: !!pop,
+                    rows: pop ? pop.querySelectorAll('.space-y-2 > div').length : 0,
+                    expanded: document.querySelector('[data-testid="session-chip"]')?.getAttribute('aria-expanded'),
+                };
+            });
+            await page.keyboard.press('Escape');
+            await sleep(300);
+            const closed = await page.evaluate(() => ({
+                gone: !document.getElementById('session-details-popover'),
+                expanded: document.querySelector('[data-testid="session-chip"]')?.getAttribute('aria-expanded'),
+            }));
+            check('the header session chip names the active region and opens its disclosure',
+                namesARegion && opened.mounted && opened.rows >= 3 && opened.expanded === 'true'
+                && closed.gone && closed.expanded === 'false',
+                `${chipInfo ? chipInfo.label : 'no chip'} / rows=${opened.rows} / esc=${closed.gone}`);
+        }
+
         // ── The instrument picker, and the claim it makes ────────────────
         // A coin/timeframe control is only worth having if it MOVES THE CHART.
         // Both surfaces bind to the same chat session, so a coin chosen on Chat

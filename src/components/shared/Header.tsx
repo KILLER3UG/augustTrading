@@ -40,6 +40,17 @@ interface HeaderProps {
     context?: React.ReactNode;
 }
 
+/** The chip NAMES the region — the trader's question is "is it Asia or
+ *  London right now?" — while the popover keeps the tables and the verbose
+ *  sessionName ('London/NY Overlap (High Volume)'). 'overlap' is its own
+ *  window and names BOTH sides; off_hours says so and carries the next open
+ *  in its suffix, so the honest empty state is information, not a dead label.
+ *  Keys are SessionService's TradingSession — the data has one source. */
+const SESSION_CHIP_LABEL: Record<SessionContext['currentSession'], string> = {
+    asian: 'Asia', london: 'London', new_york: 'New York',
+    overlap: 'London · NY', off_hours: 'Off hours',
+};
+
 // Memoized: Header re-renders every time App does (typing, progress ticks);
 // with stable props it only renders when something it actually shows changes.
 export const Header: React.FC<HeaderProps> = memo(({
@@ -175,36 +186,39 @@ export const Header: React.FC<HeaderProps> = memo(({
                             </>
                         )}
                     </div>
-                </div>
-                {/* Right side: the live session state and the shell's status
-                    cluster only. The gear and the account disc moved off this
-                    edge — Settings already has two homes (the Agents account
-                    row and ⌘/Ctrl+,) and the disc was a second door to the same
-                    settings modal. An edge with no job is not an edge worth
-                    decorating. */}
-                <div className="flex shrink-0 items-center gap-1.5 self-center">
-                    {/* Session Display — the design's live-feed pill, carrying
-                        REAL session state; the popover keeps the market
-                        conditions and the session table. */}
-                    {sessionContext && (
-                        <div className="static sm:relative" ref={sessionModalRef}>
-                            <button
-                                onClick={() => setIsSessionModalOpen(!isSessionModalOpen)}
-                                className="flex items-center gap-1.5 hit-target rounded-full border border-transparent px-2 py-1 text-ui-xs font-medium text-zinc-400 whitespace-nowrap transition-colors duration-[150ms] ease-[var(--ease-snappy)] hover:border-line hover:bg-white/[0.04] hover:text-zinc-200 focus-visible:ring-2 focus-visible:ring-zinc-500"
-                                aria-expanded={isSessionModalOpen}
-                                aria-controls="session-details-popover"
-                                aria-haspopup="dialog"
-                            >
-                                <span className={`h-1.5 w-1.5 rounded-full ${sessionContext.isKillZone ? 'bg-rose-500 animate-pulse' :
-                                    sessionContext.currentSession === 'off_hours' ? 'bg-zinc-500' : 'bg-emerald-500 shadow-[0_0_0_3px_rgba(7,181,106,0.12)]'
-                                    }`} />
-                                <span className={sessionContext.isKillZone ? 'text-rose-400' : ''}>Live</span>
-                            </button>
+                        {/* The session chip sits beside the instrument line —
+                            the trader's "is it Asia or London right now" reads
+                            where the eye already is, not as a generic Live pill
+                            on the bar's far edge. It carries REAL session state
+                            (SessionService, 5s poll, paused when hidden); the
+                            popover keeps the market conditions and the table. */}
+                        {sessionContext && (
+                            <div className="relative" ref={sessionModalRef}>
+                                <button
+                                    data-testid="session-chip"
+                                    onClick={() => setIsSessionModalOpen(!isSessionModalOpen)}
+                                    className="flex items-center gap-1.5 hit-target rounded-full border border-transparent px-2 py-1 text-ui-xs font-medium text-zinc-400 whitespace-nowrap transition-colors duration-[150ms] ease-[var(--ease-snappy)] hover:border-line hover:bg-white/[0.04] hover:text-zinc-200 focus-visible:ring-2 focus-visible:ring-zinc-500"
+                                    aria-expanded={isSessionModalOpen}
+                                    aria-controls="session-details-popover"
+                                    aria-haspopup="dialog"
+                                    title={sessionContext.sessionName}
+                                >
+                                    <span aria-hidden="true" className="h-3.5 w-px shrink-0 bg-white/10" />
+                                    <span className={`h-1.5 w-1.5 rounded-full ${sessionContext.isKillZone ? 'bg-rose-500 animate-pulse' :
+                                        sessionContext.currentSession === 'off_hours' ? 'bg-zinc-500' : 'bg-emerald-500 shadow-[0_0_0_3px_rgba(7,181,106,0.12)]'
+                                        }`} />
+                                    <span className={sessionContext.isKillZone ? 'text-rose-400' : 'flex items-baseline gap-1'}>
+                                        <span className="font-medium">{SESSION_CHIP_LABEL[sessionContext.currentSession]}</span>
+                                        {sessionContext.currentSession === 'off_hours' && (
+                                            <span className="text-zinc-600">
+                                                · next {SESSION_CHIP_LABEL[sessionContext.nextSession]} in {formatDuration(sessionContext.minutesToNextSession)}
+                                            </span>
+                                        )}
+                                    </span>
+                                </button>
 
-                            {/* Session Details Modal — a disclosure, not
-                                a modal: see the no-trap note above. */}
-                            {isSessionModalOpen && (
-                                     <div id="session-details-popover" role="dialog" aria-label="Session details" className="absolute top-full left-0 sm:left-auto sm:right-0 mt-4 sm:mt-2 w-80 bg-zinc-900 border border-hairline rounded-bubble shadow-elevated overflow-hidden z-drawer animate-fade-in">
+                                {isSessionModalOpen && (
+                                     <div id="session-details-popover" role="dialog" aria-label="Session details" className="absolute top-full left-0 mt-2 w-80 bg-zinc-900 border border-hairline rounded-bubble shadow-elevated overflow-hidden z-drawer animate-fade-in">
                                     <div className="p-3 bg-zinc-900">
                                         {/* Live Market Conditions Section */}
                                         {liveMarketConditions && (
@@ -295,11 +309,20 @@ export const Header: React.FC<HeaderProps> = memo(({
                             )}
                         </div>
                     )}
-                    {/* The bar's right edge is the Live pill and nothing else.
-                        The save state is silent while healthy — an ambient tick
-                        for a write that already succeeded is chrome — but a
-                        FAILED write still speaks, because a silent save error is
-                        data loss wearing a clean bar. */}
+
+                </div>
+                {/* Right side: the shell's status cluster only. The gear and
+                    the account disc moved off this edge — Settings already has
+                    two homes (the Agents account row and ⌘/Ctrl+,) and the disc
+                    was a second door to the same settings modal. The session
+                    state moved to the title row, beside the instrument line it
+                    describes. An edge with no job is not an edge worth
+                    decorating. */}
+                <div className="flex shrink-0 items-center gap-1.5 self-center">
+                    {/* The save state is silent while healthy — an ambient
+                        tick for a write that already succeeded is chrome — but
+                        a FAILED write still speaks, because a silent save error
+                        is data loss wearing a clean bar. */}
                     {saveStatus === 'ERROR' && (
                         <span role="status" aria-label="Save failed"
                             title="The profile could not be saved"

@@ -2779,11 +2779,13 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
     const chrome = read('src/components/shell/shellChrome.tsx');
     const app = read('src/App.tsx');
 
-    ok('content bar: title + context + one Live pill, no brand mark and no status cluster',
+    ok('content bar: title + context + a session chip that names the region, no brand mark and no status cluster',
         !/aria-label="August"/.test(header) && !/StatusCluster/.test(header)
-            && /Live<\/span>/.test(header)
+            && /data-testid="session-chip"/.test(header)
+            && /SESSION_CHIP_LABEL\[sessionContext\.currentSession\]/.test(header)
+            && !/Live<\/span>/.test(header)
             && !fs.existsSync(path.join(ROOT, 'src/components/shell/StatusCluster.tsx')),
-        'the mock bar has one live dot; a save tick and an Activity pill are chrome');
+        'the mock bar has one live dot; the pill says WHICH session is live — a generic Live answers nothing');
     ok('content bar: a FAILED save still speaks',
         /data-testid="header-save-failed"/.test(header),
         'silence is only fine while the write is healthy');
