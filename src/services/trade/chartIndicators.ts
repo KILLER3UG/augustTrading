@@ -6,13 +6,18 @@
  * through `services/analysis/TechnicalAnalysisService.ts`, `taLibrary.ts` owned
  * a third set of primitives, and the Python pipeline in `Agentic-Trading` owned
  * a fourth. Nine indicators disagreed (see `design/chart-okx-audit-2026-11-09.md`),
- * two of them changing decisions: `smcStructure.atr14` is a simple average of
- * true range while everything else is Wilder, and the setup scanner's "EMA20" is
- * an SMA20.
+ * two of them changing decisions: `smcStructure.atr14` was a simple average of
+ * true range while everything else is Wilder, and the setup scanner's "EMA20"
+ * was an SMA20. Both now read this module.
  *
- * This module is the single source. The chart draws these series; the prompt
- * reads the same series; parity tests pin them against `technicalindicators` so
- * the library cannot drift away silently.
+ * This module is the single source for the CHART and for `get_chart_studies`.
+ * It is NOT yet the prompt's only source: `TechnicalAnalysisService` still
+ * calls `technicalindicators` directly and `taLibrary` still serves the desk
+ * its own primitives. Migrating those consumers is O-150 in
+ * `docs/plan/open-items.md`, and until it lands "the model sees the same
+ * numbers the chart shows" is true only for the `get_chart_studies` tool.
+ * Parity tests pin this module against `technicalindicators` so the library
+ * cannot drift away silently.
  *
  * CONVENTIONS — pinned, and asserted by `check:contracts`:
  *
@@ -89,10 +94,10 @@ export const rsiSeries = (closes: number[], period = 14): Series => {
 };
 
 /** ATR (Wilder), bar-aligned: `null` until bar `period`. Uses TRUE range.
- *  This is the fix for the audit's D1: `smcStructure.atr14` is a simple
- *  average of true range and feeds every desk tool, while this is Wilder.
- *  The chart now draws the Wilder value; migrating the desk tools onto this
- *  module is the remaining half of that fix. */
+ *  This is the value the chart draws and the value `smcStructure.atr14` now
+ *  reads (it was a simple average of true range before 6b3f4fe9). The other
+ *  desk consumers are still on their own copies; O-150 tracks that
+ *  migration. */
 export const atrSeries = (
     highs: number[],
     lows: number[],

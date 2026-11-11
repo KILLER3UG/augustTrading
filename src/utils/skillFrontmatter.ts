@@ -37,10 +37,11 @@ export const scanSkillText = (text: string): Array<{ severity: ScanSeverity; wha
 /** The four role directories a skill folder may carry. */
 export const SKILL_SUPPORT_ROLES = ['references', 'templates', 'scripts', 'assets'] as const;
 
-/** The headings a skill body reads best with, in order. Guidance, not a gate:
- *  nothing refuses a body that skips one — the containment duplicate scan is
- *  the one deterministic refusal. The editor hint and the `skill_write` body
- *  description both name these, from this one list. */
+/** The headings a skill body reads best with, in order. `skillFormatIssues`
+ *  reports a missing heading and the LOAD path drops a row that carries an
+ *  issue; the STORE stays permissive so a sectionless create remains legal.
+ *  The editor hint and the `skill_write` body description both name these,
+ *  from this one list. */
 export const SKILL_BODY_SECTIONS = ['When to use', 'Steps', 'Pitfalls', 'Verification'] as const;
 
 /** The suggested headings a body does not have yet, read off its `## `

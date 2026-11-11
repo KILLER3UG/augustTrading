@@ -51,9 +51,12 @@ export interface ChartStudiesRead {
     structure: StructureRead | null;
 }
 
-/** The chart's study set over one kline series. `visible` is the chart's own
- *  visibility record, so the model is told exactly the studies the trader can
- *  see — not the ones that happen to be implemented. */
+/** The study set over one kline series. This computes every implemented
+ *  study; it does NOT read the chart's visibility record (there is no
+ *  `visible` parameter). `get_chart_studies` therefore tells the model what
+ *  the studies ARE, not only the subset the trader has toggled on — a
+ *  distinction worth keeping honest until the registry's visibility is
+ *  threaded through. */
 export const readChartStudies = (
     klines: readonly Kline[],
     symbol: string,

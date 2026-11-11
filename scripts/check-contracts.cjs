@@ -4423,7 +4423,7 @@ const runCaptureChecks = async () => {
 
         global.localStorage.setItem(tc.TRAINING_CAPTURE_ENABLED_KEY, '1');
         const on1 = await tc.captureTurn(turn('plan-a'));
-        const on2 = await tc.captureTurn({ ...turn('plan-b'), reasoning: 'second trace' });
+        const on2 = await tc.captureTurn({ ...turn('plan-b'), reasoning: 'second trace', playbookId: 'turtle_soup' });
         ok('capture: ON appends one record per settled turn, readable back whole',
             on1.ok && on2.ok && on2.recordCount === 2
             && backing.get(tc.TRAINING_CAPTURE_KEY).records[0].reasoning === 'thinking trace verbatim'
@@ -4441,15 +4441,21 @@ const runCaptureChecks = async () => {
             && backing.get(tc.TRAINING_CAPTURE_KEY).records.length === tc.TRAINING_CAPTURE_MAX_RECORDS
             && backing.get(tc.TRAINING_CAPTURE_KEY).refusedOnce === true);
 
+        // The real export, against the same store the captures wrote. A
+        // contract that returns `true` without calling the exporter is how the
+        // planId join this whole family is about stayed untested.
+        const jsonl = await tc.exportCorpusJsonl([
+            { planId: 'plan-a', json: { decision: { planId: 'plan-a' }, outcome: { outcome: 'WIN', realizedR: 1.4 } } },
+        ]);
+        const rows = jsonl.split('\n').filter(Boolean).map(line => JSON.parse(line));
+        const labeled = rows.find(r => r.output?.planId === 'plan-a');
+        const withPlaybook = rows.find(r => r.output?.planId === 'plan-b');
         ok('capture: the export is JSONL, one line per turn, outcomes joined by planId',
-            (() => {
-                const journal = [
-                    { planId: 'plan-a', json: { decision: { planId: 'plan-a' }, outcome: { outcome: 'WIN', realizedR: 1.4 } } },
-                ];
-                const jsonl = null; // sync bridge shim means export needs the same store — exercised below
-                void jsonl; void journal;
-                return true;
-            })());
+            rows.length === tc.TRAINING_CAPTURE_MAX_RECORDS
+            && labeled?.outcome?.outcome?.outcome === 'WIN'
+            && labeled?.labeled === true
+            && labeled?.output?.playbookId === null
+            && withPlaybook?.output?.playbookId === 'turtle_soup');
         ok('capture: the toggle flag does not ride in backups — it is a standalone key',
             tc.TRAINING_CAPTURE_ENABLED_KEY === 'training_capture_v1_enabled');
         global.localStorage.setItem(tc.TRAINING_CAPTURE_ENABLED_KEY, savedEnabled ?? '');
@@ -4734,6 +4740,27 @@ const runCaptureChecks = async () => {
         && ct.modelTitleMayReplace('model') === false
         && ct.modelTitleMayReplace('user') === false,
         `user=${ct.modelTitleMayReplace('user')} model=${ct.modelTitleMayReplace('model')}`);
+})();
+
+// ─── 49. relative time: one subtraction, rounding owned by the label ───────
+(() => {
+    const rt = loadModule('src/utils/relativeTime.ts');
+    const now = Date.parse('2026-11-11T12:00:00Z');
+    const ago = (ms) => rt.ageMinutes(now - ms, now);
+    // The bug this pins: `ageMinutes` used to round, so `floorAgoLabel` was
+    // flooring an already-rounded minute — a 30-second-old signal read
+    // "1m ago" and a 90-second-old one read "2m ago".
+    ok('relative time: floor reads the exact age, round reads the nearest minute',
+        rt.floorAgoLabel(ago(30_000)) === 'now'
+        && rt.agoLabel(ago(30_000)) === '1m ago'
+        && rt.floorAgoLabel(ago(90_000)) === '1m ago'
+        && rt.agoLabel(ago(90_000)) === '2m ago');
+    ok('relative time: the terse ladder is 8d, the health ladder stops at 48h',
+        rt.shortAgeLabel(ago(8 * 86_400_000)) === '8d'
+        && rt.healthLabel(ago(48 * 3_600_000)) === '48h ago');
+    ok('relative time: a future stamp prints nothing on the terse/floor ladders',
+        rt.shortAgeLabel(-5) === '' && rt.floorAgoLabel(-5) === ''
+        && rt.agoLabel(-5) === 'now');
 })();
 
 // ─── report ────────────────────────────────────────────────────────────────

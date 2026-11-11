@@ -151,8 +151,10 @@ const readAll = (user: string): ProfileMemoryEntry[] => {
                 && typeof v.body === 'string' && normalizeKind(v.kind) !== null;
         });
     } catch (err) {
-        // A read that cannot happen must not look like an empty notebook: the
-        // prompt would silently forget every fact the trader taught it.
+        // A read that cannot happen returns [] — the only shape this API has —
+        // so the console line is the failure signal, and a caller that shows
+        // "no facts" must not read that as "the trader taught none". The Health
+        // tab's notebook-failure panel is the user-facing half of this.
         console.error('[profileMemory] read FAILED — memory is unavailable this turn:', err);
         return [];
     }
@@ -163,8 +165,9 @@ const writeAll = (user: string, entries: ProfileMemoryEntry[]): void => {
         // Written AS GIVEN. This used to end `entries.slice(-MAX_ENTRIES)`, so a
         // store at the cap silently dropped its oldest fact on the next write
         // while the tool answered `saved: true` — a fact the trader was told was
-        // kept, gone with no receipt. The cap refuses growth in
-        // `rememberProfileMemory` instead; a delete still shrinks normally.
+        // kept, gone with no receipt. There is no entry cap now:
+        // `PROFILE_MEMORY_SOFT_ENTRY_COUNT` is a WARNING, and only a delete
+        // shrinks the store.
         localStorage.setItem(storageKey(user), JSON.stringify(entries));
     } catch (err) {
         // The cache is not a store here: readAll() re-reads localStorage, so a

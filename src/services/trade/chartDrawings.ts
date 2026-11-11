@@ -187,19 +187,25 @@ const deletedStores = new Set<string>();
  *  other coins are lost to a map the session never saw. */
 const mirrorLoaded = new Set<string>();
 
-const flushCoinMap = (storeKey: string): Promise<void> => {
+/** Resolves TRUE only when the bytes are on disk. The legacy migration
+ *  deletes the old key on this answer, so a `Promise.resolve()` for "nothing
+ *  to write" or an ignored `{ ok: false }` is a data-loss path: the caller
+ *  would clear the old home without a verified new one. */
+const flushCoinMap = (storeKey: string): Promise<boolean> => {
     const timer = pendingFlushes.get(storeKey);
     if (timer !== undefined) { clearTimeout(timer); pendingFlushes.delete(storeKey); }
-    if (deletedStores.has(storeKey)) return Promise.resolve();
+    if (deletedStores.has(storeKey)) return Promise.resolve(false);
     const mirror = coinMapMirror.get(storeKey);
-    if (!mirror) return Promise.resolve();
-    if (mirrorLoaded.has(storeKey)) return writeStore(storeKey, JSON.stringify(mirror)).then(() => undefined);
+    if (!mirror) return Promise.resolve(false);
+    if (mirrorLoaded.has(storeKey)) {
+        return writeStore(storeKey, JSON.stringify(mirror)).then(res => res.ok);
+    }
     return readStore(storeKey).then(res => {
-        if (deletedStores.has(storeKey)) return undefined; // deleted mid-read
+        if (deletedStores.has(storeKey)) return false; // deleted mid-read
         const merged = { ...parseCoinMap(res.ok ? res.value : null), ...mirror };
         mirrorLoaded.add(storeKey);
         coinMapMirror.set(storeKey, merged);
-        return writeStore(storeKey, JSON.stringify(merged)).then(() => undefined);
+        return writeStore(storeKey, JSON.stringify(merged)).then(r => r.ok);
     });
 };
 
@@ -294,8 +300,9 @@ export const loadSessionDrawings = async (sessionId: string, symbol: string, use
  *  · a session bucket that already has shapes for the coin is left alone —
  *    the trader drew there after the legacy window, and overwriting would be
  *    data loss;
- *  · the legacy key is deleted only AFTER the session write flushes, so the
- *    bytes are verified in the new home before the old one is cleared.
+ *  · the legacy key is deleted only after the session write reports SUCCESS,
+ *    so the bytes are verified in the new home before the old one is cleared.
+ *    A failed or skipped write keeps the legacy key — the next load retries.
  */
 export const loadSessionDrawingsWithLegacy = async (sessionId: string, symbol: string, username = getActiveUsername()): Promise<ChartDrawing[]> => {
     const wanted = symbol.toUpperCase();
@@ -305,7 +312,8 @@ export const loadSessionDrawingsWithLegacy = async (sessionId: string, symbol: s
     const legacy = loadDrawings(symbol, username);
     if (legacy.length === 0) return existing ?? [];
     saveCoinMap(sessionKey, wanted, legacy);
-    void flushCoinMap(sessionKey).then(() => {
+    void flushCoinMap(sessionKey).then(ok => {
+        if (!ok) return;
         try { localStorage.removeItem(storageKey(username, wanted)); } catch { /* nothing left to clean */ }
     });
     return legacy;

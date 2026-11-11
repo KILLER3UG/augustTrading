@@ -1151,15 +1151,29 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                     .map((t, i) => {
                         const v = values[i];
                         if (v === null) return null;
+                        // OKX's MACD row is 2·(DIF−DEA), and the legend and
+                        // `get_chart_studies` already print that. The module
+                        // keeps the histogram at 1× for library parity, so the
+                        // doubling belongs HERE — otherwise the bar and the
+                        // number beside it describe two different studies.
                         return def.kind === 'hist'
-                            ? { time: t, value: v, color: v >= 0 ? MACD_HIST_UP : MACD_HIST_DOWN }
+                            ? { time: t, value: 2 * v, color: v >= 0 ? MACD_HIST_UP : MACD_HIST_DOWN }
                             : { time: t, value: v };
                     })
                     .filter((p): p is { time: UTCTimestamp; value: number; color?: string } => p !== null);
                 try {
                     if (full || points.length === 0) def.series.setData(points);
                     else def.series.update(points[points.length - 1]);
-                } catch { /* a probe mock without the real series API */ }
+                } catch {
+                    // `update()` refuses a timestamp older than the series'
+                    // last one. That is reachable: CVD's forming bar has no
+                    // taker-buy field, so the last non-null point can lag the
+                    // series and `points[points.length - 1]` is an OLDER bar.
+                    // A full setData is the correct recovery; swallowing the
+                    // error left the study frozen with no signal. The second
+                    // catch is only for a series torn down mid-frame.
+                    try { def.series.setData(points); } catch { /* unmounted */ }
+                }
             }
             const bandCalc = bandCalcRef.current;
             if (bandCalc) {

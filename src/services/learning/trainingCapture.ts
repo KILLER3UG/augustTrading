@@ -81,6 +81,10 @@ export interface TrainingCaptureRecord {
     actions: ToolAction[];
     /** The plan id, when the turn minted one — the outcome-join key. */
     planId: string | null;
+    /** The detector that produced the plan, when `present_trade` carried a
+     *  verified one. Kept beside planId so a row can be scored by playbook
+     *  without re-reading the journal. */
+    playbookId: string | null;
     /** The O-46 snapshot: what the market computed at decision time. */
     snapshot: DecisionSnapshot | null;
     truncated: boolean;
@@ -182,6 +186,9 @@ export interface TurnCaptureInput {
     toolEvents: string[];
     actions: ToolAction[];
     planId: string | null;
+    /** Optional on the input so an older caller cannot fail to compile; the
+     *  record always carries the field (null when the plan named none). */
+    playbookId?: string | null;
     snapshot: DecisionSnapshot | null;
 }
 
@@ -224,6 +231,7 @@ export const captureTurn = async (input: TurnCaptureInput): Promise<CaptureResul
             toolEvents: input.toolEvents.slice(-40),
             actions: input.actions,
             planId: input.planId,
+            playbookId: input.playbookId ?? null,
             snapshot: input.snapshot,
             truncated: parts.some(p => p.clipped),
         };
@@ -265,7 +273,7 @@ export const exportCorpusJsonl = async (
             effort: r.effort,
             input: { userText: r.userText, toolEvents: r.toolEvents },
             reasoning: r.reasoning,
-            output: { finalText: r.finalText, actions: r.actions, planId: r.planId },
+            output: { finalText: r.finalText, actions: r.actions, planId: r.planId, playbookId: r.playbookId },
             decisionSnapshot: r.snapshot,
             outcome: outcome ?? null,
             labeled: !!outcome,

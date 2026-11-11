@@ -210,9 +210,12 @@ export const runToolTurn = async (req: ToolTurnRequest): Promise<ToolTurnOutcome
         reasoning: outcome.reasoning ?? '',
         toolEvents: capturedToolLines,
         actions: capturedActions.flat(),
-        // The STRUCTURED plan, not a regex over the receipt prose — and the
-        // snapshot rides with it when the fetch beat the turn's end.
+        // The STRUCTURED plan, not a regex over the receipt prose. The
+        // playbook travels beside the plan id so a corpus row can be scored
+        // by detector; the snapshot rides only when the fetch beat the turn's
+        // end (a late snapshot is not recovered here — see the caller).
         planId: capturedPlan?.planId ?? null,
+        playbookId: capturedPlan?.playbookId ?? null,
         snapshot: capturedPlan?.snapshot ?? null,
     }).then(result => {
         if (!result.ok && result.reason !== 'disabled' && result.reason !== 'desktop-only') {
