@@ -377,11 +377,7 @@ const main = async () => {
     // while the report claimed a multi-symbol grid.
     const pairs = [];
     for (const sym of SYMBOLS) for (const t of slots) pairs.push({ symbol: sym, decisionTime: t });
-    for (let i = pairs.length - 1; i > 0; i--) {
-        const j = Math.floor(rng() * (i + 1));
-        [pairs[i], pairs[j]] = [pairs[j], pairs[i]];
-    }
-    const samples = pairs.slice(0, perArm);
+    const samples = sampleSlots(pairs, perArm, rng);
     console.log(`ablation: ${samples.length} samples per arm × ${armNames.length} arms (${armNames.join(', ')}), seed ${seed}, horizon ${HORIZON_HOURS}h`);
     console.log(`  comparisons (PRE-DECLARED): ${PREDECLARED_COMPARISONS.map(([a, b]) => `${a} vs ${b}`).join('; ')} — no sweep, no post-hoc pairs`);
 
@@ -643,7 +639,27 @@ const main = async () => {
     if (dryRun) console.log('\nDRY RUN COMPLETE — the harness, packs and labels work; a real run needs the AUGUST_EVAL_* env.');
 };
 
-main().catch((e) => {
-    console.error(`ablation failed: ${e instanceof Error ? e.stack : String(e)}`);
-    process.exit(1);
-});
+/** EVERY (symbol, time) pair is a candidate; the seeded shuffle then takes
+ *  the first `perArm` of the combined pool, so the population is multi-symbol
+ *  rather than filling one symbol first (the BTC-only bug this replaced).
+ *  Shuffles a COPY — the caller's pool stays in order, and the contracts can
+ *  reuse it for the multi-symbol and reproducibility pins. */
+const sampleSlots = (pairs, perArm, rng) => {
+    const pool = pairs.slice();
+    for (let i = pool.length - 1; i > 0; i--) {
+        const j = Math.floor(rng() * (i + 1));
+        [pool[i], pool[j]] = [pool[j], pool[i]];
+    }
+    return pool.slice(0, Math.max(0, perArm | 0));
+};
+
+// Exported for scripts/check-contracts.cjs only; requiring this file must not
+// run the harness, so the invocation is guarded.
+module.exports = { sampleSlots, mulberry32 };
+
+if (require.main === module) {
+    main().catch((e) => {
+        console.error(`ablation failed: ${e instanceof Error ? e.stack : String(e)}`);
+        process.exit(1);
+    });
+}

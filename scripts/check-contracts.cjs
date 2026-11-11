@@ -1920,6 +1920,29 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
         mf.statedInTraderWords('anything at all', undefined) === true);
 })();
 
+// ─── 28f. the eval grid samples every symbol, not the first one ─────────────
+(() => {
+    // The old loop filled the first symbol to `perArm` and broke out, so the
+    // default N=40 was BTC-only while the report claimed a multi-symbol grid.
+    // The picker is extracted (`sampleSlots`) so THIS can hold: multi-symbol
+    // coverage, seed reproducibility, no duplicate pair, and perArm honored.
+    const { sampleSlots, mulberry32 } = require(path.join(ROOT, 'scripts', 'ablation.cjs'));
+    const pool = [];
+    for (const sym of ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT']) {
+        for (let t = 0; t < 100; t++) pool.push({ symbol: sym, decisionTime: t });
+    }
+    const drawn = sampleSlots(pool, 40, mulberry32(7));
+    const symbols = new Set(drawn.map(s => s.symbol));
+    ok('eval sampling: perArm=40 draws across MORE than the first symbol',
+        drawn.length === 40 && symbols.size >= 2, `symbols=${[...symbols].join(',')}`);
+    ok('eval sampling: the same seed walks the same population',
+        JSON.stringify(drawn) === JSON.stringify(sampleSlots(pool, 40, mulberry32(7))));
+    ok('eval sampling: no (symbol, time) pair is sampled twice',
+        new Set(drawn.map(s => `${s.symbol}@${s.decisionTime}`)).size === drawn.length);
+    ok('eval sampling: perArm above the pool size yields the whole pool',
+        sampleSlots(pool, 1000, mulberry32(7)).length === pool.length);
+})();
+
 // ─── 29. the Electron shell's relative requires resolve ────────────────────
 (() => {
     // `require('./storeFs')` looked fine and threw on every packaged boot:
