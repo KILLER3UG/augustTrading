@@ -16,6 +16,20 @@ const fs = require('fs');
 
 const DENY_SEGMENTS = new Set(['node_modules', '.git', 'dist', 'dist_electron', '.august-checkpoints']);
 const BINARY_EXT = /\.(png|jpe?g|gif|webp|ico|bmp|woff2?|ttf|otf|eot|pdf|zip|gz|exe|dll|node|wasm|mp4|mov|mp3|wav)$/i;
+/**
+ * Files that decide what the BUILD runs, and what the install pulls down.
+ *
+ * `package.json` carries npm's lifecycle hooks (`prebuild`, `postinstall`,
+ * `pretypecheck`): npm runs them around the script the build calls, in the
+ * build process, on the machine. A hook is a shell command, so an editable
+ * manifest turns "the model may edit the source" into "the model may run a
+ * command" - a different privilege level, and one the product never
+ * promised. `package-lock.json` decides what `npm install` fetches.
+ *
+ * The build itself runs with `--ignore-scripts` (electron/main.cjs), so a
+ * hook is inert even in a checkout that already carried one.
+ */
+const DENIED_BUILD_FILES = new Set(['package.json', 'package-lock.json']);
 
 const normalizeRel = (rel) => String(rel == null ? '' : rel).replace(/\\/g, '/');
 
@@ -101,6 +115,9 @@ const resolveRepoPath = (root, rel) => {
     if (denied) return { ok: false, error: `"${denied}" is not editable` };
     const base = parts[parts.length - 1];
     if (/^\.env/i.test(base)) return { ok: false, error: 'environment files are not editable' };
+    if (DENIED_BUILD_FILES.has(base.toLowerCase())) {
+        return { ok: false, error: 'the build manifest is not editable' };
+    }
     if (BINARY_EXT.test(base)) return { ok: false, error: 'binary files are not editable' };
     return { ok: true, abs, rel: parts.join('/') };
 };

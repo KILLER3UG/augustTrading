@@ -143,7 +143,14 @@ function setupRepoBridge() {
     trustedHandle('repo:apply', async () => {
         if (!repoReady()) return unavailable;
         const script = app.isPackaged ? 'build' : 'typecheck';
-        const res = await runInRepo(npmCmd(), ['run', script], 300_000);
+        // `--ignore-scripts` runs the named script and SKIPS npm's pre/post
+        // hooks around it. A hook is a shell command in the build process on
+        // the machine, so running one is a different privilege level from
+        // "the model may edit the source" - and the manifest that holds the
+        // hooks is not editable either (shared/repoSandbox.cjs). This is the
+        // belt to that braces: a checkout that already carried a hook runs
+        // the script without it.
+        const res = await runInRepo(npmCmd(), ['run', '--ignore-scripts', script], 300_000);
         if (!res.ok) return res;
         if (app.isPackaged && mainWindow) {
             try { mainWindow.reload(); } catch { /* window may be gone */ }
