@@ -66,6 +66,17 @@ const DEFAULT_SKILL_ARGS = {
 /** The scripted call, or null when this request must get a plain reply.
  *  `MOCK_SKILL_ARGS` overrides the payload as a JSON object, which is how a
  *  caller tests the rejection paths (e.g. a too-short trigger). */
+function toolPayload(content) {
+    const text = String(content == null ? '' : content);
+    const header = text.indexOf('### TOOL RESULT:');
+    if (header < 0) return text;
+    const lineEnd = text.indexOf('\n', header);
+    if (lineEnd < 0) return text;
+    const rest = text.slice(lineEnd + 1);
+    const end = rest.indexOf('\n<<<AUGUST-UNTRUSTED END');
+    return (end >= 0 ? rest.slice(0, end) : rest).trim();
+}
+
 function toolScenario(body) {
     // A request-scoped arming marker: the render probe sends one message
     // containing PROBE_TOOL_ROUND. A second mock instance with MOCK_TOOL_CALL=1 was
@@ -88,15 +99,15 @@ function toolScenario(body) {
     }
     let name = TOOL_NAME;
     if (name === 'skill_write') {
-        const index = results.find(x => String(x.content).includes('"skills":'));
-        const read = results.find(x => /^# .*\nName:/.test(String(x.content)));
-        const written = results.find(x => /"saved":true|skill_write rejected:/.test(String(x.content)));
+        const index = results.find(x => toolPayload(x.content).includes('"skills":'));
+        const read = results.find(x => /^# .*\nName:/.test(toolPayload(x.content)));
+        const written = results.find(x => /"saved":true|skill_write rejected:/.test(toolPayload(x.content)));
         if (written) return null;
         if (!index) {
             name = 'skill_index';
             args = {};
         } else {
-            const existing = JSON.parse(index.content).skills.find(s => s.slug === args.slug);
+            const existing = JSON.parse(toolPayload(index.content)).skills.find(s => s.slug === args.slug);
             if (existing && !read) {
                 name = 'skill_view';
                 args = { skill: existing.slug };
