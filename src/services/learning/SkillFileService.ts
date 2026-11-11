@@ -34,7 +34,7 @@ import { getActiveUsername } from '../../utils/activeUser';
 // The token-overlap vocabulary the skill redundancy scan and the memory
 // similarity check share — one stopword list, one containment rule.
 import { contentWords, jaccard, overlap } from '../../utils/textOverlap';
-import { missingSkillSections, skillFormatIssues, SKILL_BODY_SECTIONS, SKILL_SUPPORT_ROLES } from '../../utils/skillFrontmatter';
+import { missingSkillSections, skillFormatIssues, scanSkillText, SKILL_BODY_SECTIONS, SKILL_SUPPORT_ROLES } from '../../utils/skillFrontmatter';
 import type { MemoryFile } from '../../types';
 
 export const SKILL_FOLDER = 'skills';
@@ -499,6 +499,29 @@ export type SkillWriteResult =
 
 const invalid = (message: string): SkillWriteFailure => ({ ok: false, reason: 'invalid', message });
 
+/**
+ * The scan an IMPORTED skill gets, applied to a MODEL-AUTHORED one.
+ *
+ * WHY IT IS HERE. The scan existed on two of the three ways skill text enters
+ * this app: an imported skill (SkillImportService) and a self-modification
+ * prompt (SelfModificationService) are both scanned for destructive
+ * commands, exfiltration patterns and instructions to write the trader into
+ * memory. A skill the MODEL wrote was not - and a skill body is loaded into
+ * the model's context as PROCEDURE and persists. So a body carrying
+ * `curl … | sh` became durable, model-visible instruction text that the
+ * import path would have refused.
+ *
+ * The bundled `scripts/` are stored and never executed (AGENTS.md rule 10),
+ * so this is not code execution. It is durable instruction, and durable
+ * instruction is what a poisoned page wants.
+ *
+ * @param what names the piece being scanned, for the refusal message
+ * @param text the bytes
+ * @returns the findings, empty when the text is clean
+ */
+const scanFindings = (what: string, text: string): string[] =>
+    scanSkillText(text).map(f => `${what}: ${f.what}`);
+
 const bundleStorageName = (folderId: string, slug: string, relativePath: string): string => {
     const base = `${slug}__${relativePath.split('/').map(s => s.replace(/[^A-Za-z0-9._-]/g, '')).join('__')}`;
     const stored = /\.(md|json)$/i.test(base) ? base : `${base}.md`;
@@ -582,6 +605,12 @@ export const writeSkillFile = async (
         const content = existing
             ? updateSkillMarkdown(existing.file.content, name, description, body)
             : composeSkillMarkdown(name, description, body);
+        // The head is scanned as the BYTES THAT LAND, so the description and
+        // the body are both covered - exactly what the import scan sees.
+        const headFindings = scanFindings('the skill body', content);
+        if (headFindings.length) {
+            return invalid(`Refused by the skill scan: ${headFindings.join('; ')}. Rewrite it without that content and try again.`);
+        }
         const bundle = new Map<string, MemoryFile>();
         const copies = new Map<string, MemoryFile>();
         for (const owner of [...(existing ? [existing] : []), ...absorbed]) {
@@ -625,6 +654,14 @@ export const writeSkillFile = async (
                 return invalid(`Support path "${rel}" appears twice in one write.`);
             }
             support.push({ rel, content: normalizeLineEndings(file.content) });
+        }
+        // The support files are skill text too: they are read back into the
+        // model's context as procedure, and the import path scans them.
+        for (const file of support) {
+            const findings = scanFindings(file.rel, file.content);
+            if (findings.length) {
+                return invalid(`Refused by the skill scan: ${findings.join('; ')}. Rewrite it without that content and try again.`);
+            }
         }
 
         const writtenPaths: string[] = [];
