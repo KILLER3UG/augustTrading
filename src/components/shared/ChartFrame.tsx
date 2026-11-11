@@ -1,9 +1,8 @@
 /**
- * ChartFrame — the shared chart wrapper. Consumed today by the trade chart
- * (variant="plain"), the equity-curve dashboard and the dock charts
- * (variant="card"); the remaining dashboards still hand-roll their frames
- * and migrate per consumer — this header said "the ONE wrapper for every
- * chart surface" before they did, which was the claim outrunning the sweep.
+ * ChartFrame — the shared chart wrapper. Consumed by the trade chart
+ * (variant="plain"), the equity-curve dashboard, the dock charts and the
+ * remaining Recharts dashboards (variant="card"/"plain"); every chart surface
+ * now goes through this one frame.
  *
  * The app has two chart renderers (`components/trade/TradingChart.tsx` uses
  * lightweight-charts on a canvas; the dashboards use Recharts). They used to

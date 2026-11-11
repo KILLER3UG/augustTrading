@@ -39,7 +39,7 @@
 
 import type { Kline } from '../../types';
 import type { SignalCandle } from '../signals/signalResolver';
-import { resolveSignal, roundTripCostR } from '../signals/signalResolver';
+import { resolveSignal } from '../signals/signalResolver';
 import {
     resolveOutcomeFromScan,
     realizedRFromPrices,
@@ -381,7 +381,7 @@ const signalExit = (
                 realizedR: null,
                 costR: null,
                 netR: null,
-                slippageModeled: true,
+                slippageModeled: false,
             },
             discrepancy: 'entry never triggered',
         };
@@ -419,7 +419,7 @@ const signalExit = (
             realizedR,
             costR: finite(costR) ? round6(costR) : null,
             netR,
-            slippageModeled: true,
+            slippageModeled: false,
         },
     };
 };
@@ -769,17 +769,18 @@ export const closePositionManually = (
     // invent a fill the tape never gave. The caller cancels it instead.
     if (position.status !== 'open' || !finite(price) || price <= 0) return position;
     const grossR = realizedRFromPrices(position.entry, position.stop, price, isLong(position));
-    const signalCost = position.source === 'signal' ? roundTripCostR(position) : null;
-    const journalCost = grossR !== null && position.source === 'journal'
+    // ONE cost model for both sources: a signal position and a journal
+    // position with the same entry/stop/exit must net the same R. The old
+    // branch used the resolver's 7 bps model for signals and netRiskReward's
+    // 5 bps model for journal rows, so the ledger mixed two fee tiers.
+    const cost = grossR !== null
         ? netRiskReward({
             grossR,
             stopDistancePct: stopDistancePercent(position.entry, position.stop),
         })
         : null;
-    const costR = position.source === 'signal'
-        ? signalCost
-        : journalCost && journalCost.known ? journalCost.costR : null;
-    const netR = grossR !== null && finite(costR) ? round6(grossR - costR) : null;
+    const costR = cost && cost.known ? cost.costR : null;
+    const netR = grossR !== null && cost && cost.known ? cost.netR : null;
     return {
         ...position,
         status: 'closed',
@@ -795,7 +796,7 @@ export const closePositionManually = (
             realizedR: grossR,
             costR: finite(costR) ? round6(costR) : null,
             netR,
-            slippageModeled: position.source === 'signal',
+            slippageModeled: false,
         },
     };
 };

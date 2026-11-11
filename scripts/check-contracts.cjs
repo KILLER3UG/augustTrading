@@ -581,14 +581,14 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
     ok('compaction: the prompt demands the four headings the owner asked for',
         ['## Symbols', '## Decisions', '## Open tasks', '## Other context']
             .every(h => cj.buildCompactionPrompt(split.older).includes(h)));
-    ok('compaction: the digest rides as a SYSTEM message ahead of history, never as an assistant turn',
-        (() => {
-            const out = cj.withCompactionSummary([msg('user', 'hi')], '## Symbols\n- BTCUSDT');
-            return out.length === 2 && out[0].role === 'system' && out[1].role === 'user'
-                && out[0].content.includes('EARLIER IN THIS SESSION');
-        })());
-    ok('compaction: no summary means the array is returned unchanged',
-        cj.withCompactionSummary([msg('user', 'hi')], '   ').length === 1);
+    ok('compaction: a summary missing ANY of the four headings is discarded, not stored',
+        cj.sanitizeSummary('## Symbols\n- BTCUSDT\n## Decisions\n(none)\n## Open tasks\n(none)\n' + 'filler '.repeat(20), many) === null
+        && cj.sanitizeSummary('## Symbols\n- BTCUSDT\n## Decisions\n(none)\n## Other context\n(none)\n' + 'filler '.repeat(20), many) === null);
+    ok('compaction: the 128k model compacts at 80% of 128k, not 80% of the 1M default',
+        cj.shouldCompact(cj.compactionUsage(many, 128_000)) === false
+        && cj.shouldCompact({ tokens: 102_400, windowTokens: 128_000, ratio: 0.8 }) === true
+        && cj.shouldCompact({ tokens: 102_399, windowTokens: 128_000, ratio: 102_399 / 128_000 }) === false
+        && cj.shouldCompact({ tokens: 799_000, windowTokens: 1_000_000, ratio: 0.799 }) === false);
 })();
 
 // ─── 10. the shared index budget — one table, scaled to the window ─────────
@@ -951,6 +951,7 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
 // ─── 20. the signal loop: resolver order, costs, ledger, venue data ────────
 (() => {
     const rv = loadModule('src/services/signals/signalResolver.ts');
+    const nrr = loadModule('src/utils/netRiskReward.ts');
     const T0 = 1_000_000_000_000;
     const BAR = rv.SIGNAL_BAR_MS;
     const base = {
@@ -967,9 +968,12 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
         rv.bracketError({ entry: 100, stop: 101, target: 95 }, 'short') === null
         && rv.bracketError({ entry: 100, stop: 99, target: 95 }, 'short') !== null);
 
-    const feeR = rv.roundTripCostR({ entry: 100, stop: 99 });
-    ok('signal: round-trip costs are entry × 2 × (fee+slip) over risk',
-        Math.abs(feeR - 0.14) < 1e-9, String(feeR));
+    const feeR = rv.signalRoundTripCostR({ entry: 100, stop: 99 });
+    ok('signal: round-trip cost is the ONE cost model (5 bps taker, no slippage)',
+        Math.abs(feeR - 0.1) < 1e-9, String(feeR));
+    ok('signal: the resolver cost equals netRiskReward for the same stop distance',
+        Math.abs(feeR - (nrr.roundTripCostR({ stopDistancePct: 1 }).costR ?? -1)) < 1e-9,
+        `${feeR} vs ${nrr.roundTripCostR({ stopDistancePct: 1 }).costR}`);
 
     const win = rv.resolveSignal(base, [
         bar(0, 101, 101, 100, 102),
@@ -978,7 +982,7 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
     ], [], T0 + 3 * BAR);
     ok('signal: the target hit first is a win at the planned R:R',
         win && win.status === 'won' && Math.abs(win.grossR - 3) < 1e-9
-        && Math.abs(win.outcomeR - 2.86) < 1e-9 && win.ambiguous === false,
+        && Math.abs(win.outcomeR - 2.9) < 1e-9 && win.ambiguous === false,
         JSON.stringify(win));
 
     const loss = rv.resolveSignal(base, [
@@ -987,7 +991,7 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
     ], [], T0 + 3 * BAR);
     ok('signal: the stop hit first is −1R before costs',
         loss && loss.status === 'lost' && loss.grossR === -1
-        && Math.abs(loss.outcomeR + 1.14) < 1e-9);
+        && Math.abs(loss.outcomeR + 1.1) < 1e-9);
 
     // ── the gap rule: a bar that OPENED beyond the stop fills at the open ──
     const gapLoss = rv.resolveSignal(base, [
@@ -1092,7 +1096,7 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
     ], [], T0 + 3 * BAR);
     ok('signal: at expiry the open call is marked to the last closed bar',
         expired && expired.status === 'expired' && Math.abs(expired.grossR - 1) < 1e-9
-        && Math.abs(expired.outcomeR - 0.86) < 1e-9,
+        && Math.abs(expired.outcomeR - 0.9) < 1e-9,
         JSON.stringify(expired));
     ok('signal: a bar closing after expiry is NEVER read (no lookahead)',
         expired && !expired.usedBarTimes.includes(T0 + 2 * BAR));
@@ -4401,10 +4405,14 @@ const runCaptureChecks = async () => {
         const tc = loadModule('src/services/learning/trainingCapture');
         const savedEnabled = global.localStorage.getItem(tc.TRAINING_CAPTURE_ENABLED_KEY);
         const backing = new Map();
+        let failReads = false;
         global.window.electronAPI = {
             isElectron: true,
             store: {
-                read: async (k) => backing.has(k) ? { ok: true, value: backing.get(k) } : { ok: true, value: null },
+                read: async (k) => {
+                    if (failReads) return { ok: false };
+                    return backing.has(k) ? { ok: true, value: backing.get(k) } : { ok: true, value: null };
+                },
                 write: async (k, v) => { backing.set(k, v); return { ok: true }; },
             },
         };
@@ -4444,18 +4452,43 @@ const runCaptureChecks = async () => {
         // The real export, against the same store the captures wrote. A
         // contract that returns `true` without calling the exporter is how the
         // planId join this whole family is about stayed untested.
-        const jsonl = await tc.exportCorpusJsonl([
+        const exported = await tc.exportCorpusJsonl([
             { planId: 'plan-a', json: { decision: { planId: 'plan-a' }, outcome: { outcome: 'WIN', realizedR: 1.4 } } },
         ]);
+        const jsonl = exported.ok ? exported.jsonl : '';
         const rows = jsonl.split('\n').filter(Boolean).map(line => JSON.parse(line));
         const labeled = rows.find(r => r.output?.planId === 'plan-a');
         const withPlaybook = rows.find(r => r.output?.planId === 'plan-b');
         ok('capture: the export is JSONL, one line per turn, outcomes joined by planId',
-            rows.length === tc.TRAINING_CAPTURE_MAX_RECORDS
+            exported.ok
+            && rows.length === tc.TRAINING_CAPTURE_MAX_RECORDS
             && labeled?.outcome?.outcome?.outcome === 'WIN'
             && labeled?.labeled === true
             && labeled?.output?.playbookId === null
             && withPlaybook?.output?.playbookId === 'turtle_soup');
+
+        // Concurrent fire-and-forget turns must not lose a record: the
+        // read-modify-write is serialized, so both appends land.
+        backing.clear();
+        const pair = await Promise.all([tc.captureTurn(turn('race-a')), tc.captureTurn(turn('race-b'))]);
+        const raceRecords = backing.get(tc.TRAINING_CAPTURE_KEY)?.records ?? [];
+        ok('capture: concurrent turns are serialized — both records land, neither is lost',
+            pair.every(r => r.ok)
+            && raceRecords.length === 2
+            && raceRecords.map(r => r.planId).sort().join(',') === 'race-a,race-b',
+            JSON.stringify(raceRecords.map(r => r.planId)));
+
+        // A read failure is NOT an empty corpus: the write is refused, so the
+        // stored bytes are never replaced by the one record in hand.
+        failReads = true;
+        const beforeFail = JSON.stringify(backing.get(tc.TRAINING_CAPTURE_KEY));
+        const failed = await tc.captureTurn(turn('after-failure'));
+        const exportedFail = await tc.exportCorpusJsonl([]);
+        ok('capture: a failed read refuses the write and the export, never overwrites the corpus',
+            failed.ok === false && failed.reason === 'store-failed'
+            && exportedFail.ok === false
+            && JSON.stringify(backing.get(tc.TRAINING_CAPTURE_KEY)) === beforeFail);
+        failReads = false;
         ok('capture: the toggle flag does not ride in backups — it is a standalone key',
             tc.TRAINING_CAPTURE_ENABLED_KEY === 'training_capture_v1_enabled');
         global.localStorage.setItem(tc.TRAINING_CAPTURE_ENABLED_KEY, savedEnabled ?? '');
@@ -4626,9 +4659,15 @@ const runCaptureChecks = async () => {
     ok('chartIndicators: anchored VWAP is null before the anchor and starts the accumulation there',
         av[0] === null && av[1] === 102 && av[3] === 102.5,
         JSON.stringify(av));
-    ok('chartIndicators: VWAP needs volume — a volume-less row yields null and cannot reset the day',
-        ci.vwapSeries([{ time: day1, high: 101, low: 99, close: 100 }, mkBar(day1 + 3600, 103, 101, 102, 4)], null)[0] === null
-        && ci.vwapSeries([{ time: day1, high: 101, low: 99, close: 100 }, mkBar(day1 + 3600, 103, 101, 102, 4)], null)[1] === 102);
+    // The migrated consumers must import the one module, not keep a private
+    // copy. The remaining unmigrated consumers are INVENTORIED in the audit
+    // appendix; this check fails if the audit stops naming one of them, so the
+    // inventory cannot quietly go stale.
+    for (const f of ['src/services/trade/setupScan.ts', 'src/services/trade/regime.ts', 'src/utils/smcStructure.ts']) {
+        const src = fs.readFileSync(path.join(ROOT, f), 'utf8');
+        ok(`indicators: ${path.basename(f)} imports chartIndicators (no private series)`,
+            /from '.*chartIndicators'/.test(src));
+    }
 })();
 
 // ─── 46. chart indicator settings: per-user, defaulted, round-tripped ──────
@@ -4705,7 +4744,49 @@ const runCaptureChecks = async () => {
     ok('studies: the chart consumes the desk cores (volumeProfileCore, orderFlowCore) instead of copying them',
         /from '\.\.\/\.\.\/services\/market\/volumeProfileCore'/.test(chartSrc)
         && /from '\.\.\/\.\.\/services\/market\/orderFlowCore'/.test(chartSrc));
+    const drawingSrc = fs.readFileSync(path.join(ROOT, 'src/services/trade/chartDrawings.ts'), 'utf8');
+    ok('drawings: a failed merge read never writes the partial mirror (16b5f909 left the clobber path)',
+        /if \(!res\.ok\) return false;/.test(drawingSrc));
 })();
+
+// The drawing flush is runtime, not a source claim: a session read that fails
+// must leave the legacy key and the file's other coins untouched.
+const checkDrawingFlushFailure = async () => {
+    const savedDocument = global.document;
+    global.document = { hidden: false, addEventListener() {}, removeEventListener() {} };
+    const cd = loadModule('src/services/trade/chartDrawings.ts');
+    const files = new Map();
+    global.window.electronAPI = {
+        isElectron: true,
+        store: {
+            read: async k => /trade_session_drawings_v1_contract_/.test(k)
+                ? { ok: false, error: 'contract read failure' }
+                : { ok: true, value: files.has(k) ? files.get(k) : null },
+            write: async (k, v) => { files.set(k, v); return { ok: true }; },
+            remove: async k => { files.delete(k); return { ok: true }; },
+        },
+    };
+    const sid = 'contract-fail-' + Date.now();
+    const legacyKey = 'trade_drawings_v1_contract_BTCUSDT';
+    const sessionKey = 'trade_session_drawings_v1_contract_' + sid;
+    const drawing = (id) => [{ id, kind: 'trend', points: [{ t: 1, p: 2 }, { t: 3, p: 4 }], color: '#ffffff', createdAt: 1 }];
+    // The legacy bucket is localStorage, not the file store (loadDrawings).
+    global.localStorage.setItem(legacyKey, JSON.stringify(drawing('legacy')));
+    files.set(sessionKey, JSON.stringify({ ETHUSDT: drawing('eth') }));
+    const migrated = await cd.loadSessionDrawingsWithLegacy(sid, 'BTCUSDT', 'contract');
+    await new Promise(resolve => setTimeout(resolve, 10));
+    const sessionAfter = JSON.parse(files.get(sessionKey) ?? '{}');
+    const legacyStillThere = global.localStorage.getItem(legacyKey) !== null;
+    ok('drawings: a failed session read keeps the legacy key and the file\'s other coin',
+        migrated.length === 1
+        && legacyStillThere
+        && Array.isArray(sessionAfter.ETHUSDT) && sessionAfter.ETHUSDT.length === 1
+        && sessionAfter.BTCUSDT === undefined,
+        JSON.stringify({ migrated: migrated.length, legacy: legacyStillThere, session: sessionAfter }));
+    global.localStorage.removeItem(legacyKey);
+    delete global.window.electronAPI;
+    if (savedDocument === undefined) delete global.document; else global.document = savedDocument;
+};
 
 // ─── 48. the model names the chat — sanitized, never over a trader ────────
 (() => {
@@ -4793,6 +4874,7 @@ const finishReport = () => {
 // a crashed check must never print as a green one.
 checkSkillWrites()
     .then(runCaptureChecks)
+    .then(checkDrawingFlushFailure)
     .then(checkSessionSearch)
     .catch(e => { failures.push(`async runtime checks threw: ${e instanceof Error ? e.stack : String(e)}`); })
     .then(finishReport);

@@ -25,6 +25,7 @@ const ActionsTab: React.FC<{ tab: ActionsTabProps }> = ({ tab: props }) => {
     // act. State refreshes on mount and after each flip.
     const [capture, setCapture] = React.useState<{ enabled: boolean; desktop: boolean; recordCount: number; refusedOnce: boolean; lastAt: string | null } | null>(null);
     const [corpusBusy, setCorpusBusy] = React.useState(false);
+    const [corpusError, setCorpusError] = React.useState<string | null>(null);
     const refreshCapture = React.useCallback(() => { void captureStatus().then(setCapture); }, []);
     React.useEffect(() => { refreshCapture(); }, [refreshCapture]);
     const flipCapture = () => {
@@ -33,8 +34,14 @@ const ActionsTab: React.FC<{ tab: ActionsTabProps }> = ({ tab: props }) => {
     };
     const exportCorpus = async () => {
         setCorpusBusy(true);
+        setCorpusError(null);
         try {
-            const jsonl = await exportCorpusJsonl((props.loggedTrades ?? []).map(t => ({ planId: t.planId, json: trainingRecordFor(t) })));
+            const result = await exportCorpusJsonl((props.loggedTrades ?? []).map(t => ({ planId: t.planId, json: trainingRecordFor(t) })));
+            if (!result.ok) {
+                setCorpusError(result.reason);
+                return;
+            }
+            const jsonl = result.jsonl;
             const stamp = new Date().toISOString().slice(0, 10);
             const blob = new Blob([jsonl], { type: 'application/jsonl' });
             const url = URL.createObjectURL(blob);
@@ -121,6 +128,11 @@ const ActionsTab: React.FC<{ tab: ActionsTabProps }> = ({ tab: props }) => {
                 {lastCaptureFailureInfo() && (
                     <p className="mt-1 text-ui-xs leading-4 text-rose-400" data-testid="training-capture-failure" role="alert">
                         {`Last append FAILED (${lastCaptureFailureInfo()!.reason} at ${lastCaptureFailureInfo()!.at}) — that turn is not in the corpus. Check the desktop store; this resets on restart.`}
+                    </p>
+                )}
+                {corpusError && (
+                    <p className="mt-1 text-ui-xs leading-4 text-rose-400" data-testid="training-capture-export-error" role="alert">
+                        {`Export FAILED — the corpus could not be read: ${corpusError}. The stored turns were not replaced; check the desktop store.`}
                     </p>
                 )}
                 <button

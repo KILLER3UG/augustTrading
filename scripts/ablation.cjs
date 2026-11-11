@@ -16,8 +16,12 @@
  *   - Samples: a seeded, time-blocked grid of (symbol, decision-time)
  *     points over the lookback; nothing about the sample depends on the arm.
  *   - AS-OF: every candle comes from a ranged fetch with endTime = the
- *     decision time; the harness asserts no bar at/after the decision is
- *     present (the no-look-ahead integrity check, per sample).
+ *     decision time; the closed-tape filter drops any bar that closes at/after
+ *     the decision, and the run reports how many post-decision bars the fetch
+ *     returned (evidence the filter ran, not a look-ahead detection).
+ *   - Samples: every (symbol, decision-time) pair in the grid is a candidate;
+ *     the seeded shuffle takes the first `perArm` of the combined pool, so the
+ *     population is multi-symbol rather than filling one symbol first.
  *   - The tool arms receive a PRECOMPUTED CONTEXT PACK — the same cores the
  *     desk tools run, printed as text into the prompt (design rule 7's pack
  *     path; also the train/inference-parity shape). No live tool loop: the
@@ -25,13 +29,15 @@
  *     effect, not loop variance.
  *   - Labels: the model's own entry/stop/target go through the REAL
  *     resolver (`signalResolver.resolveSignal`) over the POST-decision tape
- *     — stop-first on an unknowable bar, costs in R. An abstain is recorded
- *     and scores nothing (a decision, not a failure).
- *   - Metrics per arm: n, abstain rate, hit rate, avg net R (costs charged),
- *     Brier (declared confidence→probability mapping), hallucinated-price
- *     rate (stated levels with no pack/source grounding), tokens per
- *     decision, and the per-regime breakdown (regime tagged from the as-of
- *     tape — the tag get_regime exists to provide).
+ *     — stop-first on an unknowable bar, costs in R. Net R is the resolver's
+ *     `outcomeR` (the same cost the card and journal charge). An abstain is
+ *     recorded and scores 0 in the decision-inclusive mean.
+ *   - Metrics per arm: n, abstain rate, hit rate, avg net R (resolved only),
+ *     avg net R with every non-decision at 0, Brier (declared
+ *     confidence→probability mapping), hallucinated-price rate (stated levels
+ *     with no pack/source grounding), tokens per decision, and the per-regime
+ *     breakdown (regime tagged from the as-of tape — the tag get_regime
+ *     exists to provide).
  *   - Stats: paired bootstrap (10k resamples) over common samples for the
  *     mean net-R diff per comparison, 95% CI.
  *
@@ -112,6 +118,27 @@ const mulberry32 = (seed) => {
     };
 };
 
+/** One flag parser for every option. `--key value` and `--key=value` are both
+ *  accepted; a bare token, or a value that looks like another flag, is an
+ *  error instead of a silently dropped sample. This replaces the earlier
+ *  per-flag `indexOf` scans and the one-off `--arms` space-list guard. */
+const parseArgs = (argv) => {
+    const out = {};
+    for (let i = 0; i < argv.length; i++) {
+        const token = argv[i];
+        if (!token.startsWith('--')) throw new Error(`unexpected argument "${token}"`);
+        const eq = token.indexOf('=');
+        if (eq > 2) { out[token.slice(2, eq)] = token.slice(eq + 1); continue; }
+        const key = token.slice(2);
+        if (key === 'dry-run') { out[key] = true; continue; }
+        const next = argv[i + 1];
+        if (next === undefined || next.startsWith('--')) throw new Error(`--${key} needs a value`);
+        out[key] = next;
+        i += 1;
+    }
+    return out;
+};
+
 // ─── declared configuration (printed into every report) ─────────────────
 
 const SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'DOGEUSDT'];
@@ -146,15 +173,16 @@ const HOUR = 3_600_000;
 const fmtPx = (v) => Number(v.toPrecision(6));
 
 /** The as-of 1h tape for a decision: ends BEFORE the decision closes.
- *  100 bars — the regime read needs ≥80, and every arm sees the same tape. */
+ *  100 bars — the regime read needs ≥80, and every arm sees the same tape.
+ *  Returns the closed tape plus how many bars the ranged fetch returned AFTER
+ *  the decision and the filter removed. That count is the evidence the filter
+ *  did work; the closed tape alone cannot show it (the filter is what makes it
+ *  clean). */
 const asOfTape = async (md, symbol, decisionTime, bars = 100) => {
     const start = decisionTime - bars * HOUR - HOUR;
     const raw = await md.fetchFuturesOHLCVFromTime(symbol, '1h', start, decisionTime);
-    // Closed-bars only, and the INTEGRITY RULE: no bar may close at or after
-    // the decision time — a bar that straddles the decision would carry
-    // post-decision price into the prompt.
     const closed = raw.filter(c => c.time + HOUR <= decisionTime);
-    return closed;
+    return { tape: closed, rawCount: raw.length, dropped: raw.length - closed.length };
 };
 
 /** The post-decision 5m tape the resolver labels against. */
@@ -166,15 +194,18 @@ const postTape = async (md, symbol, decisionTime, horizonHours) => {
 /** The volume/auction pack, from the as-of tape only. */
 const buildVolumePack = (m, tape, atr) => {
     const lines = [];
+    const prices = [];
     const prof = m.profile.buildVolumeProfile(tape.slice(-48), { bins: 24 });
     if (prof) {
         const last = tape[tape.length - 1].close;
+        prices.push(prof.poc, prof.valueAreaLow, prof.valueAreaHigh);
         lines.push(`volume_profile(48×1h): POC ${fmtPx(prof.poc)}, VA ${fmtPx(prof.valueAreaLow)}–${fmtPx(prof.valueAreaHigh)}, price ${m.profile.pricePositionVsValue(prof, last)} value; POC ${fmtPx(Math.abs(last - prof.poc) / atr)} ATR away; migration ${prof.developingPoc?.migration ?? 'n/a'}`);
     }
     const vw = m.vwap.computeVwap(tape.slice(-24));
     if (vw) {
         const last = tape[tape.length - 1].close;
         const pos = m.vwap.vwapPosition(vw, tape.slice(-24), last);
+        prices.push(vw.vwap);
         lines.push(`vwap(24h): ${fmtPx(vw.vwap)}, price ${pos?.side ?? '?'} at ${fmtPx(Math.abs(last - vw.vwap) / atr)} ATR; participants ${pos?.verdict.replace(/_/g, ' ')} (estimate)`);
     }
     const series = m.flow.deltaSeries(tape.slice(-48));
@@ -188,22 +219,25 @@ const buildVolumePack = (m, tape, atr) => {
         const notable = eff.bars.filter(b => b.read !== 'routine').map(b => `${b.read}@${b.rvol}×`).join(', ');
         lines.push(`effort_vs_result: ${notable || 'all routine'}; vol/price corr ${eff.volumePriceCorrelation}${eff.divergence ? ` (${eff.divergence} divergence)` : ''}`);
     }
-    return lines;
+    return { lines, prices };
 };
 
 /** The regime/levels/trade-math pack, from the as-of tape only. */
 const buildRegimePack = (m, tape, atr, symbol) => {
     const lines = [];
+    const prices = [];
     const reg = m.regime.regimeRead(tape);
     if (reg) {
         lines.push(`regime(1h): ${reg.direction} (ADX ${reg.directionStrength}, efficiency ${reg.efficiency}, dwell ${reg.dwell} bars) · volatility ${reg.volatility}${reg.atrPercentile !== null ? ` (ATR p${reg.atrPercentile})` : ''} · regime_id ${reg.regimeId}`);
     }
     const last = tape[tape.length - 1].close;
+    prices.push(last);
     const dayStart = m.sc.utcDayStart(last ? tape[tape.length - 1].time : 0);
     const prevDay = tape.filter(c => c.time >= dayStart - 24 * HOUR && c.time < dayStart);
     if (prevDay.length >= 4) {
         const hi = Math.max(...prevDay.map(c => c.high));
         const lo = Math.min(...prevDay.map(c => c.low));
+        prices.push(hi, lo);
         lines.push(`levels: prev_utc_day high ${fmtPx(hi)} (${fmtPx(Math.abs(last - hi) / atr)} ATR), low ${fmtPx(lo)} (${fmtPx(Math.abs(last - lo) / atr)} ATR)`);
     }
     // COSTS, not a bracket. This pack must not print a ready-made
@@ -213,7 +247,7 @@ const buildRegimePack = (m, tape, atr, symbol) => {
     // what a round trip costs at a given stop distance — direction-agnostic.
     const cost = m.nrr.roundTripCostR({ stopDistancePct: (atr / last) * 100 });
     lines.push(`trade_math: a 1R-stop round trip costs ~${cost.costR}R per side at the current 14-bar ATR stop distance${cost.known ? '' : ' (cost model incomplete)'}`);
-    return lines;
+    return { lines, prices };
 };
 
 // ─── the model call ─────────────────────────────────────────────────────
@@ -296,34 +330,15 @@ const userPrompt = (symbol, decisionIso, tape, packLines) => {
 // ─── main ───────────────────────────────────────────────────────────────
 
 const main = async () => {
-    const args = process.argv.slice(2);
-    const flag2 = (args, name, dflt) => {
-        const i = args.indexOf(name);
-        return i >= 0 && Number.isFinite(Number(args[i + 1])) ? Number(args[i + 1]) : dflt;
-    };
-    const flag = (name, dflt) => {
-        const i = args.indexOf(`--${name}`);
-        return i >= 0 ? Number(args[i + 1]) : dflt;
-    };
-    const dryRun = args.includes('--dry-run');
-    const perArm = Math.max(2, flag('samples', 40));
-    const seed = Number(args[args.indexOf('--seed') + 1]) || 20261107;
-    const armsIdx = args.indexOf('--arms');
-    const armNames = armsIdx >= 0
-        ? String(args[armsIdx + 1] ?? '').split(',').filter(Boolean)
+    const args = parseArgs(process.argv.slice(2));
+    const dryRun = args['dry-run'] === true;
+    const perArm = Math.max(2, Number(args.samples) || 40);
+    const seed = Number(args.seed) || 20261107;
+    const armNames = args.arms
+        ? String(args.arms).split(',').map(a => a.trim()).filter(Boolean)
         : ['baseline', 'volume', 'regime'];
     for (const a of armNames) if (!ARMS[a]) { console.error(`unknown arm "${a}"`); process.exit(1); }
     if (armNames.length === 0) { console.error('ablation: --arms resolved to zero arms (use --arms baseline,volume,regime)'); process.exit(1); }
-    // `--arms baseline volume` (space-separated) would silently drop `volume`
-    // — only the first token is read. Any non-flag token right after the
-    // comma list is almost certainly that mistake, so refuse loudly.
-    if (armsIdx >= 0) {
-        const afterList = args[armsIdx + 2];
-        if (afterList !== undefined && !afterList.startsWith('--')) {
-            console.error(`ablation: unexpected token "${afterList}" after --arms ${args[armsIdx + 1]} — --arms takes ONE comma-separated list (e.g. --arms baseline,volume)`);
-            process.exit(1);
-        }
-    }
 
     const cfg = {
         baseUrl: process.env.AUGUST_EVAL_BASE_URL,
@@ -344,10 +359,9 @@ const main = async () => {
     // "same seed" alone does not, because Date.now() moves. The chosen anchor
     // and the full sample list go into the artifact either way, so any run is
     // reproducible from its own file.
-    const anchorIdx = args.indexOf('--anchor');
-    const anchorArg = anchorIdx >= 0 ? args[anchorIdx + 1] : undefined;
+    const anchorArg = args.anchor;
     let anchorMs = Date.now();
-    if (anchorArg !== undefined && !String(anchorArg).startsWith('--')) {
+    if (anchorArg !== undefined) {
         const parsed = /^\d+$/.test(String(anchorArg)) ? Number(anchorArg) : Date.parse(anchorArg);
         if (!Number.isFinite(parsed)) { console.error(`ablation: --anchor needs an ISO date or epoch ms, got "${anchorArg}"`); process.exit(1); }
         anchorMs = parsed;
@@ -357,46 +371,51 @@ const main = async () => {
     const horizonEnd = now - HORIZON_HOURS * HOUR; // a sample needs its horizon resolved
     const slots = [];
     for (let t = gridStart; t <= horizonEnd; t += DECISION_GRID_HOURS * HOUR) slots.push(t);
-    for (let i = slots.length - 1; i > 0; i--) {
+    // EVERY (symbol, time) pair is a candidate; the seeded shuffle then takes
+    // the first `perArm` of the combined pool. The old loop filled the first
+    // symbol to `perArm` and `break outer`, so the default N=40 was BTC-only
+    // while the report claimed a multi-symbol grid.
+    const pairs = [];
+    for (const sym of SYMBOLS) for (const t of slots) pairs.push({ symbol: sym, decisionTime: t });
+    for (let i = pairs.length - 1; i > 0; i--) {
         const j = Math.floor(rng() * (i + 1));
-        [slots[i], slots[j]] = [slots[j], slots[i]];
+        [pairs[i], pairs[j]] = [pairs[j], pairs[i]];
     }
-    const samples = [];
-    outer: for (const sym of SYMBOLS) {
-        for (const t of slots) {
-            if (samples.length >= perArm) break outer;
-            samples.push({ symbol: sym, decisionTime: t });
-        }
-    }
+    const samples = pairs.slice(0, perArm);
     console.log(`ablation: ${samples.length} samples per arm × ${armNames.length} arms (${armNames.join(', ')}), seed ${seed}, horizon ${HORIZON_HOURS}h`);
     console.log(`  comparisons (PRE-DECLARED): ${PREDECLARED_COMPARISONS.map(([a, b]) => `${a} vs ${b}`).join('; ')} — no sweep, no post-hoc pairs`);
 
     // ── per-sample data: as-of tape, label machinery, packs ────────────
     const results = {}; // arm -> array of per-sample outcomes
     for (const a of armNames) results[a] = [];
+    let droppedPostDecision = 0;
     let integrityFailures = 0;
     // Every skipped sample lands here — a run that lost half its fetches must
     // not be able to report its n without the loss being in the artifact.
     const skipLog = [];
     const skip = (si, symbol, reason) => { skipLog.push({ sample: si, symbol, reason }); };
 
-    const concurrency = Math.max(1, Math.min(12, flag2(args, '--concurrency', 6)));
+    const concurrency = Math.max(1, Math.min(12, Number(args.concurrency) || 6));
     let cursor = 0;
     let done = 0;
     const processSample = async (si) => {
         const s = samples[si];
         const decisionIso = new Date(s.decisionTime).toISOString();
-        let tape;
+        let asOf;
         try {
-            tape = await asOfTape(m.md, s.symbol, s.decisionTime);
+            asOf = await asOfTape(m.md, s.symbol, s.decisionTime);
         } catch (e) {
             console.log(`  ⚠ sample ${si} ${s.symbol}: tape fetch failed (${e.message}) — skipped`);
             skip(si, s.symbol, `tape fetch failed: ${e.message}`);
             return;
         }
+        const tape = asOf.tape;
+        droppedPostDecision += asOf.dropped;
         if (tape.length < 30) { console.log(`  ⚠ sample ${si} ${s.symbol}: thin tape (${tape.length}) — skipped`); skip(si, s.symbol, `thin tape (${tape.length})`); return; }
 
-        // INTEGRITY: no closed bar at/after the decision.
+        // INTEGRITY: no closed bar at/after the decision. The filter above is
+        // what makes this true; `asOf.dropped` is the independent evidence that
+        // the filter actually removed post-decision bars the fetch returned.
         if (tape.some(c => c.time + HOUR > s.decisionTime)) {
             integrityFailures += 1;
             console.log(`  ⚠ sample ${si}: LOOK-AHEAD detected in the as-of tape — skipped and counted`);
@@ -428,7 +447,8 @@ const main = async () => {
         }
 
         for (const arm of armNames) {
-            const packLines = ARMS[arm].pack ? packs[ARMS[arm].pack] : null;
+            const pack = ARMS[arm].pack ? packs[ARMS[arm].pack] : null;
+            const packLines = pack ? pack.lines : null;
             let decision = null;
             let tokens = 0;
             if (dryRun) {
@@ -466,45 +486,40 @@ const main = async () => {
             }
 
             // Grounding: a stated level counts as grounded when it sits
-            // within 0.15×ATR of (a) a pack-printed number, or (b) a price
-            // the tape itself printed (rows are visible to every arm).
+            // within 0.15×ATR of (a) a pack-printed PRICE (not any number in
+            // the line — bars/bins/ATR multiples are not levels), or (b) a
+            // price the tape itself printed (rows are visible to every arm).
             const tapePrices = [];
             for (const c of tape.slice(-48)) tapePrices.push(c.open, c.high, c.low, c.close);
-            const packPrices = [];
-            for (const line of packLines ?? []) {
-                const nums = line.match(/-?\d+(\.\d+)?/g) ?? [];
-                for (const n of nums) { const v = Number(n); if (v > 0) packPrices.push(v); }
-            }
+            const packPrices = pack ? pack.prices : [];
             const grounded = (p) => (packPrices.some(v => Math.abs(v - p) <= 0.15 * atr) || tapePrices.some(v => Math.abs(v - p) <= 0.15 * atr)) ? 1 : 0;
             const stated = [decision.entry, decision.stop, decision.target].filter(v => v !== null);
             const hallucination = stated.length ? 1 - stated.reduce((sum, p) => sum + grounded(p), 0) / stated.length : null;
 
-            // Label: the model's own bracket through the REAL resolver.
+            // Label: the model's own bracket through the REAL resolver. The
+            // net R is the resolver's own `outcomeR` — the same cost the card
+            // and the journal charge. Recomputing it here used to let a second
+            // cost model (5 bps canonical vs 7 bps resolver) decide the eval.
             const isLong = decision.direction === 'long';
             const entry = decision.entry ?? tape[tape.length - 1].close;
             const stop = decision.stop ?? (isLong ? entry - atr : entry + atr);
             const target = decision.target ?? (isLong ? entry + 2 * atr : entry - 2 * atr);
             const bracket = { direction: isLong ? 'long' : 'short', entry, stop, target, emittedAt: s.decisionTime, expiresAt: s.decisionTime + HORIZON_HOURS * HOUR };
             const resolution = m.rv.resolveSignal(bracket, post, [], s.decisionTime + HORIZON_HOURS * HOUR);
-            let netR = null;
+            const netR = resolution && Number.isFinite(resolution.outcomeR)
+                ? Math.round(resolution.outcomeR * 10000) / 10000
+                : null;
             let won = null;
             if (resolution) {
-                if (resolution.status === 'never_triggered') {
-                    // The call never came alive: no fill, no fees, nothing
-                    // scores — the resolver's own semantics (grossR 0, feeR 0).
-                    netR = 0;
-                } else {
-                    const cost = m.nrr.roundTripCostR({ stopDistancePct: (Math.abs(entry - stop) / entry) * 100 });
-                    netR = cost.known ? Math.round(((resolution.grossR ?? 0) - cost.costR) * 10000) / 10000 : resolution.grossR;
-                    if (resolution.status === 'won') won = 1;
-                    else if (resolution.status === 'lost') won = 0;
-                    else if (resolution.status === 'expired') won = netR > 0 ? 1 : 0;
-                }
+                if (resolution.status === 'won') won = 1;
+                else if (resolution.status === 'lost') won = 0;
+                else if (resolution.status === 'expired') won = netR !== null && netR > 0 ? 1 : 0;
             }
             const brier = won !== null && decision.confidence ? (CONFIDENCE_TO_P[decision.confidence] - won) ** 2 : null;
             results[arm].push({
                 sample: si, symbol: s.symbol, regimeId,
                 outcome: resolution?.status ?? 'open', netR, brier, hallucination, tokens,
+                grossR: resolution?.grossR ?? null, costR: resolution?.feeR ?? null,
             });
         }
         done += 1;
@@ -533,10 +548,16 @@ const main = async () => {
         const hals = rows.filter(r => r.hallucination !== null).map(r => r.hallucination);
         const tokens = rows.filter(r => r.tokens > 0).map(r => r.tokens);
         const mean = (xs) => xs.length ? xs.reduce((s, x) => s + x, 0) / xs.length : null;
+        // Abstain and unparseable are DECISIONS with no bracket: they are not
+        // missing data. `avgNetR` is the resolved-only view; `avgNetRAll`
+        // scores every processed row, with a non-decision at 0, so an arm
+        // cannot look better by abstaining on the setups it would lose.
+        const netRAll = rows.map(r => typeof r.netR === 'number' ? r.netR : 0);
         return {
             n: rows.length, scored: scored.length, abstainRate: rows.length ? abstains / rows.length : null,
             hitRate: resolved.length ? wins / resolved.length : null, resolved: resolved.length,
             avgNetR: mean(scored.map(r => r.netR)),
+            avgNetRAll: mean(netRAll),
             brier: mean(briers), brierN: briers.length,
             hallucinationRate: mean(hals),
             avgTokens: mean(tokens),
@@ -557,7 +578,8 @@ const main = async () => {
         const s = stats[arm];
         console.log(`${arm}: n=${s.n} scored=${s.scored} abstain=${s.abstainRate === null ? '—' : (s.abstainRate * 100).toFixed(0) + '%'}`
             + ` hitRate=${s.hitRate === null ? '—' : (s.hitRate * 100).toFixed(0) + '%'} (of ${s.resolved})`
-            + ` avgNetR=${s.avgNetR === null ? '—' : s.avgNetR.toFixed(3)}`
+            + ` avgNetR=${s.avgNetR === null ? '—' : s.avgNetR.toFixed(3)} (scored)`
+            + ` avgNetRAll=${s.avgNetRAll === null ? '—' : s.avgNetRAll.toFixed(3)} (non-decision=0)`
             + ` Brier=${s.brier === null ? '—' : s.brier.toFixed(3)} (n=${s.brierN})`
             + ` halluc=${s.hallucinationRate === null ? '—(no pack reference)' : (s.hallucinationRate * 100).toFixed(0) + '%'}`
             + ` tokens/decision=${s.avgTokens === null ? '—' : Math.round(s.avgTokens)}`);
@@ -594,7 +616,7 @@ const main = async () => {
             + ` → ${straddle ? 'CANNOT TELL YET (CI straddles zero — larger N), not "no effect"' : (r.mean > 0 ? `${a} helps` : `${b} helps`)}`);
     }
 
-    console.log(`\nintegrity: ${integrityFailures} look-ahead detections (must be 0)`);
+    console.log(`\nintegrity: ${integrityFailures} as-of invariant failures (must be 0); ${droppedPostDecision} post-decision bar(s) the ranged fetch returned and the filter removed (evidence the filter ran, not a look-ahead detection)`);
     if (skipLog.length) {
         const byReason = skipLog.reduce((acc, s) => { const key = s.reason.split(':')[0].split('(')[0].trim(); acc[key] = (acc[key] || 0) + 1; return acc; }, {});
         console.log(`skipped: ${skipLog.length}/${samples.length} samples never reached the arms — ${Object.entries(byReason).map(([r, n]) => `${r} ×${n}`).join(', ')}`);
@@ -612,6 +634,7 @@ const main = async () => {
         samples: samples.length,
         sampleList: samples.map(s => ({ symbol: s.symbol, decisionTime: s.decisionTime })),
         integrityFailures,
+        droppedPostDecisionBars: droppedPostDecision,
         skipped: skipLog,
         results: Object.fromEntries(armNames.map(a => [a, results[a]])),
     };

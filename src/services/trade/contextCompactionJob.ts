@@ -12,9 +12,9 @@
  * during idle — into a short digest that keeps the three things a later turn
  * actually needs: which symbols were in play, what was decided, and what is
  * still open. Nothing the trader sees is blocked, cleared, or re-ordered: the
- * summary is stored on the conversation and prepended to the NEXT request, so a
- * turn never waits for it and a failure just means the next turn compacts the
- * old way.
+ * summary is stored on the conversation and injected into the NEXT request (as
+ * a system message after the standing instructions), so a turn never waits for
+ * it and a failure just means the next turn compacts the old way.
  *
  * Why 80% and not 100%: the estimate is a heuristic and the provider's own
  * tokenizer is the authority, so the last 20% is the margin in which a real
@@ -92,13 +92,23 @@ export const buildCompactionPrompt = (older: readonly ChatMessage[], maxChars = 
     ].join('\n');
 };
 
+/** The four headings the prompt demands. A summary without them is not the
+ *  contract the owner approved, and a heading-less blob is exactly the shape a
+ *  later turn cannot reliably scan. */
+export const COMPACTION_HEADINGS = ['Symbols', 'Decisions', 'Open tasks', 'Other context'] as const;
+
+const hasAllHeadings = (text: string): boolean =>
+    COMPACTION_HEADINGS.every(h => new RegExp(`^#{2,3}\\s+${h}:?\\s*$`, 'im').test(text));
+
 /**
  * Clean a model answer into a digest that is safe to inject.
  *
- * A summary missing its headings is still useful, so it is kept — but one that
- * is empty, obviously a refusal, or missing every symbol mentioned in the slice
- * is discarded. A summary that silently drops the symbol the trader is asking
- * about is worse than no summary: the next turn reasons confidently without it.
+ * The four headings are a CONTRACT, not a suggestion: a summary missing any of
+ * them is discarded, because the next turn is supposed to scan it by section.
+ * One that is empty, obviously a refusal, or missing every symbol mentioned in
+ * the slice is also discarded. A summary that silently drops the symbol the
+ * trader is asking about is worse than no summary: the next turn reasons
+ * confidently without it.
  */
 export const sanitizeSummary = (
     raw: string,
@@ -108,16 +118,20 @@ export const sanitizeSummary = (
     const text = (raw || '').trim().replace(/^```[a-z]*\n?/i, '').replace(/```$/, '').trim();
     if (text.length < 40) return null;
     if (/^(i (cannot|can't)|sorry[,.]|as an ai)/i.test(text)) return null;
+    if (!hasAllHeadings(text)) return null;
     const clipped = text.length > maxChars ? `${text.slice(0, maxChars - 1).trimEnd()}…` : text;
     // Coverage check: the symbols named in the slice must survive. Only tokens
     // that look like a pair (BTCUSDT, BTC/USDT, ETH) are checked, against the
     // user/assistant turns only — tool payloads are full of market shorthand.
+    // Indicator acronyms are excluded: RSI/ATR/VWAP are not symbols, and
+    // counting them lets a summary pass while dropping the actual coin.
     const spoken = older
         .filter(m => m.role === 'user' || m.role === 'assistant')
         .map(m => (typeof m.content === 'string' ? m.content : ''))
         .join(' ');
+    const INDICATORS = new Set(['RSI', 'ATR', 'EMA', 'SMA', 'MACD', 'VWAP', 'CVD', 'POC', 'VAH', 'VAL', 'ADX', 'TSI', 'BOLL', 'USDT', 'USDC', 'PERP']);
     const symbols = [...new Set((spoken.match(/\b[A-Z]{2,6}(?:USDT|USDC|PERP|\/USDT)?\b/g) ?? []))]
-        .filter(s => s.length >= 3)
+        .filter(s => s.length >= 3 && !INDICATORS.has(s))
         .slice(0, 8);
     const missing = symbols.filter(s => !clipped.toUpperCase().includes(s));
     if (symbols.length > 0 && missing.length > symbols.length / 2) return null;
@@ -212,21 +226,4 @@ export const resolveCompactionComplete = async (): Promise<((prompt: string) => 
     } catch {
         return null;
     }
-};
-
-/**
- * Prepend the stored digest to an outbound array. The digest rides as a leading
- * SYSTEM message, not a synthetic assistant turn: it is the harness's account of
- * history, and a model that believes it said those words will defend them.
- */
-export const withCompactionSummary = (messages: ChatMessage[], summary: string | undefined): ChatMessage[] => {
-    const text = (summary ?? '').trim();
-    if (!text) return messages;
-    return [
-        {
-            role: 'system',
-            content: `EARLIER IN THIS SESSION (summarized as the context window filled; the most recent turns are below verbatim):\n${text}`,
-        },
-        ...messages,
-    ];
 };

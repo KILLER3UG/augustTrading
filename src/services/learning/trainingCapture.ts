@@ -9,16 +9,20 @@
  * time. The corpus is the fine-tuning fuel for a future trading-focused
  * August model; it never leaves the machine.
  *
- * FORMAT: JSONL (one JSON object per line), NOT markdown. Decided, with the
- * reasons: (1) fine-tuning pipelines consume JSONL natively — the repo
- * already exports journal records as NDJSON (reportExport), so one format
- * serves both stores; (2) the corpus is APPEND-ONLY events — JSONL appends
- * without rewriting or re-parsing a growing document, which markdown's
- * prose-and-headings shape would force; (3) the shape is machine-fact
- * (messages, reasoning, actions, outcome) — markdown is for human documents,
- * and this repo already keeps that split (skills are .md, goals and
- * self-changes are .json). A human-readable digest belongs in the export
- * step, not the store.
+ * FORMAT: one JSON object per turn in the export (JSONL), NOT markdown.
+ * Decided, with the reasons: (1) fine-tuning pipelines consume JSONL natively —
+ * the repo already exports journal records as NDJSON (reportExport), so one
+ * format serves both stores; (2) the corpus is an ordered event log — the
+ * export is append-friendly, and a human-readable digest belongs in the export
+ * step, not the store; (3) the shape is machine-fact (messages, reasoning,
+ * actions, outcome) — markdown is for human documents, and this repo already
+ * keeps that split (skills are .md, goals and self-changes are .json).
+ *
+ * The STORE is a single JSON document, read-modify-write under a serialized
+ * queue (`withCaptureLock`): two fire-and-forget turns must not both read N
+ * records and write N+1. A read that FAILS is not an empty corpus — the write
+ * is refused, because overwriting the file with the one record in hand is how
+ * a corpus starts lying about what the model actually said.
  *
  * PRIVACY, in order: the toggle defaults OFF and turning it back on after a
  * restore is a conscious act (the flag deliberately does NOT ride in
@@ -132,13 +136,37 @@ export const setCaptureEnabled = (on: boolean): void => {
 
 const emptyCorpus = (): Corpus => ({ schemaVersion: 1, records: [] });
 
-const readCorpus = async (): Promise<Corpus> => {
-    const res = await store().read(TRAINING_CAPTURE_KEY);
-    const value = res.ok ? res.value : null;
-    if (!value || typeof value !== 'object') return emptyCorpus();
+type CorpusRead =
+    | { ok: true; corpus: Corpus }
+    | { ok: false; reason: string };
+
+const readCorpus = async (): Promise<CorpusRead> => {
+    let res: { ok: boolean; value?: unknown };
+    try {
+        res = await store().read(TRAINING_CAPTURE_KEY);
+    } catch (err) {
+        return { ok: false, reason: err instanceof Error ? err.message : String(err) };
+    }
+    if (!res.ok) return { ok: false, reason: 'the corpus store could not be read' };
+    const value = res.value;
+    if (!value || typeof value !== 'object') return { ok: true, corpus: emptyCorpus() };
     const c = value as Partial<Corpus>;
-    if (!Array.isArray(c.records)) return emptyCorpus();
-    return { schemaVersion: 1, records: c.records as TrainingCaptureRecord[], refusedOnce: c.refusedOnce };
+    if (!Array.isArray(c.records)) return { ok: true, corpus: emptyCorpus() };
+    return {
+        ok: true,
+        corpus: { schemaVersion: 1, records: c.records as TrainingCaptureRecord[], refusedOnce: c.refusedOnce },
+    };
+};
+
+/** Serialize the read-modify-write. The recorder is fire-and-forget and two
+ *  turns can settle together; without this, both read the same corpus and the
+ *  last write drops the other's record. The queue never rejects: a failed
+ *  capture must not block the next one. */
+let captureWriteQueue: Promise<unknown> = Promise.resolve();
+const withCaptureLock = <T>(task: () => Promise<T>): Promise<T> => {
+    const run = captureWriteQueue.then(task, task);
+    captureWriteQueue = run.then(() => undefined, () => undefined);
+    return run;
 };
 
 const clip = (text: string): { text: string; clipped: boolean } =>
@@ -146,22 +174,25 @@ const clip = (text: string): { text: string; clipped: boolean } =>
         ? { text, clipped: false }
         : { text: `${text.slice(0, TRAINING_CAPTURE_MAX_RECORD_CHARS)}\n[truncated for corpus size]`, clipped: true };
 
-/** Read the corpus status for the Settings card. */
+/** Read the corpus status for the Settings card. A read failure is surfaced,
+ *  not rendered as an empty corpus — the trader must be able to tell the
+ *  difference between "nothing recorded" and "the store is unreadable". */
 export const captureStatus = async (): Promise<CaptureStatus> => {
     const enabled = isCaptureEnabled();
     if (!isDesktop()) return { enabled, desktop: false, recordCount: 0, refusedOnce: false, lastAt: null };
-    try {
-        const c = await readCorpus();
-        return {
-            enabled,
-            desktop: true,
-            recordCount: c.records.length,
-            refusedOnce: c.refusedOnce === true,
-            lastAt: c.records.length ? c.records[c.records.length - 1].at : null,
-        };
-    } catch {
+    const read = await readCorpus();
+    if (!read.ok) {
+        noteCaptureFailure(read.reason);
         return { enabled, desktop: true, recordCount: 0, refusedOnce: false, lastAt: null };
     }
+    const c = read.corpus;
+    return {
+        enabled,
+        desktop: true,
+        recordCount: c.records.length,
+        refusedOnce: c.refusedOnce === true,
+        lastAt: c.records.length ? c.records[c.records.length - 1].at : null,
+    };
 };
 
 /** The last append that did not land, this SESSION. It cannot live in the
@@ -205,43 +236,49 @@ export type CaptureResult =
 export const captureTurn = async (input: TurnCaptureInput): Promise<CaptureResult> => {
     if (!isCaptureEnabled()) return { ok: false, reason: 'disabled' };
     if (!isDesktop()) return { ok: false, reason: 'desktop-only' };
-    try {
-        const corpus = await readCorpus();
-        if (corpus.records.length >= TRAINING_CAPTURE_MAX_RECORDS) {
-            corpus.refusedOnce = true;
-            await store().write(TRAINING_CAPTURE_KEY, corpus);
-            return { ok: false, reason: 'cap' };
+    return withCaptureLock(async () => {
+        try {
+            const read = await readCorpus();
+            if (!read.ok) return { ok: false, reason: 'store-failed' };
+            const corpus = read.corpus;
+            if (corpus.records.length >= TRAINING_CAPTURE_MAX_RECORDS) {
+                corpus.refusedOnce = true;
+                const capped = await store().write(TRAINING_CAPTURE_KEY, corpus);
+                return capped.ok
+                    ? { ok: false, reason: 'cap' }
+                    : { ok: false, reason: 'store-failed' };
+            }
+            const parts = [
+                clip(input.userText),
+                clip(input.finalText),
+                clip(input.reasoning),
+            ];
+            const record: TrainingCaptureRecord = {
+                v: 1,
+                at: new Date().toISOString(),
+                kind: 'turn',
+                surface: input.surface,
+                symbol: input.symbol,
+                model: input.model,
+                effort: input.effort,
+                userText: parts[0].text,
+                finalText: parts[1].text,
+                reasoning: parts[2].text,
+                toolEvents: input.toolEvents.slice(-40),
+                actions: input.actions,
+                planId: input.planId,
+                playbookId: input.playbookId ?? null,
+                snapshot: input.snapshot,
+                truncated: parts.some(p => p.clipped),
+            };
+            corpus.records.push(record);
+            const res = await store().write(TRAINING_CAPTURE_KEY, corpus);
+            if (!res.ok) return { ok: false, reason: 'store-failed' };
+            return { ok: true, recordCount: corpus.records.length };
+        } catch {
+            return { ok: false, reason: 'store-failed' };
         }
-        const parts = [
-            clip(input.userText),
-            clip(input.finalText),
-            clip(input.reasoning),
-        ];
-        const record: TrainingCaptureRecord = {
-            v: 1,
-            at: new Date().toISOString(),
-            kind: 'turn',
-            surface: input.surface,
-            symbol: input.symbol,
-            model: input.model,
-            effort: input.effort,
-            userText: parts[0].text,
-            finalText: parts[1].text,
-            reasoning: parts[2].text,
-            toolEvents: input.toolEvents.slice(-40),
-            actions: input.actions,
-            planId: input.planId,
-            playbookId: input.playbookId ?? null,
-            snapshot: input.snapshot,
-            truncated: parts.some(p => p.clipped),
-        };
-        corpus.records.push(record);
-        const res = await store().write(TRAINING_CAPTURE_KEY, corpus);
-        if (!res.ok) return { ok: false, reason: 'store-failed' };
-        return { ok: true, recordCount: corpus.records.length };
-    } catch {
-        return { ok: false, reason: 'store-failed' };
-    }
+    });
 };
 
 /**
@@ -252,10 +289,21 @@ export const captureTurn = async (input: TurnCaptureInput): Promise<CaptureResul
  * planId, and an unlabeled turn is INCLUDED and flagged, the same rule the
  * journal export holds (dropping unsettled turns biases the corpus).
  */
+export type CorpusExport =
+    | { ok: true; jsonl: string }
+    | { ok: false; reason: string };
+
 export const exportCorpusJsonl = async (
     journalRecords: Array<{ planId?: string; json: Record<string, unknown> }>,
-): Promise<string> => {
-    const corpus = isDesktop() ? await readCorpus() : emptyCorpus();
+): Promise<CorpusExport> => {
+    let corpus: Corpus;
+    if (isDesktop()) {
+        const read = await readCorpus();
+        if (!read.ok) return { ok: false, reason: read.reason };
+        corpus = read.corpus;
+    } else {
+        corpus = emptyCorpus();
+    }
     const byPlan = new Map<string, Record<string, unknown>>();
     for (const j of journalRecords) {
         if (j.planId) byPlan.set(j.planId, j.json);
@@ -280,5 +328,5 @@ export const exportCorpusJsonl = async (
             truncated: r.truncated,
         }));
     }
-    return lines.join('\n');
+    return { ok: true, jsonl: lines.join('\n') };
 };

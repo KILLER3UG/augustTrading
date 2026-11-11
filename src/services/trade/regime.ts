@@ -9,6 +9,7 @@
  */
 
 import type { Kline } from '../analysis/MarketDataService';
+import { emaSeries, rsiSeries } from './chartIndicators';
 
 export type BiasTone = 'bull' | 'bear' | 'neutral';
 
@@ -18,37 +19,18 @@ export interface BiasChip {
     tone: BiasTone | 'vwap';
 }
 
-/** Exponential moving average of the TAIL (last `period`-warm values) —
- *  seeded with the SMA of the first `period` closes. */
+/** Exponential moving average of the series, seeded with the SMA of the first
+ *  `period` closes. The arithmetic lives in `chartIndicators`; this wrapper
+ *  keeps the bias's call sites unchanged. */
 export const ema = (values: number[], period: number): number | null => {
-    if (values.length < period || period <= 0) return null;
-    let acc = 0;
-    for (let i = 0; i < period; i += 1) acc += values[i];
-    let e = acc / period;
-    const k = 2 / (period + 1);
-    for (let i = period; i < values.length; i += 1) e = values[i] * k + e * (1 - k);
-    return e;
+    const series = emaSeries(values, period);
+    return series.length ? series[series.length - 1] : null;
 };
 
 /** Wilder-smoothed RSI over all provided closes (needs ≥ period+1). */
 export const rsi = (closes: number[], period = 14): number | null => {
-    if (closes.length < period + 1) return null;
-    let gain = 0;
-    let loss = 0;
-    for (let i = 1; i <= period; i += 1) {
-        const d = closes[i] - closes[i - 1];
-        if (d >= 0) gain += d; else loss -= d;
-    }
-    let avgGain = gain / period;
-    let avgLoss = loss / period;
-    for (let i = period + 1; i < closes.length; i += 1) {
-        const d = closes[i] - closes[i - 1];
-        avgGain = (avgGain * (period - 1) + Math.max(d, 0)) / period;
-        avgLoss = (avgLoss * (period - 1) + Math.max(-d, 0)) / period;
-    }
-    if (avgLoss === 0) return 100;
-    const rs = avgGain / avgLoss;
-    return 100 - 100 / (1 + rs);
+    const series = rsiSeries(closes, period);
+    return series.length ? series[series.length - 1] : null;
 };
 
 /**

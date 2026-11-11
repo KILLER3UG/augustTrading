@@ -230,3 +230,28 @@ or VWAP.
 | Swings (Williams) | `taLibrary.ts:866` | 5-bar | fractal | 5 bars | prompt |
 | ZigZag | `taLibrary.ts:840` | 5% | percentage reversal | 3 bars | prompt |
 | Session levels | `market/levelsCore.ts:95` | session windows | period high/low | — | prompt |
+
+## 2026-11-11 migration update
+
+Migrated onto `services/trade/chartIndicators.ts`:
+
+- `services/trade/setupScan.ts` — `rsiSeries`, `smaSeries` and `bollinger` are now
+  NaN-aligned wrappers over `rsiSeries`/`smaSeries`/`bollingerSeries`; the local
+  math is gone.
+- `services/trade/regime.ts` — `ema` and `rsi` are wrappers over `emaSeries`/
+  `rsiSeries`; the local math is gone.
+- `utils/smcStructure.ts` — `atr14` is `atrSeries` (Wilder), migrated 2026-11-10.
+
+Still local, each a deliberate parity mirror to migrate one at a time (each
+migration changes numbers, so each needs its own parity contract):
+
+- `services/analysis/TechnicalAnalysisService.ts` — prompt/dash indicator set
+  (library semantics: SMA-seeded EMA, library RSI, different pivot/CVD).
+- `services/analysis/taLibrary.ts` — ~40 studies; imported only by
+  `DeskToolsService`.
+- `utils/playbooksCore.ts` — scanner EMA (SMA seed).
+- `services/analysis/agentTools.ts`, `strategyBacktest.ts`,
+  `patternBacktest.ts` — agent/backtest helpers.
+
+The scanner's EMA20 (D4) and the desk ATR (D1) are fixed; the rows above are
+the remaining inventory.

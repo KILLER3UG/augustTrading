@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react';
 import {ThumbsDown, ThumbsUp, Brain, Server, Target, AreaChart as AreaChartIcon} from '../shared/Icons';
 import { Tooltip, ResponsiveContainer, AreaChart, Area } from 'recharts';
 import { SelectMenu } from '../shared/SelectMenu';
+import ChartFrame from '../shared/ChartFrame';
 import { APP_VERSION } from '../../constants/version';
 
 // Import services
@@ -162,7 +163,7 @@ export const VersionHistoryDashboard: React.FC = () => {
                         {/* 1.1 RL - Large Card */}
                         <ModernCard title="Reinforcement Loop" accent="emerald" icon={<Icons.Chart className="w-5 h-5" />} large>
                             {signals.length > 0 ? (
-                                <div className="h-48 w-full -ml-2 min-w-0">
+                                <ChartFrame variant="plain" state="ready" bodyClassName="h-48 -ml-2" testId="version-history-reward-chart">
                                     <ResponsiveContainer width="100%" height="100%" minWidth={100}>
                                         <AreaChart data={signals}>
                                             <defs>
@@ -178,7 +179,7 @@ export const VersionHistoryDashboard: React.FC = () => {
                                             <Area type="monotone" dataKey="rewardScore" stroke={chartColor('--color-emerald-400', '#34d399')} strokeWidth={2} fillOpacity={1} fill="url(#colorReward)" />
                                         </AreaChart>
                                     </ResponsiveContainer>
-                                </div>
+                                </ChartFrame>
                             ) : (
                                 <div className="h-48 w-full min-w-0 flex flex-col items-center justify-center gap-2 rounded-bubble border border-dashed border-emerald-500/20 bg-emerald-500/5 text-center">
                                     <Icons.Chart className="h-6 w-6 text-emerald-500/60" />

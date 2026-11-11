@@ -30,12 +30,16 @@
  * both rules is a conservative miss at the edges; the cost of relaxing them is
  * a ledger that grades the model on prices it could not have seen.
  *
- * Every filled outcome is charged a round-trip cost in R: taker fee on both
- * sides plus an assumed slippage on both sides, scaled by the entry price over
- * the stop distance. Fees are an assumption, so they are a named constant, not
- * a hidden subtraction.
+ * Every filled outcome is charged a round-trip cost in R through the ONE cost
+ * model (`utils/netRiskReward`): the taker fee on both sides, slippage
+ * explicitly NOT modelled. The resolver used to carry its own 7 bps model
+ * (taker + 2 bps slippage), so a signal position and a journal position with
+ * the same entry/stop/exit could disagree by 0.04 R; the name `roundTripCostR`
+ * was duplicated, which is how the two drifted. Fees are an assumption, so
+ * they are a named constant, not a hidden subtraction.
  */
 
+import { roundTripCostR as netRoundTripCostR, stopDistancePercent } from '../../utils/netRiskReward';
 import type {
     SignalDirection,
     SignalLevels,
@@ -62,12 +66,6 @@ export interface SignalCandle {
 export const SIGNAL_BAR_MS = 5 * 60_000;
 export const SIGNAL_DRILL_BAR_MS = 60_000;
 
-/** Assumed costs, per side. Taker, because a signal's stop is an exit that
- *  cannot wait for a maker fill. These are DEFAULTS on a perp desk, not a
- *  claim about the trader's fee tier. */
-export const SIGNAL_TAKER_FEE_RATE = 0.0005;
-export const SIGNAL_SLIPPAGE_RATE = 0.0002;
-
 export type SignalSide = 'stop' | 'target' | 'both' | 'none';
 
 export const bracketError = (levels: SignalLevels, direction: SignalDirection): string | null => {
@@ -89,11 +87,13 @@ export const bracketError = (levels: SignalLevels, direction: SignalDirection): 
 export const riskPerUnit = (levels: Pick<SignalLevels, 'entry' | 'stop'>): number =>
     Math.abs(levels.entry - levels.stop);
 
-/** Round-trip cost in R at this entry/stop. */
-export const roundTripCostR = (levels: Pick<SignalLevels, 'entry' | 'stop'>): number => {
-    const risk = riskPerUnit(levels);
-    if (!(risk > 0)) return 0;
-    return (levels.entry * 2 * (SIGNAL_TAKER_FEE_RATE + SIGNAL_SLIPPAGE_RATE)) / risk;
+/** Round-trip cost in R at this entry/stop, through the ONE cost model.
+ *  A plan whose risk distance is not measurable costs nothing here — the
+ *  resolver never invents a cost it cannot divide by. */
+export const signalRoundTripCostR = (levels: Pick<SignalLevels, 'entry' | 'stop'>): number => {
+    if (!(riskPerUnit(levels) > 0)) return 0;
+    const cost = netRoundTripCostR({ stopDistancePct: stopDistancePercent(levels.entry, levels.stop) });
+    return cost.known && cost.costR !== null ? cost.costR : 0;
 };
 
 const touches = (candle: SignalCandle, direction: SignalDirection, price: number): boolean =>
@@ -195,7 +195,7 @@ export const resolveSignal = (
             : null;
     }
 
-    const feeR = roundTripCostR(levels);
+    const feeR = signalRoundTripCostR(levels);
     const risk = riskPerUnit(levels);
     const triggerIndex = bars.findIndex(c => touches(c, signal.direction, signal.entry));
     if (triggerIndex < 0) {

@@ -18,7 +18,8 @@ import type { TrackedPosition } from '../../types/tracking';
 import { foldRefusals, readSignalEvents, readSignals, type SignalRefusalRow } from '../../services/signals/signalLedger';
 import { readTrackedPositions } from '../../services/tracking/positionStore';
 import { settleDueSignals, settleRefusedSignals } from '../../services/signals/signalService';
-import { summariseSignals, SIGNAL_SLIPPAGE_RATE, SIGNAL_TAKER_FEE_RATE } from '../../services/signals/signalResolver';
+import { summariseSignals } from '../../services/signals/signalResolver';
+import { FEE_TAKER_BPS } from '../../utils/netRiskReward';
 import { MIN_ACCURACY_FILLS, scoreSignals } from '../../services/signals/signalAccuracy';
 import { getActiveUsername } from '../../utils/activeUser';
 import { phtStamp } from '../../utils/timezone';
@@ -363,7 +364,7 @@ const SignalFeed: React.FC<SignalFeedProps> = ({ user }) => {
         return rates.length === 0 ? null : rates.reduce((a, b) => a + b, 0) / rates.length;
     }, [rows]);
     const fills = summary.won + summary.lost + summary.expired;
-    const costPct = ((SIGNAL_TAKER_FEE_RATE + SIGNAL_SLIPPAGE_RATE) * 2 * 100).toFixed(2);
+    const costPct = ((FEE_TAKER_BPS * 2) / 100).toFixed(2);
 
     return (
         <div className="h-full overflow-y-auto" data-testid="signal-feed">
@@ -493,7 +494,7 @@ const SignalFeed: React.FC<SignalFeedProps> = ({ user }) => {
 
                 <p className="text-ui-2xs leading-relaxed text-zinc-600">
                     Settlement: closed OKX 5m candles, Binance cross-check on the bars that decided the call, 1m drill-down only for a
-                    bar that contains both levels. Costs charged in R: {costPct}% round trip (taker fee + assumed slippage). The base rate
+                    bar that contains both levels. Costs charged in R: {costPct}% round trip (taker fee; slippage not modeled). The base rate
                     is the SAME levels entered at every bar of the same tape — a hit rate means nothing without it. A signal whose tape is
                     unavailable stays open; it is never read as &quot;no entry&quot;.
                 </p>
