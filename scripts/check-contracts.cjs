@@ -92,17 +92,23 @@
  *
  * Plain node, no vitest, no jsdom, no network: each module is bundled from
  * TypeScript with esbuild (already a vite dependency) into a temp file and
- * required. Runs in CI and in the release gate BEFORE the build, the same
- * slot the anchor gate occupies. If a contract here fails, the fix belongs in
- * the module — never in this file's expectations.
+ * required. Dependencies stay external, but app source is still bundled PER
+ * CALL, so every block gets a fresh module instance — the localStorage/window
+ * shims some blocks install before loading depend on that. Do not cache the
+ * required exports to save time: it hands one block's shim to the next.
+ * Runs in CI and in the release gate BEFORE the build, the same slot the
+ * anchor gate occupies. If a contract here fails, the fix belongs in the
+ * module — never in this file's expectations.
  */
 'use strict';
 
 const fs = require('fs');
-const os = require('os');
 const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..');
+// Under node_modules so a bare `require` inside a bundle resolves the repo's
+// dependencies by walking up — no NODE_PATH mutation, no private loader API.
+const CACHE_DIR = path.join(ROOT, 'node_modules', '.cache', 'august-contracts');
 
 // ─── tiny assertion kit: run everything, report everything ─────────────────
 let passed = 0;
@@ -119,7 +125,8 @@ const ok = (name, cond, detail = '') => {
  *  `node <ELF>` dies with "Invalid or unexpected token" (it worked on Windows
  *  only because there the bin path is a JS shim). */
 const loadModule = (rel, expose = {}) => {
-    const tmp = path.join(os.tmpdir(), `contracts-${rel.replace(/[^a-z0-9]+/gi, '-')}-${process.pid}.cjs`);
+    fs.mkdirSync(CACHE_DIR, { recursive: true });
+    const tmp = path.join(CACHE_DIR, `contracts-${rel.replace(/[^a-z0-9]+/gi, '-')}-${process.pid}.cjs`);
     const esbuild = require(path.join(ROOT, 'node_modules', 'esbuild'));
     esbuild.buildSync({
         stdin: {
@@ -130,6 +137,8 @@ const loadModule = (rel, expose = {}) => {
             loader: 'ts',
         },
         bundle: true,
+        // External deps: node compiles each one once, not inside all 101 bundles.
+        packages: 'external',
         platform: 'node',
         format: 'cjs',
         outfile: tmp,
