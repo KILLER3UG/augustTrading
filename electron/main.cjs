@@ -1486,6 +1486,13 @@ function setupAutoUpdater() {
 
     trustedHandle('update:check', async () => {
         if (isInstallerSmoke) return updateInfo; // smoke runs must never contact the update service
+        // Say the problem at the CHECK, not after the user has been invited to
+        // download something this app will refuse to install.
+        if (!(await updateChannelIsVerifiable())) {
+            updateInfo = { ...updateInfo, status: 'error', error: unverifiableUpdateMessage() };
+            sendUpdateStatus();
+            return updateInfo;
+        }
         try {
             await autoUpdater.checkForUpdates();
             return updateInfo;
@@ -1496,8 +1503,59 @@ function setupAutoUpdater() {
         }
     }, () => ({ ...updateInfo, status: 'error', ...refused }));
 
+    // ── Publisher identity ──────────────────────────────────────────────────
+    //
+    // electron-updater checks a downloaded Windows installer against the
+    // `publisherName` recorded in the app-update.yml beside the INSTALLED app
+    // (electron-updater/out/NsisUpdater.js: `verifySignature` returns NULL when
+    // there is no publisherName, and the caller treats null as PASS - it only
+    // throws when the check produced an actual complaint).
+    //
+    // This project configures no publisherName, because the signing
+    // certificate has not been bought. So the channel carries no identity at
+    // all, and the updater as shipped would install ANY installer it was
+    // handed. The release-side gate (scripts/verify-release-signature.cjs)
+    // stops an unsigned ARTIFACT from being published; it cannot make the
+    // installed app verify what it is given.
+    //
+    // So the app asks the same question before it fetches or runs anything.
+    const updatePublisherIdentity = async () => {
+        try {
+            const cfg = await autoUpdater.configOnDisk.value;
+            const name = cfg && cfg.publisherName;
+            return typeof name === 'string' && name.trim() ? name.trim() : null;
+        } catch {
+            return null;
+        }
+    };
+    // The same "deliberate, never inherited" shape the release gate uses:
+    // shipping unsigned has to be chosen, not inherited. An owner who has
+    // decided to run an unsigned channel says so out loud.
+    const allowUnsignedUpdates = () => process.env.AUGUSTTRADING_ALLOW_UNSIGNED_UPDATES === '1';
+    const updateChannelIsVerifiable = async () => {
+        if (await updatePublisherIdentity()) return true;
+        if (allowUnsignedUpdates()) {
+            console.warn('[AutoUpdater] AUGUSTTRADING_ALLOW_UNSIGNED_UPDATES=1 — installing an update the app cannot verify.');
+            return true;
+        }
+        return false;
+    };
+    const unverifiableUpdateMessage = () =>
+        'This build has no publisher identity, so the app cannot verify the installer it was offered '
+        + '(the update channel carries no code-signing identity). Update installation is refused. '
+        + 'Set build.publish.publisherName in package.json to the subject of your signing certificate, '
+        + 'or set AUGUSTTRADING_ALLOW_UNSIGNED_UPDATES=1 to accept an unverified update deliberately.';
+
     trustedHandle('update:download', async () => {
         if (isInstallerSmoke) return updateInfo; // smoke runs must never download an update
+        // Nothing is fetched that could not be installed: the download is
+        // harmless, but fetching an artifact this app has already refused to
+        // trust only teaches the user a button works.
+        if (!(await updateChannelIsVerifiable())) {
+            updateInfo = { ...updateInfo, status: 'error', error: unverifiableUpdateMessage() };
+            sendUpdateStatus();
+            return updateInfo;
+        }
         try {
             await autoUpdater.downloadUpdate();
             return updateInfo;
@@ -1508,13 +1566,23 @@ function setupAutoUpdater() {
         }
     }, () => ({ ...updateInfo, status: 'error', ...refused }));
 
-    trustedHandle('update:install', () => {
+    trustedHandle('update:install', async () => {
         if (isInstallerSmoke) return false; // smoke runs must never launch an installer
         // Only install when an update was actually downloaded — quitAndInstall
         // with nothing downloaded throws synchronously inside setImmediate
         // (uncaught exception in main).
         if (updateInfo.status !== 'downloaded') {
             console.warn('[AutoUpdater] update:install ignored — no downloaded update');
+            return false;
+        }
+        // The last gate before an installer runs on this machine. A channel
+        // with no identity has nothing to check the installer against, so
+        // nothing is installed from it.
+        if (!(await updateChannelIsVerifiable())) {
+            const message = unverifiableUpdateMessage();
+            console.error('[AutoUpdater] update:install refused —', message);
+            updateInfo = { ...updateInfo, status: 'error', error: message };
+            sendUpdateStatus();
             return false;
         }
         // Push an 'installing' status so the renderer overlay can show a

@@ -148,3 +148,7 @@ Optional: `AUGUSTTRADING_REPO=<checkout>` (desktop dev only) enables the model's
 Optional: `AUGUSTTRADING_CLONE_URL=<git-url>` makes the INSTALLED app self-hosted: first boot clones
 it into `<userData>/harness-src`, installs, builds, and serves that build; `repo_apply` then builds
 and reloads. Needs git + npm + network; without it the app runs the installer bundle.
+Optional: `AUGUSTTRADING_ALLOW_UNSIGNED_UPDATES=1` lets the desktop app install an update it cannot
+verify. The update channel is only verifiable when the build carries a publisher identity
+(`build.publish.publisherName`, written from the signing certificate), so without one the app
+REFUSES to download or install an update. Set this deliberately, never by accident.
