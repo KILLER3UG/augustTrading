@@ -1811,9 +1811,15 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
 // ─── 28. the repo bridge's path sandbox ────────────────────────────────────
 (() => {
     const { resolveRepoPath } = require(path.join(ROOT, 'shared/repoSandbox.cjs'));
-    const root = path.join(ROOT, 'sandbox-probe');
+    // A REAL directory: the sandbox resolves the root through the filesystem,
+    // so a root that does not exist is refused rather than waved through.
+    const probeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'august-sandbox-'));
+    const root = path.join(probeDir, 'repo');
+    fs.mkdirSync(path.join(root, 'src', 'components'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'src', 'components', 'App.tsx'), 'export const App = () => null;\n');
     const good = resolveRepoPath(root, 'src/components/App.tsx');
-    ok('repo sandbox: a src path resolves inside the root', good.ok && good.rel === 'src/components/App.tsx');
+    ok('repo sandbox: a src path resolves inside the root', good.ok && good.rel === 'src/components/App.tsx',
+        good.ok ? good.rel : good.error);
     ok('repo sandbox: a .. escape is refused', !resolveRepoPath(root, '../outside.ts').ok);
     ok('repo sandbox: absolute and drive paths are refused',
         !resolveRepoPath(root, '/etc/passwd').ok && !resolveRepoPath(root, 'C:/Windows/win.ini').ok);
@@ -1827,26 +1833,40 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
     ok('repo sandbox: the build manifest is refused',
         !resolveRepoPath(root, 'package.json').ok
         && !resolveRepoPath(root, 'package-lock.json').ok);
+    ok('repo sandbox: the registry and every toolchain config the build runs are refused',
+        !resolveRepoPath(root, '.npmrc').ok
+        && !resolveRepoPath(root, 'vite.config.ts').ok
+        && !resolveRepoPath(root, 'eslint.config.js').ok
+        && !resolveRepoPath(root, 'capacitor.config.ts').ok
+        && !resolveRepoPath(root, 'tsconfig.json').ok
+        && !resolveRepoPath(root, 'tsconfig.scripts.json').ok,
+        'vite build executes vite.config.ts; --ignore-scripts does not reach it');
+    ok('repo sandbox: an unresolvable ROOT fails closed',
+        !resolveRepoPath(path.join(probeDir, 'not-there'), 'src/App.tsx').ok);
     ok('repo sandbox: no configured root is refused', !resolveRepoPath('', 'src/app.ts').ok);
     // A symlink (a Windows junction here) INSIDE the repo that points out of
     // it. `path.resolve`/`path.relative` are lexical and cannot see one, so
     // the containment check has to resolve the target first.
-    const probe = fs.mkdtempSync(path.join(os.tmpdir(), 'august-sandbox-'));
     try {
-        const repo = path.join(probe, 'repo');
-        const outside = path.join(probe, 'outside');
-        fs.mkdirSync(path.join(repo, 'src'), { recursive: true });
+        const outside = path.join(probeDir, 'outside');
         fs.mkdirSync(outside, { recursive: true });
         fs.writeFileSync(path.join(outside, 'secret.txt'), 'not yours');
-        fs.symlinkSync(outside, path.join(repo, 'escape'), 'junction');
-        ok('repo sandbox: an ordinary path still resolves inside the root',
-            resolveRepoPath(repo, 'src/App.tsx').ok);
+        fs.symlinkSync(outside, path.join(root, 'escape'), 'junction');
         ok('repo sandbox: a symlink out of the repo is refused',
-            !resolveRepoPath(repo, 'escape/secret.txt').ok
-            && !resolveRepoPath(repo, 'escape/newfile.txt').ok);
-    } finally {
-        fs.rmSync(probe, { recursive: true, force: true });
+            !resolveRepoPath(root, 'escape/secret.txt').ok
+            && !resolveRepoPath(root, 'escape/newfile.txt').ok);
+    } catch (e) {
+        // Junctions need no privilege; reaching this means the filesystem
+        // refused even those, so the symlink arm is unproven HERE, not green.
+        ok('repo sandbox: a symlink out of the repo is refused', false, `junction unavailable: ${e.code || e.message}`);
     }
+    // The deny list is also matched on the RESOLVED basename, so a file
+    // symlink named `notes.txt` that lands on `package.json` is refused by its
+    // target. That case needs a FILE symlink, which Windows grants only with
+    // SymlinkPrivilege (EPERM here) — so it is hardened in the module but NOT
+    // independently proven by this run; the junction arm above covers the
+    // resolved-path containment that IS constructible.
+    fs.rmSync(probeDir, { recursive: true, force: true });
 })();
 
 // ─── 28b. the provider host policy classifies by ADDRESS ───────────────────

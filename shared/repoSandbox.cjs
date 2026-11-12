@@ -24,12 +24,25 @@ const BINARY_EXT = /\.(png|jpe?g|gif|webp|ico|bmp|woff2?|ttf|otf|eot|pdf|zip|gz|
  * build process, on the machine. A hook is a shell command, so an editable
  * manifest turns "the model may edit the source" into "the model may run a
  * command" - a different privilege level, and one the product never
- * promised. `package-lock.json` decides what `npm install` fetches.
+ * promised. `package-lock.json` decides what `npm install` fetches, and
+ * `.npmrc` can redirect the registry it fetches from.
  *
  * The build itself runs with `--ignore-scripts` (electron/main.cjs), so a
  * hook is inert even in a checkout that already carried one.
  */
-const DENIED_BUILD_FILES = new Set(['package.json', 'package-lock.json']);
+const DENIED_BUILD_FILES = new Set(['package.json', 'package-lock.json', '.npmrc']);
+/**
+ * Toolchain configuration the build or lint EXECUTES, or that steers what the
+ * build compiles and where imports resolve.
+ *
+ * `--ignore-scripts` only neutralises npm lifecycle hooks. `npm run build` is
+ * `tsc --noEmit && vite build`, and `vite build` is JavaScript: an editable
+ * `vite.config.ts` is arbitrary code in the build process, reachable through
+ * the same `runInRepo` the manifest hooks were closed off through. The
+ * tsconfigs steer compilation (an alias can redirect module resolution), and
+ * `eslint.config.js` runs on every lint.
+ */
+const TOOLCHAIN_CONFIG = /(^|\/)([^/]*\.config\.[cm]?[jt]sx?|tsconfig[^/]*\.json)$/i;
 
 const normalizeRel = (rel) => String(rel == null ? '' : rel).replace(/\\/g, '/');
 
@@ -100,25 +113,36 @@ const resolveRepoPath = (root, rel) => {
     // so it cannot see one. The root is resolved the same way, or a repo
     // that lives behind a link would refuse every path inside it.
     const realRoot = realpathOrNull(rootAbs);
-    let realParts = [];
-    if (realRoot) {
-        const realBack = path.relative(realRoot, realpathWithTail(abs));
-        if (!realBack || realBack.startsWith('..') || path.isAbsolute(realBack)) {
-            return { ok: false, error: 'path must stay inside the repo' };
-        }
-        realParts = realBack.split(path.sep);
+    if (!realRoot) {
+        // Fail CLOSED. The resolved-path checks below cannot run without a
+        // real root, and a root that does not resolve is exactly the case a
+        // dangling link (or a raced delete) turns into a way out.
+        return { ok: false, error: 'the repo root does not resolve on disk' };
     }
+    const realBack = path.relative(realRoot, realpathWithTail(abs));
+    if (!realBack || realBack.startsWith('..') || path.isAbsolute(realBack)) {
+        return { ok: false, error: 'path must stay inside the repo' };
+    }
+    const realParts = realBack.split(path.sep);
+    const realBase = realParts[realParts.length - 1];
     const parts = lexicalBack.split(path.sep);
+    const base = parts[parts.length - 1];
     // The deny-list is matched on BOTH the path as written and the path as
-    // it resolves: a symlinked `node_modules` is invisible in the first.
+    // it resolves: a symlinked `node_modules` is invisible to the first, and
+    // a link named `notes.txt` that lands on a config file is invisible to
+    // the resolved segment list.
     const denied = [...parts, ...realParts].find(p => DENY_SEGMENTS.has(p));
     if (denied) return { ok: false, error: `"${denied}" is not editable` };
-    const base = parts[parts.length - 1];
-    if (/^\.env/i.test(base)) return { ok: false, error: 'environment files are not editable' };
-    if (DENIED_BUILD_FILES.has(base.toLowerCase())) {
-        return { ok: false, error: 'the build manifest is not editable' };
+    for (const candidate of new Set([base, realBase])) {
+        if (/^\.env/i.test(candidate)) return { ok: false, error: 'environment files are not editable' };
+        if (DENIED_BUILD_FILES.has(candidate.toLowerCase())) {
+            return { ok: false, error: 'the build manifest is not editable' };
+        }
+        if (TOOLCHAIN_CONFIG.test(candidate)) {
+            return { ok: false, error: 'build toolchain configuration is not editable' };
+        }
+        if (BINARY_EXT.test(candidate)) return { ok: false, error: 'binary files are not editable' };
     }
-    if (BINARY_EXT.test(base)) return { ok: false, error: 'binary files are not editable' };
     return { ok: true, abs, rel: parts.join('/') };
 };
 
