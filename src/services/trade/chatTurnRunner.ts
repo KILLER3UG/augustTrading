@@ -1149,7 +1149,7 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
             // no trader's row already waiting to be claimed.
             if (bot) onBotTurnCommit?.(bot, text);
             else if (turnConversationId) {
-                onSoloTurnCommit?.({ id: userEntry.id, role: 'user', text }, turnConversationId);
+                onSoloTurnCommit?.({ id: userEntry.id, role: 'user', text, at: userEntry.at }, turnConversationId);
             }
             // THE LIVE MIRROR. Without it the conversation gained this turn's
             // answer only when it settled, so crossing to the Agents surface

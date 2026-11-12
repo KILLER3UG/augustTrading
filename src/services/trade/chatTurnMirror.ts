@@ -62,6 +62,12 @@ export interface SoloTurnRow {
      *  lands in the same `thoughtProcesses` slot the Agents surface's own writer
      *  uses instead of opening a second paragraph for one turn. */
     speakerKey?: string;
+    /** The dock entry's own stamp — the TURN's send time. The mirrored row's
+     *  `createdAt` reads this, not the commit moment: the mirror only starts
+     *  after the context fetch (0.6–2.5s after send), and a clock started at
+     *  its own commit counted the turn ~2s young the moment the fetch was
+     *  slow. One turn, one start, in both homes. */
+    at?: number;
 }
 
 export type SoloTurnCommit = (row: SoloTurnRow, conversationId: string) => void;
@@ -112,6 +118,7 @@ export const startEntryMirror = (opts: {
             role: 'ai',
             text: e.text ?? '',
             streaming: !!e.streaming,
+            ...(typeof e.at === 'number' ? { at: e.at } : {}),
             ...(e.reasoning ? { reasoning: e.reasoning } : {}),
             ...(e.tools?.length ? { tools: e.tools } : {}),
             ...(e.toolIds?.length ? { toolIds: e.toolIds } : {}),

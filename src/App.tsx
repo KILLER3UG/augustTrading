@@ -1836,7 +1836,13 @@ const App: React.FC = () => {
         row: SoloTurnRow,
         conversationId: string,
     ): void => {
-        const at = new Date().toISOString();
+        // The row's stamp is the TURN's send time when the mirror carried it,
+        // not the commit moment: the mirror starts after the context fetch, so
+        // a commit-time stamp started the Agents surface's clock up to ~2.4s
+        // late — one round-boundary from reading younger than the dock's.
+        const at = typeof row.at === 'number' && Number.isFinite(row.at)
+            ? new Date(row.at).toISOString()
+            : new Date().toISOString();
         // What a mirrored desk turn OWNS on the row. The trace rides under the
         // answering provider's key — the same key the Agents surface's own live
         // writer uses — so one turn is one paragraph, not two.
