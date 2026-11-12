@@ -974,17 +974,24 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
         rv.notebookReviewDue({ at: 1_000, signature: 'old' }, 'new', 61_000, 60_000) === true);
 })();
 
-// ─── 19. the insight store: rendered, never created or carried ─────────────
+// ─── 19. the insight store: deleted — no reader, no carrier, no writer ─────
+// The frozen insightKnowledgeBase fields (top-level + GlobalMemory) were
+// removed; their entries migrate into the notebook's distilled/ folder
+// (distilledMemory.migrateFrozenTradeInsights). The old pin asked the code to
+// keep rendering and carrying the field — inverted here to absence pins.
 (() => {
     const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
     ok('insight store: the analysis pipeline no longer names it',
         !/insightKnowledgeBase/.test(read('src/hooks/useAnalysisPipeline.ts')));
     ok('insight store: algorithmic memory neither creates nor assigns it',
         !/insightKnowledgeBase\s*=/.test(read('src/services/learning/AlgorithmicMemoryService.ts')));
-    ok('insight store: the memory index still renders stored entries',
-        /globalMemory\.insightKnowledgeBase\?\.insights/.test(read('src/utils/memoryUtils.ts')));
-    ok('insight store: the SQLite column still round-trips for backup restore',
-        /insightKnowledgeBase/.test(read('src/services/infrastructure/SqliteService.ts')));
+    ok('insight store: the memory index no longer renders it',
+        !/globalMemory\.insightKnowledgeBase/.test(read('src/utils/memoryUtils.ts')));
+    ok('insight store: the SQLite layer no longer carries the column',
+        !/insightKnowledgeBase/.test(read('src/services/infrastructure/SqliteService.ts')));
+    ok('insight store: the boot migration exists and clears the frozen fields',
+        /migrateFrozenTradeInsights/.test(read('src/services/learning/distilledMemory.ts'))
+        && /insightKnowledgeBase:\s*undefined/.test(read('src/services/learning/distilledMemory.ts')));
 })();
 
 // ─── 20. the signal loop: resolver order, costs, ledger, venue data ────────

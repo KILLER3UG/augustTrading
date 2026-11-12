@@ -19,7 +19,7 @@
  * fingerprint already exists is updated in place instead of duplicated.
  */
 
-import { AttributedInsight, MemoryFile } from '../../types';
+import { AttributedInsight, MemoryFile, UserProfile } from '../../types';
 import {
     createMemoryFolderUnlocked,
     createMemoryFileUnlocked,
@@ -31,6 +31,7 @@ import {
     withNotebookWriteLock,
 } from './MemoryFilesService';
 import { getPreferenceObject, removePreference, PREF_KEYS } from '../infrastructure/PreferencesService';
+import { getUserProfile, saveUserProfile } from '../infrastructure/dbService';
 
 export const DISTILLED_FOLDER_NAME = 'distilled';
 /** Same cap the old pref store enforced (most recent 200). Over cap we prune
@@ -344,6 +345,108 @@ export const migrateLegacyAttributedInsights = async (): Promise<number> => {
         }
     } catch (e) {
         console.warn('[distilledMemory] Legacy insight migration failed (will retry next boot):', e);
+    }
+    return migrated;
+};
+
+// ─── Frozen-field migration (the profile-borne insight stores) ──────────────
+
+/**
+ * The shape the frozen fields carried before the store was deleted. The
+ * fields are gone from `UserProfile`, but older profiles still carry them in
+ * their stored blob — this is what the migration reads out.
+ */
+interface FrozenTradeInsight {
+    id?: unknown;
+    insight?: unknown;
+    sourceTradeId?: unknown;
+    coin?: unknown;
+    pattern?: unknown;
+    direction?: unknown;
+    createdAt?: unknown;
+}
+
+const asInsight = (v: unknown): FrozenTradeInsight | null =>
+    (v && typeof v === 'object') ? v as FrozenTradeInsight : null;
+
+/**
+ * Move the frozen `insightKnowledgeBase` fields — BOTH the top-level
+ * `UserProfile` field and the `GlobalMemory.insightKnowledgeBase` field —
+ * into the notebook's distilled/ folder, then clear them from the stored
+ * profile. Called from useUserProfileLoader.loadUserData right after
+ * `setAttributedInsightsUser`, BEFORE the profile is applied to state: the
+ * clear lands in storage first, so `applyLoadedProfile` reads a profile that
+ * no longer carries the frozen fields and the persistence round-trip cannot
+ * write them back.
+ *
+ * Safe to re-run: each fact lands through `writeDistilledFact`, whose
+ * fingerprint merge absorbs a repeat into the existing fact (counters kept).
+ * A failed write skips the clear entirely — the frozen fields stay in the
+ * stored profile and the next boot retries (no data loss).
+ *
+ * Every migrated fact is verbatim, attributed to sourceProvider 'legacy'
+ * (an honest provenance label: no provider ever reviewed it), quality 50 —
+ * the neutral mid-scale, since the store's `useCount` was birth strength,
+ * not measured usefulness.
+ */
+export const migrateFrozenTradeInsights = async (username: string): Promise<number> => {
+    let migrated = 0;
+    try {
+        const profile = await getUserProfile(username);
+        if (!profile) return 0;
+        // Structural read: the fields no longer exist on UserProfile by type,
+        // but the stored blob still carries them.
+        const carrier = profile as unknown as {
+            insightKnowledgeBase?: { insights?: unknown[] };
+            globalMemory?: { insightKnowledgeBase?: { insights?: unknown[] } };
+        };
+        const frozen: FrozenTradeInsight[] = [
+            ...(Array.isArray(carrier.insightKnowledgeBase?.insights) ? carrier.insightKnowledgeBase.insights : []),
+            ...(Array.isArray(carrier.globalMemory?.insightKnowledgeBase?.insights) ? carrier.globalMemory.insightKnowledgeBase.insights : []),
+        ]
+            .map(asInsight)
+            .filter((t): t is FrozenTradeInsight => t !== null);
+
+        for (const t of frozen) {
+            if (typeof t.id !== 'string' || !t.id) continue;
+            if (typeof t.insight !== 'string' || !t.insight.trim()) continue;
+            // Category from scope presence: a coin-scoped lesson is a coin
+            // fact, a pattern-scoped one a pattern fact, the rest global.
+            const coin = typeof t.coin === 'string' && t.coin.trim() ? t.coin.trim() : null;
+            const pattern = typeof t.pattern === 'string' && t.pattern.trim() ? t.pattern.trim() : null;
+            await writeDistilledFact({
+                id: `legacy-${t.id}`,
+                insight: t.insight,
+                sourceProvider: 'legacy',
+                category: coin ? 'coin' : pattern ? 'pattern' : 'global',
+                scope: coin ?? pattern ?? undefined,
+                qualityScore: 50,
+                wasValidated: false,
+                timesUsed: 0,
+                timesHelpful: 0,
+                timesNotHelpful: 0,
+                createdAt: typeof t.createdAt === 'string' && t.createdAt ? t.createdAt : new Date().toISOString(),
+                tradeId: typeof t.sourceTradeId === 'string' ? t.sourceTradeId : '',
+            });
+            migrated++;
+        }
+        if (migrated > 0) resetDistilledCache();
+
+        // Clear the frozen fields so no save carries them again. Reached only
+        // when every write above landed — an exception jumps to the catch and
+        // leaves the fields in place for a retry on the next boot.
+        const patch: Record<string, unknown> = { insightKnowledgeBase: undefined };
+        if (carrier.globalMemory && 'insightKnowledgeBase' in carrier.globalMemory) {
+            patch.globalMemory = { ...carrier.globalMemory, insightKnowledgeBase: undefined };
+        }
+        if (migrated > 0 || patch.globalMemory) {
+            await saveUserProfile(username, patch as unknown as Partial<UserProfile>);
+            if (migrated > 0) {
+                console.log(`[distilledMemory] Migrated ${migrated} frozen trade insights into the notebook and cleared the frozen fields`);
+            }
+        }
+    } catch (e) {
+        console.warn('[distilledMemory] Frozen insight migration failed (frozen fields kept, will retry next boot):', e);
     }
     return migrated;
 };

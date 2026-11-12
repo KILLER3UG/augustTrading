@@ -37,32 +37,6 @@ export interface TradingWeaknesses {
 }
 
 /**
- * A single insight extracted from a post-mortem analysis.
- * Rendered by `utils/memoryUtils.buildGlobalMemoryIndex` for profiles that
- * already carry entries. Nothing appends to the store any more: the
- * post-mortem detectors that wrote it were deleted.
- */
-export interface TradeInsight {
-  id: string;
-  category: 'entry_timing' | 'exit_strategy' | 'pattern_recognition' | 'risk_management' | 'general';
-  insight: string;
-  sourceTradeId: string;
-  coin?: string;
-  pattern?: string;
-  direction?: 'Long' | 'Short';
-  createdAt: string;
-  useCount: number; // How many times the pattern recurred when this was distilled — nothing increments it later, so treat it as birth strength, not evidence of use
-}
-
-/**
- * Knowledge base for storing extracted insights
- */
-export interface InsightKnowledgeBase {
-  insights: TradeInsight[];
-  lastUpdated: string;
-}
-
-/**
  * An insight with provider attribution and usage tracking. Lives in the
  * Trader notebook as a distilled/ memory file (plan store unification —
  * the old standalone `attributed_insights_kb` preference store was folded
@@ -98,7 +72,6 @@ export interface GlobalMemory {
     preferredSetup: string;
   };
   globalCorrections: string[];
-  insightKnowledgeBase?: InsightKnowledgeBase; // New: Structured insights knowledge base
   lastUpdated: string;
 }
 

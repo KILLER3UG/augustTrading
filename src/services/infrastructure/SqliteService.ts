@@ -144,7 +144,6 @@ const createTables = async (): Promise<void> => {
             settings TEXT,
             finalTradeSummary TEXT,
             tradingWeaknesses TEXT,
-            insightKnowledgeBase TEXT,
             learningRules TEXT,
             lastActiveConversationId TEXT
         );
@@ -427,7 +426,6 @@ export const sqliteGetUserProfile = async (username: string): Promise<UserProfil
         settings: safeParseJson(userData.settings, { activeFrameworks: [] }),
         finalTradeSummary: userData.finalTradeSummary,
         tradingWeaknesses: safeParseJson(userData.tradingWeaknesses, undefined),
-        insightKnowledgeBase: safeParseJson(userData.insightKnowledgeBase, undefined),
         learningRules: safeParseJson(userData.learningRules, undefined),
         lastActiveConversationId: userData.lastActiveConversationId, // Restore state
         tradeLog: trades,
@@ -523,8 +521,8 @@ const saveUserProfileUnlocked = async (profile: UserProfile): Promise<void> => {
         await db.run(`
             INSERT OR REPLACE INTO users (
                 username, createdAt, updatedAt, globalMemory, settings,
-                finalTradeSummary, tradingWeaknesses, insightKnowledgeBase, learningRules, lastActiveConversationId
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                finalTradeSummary, tradingWeaknesses, learningRules, lastActiveConversationId
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         `, [
             profile.username,
             profile.createdAt || now,
@@ -533,7 +531,6 @@ const saveUserProfileUnlocked = async (profile: UserProfile): Promise<void> => {
             JSON.stringify(profile.settings),
             profile.finalTradeSummary,
             profile.tradingWeaknesses ? JSON.stringify(profile.tradingWeaknesses) : null,
-            profile.insightKnowledgeBase ? JSON.stringify(profile.insightKnowledgeBase) : null,
             profile.learningRules ? JSON.stringify(profile.learningRules) : null,
             profile.lastActiveConversationId
         ]);

@@ -30,8 +30,6 @@ export const GlobalMemorySchema = z.object({
     preferredSetup: z.string().default(''),
   }).default({ leverageDefault: 100, favoriteAssets: [], preferredSetup: '' }),
   globalCorrections: coercedStringArray.default([]),
-  // Structured insight knowledge base — shape validated by its own consumers.
-  insightKnowledgeBase: z.any().optional(),
   lastUpdated: z.string().default(() => new Date().toISOString()),
 });
 

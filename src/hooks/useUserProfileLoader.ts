@@ -26,6 +26,7 @@ import {
     initPatternMemoryService,
     setAttributedInsightsUser,
 } from '../services/learning/PatternMemorySynthesisService';
+import { migrateFrozenTradeInsights } from '../services/learning/distilledMemory';
 import GlobalLearningService from '../services/learning/GlobalLearningService';
 import { PriceAlertService } from '../services/ui/PriceAlertService';
 import { OutcomeAutopilotService } from '../services/ui/OutcomeAutopilotService';
@@ -63,7 +64,6 @@ export interface UseUserProfileLoaderArgs {
     setIsGlobalMemoryEnabled: React.Dispatch<React.SetStateAction<boolean>>;
     setMemoryConfig: React.Dispatch<React.SetStateAction<ProviderConfig | null>>;
     setMemoryModel: React.Dispatch<React.SetStateAction<string>>;
-    setInsightKnowledgeBase: React.Dispatch<React.SetStateAction<any>>;
 
     setActiveFrameworks: React.Dispatch<React.SetStateAction<string[]>>;
     setSummaryCharLimit: React.Dispatch<React.SetStateAction<number>>;
@@ -114,7 +114,7 @@ export const useUserProfileLoader = (args: UseUserProfileLoaderArgs): UseUserPro
         setConversationHistory, setActiveConversationId,
         setLoggedTrades, setTradeSummaries, setFinalTradeSummary,
         setGlobalMemory, setIsGlobalMemoryEnabled, setMemoryConfig, setMemoryModel,
-        setInsightKnowledgeBase, setActiveFrameworks, setSummaryCharLimit,
+        setActiveFrameworks, setSummaryCharLimit,
         setSummarizationProvider, setSummarizationModel, setVisionModel,
         setUseAlgorithmicSummary, setUseAlgorithmicInsights,
         setIsStrategiesEnabled,
@@ -206,8 +206,6 @@ export const useUserProfileLoader = (args: UseUserProfileLoaderArgs): UseUserPro
         const loadedMemoryConfig = providerConfigs.find(p => p.id === profile.settings?.memoryProvider) || null;
         setMemoryConfig(loadedMemoryConfig);
         setMemoryModel(profile.settings?.memoryModel || loadedMemoryConfig?.selectedModel || getFirstReadyProvider(providerConfigs)?.selectedModel || '');
-
-        setInsightKnowledgeBase(profile.insightKnowledgeBase);
     }, [
         providerConfigs,
         setTradeSummaries, setFinalTradeSummary, setGlobalMemory,
@@ -217,7 +215,7 @@ export const useUserProfileLoader = (args: UseUserProfileLoaderArgs): UseUserPro
         setCustomInstructions,
         setIsHybridIntelligenceEnabled,
         setIsAutoCapturing, setIsEntryNotHitCapturing,
- setMemoryConfig, setMemoryModel, setInsightKnowledgeBase,
+ setMemoryConfig, setMemoryModel,
     ]);
 
     const resetAppState = useCallback(async (usernameToSave?: string | null) => {
@@ -355,6 +353,16 @@ export const useUserProfileLoader = (args: UseUserProfileLoaderArgs): UseUserPro
             await GlobalLearningService.setActiveUser(username);
             if (isStale()) return;
             setAttributedInsightsUser(username);
+            if (isStale()) return;
+
+            // The frozen insight fields (top-level + GlobalMemory) migrate
+            // into the notebook BEFORE the profile is applied to state: the
+            // migration clears them in storage, so the read below and
+            // applyLoadedProfile never see them and persistence cannot write
+            // them back. Failure is tolerated — the fields stay and the next
+            // boot retries.
+            await migrateFrozenTradeInsights(username);
+            if (isStale()) return;
 
             const profile = await dbService.getUserProfile(username);
             if (isStale()) return;

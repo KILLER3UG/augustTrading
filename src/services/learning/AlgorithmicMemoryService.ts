@@ -3,12 +3,12 @@
 // Saves significant tokens by processing statistics and patterns locally
 
 import { GlobalMemory, LoggedTrade, TradeOutcome } from '../../types';
-// The two consolidation steps are no longer imported here: their only caller
-// was the recurring-mistake block that went with the post-mortem, so
-// `GlobalMemory.insightKnowledgeBase` no longer grows — and this function no
-// longer creates it on profiles that have none. The field and its one reader
-// (`utils/memoryUtils.buildGlobalMemoryIndex`) stay for profiles that already
-// carry entries, and the SQLite column stays readable for backup restore.
+// The frozen `GlobalMemory.insightKnowledgeBase` field is deleted: its last
+// reader (the memory-index INSIGHTS block) is gone with it and its entries
+// migrated into the notebook's distilled/ folder
+// (distilledMemory.migrateFrozenTradeInsights). This function no longer
+// creates it on profiles that have none — and no profile keeps one after the
+// boot migration clears it.
 
 /**
  * Updates Global Memory algorithmically without AI.

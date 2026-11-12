@@ -34,7 +34,6 @@ export interface UseProfilePersistenceArgs extends ProfileSettingsState {
     tradeSummaries: TradeSummary[];
     finalTradeSummary: string | null;
     globalMemory: any;
-    insightKnowledgeBase: any;
     memoryConfig: ProviderConfig | null;
     memoryModel: string;
 
@@ -83,7 +82,7 @@ export const useProfilePersistence = (args: UseProfilePersistenceArgs): UseProfi
     const {
         activeUsername, activeConversationId, setSaveStatus, toast, profileReadyRef,
         conversationHistory, loggedTrades, tradeSummaries,
-        finalTradeSummary, globalMemory, insightKnowledgeBase,
+        finalTradeSummary, globalMemory,
         memoryConfig, memoryModel,
         isAnalysisInProgress,
         activeFrameworks, summaryCharLimit, summarizationProvider, summarizationModel,
@@ -107,14 +106,12 @@ export const useProfilePersistence = (args: UseProfilePersistenceArgs): UseProfi
         globalMemory: globalMemory,
         settings: { activeFrameworks, summaryCharLimit, summarizationProvider, summarizationModel, visionModel, isGlobalMemoryEnabled, isStrategiesEnabled, customInstructions,isHybridIntelligenceEnabled, isAutoCapturing, isEntryNotHitCapturing, useAlgorithmicSummary, useAlgorithmicInsights, memoryProvider: memoryConfig?.id || '', memoryModel },
         lastActiveConversationId: activeConversationId || undefined,
-        // AI Learning data
-        insightKnowledgeBase: insightKnowledgeBase,
         // Learning rules used to live ONLY in WebView localStorage — they were
         // excluded from SQLite, backups and migrations, so a WebView data
         // clear silently destroyed them. Snapshotting them here populates the
         // users.learningRules column and BackupService payload.
         learningRules: storageService.loadLearningRules(),
-    }), [conversationHistory, loggedTrades, activeFrameworks, activeConversationId, tradeSummaries, finalTradeSummary, globalMemory, summaryCharLimit, summarizationProvider, summarizationModel, visionModel, isGlobalMemoryEnabled, isStrategiesEnabled, customInstructions,isHybridIntelligenceEnabled, isAutoCapturing, isEntryNotHitCapturing, useAlgorithmicSummary, useAlgorithmicInsights, insightKnowledgeBase, memoryConfig, memoryModel]);
+    }), [conversationHistory, loggedTrades, activeFrameworks, activeConversationId, tradeSummaries, finalTradeSummary, globalMemory, summaryCharLimit, summarizationProvider, summarizationModel, visionModel, isGlobalMemoryEnabled, isStrategiesEnabled, customInstructions,isHybridIntelligenceEnabled, isAutoCapturing, isEntryNotHitCapturing, useAlgorithmicSummary, useAlgorithmicInsights, memoryConfig, memoryModel]);
 
     // ─── Split save into DATA (heavy) + SETTINGS (light) ───────────
     // Previously a single effect re-serialized ALL conversations (with base64
@@ -174,7 +171,7 @@ export const useProfilePersistence = (args: UseProfilePersistenceArgs): UseProfi
         return () => {
             clearTimeout(handler);
         };
-    }, [conversationHistory, loggedTrades, tradeSummaries, finalTradeSummary, globalMemory, insightKnowledgeBase, activeUsername, setSaveStatus]);
+    }, [conversationHistory, loggedTrades, tradeSummaries, finalTradeSummary, globalMemory, activeUsername, setSaveStatus]);
 
     // The light payload, in one place so the SETTINGS effect and the unload
     // dirty-check can never drift on WHICH fields count as settings.
@@ -245,8 +242,7 @@ export const useProfilePersistence = (args: UseProfilePersistenceArgs): UseProfi
                     || last.tradeLog !== snapshot.tradeLog
                     || last.tradeSummaries !== snapshot.tradeSummaries
                     || last.finalTradeSummary !== snapshot.finalTradeSummary
-                    || last.globalMemory !== snapshot.globalMemory
-                    || last.insightKnowledgeBase !== snapshot.insightKnowledgeBase;
+                    || last.globalMemory !== snapshot.globalMemory;
                 if (!dirty) return;
                 await dbService.saveUserProfile(activeUsername, snapshot);
                 lastSavedSnapshotRef.current = snapshot;
@@ -273,7 +269,6 @@ export const useProfilePersistence = (args: UseProfilePersistenceArgs): UseProfi
                 || last.tradeSummaries !== tradeSummaries
                 || last.finalTradeSummary !== finalTradeSummary
                 || last.globalMemory !== globalMemory
-                || last.insightKnowledgeBase !== insightKnowledgeBase
                 || last.lastActiveConversationId !== (activeConversationId || undefined)) {
                 return true;
             }

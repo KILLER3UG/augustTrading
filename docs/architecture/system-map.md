@@ -369,8 +369,9 @@ draft chain (`draftGates` → `skillDrafts` → approval → the evidence fold) 
 deleted with the ledger. What remains of the loop is measurement: the journal,
 the signal ledger and the settlement reflection, all readable.
 
-Corollary that is easy to miss: `GlobalMemory.aiPatternMemory` and
-`insightKnowledgeBase` are **frozen stores** (see G), and
+Corollary that is easy to miss: the frozen `insightKnowledgeBase` store is
+deleted — its entries migrated into the notebook's `distilled/` folder
+(`src/services/learning/distilledMemory.ts › migrateFrozenTradeInsights`) — and
 `MistakePatternService` / `JobQueueService`, which warned about a recurring setup
 before the next entry, no longer exist.
 
@@ -506,12 +507,15 @@ flowchart TD
     MSG --> PP["useProfilePersistence → dbService"]
     PP --> IDB["web: IndexedDB FuturesAI-DB / userProfiles"]
     PP --> SQL["native: SQLite — one-way migration flag sqlite_migrated"]
-    GM["GlobalMemory.aiPatternMemory · insightKnowledgeBase"]:::dead --> IDX["rendered by buildGlobalMemoryIndex — the only reader"]
-    classDef dead stroke-dasharray: 5 5,opacity:.5
 ```
 
-Both lesson stores are **frozen**: readers and the injected index stay, so a profile
-keeps what it already carries, but nothing grows them (`03fc0d5`).
+Both lesson stores are gone: the frozen `insightKnowledgeBase` fields
+(top-level and inside `GlobalMemory`) migrated into the notebook's `distilled/`
+folder and the fields were deleted
+(`src/services/learning/distilledMemory.ts › migrateFrozenTradeInsights`),
+and `GlobalMemory.aiPatternMemory` is a docs-only ghost — no code has ever
+carried it. Nothing grows a frozen memory any more (`03fc0d5` retired the
+writers).
 
 ### G.1 The notebook is the memory
 
@@ -566,9 +570,9 @@ Three derived memories sit beside the notebook:
   `profile` folder, and `buildProfileMemoryIndex` (`src/services/learning/profileMemory.ts › INDEX_LINE_MAX`) renders
   the index injected into a turn.
 - **Global memory** — `buildGlobalMemoryIndex` (`src/utils/memoryUtils.ts › buildGlobalMemoryIndex`) renders
-  `familyPerformance`, `userPreferences`, `globalCorrections` and the frozen
-  `aiPatternMemory`/`insightKnowledgeBase`. The two frozen fields keep their
-  readers and bytes; nothing grows them since `03fc0d5`.
+  `familyPerformance`, `userPreferences` and `globalCorrections`. The frozen
+  insight fields are gone; the distilled facts they carried live in the
+  notebook and reach the prompt through its own index.
 - **Pattern memory** — `findRelevantTrades` (`src/services/learning/PatternMemorySynthesisService.ts › findRelevantTrades`)
   is live at two sites: `src/services/learning/MemoryRetrievalService.ts › similarTradesBlock` and the
   synthesis pass itself. The verdict evidence pack that also read it was deleted on 2026-11-06 — no

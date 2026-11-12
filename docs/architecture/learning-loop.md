@@ -159,7 +159,7 @@ revises skill procedures.
 | provenance (what a decision saw) | retained time-window UI and backups; no skill-credit arithmetic |
 | **tracked position → diagnosis** | signals and tracked journal plans have tape outcomes and structured diagnosis; no human click is required to mint evidence, and no skill is minted |
 | **the loop's evidence base** | price outcomes, not exchange fills; the app places no trades |
-| **insight consolidation** | **not wired** — the top-level `insightKnowledgeBase` has no producer |
+| **insight consolidation** | **deleted with the frozen store** — the top-level `insightKnowledgeBase` is gone; its entries migrated into the notebook's `distilled/` folder, which has its own distill path |
 | **cheap-to-expensive retrieval** | index and explicit body reads exist; delivery and final-wire coverage must be assessed per caller |
 
 The current learning priority is signal accuracy and diagnosis, not removing a human settlement

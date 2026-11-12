@@ -38,26 +38,9 @@ export const buildGlobalMemoryIndex = (globalMemory: GlobalMemory): string => {
         lines.push(`PREFERENCES: leverage default ${prefs.leverageDefault}x${favs ? ` · favorites: ${favs}` : ''}${prefs.preferredSetup ? ` · preferred setup: ${prefs.preferredSetup}` : ''}`);
     }
 
-    // The insight knowledge base is the wall (up to 100 full JSON records).
-    // Index it: top-5 by the strength recorded when each was distilled (how
-    // many times that pattern recurred in the batch) — nothing ever increments
-    // it afterwards, so this is birth strength, NOT evidence of use. Saying
-    // "by use" here would tell a model the app had measured these being
-    // helpful, which it has not. (This GlobalMemory block is maintained by
-    // AlgorithmicMemoryService — the batch folded the separate
-    // InsightExtractionService/attributed-insight stores into the notebook.)
-    const insights = globalMemory.insightKnowledgeBase?.insights ?? [];
-    if (insights.length > 0) {
-        const top = [...insights]
-            .sort((a, b) => (b.useCount ?? 0) - (a.useCount ?? 0))
-            .slice(0, INDEX_LINE_CAP);
-        lines.push(`INSIGHTS (top ${top.length} of ${insights.length} by pattern strength):`);
-        for (const i of top) {
-            const tags = [i.category, i.coin, i.direction].filter(Boolean).join(' · ');
-            const text = i.insight.length > 120 ? `${i.insight.slice(0, 120).trimEnd()}…` : i.insight;
-            lines.push(`- [${tags || 'general'}] ${text}`);
-        }
-    }
+    // (The frozen GlobalMemory.insightKnowledgeBase is gone: its entries
+    // migrated into the notebook's distilled/ folder, which the prompt
+    // includes through its own index.)
 
     if (lines.length === 0) return 'INDEX: empty (no journal history distilled yet).';
     const body = lines.join('\n');
