@@ -96,6 +96,9 @@ export const CHAT_SURFACE_TOOLS = [
     'skill_view', 'skill_index', 'skill_write', 'write_memory_note', 'get_notebook_map', 'propose_strategy',
     'amend_memory', 'forge_tool',
     'remember', 'read_memory', 'forget',
+    // The memory_* family (owner ruling 2026-11-10) — the names the always-on
+    // fact index actually tells the seat to call. The aliases above still work.
+    'memory_read', 'memory_add', 'memory_update', 'memory_delete', 'memory_search_sessions',
     // The one tool with a human in it: it suspends the turn until the trader
     // answers (services/analysis/askUserInput.ts).
     'ask_user_input',

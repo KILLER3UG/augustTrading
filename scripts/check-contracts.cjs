@@ -5168,6 +5168,74 @@ const checkProfileFactFiles = async () => {
     localStorage.removeItem('last_active_user');
 };
 
+// ─── 47. a tool the prompt names is a tool the seat holds ──────────────────
+// The always-on fact index instructs the model BY NAME ("pull its full body
+// with memory_read … save it with memory_add … EDIT … with memory_update").
+// Those names were declared, implemented and executed, but granted to NEITHER
+// seat: the offer filter stripped their schemas and the executor refused them,
+// so every turn told the model to call a tool it could not call. This reads the
+// ASSEMBLED index against the real definitions and both real grant lists, so a
+// name added to the prose cannot ship without a grant.
+const checkPromptIndexGrants = async () => {
+    const store = new Map();
+    global.localStorage = {
+        getItem: k => (store.has(k) ? store.get(k) : null),
+        setItem: (k, v) => store.set(k, String(v)),
+        removeItem: k => store.delete(k),
+        clear: () => store.clear(),
+        key: i => [...store.keys()][i] ?? null,
+        get length() { return store.size; },
+    };
+    global.Event = class Event { constructor(t) { this.type = t; } };
+    global.CustomEvent = class CustomEvent extends global.Event {
+        constructor(t, o) { super(t); this.detail = o && o.detail; }
+    };
+    global.window = global;
+    global.window.localStorage = global.localStorage;
+    global.window.dispatchEvent = () => true;
+    global.window.addEventListener = () => {};
+    global.window.removeEventListener = () => {};
+    localStorage.setItem('last_active_user', 'grant-user');
+
+    const pm = loadModule('src/services/learning/profileMemory.ts');
+    const desk = loadModule('src/services/analysis/DeskToolsService.ts');
+    const tk = loadModule('src/utils/toolKinds.ts');
+    pm.rememberProfileMemory({
+        description: 'Uses 15m charts', kind: 'user', body: 'The trader uses 15m charts.', tag: 'stated',
+    }, 'grant-user');
+    const index = pm.buildProfileMemoryIndex('grant-user');
+    ok('prompt index: a stored fact produces the prose that names the tools',
+        index.includes('Uses 15m charts') && /memory_read/.test(index), index.slice(0, 120));
+
+    // The vocabulary comes from the DEFINITIONS, not from a grant list — testing
+    // a list against itself would never see a name missing from both.
+    const allNames = desk.DESK_TOOL_DEFINITIONS.map(d => d.function.name);
+    const advertised = allNames.filter(n => index.includes(n));
+    ok('prompt index: the assembled prose advertises at least one real tool',
+        advertised.length > 0, JSON.stringify(advertised));
+
+    const surfaceSrc = fs.readFileSync(path.join(ROOT, 'src/services/trade/chatSurfaceTurn.ts'), 'utf8');
+    const m = /export const CHAT_SURFACE_TOOLS = \[([\s\S]*?)\n\];/.exec(surfaceSrc);
+    if (!m) throw new Error('CHAT_SURFACE_TOOLS is not a literal array — this check needs re-anchoring');
+    // This array carries SEVERAL names per line, so a one-entry-per-line read
+    // silently returns a fraction of it (the reach control below caught exactly
+    // that). Comments are stripped first: their prose is not a grant.
+    const body = m[1].split('\n')
+        .filter(l => !/^\s*\/\//.test(l))
+        .map(l => l.split('//')[0])
+        .join('\n');
+    const surface = [...body.matchAll(/'([^']+)'/g)].map(x => x[1]);
+    ok('prompt index: the Chat seat list was read, not guessed', surface.length > 20, `${surface.length} names`);
+
+    const missingDesk = advertised.filter(n => !tk.DESK_TOOL_NAMES.includes(n));
+    const missingChat = advertised.filter(n => !surface.includes(n));
+    ok('prompt index: every tool the prose names is granted to the dock seat',
+        missingDesk.length === 0, missingDesk.join(', '));
+    ok('prompt index: every tool the prose names is granted to the Chat seat',
+        missingChat.length === 0, missingChat.join(', '));
+    localStorage.removeItem('last_active_user');
+};
+
 const finishReport = () => {
     console.log(`contracts: ${passed} passed, ${failures.length} failed`);
     for (const f of failures) console.log(`  FAIL ${f}`);
@@ -5187,5 +5255,6 @@ checkSkillWrites()
     .then(checkSessionSearch)
     .then(checkProviderKeyFlag)
     .then(checkProfileFactFiles)
+    .then(checkPromptIndexGrants)
     .catch(e => { failures.push(`async runtime checks threw: ${e instanceof Error ? e.stack : String(e)}`); })
     .then(finishReport);

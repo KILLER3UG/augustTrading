@@ -284,6 +284,11 @@ export const DESK_TOOL_NAMES: readonly string[] = [
     // They were refused at the executor because this list did not name them;
     // the chart copilot can now save/recall/forget like the Agents surface.
     'remember', 'read_memory', 'forget',
+    // Owner ruling 2026-11-10: the family is memory_*, with the trio above kept
+    // as working aliases. The always-on fact index names these five BY NAME, so
+    // a seat that lacks them is instructed every turn to call a tool the
+    // executor refuses — the dead affordance this list exists to prevent.
+    'memory_read', 'memory_add', 'memory_update', 'memory_delete', 'memory_search_sessions',
     // Goal environments: durable work state, edited mid-task.
     'list_goals', 'open_goal', 'create_goal', 'update_goal', 'restore_goal',
     // The harness change ledger: reading and moving its own self-modifications.
