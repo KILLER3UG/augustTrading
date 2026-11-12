@@ -165,9 +165,10 @@ the trader's journal in bulk; treat it accordingly.
   and the title-row toggle brings it back; there is no clock/column icon in the icon rail. Its
   Chats | Bots tab strip is DELETED: one scroll of sections.
 - The **content bar** is the hide-conversation toggle, the title, the instrument context and one
-  muted **Live** pill (its popover still carries sessions, market conditions, Live market and
-  Vision data). No brand mark, no save tick, no Activity pill. `AgentsView`'s own bar IS that bar
-  — no second header stacks above it.
+  **session chip that names the active region** (Asia / London / New York / `London · NY` during
+  the overlap; off hours says so and carries the next open — the popover still carries sessions,
+  market conditions, Live market and Vision data). No brand mark, no save tick, no Activity pill.
+  `AgentsView`'s own bar IS that bar — no second header stacks above it.
 - The conversation column is 240px by default and drags from its right edge (200–360px; the width
   persists and double-click restores 240); Analyze mounts no column, so its rail is 48px and has
   nothing to resize. The content bar's toggle puts the rail away; collapsed it leaves the

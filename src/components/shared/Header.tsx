@@ -218,7 +218,7 @@ export const Header: React.FC<HeaderProps> = memo(({
                                 </button>
 
                                 {isSessionModalOpen && (
-                                     <div id="session-details-popover" role="dialog" aria-label="Session details" className="absolute top-full left-0 mt-2 w-80 bg-zinc-900 border border-hairline rounded-bubble shadow-elevated overflow-hidden z-drawer animate-fade-in">
+                                     <div id="session-details-popover" role="dialog" aria-label="Session details" className="absolute top-full left-0 mt-2 w-80 max-sm:fixed max-sm:inset-x-2 max-sm:top-[calc(env(safe-area-inset-top,0px)+4.25rem)] max-sm:mt-0 max-sm:w-auto bg-zinc-900 border border-hairline rounded-bubble shadow-elevated overflow-hidden z-drawer animate-fade-in">
                                     <div className="p-3 bg-zinc-900">
                                         {/* Live Market Conditions Section */}
                                         {liveMarketConditions && (
