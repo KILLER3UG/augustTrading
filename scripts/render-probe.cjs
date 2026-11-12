@@ -4262,6 +4262,39 @@ async function main() {
                 namesARegion && opened.mounted && opened.rows >= 3 && opened.expanded === 'true'
                 && closed.gone && closed.expanded === 'false',
                 `${chipInfo ? chipInfo.label : 'no chip'} / rows=${opened.rows} / esc=${closed.gone}`);
+
+            // The disclosure is viewport-wide on a phone: the chip sits
+            // mid-header at 390px, and an absolutely-anchored w-80 popover ran
+            // 104px past the right edge — the countdown column (the numbers a
+            // session table exists for) was unreachable. The fixed inset
+            // anchor is the claim; measured here so the check carries its own
+            // viewport instead of trusting a later phase's app state.
+            const restoreViewport = page.viewportSize();
+            await page.setViewportSize({ width: 390, height: 720 });
+            await sleep(600);
+            await page.evaluate(() => document.querySelector('[data-testid="session-chip"]')?.click());
+            await sleep(400);
+            const phoneBox = await page.evaluate(() => {
+                const pop = document.getElementById('session-details-popover');
+                if (!pop) return { mounted: false };
+                const r = pop.getBoundingClientRect();
+                return {
+                    mounted: true,
+                    fixed: window.getComputedStyle(pop).position === 'fixed',
+                    left: Math.round(r.left), right: Math.round(r.right), vw: window.innerWidth,
+                    rows: pop.querySelectorAll('.space-y-2 > div').length,
+                };
+            });
+            await page.keyboard.press('Escape');
+            await sleep(300);
+            const phoneClosed = await page.evaluate(() =>
+                !document.getElementById('session-details-popover'));
+            if (restoreViewport) await page.setViewportSize(restoreViewport);
+            await sleep(400);
+            check('the session disclosure fits the phone viewport edge to edge',
+                phoneBox.mounted && phoneBox.fixed && phoneBox.left >= 0
+                && phoneBox.right <= phoneBox.vw && phoneBox.rows >= 3 && phoneClosed,
+                `fixed=${phoneBox.fixed} box=${phoneBox.left}..${phoneBox.right} vw=${phoneBox.vw} rows=${phoneBox.rows} esc=${phoneClosed}`);
         }
 
         // ── The instrument picker, and the claim it makes ────────────────
