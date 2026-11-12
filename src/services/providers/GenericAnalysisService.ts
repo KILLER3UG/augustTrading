@@ -20,6 +20,7 @@ import { parseGlobalMemory, parseStrategySearchResults } from '../../schemas/lea
 import { MASTER_ANALYSIS_PROMPT, COMPACT_ANALYSIS_PROMPT, RISK_MANAGEMENT_RULES, AI_PROVIDER_MEMORY_ENFORCEMENT_PROMPT, HARNESS_CONTRACT_PROMPT } from '../../constants/prompts';
 import { constructOptimizedContext } from '../../utils/memoryUtils';
 import { parseLiveMarketData } from '../../utils/liveMarketParser';
+import type { SeatToolGrant } from '../../utils/toolKinds';
 import {
     sendChatRequest, streamChatRequest, ChatMessage, ContentPart, ChatRequestOptions,
 } from './GenericProviderService';
@@ -262,7 +263,11 @@ export interface AnalyzeTradingViewParams {
      * output.
      */
     temperature?: number;
-    allowedTools?: string[];
+    /** What the desk seat may call. REQUIRED, and it says what it means: a
+     *  list of names, or the literal 'all' for the full toolset. A missing
+     *  grant is no tools, so the seat that wants the whole desk has to name
+     *  it. */
+    allowedTools: SeatToolGrant;
     /** Closed-trade journal for the `recall`/`get_setup_history_stats` desk
      *  tools: without it the single-analysis path had desk tools
      *  but no history to recall. */

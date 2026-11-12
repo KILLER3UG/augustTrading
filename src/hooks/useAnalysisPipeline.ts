@@ -308,8 +308,14 @@ export function useAnalysisPipeline(params: UseAnalysisPipelineParams) {
         systemPromptOverride: string | undefined;
         /** Per-seat independence directive — rendered into the system prompt head. */
         seatDirective?: string;
-        /** Role-scoped desk tools for this seat (undefined = full toolset). */
-        allowedTools?: string[];
+        // The seat's tool grant is NOT a parameter here, and that is on purpose.
+        // It used to be: `allowedTools?: string[]`, documented as "undefined =
+        // full toolset" - and it was never forwarded to anything, so it read
+        // like a grant and did nothing. A grant that does not grant is worse
+        // than no grant at all. The seats that run tools state their grant
+        // where they are configured (the Chat surface's curated list, the
+        // trade seat's), and the desk's own rule fails closed for a seat that
+        // states none.
         /** Per-seat sampling temperature (ensemble Normal mode). */
         temperature?: number;
         /** Summaries of user-uploaded strategy books (Settings → Strategies). */

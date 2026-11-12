@@ -727,8 +727,12 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
     ok('goal policy: a mixed policy keeps the tool the seat has and drops the one it has not',
         JSON.stringify(tk.intersectGoalPolicy(SEAT, ['get_order_book', 'skill_view'], REAL))
         === JSON.stringify(['get_order_book']));
-    ok('goal policy: an unrestricted seat is still narrowed by the goal',
-        JSON.stringify(tk.intersectGoalPolicy(undefined, ['recall'], ['recall', 'web_search'])) === JSON.stringify(['recall']));
+    ok('goal policy: a seat that HOLDS the full toolset is still narrowed by the goal',
+        JSON.stringify(tk.intersectGoalPolicy('all', ['recall'], ['recall', 'web_search'])) === JSON.stringify(['recall']));
+    ok('goal policy: a seat with no grant gets nothing, and a goal cannot widen it into having some',
+        JSON.stringify(tk.intersectGoalPolicy(undefined, ['recall'], ['recall', 'web_search'])) === JSON.stringify(['']));
+    ok('goal policy: an empty list is a grant of nothing, not an unrestricted seat',
+        JSON.stringify(tk.intersectGoalPolicy([], ['recall'], ['recall', 'web_search'])) === JSON.stringify(['']));
     ok('goal policy: a name the build never shipped matches nothing, and fails closed',
         JSON.stringify(tk.intersectGoalPolicy(SEAT, ['made_up_tool'], REAL)) === JSON.stringify(['']));
 })();
@@ -744,9 +748,10 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
     const desk = loadModule('src/services/analysis/DeskToolsService.ts');
     const defs = desk.DESK_TOOL_DEFINITIONS.map(d => d.function.name);
     const initial = [...desk.INITIAL_DESK_TOOL_NAMES];
-    const loadable = desk.loadableDeskToolNamesFor(true, undefined);
+    const loadable = desk.loadableDeskToolNamesFor(true, 'all');
     const narrow = desk.loadableDeskToolNamesFor(true, ['get_market_packet']);
-    const text = desk.loadableDeskToolNamesFor(false, undefined);
+    const text = desk.loadableDeskToolNamesFor(false, 'all');
+    const ungranted = desk.loadableDeskToolNamesFor(true, undefined);
     const catalogue = desk.buildDeskToolCatalogue(loadable);
     const initialChars = desk.DESK_TOOL_DEFINITIONS
         .filter(d => initial.includes(d.function.name))
@@ -756,8 +761,25 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
     ok('desk budget: every initial name is a real desk tool', initial.every(n => defs.includes(n)));
     ok('desk budget: the initial set carries no duplicate', new Set(initial).size === initial.length);
     ok('desk budget: the loader is not itself a desk tool', !defs.includes('load_tools'));
-    ok('desk budget: a native unrestricted turn defers exactly the rest',
+    ok('desk budget: a native turn that HOLDS the full toolset defers exactly the rest',
         loadable.length === defs.length - initial.length, `${loadable.length} vs ${defs.length - initial.length}`);
+    ok('desk budget: a seat with no grant defers nothing - the default is closed',
+        ungranted.length === 0, JSON.stringify(ungranted));
+    // The allow-list polarity itself - the ONE place it is decided. It used to
+    // read "an absent or empty list means UNRESTRICTED", so a caller who forgot
+    // to pass one got the whole desk. These pins are the fix.
+    ok('seat grant: a list grants exactly what it names',
+        desk.seatAllows(['skill_write'], 'skill_write')
+        && !desk.seatAllows(['skill_write'], 'repo_edit'));
+    ok('seat grant: "all" grants everything - said out loud, by whoever configured the seat',
+        desk.seatAllows('all', 'skill_write') && desk.seatAllows('all', 'repo_edit'));
+    ok('seat grant: NO grant grants nothing - the default is closed',
+        !desk.seatAllows(undefined, 'skill_write') && !desk.seatAllows(undefined, 'repo_edit'));
+    ok('seat grant: an EMPTY list grants nothing - it is not an unrestricted seat',
+        !desk.seatAllows([], 'skill_write') && !desk.seatAllows([], 'repo_edit'));
+    ok('seat grant: a restricted seat is one with a list, whatever its length',
+        desk.seatIsRestricted([]) && desk.seatIsRestricted(['x'])
+        && !desk.seatIsRestricted('all') && !desk.seatIsRestricted(undefined));
     ok('desk budget: the catalogue covers every deferrable tool exactly once',
         catalogue.split('\n').length === loadable.length
         && loadable.every(n => catalogue.includes(`- ${n}:`)));
@@ -3298,14 +3320,18 @@ const checkSkillWrites = async () => {
     });
     const sf = desk.skills;
     await desk.notebook.initMemoryFiles('skill-contract');
-    const call = (name, args, context) => desk.executeDeskTool({ id: name, name, arguments: args }, context);
+    // The seat is GRANTED the toolset here, because that is what this contract
+    // is about: the skill version gate, not the allow-list. A seat with no
+    // grant is refused every tool - which is the rule the next contract pins.
+    const granted = { allowedTools: 'all' };
+    const call = (name, args, context) => desk.executeDeskTool({ id: name, name, arguments: args }, { ...granted, ...(context || {}) });
     const input = { name: 'copper inventory', description: 'Use for copper warehouse inventory shocks.', body: 'Read warehouse changes before assigning a bias.' };
     const unopened = await call('skill_write', input);
     ok('pen runtime: a create before the library read writes nothing', !unopened.ok && sf.listSkillFiles().length === 0, unopened.content);
     const pair = await desk.executeDeskTools([
         { id: 'index', name: 'skill_index', arguments: {} },
         { id: 'write', name: 'skill_write', arguments: input },
-    ]);
+    ], granted);
     ok('pen runtime: parallel index and write cannot claim an earlier read', pair[0].ok && !pair[1].ok && sf.listSkillFiles().length === 0);
     const index = await call('skill_index', {});
     const review = { indexVersion: index.skillIndexVersion, opened: new Map() };

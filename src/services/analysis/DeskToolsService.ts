@@ -80,7 +80,7 @@ import type { ToolAction } from '../../types/message';
 import type { ChartDrawing } from '../trade/chartDrawings';
 import type { DiagnosisBrief } from '../tracking/diagnosisBrief';
 import { PANEL_MAIL_TOOLS, type PanelMailbox } from './PanelMailbox';
-import { intersectGoalPolicy } from '../../utils/toolKinds';
+import { intersectGoalPolicy, type SeatToolGrant } from '../../utils/toolKinds';
 
 /**
  * Classify a desk-tool result into a persisted model side-effect:
@@ -714,25 +714,36 @@ const TOOL_BUDGETS: Record<string, number> = {
  * is worse than the plain "MISSING, not absent" line — it invites a wasted round
  * of the very budget this file exists to protect.
  */
-export const spillReceiptAllowed = (allowedTools?: string[]): boolean =>
+export const spillReceiptAllowed = (allowedTools?: SeatToolGrant): boolean =>
     seatAllows(allowedTools, 'read_tool_output');
 
 /**
- * The ONE home for the allow-list polarity: an absent or empty list means the
- * seat is UNRESTRICTED, and a named list means exactly those tools. Both
- * readings of that sentence live here — `seatIsRestricted` for callers that
- * widen a restricted list, `seatAllows` for callers that test one name. It had
- * been hand-copied five times in three shapes (the executor's deny-form, the
- * offer-time filter, the forged-call refusal, the chart-tool filter and the
- * mail/panel merge), which is how the same sentence drifts — and it is the
- * seam the recorded P3 decision (fail-closed for unattended contexts) would
- * flip, which should be a one-line change here, not five synchronized edits.
+ * The ONE home for the allow-list polarity.
+ *
+ * A seat's grant is a LIST of names, the literal 'all', or nothing:
+ *
+ *   - a LIST: exactly those names. An EMPTY list grants nothing.
+ *   - 'all': the full toolset, said out loud, by whoever configured the seat.
+ *   - undefined: NOTHING.
+ *
+ * WHY THE DEFAULT IS NOTHING. It used to read "an absent or empty list means
+ * the seat is UNRESTRICTED", so a caller that forgot to pass a list got the
+ * whole desk: every market read, the memory writers, `skill_write`,
+ * `repo_edit`, `propose_self_change` and the trader's forged tools. Nobody
+ * had decided that - it just happened to whoever forgot. The seat that wants
+ * the full toolset now says 'all', and a missing grant is a missing grant.
+ *
+ * `seatIsRestricted` is for callers that widen a restricted list,
+ * `seatAllows` for callers that test one name. It had been hand-copied five
+ * times in three shapes (the executor's deny-form, the offer-time filter,
+ * the forged-call refusal, the chart-tool filter and the mail/panel merge),
+ * which is how the same sentence drifts - so both readings live here, once.
  */
-export const seatIsRestricted = (allowedTools: readonly string[] | undefined): allowedTools is readonly string[] =>
-    Boolean(allowedTools && allowedTools.length > 0);
+export const seatIsRestricted = (grant: SeatToolGrant | undefined): grant is readonly string[] =>
+    Array.isArray(grant);
 
-export const seatAllows = (allowedTools: readonly string[] | undefined, name: string): boolean =>
-    !seatIsRestricted(allowedTools) || (allowedTools ?? []).includes(name);
+export const seatAllows = (grant: SeatToolGrant | undefined, name: string): boolean =>
+    grant === 'all' ? true : Array.isArray(grant) && grant.includes(name);
 
 /**
  * Cut `body` to at most `visible` characters without breaking it.
@@ -2725,7 +2736,7 @@ const catalogueLine = (def: DeskToolDefinition): string => {
  *  ONE rule, read by the prompt composer and the loop's executor. */
 export const loadableDeskToolNamesFor = (
     nativeTools: boolean,
-    allowedTools?: readonly string[],
+    allowedTools?: SeatToolGrant,
 ): string[] => nativeTools
     ? DESK_TOOL_DEFINITIONS
         .map(d => d.function.name)
@@ -3384,7 +3395,7 @@ export interface DeskToolContext {
      *  tools) the model can emit a tag for ANY tool, and only the executor
      *  sees every call regardless of transport. An off-list name is refused.
      *  Absent/empty = unrestricted (legacy debate/analysis callers). */
-    allowedTools?: string[];
+    allowedTools?: SeatToolGrant;
     /** This turn's artifact scope. Stored payloads are readable only by the
      *  turn that produced them, and clearing this turn cannot delete another
      *  turn's live payloads. */
@@ -3461,7 +3472,7 @@ const goalArrayArg = (value: unknown): unknown[] | undefined | null => {
 /** Goal policy tools are a SUBSET of this seat's tools and of the built-in
  *  catalog. The executor also intersects them at turn time; this check makes
  *  the refusal explicit instead of letting a goal silently lose a tool. */
-const goalToolPolicyArg = (value: unknown, seat: readonly string[] | undefined):
+const goalToolPolicyArg = (value: unknown, seat: SeatToolGrant | undefined):
     | { ok: true; tools?: string[] }
     | { ok: false; error: string } => {
     if (value === undefined) return { ok: true };
@@ -3470,7 +3481,10 @@ const goalToolPolicyArg = (value: unknown, seat: readonly string[] | undefined):
     const tools = [...new Set(value.map(String).map(s => s.trim()).filter(Boolean))];
     for (const tool of tools) {
         if (!catalog.has(tool)) return { ok: false, error: `"${tool}" is not a desk tool` };
-        if (seat && !seat.includes(tool)) {
+        // A goal may only narrow, so the tool has to be one this seat has.
+        // A seat that holds 'all' has every tool; a seat with no grant has
+        // none, and a goal cannot widen it into having one.
+        if (!seatAllows(seat, tool)) {
             return { ok: false, error: `"${tool}" is not available on this seat; a goal can only narrow the tools it already has` };
         }
     }
@@ -4117,7 +4131,7 @@ ${body}`);
                 // trader. Sensitive rows are not a pre-read there:
                 // the feature's "excluded from unattended contexts" claim has to
                 // include the explicit "all" read, not just the hint pass.
-                const unattended = seatIsRestricted(context.allowedTools) && !seatAllows(context.allowedTools, 'remember');
+                const unattended = !seatAllows(context.allowedTools, 'remember');
                 const askedByName = !slugs.includes('all') && slugs.length > 0;
                 // "all" is a bulk read the SEAT chose, not the trader. A health
                 // or finance line rides it into the prompt exactly as it would
@@ -4469,8 +4483,7 @@ ${body}`);
                     // A detached/restricted seat that was not given the write
                     // tool is read-only for its own harness, exactly as an
                     // unattended run is read-only for memory.
-                    const readOnly = seatIsRestricted(context.allowedTools)
-                        && !seatAllows(context.allowedTools, 'propose_self_change');
+                    const readOnly = !seatAllows(context.allowedTools, 'propose_self_change');
                     const opts = { actor: 'agent' as const, readOnly };
                     const res = kind === 'prompt'
                         ? await svc.proposePromptOverride(target, value, reason, opts)
@@ -4497,8 +4510,7 @@ ${body}`);
                     const svc = await import('../selfMod/SelfModificationService');
                     const id = asString(call.arguments.id).trim();
                     if (!id) return rejectedResult(call, 'revert_self_change rejected: id is required');
-                    const readOnly = seatIsRestricted(context.allowedTools)
-                        && !seatAllows(context.allowedTools, 'revert_self_change');
+                    const readOnly = !seatAllows(context.allowedTools, 'revert_self_change');
                     if (readOnly) return rejectedResult(call, 'revert_self_change rejected: this seat is read-only for the harness');
                     const res = await svc.revertSelfChange(id, 'agent');
                     if (!res.ok) return rejectedResult(call, `revert_self_change rejected: ${res.error}`);
@@ -5812,7 +5824,7 @@ export async function runDeskToolLoop(params: {
      *  persists cannot accidentally store a line that has no bytes. */
     onToolPayload?: (payload: ToolPayload) => void;
     nativeTools?: boolean;
-    allowedTools?: string[];
+    allowedTools?: SeatToolGrant;
     /** The Settings memory switch; see `DeskToolContext.memoryEnabled`. */
     memoryEnabled?: boolean;
     /** See `DeskToolContext.lastUserMessage` (the forget guard). */
@@ -6617,7 +6629,7 @@ export interface StreamWithDeskToolsOptions extends ChatRequestOptions {
     /** See the main options interface — same contract, so a payload can be
      *  persisted from the streaming loop too. */
     onToolPayload?: (payload: ToolPayload) => void;
-    allowedTools?: string[];
+    allowedTools?: SeatToolGrant;
     /** Closed-trade log for the `recall` notebook tool. */
     trades?: LoggedTrade[];
     /** fires once per proposal/custom tool result (forge_tool,
@@ -6813,9 +6825,9 @@ export async function* streamChatWithDeskTools(
         ...chartDefs,
         ...(mailActive ? PANEL_MAIL_TOOLS : []),
     ];
-    // A RESTRICTED seat is widened by the extra defs; an unrestricted one is
-    // left unrestricted, because adding a name to an empty list would silently
-    // turn "every tool" into "only these".
+    // A RESTRICTED seat is widened by the extra defs. A seat that holds 'all'
+    // stays 'all' (adding a name to it would turn "every tool" into "only
+    // these"), and a seat with no grant stays empty.
     const mergedAllowed = (mailActive || executePanelTool) && seatIsRestricted(allowedTools)
         ? [
             ...allowedTools,
@@ -6842,14 +6854,20 @@ export async function* streamChatWithDeskTools(
     const goalList = goalAllowedTools && goalAllowedTools.length > 0 ? goalAllowedTools : null;
     // A goal narrows; it never widens. `intersectGoalPolicy` owns that rule —
     // including why an empty intersection must NOT travel on as `[]`, which
-    // every gate in this file reads as "unrestricted".
+    // every gate in this file reads as "nothing".
     const narrowed = goalList ? intersectGoalPolicy(allowedTools, goalList, allToolNames) : [];
     const effectiveAllowed = goalList ? narrowed : mergedAllowed;
+    // What the seat is TOLD it may call, which must be exactly what the
+    // executor will grant: 'all' means the whole set, a list means that list,
+    // and no grant means NOTHING is offered - the prompt must not advertise a
+    // tool the executor would refuse.
     const offeredToolNames = goalList
         ? narrowed.filter(n => allToolNames.includes(n))
-        : effectiveAllowed && effectiveAllowed.length > 0
-            ? effectiveAllowed
-            : allToolNames;
+        : effectiveAllowed === 'all'
+            ? allToolNames
+            : Array.isArray(effectiveAllowed)
+                ? effectiveAllowed.filter(n => allToolNames.includes(n))
+                : [];
     const loadableDeskToolNames = loadableDeskToolNamesFor(nativeTools, effectiveAllowed);
     const toolCatalogue = loadableDeskToolNames.length > 0 ? buildDeskToolCatalogue(loadableDeskToolNames) : undefined;
     const enriched = withDeskToolsSystemPrompt(outbound, nativeTools, offeredToolNames, toolCatalogue);

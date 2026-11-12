@@ -195,6 +195,27 @@ export const toolKindOf = (label: string): ToolKindInfo => {
 export const NO_TOOLS_ALLOWED: string[] = [''];
 
 /**
+ * What a seat may call.
+ *
+ *   - a LIST of names: exactly those.
+ *   - 'all': the full toolset, said out loud.
+ *   - undefined, or an empty list: NOTHING.
+ *
+ * WHY IT IS NOT "undefined means everything" ANY MORE. It was. The trouble was
+ * that a caller who FORGOT to pass a list got the whole desk - every market
+ * read, the memory writers, `skill_write`, `repo_edit`, `propose_self_change`
+ * and the trader's forged tools - and nobody had decided that. "Nobody decided"
+ * and "the owner decided yes" are different things, and only one of them is a
+ * decision. So the full toolset is now something a seat SAYS it has, and a
+ * missing grant is a missing grant.
+ *
+ * The 'all' marker exists so that saying it is cheap and so that the forged
+ * tools - whose names are minted at runtime and cannot be listed - keep
+ * working for a seat that holds it.
+ */
+export type SeatToolGrant = readonly string[] | 'all';
+
+/**
  * The ONE rule for how a goal's tool policy meets a seat's allow-list.
  *
  * A goal may only NARROW, so the answer is the intersection with what this
@@ -210,11 +231,16 @@ export const NO_TOOLS_ALLOWED: string[] = [''];
  * `check:contracts` pins it.
  */
 export const intersectGoalPolicy = (
-    seat: readonly string[] | undefined,
+    seat: SeatToolGrant | undefined,
     policy: readonly string[],
     realToolNames: readonly string[],
 ): string[] => {
-    const keep = policy.filter(t => (!seat || seat.includes(t)) && realToolNames.includes(t));
+    // A goal may only narrow. A seat with no grant has nothing to narrow, so
+    // the intersection is empty and the sentinel answers it - the same shape
+    // as a goal naming only tools this seat lacks.
+    const keep = policy.filter(t => realToolNames.includes(t) && (
+        seat === 'all' ? true : Array.isArray(seat) && seat.includes(t)
+    ));
     return keep.length > 0 ? keep : [...NO_TOOLS_ALLOWED];
 };
 
