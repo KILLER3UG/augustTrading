@@ -1853,6 +1853,23 @@ async function main() {
         // leaving both homes on the same live row long enough to measure.
         // Every later reading must be at least the earlier one; a reset fails
         // loudly instead of looking like a fresh turn.
+        //
+        // The display is a 1s-quantized sample (useSharedTicker's
+        // SHARED_TICK_MS): the value is recomputed at each shared tick, so a
+        // read trails the true elapsed by up to one tick of sample age plus
+        // the round-down (≤0.5s) — 1.5s — plus the cross-clock and evaluate
+        // round-trip latency between the page's read instant and the Node-side
+        // stamp (~0.25s). So each reading is compared against the TRUE elapsed
+        // since the probe's own send, MEASURED AT THE READING'S OWN INSTANT,
+        // with 1.75s of slack. The anchoring matters as much as the bound: a
+        // reading taken at +4.2s but compared against an elapsed measured 1.1s
+        // later (after the liveness sleep) demanded a ≤0.4s trail — tighter
+        // than the quantization floor itself — and failed verified-correct
+        // clocks (fiber dumps put the row's startedAt at send+33ms on BOTH
+        // surfaces while this check still failed). A mount reset or a frozen
+        // clock reads young by seconds at any sample instant, and the
+        // late-mirror-commit start this check was rebuilt for read ~2.5s
+        // young; none of them survives the bound.
         const dockThinking = () => page.evaluate(() => {
             const text = document.querySelector('[data-testid="trade-chat-panel"]')?.textContent || '';
             const m = /Thinking\s*·\s*(\d+)s/.exec(text);
@@ -1866,6 +1883,7 @@ async function main() {
             }
             return null;
         });
+        const clockTurnSentAt = Date.now();
         await page.evaluate((needle) => {
             const ta = document.querySelector('textarea');
             if (!ta || ta.disabled) return;
@@ -1892,10 +1910,20 @@ async function main() {
         await page.waitForSelector('main textarea', { timeout: 20000 });
         await sleep(600);
         const clockOnAgents = await agentsThinking();
+        // The elapsed is stamped at the reading's OWN instant — an elapsed
+        // measured after the liveness sleep below would charge this reading
+        // for 1.1s it had not yet lived (see the bound derivation above).
+        const agentsElapsedAtSample = (Date.now() - clockTurnSentAt) / 1000;
+        // The same row again, one second on. The clock's value advancing on
+        // its own is the liveness half of the claim — a frozen or reset row
+        // cannot produce it.
+        await sleep(1100);
+        const clockOnAgentsLater = await agentsThinking();
         check('the thinking clock continues on the Agents surface',
             clockStart !== null && clockOnAgents !== null && clockOnAgents > 0
-                && clockOnAgents >= (clockBeforeHop ?? 0),
-            `dock ${clockStart}s → ${clockBeforeHop}s, agents ${clockOnAgents}s`);
+                && clockOnAgents >= agentsElapsedAtSample - 1.75
+                && clockOnAgentsLater !== null && clockOnAgentsLater >= clockOnAgents,
+            `dock ${clockStart}s → ${clockBeforeHop}s; agents ${clockOnAgents}s at +${agentsElapsedAtSample.toFixed(1)}s, then ${clockOnAgentsLater}s`);
         await page.evaluate(() => {
             const hit = document.querySelector('[data-testid="surface-switch-trade"]');
             if (hit) hit.click();
@@ -1903,9 +1931,11 @@ async function main() {
         await page.locator('[data-testid="trade-view"]').waitFor({ timeout: 8000 }).catch(() => {});
         await sleep(600);
         const clockBackOnDock = await dockThinking();
+        // Same instant rule as the agents reading above.
+        const backElapsed = (Date.now() - clockTurnSentAt) / 1000;
         check('…and continues when it comes back to Analyze',
-            clockOnAgents !== null && clockBackOnDock !== null && clockBackOnDock >= clockOnAgents,
-            `agents ${clockOnAgents}s, dock ${clockBackOnDock}s`);
+            clockBackOnDock !== null && clockBackOnDock >= backElapsed - 1.75,
+            `agents ${clockOnAgentsLater}s; dock ${clockBackOnDock}s at +${backElapsed.toFixed(1)}s`);
         // Let the reasoning-only turn settle before the next phase counts rows.
         let clockTurnSettled = false;
         for (let i = 0; i < 200 && !clockTurnSettled; i++) {
