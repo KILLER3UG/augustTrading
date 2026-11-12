@@ -3642,7 +3642,7 @@ ${hitContent}`, ...resolvedSymbolField(call, fallback) };
                     const { getMemoryFiles } = await import('../learning/MemoryFilesService');
                     const { applyAmendmentNow } = await import('../learning/memoryAmendments');
                     const { getActiveUsername } = await import('../../utils/activeUser');
-                    const { filterMemoryWrite, isInstructionFolder, verifyMemoryProvenance } = await import('../../utils/memoryWriteFilters');
+                    const { filterMemoryWrite, isInstructionFolder, verifyMemoryProvenance, untrustedFactIsProvable } = await import('../../utils/memoryWriteFilters');
                     const fileName = String(call.arguments.file_name ?? '').replace(/\.md$/i, '');
                     const files = getMemoryFiles();
                     const target = files.files.find(f => f.name.replace(/\.md$/i, '') === fileName) ?? null;
@@ -3651,6 +3651,15 @@ ${hitContent}`, ...resolvedSymbolField(call, fallback) };
                     const proposed = String(call.arguments.proposed_content ?? '');
                     const verdict = filterMemoryWrite(proposed);
                     if (verdict.refused) return rejectedResult(call, `amend_memory rejected: ${verdict.refused}`);
+                    // A turn that READ a page or a forged-tool result cannot
+                    // mint a notebook correction from it: the proposed bytes
+                    // must be the trader's own words, or the page becomes the
+                    // notebook. Same rule `remember` enforces, on the other
+                    // write path that used to skip it.
+                    if (context.untrustedSeen) {
+                        const provable = untrustedFactIsProvable(proposed, context.lastUserMessage);
+                        if (!provable.ok) return rejectedResult(call, `amend_memory rejected: ${provable.reason}`);
+                    }
                     if (isInstructionFolder(folder)) {
                         const quote = asString(call.arguments.quote).trim();
                         if (!quote) return rejectedResult(call, `amend_memory rejected: a correction to ${folder}/ needs a verbatim quote of the trader’s words that states it`);
@@ -3724,7 +3733,7 @@ ${hitContent}`, ...resolvedSymbolField(call, fallback) };
                     const { writeModelNote, getMemoryFiles } = await import('../learning/MemoryFilesService');
                     const { getActiveUsername } = await import('../../utils/activeUser');
                     const {
-                        filterMemoryWrite, observedReflection, verifyMemoryProvenance,
+                        filterMemoryWrite, observedReflection, verifyMemoryProvenance, untrustedFactIsProvable,
                     } = await import('../../utils/memoryWriteFilters');
                     const folder = asString(call.arguments.folder, 'lessons');
                     const fileName = asString(call.arguments.file_name, 'note');
@@ -3747,6 +3756,15 @@ ${hitContent}`, ...resolvedSymbolField(call, fallback) };
                     const n = typeof nRaw === 'number' && Number.isFinite(nRaw) ? Math.floor(nRaw) : 0;
                     if (!stated && n < 1) {
                         return rejectedResult(call, 'write_memory_note rejected: an inferred note needs `n` — the sample size it was observed over. It would be saved in reflections/ as [observed n=N], context only, never a rule.');
+                    }
+                    // A STATED note lands in a rule-capable folder, so on a turn
+                    // that READ a page or a forged-tool result the body has to
+                    // be the trader's own words. An OBSERVED note is already
+                    // demoted to reflections/ as [observed n=N] — context, not
+                    // a rule — so it is not gated here.
+                    if (stated && context.untrustedSeen) {
+                        const provable = untrustedFactIsProvable(bodyText, context.lastUserMessage);
+                        if (!provable.ok) return rejectedResult(call, `write_memory_note rejected: ${provable.reason}`);
                     }
                     const targetFolder = stated ? folder : 'reflections';
                     const files = getMemoryFiles();
@@ -4183,6 +4201,23 @@ ${body}`);
                 const aliasesRaw = Array.isArray(call.arguments.aliases)
                     ? call.arguments.aliases.map(a => String(a)).slice(0, 8)
                     : undefined;
+                // A turn that READ a page or a forged-tool result cannot mint or
+                // rewrite a profile fact from it: the text must be the trader's
+                // own words, the same rule `remember` enforces. A patch that
+                // only retitles or re-tags writes no fact text, so it is not
+                // gated.
+                if (context.untrustedSeen) {
+                    const { untrustedFactIsProvable } = await import('../../utils/memoryWriteFilters');
+                    const candidate = [
+                        asString(call.arguments.description),
+                        asString(call.arguments.body),
+                        asString(call.arguments.new_str),
+                    ].filter(s => s.length > 0).join(' ').trim();
+                    if (candidate) {
+                        const provable = untrustedFactIsProvable(candidate, context.lastUserMessage);
+                        if (!provable.ok) return rejectedResult(call, `memory_update rejected: ${provable.reason}`);
+                    }
+                }
                 const result = updateProfileMemory({
                     slug,
                     mode,

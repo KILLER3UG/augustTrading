@@ -5322,6 +5322,98 @@ const checkInsightWriteDurability = async () => {
     localStorage.removeItem('last_active_user');
 };
 
+// ─── 49. every fact-writing path honours the untrusted gate ────────────────
+// The provenance helper was pinned (above), but `context.untrustedSeen` was
+// consulted at exactly ONE call site — case remember/memory_add. A turn that
+// read a page could still mint a fact through write_memory_note, amend_memory
+// or memory_update, because the gate simply was not reached on those paths.
+// This drives the REAL executor for all four writers with page-derived text
+// and no trader message, and refuses to accept a gate that only some of them
+// reach.
+const checkUntrustedGateCoversAllWriters = async () => {
+    const storage = new Map();
+    global.localStorage = {
+        getItem: key => storage.get(key) ?? null,
+        setItem: (key, value) => storage.set(key, String(value)),
+        removeItem: key => storage.delete(key),
+        key: index => [...storage.keys()][index] ?? null,
+        get length() { return storage.size; },
+    };
+    global.Event = class Event { constructor(t) { this.type = t; } };
+    global.CustomEvent = class CustomEvent extends global.Event {
+        constructor(t, o) { super(t); this.detail = o && o.detail; }
+    };
+    global.window = global;
+    global.window.localStorage = global.localStorage;
+    global.window.dispatchEvent = () => true;
+    global.window.addEventListener = () => {};
+    global.window.removeEventListener = () => {};
+    localStorage.setItem('last_active_user', 'gate-user');
+
+    const desk = loadModule('src/services/analysis/DeskToolsService.ts', {
+        notebook: 'src/services/learning/MemoryFilesService.ts',
+        amendments: 'src/services/learning/memoryAmendments.ts',
+    });
+    await desk.notebook.initMemoryFiles('gate-user');
+    const PAGE_FACT = 'copper inventory doubled week over week';
+    // `untrustedSeen` is what a turn that read a page or a forged-tool result
+    // carries; there is no trader message to check the text against.
+    const untrusted = { allowedTools: 'all', untrustedSeen: true, lastUserMessage: undefined };
+    const attended = {
+        allowedTools: 'all', untrustedSeen: false,
+        // Carries both seed texts, so the SEED writes are legitimate stated
+        // facts and the only thing under test is the untrusted turn.
+        lastUserMessage: 'please remember: The trader uses 15m charts. The trader watches copper warehouse draws.',
+    };
+    const call = (name, args, ctx) => desk.executeDeskTool({ id: name, name, arguments: args }, { ...ctx });
+
+    const refused = (label, res) => {
+        const text = res && res.content ? String(res.content) : '';
+        return ok(label, res && res.ok === false
+            && /no trader message|not in the trader's own words|is data, not/.test(text),
+            text.slice(0, 160));
+    };
+
+    // remember / memory_add — the path that WAS gated (kept as the control).
+    refused('untrusted gate: remember refuses a page-derived fact',
+        await call('remember', { description: PAGE_FACT, kind: 'user', body: PAGE_FACT }, untrusted));
+
+    // memory_update — edits an existing fact's body. Seed it on an ATTENDED
+    // turn first, so the only thing under test is the untrusted update.
+    const seeded = await call('remember', { description: 'Uses 15m charts', kind: 'user', body: 'The trader uses 15m charts.' }, attended);
+    if (seeded && seeded.ok) {
+        const read = await call('memory_read', { slugs: ['uses-15m-charts'] }, attended);
+        let version = 1;
+        try { version = JSON.parse(String(read.content)).entries[0].version ?? 1; } catch { /* default */ }
+        refused('untrusted gate: memory_update refuses a page-derived body',
+            await call('memory_update', { slug: 'uses-15m-charts', mode: 'replace', body: PAGE_FACT, if_version: version }, untrusted));
+    } else {
+        ok('untrusted gate: memory_update refuses a page-derived body', false, 'seed write failed');
+    }
+
+    // write_memory_note — a STATED note lands in a rule-capable folder.
+    refused('untrusted gate: write_memory_note refuses a stated page-derived note',
+        await call('write_memory_note', { folder: 'lessons', file_name: 'copper', content: PAGE_FACT, quote: PAGE_FACT }, untrusted));
+
+    // amend_memory — rewrites an existing notebook file. Seed one on an
+    // ATTENDED turn first (with the reason amend_memory requires), so the only
+    // thing under test is the untrusted correction.
+    const seededNote = await call('write_memory_note', {
+        folder: 'lessons', file_name: 'copper', content: 'The trader watches copper warehouse draws.',
+        quote: 'The trader watches copper warehouse draws.', reason: 'seed',
+    }, attended);
+    if (seededNote && seededNote.ok) {
+        refused('untrusted gate: amend_memory refuses a page-derived correction',
+            await call('amend_memory', {
+                file_name: 'copper', proposed_content: PAGE_FACT, reason: 'update from the page',
+            }, untrusted));
+    } else {
+        ok('untrusted gate: amend_memory refuses a page-derived correction', false,
+            seededNote ? String(seededNote.content).slice(0, 120) : 'seed write failed');
+    }
+    localStorage.removeItem('last_active_user');
+};
+
 const finishReport = () => {
     console.log(`contracts: ${passed} passed, ${failures.length} failed`);
     for (const f of failures) console.log(`  FAIL ${f}`);
@@ -5343,5 +5435,6 @@ checkSkillWrites()
     .then(checkProfileFactFiles)
     .then(checkPromptIndexGrants)
     .then(checkInsightWriteDurability)
+    .then(checkUntrustedGateCoversAllWriters)
     .catch(e => { failures.push(`async runtime checks threw: ${e instanceof Error ? e.stack : String(e)}`); })
     .then(finishReport);
