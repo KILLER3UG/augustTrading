@@ -554,8 +554,24 @@ const inOrder = (haystack, needles) => {
  * control that an old row renders, rather than dropping that message and every
  * message after it — which is what "the second message doesn't render" looks
  * like from the inside.
+ *
+ * The app must be UNMOUNTED while these bytes are written, and that is not a
+ * style choice. A mounted app owns its profile row: its unload flush
+ * (useSaveOnUnload) is dirty on every fresh boot until the first save lands
+ * (~1500ms after load, the mount-armed DATA debounce), so a reload that
+ * happens inside that window writes the in-memory profile OVER whatever an
+ * external writer just put in the row — verified live: seed → reload returns
+ * the pre-seed row, with `[App] Flushed pending save on unload` in between.
+ * seed() below already seeds from favicon.ico for this reason; this seeder
+ * was seeding under a live Agents surface, which made the whole verdict
+ * family fail whenever the seed+reload finished inside the save window.
  */
 async function seedVerdicts(page) {
+    // Unmount first: navigate away from the app so its pagehide flush — which
+    // would otherwise overwrite these rows with the pre-seed in-memory state —
+    // fires BEFORE the write, not after it. The caller's reload then boots the
+    // app fresh, which is the persistence claim being made anyway.
+    await page.goto(`${BASE}/favicon.ico`, { waitUntil: 'domcontentloaded' });
     await page.evaluate(async () => {
         const iso = (minsAgo) => new Date(Date.now() - minsAgo * 60000).toISOString();
         // A roster bot thinking with the SAME provider+model as the answers
@@ -854,16 +870,49 @@ async function seedVerdicts(page) {
             request.onsuccess = () => resolve(request.result);
             request.onerror = () => reject(request.error);
         });
-        const store = db.transaction('userProfiles', 'readwrite').objectStore('userProfiles');
+        const tx = db.transaction('userProfiles', 'readwrite');
+        const store = tx.objectStore('userProfiles');
         const current = await new Promise((resolve) => {
             const get = store.get('Probe User');
             get.onsuccess = () => resolve(get.result);
             get.onerror = () => resolve(null);
         });
         store.put(put(current));
-        await new Promise((resolve) => { setTimeout(resolve, 200); });
+        // Commit, not a sleep: the 200ms timeout could race the transaction and
+        // silently drop the row, which then read as 22 unrelated downstream
+        // failures instead of one loud one here.
+        await new Promise((resolve, reject) => {
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error);
+            tx.onabort = () => reject(tx.error || new Error('userProfiles transaction aborted'));
+        });
         db.close();
+        // Read back what the app will read. A seed that verifies itself turns a
+        // storage-layer regression into a single named failure at this step.
+        const seeded = await new Promise((resolve, reject) => {
+            const request = indexedDB.open('FuturesAI-DB', 1);
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+        });
+        const row = await new Promise((resolve) => {
+            const get = seeded.transaction('userProfiles', 'readonly')
+                .objectStore('userProfiles').get('Probe User');
+            get.onsuccess = () => resolve(get.result || null);
+            get.onerror = () => resolve(null);
+        });
+        seeded.close();
+        const ids = ((row && row.conversations) || []).map((c) => c.id);
+        if (!row || !ids.includes('probe-seeded')
+            || row.lastActiveConversationId !== 'probe-seeded'
+            || !(row.tradeLog || []).length) {
+            throw new Error(`seedVerdicts: the written row does not read back — convs=${JSON.stringify(ids)} activeId=${row && row.lastActiveConversationId}`);
+        }
     });
+    // Back into the app: the caller's `page.reload()` is the persistence claim
+    // and must reload the APP, not the favicon this seeder parked on. A reload
+    // of the just-booted app is safe for the seed — its flush, if dirty,
+    // writes back exactly the seeded row it loaded.
+    await page.goto(BASE, { waitUntil: 'domcontentloaded' });
 }
 
 const failures = [];
