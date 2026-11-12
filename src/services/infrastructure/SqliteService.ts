@@ -143,7 +143,6 @@ const createTables = async (): Promise<void> => {
             globalMemory TEXT,
             settings TEXT,
             finalTradeSummary TEXT,
-            tradingWeaknesses TEXT,
             learningRules TEXT,
             lastActiveConversationId TEXT
         );
@@ -425,7 +424,6 @@ export const sqliteGetUserProfile = async (username: string): Promise<UserProfil
         globalMemory: safeParseJson(userData.globalMemory, undefined),
         settings: safeParseJson(userData.settings, { activeFrameworks: [] }),
         finalTradeSummary: userData.finalTradeSummary,
-        tradingWeaknesses: safeParseJson(userData.tradingWeaknesses, undefined),
         learningRules: safeParseJson(userData.learningRules, undefined),
         lastActiveConversationId: userData.lastActiveConversationId, // Restore state
         tradeLog: trades,
@@ -521,8 +519,8 @@ const saveUserProfileUnlocked = async (profile: UserProfile): Promise<void> => {
         await db.run(`
             INSERT OR REPLACE INTO users (
                 username, createdAt, updatedAt, globalMemory, settings,
-                finalTradeSummary, tradingWeaknesses, learningRules, lastActiveConversationId
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                finalTradeSummary, learningRules, lastActiveConversationId
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         `, [
             profile.username,
             profile.createdAt || now,
@@ -530,7 +528,6 @@ const saveUserProfileUnlocked = async (profile: UserProfile): Promise<void> => {
             profile.globalMemory ? JSON.stringify(profile.globalMemory) : null,
             JSON.stringify(profile.settings),
             profile.finalTradeSummary,
-            profile.tradingWeaknesses ? JSON.stringify(profile.tradingWeaknesses) : null,
             profile.learningRules ? JSON.stringify(profile.learningRules) : null,
             profile.lastActiveConversationId
         ]);

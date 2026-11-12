@@ -1,7 +1,7 @@
 // User profile, settings, and custom instruction types
 
 import { Conversation, LoggedTrade, TradeSummary } from './trade';
-import { GlobalMemory, LearningRule, TradingWeaknesses } from './learning';
+import { GlobalMemory, LearningRule } from './learning';
 
 export interface CustomInstruction {
   id: string;
@@ -45,6 +45,5 @@ export interface UserProfile {
   createdAt?: string;
   updatedAt?: string;
   // AI Learning Features
-  tradingWeaknesses?: TradingWeaknesses;       // Mistake pattern analysis
   learningRules?: { rules: LearningRule[]; lastUpdated: string }; // journal rules (when → action) from post-mortems
 }

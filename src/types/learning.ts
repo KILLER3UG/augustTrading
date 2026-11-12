@@ -16,27 +16,6 @@ export interface FinComMarker {
 }
 
 /**
- * A recurring trading mistake detected from losing trades
- * Used by MistakePatternService
- */
-export interface RecurringMistake {
-  type: 'timing' | 'direction' | 'setup' | 'risk' | 'exit';
-  description: string;
-  occurrences: number;
-  affectedTrades: string[]; // Trade IDs
-  severity: 'high' | 'medium' | 'low';
-}
-
-/**
- * Summary of trading weaknesses for UI display
- */
-export interface TradingWeaknesses {
-  mistakes: RecurringMistake[];
-  worstPerformingSetups: { setup: string; winRate: number; count: number }[];
-  lastUpdated: string;
-}
-
-/**
  * An insight with provider attribution and usage tracking. Lives in the
  * Trader notebook as a distilled/ memory file (plan store unification —
  * the old standalone `attributed_insights_kb` preference store was folded
