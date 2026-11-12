@@ -5077,6 +5077,97 @@ const checkProviderKeyFlag = async () => {
     localStorage.removeItem('provider_configs_v1');
 };
 
+// ─── 46. the fact FILE round-trip — what is written must be readable ───────
+// The notebook's facts/ folder replaced the raw profile_memory_v1 blob. The
+// serializer wrote an UNTERMINATED frontmatter block while the parser required
+// the closing fence, so EVERY fact — migrated or freshly remembered — was
+// skipped on read: the migration reported success, retired the legacy key, and
+// the Memory page rendered empty. A write-side assertion cannot see that; only
+// a round-trip through the real reader can.
+const checkProfileFactFiles = async () => {
+    const store = new Map();
+    global.localStorage = {
+        getItem: k => (store.has(k) ? store.get(k) : null),
+        setItem: (k, v) => store.set(k, String(v)),
+        removeItem: k => store.delete(k),
+        clear: () => store.clear(),
+        key: i => [...store.keys()][i] ?? null,
+        get length() { return store.size; },
+    };
+    global.Event = class Event { constructor(t) { this.type = t; } };
+    global.CustomEvent = class CustomEvent extends global.Event {
+        constructor(t, o) { super(t); this.detail = o && o.detail; }
+    };
+    global.window = global;
+    global.window.localStorage = global.localStorage;
+    global.window.dispatchEvent = () => true;
+    global.window.addEventListener = () => {};
+    global.window.removeEventListener = () => {};
+
+    const USER = 'facts-contract-user';
+    localStorage.setItem('last_active_user', USER);
+    // ONE bundle: profileMemory and the notebook must share a cache, or the
+    // pin measures two stores instead of the one the app has.
+    const both = loadModule('src/services/learning/profileMemory.ts', {
+        mf: 'src/services/learning/MemoryFilesService.ts',
+    });
+    const pm = both;
+    const mf = both.mf;
+
+    const legacy = [
+        { slug: 'risk-style', description: 'Sizes risk at 0.5% per trade', kind: 'feedback',
+            subject: 'preference', body: 'Keeps the account alive.', createdAt: '2026-10-20T04:00:00.000Z',
+            updatedAt: '2026-10-28T04:00:00.000Z', tag: 'stated', version: 1 },
+        { slug: 'trader-profile', description: 'Runs a small perp account', kind: 'user',
+            subject: 'profile', body: 'Trades the London open.', createdAt: '2026-10-18T04:00:00.000Z',
+            updatedAt: '2026-10-27T04:00:00.000Z', tag: 'stated', version: 1 },
+    ];
+    localStorage.setItem(`profile_memory_v1_${USER}`, JSON.stringify(legacy));
+    await mf.initMemoryFiles(USER);
+    const migrated = await pm.migrateProfileMemoryToFacts(USER);
+    const read = pm.listProfileMemories(USER);
+    ok('facts: the migration lands rows the REAL reader reads back',
+        migrated === 2 && read.length === 2
+        && read.map(e => e.slug).sort().join(',') === 'risk-style,trader-profile',
+        `migrated=${migrated} read=${read.length}`);
+    ok('facts: the legacy key is retired only once the rows are readable',
+        localStorage.getItem(`profile_memory_v1_${USER}`) === null);
+    const risk = read.find(e => e.slug === 'risk-style');
+    ok('facts: a migrated row keeps its body, kind, subject and version',
+        risk && risk.body === 'Keeps the account alive.' && risk.kind === 'feedback'
+        && risk.subject === 'preference' && risk.version === 1, JSON.stringify(risk));
+    ok('facts: the migrated rows ride the prompt index',
+        pm.buildProfileMemoryIndex(USER).includes('risk-style'));
+
+    // The migration is not the only write path: a fresh remember must round-trip.
+    const w = pm.rememberProfileMemory({
+        description: 'Uses 15m charts', kind: 'user', body: 'The trader uses 15m charts.',
+        author: 'model', sourceTurnId: 'c1',
+    }, USER);
+    const landed = await pm.flushProfileMemoryWrites();
+    ok('facts: a remembered fact reaches disk and reads back',
+        w.persisted === true && landed.ok === true
+        && pm.listProfileMemories(USER).some(e => e.slug === w.entry.slug
+            && e.body === 'The trader uses 15m charts.'),
+        JSON.stringify(landed));
+
+    // A DROPPED write is a failed write. The notebook switching owner mid-queue
+    // is the one failure the catch block never sees, so the receipt has to count
+    // it too — otherwise the tool answers `saved` for a fact that is nowhere.
+    await mf.initMemoryFiles('facts-other-user');
+    const dropped = pm.rememberProfileMemory({
+        description: 'Queued against the wrong notebook', kind: 'user',
+        body: 'This write must be refused, not reported as saved.',
+    }, USER);
+    const receipt = await pm.flushProfileMemoryWrites();
+    ok('facts: a write dropped by an owner switch is reported as NOT landed',
+        dropped.persisted === true && receipt.ok === false && Boolean(receipt.error),
+        JSON.stringify(receipt));
+    ok('facts: the dropped fact is not served from the cache either',
+        !pm.listProfileMemories(USER).some(e => e.description === 'Queued against the wrong notebook'));
+    localStorage.removeItem('last_active_user');
+};
+
 const finishReport = () => {
     console.log(`contracts: ${passed} passed, ${failures.length} failed`);
     for (const f of failures) console.log(`  FAIL ${f}`);
@@ -5095,5 +5186,6 @@ checkSkillWrites()
     .then(checkDrawingFlushFailure)
     .then(checkSessionSearch)
     .then(checkProviderKeyFlag)
+    .then(checkProfileFactFiles)
     .catch(e => { failures.push(`async runtime checks threw: ${e instanceof Error ? e.stack : String(e)}`); })
     .then(finishReport);

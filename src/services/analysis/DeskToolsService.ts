@@ -3928,7 +3928,7 @@ ${hitContent}`, ...resolvedSymbolField(call, fallback) };
                 // duplicates. The index rides every system prompt, so the model
                 // already sees what exists before choosing slug vs new.
                 try {
-                    const { normalizeKind, normalizeSubject, slugify } = await import('../learning/profileMemory');
+                    const { normalizeKind, normalizeSubject, slugify, flushProfileMemoryWrites } = await import('../learning/profileMemory');
                     const { getActiveUsername } = await import('../../utils/activeUser');
                     const kind = normalizeKind(call.arguments.kind);
                     if (!kind) {
@@ -4063,8 +4063,14 @@ ${body}`);
                         });
                         break;
                     }
-                    if (result.persisted === false) {
-                        return rejectedResult(call, `remember rejected: the fact did not reach storage${result.error ? ` (${result.error})` : ''}. Nothing was saved.`);
+                    // The sync call answers from the write-through cache; the
+                    // notebook write is still queued. Await it before claiming
+                    // `saved`, or the tool reports a fact that never reached
+                    // disk — the refusal this branch was written for.
+                    const landed = await flushProfileMemoryWrites();
+                    if (result.persisted === false || !landed.ok) {
+                        const why = result.error ?? landed.error;
+                        return rejectedResult(call, `remember rejected: the fact did not reach storage${why ? ` (${why})` : ''}. Nothing was saved.`);
                     }
                     const { entry, created } = result;
                     content = JSON.stringify({
@@ -4160,7 +4166,7 @@ ${body}`);
                 break;
             }
             case 'memory_update': {
-                const { updateProfileMemory } = await import('../learning/profileMemory');
+                const { updateProfileMemory, flushProfileMemoryWrites } = await import('../learning/profileMemory');
                 const { getActiveUsername } = await import('../../utils/activeUser');
                 const slug = asString(call.arguments.slug).trim();
                 const modeRaw = asString(call.arguments.mode).trim();
@@ -4204,6 +4210,10 @@ ${body}`);
                     }
                     return rejectedResult(call, `memory_update rejected: ${result.reason}`);
                 }
+                const landedUpdate = await flushProfileMemoryWrites();
+                if (!landedUpdate.ok) {
+                    return rejectedResult(call, `memory_update rejected: the edit did not reach storage${landedUpdate.error ? ` (${landedUpdate.error})` : ''}. The row is unchanged on disk.`);
+                }
                 content = JSON.stringify({
                     saved: true, slug: result.entry.slug, mode: result.mode,
                     version: result.entry.version ?? 1,
@@ -4213,7 +4223,7 @@ ${body}`);
                 break;
             }
             case 'forget': case 'memory_delete': {
-                const { forgetProfileMemory, getProfileMemory } = await import('../learning/profileMemory');
+                const { forgetProfileMemory, getProfileMemory, flushProfileMemoryWrites } = await import('../learning/profileMemory');
                 const { explicitlyRequestedDelete } = await import('../../utils/memoryWriteFilters');
                 const { getActiveUsername } = await import('../../utils/activeUser');
                 const slug = asString(call.arguments.slug);
@@ -4230,6 +4240,10 @@ ${body}`);
                 const gone = forgetProfileMemory(slug, getActiveUsername(), 'model');
                 if (!gone.gone) {
                     return rejectedResult(call, `forget rejected: "${slug}" could not be removed.`);
+                }
+                const landedDelete = await flushProfileMemoryWrites();
+                if (!landedDelete.ok) {
+                    return rejectedResult(call, `forget rejected: the deletion did not reach storage${landedDelete.error ? ` (${landedDelete.error})` : ''}. The row is still on disk.`);
                 }
                 // Say what actually left the store. A line that was the ONLY
                 // source of another line goes with it, and a survivor that

@@ -174,9 +174,10 @@ export const ToolActionsRow: React.FC<ToolActionsRowProps> = ({ actions }) => {
                                                 onClick={() => {
                                                     void (async () => {
                                                         try {
-                                                            const { forgetProfileMemory } = await import('../../services/learning/profileMemory');
+                                                            const { forgetProfileMemory, flushProfileMemoryWrites } = await import('../../services/learning/profileMemory');
                                                             const { getActiveUsername } = await import('../../utils/activeUser');
-                                                            if (forgetProfileMemory(slug, getActiveUsername()).gone) {
+                                                            const removed = forgetProfileMemory(slug, getActiveUsername()).gone;
+                                                            if (removed && (await flushProfileMemoryWrites()).ok) {
                                                                 window.dispatchEvent(new Event('august-profile-memory'));
                                                                 setUndoneSlugs(prev => new Set(prev).add(slug));
                                                             }

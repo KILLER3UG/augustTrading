@@ -19,8 +19,18 @@
  *   • the model maintains it itself: remember (upsert by slug — update over
  *     duplicate), forget (wrong memories get deleted, not left to rot).
  *
- * Per-user localStorage blob (`profile_memory_v1_${user}`), bounded — same
- * persistence grain as chatSessions, so no new storage path.
+ * Storage: one file per fact in the trader notebook's `facts/` folder
+ * (MemoryFilesService) — `<slug>.md`, a frontmatter header, the body verbatim.
+ * The old per-user localStorage blob (`profile_memory_v1_<user>`) is gone
+ * except as this boot's MIGRATION source and the restore target for old
+ * backups, which migrate on the next boot (`migrateProfileMemoryToFacts`).
+ * Read/write shape mirrors distilledMemory: a synchronous write-through cache
+ * (so a write is visible to the next sync read — remember, the CAS checks and
+ * the tool executor all answer synchronously) hydrated from the notebook,
+ * with every file write serialized through the notebook write lock. The
+ * notebook is the single persistent store; the cache only mirrors it. Fact
+ * files are NOT auto-managed: the trader co-owns these rows and edits them
+ * through the same page as before, so no harness label claims them.
  */
 
 import { getActiveUsername } from '../../utils/activeUser';
@@ -29,6 +39,16 @@ import { getHarnessSettings } from '../../utils/harnessSettings';
 import { contentWords, jaccard, overlap } from '../../utils/textOverlap';
 import { UNBOUNDED_INDEX_LINES } from '../../utils/promptIndexBudget';
 import { memorySectionOf, normalizeMemorySection, orderMemorySections } from './memorySections';
+import {
+    createMemoryFileUnlocked,
+    createMemoryFolderUnlocked,
+    deleteMemoryFileUnlocked,
+    getMemoryFiles,
+    getMemoryFilesOwner,
+    subscribeMemoryFilesChanged,
+    updateMemoryFileUnlocked,
+    withNotebookWriteLock,
+} from './MemoryFilesService';
 
 export type ProfileMemoryKind = 'user' | 'feedback' | 'project' | 'reference';
 
@@ -104,7 +124,6 @@ export interface ProfileMemoryEntry {
     derivedFrom?: string[];
 }
 
-const KEY_PREFIX = 'profile_memory_v1';
 /** The store's SOFT thresholds. Neither refuses a write any more: the owner's
  *  ruling is that capacity must not limit the model, so a large store is a
  *  warning a person can act on, never a wall. Exported so the UI and the
@@ -113,8 +132,6 @@ export const PROFILE_MEMORY_SOFT_ENTRY_COUNT = 200;
 export const PROFILE_MEMORY_MAX_BODY_CHARS = 20_000;
 const MAX_DESC_CHARS = 160;
 const MAX_TITLE_CHARS = 60;
-
-const storageKey = (user: string): string => `${KEY_PREFIX}_${user}`;
 
 const KINDS: readonly string[] = ['user', 'feedback', 'project', 'reference'];
 
@@ -139,45 +156,344 @@ export const subjectOf = (e: ProfileMemoryEntry): NonNullable<ProfileMemoryEntry
 export const slugify = (name: string): string =>
     (name || '').toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60);
 
-const readAll = (user: string): ProfileMemoryEntry[] => {
+// ─── Storage: the notebook's facts/ folder ──────────────────────────────────
+//
+// One file per fact in the trader notebook (`MemoryFilesService`), in a
+// `facts/` folder: `<slug>.md` with a small frontmatter header and the body
+// verbatim below it. Files are NOT auto-managed — the trader co-owns these
+// rows and edits them through the same page as before, so no harness label
+// claims them, and no prune pass ever eats one. There is NO ENTRY CAP here on
+// purpose (see rememberProfileMemory): capacity warns through
+// `profileMemoryPressure`, it never refuses a write.
+
+const FACTS_FOLDER_NAME = 'facts';
+const FACTS_SCHEMA = 'profile-fact-1';
+
+/** One frontmatter line: a fact's single-line fields collapse their newlines;
+ *  the body below the header keeps its own. */
+const escLine = (v: string): string => v.replace(/\r?\n/g, ' ');
+
+const serializeFactEntry = (e: ProfileMemoryEntry): string => {
+    const fm: string[] = [
+        '---',
+        `schema: ${FACTS_SCHEMA}`,
+        `slug: ${escLine(e.slug)}`,
+        `kind: ${e.kind}`,
+        `description: ${escLine(e.description)}`,
+        `created: ${e.createdAt}`,
+        `updated: ${e.updatedAt}`,
+    ];
+    if (e.title) fm.push(`title: ${escLine(e.title)}`);
+    if (e.source) fm.push(`source: ${escLine(e.source)}`);
+    if (e.author) fm.push(`author: ${e.author}`);
+    if (e.tag) fm.push(`tag: ${e.tag}`);
+    if (e.subject) fm.push(`subject: ${e.subject}`);
+    if (e.section) fm.push(`section: ${escLine(e.section)}`);
+    if (e.sensitive === true) fm.push('sensitive: true');
+    if (e.aliases?.length) fm.push(`aliases: ${e.aliases.map(escLine).join(', ')}`);
+    if (typeof e.version === 'number' && e.version > 0) fm.push(`version: ${e.version}`);
+    if (e.sourceSession) fm.push(`session: ${escLine(e.sourceSession)}`);
+    if (e.sourceTurnId) fm.push(`turn: ${escLine(e.sourceTurnId)}`);
+    if (e.deletedAt) fm.push(`deleted: ${e.deletedAt}`);
+    if (e.deletedBy) fm.push(`deletedBy: ${e.deletedBy}`);
+    if (e.derivedFrom?.length) fm.push(`derived: ${e.derivedFrom.map(escLine).join(', ')}`);
+    if (e.previous) {
+        // "now X, previously Y" — JSON-encoded single lines so the old body
+        // text survives verbatim. A corrupt line drops the provenance, not
+        // the row.
+        fm.push(`prevUpdated: ${e.previous.updatedAt}`);
+        fm.push(`prevDesc: ${JSON.stringify(e.previous.description)}`);
+        fm.push(`prevBody: ${JSON.stringify(e.previous.body)}`);
+    }
+    // The closing fence is part of the format: `parseFactEntry` matches
+    // `^---\n…\n---\n`, so an unterminated block is not a fact and the row is
+    // skipped on read. Without it every write produced a file nothing could read.
+    return `${fm.join('\n')}\n---\n\n${e.body}\n`;
+};
+
+const parseFactEntry = (content: string): ProfileMemoryEntry | null => {
+    const m = content.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/);
+    if (!m) return null;
+    const meta: Record<string, string> = {};
+    for (const line of m[1].split('\n')) {
+        const kv = line.match(/^([a-zA-Z]+):\s*(.*)$/);
+        if (kv) meta[kv[1].trim()] = kv[2].trim();
+    }
+    if (meta.schema !== FACTS_SCHEMA) return null;
+    // The same four-field validity the old JSON reader enforced — slug,
+    // description, body and a known kind. A file missing any of them is not a
+    // fact and is skipped, not loaded as a half-row.
+    const kind = normalizeKind(meta.kind);
+    if (!meta.slug || !meta.description || !kind) return null;
+    let body = content.slice(m[0].length);
+    if (body.startsWith('\n')) body = body.slice(1);
+    body = body.replace(/\n$/, '');
+    if (!body) return null;
+    const version = Number.parseInt(meta.version ?? '', 10);
+    let previous: ProfileMemoryEntry['previous'] | undefined;
     try {
-        const raw = localStorage.getItem(storageKey(user));
-        const parsed: unknown = raw ? JSON.parse(raw) : [];
-        if (!Array.isArray(parsed)) return [];
-        return parsed.filter((e): e is ProfileMemoryEntry => {
-            const v = e as ProfileMemoryEntry;
-            return !!v && typeof v === 'object'
-                && typeof v.slug === 'string' && typeof v.description === 'string'
-                && typeof v.body === 'string' && normalizeKind(v.kind) !== null;
-        });
-    } catch (err) {
-        // A read that cannot happen returns [] — the only shape this API has —
-        // so the console line is the failure signal, and a caller that shows
-        // "no facts" must not read that as "the trader taught none". The Health
-        // tab's notebook-failure panel is the user-facing half of this.
-        console.error('[profileMemory] read FAILED — memory is unavailable this turn:', err);
-        return [];
+        if (meta.prevUpdated && meta.prevDesc !== undefined && meta.prevBody !== undefined) {
+            previous = {
+                body: JSON.parse(meta.prevBody) as string,
+                description: JSON.parse(meta.prevDesc) as string,
+                updatedAt: meta.prevUpdated,
+            };
+        }
+    } catch { previous = undefined; }
+    return {
+        slug: meta.slug,
+        description: meta.description,
+        kind,
+        body,
+        createdAt: meta.created || '',
+        updatedAt: meta.updated || meta.created || '',
+        ...(Number.isFinite(version) && version > 0 ? { version } : {}),
+        ...(meta.title ? { title: meta.title } : {}),
+        ...(meta.source ? { source: meta.source as ProfileMemoryEntry['source'] } : {}),
+        ...(meta.author === 'trader' || meta.author === 'model' ? { author: meta.author } : {}),
+        ...(meta.tag === 'stated' || meta.tag === 'observed' || meta.tag === 'inferred'
+            ? { tag: meta.tag } : {}),
+        ...(meta.subject && SUBJECTS.includes(meta.subject as ProfileMemoryEntry['subject'])
+            ? { subject: meta.subject as ProfileMemoryEntry['subject'] } : {}),
+        ...(meta.section ? { section: meta.section } : {}),
+        ...(meta.sensitive === 'true' ? { sensitive: true } : {}),
+        ...(meta.aliases ? { aliases: meta.aliases.split(',').map(a => a.trim()).filter(Boolean) } : {}),
+        ...(meta.session ? { sourceSession: meta.session } : {}),
+        ...(meta.turn ? { sourceTurnId: meta.turn } : {}),
+        ...(meta.deleted ? { deletedAt: meta.deleted } : {}),
+        ...(meta.deletedBy === 'trader' || meta.deletedBy === 'model' ? { deletedBy: meta.deletedBy } : {}),
+        ...(meta.derived ? { derivedFrom: meta.derived.split(',').map(s => s.trim()).filter(Boolean) } : {}),
+        ...(previous ? { previous } : {}),
+    };
+};
+
+// ─── Sync facts cache (write-through mirror of the notebook) ────────────────
+
+let factsCache: ProfileMemoryEntry[] | null = null;
+/** The user the hydrated cache belongs to. The notebook holds ONE user at a
+ *  time (`getMemoryFilesOwner`); a read for anyone else cannot be served from
+ *  the loaded notebook and reports the empty shape with a loud console line —
+ *  the one shape this API has for a read that cannot happen. */
+let factsCacheOwner: string | null = null;
+/** Facts written this session whose notebook file may not have landed yet —
+ *  overlaid on the files at hydrate so a notification-driven re-hydrate
+ *  mid-burst never drops a fact from view. Keyed `owner/slug`; `entry: null`
+ *  is a scheduled delete. */
+const pendingFactWrites = new Map<string, { owner: string; entry: ProfileMemoryEntry | null }>();
+
+/** Failed notebook writes since module load, and the last failure's message.
+ *  `flushProfileMemoryWrites` diffs the count across a drain so a receipt only
+ *  blames writes from ITS window. */
+let profileWriteFailureCount = 0;
+let lastProfileWriteError: string | null = null;
+
+let subscribedFacts = false;
+const ensureSubscription = (): void => {
+    if (subscribedFacts) return;
+    subscribedFacts = true;
+    try {
+        // Any notebook write — ours, the harness's, the trader's — may have
+        // changed the facts folder. Drop the mirror; the next read re-hydrates
+        // (the pending overlay keeps in-flight writes visible). Subscribed
+        // lazily (not at module eval): MemoryFilesService is heavy and its
+        // import graph can cycle back here while imports are initializing.
+        subscribeMemoryFilesChanged(() => { factsCache = null; });
+    } catch (e) {
+        console.warn('[profileMemory] Could not subscribe to notebook changes:', e);
     }
 };
 
-const writeAll = (user: string, entries: ProfileMemoryEntry[]): void => {
-    try {
-        // Written AS GIVEN. This used to end `entries.slice(-MAX_ENTRIES)`, so a
-        // store at the cap silently dropped its oldest fact on the next write
-        // while the tool answered `saved: true` — a fact the trader was told was
-        // kept, gone with no receipt. There is no entry cap now:
-        // `PROFILE_MEMORY_SOFT_ENTRY_COUNT` is a WARNING, and only a delete
-        // shrinks the store.
-        localStorage.setItem(storageKey(user), JSON.stringify(entries));
-    } catch (err) {
-        // The cache is not a store here: readAll() re-reads localStorage, so a
-        // swallowed throw means the tool says "saved" and the next turn knows
-        // nothing. Log it and let the caller report the failure.
-        console.error('[profileMemory] write FAILED — the fact is NOT on disk:', err);
-        throw err;
+const factsFolderId = (): string | null =>
+    getMemoryFiles().folders.find(f => f.name === FACTS_FOLDER_NAME)?.id ?? null;
+
+/** All rows for `user` — tombstones included — oldest first, the same order
+ *  the old blob's array gave readers: the index treats the tail as newest. */
+const factsAll = (user: string): ProfileMemoryEntry[] => {
+    ensureSubscription();
+    if (factsCache !== null && factsCacheOwner === user) return factsCache;
+    const notebookOwner = getMemoryFilesOwner();
+    if (notebookOwner !== null && notebookOwner !== user) {
+        console.error(`[profileMemory] read FAILED — the loaded notebook holds "${notebookOwner}", not "${user}"; memory is unavailable this turn`);
+        return [];
     }
+    const folderId = factsFolderId();
+    const parsed: ProfileMemoryEntry[] = folderId
+        ? getMemoryFiles().files
+            .filter(f => f.folderId === folderId)
+            .map(f => parseFactEntry(f.content))
+            .filter((e): e is ProfileMemoryEntry => e !== null)
+        : [];
+    for (const [key, pending] of pendingFactWrites) {
+        if (pending.owner !== user) continue;
+        const slug = key.slice(user.length + 1);
+        const idx = parsed.findIndex(e => e.slug === slug);
+        if (pending.entry === null) {
+            if (idx >= 0) parsed.splice(idx, 1);
+        } else if (idx >= 0) parsed[idx] = pending.entry;
+        else parsed.push(pending.entry);
+    }
+    parsed.sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.slug.localeCompare(b.slug));
+    factsCache = parsed;
+    factsCacheOwner = user;
+    return parsed;
+};
+
+/**
+ * The notebook write for one slug: upsert the fact file, or delete it. The
+ * SYNC caller has already updated the cache — this is the disk half, queued
+ * through the notebook's write lock and fire-and-forget (the distilledMemory
+ * precedent): the sync API cannot await, and a failed write is surfaced to the
+ * callers that owe a receipt through `flushProfileMemoryWrites`.
+ */
+const scheduleFactWrite = (slug: string, entry: ProfileMemoryEntry | null, user: string): void => {
+    const key = `${user}/${slug}`;
+    const queued = pendingFactWrites.has(key);
+    pendingFactWrites.set(key, { owner: user, entry });
     // Nudge any open Settings → Memory card to re-read.
     if (typeof window !== 'undefined') window.dispatchEvent(new Event('august-profile-memory'));
+    if (queued) return; // a queued closure will pick up this newer state
+    void withNotebookWriteLock(async () => {
+        const pending = pendingFactWrites.get(key);
+        pendingFactWrites.delete(key);
+        if (!pending || pending.owner !== user) return; // superseded by a newer owner's write
+        // Never write into another user's notebook: if the active notebook
+        // switched while this write queued, the write is DROPPED (loudly).
+        // A drop is a FAILED write, not a quiet no-op: the sync caller already
+        // answered from the cache, so the receipt layer has to be able to see
+        // this, and the cache has to stop serving a row that is not on disk.
+        if (getMemoryFilesOwner() !== user) {
+            profileWriteFailureCount += 1;
+            lastProfileWriteError = `the notebook now holds "${getMemoryFilesOwner() ?? 'nobody'}", not "${user}"`;
+            factsCache = null;
+            console.warn(`[profileMemory] dropped a queued write for "${slug}" — ${lastProfileWriteError}`);
+            return;
+        }
+        try {
+            const folderId = factsFolderId() ?? (await createMemoryFolderUnlocked(FACTS_FOLDER_NAME, user)).id;
+            const fileName = `${slug}.md`;
+            const existing = getMemoryFiles().files.find(f => f.folderId === folderId && f.name === fileName);
+            if (pending.entry === null) {
+                if (existing) await deleteMemoryFileUnlocked(existing.id, user);
+                return;
+            }
+            const content = serializeFactEntry(pending.entry);
+            if (existing) {
+                if (existing.content !== content) await updateMemoryFileUnlocked(existing.id, { content }, user);
+            } else {
+                await createMemoryFileUnlocked(folderId, fileName, content, user, false);
+            }
+        } catch (err) {
+            // The notebook rolled its own cache back (withNotebookRollback);
+            // drop this mirror too, so the next sync read re-hydrates to what
+            // the notebook ACTUALLY holds. The receipt layer refuses.
+            profileWriteFailureCount += 1;
+            lastProfileWriteError = err instanceof Error ? err.message : String(err);
+            factsCache = null;
+            console.error('[profileMemory] notebook write FAILED — the fact is NOT on disk:', err);
+        }
+    });
+};
+
+/** Resolves once every scheduled fact write has landed (or failed). Callers
+ *  that report a receipt — the remember/memory_update/forget desk tools — owe
+ *  the trader a refusal when the notebook write did not land, not a `saved`
+ *  that only the cache believed. */
+export const flushProfileMemoryWrites = async (): Promise<{ ok: boolean; error?: string }> => {
+    const failuresBefore = profileWriteFailureCount;
+    await withNotebookWriteLock(() => Promise.resolve());
+    if (profileWriteFailureCount !== failuresBefore) {
+        return { ok: false, error: lastProfileWriteError ?? 'the notebook write failed' };
+    }
+    return { ok: true };
+};
+
+// ─── One-time migration: the legacy blob into the notebook ──────────────────
+
+const LEGACY_KEY_PREFIX = 'profile_memory_v1';
+const legacyStorageKey = (user: string): string => `${LEGACY_KEY_PREFIX}_${user}`;
+
+/** The validity rule the old JSON reader enforced — reused to filter the
+ *  legacy blob so a corrupt row does not become a corrupt file. */
+const isLegacyEntry = (e: unknown): e is ProfileMemoryEntry => {
+    const v = e as ProfileMemoryEntry;
+    return !!v && typeof v === 'object'
+        && typeof v.slug === 'string' && typeof v.description === 'string'
+        && typeof v.body === 'string' && normalizeKind(v.kind) !== null;
+};
+
+/**
+ * Move the legacy `profile_memory_v1_<user>` blob into the notebook's facts/
+ * folder once, then retire the key. Called from useUserProfileLoader's
+ * loadUserData, right after the notebook is initialized.
+ *
+ * Safe to re-run, and crash-window-safe: a row whose file already carries the
+ * SAME or NEWER version is already migrated (a mid-batch crash re-runs the
+ * batch without duplicating), and a file the trader edited after migrating
+ * (higher version) wins. A hand-authored file in facts/ that is not a profile
+ * fact is never overwritten — the legacy row stays behind, the key is KEPT,
+ * and the next boot tries again rather than silently dropping the row.
+ *
+ * The key is cleared ONLY on full success, so the data's only remaining copy
+ * is never deleted while a write is still pending. Old BACKUPS that restore
+ * the raw key re-migrate on the next boot.
+ */
+export const migrateProfileMemoryToFacts = async (username: string): Promise<number> => {
+    let migrated = 0;
+    let allLanded = true;
+    try {
+        // Read the legacy blob DIRECTLY from raw localStorage on purpose: this
+        // was the one raw-localStorage store, and Preferences' object helpers
+        // would mangle it. A failed parse keeps the key (the bytes are the
+        // only copy) and leaves the facts folder as it is.
+        let legacy: ProfileMemoryEntry[] = [];
+        try {
+            const raw = localStorage.getItem(legacyStorageKey(username));
+            const parsed: unknown = raw ? JSON.parse(raw) : [];
+            if (Array.isArray(parsed)) legacy = parsed.filter(isLegacyEntry);
+        } catch (err) {
+            console.warn('[profileMemory] legacy store unreadable; the raw key is kept and the facts stay as they are:', err);
+            return 0;
+        }
+        if (legacy.length === 0) {
+            // Nothing to move — still retire the key so no boot carries a dead
+            // blob forever.
+            try { localStorage.removeItem(legacyStorageKey(username)); } catch { /* noop */ }
+            return 0;
+        }
+        await withNotebookWriteLock(async () => {
+            const folder = await createMemoryFolderUnlocked(FACTS_FOLDER_NAME, username);
+            for (const entry of legacy) {
+                const fileName = `${entry.slug}.md`;
+                const existing = getMemoryFiles().files.find(f => f.folderId === folder.id && f.name === fileName);
+                if (existing) {
+                    const current = parseFactEntry(existing.content);
+                    if (current) {
+                        if ((current.version ?? 1) >= (entry.version ?? 1)) continue;
+                        await updateMemoryFileUnlocked(existing.id, { content: serializeFactEntry(entry) }, username);
+                    } else {
+                        console.warn(`[profileMemory] facts/${fileName} is not a profile-fact file — legacy row "${entry.slug}" stays in the legacy key`);
+                        allLanded = false;
+                        continue;
+                    }
+                } else {
+                    await createMemoryFileUnlocked(folder.id, fileName, serializeFactEntry(entry), username, false);
+                }
+                migrated += 1;
+            }
+            factsCache = null; // next read re-hydrates from the migrated files
+        });
+        if (allLanded) {
+            try { localStorage.removeItem(legacyStorageKey(username)); } catch { /* noop */ }
+            console.log(`[profileMemory] Migrated ${migrated} profile facts into the notebook's facts/ folder`);
+        }
+    } catch (err) {
+        // The notebook rolled its writes back; the legacy key stays intact and
+        // the next boot retries. No data loss is possible from here.
+        console.warn('[profileMemory] migration failed (legacy key kept, will retry next boot):', err);
+        allLanded = false;
+        factsCache = null;
+    }
+    return allLanded ? migrated : 0;
 };
 
 /** How full the store is, as a WARNING (never a refusal). The UI and the
@@ -193,10 +509,12 @@ export interface ProfileMemoryPressure {
 
 export const profileMemoryPressure = (username?: string): ProfileMemoryPressure => {
     const user = username || getActiveUsername();
-    let raw = '';
-    try { raw = localStorage.getItem(storageKey(user)) ?? ''; } catch { /* unreadable counts as empty */ }
-    const entries = listProfileMemories(user).length;
-    const bytes = raw.length * 2;
+    const all = factsAll(user);
+    const entries = all.filter(e => !e.deletedAt).length;
+    // The serialized fact files are the bytes the notebook actually carries —
+    // frontmatter included — so the warning reflects what a reader sees. The
+    // old number was the raw JSON blob's length ×2.
+    const bytes = all.reduce((sum, e) => sum + serializeFactEntry(e).length, 0) * 2;
     if (entries < PROFILE_MEMORY_SOFT_ENTRY_COUNT) return { entries, bytes, level: 'ok', message: '' };
     return {
         entries, bytes, level: 'soft',
@@ -206,11 +524,11 @@ export const profileMemoryPressure = (username?: string): ProfileMemoryPressure 
 
 /** All entries for the active user, oldest first. */
 export const listProfileMemories = (username?: string): ProfileMemoryEntry[] =>
-    readAll(username || getActiveUsername()).filter(e => !e.deletedAt);
+    factsAll(username || getActiveUsername()).filter(e => !e.deletedAt);
 
 /** Soft-deleted rows, newest first — the undo list behind the 30-day window. */
 export const listDeletedProfileMemories = (username?: string): ProfileMemoryEntry[] =>
-    readAll(username || getActiveUsername())
+    factsAll(username || getActiveUsername())
         .filter(e => Boolean(e.deletedAt))
         .sort((a, b) => String(b.deletedAt).localeCompare(String(a.deletedAt)));
 
@@ -267,7 +585,7 @@ export const rememberProfileMemory = (input: {
     const now = new Date().toISOString();
     const subjectField = normalizeSubject(input.subject);
     const sectionField = normalizeMemorySection(input.section);
-    const all = readAll(user);
+    const all = factsAll(user);
     const idx = all.findIndex(e => e.slug === (slug || ''));
     if (idx >= 0 && typeof input.ifVersion === 'number' && (all[idx].version ?? 1) !== input.ifVersion) {
         return { conflict: true, current: all[idx] };
@@ -329,17 +647,16 @@ ${input.body}`);
     // 40 facts; capacity must never be the reason the seat cannot remember
     // something the trader told it. A large store is reported as pressure (see
     // `profileMemoryPressure`) so a person can merge or forget, not blocked.
-    if (created) {
-        all.push(entry);
-    } else {
-        all[idx] = { ...all[idx], ...entry, createdAt: all[idx].createdAt };
-    }
-    try {
-        writeAll(user, all);
-        return { entry, created, persisted: true };
-    } catch (err) {
-        return { entry, created, persisted: false, error: err instanceof Error ? err.message : String(err) };
-    }
+    // The cache is written synchronously — it IS the store this turn — and the
+    // notebook file write is queued behind it (`scheduleFactWrite`); the desk
+    // tool that reports the receipt awaits `flushProfileMemoryWrites`, so a
+    // failed disk write is refused, not lied about.
+    const stored = created
+        ? entry
+        : { ...all[idx], ...entry, createdAt: all[idx].createdAt };
+    if (created) all.push(stored); else all[idx] = stored;
+    scheduleFactWrite(stored.slug, stored, user);
+    return { entry, created, persisted: true };
 };
 
 export interface ForgetResult {
@@ -378,7 +695,7 @@ export const forgetProfileMemory = (
     by: 'trader' | 'model' = 'trader',
 ): ForgetResult => {
     const user = username || getActiveUsername();
-    const all = readAll(user);
+    const all = factsAll(user);
     const target = all.find(e => e.slug === slug && !e.deletedAt);
     if (!target) return { gone: false, removed: [], carried: [] };
     const doomed = new Set<string>([slug]);
@@ -391,17 +708,18 @@ export const forgetProfileMemory = (
         }
     }
     const deletedAt = new Date().toISOString();
-    const next = all.map(e => doomed.has(e.slug) && !e.deletedAt
-        ? { ...e, deletedAt, deletedBy: by, updatedAt: deletedAt, version: (e.version ?? 1) + 1 }
-        : e);
-    try {
-        writeAll(user, next);
-    } catch {
-        return { gone: false, removed: [], carried: [] };
+    const tombstoned: ProfileMemoryEntry[] = [];
+    for (let i = 0; i < all.length; i++) {
+        const e = all[i];
+        if (!doomed.has(e.slug) || e.deletedAt) continue;
+        const t = { ...e, deletedAt, deletedBy: by, updatedAt: deletedAt, version: (e.version ?? 1) + 1 };
+        all[i] = t;
+        tombstoned.push(t);
     }
+    for (const t of tombstoned) scheduleFactWrite(t.slug, t, user);
     return {
         gone: true,
-        removed: [slug, ...all.filter(e => doomed.has(e.slug) && e.slug !== slug && !e.deletedAt).map(e => e.slug)],
+        removed: [slug, ...tombstoned.filter(t => t.slug !== slug).map(t => t.slug)],
         carried: target.derivedFrom ?? [],
         undoUntil: new Date(Date.now() + 30 * 86_400_000).toISOString(),
     };
@@ -410,32 +728,27 @@ export const forgetProfileMemory = (
 /** Undo a soft delete. False when the slug is not currently deleted. */
 export const restoreProfileMemory = (slug: string, username?: string): boolean => {
     const user = username || getActiveUsername();
-    const all = readAll(user);
+    const all = factsAll(user);
     const idx = all.findIndex(e => e.slug === slug && Boolean(e.deletedAt));
     if (idx < 0) return false;
     const restored = { ...all[idx] };
     delete restored.deletedAt;
     delete restored.deletedBy;
     all[idx] = restored;
-    try {
-        writeAll(user, all);
-        return true;
-    } catch {
-        return false;
-    }
+    scheduleFactWrite(restored.slug, restored, user);
+    return true;
 };
 
 /** The undo window is a hard 30 days; a cleanup pass may call this. */
 export const purgeDeletedProfileMemories = (username?: string, days = 30): number => {
     const user = username || getActiveUsername();
-    const all = readAll(user);
+    const all = factsAll(user);
     const cutoff = Date.now() - Math.max(1, days) * 86_400_000;
-    const next = all.filter(e => !e.deletedAt || Date.parse(e.deletedAt) >= cutoff);
-    const removed = all.length - next.length;
-    if (removed > 0) {
-        try { writeAll(user, next); } catch { return 0; }
-    }
-    return removed;
+    const removedEntries = all.filter(e => e.deletedAt && Date.parse(e.deletedAt) < cutoff);
+    if (removedEntries.length === 0) return 0;
+    factsCache = all.filter(e => !e.deletedAt || Date.parse(e.deletedAt) >= cutoff);
+    for (const e of removedEntries) scheduleFactWrite(e.slug, null, user);
+    return removedEntries.length;
 };
 
 /**
@@ -451,15 +764,12 @@ export const purgeDeletedProfileMemories = (username?: string, days = 30): numbe
  */
 export const retireMergedMemory = (slug: string, username?: string): boolean => {
     const user = username || getActiveUsername();
-    const all = readAll(user);
-    const next = all.filter(e => e.slug !== slug);
-    if (next.length === all.length) return false;
-    try {
-        writeAll(user, next);
-        return true;
-    } catch {
-        return false;
-    }
+    const all = factsAll(user);
+    const idx = all.findIndex(e => e.slug === slug);
+    if (idx < 0) return false;
+    factsCache = all.filter(e => e.slug !== slug);
+    scheduleFactWrite(slug, null, user);
+    return true;
 };
 
 // ─── Search, update, similarity (the memory_* tools) ────────────────────────
@@ -633,7 +943,7 @@ export const updateProfileMemory = (
     username?: string,
 ): MemoryUpdateResult => {
     const user = username || getActiveUsername();
-    const all = readAll(user);
+    const all = factsAll(user);
     const idx = all.findIndex(e => e.slug === input.slug.trim() && !e.deletedAt);
     if (idx < 0) return { ok: false, reason: `no memory with slug "${input.slug}"` };
     const prior = all[idx];
@@ -677,11 +987,7 @@ export const updateProfileMemory = (
             : {}),
     };
     all[idx] = entry;
-    try {
-        writeAll(user, all);
-    } catch (err) {
-        return { ok: false, reason: err instanceof Error ? err.message : String(err), current: prior };
-    }
+    scheduleFactWrite(entry.slug, entry, user);
     return { ok: true, entry, mode: input.mode, ...(entry.previous ? { previous: entry.previous } : {}) };
 };
 
@@ -755,7 +1061,23 @@ export const buildProfileMemoryIndex = (username?: string, maxLines = UNBOUNDED_
     ].filter(Boolean).join('\n');
 };
 
-/** Test hook: wipe the store. */
+/** Test hook: wipe the store — the mirror cache first (so the next sync read
+ *  answers empty immediately), then every fact file in the notebook's facts
+ *  folder, queued through the write lock. */
 export const __clearProfileMemoriesForTests = (username?: string): void => {
-    try { localStorage.removeItem(storageKey(username || getActiveUsername())); } catch { /* noop */ }
+    const user = username || getActiveUsername();
+    for (const [key, pending] of pendingFactWrites) {
+        if (pending.owner === user) pendingFactWrites.delete(key);
+    }
+    factsCache = [];
+    factsCacheOwner = user;
+    const folderId = factsFolderId();
+    if (!folderId) return;
+    // Snapshot the files BEFORE the lock: the deletes mutate the shared cache.
+    const files = getMemoryFiles().files.filter(f => f.folderId === folderId);
+    void withNotebookWriteLock(async () => {
+        for (const f of files) {
+            try { await deleteMemoryFileUnlocked(f.id, user); } catch { /* best effort */ }
+        }
+    });
 };

@@ -30,7 +30,7 @@ import { phtDayYear } from '../../utils/timezone';
 import { memoryExportFilename, memoryExportMarkdown } from '../../services/learning/memoryExport';
 import {
     listProfileMemories, listDeletedProfileMemories, forgetProfileMemory, rememberProfileMemory,
-    restoreProfileMemory, type ProfileMemoryEntry,
+    restoreProfileMemory, flushProfileMemoryWrites, type ProfileMemoryEntry,
 } from '../../services/learning/profileMemory';
 import { memorySectionOf, memorySectionSlug, orderMemorySections } from '../../services/learning/memorySections';
 import { isTraderLearningEnabled, setTraderLearningEnabled } from '../../services/learning/traderLearner';
@@ -103,7 +103,7 @@ const ProfileMemoryCard: React.FC<ProfileMemoryCardProps> = ({ memoryModel, onOp
 
     /** Save an edit as a STATED fact — the trader wrote it, so it outranks an
      *  observed one — and refuse silently losing a concurrent change. */
-    const saveEdit = (): void => {
+    const saveEdit = async (): Promise<void> => {
         if (!editing) return;
         const r = rememberProfileMemory({
             slug: editing.slug,
@@ -118,8 +118,12 @@ const ProfileMemoryCard: React.FC<ProfileMemoryCardProps> = ({ memoryModel, onOp
             setEditError('This memory changed while you were editing it. Reopen it to see the current text.');
             return;
         }
-        if (r.persisted === false) {
-            setEditError(r.error ?? 'The change could not be saved.');
+        // The edit is queued to the notebook, not written yet. Close the editor
+        // only once the write lands, or the trader sees a saved row that is not
+        // on disk.
+        const landed = await flushProfileMemoryWrites();
+        if (r.persisted === false || !landed.ok) {
+            setEditError(r.error ?? landed.error ?? 'The change could not be saved.');
             return;
         }
         setEditing(null);
@@ -127,9 +131,12 @@ const ProfileMemoryCard: React.FC<ProfileMemoryCardProps> = ({ memoryModel, onOp
         refresh();
     };
 
-    const restoreOne = (slug: string): void => {
+    const restoreOne = async (slug: string): Promise<void> => {
         const ok = restoreProfileMemory(slug);
-        setNote(ok ? `Restored "${slug}".` : `"${slug}" could not be restored.`);
+        const landed = await flushProfileMemoryWrites();
+        setNote(ok && landed.ok
+            ? `Restored "${slug}".`
+            : `"${slug}" could not be restored.${landed.error ? ` (${landed.error})` : ''}`);
         refresh();
     };
 
@@ -137,8 +144,14 @@ const ProfileMemoryCard: React.FC<ProfileMemoryCardProps> = ({ memoryModel, onOp
      *  source was this line goes with it, and a survivor that had absorbed other
      *  facts took those records down too — either case deletes more than the
      *  trader clicked, and a list that just shrinks under-reports it. */
-    const forgetOne = (slug: string): void => {
+    const forgetOne = async (slug: string): Promise<void> => {
         const r = forgetProfileMemory(slug);
+        const landed = await flushProfileMemoryWrites();
+        if (r.gone && !landed.ok) {
+            setNote(`"${slug}" could not be removed from storage${landed.error ? ` (${landed.error})` : ''}. It is still on disk.`);
+            refresh();
+            return;
+        }
         const extra = r.removed.length - 1;
         setNote(!r.gone
             ? `"${slug}" was already gone.`

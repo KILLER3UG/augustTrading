@@ -3499,6 +3499,16 @@ async function main() {
                         body: 'The notebook is the record.', createdAt: at(12), updatedAt: at(25), tag: 'stated', version: 1 },
                 ]));
             });
+            // Profile facts live in the notebook's facts/ folder now; the legacy
+            // blob above is what an UPGRADED trader (or a restored backup) still
+            // has, and it is migrated at boot. Reload so the real migration runs:
+            // seeding the retired key and reading it back without a boot would
+            // assert against a store the app no longer reads. The six checks
+            // below are unchanged — this proves the legacy rows BECOME visible.
+            await page.reload({ waitUntil: 'domcontentloaded' });
+            await sleep(1800);
+            await page.evaluate(() => { window.location.hash = '#/settings'; });
+            await sleep(600);
             const memoryClicked = await page.evaluate(() => {
                 const btn = [...document.querySelectorAll('button')]
                     .find(b => (b.textContent || '').trim() === 'Memory');

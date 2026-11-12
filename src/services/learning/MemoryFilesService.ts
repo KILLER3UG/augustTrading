@@ -118,6 +118,10 @@ const DEFAULT_FOLDERS: MemoryFolder[] = [
     { id: 'rules', name: 'rules', order: 3 },
     { id: 'skills', name: 'skills', order: 4 },
     { id: 'bots', name: 'bots', order: 5 },
+    // The collaboration-facts store (profileMemory). One file per fact,
+    // written by the remember/memory_update tools and edited by the trader;
+    // the store keeps its own sync cache hydrated from this folder.
+    { id: 'facts', name: 'facts', order: 6 },
     { id: 'distilled', name: 'distilled', order: 7 },
     // Goal environments (goals/*.json). A goal is durable work state, not a
     // skill or a note; it lives in the SAME notebook blob so backup/export and

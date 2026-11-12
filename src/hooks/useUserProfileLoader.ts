@@ -330,6 +330,17 @@ export const useUserProfileLoader = (args: UseUserProfileLoaderArgs): UseUserPro
             await initMemoryFiles(username);
             if (isStale()) return;
 
+            // The legacy profile-fact blob moves into the notebook's facts/
+            // folder here, before anything reads a fact: the reader only looks
+            // at the notebook, so an unmigrated store is an EMPTY store. The
+            // migration keeps the legacy key unless every row landed, so a
+            // failure costs nothing and the next boot retries.
+            // Lazy: this runs once per boot, and a static import would pull the
+            // whole fact store into the startup chunk for it.
+            const { migrateProfileMemoryToFacts } = await import('../services/learning/profileMemory');
+            await migrateProfileMemoryToFacts(username);
+            if (isStale()) return;
+
             // Captured, not fired: the regime ledger's cache is read by the
             // settlement path's regime resolution, so it must be hydrated
             // before anything asks it a question.
