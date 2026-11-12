@@ -5236,6 +5236,72 @@ const checkPromptIndexGrants = async () => {
     localStorage.removeItem('last_active_user');
 };
 
+// ─── 48. the insight migration's durability gate ───────────────────────────
+// migrateFrozenTradeInsights clears the stored profile's frozen fields — the
+// fact's ONLY other copy — after queueing notebook writes that are NOT awaited.
+// A write that failed used to be invisible: the loop completed, the fields were
+// cleared, and the row was gone from both places. The flush now reports whether
+// the writes landed, and the migration refuses to clear until they did. This
+// drives a real failing store, because a green flush on a healthy disk proves
+// nothing about the failure path.
+const checkInsightWriteDurability = async () => {
+    const storage = new Map();
+    let failWrites = false;
+    global.localStorage = {
+        getItem: key => storage.get(key) ?? null,
+        setItem: (key, value) => { if (failWrites) throw new Error('disk full'); storage.set(key, String(value)); },
+        removeItem: key => storage.delete(key),
+        key: index => [...storage.keys()][index] ?? null,
+        get length() { return storage.size; },
+    };
+    global.Event = class Event { constructor(t) { this.type = t; } };
+    global.CustomEvent = class CustomEvent extends global.Event {
+        constructor(t, o) { super(t); this.detail = o && o.detail; }
+    };
+    global.window = global;
+    global.window.localStorage = global.localStorage;
+    global.window.dispatchEvent = () => true;
+    global.window.addEventListener = () => {};
+    global.window.removeEventListener = () => {};
+    localStorage.setItem('last_active_user', 'dur-user');
+
+    // ONE bundle: the distilled store and the notebook must share a cache.
+    const both = loadModule('src/services/learning/distilledMemory.ts', {
+        mf: 'src/services/learning/MemoryFilesService.ts',
+    });
+    const dm = both;
+    const mf = both.mf;
+    await mf.initMemoryFiles('dur-user');
+    const fact = (id, insight) => ({
+        id, insight, sourceProvider: 'test', category: 'global', qualityScore: 50,
+        wasValidated: false, timesUsed: 0, timesHelpful: 0, timesNotHelpful: 0,
+        createdAt: '2026-11-01T00:00:00.000Z', tradeId: '',
+    });
+
+    dm.mergeDistilledFact(fact('d1', 'Fades at 16:00'));
+    const good = await dm.flushDistilledWrites();
+    ok('insight durability: a landed notebook write reports ok',
+        good.ok === true, JSON.stringify(good));
+
+    failWrites = true;
+    dm.mergeDistilledFact(fact('d2', 'Never add to a loser'));
+    const bad = await dm.flushDistilledWrites();
+    ok('insight durability: a FAILED notebook write is reported, not swallowed',
+        bad.ok === false && typeof bad.error === 'string' && bad.error.length > 0, JSON.stringify(bad));
+
+    // The migration must consult that verdict BEFORE clearing the frozen
+    // fields, and bail out — leaving them in place — when it says not-landed.
+    const src = fs.readFileSync(path.join(ROOT, 'src/services/learning/distilledMemory.ts'), 'utf8');
+    const flushIdx = src.indexOf('await flushDistilledWrites()');
+    const clearIdx = src.indexOf('insightKnowledgeBase: undefined');
+    ok('insight durability: the migration flushes BEFORE it clears the frozen fields',
+        flushIdx > -1 && clearIdx > -1 && flushIdx < clearIdx,
+        `flush@${flushIdx} clear@${clearIdx}`);
+    ok('insight durability: a not-landed flush returns before the clear',
+        /if \(!landed\.ok\) \{[\s\S]*?return migrated/.test(src));
+    localStorage.removeItem('last_active_user');
+};
+
 const finishReport = () => {
     console.log(`contracts: ${passed} passed, ${failures.length} failed`);
     for (const f of failures) console.log(`  FAIL ${f}`);
@@ -5256,5 +5322,6 @@ checkSkillWrites()
     .then(checkProviderKeyFlag)
     .then(checkProfileFactFiles)
     .then(checkPromptIndexGrants)
+    .then(checkInsightWriteDurability)
     .catch(e => { failures.push(`async runtime checks threw: ${e instanceof Error ? e.stack : String(e)}`); })
     .then(finishReport);

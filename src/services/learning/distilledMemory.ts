@@ -148,6 +148,12 @@ let factsCache: AttributedInsight[] | null = null;
  *  overlaid on the files at hydrate so a notification-driven re-hydrate
  *  mid-burst never drops a fact from view. */
 const pendingWrites = new Map<string, AttributedInsight>();
+/** The notebook writes are fire-and-forget, so a failure never reaches the
+ *  caller that queued it. These make it visible to the one caller that owes a
+ *  durability decision — the frozen-insight migration, which must NOT clear
+ *  the profile's copy of a fact whose notebook write did not land. */
+let distilledWriteFailures = 0;
+let lastDistilledWriteError: string | null = null;
 
 const distilledFolderId = (): string | null =>
     getMemoryFiles().folders.find(f => f.name === DISTILLED_FOLDER_NAME)?.id ?? null;
@@ -283,8 +289,11 @@ export const mergeDistilledFact = (incoming: AttributedInsight): AttributedInsig
     pendingWrites.set(finalFact.id, finalFact);
     if (finalFact.id !== incoming.id) pendingWrites.delete(incoming.id);
 
-    // Notebook persistence (serialized; the cache already reflects it).
-    withNotebookWriteLock(async () => {
+    // Notebook persistence (serialized; the cache already reflects it). The
+    // lock promise is NOT awaited here — the sync caller cannot wait — but a
+    // rejection is recorded so the migration's flush can refuse to clear the
+    // profile's copy of a fact that is not actually on disk.
+    void withNotebookWriteLock(async () => {
         try {
             let folder = getMemoryFiles().folders.find(f => f.name === DISTILLED_FOLDER_NAME);
             if (!folder) folder = await createMemoryFolderUnlocked(DISTILLED_FOLDER_NAME, username);
@@ -307,12 +316,26 @@ export const mergeDistilledFact = (incoming: AttributedInsight): AttributedInsig
             pendingWrites.delete(finalFact.id);
             resetDistilledCache();
         }
+    }).catch((err: unknown) => {
+        distilledWriteFailures += 1;
+        lastDistilledWriteError = err instanceof Error ? err.message : String(err);
+        console.error('[distilledMemory] notebook write FAILED — the fact is NOT on disk:', err);
     });
     return finalFact;
 };
 
-/** Test/tooling hook: resolves once every scheduled fact write has landed. */
-export const flushDistilledWrites = (): Promise<void> => withNotebookWriteLock(() => Promise.resolve());
+/** Resolves once every scheduled fact write has landed, and says whether they
+ *  did. The frozen-insight migration owes the trader's data a durability
+ *  decision: it clears the profile's only other copy of a fact, so it must
+ *  refuse when the notebook write failed rather than report success. */
+export const flushDistilledWrites = async (): Promise<{ ok: boolean; error?: string }> => {
+    const failuresBefore = distilledWriteFailures;
+    await withNotebookWriteLock(() => Promise.resolve());
+    if (distilledWriteFailures !== failuresBefore) {
+        return { ok: false, error: lastDistilledWriteError ?? 'the notebook write failed' };
+    }
+    return { ok: true };
+};
 
 // ─── One-time legacy migration ──────────────────────────────────────────────
 
@@ -432,9 +455,19 @@ export const migrateFrozenTradeInsights = async (username: string): Promise<numb
         }
         if (migrated > 0) resetDistilledCache();
 
-        // Clear the frozen fields so no save carries them again. Reached only
-        // when every write above landed — an exception jumps to the catch and
-        // leaves the fields in place for a retry on the next boot.
+        // The writes above were queued, not awaited. Flush them and REFUSE to
+        // clear the frozen fields unless every one landed: the stored profile
+        // is the fact's only other copy, so clearing it behind a failed write
+        // destroys the row. The fields stay, and the next boot re-runs the
+        // batch — an already-landed fact fingerprint-merges instead of
+        // duplicating, so the retry is safe.
+        const landed = await flushDistilledWrites();
+        if (!landed.ok) {
+            console.warn(`[distilledMemory] ${migrated} insight(s) did NOT reach the notebook (${landed.error ?? 'write failed'}) — the frozen fields are KEPT and the next boot retries`);
+            return migrated;
+        }
+
+        // Clear the frozen fields so no save carries them again.
         const patch: Record<string, unknown> = { insightKnowledgeBase: undefined };
         if (carrier.globalMemory && 'insightKnowledgeBase' in carrier.globalMemory) {
             patch.globalMemory = { ...carrier.globalMemory, insightKnowledgeBase: undefined };
