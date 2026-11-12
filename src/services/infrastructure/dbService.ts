@@ -36,6 +36,25 @@ const DB_VERSION = 1;
 let dbPromise: Promise<IDBPDatabase> | null = null;
 let sqliteReady = false;
 let dbReadyPromise: Promise<void> | null = null;
+/** Fires once: the deleted reasoning corpus owned its own IndexedDB database
+ *  ('FuturesAI-Thinking-DB'). Nothing reads it — drop it from every machine
+ *  that still carries one. Deliberate best-effort; a refused delete is
+ *  harmless because no open connection ever holds the database any more. */
+let deadThinkingDbCleanup: Promise<void> | null = null;
+const cleanupDeadThinkingDb = (): Promise<void> => {
+  if (!deadThinkingDbCleanup) {
+    deadThinkingDbCleanup = new Promise<void>((resolve) => {
+      if (typeof indexedDB === 'undefined') { resolve(); return; }
+      try {
+        const req = indexedDB.deleteDatabase('FuturesAI-Thinking-DB');
+        req.onsuccess = () => { console.log('[dbService] Removed the deleted thinking corpus database'); resolve(); };
+        req.onerror = () => { console.warn('[dbService] Could not remove the deleted thinking corpus database'); resolve(); };
+        req.onblocked = () => resolve(); // another tab holds it; not our problem
+      } catch { resolve(); }
+    });
+  }
+  return deadThinkingDbCleanup;
+};
 
 /**
  * Await database initialization and return whether SQLite is available.
@@ -60,6 +79,7 @@ const ensureDbReady = async (): Promise<boolean> => {
  */
 const initIndexedDB = () => {
   if (dbPromise) return dbPromise;
+  void cleanupDeadThinkingDb();
   dbPromise = openDB(DB_NAME, DB_VERSION, {
     upgrade(db) {
       if (!db.objectStoreNames.contains(STORE_NAME)) {
@@ -67,10 +87,10 @@ const initIndexedDB = () => {
       }
     },
   }).catch(async (err: unknown) => {
-    // Repair: an older WIP build had ThinkingStoreService open this same
-    // database at a higher version, which makes a v1 request fail with a
-    // VersionError. Open at the current version instead — the userProfiles
-    // store is unaffected.
+    // Repair: an older WIP build had ThinkingStoreService (since deleted)
+    // open this same database at a higher version, which makes a v1 request
+    // fail with a VersionError. Open at the current version instead — the
+    // userProfiles store is unaffected.
     if ((err as { name?: string })?.name === 'VersionError') {
       console.warn('[dbService] Database version conflict detected, opening at current version');
       dbPromise = null;
@@ -99,6 +119,9 @@ const initIndexedDBRepair = () => {
 export const initDatabase = async (): Promise<void> => {
   if (!dbReadyPromise) {
     dbReadyPromise = (async () => {
+      // Runs on every backend: the deleted reasoning corpus owned its own
+      // IndexedDB database even on SQLite (native) machines.
+      void cleanupDeadThinkingDb();
       if (isNativePlatform()) {
         console.log('[dbService] Native platform detected, initializing SQLite...');
         sqliteReady = await initSqlite();
@@ -420,13 +443,8 @@ export const deleteUserProfile = async (username: string): Promise<void> => {
         console.warn('[dbService] Could not enumerate conversations for image GC:', err);
     }
     await idbDeleteUserProfile(username);
-    // Clean the reasoning store too (separate IndexedDB database — the
-    // profile delete above cannot reach it; on SQLite, sqliteDeleteUser
-    // already removed the rows and this becomes a harmless no-op).
-    const { deleteThinkingForUser } = await import('./ThinkingStoreService');
-    await deleteThinkingForUser(username).catch(err => {
-        console.warn('[dbService] Failed to delete thinking records:', err);
-    });
+    // (The reasoning corpus's own IndexedDB database is not touched here:
+    // the store was deleted, and initDatabase drops the dead database once.)
     // Same GC for the image side-store (web/IndexedDB path).
     await deleteMessageImagesForConversations(conversationIds);
 };

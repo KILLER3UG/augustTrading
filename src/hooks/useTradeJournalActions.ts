@@ -2,7 +2,6 @@ import { useCallback } from 'react';
 import * as MemoryService from '../services/learning/MemoryService';
 import { generateFinalSummary } from '../services/providers/GenericAnalysisService';
 import { syncPatternMemory } from '../services/learning/MemoryFilesService';
-import { getThinkingTradeId, updateThinkingOutcome, deleteThinkingByTrade } from '../services/infrastructure/ThinkingStoreService';
 import { OutcomeAutopilotService } from '../services/ui/OutcomeAutopilotService';
 import { recordIntentionalTradeCount } from '../services/validation/DataIntegrityService';
 import { insightTextForTrade } from '../utils/tradeInsightBrief';
@@ -140,7 +139,6 @@ export const useTradeJournalActions = (args: UseTradeJournalActionsArgs): UseTra
         if (removed) void recordIntentionalTradeCount(username, nextTrades.length);
         const deletedTrades = loggedTrades.filter(t => idSet.has(t.id));
         deletedTrades.forEach(t => {
-            void deleteThinkingByTrade(getThinkingTradeId(t.analysis?.createdAt, t.id), username);
             OutcomeAutopilotService.unregister(t.id);
         });
     };
@@ -186,7 +184,6 @@ export const useTradeJournalActions = (args: UseTradeJournalActionsArgs): UseTra
             window.setTimeout(() => {
                 if (restored || prevTrades.length === 0) return;
                 prevTrades.forEach(t => {
-                    void deleteThinkingByTrade(getThinkingTradeId(t.analysis?.createdAt, t.id), username);
                     OutcomeAutopilotService.unregister(t.id);
                 });
             }, 5500);
@@ -402,10 +399,6 @@ export const useTradeJournalActions = (args: UseTradeJournalActionsArgs): UseTra
             : t)));
         const trade = loggedTradesRef.current.find(t => t.id === id);
         if (trade) {
-            const tradeId = getThinkingTradeId(trade.analysis?.createdAt, id);
-            void updateThinkingOutcome(tradeId, outcome, id, activeUsernameRef.current || 'default', { pnlAmount: trade.pnlAmount, pnlPercent: trade.pnlPercent }).catch(err => {
-                console.warn('[TradeLog] Failed to update thinking outcome:', err);
-            });
             // The settlement pass folded this trade into the skills that carried
             // it. The row and the fold must not disagree: move the record to the
             // corrected class, and say so — a silent repair is a second opinion
@@ -426,19 +419,10 @@ export const useTradeJournalActions = (args: UseTradeJournalActionsArgs): UseTra
 
     // Fill in / correct PnL from the journal card (autopilot-logged trades
     // only carry the leveraged percent, so the dollar figure needs a manual
-    // entry to make the dashboard PnL math meaningful). Backfills the
-    // thinking records too so the training corpus stays consistent with the
-    // journal.
+    // entry to make the dashboard PnL math meaningful).
     const handleUpdateTradePnL = useCallback((id: string, pnl: { pnlAmount?: number; pnlPercent?: number }) => {
         setLoggedTrades(prev => prev.map(t => t.id === id ? { ...t, ...pnl } : t));
-        const trade = loggedTradesRef.current.find(t => t.id === id);
-        if (trade) {
-            const tradeId = getThinkingTradeId(trade.analysis?.createdAt, id);
-            void updateThinkingOutcome(tradeId, trade.outcome, id, activeUsernameRef.current || 'default', pnl).catch(err => {
-                console.warn('[TradeLog] Failed to backfill thinking PnL:', err);
-            });
-        }
-    }, [setLoggedTrades, loggedTradesRef, activeUsernameRef]);
+    }, [setLoggedTrades]);
 
     const handleRegenerateFinalSummary = async () => {
         // Guard: an auto-refresh may already be running (the debounced

@@ -163,9 +163,10 @@ Exposure: TOOL (a desk tool returns it), PROMPT (packet block), INTERNAL, UI.
    break yet. The export that exists is journal-shaped only (`utils/reportExport.ts` ›
    `trainingRecordFor`, `TRAINING_SCHEMA_VERSION` 1): decision + outcome + lesson + provenance.
    The feature snapshot is dashes (O-46), and entry-time candles are reconstructable, not stored.
-2. **Tool outputs reach training data only through prose.** No tool result is persisted with the
-   row; the reasoning store correlates outcomes with per-model traces
-   (`services/infrastructure/ThinkingStoreService.ts`). The only decision→price-outcome loop that
+2. **Tool outputs reach training data only through prose.** No tool result is persisted with
+   the row; the per-model reasoning traces are display state only (they ride on the chat row
+   and are not stored anywhere — the reasoning-corpus store was deleted as dead weight). The
+   only decision→price-outcome loop that
    is closed and measured is the signal ledger (§8).
 3. **Live-vs-live divergences that matter** (the ones a context pack would freeze):
    - delta: live path approximates, historical path is real (F4) — one P0 fix closes it for the desk;

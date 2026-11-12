@@ -624,31 +624,9 @@ export const useTradeLogging = (params: UseTradeLoggingParams) => {
             })().catch(err => console.warn('[TraderNotebook] Closed-trade sync failed:', err));
         }
 
-        // === ThinkingStore: Update outcome for all thinking records of this trade ===
-        // This correlates the stored reasoning with the actual outcome (WIN/LOSS),
-        // enabling outcome-conditioned training data.
-        try {
-            const { updateThinkingOutcome, getThinkingTradeId } = await import('../services/infrastructure/ThinkingStoreService');
-            // Canonical trade key — same formula as the save side, so the
-            // outcome update lands on the records even when the analysis
-            // createdAt is missing.
-            const tradeId = getThinkingTradeId(loggedTrade.analysis?.createdAt, loggedTrade.id);
-            // Pass the card (message) id so the outcome reaches the records
-            // even if the timestamp key diverges from the logged trade.
-            // PnL travels with the outcome — the corpus becomes risk-weighted
-            // (a WIN at +4R is not the same as a WIN at +0.5R).
-            updateThinkingOutcome(
-                tradeId,
-                outcome,
-                message.id,
-                getActiveUsername(),
-                { pnlAmount: loggedTrade.pnlAmount, pnlPercent: loggedTrade.pnlPercent }
-            ).catch(err => {
-                console.warn('[ThinkingStore] Failed to update outcome:', err);
-            });
-        } catch (err) {
-            console.warn('[ThinkingStore] Failed to import updateThinkingOutcome:', err);
-        }
+        // The outcome-correlated reasoning corpus (ThinkingStoreService) is
+        // deleted — nothing ever read it. Outcome/PnL now live only where they
+        // are consumed: the trade row and the calibration ledgers below.
 
         // Update confidence calibration
         // The same exclusion for the Brier calibration ledger. A mirrored
@@ -1027,20 +1005,7 @@ export const useTradeLogging = (params: UseTradeLoggingParams) => {
         // with the same id, skewing every dashboard stat.
         setLoggedTrades(prev => prev.some(t => t.id === loggedTrade.id) ? prev : [loggedTrade, ...prev]);
 
-        // === ThinkingStore: Update outcome for all thinking records of this trade ===
-        // ENTRY_NOT_HIT resolves the reasoning set the same way a WIN/LOSS
-        // does — without this the training records stayed PENDING forever and
-        // the per-trade browser never showed the entry was missed.
-        try {
-            const { updateThinkingOutcome, getThinkingTradeId } = await import('../services/infrastructure/ThinkingStoreService');
-            const tradeId = getThinkingTradeId(loggedTrade.analysis?.createdAt, loggedTrade.id);
-            updateThinkingOutcome(tradeId, TradeOutcome.ENTRY_NOT_HIT, candidate.message.id, getActiveUsername()).catch(err => {
-                console.warn('[ThinkingStore] Failed to update outcome:', err);
-            });
-        } catch (err) {
-            console.warn('[ThinkingStore] Failed to import updateThinkingOutcome:', err);
-
-        }
+        // (The reasoning corpus is deleted — no thinking-record outcome to resolve.)
 
         // Auto-add to Recent Insights via the SHARED helper. This block used
         // to be a ~45-line verbatim copy of autoAddRecentInsight (its own

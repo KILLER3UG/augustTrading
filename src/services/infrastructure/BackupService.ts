@@ -13,7 +13,6 @@ import { getUserProfile, saveUserProfile, overwriteUserProfile } from './dbServi
 import { isValidUserProfile } from '../../utils/profileUtils';
 import { phtDayKey } from '../../utils/timezone';
 import { exportPreferencesData, importPreferencesData } from './ExportService';
-import { getAllThinkingRecordsByUser, saveThinkingBatch } from './ThinkingStoreService';
 
 export interface BackupMetadata {
     id: string;
@@ -139,10 +138,10 @@ export const createBackup = async (username: string): Promise<BackupMetadata | n
             ? (preferences._backup_notices as unknown[]).map(String)
             : [];
         const preferencesJson = JSON.stringify(preferences);
-        // Thinking sidecar — the outcome-correlated reasoning corpus lives in
-        // its own store that is NOT part of UserProfile; a restore without it
-        // silently dropped every reasoning record.
-        const thinkingJson = JSON.stringify(await getAllThinkingRecordsByUser(username));
+        // (The reasoning-corpus sidecar is gone with ThinkingStoreService —
+        // nothing wrote to that store any more, so backups no longer carry it.
+        // Old backups that do have a .thinking.json sidecar are restored
+        // without it; their profile and preferences still apply.)
         const sizeBytes = new Blob([profileJson]).size;
         const metadata: BackupMetadata = {
             id: backupId,
@@ -184,12 +183,6 @@ export const createBackup = async (username: string): Promise<BackupMetadata | n
                 directory: Directory.Documents,
                 encoding: Encoding.UTF8,
             });
-            await Filesystem.writeFile({
-                path: `${NATIVE_BACKUP_DIR}/${baseName}.thinking.json`,
-                data: thinkingJson,
-                directory: Directory.Documents,
-                encoding: Encoding.UTF8,
-            });
         } else {
             // Web fallback: IndexedDB (subject to eviction under storage
             // pressure, but acceptable on desktop browsers).
@@ -204,7 +197,6 @@ export const createBackup = async (username: string): Promise<BackupMetadata | n
                     version: 1,
                     profile: profileJson,
                     preferences: preferencesJson,
-                    thinking: thinkingJson,
                     sizeBytes,
                     conversationCount: metadata.conversationCount,
                     tradeCount: metadata.tradeCount,
@@ -296,7 +288,7 @@ export const getBackups = async (username: string): Promise<BackupMetadata[]> =>
  * Read the full profile JSON for a backup (from either storage backend).
  * Used by exportBackupToFile.
  */
-const readBackupProfile = async (backupId: string): Promise<{ username: string; timestamp: string; profileJson: string; preferencesJson?: string | null; thinkingJson?: string | null } | null> => {
+const readBackupProfile = async (backupId: string): Promise<{ username: string; timestamp: string; profileJson: string; preferencesJson?: string | null } | null> => {
     if (useNativeStorage()) {
         const { Filesystem, Directory, Encoding } = await getFilesystem();
         // Find the .json (non-meta) file whose name ends with the backupId.
@@ -335,17 +327,10 @@ const readBackupProfile = async (backupId: string): Promise<{ username: string; 
             });
             preferencesJson = await readFileAsString(prefsResult.data);
         } catch { /* prefs sidecar missing — pre-F6 backup */ }
-        // Thinking sidecar — old backups don't have one.
-        let thinkingJson: string | null = null;
-        try {
-            const thinkingResult = await Filesystem.readFile({
-                path: `${NATIVE_BACKUP_DIR}/${match.name.replace('.json', '.thinking.json')}`,
-                directory: Directory.Documents,
-                encoding: Encoding.UTF8,
-            });
-            thinkingJson = await readFileAsString(thinkingResult.data);
-        } catch { /* thinking sidecar missing — pre-thinking backup */ }
-        return { username, timestamp, profileJson, preferencesJson, thinkingJson };
+        // (Old backups may still carry a .thinking.json sidecar from the
+        // deleted reasoning corpus — it is intentionally NOT read; a restore
+        // applies the profile and preferences and ignores it.)
+        return { username, timestamp, profileJson, preferencesJson };
     }
 
     const db = await initBackupDB();
@@ -357,7 +342,7 @@ const readBackupProfile = async (backupId: string): Promise<{ username: string; 
         request.onerror = () => reject(request.error);
     });
     if (!backup) return null;
-    return { username: backup.username, timestamp: backup.timestamp, profileJson: backup.profile, preferencesJson: backup.preferences ?? null, thinkingJson: backup.thinking ?? null };
+    return { username: backup.username, timestamp: backup.timestamp, profileJson: backup.profile, preferencesJson: backup.preferences ?? null };
 };
 
 /**
@@ -441,8 +426,8 @@ export const exportBackupToFile = async (backupId: string): Promise<void> => {
  * with the backed-up snapshot (delete-sync in sqliteSaveUserProfile removes
  * rows absent from the backup, so a smaller/older backup truly restores).
  *
- * ATOMICITY: every apply-step (profile write, preferences sidecar, thinking
- * sidecar) that FAILS aborts the restore with a thrown, step-named error —
+ * ATOMICITY: every apply-step (profile write, preferences sidecar) that
+ * FAILS aborts the restore with a thrown, step-named error —
  * a mixed-generation state (new profile + old prefs) never reports success.
  * A best-effort safety backup of the CURRENT state is taken before anything
  * is applied (when the profile exists) so a failed/partial restore is
@@ -523,24 +508,8 @@ export const restoreBackup = async (
             }
         }
 
-        // ── Step 3: thinking sidecar ──────────────────────────────────────
-        // Restore the thinking sidecar (reasoning corpus). Old backups don't
-        // have one — the profile restore still succeeds without it. A present
-        // sidecar that fails to apply is a loud, named-step failure.
-        if (record.thinkingJson) {
-            try {
-                const parsed = JSON.parse(record.thinkingJson);
-                if (Array.isArray(parsed)) {
-                    await saveThinkingBatch(parsed);
-                    console.log(`[BackupService] Restored ${parsed.length} thinking records`);
-                }
-            } catch (error) {
-                throw new Error(
-                    `Restore failed at the "thinking" step: ${error instanceof Error ? error.message : String(error)}.${safetyNote}`,
-                    { cause: error },
-                );
-            }
-        }
+        // (The thinking sidecar step is gone with ThinkingStoreService. Old
+        // backups that carry a .thinking.json sidecar are restored without it.)
         const message = skippedPreferenceKeys.length > 0
             ? `Restore succeeded, but ${skippedPreferenceKeys.length} backup key(s) are not on this build's restore allow-list and were skipped: ${skippedPreferenceKeys.join(', ')}.`
             : undefined;
@@ -754,7 +723,6 @@ export interface BackupRecord {
     version: number;
     profile: string;
     preferences: string;
-    thinking: string;
     sizeBytes: number;
     conversationCount: number;
     tradeCount: number;
@@ -791,12 +759,11 @@ export const buildBackupRecordFromExport = (text: string): ImportOutcome => {
         version: 1,
         profile: profileJson,
         preferences: _preferencesBackup ? JSON.stringify(_preferencesBackup) : '{}',
-        thinking: '[]',
         sizeBytes: profileJson.length * 2,
         conversationCount: preview.conversationCount,
         tradeCount: preview.tradeCount,
     };
-    const limitations = ['Reasoning records (the thinking corpus) are not carried by an exported file.'];
+    const limitations: string[] = [];
     if (!_preferencesBackup) {
         limitations.push('No provider settings/keys sidecar in this file — it predates sidecar exports.');
     }

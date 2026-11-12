@@ -391,9 +391,9 @@ const TradeDetailView: React.FC<{
                                 )}
 
                                 {/* The Model Reasoning panel went with the
-                                    debate engine: nothing writes a
-                                    ThinkingRecord any more, so it rendered an
-                                    empty section on every trade. */}
+                                    debate engine and the reasoning corpus
+                                    store: it rendered an empty section on
+                                    every trade. */}
                             </div>
                         </div>
                         </div>

@@ -12,11 +12,6 @@ import { Capacitor } from '@capacitor/core';
 import { CapacitorSQLite, SQLiteConnection, SQLiteDBConnection } from '@capacitor-community/sqlite';
 import { LoggedTrade, UserProfile, Conversation, TradeSummary, GlobalMemory, UserSettings, Message } from '../../types';
 import { setSqliteDb, runExclusiveWrite, WritePermit } from './SqliteServiceHelpers';
-// Dynamic import inside migrateFromIndexedDB would be cleaner, but the
-// thinking store's save path dynamically imports SqliteServiceHelpers — a
-// static import here is safe (no cycle: ThinkingStoreService never imports
-// SqliteService itself).
-import { getAllThinkingRecordsByUser, saveThinkingBatch } from './ThinkingStoreService';
 import { LEGACY_LEVERAGE } from '../../utils/conversationUtils';
 import { parsePrice } from '../../utils/analysisUtils';
 import { withTradeSource } from '../../utils/tradeSource';
@@ -46,8 +41,8 @@ const DB_NAME = 'futuresai_db';
  * VERSION PASSED TO createConnection — NOT this app's schema version.
  *
  * The real schema is versioned by the `schema_migrations` table below, which
- * currently gates through v7 (thinking_records.pnlAmount/pnlPercent,
- * analystLens, …). This number is only the version the SQLite plugin records
+ * currently gates through v8 (the v8 pass dropped the deleted thinking_records
+ * table). This number is only the version the SQLite plugin records
  * on the connection it opens; bumping it does NOT migrate anything and must
  * NOT be "fixed" to 7 — the plugin treats a version change on an EXISTING
  * database as an upgrade request and runs its own upgrade path, which knows
@@ -227,38 +222,8 @@ const createTables = async (): Promise<void> => {
         CREATE INDEX IF NOT EXISTS idx_saved_analyses_username ON saved_analyses(username);
     `);
 
-    // Thinking records table — stores per-model reasoning for training & analysis
-    await db.execute(`
-        CREATE TABLE IF NOT EXISTS thinking_records (
-            id TEXT PRIMARY KEY,
-            tradeId TEXT NOT NULL,
-            username TEXT NOT NULL,
-            provider TEXT NOT NULL,
-            role TEXT,
-            modelName TEXT,
-            reasoning TEXT,
-            finalOutput TEXT,
-            rawReasoning TEXT,
-            messageId TEXT,
-            analysisJson TEXT,
-            debateTurnIndex INTEGER,
-            debateTurnSpeaker TEXT,
-            confidence TEXT,
-            probability REAL,
-            outcome TEXT,
-            pnlAmount REAL,
-            pnlPercent REAL,
-            createdAt TEXT,
-            analystLens TEXT
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_thinking_trade ON thinking_records(tradeId);
-        CREATE INDEX IF NOT EXISTS idx_thinking_provider ON thinking_records(provider);
-        CREATE INDEX IF NOT EXISTS idx_thinking_outcome ON thinking_records(outcome);
-        CREATE INDEX IF NOT EXISTS idx_thinking_username ON thinking_records(username);
-        CREATE INDEX IF NOT EXISTS idx_thinking_message ON thinking_records(messageId);
-        CREATE INDEX IF NOT EXISTS idx_thinking_lens ON thinking_records(analystLens);
-    `);
+    // (The thinking_records table is gone with the reasoning corpus it held.
+    // The v8 migration below drops it from installs that still carry one.)
 
     // The tracked-position store. A dedicated table, NOT a column on
     // `users`: a position carries a capped path/context timeline that must
@@ -347,35 +312,15 @@ const createTables = async (): Promise<void> => {
         ]);
     }
 
-    // VERSION 5 MIGRATION: Enrich thinking_records with final output, raw
-    // chain-of-thought, and the analysis card (message) id so each reasoning
-    // set is linked to its trade/card prediction.
-    if (appliedVersion < 5) {
-        await runMigrations(5, [
-            { label: 'v5 thinking_records.finalOutput', sql: 'ALTER TABLE thinking_records ADD COLUMN finalOutput TEXT;' },
-            { label: 'v5 thinking_records.rawReasoning', sql: 'ALTER TABLE thinking_records ADD COLUMN rawReasoning TEXT;' },
-            { label: 'v5 thinking_records.messageId', sql: 'ALTER TABLE thinking_records ADD COLUMN messageId TEXT;' },
-            { label: 'v5 thinking_records.messageId index', sql: 'CREATE INDEX IF NOT EXISTS idx_thinking_message ON thinking_records(messageId);' },
-        ]);
-    }
-
-    // VERSION 6 MIGRATION: Realized PnL on thinking records — the training
-    // corpus becomes risk-weighted (a WIN at +4R vs +0.5R), enabling EV-based
-    // per-provider stats in the reasoning dashboard.
-    if (appliedVersion < 6) {
-        await runMigrations(6, [
-            { label: 'v6 thinking_records.pnlAmount', sql: 'ALTER TABLE thinking_records ADD COLUMN pnlAmount REAL;' },
-            { label: 'v6 thinking_records.pnlPercent', sql: 'ALTER TABLE thinking_records ADD COLUMN pnlPercent REAL;' },
-        ]);
-    }
-
-    // VERSION 7 MIGRATION: Analyst lens bucket (macro / technical / risk /
-    // normal) so the journal Think tab can group every prior chain of thought
-    // by role without inferring from speaker names alone.
-    if (appliedVersion < 7) {
-        await runMigrations(7, [
-            { label: 'v7 thinking_records.analystLens', sql: 'ALTER TABLE thinking_records ADD COLUMN analystLens TEXT;' },
-            { label: 'v7 thinking_records.analystLens index', sql: 'CREATE INDEX IF NOT EXISTS idx_thinking_lens ON thinking_records(analystLens);' },
+    // VERSION 8 MIGRATION: Drop the deleted reasoning-corpus table. Its
+    // v5/v6/v7 ALTER passes are retired from the ladder — the table itself is
+    // being removed, so re-adding its columns on an install that never ran
+    // them would recreate a table nothing reads. IF EXISTS makes this a
+    // no-op on installs that never got the table; the table's indexes are
+    // dropped with it (SQLite drops index owned by a table with the table).
+    if (appliedVersion < 8) {
+        await runMigrations(8, [
+            { label: 'v8 drop thinking_records', sql: 'DROP TABLE IF EXISTS thinking_records;' },
         ]);
     }
 
@@ -823,7 +768,6 @@ export const sqliteDeleteUser = async (username: string): Promise<void> => {
             await connection.run('DELETE FROM conversations WHERE username = ?', [username]);
             await connection.run('DELETE FROM trade_summaries WHERE username = ?', [username]);
             await connection.run('DELETE FROM saved_analyses WHERE username = ?', [username]);
-            await connection.run('DELETE FROM thinking_records WHERE username = ?', [username]);
             await connection.run('DELETE FROM tracking_store WHERE username = ?', [username]);
             await connection.run('DELETE FROM users WHERE username = ?', [username]);
             await connection.execute('COMMIT');
@@ -988,21 +932,9 @@ export const migrateFromIndexedDB = async (
                 console.log(`[SqliteService] Migrated user ${username} with ${profile.tradeLog?.length || 0} trades`);
             }
 
-            // The thinking store lives in a SEPARATE IndexedDB database
-            // (FuturesAI-Thinking-DB) that the profile migration never
-            // touched — on first native run after a web install the SQLite
-            // thinking_records table started empty and the old reasoning
-            // corpus was orphaned. Upsert by id, so re-running the migration
-            // for an already-migrated user is idempotent.
-            try {
-                const thinkingRecords = await getAllThinkingRecordsByUser(username);
-                if (thinkingRecords.length > 0) {
-                    await saveThinkingBatch(thinkingRecords);
-                    console.log(`[SqliteService] Migrated ${thinkingRecords.length} thinking records for ${username}`);
-                }
-            } catch (thinkingError) {
-                console.warn(`[SqliteService] Thinking migration failed for ${username}:`, thinkingError);
-            }
+            // (The reasoning corpus's IndexedDB→SQLite pass is gone with
+            // ThinkingStoreService — nothing owns that data any more; the
+            // web-side initDatabase drops the dead database instead.)
         }
 
         console.log(`[SqliteService] Migration complete: ${usernames.length} users, ${totalTrades} trades`);

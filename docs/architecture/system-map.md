@@ -461,8 +461,8 @@ flowchart LR
     W3 --> RS
     RS --> D1["dock: LiveEntry.reasoning chatTurnRunner.ts"]
     RS --> D2["pipeline: Message.thoughtProcesses useAnalysisPipeline.ts"]
-    D1 --> TS["traces persist to their own IDB db — ThinkingStoreService.ts"]
-    D2 --> TS
+    D1 --> E["ephemeral — rendered on the row, not stored"]
+    D2 --> E
 ```
 
 `electron/sseParser.cjs` mirrors only three dialects — `google` has no desktop SSE
@@ -959,7 +959,7 @@ the eval scheduler, hygiene and the supervisor — and it says which legs are st
 | roster · providers · legacy automations | `agents_bots_v1` · `provider_configs_v1` (keys `enc:v1:` via safeStorage) · `automations_v1_` (legacy: nothing writes it since 2026-10-24, still restorable) |
 | profile memory (the collaboration facts) | `profile_memory_v1_<user>` — raw localStorage by design (`ExportService.RAW_LOCAL_STORAGE_PREFIXES`, `src/services/infrastructure/ExportService.ts › RAW_LOCAL_STORAGE_PREFIXES`), exported/restored through the prefix list, not Preferences |
 | learning rules · calibration stats · harness lessons | `learning_rules_v2_` · `model_confidence_calibration`/`confidence_calibration` · `august_harness_lessons_v1_` — the rest of the raw-localStorage family the export fallback reads |
-| screenshots · reasoning traces | IDB store `images` (`services/infrastructure/messageImageStore.ts`) · own db (`services/infrastructure/ThinkingStoreService.ts`) |
+| screenshots · reasoning traces | IDB store `images` (`services/infrastructure/messageImageStore.ts`) — the reasoning-trace store was deleted (nothing ever read it; the trace rides on the chat row only) |
 | reduce-motion preference | `desk_idle_motion_v1_&lt;user&gt;` — the desk floor is deleted, the key is not, renaming it silently resets every profile |
 
 `savedAnalyses` is deleted outright (stage 21): the `UserProfile` field, its state, the
@@ -1167,7 +1167,7 @@ it to `NO_TOOLS_ALLOWED` rather than grant anything.
 | 37 | every provider call → the policy | GenericProviderService is configured by `providerRequestPolicy src/services/providers/GenericProviderService.ts` — the same shared module the vite dev proxy and electron main import |
 | 38 | dev calls → the proxy | the dev proxy mounts `__provider_proxy vite.config.ts › devProviderProxy` |
 | 39 | desktop calls → IPC → sseParser → chunks | `trustedHandle electron/main.cjs › trustedHandle` → `consumeProviderStream electron/main.cjs › extractStopReasonFromSse` → `createSseParser electron/sseParser.cjs › createSseParser` |
-| 40 | reasoning deltas → their own field | the trace rides ON THE ROW: `thoughtProcesses src/types/message.ts › Message` is what the Thinking row draws. The thinking STORE is written when a trade is logged (`useTradeLogging src/hooks/useTradeLogging.ts › useTradeLogging`); `saveThinkingBatch src/services/infrastructure/ThinkingStoreService.ts › saveThinkingBatch` is the RESTORE/migration path (`BackupService`, `SqliteService`), not a per-delta write |
+| 40 | reasoning deltas → their own field | the trace rides ON THE ROW: `thoughtProcesses src/types/message.ts › Message` is what the Thinking row draws. It is display state — never persisted. The old reasoning-corpus store (`ThinkingStoreService`) was deleted as dead weight: nothing ever read a stored trace |
 | 41 | notebook writes → byte tiers | a write asks `notebookPressureAllows src/services/learning/MemoryFilesService.ts › notebookPressureAllows` before the notebook may grow; the tiers come from utils/memoryBudget.ts and Settings Health reads memoryHealth.ts |
 | 42 | heartbeat → notebook hygiene | `useLearningHeartbeat src/hooks/useLearningHeartbeat.ts › useLearningHeartbeat` → `runMemoryHygieneIfDue src/services/learning/memoryHygiene.ts › runMemoryHygieneIfDue` |
 | 43 | ~~approval tray → badge~~ | DELETED (2026-11-03, owner request): the Approvals tab, its rail count and `collectApprovalItems` are gone; the queues apply themselves |

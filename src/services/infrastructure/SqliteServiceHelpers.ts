@@ -2,7 +2,7 @@
  * SqliteServiceHelpers
  *
  * Exposes the internal SQLite db connection for use by other infrastructure
- * services (like ThinkingStoreService) without circular dependencies.
+ * services without circular dependencies.
  *
  * The db connection is managed by SqliteService.ts via initSqlite().
  */
