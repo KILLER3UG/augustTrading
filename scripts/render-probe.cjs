@@ -1690,16 +1690,35 @@ async function main() {
         // shows a silent thread mid-run. So this phase asks slowly — the mock's
         // request-scoped `PROBE_SLOW_STREAM` scenario, ~5s of deltas — and
         // crosses over while the stream is still up.
-        await page.evaluate((needle) => {
+        //
+        // The send has to HAPPEN, and it has to be visible when it does not.
+        // This used to be a raw evaluate that returned quietly when the
+        // composer was missing, disabled, or showing Stop instead of Send - so
+        // a busy composer (a run still in flight from the previous phase) made
+        // the whole phase a no-op: nothing was sent, the phase measured an
+        // OLDER turn that had already settled, and the failure read as "the
+        // answer stopped growing" when nothing had been asked. The wait and
+        // the loud failure are the same two steps `sendInDock` takes, minus
+        // its wait for the answer to SETTLE - which is the one thing this
+        // phase must not do.
+        if (!(await waitSendable(page))) {
+            throw new Error('the slow-stream phase: the composer never became sendable within 30s');
+        }
+        const slowSent = await page.evaluate((needle) => {
             const ta = document.querySelector('textarea');
-            if (!ta || ta.disabled) return;
+            if (!ta || ta.disabled) return 'no composer (missing or disabled)';
             Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')
                 .set.call(ta, needle);
             ta.dispatchEvent(new Event('input', { bubbles: true }));
             const btn = [...document.querySelectorAll('button')].find(b => !b.disabled && /send/i.test(
                 `${b.getAttribute('aria-label') || ''} ${b.title || ''} ${b.textContent || ''}`));
-            if (btn) btn.click();
+            if (!btn) return 'no enabled send button';
+            btn.click();
+            return 'clicked';
         }, 'PROBE_SLOW_STREAM does the answer cross the hop');
+        if (slowSent !== 'clicked') {
+            throw new Error(`the slow-stream phase: ${slowSent}`);
+        }
         // At or below 1280 the rail is an OVERLAY, so the surface switch is not
         // in the title bar — open the rail from its header toggle first. One
         // helper for every hop to Agents so a layout change cannot silently
