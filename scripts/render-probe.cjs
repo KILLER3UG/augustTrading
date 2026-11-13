@@ -4272,8 +4272,14 @@ async function main() {
             const namesARegion = !!chipInfo
                 && KNOWN_REGIONS.some(r => chipInfo.label === r || chipInfo.label.startsWith(r + ' '));
             await page.evaluate(() => document.querySelector('[data-testid="session-chip"]')?.click());
-            await sleep(350);
-            const opened = await page.evaluate(() => {
+            // The session rows are component state the header fills from
+            // getAllSessionsStatus; a single sample at a fixed delay read
+            // rows=0 whenever it landed before that state committed, which
+            // made this check fail spuriously at some hours and pass at
+            // others. Poll for the rows the disclosure exists to show, and
+            // keep a final sample so a genuine empty list still reports
+            // itself with the chip's own label.
+            const readPopover = () => page.evaluate(() => {
                 const pop = document.getElementById('session-details-popover');
                 return {
                     mounted: !!pop,
@@ -4281,6 +4287,10 @@ async function main() {
                     expanded: document.querySelector('[data-testid="session-chip"]')?.getAttribute('aria-expanded'),
                 };
             });
+            const opened = await pollFor(async () => {
+                const s = await readPopover();
+                return (s.mounted && s.rows >= 3 && s.expanded === 'true') ? s : null;
+            }, 6000) ?? await readPopover();
             await page.keyboard.press('Escape');
             await sleep(300);
             const closed = await page.evaluate(() => ({
