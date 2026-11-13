@@ -193,7 +193,7 @@ export const Header: React.FC<HeaderProps> = memo(({
                             (SessionService, 5s poll, paused when hidden); the
                             popover keeps the market conditions and the table. */}
                         {sessionContext && (
-                            <div className="relative" ref={sessionModalRef}>
+                            <div className="relative flex items-center" ref={sessionModalRef}>
                                 <button
                                     data-testid="session-chip"
                                     onClick={() => setIsSessionModalOpen(!isSessionModalOpen)}
