@@ -1418,6 +1418,11 @@ function sendUpdateStatus() {
 }
 
 function setupAutoUpdater() {
+    // Returned to the boot path: the startup check must answer to the SAME
+    // verifiability gate the IPC handlers do, or an unverifiable channel is
+    // only refused when the trader clicks the button — while the boot probe
+    // has already fetched from it.
+    const updateGateRef = { isVerifiable: async () => false };
     // Disable auto-download — we let the user decide via the Update button
     autoUpdater.autoDownload = false;
     // User-decides flow: the update installs only when update:install fires.
@@ -1540,6 +1545,7 @@ function setupAutoUpdater() {
         }
         return false;
     };
+    updateGateRef.isVerifiable = updateChannelIsVerifiable;
     const unverifiableUpdateMessage = () =>
         'This build has no publisher identity, so the app cannot verify the installer it was offered '
         + '(the update channel carries no code-signing identity). Update installation is refused. '
@@ -1705,6 +1711,7 @@ function setupAutoUpdater() {
             return null;
         }
     }, () => null);
+    return updateGateRef;
 }
 
 // =============================================================================
@@ -1742,19 +1749,25 @@ app.whenReady().then(() => {
     registerAppProtocol();
     blockSmokeNetwork();
     createWindow();
-    setupAutoUpdater();
+    const updateGate = setupAutoUpdater();
     setupRepoBridge();
 
     // Check for updates on startup (production only, non-blocking). The
     // installer-smoke probe sets AUGUST_SMOKE_TEST=1 to skip this entirely:
     // a packaged build without app-update.yml (electron-builder --dir) logs
     // an ENOENT here, and a real installer probe should never talk to GitHub.
+    // The SAME verifiability gate the check/download IPC handlers use guards
+    // this too: an unsigned channel is not refused only at the button while
+    // the boot probe has already asked GitHub for the artifact.
     if (!isDev && !isInstallerSmoke) {
         // Delay the check so the app loads first
         setTimeout(() => {
-            autoUpdater.checkForUpdates().catch(() => {
-                // Silently fail on startup — user can manually check
-            });
+            void (async () => {
+                if (!(await updateGate.isVerifiable())) return;
+                await autoUpdater.checkForUpdates().catch(() => {
+                    // Silently fail on startup — user can manually check
+                });
+            })();
         }, 3000);
     }
 

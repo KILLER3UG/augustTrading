@@ -128,9 +128,10 @@ export const useTradeJournalActions = (args: UseTradeJournalActionsArgs): UseTra
             // it so Pattern Memory never describes deleted trades.
             handleJournalAutoRefresh();
         }
-        // Cascade: reasoning records, learning rules and autopilot watchers
-        // keyed to the deleted trades must not survive — a deleted trade
-        // would otherwise re-trigger "outcome detected" and be re-logged.
+        // Cascade: autopilot watchers keyed to the deleted trades must not
+        // survive — a deleted trade would otherwise re-trigger "outcome
+        // detected" and be re-logged. (The reasoning-record store is gone; the
+        // rules live in the notebook, which a trade deletion does not touch.)
         const username = activeUsernameRef.current || 'default';
         // A deletion that actually removed rows is deliberate, not a storage
         // loss. A no-op must NOT move the baseline: if the on-screen count is

@@ -619,7 +619,7 @@ const TradeLogContent: React.FC<TradeLogContentProps> = ({
         const count = selectedIds.length;
         void confirmDeleteSelected({
             title: `Delete ${count} selected trade${count === 1 ? '' : 's'}?`,
-            message: 'This permanently deletes the selected trades, including their reasoning records and autopilot watches. This cannot be undone.',
+            message: 'This permanently deletes the selected trades, including their autopilot watches. This cannot be undone.',
             confirmLabel: 'Delete',
             destructive: true,
         }).then(ok => {

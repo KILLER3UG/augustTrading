@@ -3394,7 +3394,8 @@ export interface DeskToolContext {
      *  text-protocol transports (chat_completions-responses without native
      *  tools) the model can emit a tag for ANY tool, and only the executor
      *  sees every call regardless of transport. An off-list name is refused.
-     *  Absent/empty = unrestricted (legacy debate/analysis callers). */
+     *  Absent/empty = NOTHING (fail-closed); 'all' = every tool; a list = that
+     *  list. See intersectGoalPolicy, the one polarity home. */
     allowedTools?: SeatToolGrant;
     /** This turn's artifact scope. Stored payloads are readable only by the
      *  turn that produced them, and clearing this turn cannot delete another

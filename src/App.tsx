@@ -1814,8 +1814,11 @@ const App: React.FC = () => {
                 // message so the Agents surface's collapsed block shows the same
                 // "Analyzed for Ns" this dock row did — and so it survives a
                 // reload. Without it the Chat rail's runStats is the only source
-                // and a dock-native answer shows no duration there.
-                ...(typeof workedMs === 'number' ? { runStats: { runId: `dock-${bot.id}-${Date.now()}`, startedAt: at, finishedAt: at, durationMs: workedMs, ...(effort ? { effort } : {}) } } : {}),
+                // and a dock-native answer shows no duration there. The window
+                // has to agree with itself: startedAt is derived from the
+                // measured duration, not stamped at the commit instant, or the
+                // row reports a run that began after it finished.
+                ...(typeof workedMs === 'number' ? { runStats: { runId: `dock-${bot.id}-${Date.now()}`, startedAt: new Date(Date.parse(at) - workedMs).toISOString(), finishedAt: at, durationMs: workedMs, ...(effort ? { effort } : {}) } } : {}),
             };
         updateMessages(prev => [...prev, row], activeConversationId ?? null);
     }, [updateMessages, activeConversationId]);
