@@ -2287,6 +2287,8 @@ const App: React.FC = () => {
                 onToggleEntryNotHitCapturing={() => setIsEntryNotHitCapturing(!isEntryNotHitCapturing)}
                 isStrategiesEnabled={isStrategiesEnabled}
                 setIsStrategiesEnabled={setIsStrategiesEnabled}
+                isGlobalMemoryEnabled={isGlobalMemoryEnabled}
+                onToggleGlobalMemory={() => setIsGlobalMemoryEnabled(!isGlobalMemoryEnabled)}
                 memoryConfig={memoryConfig}
                 onMemoryConfigChange={(config) => {
                     setMemoryConfig(config);

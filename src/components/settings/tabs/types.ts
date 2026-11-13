@@ -38,4 +38,7 @@ export interface SettingsTabProps {
      *  crosses surfaces. Kept as a callback because the Strategies tab's
      *  "browse everything" button needs it and cannot navigate itself. */
     onOpenStrategyStudio?: () => void;
+    /** The Settings → Memory switch: what the seat's memory tools may read and write this turn. */
+    isGlobalMemoryEnabled?: boolean;
+    onToggleGlobalMemory?: () => void;
 }

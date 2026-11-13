@@ -58,6 +58,9 @@ interface SettingsMenuProps {
     isStrategiesEnabled?: boolean;
     setIsStrategiesEnabled?: (enabled: boolean) => void;
     memoryConfig?: ProviderConfig | null;
+    /** The Settings → Memory behavior switch. */
+    isGlobalMemoryEnabled?: boolean;
+    onToggleGlobalMemory?: () => void;
     onMemoryConfigChange?: (config: ProviderConfig | null) => void;
     // Pure AI options
     // Instructions
@@ -728,6 +731,8 @@ const SettingsMenu: React.FC<SettingsMenuProps> = (props) => {
                                     <MemoryTab tab={{
                                         memoryConfig: props.memoryConfig,
                                         onOpenLearn,
+                                        isGlobalMemoryEnabled: props.isGlobalMemoryEnabled,
+                                        onToggleGlobalMemory: props.onToggleGlobalMemory,
                                     }} />
                                 </Suspense>
                             )}
