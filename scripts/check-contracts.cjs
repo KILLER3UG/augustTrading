@@ -1629,11 +1629,14 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
         deskTitleLine.trim());
 
     const card = read('src/components/settings/ProfileMemoryCard.tsx');
+    // The behavior switches live on the Memory PAGE — the behavior card in
+    // MemoryTab plus the entries card — so the page-level claims scan both.
+    const memoryPage = card + read('src/components/settings/tabs/MemoryTab.tsx');
     ok('memory page: the two switches are the reference labels',
-        /Generate memory from chats/.test(card) && /Include sensitive topics in memory/.test(card));
+        /Generate memory from chats/.test(memoryPage) && /Include sensitive topics in memory/.test(memoryPage));
     ok('memory page: the sensitive switch writes the real setting',
-        /saveHarnessSettings\(\{ sensitiveMemoryEnabled: next \}\)/.test(card)
-        && /getHarnessSettings\(\)\.sensitiveMemoryEnabled/.test(card));
+        /saveHarnessSettings\(\{ sensitiveMemoryEnabled: next \}\)/.test(memoryPage)
+        && /getHarnessSettings\(\)\.sensitiveMemoryEnabled/.test(memoryPage));
     ok('memory page: entries are grouped by the section label, including new ones',
         /memorySectionOf\(entry\)/.test(card) && /memorySectionSlug\(label\)/.test(card)
         && /memory-group-/.test(card));

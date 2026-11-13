@@ -21,10 +21,8 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { ChevronLeftIcon, Pencil, Trash2 } from '../shared/Icons';
-import ToggleSwitch from '../shared/ToggleSwitch';
 import StatusPill from '../ui/StatusPill';
 import { exportTextAsFile } from '../../services/infrastructure/ExportService';
-import { getHarnessSettings, saveHarnessSettings } from '../../utils/harnessSettings';
 import { memoryEntryTitle, memoryUpdatedLabel } from '../../services/learning/memoryTopics';
 import { phtDayYear } from '../../utils/timezone';
 import { memoryExportFilename, memoryExportMarkdown } from '../../services/learning/memoryExport';
@@ -33,7 +31,6 @@ import {
     restoreProfileMemory, flushProfileMemoryWrites, type ProfileMemoryEntry,
 } from '../../services/learning/profileMemory';
 import { memorySectionOf, memorySectionSlug, orderMemorySections } from '../../services/learning/memorySections';
-import { isTraderLearningEnabled, setTraderLearningEnabled } from '../../services/learning/traderLearner';
 
 interface ProfileMemoryCardProps {
     /** Settings → Memory still owns the model pick; the row lives in this list. */
@@ -66,8 +63,6 @@ const detailUpdatedOf = (entry: ProfileMemoryEntry): string => {
 const ProfileMemoryCard: React.FC<ProfileMemoryCardProps> = ({ memoryModel, onOpenNotebook, onDetailOpenChange }) => {
     const [entries, setEntries] = useState<ProfileMemoryEntry[]>([]);
     const [deleted, setDeleted] = useState<ProfileMemoryEntry[]>([]);
-    const [learning, setLearning] = useState(true);
-    const [sensitive, setSensitive] = useState(false);
     const [selected, setSelected] = useState<string | null>(null);
     const [editing, setEditing] = useState<{ slug: string; description: string; body: string; version?: number } | null>(null);
     const [editError, setEditError] = useState('');
@@ -78,8 +73,6 @@ const ProfileMemoryCard: React.FC<ProfileMemoryCardProps> = ({ memoryModel, onOp
             (a, b) => (Date.parse(b.updatedAt) || 0) - (Date.parse(a.updatedAt) || 0),
         ));
         setDeleted(listDeletedProfileMemories());
-        setLearning(isTraderLearningEnabled());
-        setSensitive(getHarnessSettings().sensitiveMemoryEnabled === true);
     };
 
     useEffect(() => {
@@ -302,38 +295,6 @@ const ProfileMemoryCard: React.FC<ProfileMemoryCardProps> = ({ memoryModel, onOp
     return (
         <div data-testid="profile-memory-card">
             <div>
-                <div className="flex items-center justify-between gap-6 rounded-control py-3 transition-colors hover:bg-white/[0.02]" data-testid="trader-learning-toggle">
-                    <div className="min-w-0">
-                        <div className="text-ui-sm font-medium text-zinc-100">Generate memory from chats</div>
-                        <p className="mt-1 text-ui-sm leading-relaxed text-zinc-500">
-                            Allow August to generate memory from your chats and trading sessions.
-                        </p>
-                    </div>
-                    <ToggleSwitch
-                        checked={learning}
-                        onChange={() => { const next = !learning; setTraderLearningEnabled(next); setLearning(next); }}
-                        label="Generate memory from chats"
-                    />
-                </div>
-
-                <div className="flex items-center justify-between gap-6 rounded-control py-3 transition-colors hover:bg-white/[0.02]" data-testid="memory-sensitive-toggle">
-                    <div className="min-w-0">
-                        <div className="text-ui-sm font-medium text-zinc-100">Include sensitive topics in memory</div>
-                        <p className="mt-1 text-ui-sm leading-relaxed text-zinc-500">
-                            Allow facts about health, finances or identity; secrets are always refused.
-                        </p>
-                    </div>
-                    <ToggleSwitch
-                        checked={sensitive}
-                        onChange={() => {
-                            const next = !sensitive;
-                            saveHarnessSettings({ sensitiveMemoryEnabled: next });
-                            setSensitive(next);
-                        }}
-                        label="Include sensitive topics in memory"
-                    />
-                </div>
-
                 <div className="flex items-center justify-between gap-6 rounded-control py-3 transition-colors hover:bg-white/[0.02]">
                     <div className="min-w-0">
                         <div className="text-ui-sm font-medium text-zinc-100">Export memory</div>

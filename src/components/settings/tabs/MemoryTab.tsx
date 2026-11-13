@@ -9,9 +9,11 @@
 import React, { useEffect, useState } from 'react';
 import ProfileMemoryCard from '../ProfileMemoryCard';
 import AmendmentsInbox from '../../learn/AmendmentsInbox';
-import { FolderIcon } from '../../shared/Icons';
+import { BrainIcon, FolderIcon, ShieldAlert } from '../../shared/Icons';
 import ToggleSwitch from '../../shared/ToggleSwitch';
 import { getMemoryFiles, subscribeMemoryFilesChanged } from '../../../services/learning/MemoryFilesService';
+import { isTraderLearningEnabled, setTraderLearningEnabled } from '../../../services/learning/traderLearner';
+import { getHarnessSettings, saveHarnessSettings } from '../../../utils/harnessSettings';
 import { SettingsGroup, SettingsPageHeader } from './shared';
 import type { SettingsTabProps } from './types';
 
@@ -52,6 +54,27 @@ const folderCards = (): FolderCard[] => {
     return cards.sort((a: FolderCard, b: FolderCard) => a.name.localeCompare(b.name));
 };
 
+/** One switch row of the behavior card: icon, title, an honest description of
+ *  what the switch changes, and the control. */
+const BehaviorRow: React.FC<{
+    icon: React.ReactNode;
+    title: string;
+    description: string;
+    testid: string;
+    control: React.ReactNode;
+}> = ({ icon, title, description, testid, control }) => (
+    <div className="flex items-center justify-between gap-6 rounded-control py-3 transition-colors hover:bg-white/[0.02]" data-testid={testid}>
+        <div className="flex items-center gap-3 min-w-0">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-control bg-zinc-800 text-zinc-300">{icon}</span>
+            <div className="min-w-0">
+                <div className="text-ui-sm font-medium text-zinc-100">{title}</div>
+                <p className="mt-1 text-ui-sm leading-relaxed text-zinc-500">{description}</p>
+            </div>
+        </div>
+        {control}
+    </div>
+);
+
 const MemoryTab: React.FC<{ tab: MemoryTabProps }> = ({ tab: props }) => {
     const {
         memoryConfig,
@@ -65,6 +88,22 @@ const MemoryTab: React.FC<{ tab: MemoryTabProps }> = ({ tab: props }) => {
     // leads with the back link, so the Memory heading belongs to the list only.
     const [detailOpen, setDetailOpen] = useState(false);
     const [folders, setFolders] = useState<FolderCard[]>(() => folderCards());
+    // The behavior switches live HERE (the Settings page), not on the entries
+    // card — one home per concern. The values read from their services on
+    // mount; the entries card no longer carries them.
+    const [learning, setLearning] = useState(() => isTraderLearningEnabled());
+    const [sensitive, setSensitive] = useState(() => getHarnessSettings().sensitiveMemoryEnabled === true);
+
+    const toggleLearning = (): void => {
+        const next = !learning;
+        setTraderLearningEnabled(next);
+        setLearning(next);
+    };
+    const toggleSensitive = (): void => {
+        const next = !sensitive;
+        saveHarnessSettings({ sensitiveMemoryEnabled: next });
+        setSensitive(next);
+    };
 
     useEffect(() => {
         const sync = () => setFolders(folderCards());
@@ -93,28 +132,29 @@ const MemoryTab: React.FC<{ tab: MemoryTabProps }> = ({ tab: props }) => {
                     description="What the seat's memory tools may read and write. With memory off, nothing is read from or saved to the notebook."
                 >
                     <div className="py-3">
-                        <div className="flex items-center justify-between gap-6 rounded-control py-3 transition-colors hover:bg-white/[0.02]" data-testid="global-memory-toggle">
-                            <div className="flex items-center gap-3 min-w-0">
-                                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-control bg-zinc-800 text-zinc-300">
-                                    <FolderIcon className="h-4 w-4" aria-hidden="true" />
-                                </span>
-                                <div className="min-w-0">
-                                    <div className="text-ui-sm font-medium text-zinc-100">Global memory</div>
-                                    <p className="mt-1 text-ui-sm leading-relaxed text-zinc-500">
-                                        When enabled, the seat reads and updates your preferences, habits and long-term
-                                        context across surfaces. When disabled, the memory tools are refused — nothing is
-                                        read or saved.
-                                    </p>
-                                </div>
-                            </div>
-                            {onToggleGlobalMemory && (
-                                <ToggleSwitch
-                                    checked={isGlobalMemoryEnabled !== false}
-                                    onChange={onToggleGlobalMemory}
-                                    label="Toggle Global Memory"
-                                />
-                            )}
-                        </div>
+                        <BehaviorRow
+                            icon={<FolderIcon className="h-4 w-4" aria-hidden="true" />}
+                            title="Global memory"
+                            description="When enabled, the seat reads and updates your preferences, habits and long-term context across surfaces. When disabled, the memory tools are refused — nothing is read or saved."
+                            testid="global-memory-toggle"
+                            control={onToggleGlobalMemory
+                                ? <ToggleSwitch checked={isGlobalMemoryEnabled !== false} onChange={onToggleGlobalMemory} label="Toggle Global Memory" />
+                                : null}
+                        />
+                        <BehaviorRow
+                            icon={<BrainIcon className="h-4 w-4" aria-hidden="true" />}
+                            title="Generate memory from chats"
+                            description="Allow August to generate memory from your chats and trading sessions."
+                            testid="trader-learning-toggle"
+                            control={<ToggleSwitch checked={learning} onChange={toggleLearning} label="Generate memory from chats" />}
+                        />
+                        <BehaviorRow
+                            icon={<ShieldAlert className="h-4 w-4" aria-hidden="true" />}
+                            title="Include sensitive topics in memory"
+                            description="Allow facts about health, finances or identity; secrets are always refused."
+                            testid="memory-sensitive-toggle"
+                            control={<ToggleSwitch checked={sensitive} onChange={toggleSensitive} label="Include sensitive topics in memory" />}
+                        />
                     </div>
                 </SettingsGroup>
 
