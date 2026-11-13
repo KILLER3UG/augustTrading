@@ -287,6 +287,89 @@ const MemoryFilesManager: React.FC<MemoryFilesManagerProps> = ({
                     {stats.enabledCount} enabled · {stats.charCount.toLocaleString()} chars
                 </span>
             </div>
+            {/* behaves as the reference's "Memory behavior" card: the switch that
+                decides what the seat's memory tools may read and write, with the
+                store's size and the owning model as footnotes. */}
+            <div className="shrink-0 mb-8 rounded-bubble border border-hairline bg-zinc-900/60 p-4" data-testid="memory-behavior-card">
+                <div className="flex items-center justify-between gap-6">
+                    <div className="flex items-center gap-3 min-w-0">
+                        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-control bg-zinc-800 text-zinc-300">
+                            <FolderIcon className="h-4 w-4" aria-hidden="true" />
+                        </span>
+                        <div className="min-w-0">
+                            <div className="text-ui-sm font-medium text-zinc-100">Global memory</div>
+                            <p className="mt-1 text-ui-sm leading-relaxed text-zinc-500">
+                                When enabled, the seat reads and updates your preferences, habits and long-term
+                                context across surfaces. When disabled, the memory tools are refused — nothing is
+                                read or saved.
+                            </p>
+                        </div>
+                    </div>
+                    {setIsGlobalMemoryEnabled && (
+                        <ToggleSwitch
+                            checked={!!isGlobalMemoryEnabled}
+                            onChange={() => setIsGlobalMemoryEnabled(!isGlobalMemoryEnabled)}
+                            label="Toggle Global Memory"
+                        />
+                    )}
+                </div>
+                <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-hairline pt-2.5">
+                    <span className="text-ui-dense text-zinc-500">{stats.enabledCount} enabled · {stats.charCount.toLocaleString()} chars</span>
+                    {memoryConfig && (
+                        <span className="text-ui-dense text-zinc-500">Managed by {memoryConfig.selectedModel || memoryConfig.name || 'memory model'}</span>
+                    )}
+                </div>
+            </div>
+            {/* the reference's folder cards: one per notebook folder, with the
+                folder's honest file count and its latest update. Open selects
+                the folder in the browser below; the reorder arrows keep the
+                prompt-injection order in the trader's hands. */}
+            <div className="shrink-0 mb-8 grid gap-2 sm:grid-cols-2" data-testid="notebook-folder-cards">
+                {[...folders].sort((a, b) => a.order - b.order).map(folder => {
+                    const folderFiles = files.filter(f => f.folderId === folder.id && f.name !== SUGGESTIONS_FILE_NAME);
+                    let latest = 0;
+                    for (const f of folderFiles) { if (f.updatedAt > latest) latest = f.updatedAt; }
+                    return (
+                        <div key={folder.id} className="flex items-center justify-between gap-4 rounded-control border border-hairline bg-zinc-950/40 px-3 py-3">
+                            <div className="flex items-center gap-3 min-w-0">
+                                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-control bg-zinc-800 text-zinc-300">
+                                    <FolderIcon className="h-4 w-4" aria-hidden="true" />
+                                </span>
+                                <div className="min-w-0">
+                                    <div className="truncate text-ui-sm font-medium text-zinc-100">{folder.name}</div>
+                                    <div className="text-ui-dense text-zinc-500">
+                                        {folderFiles.length} memory file{folderFiles.length === 1 ? '' : 's'} · {latest > 0 ? memoryUpdatedLabel(latest) : 'No files yet'}
+                                    </div>
+                                </div>
+                            </div>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                                <button
+                                    type="button"
+                                    aria-label={`Move ${folder.name} up`}
+                                    title="Move up"
+                                    disabled={folder.order === 0}
+                                    onClick={() => {
+                                        const target = [...folders].sort((a, b) => a.order - b.order)
+                                            .find(f => f.order === folder.order - 1);
+                                        if (target) void moveMemoryFolder(folder.id, target.order, activeUser).then(() => refresh());
+                                    }}
+                                    className="rounded-control p-1 text-zinc-500 transition-colors hover:text-zinc-200 disabled:opacity-30"
+                                >
+                                    <ChevronUpIcon className="h-4 w-4" aria-hidden="true" />
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => { setSelectedFolderId(folder.id); setIsCreatingFolder(false); setIsCreatingFile(false); }}
+                                    aria-label={`Open ${folder.name}`}
+                                    className="shrink-0 rounded-control border border-zinc-800 px-2.5 py-1 text-ui-xs font-medium text-zinc-300 transition-colors hover:border-line hover:text-zinc-100"
+                                >
+                                    Open
+                                </button>
+                            </div>
+                        </div>
+                    );
+                })}
+            </div>
 
             {corruptSidecars.length > 0 && (
                 <div className="shrink-0 mb-6 rounded-bubble border border-amber-500/30 bg-amber-500/[0.06] p-4" data-testid="notebook-recovery">
@@ -314,28 +397,6 @@ const MemoryFilesManager: React.FC<MemoryFilesManagerProps> = ({
                     </div>
                 </div>
             )}
-
-            <div className="flex flex-wrap items-end gap-4 shrink-0 mb-8">
-                {/* The Memory Model picker moved to Settings →
-                    AI Setup (it owns every learning pass); this surface shows
-                    a read-only pointer so ownership stays discoverable. */}
-                {memoryConfig && (
-                    <div className="pb-2">
-                        <span className="text-ui-xs uppercase tracking-widest text-zinc-600">Managed by </span>
-                        <span className="text-ui-sm text-zinc-400">{memoryConfig.selectedModel || memoryConfig.name || 'memory model'}</span>
-                    </div>
-                )}
-                {setIsGlobalMemoryEnabled && (
-                    <div className="flex items-center gap-3 pb-2 ml-auto">
-                        <span className="text-ui-sm font-medium uppercase tracking-widest text-zinc-500">Global memory</span>
-                        <ToggleSwitch
-                            checked={!!isGlobalMemoryEnabled}
-                            onChange={() => setIsGlobalMemoryEnabled(!isGlobalMemoryEnabled)}
-                            label="Toggle Global Memory"
-                        />
-                    </div>
-                )}
-            </div>
 
             {isCreatingFolder && !selectedFolder && !selectedFile && (
                 <div className="shrink-0 mb-4">

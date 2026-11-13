@@ -425,6 +425,11 @@ export const SkillLibrary: React.FC<SkillLibraryProps> = ({
                 </span>
             </div>
 
+            <div className="flex items-center gap-2 pt-1">
+                <h3 className="text-ui-sm text-zinc-500">Your skills</h3>
+                <span className="font-mono text-ui-2xs text-zinc-600">{filtered.length} of {skills.length}</span>
+            </div>
+
             <div
                 data-testid="skills-catalog-grid"
                 className="grid min-h-0 flex-1 grid-cols-1 content-start gap-2 overflow-y-auto custom-scrollbar md:grid-cols-2"
