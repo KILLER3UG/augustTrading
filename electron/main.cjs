@@ -432,6 +432,7 @@ trustedHandle('store:read', (_event, key) => getDesktopStore().read(key), untrus
 trustedHandle('store:write', (_event, key, value) => getDesktopStore().write(key, value), untrusted);
 trustedHandle('store:remove', (_event, key) => getDesktopStore().remove(key), untrusted);
 trustedHandle('store:location', () => getDesktopStore().location(), null);
+trustedHandle('store:list', (_event, prefix) => getDesktopStore().list(prefix), untrusted);
 
 // =============================================================================
 // PROVIDER TRANSPORT — main-process requests avoid renderer CORS restrictions

@@ -5414,6 +5414,75 @@ const checkUntrustedGateCoversAllWriters = async () => {
     localStorage.removeItem('last_active_user');
 };
 
+// ─── 50. the desktop profile store — files, not a database ─────────────────
+// On Electron the profile used to live in IndexedDB while everything else
+// lived in files. It now lives in the SAME file store, reached through the
+// real dbService → storeBackend → bridge path, so there is no database on the
+// desktop at all. This drives that path against an in-memory bridge and pins
+// the parts a unit test cannot see: the backend is actually selected, a write
+// is READ BACK before it reports saved, enumeration comes from the files (not
+// a second index), and a store that drops bytes refuses the write.
+const checkDesktopProfileStore = async () => {
+    const backing = new Map();
+    let dropWrites = false;
+    global.window.electronAPI = {
+        isElectron: true,
+        store: {
+            read: async (k) => {
+                if (dropWrites) return { ok: false, error: 'disk full' };
+                return backing.has(k) ? { ok: true, value: backing.get(k) } : { ok: true, value: null };
+            },
+            write: async (k, v) => {
+                if (dropWrites) return { ok: false, error: 'disk full' };
+                backing.set(k, v);
+                return { ok: true };
+            },
+            remove: async (k) => { backing.delete(k); return { ok: true }; },
+            // The bridge hands back FILE keys; the shim keys by the same
+            // string, so list is a plain prefix filter.
+            list: async (prefix) => ({ ok: true, keys: [...backing.keys()].filter(k => k.startsWith(prefix)) }),
+        },
+    };
+    global.localStorage.setItem('last_active_user', 'store-user');
+
+    // ONE bundle: dbService and the store backend must share the bridge.
+    const dbs = loadModule('src/services/infrastructure/dbService.ts', {
+        sb: 'src/services/infrastructure/storeBackend.ts',
+    });
+    await dbs.initDatabase();
+    ok('profile store: the DESKTOP backend is selected, not IndexedDB or SQLite',
+        dbs.isUsingSqlite() === false && dbs.getStorageInfo && (await dbs.getStorageInfo()).storageType === 'files',
+        JSON.stringify(await dbs.getStorageInfo()));
+
+    await dbs.saveUserProfile('Store User', { finalTradeSummary: null, settings: { activeFrameworks: [] } });
+    const readBack = await dbs.getUserProfile('Store User');
+    ok('profile store: a save is readable back through the same API',
+        !!readBack && readBack.username === 'Store User', JSON.stringify(readBack?.username));
+
+    // A second profile, then enumerate: the names come from the FILES.
+    await dbs.saveUserProfile('Alpha', {});
+    const names = await dbs.getAllUsernames();
+    ok('profile store: usernames are enumerated from the store, not an index',
+        names.includes('Store User') && names.includes('Alpha'), JSON.stringify(names));
+
+    // A store that cannot commit must not report a save.
+    dropWrites = true;
+    let refused = '';
+    try { await dbs.saveUserProfile('Store User', { settings: { activeFrameworks: ['x'] } }); }
+    catch (e) { refused = e instanceof Error ? e.message : String(e); }
+    ok('profile store: a write the backend dropped is REFUSED, not reported saved',
+        refused.length > 0, refused || 'no error raised');
+    dropWrites = false;
+
+    // A delete removes the row and it stops being enumerated.
+    await dbs.deleteUserProfile('Alpha');
+    const afterDelete = await dbs.getAllUsernames();
+    ok('profile store: a deleted profile is gone from the store and the listing',
+        !afterDelete.includes('Alpha') && (await dbs.getUserProfile('Alpha')) === undefined,
+        JSON.stringify(afterDelete));
+    localStorage.removeItem('last_active_user');
+};
+
 const finishReport = () => {
     console.log(`contracts: ${passed} passed, ${failures.length} failed`);
     for (const f of failures) console.log(`  FAIL ${f}`);
@@ -5436,5 +5505,6 @@ checkSkillWrites()
     .then(checkPromptIndexGrants)
     .then(checkInsightWriteDurability)
     .then(checkUntrustedGateCoversAllWriters)
+    .then(checkDesktopProfileStore)
     .catch(e => { failures.push(`async runtime checks threw: ${e instanceof Error ? e.stack : String(e)}`); })
     .then(finishReport);

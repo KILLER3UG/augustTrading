@@ -124,7 +124,39 @@ const createStore = (root) => {
     /** Where this store lives, for the Settings card and for support. */
     const location = () => path.resolve(root);
 
-    return { read, write, remove, location, keySegments };
+    /** Every key currently in the store whose name starts with `prefix`,
+     *  decoded back from the files on disk. A store the renderer can write to
+     *  but never enumerate cannot answer "which profiles exist" — so the
+     *  profile store gets a real listing instead of a second index file that
+     *  could drift from the bytes it claims to describe. */
+    const list = (prefix) => {
+        const rootResolved = path.resolve(root);
+        const out = [];
+        const want = typeof prefix === 'string' ? prefix : '';
+        const walk = (dir, parts) => {
+            let entries;
+            try {
+                entries = fs.readdirSync(dir, { withFileTypes: true });
+            } catch {
+                return; // a directory that is not there yet is an empty store
+            }
+            for (const entry of entries) {
+                const nextParts = [...parts, entry.name];
+                if (entry.isDirectory()) {
+                    walk(path.join(dir, entry.name), nextParts);
+                    continue;
+                }
+                if (!entry.name.endsWith('.json')) continue;
+                const key = nextParts.slice(0, -1).concat(entry.name.slice(0, -'.json'.length)).join('/');
+                if (want && !key.startsWith(want)) continue;
+                out.push(key);
+            }
+        };
+        walk(rootResolved, []);
+        return { ok: true, keys: out };
+    };
+
+    return { read, write, remove, location, list, keySegments };
 };
 
 /**

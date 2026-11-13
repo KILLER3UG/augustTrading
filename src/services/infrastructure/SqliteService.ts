@@ -202,23 +202,10 @@ const createTables = async (): Promise<void> => {
         CREATE INDEX IF NOT EXISTS idx_summaries_username ON trade_summaries(username);
     `);
 
-    // Saved analyses table
-    await db.execute(`
-        CREATE TABLE IF NOT EXISTS saved_analyses (
-            id TEXT PRIMARY KEY,
-            username TEXT NOT NULL,
-            analysis TEXT,
-            userPrompt TEXT,
-            timestamp TEXT,
-            meta TEXT
-        );
-    `);
-    // Every read of this table filters by username, and it was the only one
-    // without the index its siblings got — so it was full-scanning on each
-    // open. IF NOT EXISTS means this also lands for pre-existing installs.
-    await db.execute(`
-        CREATE INDEX IF NOT EXISTS idx_saved_analyses_username ON saved_analyses(username);
-    `);
+    // (The saved_analyses table is gone: it had a CREATE, an index, two ALTER
+    // migrations and a DELETE-on-user-delete, but no INSERT and no SELECT
+    // anywhere — nothing ever wrote or read a row. The v9 migration below
+    // drops it from installs that still carry one.)
 
     // (The thinking_records table is gone with the reasoning corpus it held.
     // The v8 migration below drops it from installs that still carry one.)
@@ -289,9 +276,7 @@ const createTables = async (): Promise<void> => {
 
     // VERSION 2 MIGRATION: Add userPrompt if missing
     if (appliedVersion < 2) {
-        await runMigrations(2, [
-            { label: 'v2 saved_analyses.userPrompt', sql: 'ALTER TABLE saved_analyses ADD COLUMN userPrompt TEXT;' },
-        ]);
+        await runMigrations(2, []);
     }
 
     // VERSION 3 MIGRATION: Add settings to conversations and meta to trades
@@ -302,11 +287,10 @@ const createTables = async (): Promise<void> => {
         ]);
     }
 
-    // VERSION 4 MIGRATION: Add lastActiveConversationId to users and meta to saved_analyses
+    // VERSION 4 MIGRATION: Add lastActiveConversationId to users
     if (appliedVersion < 4) {
         await runMigrations(4, [
             { label: 'v4 users.lastActiveConversationId', sql: 'ALTER TABLE users ADD COLUMN lastActiveConversationId TEXT;' },
-            { label: 'v4 saved_analyses.meta', sql: 'ALTER TABLE saved_analyses ADD COLUMN meta TEXT;' },
         ]);
     }
 
@@ -319,6 +303,16 @@ const createTables = async (): Promise<void> => {
     if (appliedVersion < 8) {
         await runMigrations(8, [
             { label: 'v8 drop thinking_records', sql: 'DROP TABLE IF EXISTS thinking_records;' },
+        ]);
+    }
+
+    // VERSION 9 MIGRATION: Drop the never-written analyses table. It predates
+    // the journal's own export and had no INSERT and no SELECT in the code —
+    // a schema occupied by nothing. IF EXISTS makes this a no-op on installs
+    // that already lost it, and SQLite drops its index with the table.
+    if (appliedVersion < 9) {
+        await runMigrations(9, [
+            { label: 'v9 drop saved_analyses', sql: 'DROP TABLE IF EXISTS saved_analyses;' },
         ]);
     }
 
@@ -761,7 +755,6 @@ export const sqliteDeleteUser = async (username: string): Promise<void> => {
             await connection.run('DELETE FROM trades WHERE username = ?', [username]);
             await connection.run('DELETE FROM conversations WHERE username = ?', [username]);
             await connection.run('DELETE FROM trade_summaries WHERE username = ?', [username]);
-            await connection.run('DELETE FROM saved_analyses WHERE username = ?', [username]);
             await connection.run('DELETE FROM tracking_store WHERE username = ?', [username]);
             await connection.run('DELETE FROM users WHERE username = ?', [username]);
             await connection.execute('COMMIT');

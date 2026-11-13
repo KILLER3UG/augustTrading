@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
         write: (key, value) => ipcRenderer.invoke('store:write', key, value),
         remove: (key) => ipcRenderer.invoke('store:remove', key),
         location: () => ipcRenderer.invoke('store:location'),
+        list: (prefix) => ipcRenderer.invoke('store:list', prefix),
     },
     isElectron: true,
     platform: process.platform,

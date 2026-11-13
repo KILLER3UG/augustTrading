@@ -19,7 +19,7 @@ import { getStoreFailure, storeBackendKind, storeLocation, type StoreFailure } f
 
 interface StorageInfo {
     platform: string;
-    storageType: 'sqlite' | 'indexeddb';
+    storageType: 'files' | 'sqlite' | 'indexeddb';
     userCount: number;
 }
 

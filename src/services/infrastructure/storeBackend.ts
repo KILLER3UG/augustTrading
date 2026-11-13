@@ -31,6 +31,8 @@ interface StoreBridge {
     write: (key: string, value: string) => Promise<{ ok: boolean; error?: string }>;
     remove: (key: string) => Promise<{ ok: boolean; error?: string }>;
     location?: () => Promise<string | null>;
+    /** Enumerate keys by prefix. Present only on the desktop bridge. */
+    list?: (prefix: string) => Promise<{ ok: boolean; keys?: string[] }>;
 }
 
 export interface StoreFailure {
@@ -180,4 +182,35 @@ export const storeLocation = async (): Promise<string | null> => {
     const api = bridge();
     if (!api?.location) return null;
     try { return await api.location(); } catch { return null; }
+};
+
+/**
+ * Every store key on this machine that starts with `prefix`, or null when the
+ * backend cannot enumerate (web/localStorage keeps its own namespace; use
+ * PreferencesService.getAllKeys there). Desktop reads the file store directly,
+ * so a caller never maintains a second index that can drift from the bytes.
+ *
+ * The keys are STORAGE ADDRESSES (the file path under the store root, without
+ * `.json`) — not the caller-facing key, because a key holding a character
+ * outside `[A-Za-z0-9._-]` is escaped on its way to a filename and a filename
+ * cannot be un-escaped unambiguously. Read them back with `readStoreByFileKey`.
+ */
+export const listStoreKeys = async (prefix: string): Promise<string[] | null> => {
+    const api = bridge();
+    if (!api?.list) return null;
+    try {
+        const res = await api.list(prefix);
+        return Array.isArray(res?.keys) ? res.keys : null;
+    } catch {
+        return null;
+    }
+};
+
+/** Read one storage address exactly as `listStoreKeys` returned it — no second
+ *  escaping pass. This is how a caller enumerates-then-reads a store whose
+ *  keys are not file-safe. */
+export const readStoreByFileKey = async (fileKey: string): Promise<{ ok: boolean; value?: string | null; error?: string }> => {
+    const api = bridge();
+    if (!api) return { ok: false, error: 'no file store on this platform' };
+    return api.read(fileKey);
 };
