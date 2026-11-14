@@ -3255,10 +3255,11 @@ async function main() {
             `${await page.locator('[data-testid="agent-message"]').count()} rows`);
 
         // ── Journal, Learning, Skills and Memory are SECTIONS of the Settings
-        //    modal now — the rail carries one Settings entry. Open the modal
-        //    and assert its sidebar carries all four sections.
+        //    modal now — the rail carries the ONE Settings entry. Open the modal
+        //    through it and assert its sidebar carries all four sections.
         await page.evaluate(() => {
-            const gear = document.querySelector('[data-testid="nav-settings"]');
+            const gear = document.querySelector('[data-testid="surface-switch-settings"]')
+                || document.querySelector('[data-testid="nav-settings"]');
             if (gear) gear.click();
         });
         await sleep(1200);
