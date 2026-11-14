@@ -22,8 +22,7 @@
  */
 import React, { useRef } from 'react';
 import {
-    ActivityIcon, BookOpen, GraduationCap, LayersIcon, NotebookPen,
-    MessageSquareIcon,
+    ActivityIcon, MessageSquareIcon, SettingsIcon,
 } from '../shared/Icons';
 import { AccountRow } from './shellChrome';
 import { ConversationGroups } from './ConversationGroups';
@@ -169,15 +168,10 @@ const ShellRail: React.FC<ShellRailProps> = ({
                         : 'relative shrink-0'
                 } ${isResizing ? '' : 'transition-[width] duration-150 ease-[var(--ease-snappy)]'}`}
             >
-                {/* The icon rail: the two desk modes at the top, the six
-                    surfaces' records at its foot. The old "Hide conversations"
-                    (Chats) icon is GONE on the surfaces whose column IS the rail
-                    — it collapsed the whole rail and so duplicated the
-                    title-row toggle. It stays on Agents ONLY, where it opens
-                    that surface's own column (which starts closed and has no
-                    other opener). Analyze mounts no conversation column at all;
-                    the record surfaces hide their list with the icon after the
-                    RECENT heading. */}
+                {/* The icon rail: the two desk modes at the top, and Settings
+                    at its foot — Journal, Learning, Skills and Memory live
+                    inside the Settings modal now, so the rail carries one
+                    entry instead of four. */}
                 <nav
                     aria-label="Surfaces"
                     data-testid="shell-surface-rail"
@@ -192,25 +186,9 @@ const ShellRail: React.FC<ShellRailProps> = ({
                         <MessageSquareIcon className="h-[18px] w-[18px]" aria-hidden="true" />
                     </RailIcon>
                     <span aria-hidden="true" className="flex-1" />
-                    <RailIcon label="Journal · Alt+2" testId="surface-switch-journal"
-                        current={surface === 'journal'} onClick={() => onSelectSurface('journal')}>
-                        <BookOpen className="h-[18px] w-[18px]" aria-hidden="true" />
-                    </RailIcon>
-                    <RailIcon label="Learning · Alt+5" testId="surface-switch-learn"
-                        current={surface === 'learn'} onClick={() => onSelectSurface('learn')}>
-                        <GraduationCap className="h-[18px] w-[18px]" aria-hidden="true" />
-                    </RailIcon>
-                    {/* Skills and Memory are surfaces, not tabs (2026-11-08, v4
-                        plan D2). They used to be the Learning surface's first two
-                        tabs; each now lands on its own screen from the rail, and
-                        the tab bar is gone from a surface with one destination. */}
-                    <RailIcon label="Skills · Alt+3" testId="surface-switch-skills"
-                        current={surface === 'skills'} onClick={() => onSelectSurface('skills')}>
-                        <LayersIcon className="h-[18px] w-[18px]" aria-hidden="true" />
-                    </RailIcon>
-                    <RailIcon label="Memory · Alt+6" testId="surface-switch-memory"
-                        current={surface === 'memory'} onClick={() => onSelectSurface('memory')}>
-                        <NotebookPen className="h-[18px] w-[18px]" aria-hidden="true" />
+                    <RailIcon label="Settings — Journal, Learning, Skills, Memory · Ctrl+," testId="surface-switch-settings"
+                        current={false} onClick={onOpenSettings}>
+                        <SettingsIcon className="h-[18px] w-[18px]" aria-hidden="true" />
                     </RailIcon>
                     {/* No collapse control here. The whole rail's one toggle
                         lives on the content bar's TITLE row (`SidebarToggle`),

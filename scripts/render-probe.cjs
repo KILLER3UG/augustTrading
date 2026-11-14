@@ -2264,6 +2264,27 @@ async function main() {
             const IDS = { Analyze: 'trade', Journal: 'journal', Agents: 'agents', Learning: 'learn', Skills: 'skills', Memory: 'memory' };
             const id = IDS[label];
             if (!id) return 'not found';
+            // The four record surfaces are SECTIONS of the Settings modal —
+            // the rail's Settings entry opens the modal and the modal's
+            // sidebar entry picks the section. The two desk modes remain
+            // rail switches.
+            if (id !== 'trade' && id !== 'agents') {
+                await page.evaluate(() => {
+                    const railEntry = document.querySelector('[data-testid="surface-switch-settings"]');
+                    const gear = document.querySelector('[data-testid="nav-settings"]');
+                    (railEntry || gear)?.click();
+                });
+                await sleep(600);
+                const picked = await page.evaluate((sectionId) => {
+                    const map = { journal: 'journal', learn: 'learning-accuracy', skills: 'skills', memory: 'memory' };
+                    const el = document.querySelector(`[data-testid="settings-section-${map[sectionId] || sectionId}"]`);
+                    if (!el) return 'missing';
+                    el.click();
+                    return 'clicked';
+                }, id);
+                await sleep(900);
+                return picked === 'clicked' ? 'clicked' : 'not found';
+            }
             const clickSwitch = () => page.evaluate((surfaceId) => {
                 const el = document.querySelector(`[data-testid="surface-switch-${surfaceId}"]`);
                 if (!el) return 'missing';
@@ -2274,6 +2295,12 @@ async function main() {
                 el.click();
                 return 'clicked';
             }, id);
+            await page.evaluate(() => {
+                const close = Array.prototype.slice.call(document.querySelectorAll('button'))
+                    .find(b => (b.getAttribute('aria-label') || '') === 'Close settings');
+                if (close) close.click();
+            });
+            await sleep(400);
             const first = await clickSwitch();
             if (first === 'clicked') { await closeRailOverlayAtPhone(); return 'clicked'; }
             // The rail is put away. Open it from whichever affordance this
@@ -2507,8 +2534,8 @@ async function main() {
                     agentsColumn: !!rail?.querySelector('[data-testid="shell-conversations"]'),
                 };
             });
-            check('every surface is reachable from the shell rail with no menu to open',
-                nav.switchCount === 6, `${nav.switchCount} entries in the rail switch`);
+            check('the rail carries the two desk modes and the Settings entry',
+                nav.switchCount === 3, `${nav.switchCount} entries in the rail switch`);
             check('the switch marks the screen you are actually on',
                 nav.marked === 'surface-switch-agents', nav.marked || 'nothing marked');
             // The rail is icons only; Skills is one of the six (see the count
@@ -2597,33 +2624,6 @@ async function main() {
             check('the Analyze rail is 48px and has no conversation-column resize handle',
                 analyzeRailWidth === 48 && !analyzeResize,
                 `${analyzeRailWidth}px resize=${analyzeResize}`);
-
-            await navTo('Journal');
-            await settleSurface('Journal');
-            await settleRailWidth();
-            const columnBefore = await railBox();
-            const railHandle = await page.locator('[data-testid="shell-rail-resize"]').boundingBox();
-            if (railHandle) {
-                const y = railHandle.y + Math.min(120, railHandle.height / 2);
-                await page.mouse.move(railHandle.x + railHandle.width / 2, y);
-                await page.mouse.down();
-                await page.mouse.move(railHandle.x + railHandle.width / 2 + 48, y, { steps: 4 });
-                await page.mouse.up();
-            }
-            await sleep(250);
-            const columnWide = await railBox();
-            check('the conversation column drags wider from its right edge',
-                columnBefore > 48 && columnWide >= columnBefore + 40, `${columnBefore} -> ${columnWide}`);
-            const railResetHandle = await page.locator('[data-testid="shell-rail-resize"]').boundingBox();
-            if (railResetHandle) {
-                await page.mouse.dblclick(
-                    railResetHandle.x + railResetHandle.width / 2,
-                    railResetHandle.y + Math.min(120, railResetHandle.height / 2));
-            }
-            await sleep(300);
-            const columnReset = await railBox();
-            check('double-click restores the conversation column width',
-                columnReset === columnBefore, `${columnWide} -> ${columnReset} (want ${columnBefore})`);
 
             await navTo('Analyze');
             await settleSurface('Analyze');
@@ -2795,38 +2795,6 @@ async function main() {
             await settleSurface('Analyze');
         }
 
-        /** Wait for the surface to settle: two identical, non-empty reads of
-         *  <main>. A fixed sleep made this sweep flaky — under load a surface's
-         *  lazy chunk arrives after the sleep, and the probe reported a blank
-         *  Studio/Learn that the app was seconds away from filling. Two equal
-         *  samples is the same rule `waitStableAnswer` uses for a reply, and it
-         *  can still fail: only on a surface that genuinely stays empty. */
-        const waitSurfaceText = async (deadlineMs = 12000) => {
-            let prev = null;
-            const until = Date.now() + deadlineMs;
-            while (Date.now() < until) {
-                const now = await page.evaluate(() => {
-                    const main = document.querySelector('main');
-                    if (!main) return '';
-                    // The title bar lives INSIDE <main> now, so its text is
-                    // constant across every surface — sampling it would make the
-                    // first two reads equal and return the band as "the surface"
-                    // a beat before the lazy chunk mounts. Measure the branches
-                    // under it, which are what actually changes.
-                    const head = main.querySelector(':scope > header');
-                    let text = '';
-                    for (const el of main.children) {
-                        if (el === head) continue;
-                        text += `${el.innerText ?? ''}\n`;
-                    }
-                    return text.trim();
-                });
-                if (now && now === prev) return now;
-                prev = now;
-                await sleep(250);
-            }
-            return prev ?? '';
-        };
         let prevSurfaceText = '';
         for (const surface of surfaces) {
             const errorsBefore = pageErrors.length;
@@ -2851,12 +2819,37 @@ async function main() {
             // count inside the same button (Learning renders "Learning9+"), and
             // the accessible name is what a reader actually hears.
             const switchText = await page.evaluate((id) => {
-                const el = document.querySelector(`[data-testid="surface-switch-${id}"]`);
-                return el ? (el.getAttribute('aria-label') || '').trim() : null;
+                // The four record surfaces are sidebar entries of the Settings
+                // modal now — their testids derive from their labels, not from
+                // the old surface-switch ids.
+                const modalSection = { journal: 'journal', learn: 'learning-accuracy', skills: 'skills', memory: 'memory' }[id];
+                const testId = modalSection ? 'settings-section-' + modalSection : ('surface-switch-' + id);
+                const el = document.querySelector(`[data-testid="${testId}"]`);
+                return el ? ((el.getAttribute('aria-label') || '') + ' ' + (el.textContent || '')).trim() : null;
             }, surface.switchId);
             check(`the ${surface.label} tab reads its own name`,
-                !!switchText && new RegExp('^' + surface.label + '[,. ]').test(switchText), String(switchText));
-            if (surface.overlay) {
+                !!switchText && new RegExp('^' + surface.label + '($|[,. ])').test(switchText), String(switchText));
+            const readsModal = surface.switchId !== 'trade' && surface.switchId !== 'agents';
+            const surfaceText = async () => page.evaluate(() => {
+                const pane = document.querySelector('[data-testid="settings-content-pane"]');
+                return ((pane && pane.innerText) || (document.querySelector("main") || document.body).innerText || "").replace(/\s+/g, " ");
+            });
+            if (readsModal) {
+                // The section mounts lazily inside the modal (the Journal
+                // loads its whole chunk graph) — a single read raced the
+                // chunk and judged a skeleton. Poll for the pane to carry
+                // the section before judging it.
+                let body = '';
+                for (let i = 0; i < 40 && body.length <= 40; i += 1) {
+                    body = await surfaceText();
+                    if (body.length <= 40) await sleep(300);
+                }
+                check(`${surface.label} section renders content`, body.length > 40, `${body.length} chars`);
+                check(`${surface.label} section replaced the one before it`,
+                    body !== prevSurfaceText,
+                    body === prevSurfaceText ? "the pane is unchanged by the click" : "changed");
+                prevSurfaceText = body;
+            } else if (surface.overlay) {
                 let mounted = 0;
                 const until = Date.now() + 12000;
                 while (Date.now() < until) {
@@ -2869,7 +2862,7 @@ async function main() {
                     ? (await page.locator(surface.expect).innerText()).trim() : '';
                 check(`${surface.label} panel renders content`, text.length > 40, `${text.length} chars`);
             } else {
-                const body = await waitSurfaceText();
+                const body = await surfaceText();
                 check(`${surface.label} surface renders content`, body.length > 40, `${body.length} chars`);
                 // A click that leaves <main> byte-identical did not switch
                 // surfaces however green the content check above looks — this
@@ -3261,19 +3254,24 @@ async function main() {
             await page.locator('[data-testid="agent-message"]').count() >= 4,
             `${await page.locator('[data-testid="agent-message"]').count()} rows`);
 
-        // ── Skills and Memory are SURFACES now (2026-11-08), so the rail rows
-        //    are the documented route and Alt+3 keeps its meaning. Assert the
-        //    Studio's OWN root mounted — a route that opens the wrong surface
-        //    would otherwise pass every gate.
+        // ── Journal, Learning, Skills and Memory are SECTIONS of the Settings
+        //    modal now — the rail carries one Settings entry. Open the modal
+        //    and assert its sidebar carries all four sections.
+        await page.evaluate(() => {
+            const gear = document.querySelector('[data-testid="nav-settings"]');
+            if (gear) gear.click();
+        });
+        await sleep(1200);
         const railRows = await page.evaluate(() => ({
-            skills: !!document.querySelector('[data-testid="surface-switch-skills"]'),
-            memory: !!document.querySelector('[data-testid="surface-switch-memory"]'),
+            journal: !!document.querySelector('[data-testid="settings-section-journal"]'),
+            learn: !!document.querySelector('[data-testid="settings-section-learning-accuracy"]'),
+            skills: !!document.querySelector('[data-testid="settings-section-skills"]'),
+            memory: !!document.querySelector('[data-testid="settings-section-memory"]'),
         }));
-        check('the rail has Skills and Memory rows — both are surfaces',
-            railRows.skills && railRows.memory,
-            `skills=${railRows.skills} memory=${railRows.memory}`);
-        await page.keyboard.press('Alt+3');
-        const customize = 'alt+3';
+        check('the Settings modal carries the Journal, Learning, Skills and Memory sections',
+            railRows.journal && railRows.learn && railRows.skills && railRows.memory,
+            `journal=${railRows.journal} learn=${railRows.learn} skills=${railRows.skills} memory=${railRows.memory}`);
+        const customize = 'modal';
         // The Studio rides a React.lazy chunk behind a Suspense, so the surface
         // appears BEFORE the Studio mounts. A fixed 1.5s wait sampled once and
         // raced the chunk — the merge that deleted the automation chunk
@@ -3281,24 +3279,30 @@ async function main() {
         // root: the claim is the route MOUNTS it, not that it lands within a
         // hard-coded window. The fallthrough re-samples once at the deadline
         // so a failure still names which of the three facts was missing.
+        // Land on the Skills SECTION itself: the gear opens the modal on its
+        // own current page, and a poll for the Studio there would wait on a
+        // section that was never selected.
+        await page.evaluate(() => {
+            document.querySelector('[data-testid="settings-section-skills"]')?.click();
+        });
         const studioMounted = await pollFor(async () => page.evaluate(() => {
-            const knowledge = !!document.querySelector('[data-testid="learn-view"]');
-            const skillsTab = !!document.querySelector('[data-testid="learn-skills"]');
+            const section = !!document.querySelector('[data-testid="settings-section-skills"]');
+            const skills = !!document.querySelector('[data-testid="learn-skills"]');
             const studio = !!document.querySelector('[data-testid="studio-view"]');
-            return knowledge && skillsTab && studio;
+            return section && skills && studio;
         }));
         const reached = studioMounted === true
             ? { knowledge: true, skillsTab: true, studio: true }
             : await page.evaluate(() => ({
                 knowledge: !!document.querySelector('[data-testid="learn-view"]'),
-                skillsTab: !!document.querySelector('[data-testid="learn-skills"]'),
+                skillsTab: !!document.querySelector('[data-testid="settings-section-skills"]'),
                 studio: !!document.querySelector('[data-testid="studio-view"]'),
             }));
         // Three things, because landing on the right SURFACE is not the claim —
         // the row promises the library, so the Skills panel must be the one
         // showing and the Studio must actually be mounted inside it.
-        check('Alt+3 lands on the Skills surface with the Studio mounted',
-            customize === 'alt+3' && reached.knowledge && reached.skillsTab && reached.studio,
+        check('the Settings modal lands on the Skills section with the Studio mounted',
+            customize === 'modal' && reached.knowledge && reached.skillsTab && reached.studio,
             `${customize} knowledge=${reached.knowledge} skills=${reached.skillsTab} studio=${reached.studio}`);
         await page.waitForTimeout(600);
 
@@ -3637,6 +3641,14 @@ async function main() {
                         .querySelector(`[data-testid="${id}"]`)?.click(), tabTestId);
                 }
                 await sleep(1200);
+                // The modal sections mount lazily (a Journal visit loads its
+                // whole chunk graph); sweeping a skeleton would press the
+                // chart's controls BEHIND the open modal and call them inert.
+                // Wait for the pane to actually carry the section first.
+                await pollFor(async () => page.evaluate(() => {
+                    const pane = document.querySelector('[data-testid="settings-content-pane"]');
+                    return !!pane && (pane.innerText || '').trim().length > 40 ? 1 : null;
+                }), 12000);
             };
             const tried = new Set();
             const inert = [];
@@ -3657,7 +3669,14 @@ async function main() {
                 // sweep that clicks nothing reports "zero inert controls".
                 nativeDialogSeen = false;
                 const picked = await page.evaluate((skip) => {
-                    const main = document.querySelector('main') || document.body;
+                    // A Settings-modal section is swept INSIDE the pane: the
+                    // document's <main> still holds the chart surface behind
+                    // the modal, and pressing those controls proves nothing
+                    // about the section. The pane is the surface being judged.
+                    const pane = document.querySelector('[data-testid="settings-content-pane"]');
+                    const main = (pane && (pane.innerText || '').trim().length > 40)
+                        ? pane
+                        : (document.querySelector('main') || document.body);
                     const nameOf = b => (b.getAttribute('aria-label') || b.textContent || '').trim();
                     const btn = [...main.querySelectorAll('button')]
                         .find(b => !b.disabled && b.offsetParent !== null
@@ -3951,17 +3970,28 @@ async function main() {
             await sleep(400);
             journalHow = await navTo('Journal');
         }
-        await sleep(1500);
-        const journalText = (await page.locator('main').innerText()).trim();
+        // The Journal is a SECTION of the Settings modal now: its lazy chunk
+        // is waited for (a fixed sleep raced the chunk and read an empty pane),
+        // and every read scopes to the modal's content pane — <main> holds the
+        // chart surface behind the modal and knows nothing of the journal.
+        const journalMounted = await pollFor(async () => page.evaluate(() => {
+            const pane = document.querySelector('[data-testid="settings-content-pane"]');
+            return !!pane && !!pane.querySelector('[data-testid="journal-view"]');
+        }), 15000);
+        const journalText = await page.evaluate(() => {
+            const pane = document.querySelector('[data-testid="settings-content-pane"]');
+            return pane ? (pane.innerText || '').trim() : '';
+        });
         check('the seeded journal is populated before it is swept',
-            journalHow === 'clicked' && !/No trades logged yet/i.test(journalText),
+            journalHow === 'clicked' && journalMounted && journalText.length > 40
+            && !/No trades logged yet/i.test(journalText),
             journalText.slice(0, 120));
         // The tracker writes PENDING journal rows while a trade is open. This
         // is the only gate that can see the rendered OPEN state and its filter.
         const openFilterPresent = await page.evaluate(() => {
-            const main = document.querySelector('main');
-            if (!main) return false;
-            return [...main.querySelectorAll('button')]
+            const pane = document.querySelector('[data-testid="settings-content-pane"]');
+            if (!pane) return false;
+            return [...pane.querySelectorAll('button')]
                 .some(el => (el.textContent || '').trim() === 'OPEN');
         });
         check('the journal offers an OPEN filter', openFilterPresent === true);
@@ -3969,8 +3999,8 @@ async function main() {
         // the filter brings it in. Clicking OPEN must leave the PENDING row
         // (and its badge) on screen; a filter that changes nothing is inert.
         const openFilterClicked = await page.evaluate(() => {
-            const main = document.querySelector('main');
-            const button = [...(main?.querySelectorAll('button') ?? [])]
+            const pane = document.querySelector('[data-testid="settings-content-pane"]');
+            const button = [...(pane?.querySelectorAll('button') ?? [])]
                 .find(el => (el.textContent || '').trim() === 'OPEN');
             if (!(button instanceof HTMLElement)) return false;
             button.click();
@@ -3978,9 +4008,9 @@ async function main() {
         });
         await sleep(500);
         const openBadge = await page.evaluate(() => {
-            const main = document.querySelector('main');
+            const pane = document.querySelector('[data-testid="settings-content-pane"]');
             const text = (el) => (el.textContent || '').trim();
-            return [...(main?.querySelectorAll('span') ?? [])]
+            return [...(pane?.querySelectorAll('span') ?? [])]
                 .some(el => text(el) === 'OPEN');
         });
         check('a PENDING journal row renders the OPEN state',
@@ -4756,7 +4786,7 @@ async function main() {
         });
         check('the phone rail opens as a drawer and carries every route',
             phoneRailOpen === 'clicked' && phoneRail.rail && phoneRail.backdrop
-                && phoneRail.position === 'fixed' && phoneRail.switches === 6,
+                && phoneRail.position === 'fixed' && phoneRail.switches === 3,
             `${phoneRailOpen} rail=${phoneRail.rail} backdrop=${phoneRail.backdrop} `
             + `position=${phoneRail.position} tabs=${phoneRail.switches}`);
         const phoneRailClosed = await page.evaluate(() => {

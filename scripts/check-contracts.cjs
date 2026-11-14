@@ -2807,14 +2807,20 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
         (read('src/components/shell/ConversationGroups.tsx').match(/data-testid="conversation-row"/g) || []).length === 1
             && /<ConversationGroups/.test(agents) && /<ConversationGroups/.test(read('src/components/shell/ShellRail.tsx')),
         'two row implementations is how the two lists drift apart');
-    // Three surfaces, three screens. Skills and Memory left Learning's tab row
-    // (2026-11-08, v4 plan D2), so the landing panel belongs to the SURFACE.
-    ok('skills and memory are surfaces, and LearnView is pinned per surface',
-        /surface-switch-skills/.test(read('src/components/shell/ShellRail.tsx'))
-            && /surface-switch-memory/.test(read('src/components/shell/ShellRail.tsx'))
-            && /tab="skills"/.test(app) && /tab="memory"/.test(app) && /tab="health"/.test(app)
-            && /tab: LearnTab;/.test(read('src/components/learn/LearnView.tsx')),
-        'one panel per surface, not a shared default behind two entries');
+    // The rail carries the two desk modes and the Settings entry; the four
+    // record surfaces are SECTIONS of the Settings modal (2026-11-13).
+    // LearnView stays pinned per use — every mount names its tab — and the
+    // modal's own Memory page is the one the trader gets for memory.
+    ok('the rail is two desk modes + Settings, and LearnView is pinned per use',
+        /surface-switch-trade/.test(read('src/components/shell/ShellRail.tsx'))
+            && /surface-switch-agents/.test(read('src/components/shell/ShellRail.tsx'))
+            && /surface-switch-settings/.test(read('src/components/shell/ShellRail.tsx'))
+            && !/surface-switch-skills/.test(read('src/components/shell/ShellRail.tsx'))
+            && !/surface-switch-memory/.test(read('src/components/shell/ShellRail.tsx'))
+            && /tab="skills"/.test(app)
+            && /tab: LearnTab;/.test(read('src/components/learn/LearnView.tsx'))
+            && /data-testid="memory-tab"/.test(read('src/components/settings/tabs/MemoryTab.tsx')),
+        'the record surfaces are modal sections; LearnView still names its tab');
 })();
 
 // ─── the v3 chrome: fewer controls, each with one door ─────────────────────
