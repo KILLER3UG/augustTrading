@@ -200,6 +200,36 @@ async function main() {
         const SWITCH_ID = { Analyze: 'trade', Journal: 'journal', Agents: 'agents', Learning: 'learn', Skills: 'skills', Memory: 'memory' };
         const navTo = async (name) => {
             const id = SWITCH_ID[name] || name;
+            // The four record surfaces are SECTIONS of the Settings modal now —
+            // the rail's Settings entry opens the modal and the modal's sidebar
+            // entry picks the section. The same route render-probe drives; the
+            // old direct `surface-switch-journal` click died with the rail
+            // entries and made this sweep throw "no route".
+            if (id !== 'trade' && id !== 'agents') {
+                await page.evaluate(() => {
+                    const railEntry = document.querySelector('[data-testid="surface-switch-settings"]');
+                    const gear = document.querySelector('[data-testid="nav-settings"]');
+                    (railEntry || gear)?.click();
+                });
+                await sleep(600);
+                const picked = await page.evaluate((sectionId) => {
+                    const map = { journal: 'journal', learn: 'learning-accuracy', skills: 'skills', memory: 'memory' };
+                    const el = document.querySelector(`[data-testid="settings-section-${map[sectionId] || sectionId}"]`);
+                    if (!el) return 'missing';
+                    el.click();
+                    return 'clicked';
+                }, id);
+                await sleep(900);
+                return picked === 'clicked' ? 'clicked' : 'not found';
+            }
+            // Leaving a section means leaving the modal: close it first, or the
+            // overlay swallows the rail click this surface needs.
+            await page.evaluate(() => {
+                const close = Array.prototype.slice.call(document.querySelectorAll('button'))
+                    .find(b => (b.getAttribute('aria-label') || '') === 'Close settings');
+                if (close) close.click();
+            });
+            await sleep(400);
             const clickSwitch = () => page.evaluate((surfaceId) => {
                 const el = document.querySelector(`[data-testid="surface-switch-${surfaceId}"]`);
                 if (!el) return 'missing';
@@ -269,11 +299,16 @@ async function main() {
         } else {
             console.log('  Chat → Chart AI hop: NO SWITCH FOUND');
         }
-        // Settings modal — opened the way a person does (the Agents account
-        // row's gear); there is no #/settings hash route, and the overlay mounts
-        // outside <main> regardless. The title-bar gear was removed at the
-        // owner's request; Ctrl+, remains the global shortcut.
-        await page.locator('[data-testid="nav-settings"]').last().click();
+        // Settings modal — opened the way a person does: the rail's Settings
+        // entry (the one Settings control on every surface), falling back to
+        // the account row's gear. There is no #/settings hash route, and the
+        // overlay mounts outside <main> regardless. The title-bar gear was
+        // removed at the owner's request; Ctrl+, remains the global shortcut.
+        await page.evaluate(() => {
+            const railEntry = document.querySelector('[data-testid="surface-switch-settings"]');
+            const gear = document.querySelector('[data-testid="nav-settings"]');
+            (railEntry || gear)?.click();
+        });
         await page.waitForSelector('[aria-labelledby="settings-title"]', { timeout: 15000 });
         await sleep(1500);
         await page.screenshot({ path: path.join(SHOTS, 'surface-settings.png') });

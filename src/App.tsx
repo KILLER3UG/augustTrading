@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useRef, useCallback, useMemo, useSyncExternalStore } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { reapplyIdleMotionClass } from './services/desk/idleMotion';
 
 // Apply the user's persisted stillness preference to <body> on app startup,
@@ -30,7 +30,6 @@ import { FORGED_PROPOSAL_EVENT } from './services/tools/toolForge';
 import { AMENDMENT_EVENT } from './services/learning/memoryAmendments';
 import { loadBotLearningStats } from './services/agents/botLearning';
 import { useConfirmDialog } from './components/shared/ConfirmDialog';
-import { Header } from './components/shared/Header';
 import { useProviderConfigs } from './hooks/useProviderConfigs';
 import { useAppSettings } from './hooks/useAppSettings';
 import { useJournalUI } from './hooks/useJournalUI';
@@ -56,14 +55,12 @@ const VisionDataViewer = React.lazy(() => import('./components/analysis/VisionDa
 const LiveMarket = React.lazy(() => import('./components/market/LiveMarket'));
 const UpdateOverlay = React.lazy(() => import('./components/shared/UpdateOverlay'));
 const StrategyStudio = React.lazy(() => import('./components/dashboards/StrategyStudio'));
-const TradeView = React.lazy(() => import('./components/trade/TradeView'));
 const NewBotDialog = React.lazy(() => import('./components/chat/NewBotDialog'));
 const NewGroupDialog = React.lazy(() => import('./components/chat/NewGroupDialog'));
 const GroupChatView = React.lazy(() => import('./components/chat/GroupChatView'));
 const LearnView = React.lazy(() => import('./components/learn/LearnView'));
 import SkillsLibrary from './components/skills/SkillsLibrary';
-const AgentsView = React.lazy(() => import('./components/agents/AgentsView'));
-import ModelChip from './components/shared/ModelChip';
+import SurfaceOutlet, { SurfaceSkeleton } from './components/shell/SurfaceOutlet';
 import { effortDialUp } from './components/shared/effortDial';
 import { nextEffortTier } from './components/shared/effortScale';
 import { DEFAULT_FRAMEWORKS } from './constants/models';
@@ -113,9 +110,7 @@ import type { SoloTurnRow } from './services/trade/chatTurnMirror';
 // threshold are the live pieces of that shell module, and the deletion is not
 // a rename that a future reader should undo.
 import { AccountRow, NAV_RAIL_AUTO_COLLAPSE_PX, NAV_RAIL_EXPANDED_PX } from './components/shell/shellChrome';
-import ShellRail, {
-    DeskInstrument,
-} from './components/shell/ShellRail';
+import ShellRail from './components/shell/ShellRail';
 // The Journal pulls recharts + react-virtuoso into its chunk — statically
 // importing it put both on the startup path for a surface most users open
 // after days of logging. Lazy-once like the other surfaces; the deep-link
@@ -137,20 +132,6 @@ const dataUrlToFile = (dataUrl: string, filename: string): File => {
     for (let i = 0; i < byteString.length; i++) bytes[i] = byteString.charCodeAt(i);
     return new File([bytes], filename, { type: mime });
 };
-
-/**
- * Suspense fallback for the SURFACE-level lazy screens (TradeView,
- * StrategyStudio, the Agents roster). With fallback={null} the whole surface
- * flashed a blank black/white void for the duration of the chunk fetch
- * (audit: 21× fallback={null}). This is a quiet pulsing zinc panel that
- * matches the dark chrome — no new deps, no layout shift to the real screen.
- */
-const SurfaceSkeleton: React.FC = () => (
-    <div className="flex h-full min-h-0 w-full flex-col gap-3 bg-zinc-950 p-4" role="status" aria-label="Loading">
-        <div className="h-8 w-40 animate-pulse rounded-control bg-zinc-900" />
-        <div className="flex-1 animate-pulse rounded-bubble border border-hairline bg-zinc-900" />
-    </div>
-);
 
 /** The IN-CONTENT skeleton: the room view lazy-chunks inside the conversation
  *  area, where a blank beat reads as a crash (a surface skeleton would paint
@@ -193,43 +174,6 @@ const BACKUP_CADENCE_MS = 30 * 60 * 1000;
 const BACKUP_WATCHDOG_GRACE_MS = 10 * 60 * 1000;
 const BACKUP_WATCHDOG_REPEAT_MS = 2 * 60 * 60 * 1000;
 const BACKUP_WATCHDOG_EVERY_MS = 2 * 60 * 1000;
-
-/**
- * The Agents surface's model control — provider, model and the thinking dial,
- * subscribed HERE rather than in App's body.
- *
- * `chatStore` latches the username it loaded for on its FIRST touch and rehashes
- * onto a different one the next time it writes. App renders before a profile is
- * chosen, so an App-level `useSyncExternalStore` over that store initialized it
- * against the empty username; the first persist then rehydrated it onto the real
- * one, and the session id the dock had been writing into simply stopped existing
- * — `mutate` no-ops on an unknown id, so a send appended nothing and the run
- * hung behind a bubble that never settled. Mounting this node is what touches
- * the store, and that only happens once the Agents surface is on screen.
- *
- * The snapshot is the tier itself, so the subscription re-renders on a real
- * change and not on every streaming patch of the session store.
- *
- * `showEffort` is handed IN rather than read here because a bot turn answers on
- * the bot's own config through a transport that never reads the dial, and only
- * the surface's own selection knows whether this turn is a bot's (E-51 §2).
- */
-const SessionModelChip: React.FC<{
-    providers: ProviderConfig[];
-    value: string;
-    onChange: (value: string) => void;
-    onRefreshModels?: () => Promise<void>;
-    issue: string | null;
-    fallbackLabel?: string;
-    showEffort: boolean;
-}> = ({ providers, value, onChange, onRefreshModels, issue, fallbackLabel, showEffort }) => {
-    const effort = useSyncExternalStore(chatStore.subscribe, chatStore.getActiveEffort, chatStore.getActiveEffort);
-    return (
-        <ModelChip providers={providers} value={value} onChange={onChange}
-            onRefreshModels={onRefreshModels} issue={issue} fallbackLabel={fallbackLabel}
-            effort={effort} onEffortChange={chatStore.setActiveEffort} showEffort={showEffort} />
-    );
-};
 
 const App: React.FC = () => {
     const toast = useToastActions();
@@ -2245,24 +2189,10 @@ const App: React.FC = () => {
 
 
 
-    // The title bar's status cluster, built ONCE. Every surface now has exactly
-    // one bar: Analyze/Journal/Learning get the band — moved INSIDE the content
-    // column so the sidebar runs the full height, the reference's silhouette —
-    // and the Agents surface keeps its own header row, which is why this travels
-    // as a node rather than markup only `shared/Header` can reach. The collapsed
-    // rail's toggle is deliberately NOT a node: each bar renders
-    // `SidebarToggle` from the callbacks it already holds, because an
-    // interactive-root element parked in a local variable gets attributed to
-    // whichever component holds it, and `App` is not a button wrapper.
-    /** What the content bar is about. The rail names the workspace; this names
-     *  the thing being worked on. */
-    const shellTitle = surface === 'agents' ? 'Chat AI' : 'Chart AI';
-    // Memoized because Header is memoized on purpose: a fresh element on every
-    // price tick would re-render the whole bar for a label that has not moved.
-    const shellContext = useMemo(
-        () => (surface === 'trade' ? <DeskInstrument /> : undefined),
-        [surface],
-    );
+    // The title bar's status cluster moved INTO the surface switch
+    // (components/shell/SurfaceOutlet.tsx): every surface has exactly one bar,
+    // and the Agents surface keeps its own header row — so the bar travels as
+    // part of the switch, not as a node App assembles.
 
     /** One read of "the chat's model pick is unusable", shared by the Chat
      *  surface's model chip (which colours itself amber) and its banner. */
@@ -2498,225 +2428,166 @@ const App: React.FC = () => {
                 )}
                 {/* Surfaces: pages, not modals. */}
                 <main className="flex-1 flex flex-col min-h-0 min-w-0 relative bg-zinc-950">
-                    {/* The content bar. The rail owns navigation; this bar names
-                        what is being worked on and carries the live state. On
-                        Agents, AgentsView's own bar is this bar — rendering a
-                        second one above it stacked two titles for one screen. */}
-                    {surface !== 'agents' && (
-                        <Header
-                            saveStatus={saveStatus}
-                            isAnalysisInProgress={isAnalysisInProgress}
-                            currentVisionData={currentVisionData}
-                            pendingQueueCount={pendingQueueCount}
-                            liveMarketConditions={liveMarketConditions}
-                            liveMarketSymbol={liveMarketSymbol}
-                            onOpenLiveMarket={handleOpenLiveMarket}
-                            onOpenVisionData={() => setIsVisionDataVisible(true)}
-                            hasVisionData={currentVisionData.length > 0}
-                            title={shellTitle}
-                            context={shellContext}
-                            onToggleNavRail={toggleNavRail}
-                            navRailExpanded={isNavRailOpen}
-                        />
-                    )}
-
-                    {/* The first-run onboarding card used to sit here as a
-                        centered banner, but it ate ~50% of the Analyze surface
-                        width. The same nudge now lives inside the Chart AI
-                        dock's composer card (see TradeChatPanel) so it shows
-                        up exactly where the user needs to take action. */}
-
-                    {surface === 'trade' && (
-                            <React.Suspense fallback={<SurfaceSkeleton />}>
-                                <TradeView
-                                    memoryEnabled={isGlobalMemoryEnabled}
-                                    strategiesEnabled={isStrategiesEnabled}
-                                    providers={providerConfigs}
-                                    selectedChatModel={selectedChatModel}
-                                    onSelectChatModel={setSelectedChatModel}
-                                    onRefreshModels={refreshModelCatalog}
-                                    sidebarOpen={surface === 'trade' && tradeSidebarOpen}
-                                    onToggleSidebar={toggleTradeSidebar}
-                                    modeRequest={tradeModeRequest ?? undefined}
-                                    activeUsername={activeUsername ?? undefined}
-                                    onTradeModeChange={(m) => { lastRequestedTradeModeRef.current = m; }}
-                                    onOpenChat={() => handleSurfaceSelect('agents')}
-                                    /* The same handlers the Chat rail gets, so the
-                                       dock is the Chat's compact form rather than
-                                       a reduced one: it can open a room, not just
-                                       list rooms. */
-                                    botThreadRows={tradeBotThread}
-                                    onBotTurnCommit={commitDockBotTurn}
-                                    onSoloTurnCommit={commitSoloChatTurn}
-                                    onSyncConversation={ensureDockTurnConversation}
-                                    conversationRows={messages}
-                                    onNewGroup={() => setIsNewGroupOpen(true)}
-                                    verdict={chartVerdict}
-                                    bots={bots}
-                                    trades={loggedTrades}
-                                    groups={groups.map(g => ({ id: g.id, name: groupDisplayName(g, bots) }))}
-                                    botSessionRequest={tradeBotRequest ?? undefined}
-                                    groupSessionRequest={tradeGroupRequest ?? undefined}
-                                    onRunAnalysis={(prompt, images) => handleRunAnalysisFromChat(prompt, images, true)}
-                                    onAnalysisError={(message) => toast.error(message)}
-                                    onStopRun={handleCancelAnalysis}
-                                    getAnalysisMessage={getAnalysisMessage}
-                                    onLogProposedTrade={handleLogProposedTrade}
-                                    registerScrollToMessage={registerScrollToMessage}
-                                    onToggleWatch={handleToggleWatch}
-                                    onOpenWatchList={() => setIsWatchListVisible(true)}
-                                    watchOpenCount={watchedSignals.filter(s => !s.outcome || s.outcome === TradeOutcome.PENDING).length}
-                                    watchOpenR={watchOpenR}
-                                    pinnedMessageIds={pinnedMessageIds}
-                                    renderGroupSurface={renderGroupSurface}
-                                />
-                            </React.Suspense>
+                    {/* The surface switch (extracted from App — plan O-105):
+                        the content bar plus the one surface the route names.
+                        Every handler is App's own; the switch only mounts. */}
+                    <SurfaceOutlet
+                        surface={surface}
+                        saveStatus={saveStatus}
+                        isAnalysisInProgress={isAnalysisInProgress}
+                        currentVisionData={currentVisionData}
+                        pendingQueueCount={pendingQueueCount}
+                        liveMarketConditions={liveMarketConditions}
+                        liveMarketSymbol={liveMarketSymbol}
+                        onOpenLiveMarket={handleOpenLiveMarket}
+                        onOpenVisionData={() => setIsVisionDataVisible(true)}
+                        onToggleNavRail={toggleNavRail}
+                        navRailExpanded={isNavRailOpen}
+                        memoryEnabled={isGlobalMemoryEnabled}
+                        strategiesEnabled={isStrategiesEnabled}
+                        providers={providerConfigs}
+                        selectedChatModel={selectedChatModel}
+                        onSelectChatModel={setSelectedChatModel}
+                        onRefreshModels={refreshModelCatalog}
+                        tradeSidebarOpen={tradeSidebarOpen}
+                        onToggleTradeSidebar={toggleTradeSidebar}
+                        tradeModeRequest={tradeModeRequest}
+                        activeUsername={activeUsername}
+                        onTradeModeChange={(m) => { lastRequestedTradeModeRef.current = m; }}
+                        botThreadRows={tradeBotThread}
+                        onBotTurnCommit={commitDockBotTurn}
+                        onSoloTurnCommit={commitSoloChatTurn}
+                        onSyncConversation={ensureDockTurnConversation}
+                        conversationRows={messages}
+                        onNewGroup={() => setIsNewGroupOpen(true)}
+                        verdict={chartVerdict}
+                        bots={bots}
+                        trades={loggedTrades}
+                        groupTabs={groups.map(g => ({ id: g.id, name: groupDisplayName(g, bots) }))}
+                        botSessionRequest={tradeBotRequest}
+                        groupSessionRequest={tradeGroupRequest}
+                        onRunAnalysisFromChat={handleRunAnalysisFromChat}
+                        onAnalysisError={(message) => toast.error(message)}
+                        onCancelAnalysis={handleCancelAnalysis}
+                        getAnalysisMessage={getAnalysisMessage}
+                        onLogProposedTrade={handleLogProposedTrade}
+                        registerScrollToMessage={registerScrollToMessage}
+                        onToggleWatch={handleToggleWatch}
+                        onOpenWatchList={() => setIsWatchListVisible(true)}
+                        onOpenAgents={() => handleSurfaceSelect('agents')}
+                        watchOpenCount={watchedSignals.filter(s => !s.outcome || s.outcome === TradeOutcome.PENDING).length}
+                        watchOpenR={watchOpenR}
+                        pinnedMessageIds={pinnedMessageIds}
+                        renderGroupSurface={renderGroupSurface}
+                        groups={groups}
+                        activeThread={activeThread}
+                        onSelectThread={t => {
+                            if (t.kind === 'bot') selectBotThread(t.botId);
+                            else if (t.kind === 'group') selectGroupThread(t.groupId);
+                            else selectTeamThread();
+                        }}
+                        onNewBot={() => setIsNewBotOpen(true)}
+                        onSendBotTurn={async (bot, prompt) =>
+                            (await mailboxRef.current?.runUserBotTurn(bot, prompt)) ?? false}
+                        onAnalyze={handleRunAnalysisFromChat}
+                        /* The settlement-correction write path: the
+                           SAME handlers the Journal's own editors
+                           call, so a confirmed correction lands with
+                           the audit trail a human edit gets. */
+                        onApplySettlementCorrection={(proposal) => {
+                            if (proposal.outcome !== undefined) handleUpdateTradeOutcome(proposal.tradeId, proposal.outcome);
+                            if (proposal.pnlAmount !== undefined || proposal.pnlPercent !== undefined) {
+                                handleUpdateTradePnL(proposal.tradeId, { pnlAmount: proposal.pnlAmount, pnlPercent: proposal.pnlPercent });
+                            }
+                        }}
+                        /* The trade-action apply path: move the levels on the
+                           armed plan (re-arm it with the confirmed levels) or
+                           close it (disarm the watch). Written through the
+                           watch service, not through this component. */
+                        onApplyTradeAction={(proposal) => {
+                            void (async () => {
+                                const { arm, disarm, getArmedPlans } = await import('./services/trade/levelWatchService');
+                                if (proposal.kind === 'close') {
+                                    disarm(proposal.planId);
+                                    return;
+                                }
+                                const plan = getArmedPlans().find(p => p.planId === proposal.planId);
+                                if (!plan) return;
+                                arm({
+                                    ...plan,
+                                    ...(proposal.entry !== undefined ? { entry: proposal.entry } : {}),
+                                    ...(proposal.stopLoss !== undefined ? { stopLoss: proposal.stopLoss } : {}),
+                                    ...(proposal.takeProfits !== undefined ? { takeProfits: proposal.takeProfits } : {}),
+                                }, null);
+                            })();
+                        }}
+                        onStopAgentsRun={handleStopAgentsRun}
+                        workingBotId={workingBotId}
+                        dmWorkingBotId={dmWorkingBotId}
+                        mailboxBusyBotIds={mailbox.dmBusyBotIds}
+                        threadOpenedMap={threadOpenedMap}
+                        attentionMap={attentionMap}
+                        botStats={botStats}
+                        onDeleteBot={deleteBot}
+                        onRenameBot={(botId, name) => updateBot(botId, { name })}
+                        onDeleteGroup={deleteGroup}
+                        onEditGroup={groupId => {
+                            const target = groups.find(g => g.id === groupId);
+                            if (!target) return;
+                            setGroupEditTarget(target);
+                            setIsNewGroupOpen(true);
+                        }}
+                        changeChatSoloModel={changeChatSoloModel}
+                        chatModelFallback={chatModelFallback}
+                        railExpanded={isNavRailOpen}
+                        /* Whole-rail state, separate from the Agents
+                           COLUMN state above: the top-bar toggle is
+                           about the rail, on every surface. */
+                        sidebarExpanded={isNavRailOpen}
+                        /* The content bar's toggle opens/closes the RAIL;
+                           the column's own put-away is a separate callback. */
+                        onToggleRailExpanded={toggleNavRail}
+                        railWidth={railResize.width}
+                        railIsResizing={railResize.isResizing}
+                        onRailResizeStart={railResize.startResize}
+                        onRailResizeReset={railResize.resetWidth}
+                        onRevertTo={revertToMessage}
+                        onEditPromptMessage={editMessageText}
+                        onStepVersion={stepMessageGeneration}
+                        parkedCount={(activeConversation?.parked ?? []).reduce((n, p) => n + p.rows.length, 0)}
+                        onRestoreParked={restoreParkedTurns}
+                        /* Navigation on this surface follows the same
+                           rule as the shell rail: the mode switch owns
+                           the top of the column at every width, the
+                           four-destination switch only comes back when
+                           the column is put away (the title bar then
+                           has to carry it), and Journal / Learning /
+                           Skills sit above the account. */
+                        accountRow={(
+                            <AccountRow
+                                expanded
+                                activeUsername={activeUsername}
+                                onOpenSettings={() => setIsSettingsMenuVisible(true)}
+                                onOpenActivity={() => setIsJobsDrawerVisible(true)}
+                            />
                         )}
-
-                        {/* Learning shows Health; Skills and Memory are surfaces
-                            of their own (2026-11-08). LearnView is pinned per
-                            surface, so the tab bar — chrome for a surface with
-                            three destinations — is gone. */}
-
-
-
-                        {surface === 'agents' && (
-                            <React.Suspense fallback={<SurfaceSkeleton />}>
-                                <AgentsView
-                                    username={activeUsername || ''}
-                                    bots={bots}
-                                    groups={groups}
-                                    messages={messages}
-                                    selection={activeThread}
-                                    onSelect={t => {
-                                        if (t.kind === 'bot') selectBotThread(t.botId);
-                                        else if (t.kind === 'group') selectGroupThread(t.groupId);
-                                        else selectTeamThread();
-                                    }}
-                                    onNewBot={() => setIsNewBotOpen(true)}
-                                    onNewGroup={() => setIsNewGroupOpen(true)}
-                                    onSendBotTurn={async (bot, prompt) =>
-                                        (await mailboxRef.current?.runUserBotTurn(bot, prompt)) ?? false}
-                                    onAnalyze={handleRunAnalysisFromChat}
-                                    onLogProposedTrade={handleLogProposedTrade}
-                                    /* The settlement-correction write path: the
-                                       SAME handlers the Journal's own editors
-                                       call, so a confirmed correction lands with
-                                       the audit trail a human edit gets. */
-                                    trades={loggedTrades}
-                                    onApplySettlementCorrection={(proposal) => {
-                                        if (proposal.outcome !== undefined) handleUpdateTradeOutcome(proposal.tradeId, proposal.outcome);
-                                        if (proposal.pnlAmount !== undefined || proposal.pnlPercent !== undefined) {
-                                            handleUpdateTradePnL(proposal.tradeId, { pnlAmount: proposal.pnlAmount, pnlPercent: proposal.pnlPercent });
-                                        }
-                                    }}
-                                    /* The trade-action apply path: move the levels on the
-                                       armed plan (re-arm it with the confirmed levels) or
-                                       close it (disarm the watch). Written through the
-                                       watch service, not through this component. */
-                                    onApplyTradeAction={(proposal) => {
-                                        void (async () => {
-                                            const { arm, disarm, getArmedPlans } = await import('./services/trade/levelWatchService');
-                                            if (proposal.kind === 'close') {
-                                                disarm(proposal.planId);
-                                                return;
-                                            }
-                                            const plan = getArmedPlans().find(p => p.planId === proposal.planId);
-                                            if (!plan) return;
-                                            arm({
-                                                ...plan,
-                                                ...(proposal.entry !== undefined ? { entry: proposal.entry } : {}),
-                                                ...(proposal.stopLoss !== undefined ? { stopLoss: proposal.stopLoss } : {}),
-                                                ...(proposal.takeProfits !== undefined ? { takeProfits: proposal.takeProfits } : {}),
-                                            }, null);
-                                        })();
-                                    }}
-                                    onAnalysisError={(message) => toast.error(message)}
-                                    onStopRun={handleStopAgentsRun}
-                                    analysisRunning={isAnalysisInProgress}
-                                    renderGroup={g => renderGroupSurface(g.id)}
-                                    workingBotId={workingBotId ?? dmWorkingBotId}
-                                    mailboxBusyBotIds={mailbox.dmBusyBotIds}
-                                    lastOpenedMap={threadOpenedMap}
-                                    attentionMap={attentionMap}
-                                    botStats={botStats}
-                                    onDeleteBot={deleteBot}
-                                    onRenameBot={(botId, name) => updateBot(botId, { name })}
-                                    onDeleteGroup={deleteGroup}
-                                    onEditGroup={groupId => {
-                                        const target = groups.find(g => g.id === groupId);
-                                        if (!target) return;
-                                        setGroupEditTarget(target);
-                                        setIsNewGroupOpen(true);
-                                    }}
-                                    modelPicker={({ showEffort }) => (
-                                        /* The dock's control, not a plainer twin of
-                                           it: one trigger naming the provider, the
-                                           model AND the tier, opening one panel that
-                                           edits all three. The writes are the pair
-                                           the dock writes (`changeChatSoloModel`), and
-                                           the tier is subscribed inside the node — see
-                                           SessionModelChip. */
-                                        <SessionModelChip providers={providerConfigs} value={selectedChatModel}
-                                            onChange={changeChatSoloModel}
-                                            onRefreshModels={refreshModelCatalog}
-                                            issue={chatModelFallback.issue}
-                                            fallbackLabel={chatModelFallback.providerName}
-                                            showEffort={showEffort} />
-                                    )}
-                                    modelFallback={chatModelFallback.notice}
-                                    railExpanded={isNavRailOpen}
-                                    /* Whole-rail state, separate from the Agents
-                                       COLUMN state above: the top-bar toggle is
-                                       about the rail, on every surface. */
-                                    sidebarExpanded={isNavRailOpen}
-                                    /* The content bar's toggle opens/closes the RAIL;
-                                       the column's own put-away is a separate callback. */
-                                    onToggleRailExpanded={toggleNavRail}
-                                    railWidth={railResize.width}
-                                    railIsResizing={railResize.isResizing}
-                                    onRailResizeStart={railResize.startResize}
-                                    onRailResizeReset={railResize.resetWidth}
-                                    onRevertTo={revertToMessage}
-                                    onEditPromptMessage={editMessageText}
-                                    onStepVersion={stepMessageGeneration}
-                                    parkedCount={(activeConversation?.parked ?? []).reduce((n, p) => n + p.rows.length, 0)}
-                                    onRestoreParked={restoreParkedTurns}
-                                    /* Navigation on this surface follows the same
-                                       rule as the shell rail: the mode switch owns
-                                       the top of the column at every width, the
-                                       four-destination switch only comes back when
-                                       the column is put away (the title bar then
-                                       has to carry it), and Journal / Learning /
-                                       Skills sit above the account. */
-
-                                    accountRow={(
-                                        <AccountRow
-                                            expanded
-                                            activeUsername={activeUsername}
-                                            onOpenSettings={() => setIsSettingsMenuVisible(true)}
-                                            onOpenActivity={() => setIsJobsDrawerVisible(true)}
-                                        />
-                                    )}
-                                    conversations={conversationHistory}
-                                    activeConversationId={activeConversationId}
-                                    onLoadConversation={(id) => {
-                                        // A loaded conversation's general rows land
-                                        // in the desk pane's slice, so the selection
-                                        // follows — otherwise the pane kept showing
-                                        // the previous thread while the transcript
-                                        // silently swapped underneath (stage-3 fix
-                                        // for the silent-session-swap defect).
-                                        handleLoadConversation(id);
-                                        selectTeamThread();
-                                    }}
-                                    onDeleteConversation={handleDeleteConversationFromSidebar}
-                                    onClearConversation={(id) => { void handleClearChat(id); }}
-                                    onNewChat={handleStartNewConversation}
-                                />
-                            </React.Suspense>
-                        )}
-                    </main>
+                        conversations={conversationHistory}
+                        activeConversationId={activeConversationId}
+                        onLoadConversation={(id) => {
+                            // A loaded conversation's general rows land
+                            // in the desk pane's slice, so the selection
+                            // follows — otherwise the pane kept showing
+                            // the previous thread while the transcript
+                            // silently swapped underneath (stage-3 fix
+                            // for the silent-session-swap defect).
+                            handleLoadConversation(id);
+                            selectTeamThread();
+                        }}
+                        onDeleteConversation={handleDeleteConversationFromSidebar}
+                        onClearConversation={(id) => { void handleClearChat(id); }}
+                        onNewChat={handleStartNewConversation}
+                    />
+                </main>
 
 
                 </div>
