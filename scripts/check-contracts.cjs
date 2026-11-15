@@ -877,7 +877,9 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
 (() => {
     const desk = loadModule('src/services/analysis/DeskToolsService.ts');
     const kinds = loadModule('src/utils/toolKinds.ts');
-    const SHIPPED = ['set_chart_timeframe', 'toggle_chart_study'];
+    const SHIPPED_CHART = ['set_chart_timeframe', 'toggle_chart_study'];
+    const SHIPPED_DESK = ['correct_trade_outcome'];
+    const SHIPPED = [...SHIPPED_CHART, ...SHIPPED_DESK];
     const UNREGISTERED = ['update_trade', 'close_trade', 'run_review'];
     const hands = desk.AGENT_HAND_TOOL_DEFINITIONS.map(d => d.function.name);
     const chartActions = desk.CHART_ACTION_TOOL_DEFS.map(d => d.function.name);
@@ -891,10 +893,13 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
     ok('agent hands: the three unshipped ones are still defined, in the one array',
         UNREGISTERED.every(n => hands.includes(n)) && hands.length === UNREGISTERED.length,
         JSON.stringify(hands));
-    ok('agent hands: every shipped hand has a definition - and exactly one',
-        SHIPPED.every(n => chartActions.filter(x => x === n).length === 1 && !hands.includes(n) && !defs.includes(n)),
-        JSON.stringify(SHIPPED.map(n => `${n}: chart=${chartActions.filter(x => x === n).length} hands=${hands.includes(n)}`)));
-    ok('agent hands: the shipped chart writes are in the trade seat allow-list',
+    ok('agent hands: the shipped chart writes live in the chart-action defs, once each',
+        SHIPPED_CHART.every(n => chartActions.filter(x => x === n).length === 1 && !defs.includes(n) && !hands.includes(n)),
+        JSON.stringify(SHIPPED_CHART.map(n => `${n}: chart=${chartActions.filter(x => x === n).length} defs=${defs.includes(n)}`)));
+    ok('agent hands: the correction tool lives in the desk definitions, once',
+        SHIPPED_DESK.every(n => defs.filter(x => x === n).length === 1 && !chartActions.includes(n) && !hands.includes(n)),
+        JSON.stringify(SHIPPED_DESK.map(n => `${n}: defs=${defs.filter(x => x === n).length} chart=${chartActions.includes(n)}`)));
+    ok('agent hands: every shipped hand is in the trade seat allow-list',
         SHIPPED.every(n => tradeTools.includes(n)), JSON.stringify(SHIPPED.filter(n => !tradeTools.includes(n))));
     ok('agent hands: the unshipped ones are in NO registry - not the definitions, not the initial set, not the trade allow-list',
         UNREGISTERED.every(n => !defs.includes(n) && !initial.includes(n) && !tradeTools.includes(n) && !chartActions.includes(n)),
@@ -902,7 +907,7 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
 
     // The schemas themselves: a real definition, not a stub, and the two gated
     // ones say GATED where the model reads it.
-    const all = new Map([...desk.AGENT_HAND_TOOL_DEFINITIONS, ...desk.CHART_ACTION_TOOL_DEFS]
+    const all = new Map([...desk.DESK_TOOL_DEFINITIONS, ...desk.CHART_ACTION_TOOL_DEFS, ...desk.AGENT_HAND_TOOL_DEFINITIONS]
         .map(d => [d.function.name, d]));
     const params = n => all.get(n)?.function.parameters;
     ok('agent hands: every hand is a closed object schema naming fields that exist',
@@ -5620,6 +5625,17 @@ const checkAgentHandExecutor = async () => {
     const realStudy = await desk.executeDeskTool(call('toggle_chart_study', { id: 'rsi', enabled: false }), ctx);
     ok('agent hands executor: a real study write is announced, not silently dropped',
         realStudy.ok === true && /RSI/.test(realStudy.content) && /OFF/.test(realStudy.content), realStudy.content);
+
+    // The correction tool RECORDS a proposal; it never writes the row.
+    const badOutcome = await desk.executeDeskTool(call('correct_trade_outcome', { tradeId: 't9', outcome: 'MAYBE', reason: 'r' }), ctx);
+    ok('agent hands executor: a correction with an unknown outcome is refused',
+        badOutcome.ok === false && /WIN or LOSS/.test(badOutcome.content), badOutcome.content);
+    const noField = await desk.executeDeskTool(call('correct_trade_outcome', { tradeId: 't9', reason: 'r' }), ctx);
+    ok('agent hands executor: a correction that changes nothing is refused',
+        noField.ok === false && /at least one field/.test(noField.content), noField.content);
+    const okCorrection = await desk.executeDeskTool(call('correct_trade_outcome', { tradeId: 't9', outcome: 'LOSS', reason: 'the fill contradicts the record' }), ctx);
+    ok('agent hands executor: a real correction is PROPOSED, not written',
+        okCorrection.ok === true && /CORRECTION PROPOSED/.test(okCorrection.content) && /t9/.test(okCorrection.content), okCorrection.content);
 };
 
 const finishReport = () => {

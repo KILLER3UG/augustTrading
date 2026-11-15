@@ -1018,6 +1018,7 @@ const TOOL_LABELS: Record<string, string> = {
     switch_chart_symbol: 'chart switch',
     set_chart_timeframe: 'chart timeframe',
     toggle_chart_study: 'chart study',
+    correct_trade_outcome: 'settlement correction',
     run_monte_carlo: 'monte carlo',
     recall_chat: 'session search',
     project_future_price: 'price projection',
@@ -2638,6 +2639,26 @@ export const DESK_TOOL_DEFINITIONS: DeskToolDefinition[] = [
             description:
                 'INSTALLED APP ONLY, one time: clone the owner-configured August repository (AUGUSTTRADING_CLONE_URL) into the app data folder, install dependencies, build it, and switch the window onto that build. This is what makes the app self-hosted like a Hermes install. Takes minutes. It takes NO arguments — the URL is configured by the owner, never by the model.',
             parameters: { type: 'object', properties: {}, additionalProperties: false },
+        },
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'correct_trade_outcome',
+            description:
+                'Propose a CORRECTION to one journal row\'s settlement — its outcome (win/loss) and/or its PnL. Use when the record is wrong: a row still pending that actually resolved, a PnL that contradicts the fill, a settled row whose outcome is backwards. The proposal is shown to the trader as a card and NOTHING changes until they confirm it — this call records a proposal, it does not write the row. Take the trade id from get_trade_log; never invent one. State the reason: it is printed on the card.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    tradeId: { type: 'string', description: 'The journal row id, exactly as get_trade_log returned it.' },
+                    outcome: { type: 'string', enum: ['WIN', 'LOSS'], description: 'The outcome you say is right. Omit to leave the outcome alone.' },
+                    pnlAmount: { type: 'number', description: 'Corrected PnL in the row\'s own captured unit ($, or leveraged %).' },
+                    pnlPercent: { type: 'number', description: 'Corrected PnL as a percentage, when the row carries one.' },
+                    reason: { type: 'string', description: 'Why the record is wrong — printed on the confirmation card.' },
+                },
+                required: ['tradeId', 'reason'],
+                additionalProperties: false,
+            },
         },
     },
 ];
@@ -5241,6 +5262,43 @@ ${body}`);
                     rankBestSetups(scan.rows, { limit, minScore, direction: side }),
                     { top, interval, minScore },
                 );
+                break;
+            }
+            case 'correct_trade_outcome': {
+                // A PROPOSED settlement fix (audit P-6). It records a proposal the
+                // transcript renders as a card; the row is untouched until the
+                // trader confirms, and the confirm goes through the SAME journal
+                // hook a human edit calls. The gate here is the proposal's own
+                // validation — never a silent write.
+                const raw = {
+                    tradeId: asString(call.arguments.tradeId),
+                    outcome: call.arguments.outcome,
+                    pnlAmount: call.arguments.pnlAmount,
+                    pnlPercent: call.arguments.pnlPercent,
+                    reason: asString(call.arguments.reason),
+                };
+                if (raw.outcome !== undefined && raw.outcome !== 'WIN' && raw.outcome !== 'LOSS') {
+                    return rejectedResult(call, 'correct_trade_outcome rejected: outcome must be WIN or LOSS.');
+                }
+                const { checkSettlementCorrection, proposeSettlementCorrection } = await import('../trade/settlementCorrection');
+                const checked = checkSettlementCorrection(raw);
+                if (!checked.ok) {
+                    return rejectedResult(call, `correct_trade_outcome rejected: ${checked.refused}.`);
+                }
+                const stored = proposeSettlementCorrection(checked.proposal);
+                if (!stored.ok) {
+                    return rejectedResult(call, `correct_trade_outcome rejected: ${stored.refused}.`);
+                }
+                const changed = [
+                    checked.proposal.outcome !== undefined ? `outcome -> ${checked.proposal.outcome}` : null,
+                    checked.proposal.pnlAmount !== undefined ? `pnlAmount -> ${checked.proposal.pnlAmount}` : null,
+                    checked.proposal.pnlPercent !== undefined ? `pnlPercent -> ${checked.proposal.pnlPercent}` : null,
+                ].filter(Boolean).join(', ');
+                content = [
+                    `CORRECTION PROPOSED for row ${checked.proposal.tradeId}: ${changed}.`,
+                    'The trader sees a confirmation card; NOTHING changes until they confirm it. When they do, the row is written through the journal\'s own correction path (correctedFrom, correctedAt, resolutionSource "correction").',
+                    'No order was placed and no journal row was written by this call.',
+                ].join(' ');
                 break;
             }
             case 'set_chart_timeframe': {

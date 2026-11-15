@@ -136,6 +136,7 @@ const BY_LABEL: Record<string, ToolKindInfo> = {
     'chart switch': { kind: 'draw', activity: 'Switching the chart symbol' },
     'chart timeframe': { kind: 'draw', activity: 'Changing the timeframe' },
     'chart study': { kind: 'draw', activity: 'Toggling a chart study' },
+    'settlement correction': { kind: 'write', activity: 'Proposing a settlement correction' },
     'draw detected': { kind: 'draw', activity: 'Drawing the detected setup' },
     'level marks': { kind: 'draw', activity: 'Marking levels' },
 
@@ -297,4 +298,7 @@ export const DESK_TOOL_NAMES: readonly string[] = [
     'list_self_changes', 'propose_self_change', 'revert_self_change',
     // A human answer is a tool, not a broadcast: the dock's seat can ask too.
     'ask_user_input',
+    // The agent's proposed settlement fix (audit P-6). Records a proposal the
+    // trader confirms on a card; it never writes the row itself.
+    'correct_trade_outcome',
 ];

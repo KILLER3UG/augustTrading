@@ -102,6 +102,10 @@ export const CHAT_SURFACE_TOOLS = [
     // The one tool with a human in it: it suspends the turn until the trader
     // answers (services/analysis/askUserInput.ts).
     'ask_user_input',
+    // The agent's proposed settlement fix (audit P-6): it records a proposal the
+    // transcript renders as a confirm card. The row is written only when the
+    // trader confirms, through the journal's own correction path.
+    'correct_trade_outcome',
     // Goal environments — durable work state the agent can shape mid-task.
     'list_goals', 'open_goal', 'create_goal', 'update_goal', 'restore_goal',
     // The harness's own change ledger. Reading it is always available; the two
@@ -467,6 +471,27 @@ export const runChatSurfaceTurn = async (req: ChatSurfaceTurnRequest): Promise<T
         // receipt the model reads says exactly that instead of promising a
         // [HARNESS SIGNAL] that would never arrive.
         executePanelTool: async (call: Parameters<NonNullable<ToolTurnRequest['transport']['executePanelTool']>>[0]) => {
+            // A proposed settlement fix. The shared executor validates and
+            // RECORDS the proposal; this sink then attaches it to THIS
+            // conversation row via req.patch — the store the transcript reads —
+            // so the card actually renders. The row is untouched until the
+            // trader confirms, and the confirm goes through App's journal
+            // handlers, not through anything here.
+            if (call.name === 'correct_trade_outcome') {
+                const { executeDeskTool } = await import('../analysis/DeskToolsService');
+                const result = await executeDeskTool(call, {
+                    defaultSymbol: req.symbol ?? null,
+                    allowedTools: CHAT_SURFACE_TOOLS,
+                    trades: req.trades,
+                });
+                if (result.ok) {
+                    const { pendingSettlementCorrection } = await import('./settlementCorrection');
+                    const tradeId = typeof call.arguments?.tradeId === 'string' ? call.arguments.tradeId : '';
+                    const proposal = pendingSettlementCorrection(tradeId);
+                    if (proposal) req.patch(m => ({ ...m, settlementCorrection: proposal }));
+                }
+                return result;
+            }
             if (call.name !== 'present_trade') return null;
             return runPresentTrade(
                 {
