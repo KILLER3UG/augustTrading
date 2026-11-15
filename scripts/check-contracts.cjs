@@ -968,6 +968,42 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
         })());
 })();
 
+// ─── 13f. the trade-action proposal store: an authority change needs a tap ─
+// update_trade moves the levels on an armed plan; close_trade closes it. Both
+// are authority changes, so both record a proposal here and neither may act on
+// the call. The failure this pins: a proposal that moves nothing (a card that
+// lies about doing work), a non-numeric level (a silent plausibility failure),
+// and a confirmed plan being silently re-opened for a second apply.
+(() => {
+    const ta = loadModule('src/services/trade/tradeActionProposal.ts');
+    ok('trade action: update needs a plan, a reason and one changed level',
+        ta.checkTradeActionProposal({ kind: 'update', planId: 'p1', reason: 'r' }).ok === false
+        && ta.checkTradeActionProposal({ kind: 'update', planId: 'p1', entry: 1 }).ok === false
+        && ta.checkTradeActionProposal({ kind: 'update', reason: 'r', entry: 1 }).ok === false
+        && ta.checkTradeActionProposal({ kind: 'update', planId: 'p1', reason: 'r', stopLoss: 2 }).ok === true);
+    ok('trade action: a non-numeric level or a 6th target is refused',
+        ta.checkTradeActionProposal({ kind: 'update', planId: 'p', reason: 'r', entry: 'x' }).ok === false
+        && ta.checkTradeActionProposal({ kind: 'update', planId: 'p', reason: 'r', takeProfits: [1, 2, 3, 4, 5, 6] }).ok === false);
+    ok('trade action: close needs only a plan and a reason',
+        ta.checkTradeActionProposal({ kind: 'close', planId: 'p2', reason: 'thesis broken' }).ok === true);
+    ok('trade action: a proposal is pending, then resolved by a decision',
+        (() => {
+            ta.__clearTradeActionProposalsForTests();
+            const p = ta.proposeTradeAction({ kind: 'close', planId: 'p3', reason: 'r' });
+            if (!p.ok || ta.pendingTradeAction('p3') === undefined) return false;
+            if (!ta.dismissTradeAction('p3')) return false;
+            return ta.pendingTradeAction('p3') === undefined && ta.tradeActionStateOf('p3') === 'dismissed';
+        })());
+    ok('trade action: a CONFIRMED plan is not re-opened by a second proposal',
+        (() => {
+            ta.__clearTradeActionProposalsForTests();
+            ta.proposeTradeAction({ kind: 'update', planId: 'p4', reason: 'a', stopLoss: 1 });
+            ta.confirmTradeAction('p4');
+            const again = ta.proposeTradeAction({ kind: 'update', planId: 'p4', reason: 'b', stopLoss: 2 });
+            return again.ok === false && ta.pendingTradeAction('p4') === undefined;
+        })());
+})();
+
 // ─── 15. profile memory: soft delete, undo, versions, observed context ─────
 (() => {
     const store = new Map();
