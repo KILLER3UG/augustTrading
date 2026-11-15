@@ -1,7 +1,14 @@
 # The plan
 
-One file: **[open-items.md](open-items.md)**. Every row is a measurement, not a transcription — it
-carries the code that proves it is still open at the commit the row was last re-measured.
+**[open-items.md](open-items.md)** is the register. Every row is a measurement, not a
+transcription — it carries the code that proves it is still open at the commit the row was last
+re-measured.
+
+An approved redesign that is still in flight lives beside the register as
+**[agent-driven-august.md](agent-driven-august.md)**. It is a working document, not a second register:
+it holds the design, the phases and the removal-parity proofs, and it is deleted as its phases land —
+a closed phase is git history. Nothing in it overrides a row; when a phase closes, the row moves here
+and then out.
 
 There is no roadmap and no separate decision log. The order of work is what the owner's focus says
 ([docs/product/focus.md](../product/focus.md)): analysis, accuracy, signals. A row that needs an
