@@ -305,6 +305,10 @@ export interface Message {
    *  Type-only import: `proposedTrade` imports `Message` back, and a value
    *  import here would make that a runtime cycle in the bundle. */
   proposal?: import('../services/trade/proposedTrade').TradeProposal;
+  /** A PROPOSED settlement fix for one journal row (audit P-6). Set by the
+   *  agent's correction tool; rendered as a confirm card. The row is untouched
+   *  until the trader confirms — see services/trade/settlementCorrection. */
+  settlementCorrection?: import('../services/trade/settlementCorrection').SettlementCorrectionProposal;
   /** Persisted model side-effects: proposal tools and file
    *  creations this run produced, for the status rows on
    *  the bubble ("Saved to memory · N entries", "⚠ Memory write noted").

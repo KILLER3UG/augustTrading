@@ -58,7 +58,7 @@ import { MENU_W, RowMenu, type RowMenuItem } from './RowMenu';
 import ActiveGoalChip from './ActiveGoalChip';
 import type { AgentBot, AgentGroup } from '../../services/agents/agentRoster';
 import { groupDisplayName } from '../../services/agents/agentRoster';
-import type { Conversation } from '../../types';
+import type { Conversation, LoggedTrade } from '../../types';
 import type { BotLearningStat } from '../../services/agents/botLearning';
 import {
     deskThread, markThreadOpened, previewTextFor, threadForProvider, unreadCount,
@@ -79,6 +79,7 @@ import { ConversationGroups } from '../shell/ConversationGroups';
 import { conversationTitle } from '../../utils/conversationTitle';
 import AgentsDock from './dock/AgentsDock';
 import { proposalStateOf, rememberProposalState } from '../../services/trade/proposalDisposition';
+import { confirmSettlementCorrection, dismissSettlementCorrection, type SettlementCorrectionProposal } from '../../services/trade/settlementCorrection';
 import type { TradeProposal } from '../../services/trade/proposedTrade';
 import { mintPlanId } from '../../services/trade/proposedTrade';
 import { planFromProse } from '../../services/trade/tradeShapedProse';
@@ -107,6 +108,16 @@ interface AgentsViewProps {
      *  card still shows (the plan is the model's, not the journal's), but its
      *  Log button is hidden rather than clicking into nothing. */
     onLogProposedTrade?: (proposal: TradeProposal) => void | Promise<boolean>;
+    /** The journal rows, so a settlement-correction card can show what it is
+     *  about to change. Without them the card still renders, but it cannot show
+     *  the "before" half of the change. */
+    trades?: LoggedTrade[];
+    /** Apply a CONFIRMED settlement correction. This is the journal's own write
+     *  path (App's handleUpdateTradeOutcome / handleUpdateTradePnL), NOT a
+     *  second one — the correction lands with correctedFrom, correctedAt and
+     *  resolutionSource 'correction' because that hook writes them. Without it
+     *  the card's Confirm is hidden rather than clicking into nothing. */
+    onApplySettlementCorrection?: (proposal: SettlementCorrectionProposal) => void;
     /** Where a run that never started says why. The pipeline writes its own rows
      *  — including its error bubble — once it is running, so the only silent
      *  failures left are the pre-flight ones ("already running", "no providers"),
@@ -507,6 +518,7 @@ interface BotRow {
 const AgentsView: React.FC<AgentsViewProps> = ({
     username, bots, groups, messages, selection, onSelect, onNewBot, onNewGroup,
     onSendBotTurn, onAnalyze, onLogProposedTrade, onAnalysisError, onStopRun, analysisRunning = false, renderGroup, workingBotId, mailboxBusyBotIds,
+    trades = [], onApplySettlementCorrection,
     lastOpenedMap = {}, modelPicker, modelFallback = null, accountRow,
     railExpanded = true, sidebarExpanded = true, onToggleRailExpanded,
     railWidth = NAV_RAIL_EXPANDED_PX, railIsResizing = false,
@@ -695,6 +707,42 @@ const AgentsView: React.FC<AgentsViewProps> = ({
         rememberProposalState(messageId, 'dismissed');
         setProposalTick(t => t + 1);
     }, []);
+
+    /** Settlement corrections. A PROPOSED fix to one journal row: the trader
+     *  confirms, and the confirm calls the SAME journal hook a human edit calls
+     *  (`onApplySettlementCorrection`, App's `handleUpdateTradeOutcome` /
+     *  `handleUpdateTradePnL`), so the row carries `correctedFrom`,
+     *  `correctedAt` and `resolutionSource: 'correction'`. Nothing here writes a
+     *  row: this component records the decision and hides the card. */
+    const [settledCorrectionRowIds, setSettledCorrectionRowIds] = useState<ReadonlySet<string>>(() => new Set());
+    const markCorrectionSettled = useCallback((messageId: string): void => {
+        setSettledCorrectionRowIds(prev => {
+            if (prev.has(messageId)) return prev;
+            const next = new Set(prev);
+            next.add(messageId);
+            return next;
+        });
+    }, []);
+    /** The row's CURRENT values, so the card can show what actually changes. */
+    const currentForCorrection = useCallback((proposal?: SettlementCorrectionProposal) => {
+        if (!proposal) return undefined;
+        const row = trades.find(t => t.id === proposal.tradeId);
+        if (!row) return undefined;
+        return { outcome: row.outcome, pnlAmount: row.pnlAmount, pnlPercent: row.pnlPercent };
+    }, [trades]);
+    const handleConfirmSettlementCorrection = useCallback((messageId: string): void => {
+        const row = messages.find(m => m.id === messageId);
+        const proposal = row?.settlementCorrection;
+        if (proposal && confirmSettlementCorrection(proposal.tradeId)) {
+            onApplySettlementCorrection?.(proposal);
+        }
+        markCorrectionSettled(messageId);
+    }, [messages, onApplySettlementCorrection, markCorrectionSettled]);
+    const handleDismissSettlementCorrection = useCallback((messageId: string): void => {
+        const proposal = messages.find(m => m.id === messageId)?.settlementCorrection;
+        if (proposal) dismissSettlementCorrection(proposal.tradeId);
+        markCorrectionSettled(messageId);
+    }, [messages, markCorrectionSettled]);
 
     /** Minute bucket for the rows' relative-time labels — a CACHE KEY, not a
      *  new clock. An unchanged message reuses its cached row, and therefore its
@@ -1514,6 +1562,15 @@ const AgentsView: React.FC<AgentsViewProps> = ({
                                                 proposalLogBusy={awaitingProposalRowId !== null}
                                                 onLogProposal={handleLogProposal}
                                                 onDismissProposal={handleDismissProposal}
+                                                /* The settlement-correction card: a
+                                                   PROPOSED fix, confirmed by the trader. The
+                                                   row is untouched until they tap. */
+                                                settlementCorrection={
+                                                    settledCorrectionRowIds.has(m.id) ? undefined : m.settlementCorrection
+                                                }
+                                                settlementCorrectionCurrent={currentForCorrection(m.settlementCorrection)}
+                                                onConfirmSettlementCorrection={handleConfirmSettlementCorrection}
+                                                onDismissSettlementCorrection={handleDismissSettlementCorrection}
                                             />
                                         );
                                     })}

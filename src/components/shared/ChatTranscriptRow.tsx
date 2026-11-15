@@ -32,6 +32,7 @@ import KeyLevelsCard from '../trade/KeyLevelsCard';
 import SignalCard, { signalIdFromActions, signalRowById } from '../trade/SignalCard';
 import InlineVerdict from '../analysis/InlineVerdict';
 import TradeProposalCard, { TradeProposalLoggedRow } from '../trade/panels/TradeProposalCard';
+import SettlementCorrectionCard from '../trade/panels/SettlementCorrectionCard';
 import { parseKeyLevels, type ModelKeyLevel } from '../../services/trade/keyLevels';
 import type { TradeProposal } from '../../services/trade/proposedTrade';
 import type { ProposalState } from '../../services/trade/proposalDisposition';
@@ -157,6 +158,12 @@ export interface ChatTranscriptRowProps {
     onLogProposal?: (messageId: string, plan: TradeProposal, kind: 'presented' | 'prose') => void;
     /** Dismiss the plan — the card/chip never comes back. */
     onDismissProposal?: (messageId: string) => void;
+    /** A proposed settlement fix this row carries, and the two clicks. Absent
+     *  (no proposal, or the trader already decided) renders nothing. */
+    settlementCorrection?: import('../../services/trade/settlementCorrection').SettlementCorrectionProposal;
+    settlementCorrectionCurrent?: { outcome?: import('../../types/enums').TradeOutcome; pnlAmount?: number; pnlPercent?: number };
+    onConfirmSettlementCorrection?: (messageId: string) => void;
+    onDismissSettlementCorrection?: (messageId: string) => void;
 }
 
 const ChatTranscriptRow: React.FC<ChatTranscriptRowProps> = ({
@@ -164,6 +171,8 @@ const ChatTranscriptRow: React.FC<ChatTranscriptRowProps> = ({
     onEditPromptMessage, onRevertTo, turnsAfter = 0, versionIndex, versionTotal, onStepVersion, priorPrompts,
     proposal, prosePlan, proposalState, canLogProposal, awaitingProposalLog, proposalLogBusy,
     onLogProposal, onDismissProposal,
+    settlementCorrection, settlementCorrectionCurrent,
+    onConfirmSettlementCorrection, onDismissSettlementCorrection,
 }) => {
     const isUser = row.role === 'user';
     const deskSpeaker = !row.speaker || row.speaker.trim().toLowerCase() === 'desk';
@@ -327,6 +336,17 @@ const ChatTranscriptRow: React.FC<ChatTranscriptRowProps> = ({
                             awaitingLog={!!awaitingProposalLog}
                             onLog={() => onLogProposal?.(row.id, proposal, 'presented')}
                             onCancel={() => onDismissProposal?.(row.id)}
+                        />
+                    )}
+                    {/* A proposed settlement fix. The card holds no authority:
+                        confirm calls the SAME journal hook a human edit calls, so
+                        the correction lands with its own audit trail. */}
+                    {settlementCorrection && (
+                        <SettlementCorrectionCard
+                            proposal={settlementCorrection}
+                            current={settlementCorrectionCurrent}
+                            onConfirm={() => onConfirmSettlementCorrection?.(row.id)}
+                            onDismiss={() => onDismissSettlementCorrection?.(row.id)}
                         />
                     )}
                     {/* The seat DESCRIBED a plan and never called present_trade.

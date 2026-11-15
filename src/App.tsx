@@ -2581,6 +2581,17 @@ const App: React.FC = () => {
                                         (await mailboxRef.current?.runUserBotTurn(bot, prompt)) ?? false}
                                     onAnalyze={handleRunAnalysisFromChat}
                                     onLogProposedTrade={handleLogProposedTrade}
+                                    /* The settlement-correction write path: the
+                                       SAME handlers the Journal's own editors
+                                       call, so a confirmed correction lands with
+                                       the audit trail a human edit gets. */
+                                    trades={loggedTrades}
+                                    onApplySettlementCorrection={(proposal) => {
+                                        if (proposal.outcome !== undefined) handleUpdateTradeOutcome(proposal.tradeId, proposal.outcome);
+                                        if (proposal.pnlAmount !== undefined || proposal.pnlPercent !== undefined) {
+                                            handleUpdateTradePnL(proposal.tradeId, { pnlAmount: proposal.pnlAmount, pnlPercent: proposal.pnlPercent });
+                                        }
+                                    }}
                                     onAnalysisError={(message) => toast.error(message)}
                                     onStopRun={handleStopAgentsRun}
                                     analysisRunning={isAnalysisInProgress}

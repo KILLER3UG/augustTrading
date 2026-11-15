@@ -932,6 +932,37 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
         /READ-ONLY/.test(all.get('run_review').function.description));
 })();
 
+// ─── 13e. the settlement-correction store: a proposal, never a write ───────
+// P-6's confirmation half. The store records what the agent PROPOSED and what
+// the trader decided; it never touches a journal row. The failure this pins is
+// a correction that changes nothing (a card that lies about doing work) and a
+// confirmed row being silently re-opened for a second write.
+(() => {
+    const sc = loadModule('src/services/trade/settlementCorrection.ts');
+    ok('settlement correction: a proposal needs a row, a reason and one changed field',
+        sc.checkSettlementCorrection({ tradeId: 't1', reason: 'r' }).ok === false
+        && sc.checkSettlementCorrection({ tradeId: 't1', outcome: 'WIN' }).ok === false
+        && sc.checkSettlementCorrection({ reason: 'r', outcome: 'WIN' }).ok === false
+        && sc.checkSettlementCorrection({ tradeId: 't1', reason: 'r', outcome: 'WIN' }).ok === true);
+    ok('settlement correction: a stored proposal is pending, then resolved by a decision',
+        (() => {
+            sc.__clearSettlementCorrectionsForTests();
+            const p = sc.proposeSettlementCorrection({ tradeId: 't2', reason: 'fill contradicts record', pnlAmount: -12.5 });
+            if (!p.ok || sc.pendingSettlementCorrection('t2') === undefined) return false;
+            if (!sc.dismissSettlementCorrection('t2')) return false;
+            return sc.pendingSettlementCorrection('t2') === undefined
+                && sc.settlementCorrectionStateOf('t2') === 'dismissed';
+        })());
+    ok('settlement correction: a CONFIRMED row is not re-opened by a second proposal',
+        (() => {
+            sc.__clearSettlementCorrectionsForTests();
+            sc.proposeSettlementCorrection({ tradeId: 't3', reason: 'a', outcome: 'LOSS' });
+            sc.confirmSettlementCorrection('t3');
+            const again = sc.proposeSettlementCorrection({ tradeId: 't3', reason: 'b', outcome: 'WIN' });
+            return again.ok === false && sc.pendingSettlementCorrection('t3') === undefined;
+        })());
+})();
+
 // ─── 15. profile memory: soft delete, undo, versions, observed context ─────
 (() => {
     const store = new Map();
