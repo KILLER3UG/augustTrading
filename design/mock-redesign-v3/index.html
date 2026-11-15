@@ -1,0 +1,601 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>August — Analyze &amp; Chat redesign mock v3 (sparse minimalist)</title>
+<style>
+  :root{
+    --page:#0a0a0a; --panel:#17171a; --raised:#26262b; --hair:#222226;
+    --ink:#fafafa; --ink-2:#d4d4d4; --ink-3:#a1a1aa; --ink-4:#858585;
+    --up:#10b981; --down:#f43f5e; --warn:#f59e0b; --info:#22d3ee;
+    --ease:cubic-bezier(.2,.8,.2,1); --r-ctl:10px; --r-bub:20px; --r-card:12px;
+    --ui:"Geist",system-ui,-apple-system,"Segoe UI",sans-serif;
+    --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--page);color:var(--ink);font-family:var(--ui);font-size:15px;line-height:1.55}
+  :focus-visible{outline:2px solid var(--info);outline-offset:2px}
+  button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+  .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+  .micro{font-size:10.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--ink-4);font-weight:600}
+  .up{color:var(--up)} .down{color:var(--down)} .warn{color:var(--warn)} .mut{color:var(--ink-3)}
+
+  .mockbar{position:sticky;top:0;z-index:50;display:flex;flex-wrap:wrap;gap:12px;align-items:center;
+    padding:10px 18px;background:#101012;border-bottom:1px solid var(--hair)}
+  .mockbar b{font-size:15px}
+  .mockbar .sub{color:var(--ink-3);font-size:12px}
+  .seg{display:inline-flex;background:var(--panel);border:1px solid var(--hair);border-radius:var(--r-ctl);padding:2px;gap:2px}
+  .seg button{padding:5px 12px;border-radius:8px;color:var(--ink-3);transition:background .15s var(--ease),color .15s var(--ease)}
+  .seg button[aria-pressed="true"]{background:var(--raised);color:var(--ink)}
+  .mockbar .sp{flex:1}
+  .frame{margin:18px auto;max-width:1440px;padding:0 18px;transition:max-width .18s var(--ease)}
+  .frame.narrow{max-width:800px}
+  .app{display:flex;height:1000px;background:var(--page);border:1px solid var(--hair);border-radius:14px;overflow:hidden}
+  .frame.narrow .app{height:1040px}
+
+  /* rail */
+  .rail{width:52px;flex:0 0 52px;display:flex;flex-direction:column;align-items:center;padding:10px 0;gap:4px}
+  .rail .grp{display:flex;flex-direction:column;align-items:center;gap:2px}
+  .ric{width:36px;height:36px;border-radius:10px;display:grid;place-items:center;color:var(--ink-4)}
+  .ric:hover{background:var(--panel);color:var(--ink)}
+  .ric[aria-current="page"]{color:var(--ink);background:var(--panel)}
+  .ric svg{width:18px;height:18px}
+  .rail .foot{margin-top:auto}
+  .avatar{width:28px;height:28px;border-radius:50%;background:var(--raised);display:grid;place-items:center;font-size:11px;font-weight:700;color:var(--ink-2)}
+
+  /* list column — list only, two sections */
+  .col{width:232px;flex:0 0 232px;border-right:1px solid var(--hair);display:flex;flex-direction:column;min-height:0}
+  .frame.narrow .col{display:none}
+  .col .scroll{flex:1;overflow:auto;padding:12px 10px}
+  .rowline{display:flex;align-items:center;gap:9px;padding:7px 9px;border-radius:9px;color:var(--ink-2);font-size:14px}
+  .rowline:hover{background:var(--panel)}
+  .rowline.active{background:var(--raised);color:var(--ink)}
+  .rowline .t{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .rowline .age{font-family:var(--mono);font-size:11px;color:var(--ink-4)}
+  .rowline .sig{font-size:11px;font-weight:650;color:var(--up)}
+  .rowline .kbd{font-size:11px;color:var(--ink-4)}
+  .dot{width:6px;height:6px;border-radius:50%;background:var(--ink-4);flex:0 0 6px}
+  .dot.on{background:var(--up)} .dot.thin{background:var(--warn)}
+  .dot.run{background:var(--up);animation:beacon 1.6s infinite}
+  @keyframes beacon{0%,100%{opacity:1}50%{opacity:.35}}
+  .sect{padding:18px 9px 5px}
+  .acct{border-top:1px solid var(--hair);padding:12px 10px;display:flex;gap:9px;align-items:center;font-size:13px}
+  .acct small{color:var(--ink-4)}
+
+  main{flex:1;display:flex;flex-direction:column;min-width:0}
+  .contentbar{height:48px;flex:0 0 48px;display:flex;align-items:center;gap:12px;padding:0 18px;border-bottom:1px solid var(--hair)}
+  .contentbar .ctx{color:var(--ink-4);font-size:12px}
+  .contentbar .sp{flex:1}
+  .livedot{width:6px;height:6px;border-radius:50%;background:var(--up);display:inline-block;animation:beacon 1.6s infinite}
+
+  .body{flex:1;display:flex;min-height:0}
+  .chartwrap{flex:1;display:flex;flex-direction:column;min-width:0;position:relative}
+  /* one quiet header line — no metrics band, no tabs strip */
+  .charthead{display:flex;align-items:baseline;gap:14px;padding:14px 20px 4px;flex-wrap:wrap}
+  .charthead .sym{font-size:14px;font-weight:650}
+  .charthead .price{font-family:var(--mono);font-size:20px;font-weight:650}
+  .charthead .chg{font-family:var(--mono);font-size:12px}
+  .charthead .tf{display:inline-flex;gap:2px;margin-left:auto}
+  .tf button{padding:4px 10px;border-radius:8px;font-size:12px;color:var(--ink-4);font-family:var(--mono)}
+  .tf button:hover{color:var(--ink)}
+  .tf button[aria-pressed="true"]{background:var(--raised);color:var(--ink)}
+  .charthead .meta{font-size:12px;color:var(--ink-4)}
+  .floattools{position:absolute;left:18px;top:170px;z-index:6;display:flex;flex-direction:column;gap:2px;
+    background:rgba(23,23,26,.92);border-radius:var(--r-ctl);padding:4px}
+  .floattools button{width:30px;height:30px;border-radius:8px;display:grid;place-items:center;color:var(--ink-4)}
+  .floattools button:hover,.floattools button[aria-pressed="true"]{background:var(--raised);color:var(--ink)}
+  .floattools svg{width:15px;height:15px}
+  .chartbox{flex:1;min-height:0;position:relative}
+  .chartbox svg{position:absolute;inset:0;width:100%;height:100%}
+  /* book: closed is the default state */
+  .bookdrawer{flex:0 0 30px;border-top:1px solid var(--hair);display:flex;flex-direction:column;transition:flex-basis .15s var(--ease)}
+  .bookdrawer.open{flex-basis:150px}
+  .bookdrawer .bookgrid{display:none}
+  .bookdrawer.open .bookgrid{display:grid}
+  .bookhead{display:flex;align-items:center;gap:10px;padding:6px 20px;font-size:12px;color:var(--ink-4)}
+  .bookhead .sp{flex:1}
+  .bookgrid{grid-template-columns:1fr 1fr 1fr;gap:0 18px;padding:2px 20px 8px;overflow:hidden}
+  .bookgrid table{border-collapse:collapse;width:100%;font-family:var(--mono);font-size:11px}
+  .bookgrid td{padding:1px 4px;white-space:nowrap}
+  .bookgrid td.p{text-align:left} .bookgrid td.s{text-align:right;color:var(--ink-2)} .bookgrid td.t{text-align:right;color:var(--ink-4)}
+  .asks td.p{color:var(--down)} .bids td.p{color:var(--up)}
+  .spread{display:grid;place-items:center;color:var(--ink-4);font-size:11px}
+  .spread b{color:var(--ink-2);font-family:var(--mono);font-size:13px}
+  .depth{position:relative}
+  .depth i{position:absolute;inset:0 auto 0 0;opacity:.09}
+  .asks .depth i{background:var(--down)} .bids .depth i{background:var(--up)}
+
+  .modeswitch{display:none}
+  .frame.narrow .modeswitch{display:flex;gap:4px;padding:8px 14px;border-bottom:1px solid var(--hair)}
+  .modeswitch button{flex:1;height:32px;border-radius:9px;background:var(--panel);color:var(--ink-4);font-size:13px}
+  .modeswitch button[aria-pressed="true"]{background:var(--raised);color:var(--ink)}
+  .frame.narrow.ai .chartwrap{display:none}
+  .frame.narrow.ai .dock{display:flex;flex:1 1 auto;width:auto;flex-basis:auto;border-left:0}
+  .frame.narrow.book .dock{display:none}
+  .frame.narrow.book .bookdrawer{flex-basis:232px}
+  .frame.narrow.book .bookdrawer .bookgrid{overflow:auto}
+  .dock{width:364px;flex:0 0 364px;border-left:1px solid var(--hair);display:flex;flex-direction:column;min-height:0}
+  .frame.narrow .dock{display:none}
+  .dockhead{display:flex;align-items:center;gap:9px;padding:16px 20px 0}
+  .dockhead b{font-size:14px;font-weight:650}
+  .dockhead .sub{color:var(--ink-4);font-size:12px}
+  .dockhead .sp{flex:1}
+  .iconbtn{width:28px;height:28px;border-radius:8px;display:grid;place-items:center;color:var(--ink-4)}
+  .iconbtn:hover{background:var(--panel);color:var(--ink)}
+  .iconbtn svg{width:15px;height:15px}
+  .dockscroll{flex:1;overflow:auto;padding:8px 20px 20px;display:flex;flex-direction:column;gap:28px}
+  .biasline{display:flex;gap:7px;flex-wrap:wrap;align-items:center;font-size:12.5px;color:var(--ink-4)}
+  .biasline .d{width:6px;height:6px;border-radius:50%;display:inline-block;margin-right:5px}
+  .d-bear{background:var(--down)} .d-bull{background:var(--up)} .d-flat{background:var(--ink-4)}
+  .biasline b{color:var(--ink-2);font-weight:600}
+
+  .sig h3{margin:0;font-size:20px;font-weight:650;letter-spacing:-.01em}
+  .sig h3 .long{color:var(--up)}
+  .sig h3 .coin{font-family:var(--mono);font-size:17px}
+  .sig .meta{color:var(--ink-4);font-size:12.5px;margin-top:3px}
+  .kv{display:grid;grid-template-columns:80px 1fr 80px 1fr;gap:7px 12px;margin:14px 0 0;font-size:13px}
+  .kv dt{color:var(--ink-4);font-size:11px;letter-spacing:.07em;text-transform:uppercase;padding-top:2px}
+  .kv dd{margin:0;font-family:var(--mono);font-variant-numeric:tabular-nums}
+  .kv .entry{color:var(--info)}
+  .probbar{grid-column:2/5}
+  .probbar .track{height:4px;background:var(--raised);border-radius:2px;overflow:hidden;position:relative}
+  .probbar .fill{height:100%;background:var(--up);width:62%}
+  .probbar .base{position:absolute;top:-2px;bottom:-2px;width:2px;background:var(--warn)}
+  .probnote{grid-column:2/5;color:var(--ink-4);font-size:12px}
+  .trig{margin-top:14px;font-size:13px;line-height:1.65;color:var(--ink-2)}
+  .trig b{color:var(--ink)}
+  .evid{list-style:none;margin:14px 0 0;padding:14px 0 0;border-top:1px solid var(--hair);display:grid;gap:7px;font-size:13px}
+  .evid li{display:flex;gap:9px;align-items:baseline;color:var(--ink-2)}
+  .evid .ok{color:var(--up)} .evid .no{color:var(--warn)}
+  .sigfoot{display:flex;gap:16px;flex-wrap:wrap;margin-top:14px}
+  .act{font-size:13px;color:var(--ink-4);padding:2px 0}
+  .act:hover{color:var(--ink)}
+  .act.primary{color:var(--ink);font-weight:600}
+  .sigmeta{margin-top:10px;font-size:11px;color:var(--ink-4)}
+
+  details.mini summary{cursor:pointer;font-size:13px;color:var(--ink-4);list-style:none}
+  details.mini summary::-webkit-details-marker{display:none}
+  details.mini summary::before{content:"▸ "}
+  details.mini summary:hover{color:var(--ink-2)}
+  details.mini[open] summary::before{content:"▾ "}
+  details.mini{font-size:13px}
+  .levels{width:100%;border-collapse:collapse;font-size:13px;margin-top:8px}
+  .levels th{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-4);text-align:left;padding:4px 0;border-bottom:1px solid var(--hair);font-weight:600}
+  .levels td{padding:6px 0;border-bottom:1px solid var(--hair);font-family:var(--mono);font-variant-numeric:tabular-nums}
+  .levels td.role{font-family:var(--ui);color:var(--ink-3)}
+  .score{display:flex;align-items:baseline;gap:12px;margin-top:8px}
+  .score .big{font-family:var(--mono);font-size:22px;color:var(--up)}
+  .score .track{flex:1;height:4px;background:var(--raised);border-radius:2px;overflow:hidden;align-self:center}
+  .score .fill{height:100%;background:var(--up)}
+
+  .turn{display:flex;flex-direction:column;gap:8px}
+  .u{align-self:flex-end;max-width:80%;background:var(--raised);border-radius:var(--r-bub);padding:9px 14px;font-size:14px;line-height:1.5}
+  .a{font-size:15px;line-height:1.65;color:var(--ink-2)}
+  .a .reading{font-size:17px;line-height:1.5;color:var(--ink);font-weight:550;letter-spacing:-.01em}
+  .analyzed{display:flex;align-items:center;gap:7px;color:var(--ink-4);font-size:13px;width:100%;text-align:left;padding:2px 0}
+  .analyzed:hover{color:var(--ink-2)}
+  .steps{list-style:none;margin:0;padding:0;display:grid;gap:5px;font-size:13px;color:var(--ink-4)}
+  .steps li{display:flex;gap:9px;align-items:baseline}
+  .steps .ok{color:var(--up);font-size:11px}
+  .steps .ms{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--ink-4)}
+  .prov{color:var(--ink-4);font-size:12px}
+  .gategrid{display:grid;grid-template-columns:1fr auto;gap:5px 14px;margin-top:10px;font-size:13px}
+  .gategrid dt{color:var(--ink-4)} .gategrid dd{margin:0;font-family:var(--mono);text-align:right}
+  .recalled{border:1px solid var(--hair);border-radius:var(--r-card);padding:11px 13px;font-size:13px;color:var(--ink-3)}
+  .recalled b{color:var(--ink-2);font-weight:600}
+  .recalled div+div{margin-top:5px}
+
+  .composer{padding:12px 20px 14px}
+  .box{background:var(--panel);border:1px solid var(--hair);border-radius:16px;padding:13px 15px 9px}
+  .box:focus-within{border-color:#3a3a40}
+  .box textarea{width:100%;background:none;border:0;resize:none;color:var(--ink);font:inherit;font-size:15px;min-height:24px}
+  .box textarea::placeholder{color:var(--ink-4)}
+  .boxrow{display:flex;align-items:center;gap:8px;margin-top:7px}
+  .modeltxt{font-size:12.5px;color:var(--ink-4)}
+  .modeltxt:hover{color:var(--ink-2)}
+  .send{margin-left:auto;width:32px;height:32px;border-radius:50%;background:var(--raised);color:var(--ink-3);display:grid;place-items:center}
+  .send:hover{background:#333338;color:var(--ink)}
+  .send svg{width:15px;height:15px}
+  .disc{font-size:11px;color:var(--ink-4);margin:9px 2px 0;line-height:1.5}
+
+  .chatwrap{flex:1;overflow:auto}
+  .chatcol{max-width:720px;margin:0 auto;padding:34px 24px 12px;display:flex;flex-direction:column;gap:26px}
+  .chatcol .sig h3{font-size:25px}
+  .chatcol .sig h3 .coin{font-size:20px}
+  .chatcol .sig .kv{grid-template-columns:112px 1fr 112px 1fr}
+  .attachline{display:flex;gap:12px;align-items:center;border:1px solid var(--hair);border-radius:var(--r-card);padding:10px 13px}
+  .thumb{width:64px;height:38px;border-radius:6px;overflow:hidden;background:#0b0b0c;flex:0 0 auto}
+  .thumb svg{width:100%;height:100%;display:block}
+  .attachline b{display:block;font-size:13.5px;font-weight:600}
+  .attachline span{font-size:12.5px;color:var(--ink-4)}
+  .followline{font-size:13px;color:var(--ink-4)}
+  .followline b{color:var(--ink-4);font-weight:600}
+  .followline button{color:var(--ink-3);font-size:13px;padding:0}
+  .followline button:hover{color:var(--ink)}
+  .followline .sep{margin:0 6px}
+  .chatcomposer{max-width:720px;margin:16px auto 0;padding:0 24px 16px}
+
+  .notes{max-width:1440px;margin:0 auto;padding:6px 18px 40px}
+  .notes h2{font-size:20px;margin:28px 0 4px}
+  .notes h3{font-size:14.5px;margin:24px 0 6px}
+  .notes p,.notes li{color:var(--ink-3);font-size:13.5px;line-height:1.65}
+  table.cmp{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:10px}
+  table.cmp th{text-align:left;color:var(--ink-4);font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;padding:7px 10px;border-bottom:1px solid var(--hair)}
+  table.cmp td{padding:8px 10px;border-bottom:1px solid var(--hair);vertical-align:top;color:var(--ink-2)}
+  table.cmp td:first-child{color:var(--ink-3)}
+  .cols{display:grid;grid-template-columns:1fr 1fr;gap:26px}
+  @media (max-width:900px){.cols{grid-template-columns:1fr}}
+  code{font-family:var(--mono);font-size:11.5px;background:var(--panel);border:1px solid var(--hair);border-radius:6px;padding:1px 5px;color:var(--ink-2)}
+  [hidden]{display:none!important}
+</style>
+</head>
+<body>
+
+<header class="mockbar">
+  <b>August — Analyze &amp; Chat redesign</b>
+  <span class="sub">v3 sparse minimalist · new folder, new filenames · static proposal</span>
+  <span class="sp"></span>
+  <div class="seg" role="group" aria-label="Surface">
+    <button id="tAnalyze" aria-pressed="true">Analyze</button>
+    <button id="tChat" aria-pressed="false">Chat</button>
+  </div>
+  <div class="seg" role="group" aria-label="Width">
+    <button id="t1440" aria-pressed="true">1440px</button>
+    <button id="t800" aria-pressed="false">800px</button>
+  </div>
+</header>
+
+<div class="frame" id="frame">
+<div class="app" aria-label="Redesigned app mock v3">
+
+  <nav class="rail" aria-label="Surfaces">
+    <div class="grp">
+      <button class="ric" aria-current="page" title="Analyze (Alt+1)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg></button>
+      <button class="ric" title="Agents (Alt+4)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M7 9h6M7 13h10"/></svg></button>
+      <button class="ric" title="Chats"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a8 8 0 0 1-8 8H4l2-3a8 8 0 1 1 15-5z"/></svg></button>
+    </div>
+    <div class="foot grp">
+      <button class="ric" title="Journal (Alt+2)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V4H6.5A2.5 2.5 0 0 0 4 6.5z"/></svg></button>
+      <button class="ric" title="Learning (Alt+5)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l2 5 5 .7-3.6 3.5.9 5-4.3-2.4-4.3 2.4.9-5L5 8.7 10 8z"/></svg></button>
+      <div class="avatar">P</div>
+    </div>
+  </nav>
+
+  <aside class="col" aria-label="Conversations">
+    <div class="scroll">
+      <div class="rowline"><span>＋</span><span class="t">New chat</span><span class="kbd">Ctrl K</span></div>
+      <div class="sect micro">Pinned</div>
+      <div class="rowline active"><span class="dot run"></span><span class="t">BTC reclaim</span><span class="sig">Long</span><span class="age">2m</span></div>
+      <div class="sect micro">Recent</div>
+      <div class="rowline"><span class="dot on"></span><span class="t">What is the bias here?</span><span class="age">2m</span></div>
+      <div class="rowline"><span class="dot thin"></span><span class="t">ETH funding squeeze</span><span class="age">1h</span></div>
+      <div class="rowline"><span class="dot"></span><span class="t">SOL weekly levels</span><span class="age">3h</span></div>
+    </div>
+    <div class="acct"><div class="avatar">P</div><div style="flex:1"><div>Probe User</div><small>Signed in · local-first</small></div></div>
+  </aside>
+
+  <main>
+    <div class="contentbar">
+      <b style="font-size:14px">Chart AI</b>
+      <span class="ctx mono">BTC/USDT · 15m</span>
+      <span class="sp"></span>
+      <span style="font-size:12.5px;color:var(--ink-3)"><span class="livedot"></span>&nbsp; Live</span>
+    </div>
+
+    <section id="surface-analyze" style="display:flex;flex-direction:column;flex:1;min-height:0">
+      <div class="modeswitch" role="group" aria-label="Pane">
+        <button data-m="chart" aria-pressed="true">Chart</button>
+        <button data-m="ai" aria-pressed="false">AI</button>
+        <button data-m="book" aria-pressed="false">Book</button>
+      </div>
+
+      <div class="body">
+        <div class="chartwrap">
+          <div class="charthead">
+            <span class="sym">BTC/USDT</span>
+            <span class="price down">77,420.10</span>
+            <span class="chg down">-0.83%</span>
+            <svg class="spark" width="96" height="26" viewBox="0 0 96 26" aria-hidden="true"><polyline id="sparkline" fill="none" stroke="#a1a1aa" stroke-width="1.2"/></svg>
+            <span class="meta mono">funding 0.0100% · next 06:40</span>
+            <div class="tf" role="group" aria-label="Interval">
+              <button>1m</button><button>5m</button><button aria-pressed="true">15m</button><button>1h</button><button>4h</button><button>1D</button>
+            </div>
+          </div>
+          <div class="floattools" aria-label="Drawing tools">
+            <button aria-pressed="true" title="Cursor"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 3l7 18 2.5-7.5L21 11z"/></svg></button>
+            <button title="Trend line"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 20L20 4"/></svg></button>
+            <button title="Horizontal line"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h18"/></svg></button>
+            <button title="Rectangle"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="6" width="16" height="12"/></svg></button>
+          </div>
+          <div class="chartbox" id="chartbox"><svg id="chartSvg" preserveAspectRatio="none" aria-label="BTC/USDT 15m chart with signal levels"></svg></div>
+          <div class="bookdrawer" id="bookdrawer">
+            <div class="bookhead"><span>Order book · live</span><span class="sp"></span><span class="mono">spread 0.10 · imbalance <b class="up">+12%</b></span></div>
+            <div class="bookgrid">
+              <table class="asks" aria-label="Asks"><tbody id="asksBody"></tbody></table>
+              <div class="spread"><div>spread</div><b>0.10</b></div>
+              <table class="bids" aria-label="Bids"><tbody id="bidsBody"></tbody></table>
+            </div>
+          </div>
+        </div>
+
+        <aside class="dock" aria-label="Chart AI dock">
+          <div class="dockhead">
+            <span class="dot run"></span><b>Chart AI</b><span class="sub">New chat</span>
+            <span class="sp"></span>
+            <button class="iconbtn" title="New chat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg></button>
+            <button class="iconbtn" title="History"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l4 2"/></svg></button>
+            <button class="iconbtn" title="Collapse dock"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg></button>
+          </div>
+          <div class="dockscroll">
+            <div class="biasline" aria-label="Bias">
+              <span><span class="d d-bear"></span><b>1D Bearish</b></span>
+              <span><span class="d d-bear"></span><b>15m Bearish</b></span>
+              <span><span class="d d-flat"></span>Below VWAP</span>
+              <span><span class="d d-bull"></span>Book bid-heavy</span>
+            </div>
+
+            <article class="sig" aria-label="Active signal">
+              <h3><span class="long">Long</span> <span class="coin">BTCUSDT</span></h3>
+              <div class="meta">3.3 : 1 R:R · 15m · confidence <b style="color:var(--up)">High</b></div>
+              <dl class="kv">
+                <dt>Entry</dt><dd class="entry">77,420</dd>
+                <dt>Stop</dt><dd class="down">76,800</dd>
+                <dt>Target</dt><dd class="up">78,900</dd>
+                <dt>Prob.</dt><dd>62%</dd>
+                <dt>Base</dt>
+                <dd class="probbar"><div class="track"><div class="fill"></div><div class="base" style="left:41%"></div></div></dd>
+                <dd class="probnote">62% vs 41% base · n=24 · amber tick = base.</dd>
+              </dl>
+              <div class="trig">
+                <div><b>Trigger —</b> 15m close above the 77,520 shelf.</div>
+                <div><b>Invalidation —</b> 15m close below 76,500. The signal dies here.</div>
+              </div>
+              <ul class="evid">
+                <li><span class="ok">✓</span> Shelf reclaim, higher low on 15m</li>
+                <li><span class="no">!</span> Funding 0.0100% — thin, not used for confidence.</li>
+              </ul>
+              <div class="sigfoot">
+                <button class="act primary" id="showOnChart">Show on chart</button>
+                <button class="act">Log plan</button>
+                <button class="act">Copy signal</button>
+              </div>
+              <div class="sigmeta mono">sig_8f2c · 2m ago · expires in 38m · OKX 5m + Binance x-check</div>
+            </article>
+
+            <details class="mini">
+              <summary>Key levels · 4</summary>
+              <table class="levels">
+                <thead><tr><th>Price</th><th>Role</th><th style="text-align:right">Dist.</th></tr></thead>
+                <tbody>
+                  <tr><td>78,190</td><td class="role">Resistance / sweep</td><td class="up" style="text-align:right">+1.00%</td></tr>
+                  <tr><td style="color:var(--info)">77,520</td><td class="role">Shelf (trigger)</td><td class="up" style="text-align:right">+0.13%</td></tr>
+                  <tr><td>76,980</td><td class="role">Support / 24h low</td><td class="down" style="text-align:right">-0.57%</td></tr>
+                  <tr><td>76,500</td><td class="role">Invalidation</td><td class="down" style="text-align:right">-1.19%</td></tr>
+                </tbody>
+              </table>
+            </details>
+
+            <details class="mini">
+              <summary>Scorecard · 58% vs 41% base (n=24, thin)</summary>
+              <div class="score"><span class="big">58%</span><div class="track"><div class="fill" style="width:58%"></div></div><span style="color:var(--ink-4);font-size:12px">signal → price outcome, not journal P&amp;L</span></div>
+            </details>
+
+            <div class="turn"><div class="u">What is the bias here?</div></div>
+            <div class="turn">
+              <button class="analyzed" id="anToggle" aria-expanded="true">Analyzed for 12s <span class="mut">· tools ran, nothing executed</span><span style="margin-left:auto">▾</span></button>
+              <ol class="steps" id="steps">
+                <li><span class="ok">✓</span> Structure — 15m + 1D candles, VWAP <span class="ms">4.1s</span></li>
+                <li><span class="ok">✓</span> Order book + funding snapshot <span class="ms">2.3s</span></li>
+                <li><span class="ok">✓</span> Notebook — 2 sources checked <span class="ms">1.8s</span></li>
+                <li><span class="ok">✓</span> Signal gate — evidence floor met <span class="ms">3.8s</span></li>
+              </ol>
+              <div class="a"><p class="reading">Long bias into the reclaim, stop below the shelf.</p>
+                <p>Price is sitting on the 77,520 shelf with the book bid-heavy and funding too thin to lean on — so the call is <b>long on a 15m close above the shelf, dead below 76,500</b>.</p>
+              </div>
+              <div class="recalled"><b>Recalled notebook · 2 sources</b><div>Shelf rule — a reclaim needs a 15m close, not a wick. Funding cap — never upgrade confidence under 0.02%.</div></div>
+              <details class="mini">
+                <summary>Inspect evidence &amp; gate</summary>
+                <dl class="gategrid">
+                  <dt>Evidence floor</dt><dd class="up">met · 4/4 checked</dd>
+                  <dt>Programmatic gate</dt><dd class="up">pass (shadow)</dd>
+                  <dt>Base rate used</dt><dd>41% · n=24</dd>
+                  <dt>Refused</dt><dd>funding upgrade — too thin</dd>
+                </dl>
+              </details>
+              <div class="prov">Mock · Auto — thinking High · notebook 2 · 2m ago</div>
+            </div>
+          </div>
+
+          <div class="composer">
+            <div class="box">
+              <textarea id="composerInput" rows="1" placeholder="Ask about the chart or a plan…" aria-label="Ask about the chart or a plan"></textarea>
+              <div class="boxrow">
+                <button class="iconbtn" title="Attach">＋</button>
+                <button class="modeltxt mono">Mock · Auto ▾</button>
+                <button class="send" title="Send" aria-label="Send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button>
+              </div>
+            </div>
+            <p class="disc">Analysis and journaling only — it never places or signs a trade.</p>
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <!-- ═══════════ CHAT ═══════════ -->
+    <section id="surface-chat" hidden>
+      <div class="chatwrap">
+        <div class="chatcol">
+          <div class="turn"><div class="u">What is the bias here?</div></div>
+
+          <article class="sig" aria-label="Signal, full view">
+            <h3><span class="long">Long</span> <span class="coin">BTCUSDT</span></h3>
+            <div class="meta">3.3 : 1 R:R · 15m · confidence <b style="color:var(--up)">High</b> · no veto applied</div>
+            <dl class="kv">
+              <dt>Entry</dt><dd class="entry">77,420</dd>
+              <dt>Stop</dt><dd class="down">76,800</dd>
+              <dt>Target 1</dt><dd class="up">78,400</dd>
+              <dt>Target 2</dt><dd class="up">78,900</dd>
+              <dt>Probability</dt><dd>62%</dd>
+              <dt>Base rate</dt><dd class="warn">41% · n=24</dd>
+              <dt>Trigger</dt><dd style="grid-column:2/5;font-family:var(--ui)">15m close above 77,520 shelf</dd>
+              <dt>Invalidation</dt><dd style="grid-column:2/5;font-family:var(--ui)">15m close below 76,500 — the signal dies here</dd>
+            </dl>
+            <ul class="evid">
+              <li><span class="ok">✓</span> Shelf reclaim + higher low — OKX 15m candles, closed bars</li>
+              <li><span class="ok">✓</span> Bid-heavy book (+12%) — live ladder snapshot</li>
+              <li><span class="no">!</span> Funding 0.0100% — thin, not used</li>
+              <li><span class="ok">✓</span> Shelf rule + funding cap — notebook, 2 sources checked</li>
+            </ul>
+            <div class="sigfoot">
+              <button class="act primary">Show on chart</button>
+              <button class="act">Log plan</button>
+              <button class="act">Copy signal</button>
+              <button class="act">Export</button>
+            </div>
+            <div class="sigmeta mono">sig_8f2c · 2m ago · expires in 38m · resolves OKX 5m + Binance x-check · costs in R</div>
+          </article>
+
+          <div class="attachline">
+            <div class="thumb"><svg id="thumbSvg" preserveAspectRatio="none"></svg></div>
+            <div><b>Chart snapshot — BTC/USDT 15m</b><span>Read with the book and 2 drawings; context travels with the turn.</span></div>
+          </div>
+
+          <div class="turn">
+            <button class="analyzed" aria-expanded="true">Analyzed for 12s <span class="mut">· tools ran, nothing executed</span><span style="margin-left:auto">▾</span></button>
+            <ol class="steps">
+              <li><span class="ok">✓</span> Structure — 15m + 1D candles, VWAP <span class="ms">4.1s</span></li>
+              <li><span class="ok">✓</span> Order book + funding snapshot <span class="ms">2.3s</span></li>
+              <li><span class="ok">✓</span> Notebook — 2 sources checked <span class="ms">1.8s</span></li>
+              <li><span class="ok">✓</span> Signal gate — evidence floor met, emitted sig_8f2c <span class="ms">3.8s</span></li>
+            </ol>
+            <div class="a">
+              <p class="reading">Long bias into the reclaim, stop below the shelf.</p>
+              <p>The chart is holding the shelf the plan was written on. Until a 15m close gives that up, the long stands; the moment it closes below 76,500, it is gone and the ledger will say so against price — not against your journal P&amp;L. Funding stays a footnote: 0.0100% is too thin to carry a decision.</p>
+            </div>
+            <div class="recalled"><b>Recalled notebook · 2 sources</b><div>Shelf rule — a reclaim needs a 15m close, not a wick. Funding cap — never upgrade confidence under 0.02%.</div></div>
+            <details class="mini">
+              <summary>Inspect evidence &amp; gate</summary>
+              <dl class="gategrid">
+                <dt>Evidence floor</dt><dd class="up">met · 4/4 checked</dd>
+                <dt>Programmatic gate</dt><dd class="up">pass (shadow)</dd>
+                <dt>Confidence cap</dt><dd>none applied — tentative skills inform only</dd>
+                <dt>Refused</dt><dd>funding upgrade — too thin</dd>
+              </dl>
+            </details>
+            <div class="prov">Mock · Auto — thinking High · notebook 2 · 2m ago</div>
+          </div>
+
+          <div class="followline"><b>Follow up:</b>
+            <button>What would kill the long?</button><span class="sep">·</span>
+            <button>Re-check the book now</button><span class="sep">·</span>
+            <button>Log as a plan</button>
+          </div>
+        </div>
+
+        <div class="chatcomposer">
+          <div class="box">
+            <textarea rows="1" placeholder="How can I help you today?" aria-label="Message"></textarea>
+            <div class="boxrow">
+              <button class="iconbtn" title="Attach">＋</button>
+              <button class="modeltxt mono">Mock · Auto ▾</button>
+              <button class="send" title="Send" aria-label="Send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button>
+            </div>
+          </div>
+          <p class="disc">Analysis and journaling only — it never places or signs a trade.</p>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+</div>
+
+<section class="notes">
+  <h2>v3 — sparser, on purpose</h2>
+  <p>v2 was a restyle of the same dense layout. v3 removes content instead. The reference screens (Kimi new-chat, Claude home) share one trait above all: <b>most of the screen is empty on purpose</b> — one greeting, one composer, nothing else until the trader asks. That can't literally hold for a chart surface (the chart is the product), so v3 keeps the chart full-bleed and makes <i>everything around it</i> quieter than the reference: fewer rows, fewer labels, nothing competing with the tape.</p>
+
+  <h3>Density: v1/v2 → v3</h3>
+  <table class="cmp">
+    <thead><tr><th style="width:32%">Element</th><th style="width:34%">v2 (mock-redesign)</th><th>v3 (this file)</th></tr></thead>
+    <tbody>
+      <tr><td>Market header</td><td>Chart tabs + 6 metric cells (Mark/Oracle/H/L/Vol/OI/Funding) with micro labels</td><td>One line: symbol, price, change, sparkline, funding + timeframe control. Mark/Oracle/H/L/Vol/OI live in the chart crosshair readout instead of a band — same data, no band. Trade-off recorded; undoing it is a one-line restore.</td></tr>
+      <tr><td>Order book</td><td>Drawer open by default, 148px, 16 rows</td><td><b>Closed by default</b> — a 30px "Order book · live" line; expands on demand</td></tr>
+      <tr><td>Dock</td><td>Signal card + levels table + scorecard bar + turn, all visible (~26 rows)</td><td>Signal headline + 4 kv rows + 2 evidence lines; levels and scorecard behind one-line disclosures (~14 rows visible)</td></tr>
+      <tr><td>Sidebar</td><td>New chat + Pinned + Recent + Workspaces + Rooms + account</td><td>New chat (+ Ctrl K) + Pinned + Recent + account. Workspaces/Rooms removed — rooms are an Agents concern, not a list section</td></tr>
+      <tr><td>Content bar</td><td>▲ logo, title, ctx, Live pill, NY pill, Activity pill</td><td>Title + context + one muted "● Live". Pills deleted</td></tr>
+      <tr><td>Chat evidence</td><td>4-col table with header row, always visible</td><td>4 muted evidence lines; the table and gate grid sit behind <i>Inspect evidence &amp; gate</i></td></tr>
+      <tr><td>Composer</td><td>Context chips + box + quick-action chips</td><td>Box only — context (chart/book/drawings) is stated inside the attach line and the signal meta, where it belongs</td></tr>
+      <tr><td>Chart levels</td><td>6 labelled lines + VWAP + shelf rect + trendline</td><td>4 lines (entry/stop/target/invalidation), smaller labels, fainter grid</td></tr>
+    </tbody>
+  </table>
+
+  <h3>What stays August</h3>
+  <p>Geist, not serif (charter). Monospace tabular numerals. One cyan = entry. Basis-rate math and the funding refusal survive every pass unchanged — minimalism never costs the trader the number that says <i>how sure</i>. No serif, no coral/blue brand color, no upsell rows, no marketing. Signal lifecycle (expiry, ledger resolution, bot-identity claim) still on the card.</p>
+
+  <h3>Implementation mapping (same as v1/v2)</h3>
+  <p>Shared <code>SignalCard</code> for <code>TradeChatPanel</code> + <code>AgentsView</code>; emit receipt links <code>SignalRecord.id</code> / <code>expiresAt</code>; verdict overlay (<code>verdictLevels</code>) vs card lines (<code>onChatLevels</code> + ownerId) stay distinct; <code>OrderBookPanel</code> as collapsible chart drawer (Analyze-only portal, single-column <code>GRID</code>); <code>SignalFeed</code> scorecard up from Journal; <code>BiasChips</code> into Agents with honest failure state. Gates: <code>typecheck</code>, <code>lint</code>, <code>build</code>, <code>render-probe</code>, manual 1440/800 look. Header metrics become the chart crosshair readout (TradeView tape stays as the source — it is not deleted, it is not a visible band).</p>
+</section>
+
+<script>
+function mulberry(seed){return function(){seed|=0;seed=seed+0x6D2B79F5|0;let t=Math.imul(seed^seed>>>15,1|seed);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+const rnd=mulberry(42);
+let p=79200;const candles=[];
+for(let i=0;i<140;i++){const o=p;const c=o+(rnd()-0.58)*260;const h=Math.max(o,c)+rnd()*140;const l=Math.min(o,c)-rnd()*140;const v=18+rnd()*70+(i>118?30:0);candles.push({o,h,l,c,v});p=c}
+const MIN=76000,MAX=79500;
+function drawChart(){
+  const svg=document.getElementById('chartSvg');const box=document.getElementById('chartbox');
+  const W=box.clientWidth||800,H=box.clientHeight||420;const padR=56;
+  const cw=(W-padR)/candles.length;
+  const X=i=>i*cw+cw/2;
+  let s='';
+  for(const px of [76500,77500,78500,79000]){const yy=H-(px-MIN)/(MAX-MIN)*H;
+    s+=`<line x1="0" y1="${yy}" x2="${W-padR}" y2="${yy}" stroke="#1a1a1d" stroke-width="1"/><text x="${W-padR+8}" y="${yy+4}" fill="#6f6f6f" font-size="10" font-family="monospace">${px.toFixed(0)}</text>`}
+  const lvl=(px,col,dash,label)=>{const yy=H-(px-MIN)/(MAX-MIN)*H;
+    return `<g class="lvl"><line x1="0" y1="${yy}" x2="${W-padR}" y2="${yy}" stroke="${col}" stroke-width="1.2" ${dash?'stroke-dasharray="5 4"':''}/><text x="${W-padR+4}" y="${yy+4}" fill="${col}" font-size="10" font-family="monospace">${label}</text></g>`};
+  candles.forEach((c,i)=>{const x=X(i);const up=c.c>=c.o;const col=up?'#10b981':'#f43f5e';
+    const yH=H-(c.h-MIN)/(MAX-MIN)*H,yL=H-(c.l-MIN)/(MAX-MIN)*H,yO=H-(c.o-MIN)/(MAX-MIN)*H,yC=H-(c.c-MIN)/(MAX-MIN)*H;
+    s+=`<line x1="${x}" y1="${yH}" x2="${x}" y2="${yL}" stroke="${col}" stroke-width="1"/>`+
+       `<rect x="${x-cw*0.32}" y="${Math.min(yO,yC)}" width="${cw*0.64}" height="${Math.max(2,Math.abs(yC-yO))}" fill="${col}"/>`;
+    const vh=(c.v/110)*44;
+    s+=`<rect x="${x-cw*0.32}" y="${H-vh}" width="${cw*0.64}" height="${vh}" fill="${col}" opacity=".45"/>`});
+  const yt=i=>H-(candles[i].c-MIN)/(MAX-MIN)*H;
+  s+=`<line x1="${X(96)}" y1="${yt(96)}" x2="${X(136)}" y2="${yt(136)}" stroke="#8f8f96" stroke-width="1"/>`;
+  s+=`<rect x="${X(108)}" y="${H-(77520-MIN)/(MAX-MIN)*H-6}" width="${X(136)-X(108)}" height="12" fill="none" stroke="#8f8f96" stroke-width="1"/>`;
+  s+=lvl(78900,'#10b981',false,'79,000');
+  s+=lvl(77520,'#22d3ee',false,'77,520');
+  s+=lvl(76800,'#f43f5e',true,'76,800');
+  s+=lvl(76500,'#f43f5e',false,'76,500');
+  s+=`<text x="10" y="${H-8}" fill="#6f6f6f" font-size="10" font-family="monospace">Nov 2 · Nov 3</text>`;
+  svg.setAttribute('viewBox',`0 0 ${W} ${H}`);svg.innerHTML=s;
+  const sp=document.getElementById('sparkline');let pts='';
+  candles.slice(-48).forEach((c,i)=>{pts+=`${i*(96/47)},${24-((c.c-MIN)/(MAX-MIN))*22} `});
+  sp.setAttribute('points',pts);
+  const th=document.getElementById('thumbSvg');let ts='';
+  candles.forEach((c,i)=>{const x=i*(64/candles.length);const col=c.c>=c.o?'#10b981':'#f43f5e';
+    ts+=`<rect x="${x}" y="${34-((c.c-MIN)/(MAX-MIN))*30}" width="1.4" height="2.6" fill="${col}"/>`});
+  th.setAttribute('viewBox','0 0 64 38');th.innerHTML=ts;
+}
+function book(){
+  const asks=[[77421.4,.002],[77421.3,.002],[77421.2,.069],[77421.1,.001],[77421.0,.004],[77420.8,.001],[77420.6,.001],[77420.5,.004]];
+  const bids=[[77420.0,7.369],[77419.9,.056],[77419.8,.003],[77419.7,.002],[77419.6,.321],[77419.3,.001],[77419.2,.001],[77419.1,.002]];
+  const row=(arr,cls)=>arr.map(([pp,ss])=>`<tr class="${cls}"><td class="p depth"><i style="width:${Math.min(90,ss/7.4*100)}%"></i>${pp.toFixed(2)}</td><td class="s">${ss}</td><td class="t">${(ss*2).toFixed(3)}</td></tr>`).join('');
+  document.getElementById('asksBody').innerHTML=row(asks,'asks');
+  document.getElementById('bidsBody').innerHTML=row(bids,'bids');
+}
+function seg(id,on){document.getElementById(id).setAttribute('aria-pressed',on)}
+document.getElementById('tAnalyze').onclick=()=>{seg('tAnalyze',true);seg('tChat',false);document.getElementById('surface-analyze').hidden=false;document.getElementById('surface-chat').hidden=true;requestAnimationFrame(drawChart)};
+document.getElementById('tChat').onclick=()=>{seg('tAnalyze',false);seg('tChat',true);document.getElementById('surface-analyze').hidden=true;document.getElementById('surface-chat').hidden=false};
+document.getElementById('t1440').onclick=()=>{seg('t1440',true);seg('t800',false);document.getElementById('frame').classList.remove('narrow');requestAnimationFrame(drawChart)};
+document.getElementById('t800').onclick=()=>{seg('t1440',false);seg('t800',true);document.getElementById('frame').classList.add('narrow');requestAnimationFrame(drawChart)};
+document.querySelectorAll('.modeswitch button').forEach(b=>b.onclick=()=>{
+  document.querySelectorAll('.modeswitch button').forEach(x=>x.setAttribute('aria-pressed',x===b));
+  const f=document.getElementById('frame');f.classList.toggle('ai',b.dataset.m==='ai');f.classList.toggle('book',b.dataset.m==='book');
+  requestAnimationFrame(drawChart)});
+document.getElementById('bookdrawer').addEventListener('click',e=>{if(e.target.closest('.bookhead')){document.getElementById('bookdrawer').classList.toggle('open');requestAnimationFrame(drawChart)}});
+document.getElementById('anToggle').onclick=e=>{const s=document.getElementById('steps');const open=s.style.display!=='none';s.style.display=open?'none':'grid';e.currentTarget.setAttribute('aria-expanded',!open)};
+document.getElementById('showOnChart').onclick=()=>{document.querySelectorAll('#chartSvg .lvl').forEach(g=>{g.style.transition='opacity .15s';g.style.opacity=.25;setTimeout(()=>g.style.opacity=1,450)})};
+window.addEventListener('resize',()=>requestAnimationFrame(drawChart));
+drawChart();book();requestAnimationFrame(drawChart);
+</script>
+</body>
+</html>
