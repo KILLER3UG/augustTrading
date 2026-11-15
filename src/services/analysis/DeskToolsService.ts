@@ -2661,34 +2661,6 @@ export const DESK_TOOL_DEFINITIONS: DeskToolDefinition[] = [
             },
         },
     },
-];
-
-/**
- * The agent's remaining hands — Phase 1b, part 2. DEFINED, REGISTERED NOWHERE.
- *
- * These three are deliberately NOT in `DESK_TOOL_DEFINITIONS`, NOT in
- * `INITIAL_DESK_TOOL_NAMES`, and NOT in `toolKinds.DESK_TOOL_NAMES` — the list
- * `chatTurnRunner`'s TRADE_TOOLS is built from, which is what the wire and the
- * seat allow-lists read. Nothing reachable can call one yet, so the runtime is
- * unchanged by their presence.
- *
- * The split is not ceremony. Two of these are an AUTHORITY change, not prep:
- * `update_trade` moves the levels on a plan the trader already armed, and
- * `close_trade` closes it. A tool the model can call is a capability the model
- * has, so "define it" and "arm it" stay separate commits. Unlike the two chart
- * writes that already shipped (`set_chart_timeframe`, `toggle_chart_study`,
- * both in CHART_ACTION_TOOL_DEFS), these two cannot be registered honestly
- * until the decision card exists: a proposal with no card to confirm it is a
- * dead affordance, and a tool that applied its change on the call would be the
- * authority bug this split exists to prevent.
- *
- * `run_review` waits on its own dependency — the review services' entry points
- * and the harness turn that carries their findings — not on the card.
- *
- * `check:contracts` pins both halves: every name is defined here, and none of
- * them is reachable from any of the three registries.
- */
-export const AGENT_HAND_TOOL_DEFINITIONS: DeskToolDefinition[] = [
     {
         type: 'function',
         function: {
@@ -2744,6 +2716,8 @@ export const AGENT_HAND_TOOL_DEFINITIONS: DeskToolDefinition[] = [
         },
     },
 ];
+
+
 
 /**
  * The tools every desk turn carries on the wire.
@@ -5299,6 +5273,62 @@ ${body}`);
                     'The trader sees a confirmation card; NOTHING changes until they confirm it. When they do, the row is written through the journal\'s own correction path (correctedFrom, correctedAt, resolutionSource "correction").',
                     'No order was placed and no journal row was written by this call.',
                 ].join(' ');
+                break;
+            }
+            case 'update_trade':
+            case 'close_trade': {
+                // AUTHORITY CHANGES over an armed plan (principle 5). They RECORD
+                // a proposal; the trader's confirm applies it through the
+                // journal's own writers. Neither writes anything here, and
+                // neither is reachable without the trader seeing a card.
+                const { checkTradeActionProposal, proposeTradeAction } = await import('../trade/tradeActionProposal');
+                const kind = call.name === 'close_trade' ? 'close' : 'update';
+                const checked = checkTradeActionProposal({
+                    kind,
+                    planId: asString(call.arguments.planId),
+                    reason: asString(call.arguments.reason),
+                    entry: call.arguments.entry,
+                    stopLoss: call.arguments.stopLoss,
+                    takeProfits: call.arguments.takeProfits,
+                });
+                if (!checked.ok) return rejectedResult(call, `${call.name} rejected: ${checked.refused}.`);
+                const stored = proposeTradeAction(checked.proposal);
+                if (!stored.ok) return rejectedResult(call, `${call.name} rejected: ${stored.refused}.`);
+                const p = checked.proposal;
+                const changed = kind === 'close'
+                    ? 'close the plan'
+                    : [
+                        p.entry !== undefined ? `entry -> ${p.entry}` : null,
+                        p.stopLoss !== undefined ? `stopLoss -> ${p.stopLoss}` : null,
+                        p.takeProfits !== undefined ? `targets -> ${p.takeProfits.join('/')}` : null,
+                    ].filter(Boolean).join(', ');
+                content = [
+                    `${kind === 'close' ? 'CLOSE' : 'LEVEL CHANGE'} PROPOSED for plan ${p.planId}: ${changed}.`,
+                    'The trader sees a confirmation card; NOTHING changes until they confirm it. The armed watch and the journal are untouched by this call.',
+                    'No order was placed and no journal row was written.',
+                ].join(' ');
+                break;
+            }
+            case 'run_review': {
+                // READ-ONLY. It computes the review from the journal rows this
+                // turn already carries and returns the findings; it writes
+                // nothing and arms nothing.
+                const scope = (asString(call.arguments.scope) || 'weekly').toLowerCase();
+                const rows = context.trades ?? [];
+                if (scope === 'trade') {
+                    const tradeId = asString(call.arguments.tradeId);
+                    const row = rows.find(t => t.id === tradeId);
+                    if (!row) return rejectedResult(call, `run_review rejected: no journal row "${tradeId}" among this turn's ${rows.length} rows. Call get_trade_log for the ids.`);
+                    content = 'POST-MORTEM DATA (read-only) for ' + tradeId + ': ' + JSON.stringify(row, null, 1).slice(0, 4000);
+                    break;
+                }
+                if (scope === 'monthly') {
+                    const { buildMonthReport } = await import('../learning/monthlyReport');
+                    content = 'MONTHLY REVIEW (read-only): ' + JSON.stringify(buildMonthReport(rows, Date.now()), null, 1).slice(0, 5000);
+                    break;
+                }
+                const { buildWeekStats } = await import('../learning/weeklyReview');
+                content = 'WEEKLY REVIEW (read-only): ' + JSON.stringify(buildWeekStats(rows, Date.now()), null, 1).slice(0, 5000);
                 break;
             }
             case 'set_chart_timeframe': {

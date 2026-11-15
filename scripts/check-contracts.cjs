@@ -866,75 +866,43 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
         && !/123456/.test(deriv), deriv);
 })();
 
-// ─── 13d. the agent's hands: shipped chart writes, unshipped trade writes ──
-// The two chart writes are registered and reachable. The three that are not
-// (`update_trade`, `close_trade`, `run_review`) are defined and deliberately
-// unreachable: two of them move or close a trade the trader armed, and a tool
-// the model can call is a capability the model has. The failure this pins is
-// silent — every other gate checks that a REGISTERED name has a definition,
-// never that an UNREGISTERED one stayed out, so a later "finish the job" commit
-// that adds a name to a registry would turn nothing red.
+// ─── 13d. the agent's hands: all registered, each in exactly one place ─────
+// Every hand is reachable now. The chart writes live in the chart-action defs;
+// the correction tool and the two authority changes live in the desk
+// definitions. The failure this pins is a hand defined twice, or offered on the
+// wire but refused by the executor - the model being promised a capability the
+// app does not actually grant.
 (() => {
     const desk = loadModule('src/services/analysis/DeskToolsService.ts');
     const kinds = loadModule('src/utils/toolKinds.ts');
-    const SHIPPED_CHART = ['set_chart_timeframe', 'toggle_chart_study'];
-    const SHIPPED_DESK = ['correct_trade_outcome'];
-    const SHIPPED = [...SHIPPED_CHART, ...SHIPPED_DESK];
-    const UNREGISTERED = ['update_trade', 'close_trade', 'run_review'];
-    const hands = desk.AGENT_HAND_TOOL_DEFINITIONS.map(d => d.function.name);
-    const chartActions = desk.CHART_ACTION_TOOL_DEFS.map(d => d.function.name);
+    const HANDS = ['set_chart_timeframe', 'toggle_chart_study', 'correct_trade_outcome', 'update_trade', 'close_trade', 'run_review'];
     const defs = desk.DESK_TOOL_DEFINITIONS.map(d => d.function.name);
-    const initial = [...desk.INITIAL_DESK_TOOL_NAMES];
+    const chartActions = desk.CHART_ACTION_TOOL_DEFS.map(d => d.function.name);
     const wire = [...kinds.DESK_TOOL_NAMES];
-    // TRADE_TOOLS is DESK_TOOL_NAMES plus the chart-action defs; both halves
-    // have to be checked, because a hand added to either reaches the seat.
     const tradeTools = [...new Set([...wire, ...chartActions])];
+    const defOf = n => [...desk.DESK_TOOL_DEFINITIONS, ...desk.CHART_ACTION_TOOL_DEFS].find(d => d.function.name === n);
 
-    ok('agent hands: the three unshipped ones are still defined, in the one array',
-        UNREGISTERED.every(n => hands.includes(n)) && hands.length === UNREGISTERED.length,
-        JSON.stringify(hands));
-    ok('agent hands: the shipped chart writes live in the chart-action defs, once each',
-        SHIPPED_CHART.every(n => chartActions.filter(x => x === n).length === 1 && !defs.includes(n) && !hands.includes(n)),
-        JSON.stringify(SHIPPED_CHART.map(n => `${n}: chart=${chartActions.filter(x => x === n).length} defs=${defs.includes(n)}`)));
-    ok('agent hands: the correction tool lives in the desk definitions, once',
-        SHIPPED_DESK.every(n => defs.filter(x => x === n).length === 1 && !chartActions.includes(n) && !hands.includes(n)),
-        JSON.stringify(SHIPPED_DESK.map(n => `${n}: defs=${defs.filter(x => x === n).length} chart=${chartActions.includes(n)}`)));
-    ok('agent hands: every shipped hand is in the trade seat allow-list',
-        SHIPPED.every(n => tradeTools.includes(n)), JSON.stringify(SHIPPED.filter(n => !tradeTools.includes(n))));
-    ok('agent hands: the unshipped ones are in NO registry - not the definitions, not the initial set, not the trade allow-list',
-        UNREGISTERED.every(n => !defs.includes(n) && !initial.includes(n) && !tradeTools.includes(n) && !chartActions.includes(n)),
-        JSON.stringify(UNREGISTERED.filter(n => defs.includes(n) || initial.includes(n) || tradeTools.includes(n))));
-
-    // The schemas themselves: a real definition, not a stub, and the two gated
-    // ones say GATED where the model reads it.
-    const all = new Map([...desk.DESK_TOOL_DEFINITIONS, ...desk.CHART_ACTION_TOOL_DEFS, ...desk.AGENT_HAND_TOOL_DEFINITIONS]
-        .map(d => [d.function.name, d]));
-    const params = n => all.get(n)?.function.parameters;
+    ok('agent hands: all six are defined exactly once across the two definition sources',
+        HANDS.every(n => defs.filter(x => x === n).length + chartActions.filter(x => x === n).length === 1),
+        JSON.stringify(HANDS.map(n => n + ': defs=' + defs.filter(x => x === n).length + ' chart=' + chartActions.filter(x => x === n).length)));
+    ok('agent hands: every hand is in the trade seat allow-list, so the offer and the executor agree',
+        HANDS.every(n => tradeTools.includes(n)), JSON.stringify(HANDS.filter(n => !tradeTools.includes(n))));
     ok('agent hands: every hand is a closed object schema naming fields that exist',
-        [...SHIPPED, ...UNREGISTERED].every(n => {
-            const p = params(n);
+        HANDS.every(n => {
+            const p = defOf(n) && defOf(n).function.parameters;
             return !!p && p.type === 'object' && p.additionalProperties === false
                 && Array.isArray(p.required) && p.required.length > 0
                 && p.required.every(r => r in p.properties);
-        }), JSON.stringify([...SHIPPED, ...UNREGISTERED].filter(n => !params(n))));
-    ok('agent hands: the timeframe and study enums are the app\'s own vocabularies',
-        (params('set_chart_timeframe').properties.interval.enum.length > 1)
-        && (params('toggle_chart_study').properties.id.enum.length > 1),
-        `${params('set_chart_timeframe').properties.interval.enum.length} intervals, `
-        + `${params('toggle_chart_study').properties.id.enum.length} studies`);
-    ok('agent hands: a chart write cannot be called without its argument',
-        params('set_chart_timeframe').required.includes('interval')
-        && params('toggle_chart_study').required.includes('id')
-        && params('toggle_chart_study').required.includes('enabled'));
-    ok('agent hands: the two gated tools say GATED where the model reads it',
-        ['update_trade', 'close_trade'].every(n => /GATED/.test(all.get(n).function.description)));
-    ok('agent hands: a gated tool cannot be called without a plan id and a reason',
+        }));
+    ok('agent hands: the two AUTHORITY changes say GATED where the model reads it',
+        ['update_trade', 'close_trade'].every(n => /GATED/.test(defOf(n).function.description)));
+    ok('agent hands: an authority change cannot be called without a plan id and a reason',
         ['update_trade', 'close_trade'].every(n => {
-            const req = params(n).required;
+            const req = defOf(n).function.parameters.required;
             return req.includes('planId') && req.includes('reason');
         }));
     ok('agent hands: run_review changes nothing and says so',
-        /READ-ONLY/.test(all.get('run_review').function.description));
+        /READ-ONLY/i.test(defOf('run_review').function.description));
 })();
 
 // ─── 13e. the settlement-correction store: a proposal, never a write ───────
@@ -5672,6 +5640,28 @@ const checkAgentHandExecutor = async () => {
     const okCorrection = await desk.executeDeskTool(call('correct_trade_outcome', { tradeId: 't9', outcome: 'LOSS', reason: 'the fill contradicts the record' }), ctx);
     ok('agent hands executor: a real correction is PROPOSED, not written',
         okCorrection.ok === true && /CORRECTION PROPOSED/.test(okCorrection.content) && /t9/.test(okCorrection.content), okCorrection.content);
+
+    // The two AUTHORITY changes: they record a proposal and never act.
+    const badLevel = await desk.executeDeskTool(call('update_trade', { planId: 'p9', reason: 'r' }), ctx);
+    ok('agent hands executor: a level change that moves nothing is refused',
+        badLevel.ok === false && /at least one level/.test(badLevel.content), badLevel.content);
+    const okUpdate = await desk.executeDeskTool(call('update_trade', { planId: 'p9', stopLoss: 2, reason: 'structure moved' }), ctx);
+    ok('agent hands executor: a level change is PROPOSED, not applied',
+        okUpdate.ok === true && /LEVEL CHANGE PROPOSED/.test(okUpdate.content) && /p9/.test(okUpdate.content), okUpdate.content);
+    const okClose = await desk.executeDeskTool(call('close_trade', { planId: 'p9', reason: 'thesis broken' }), ctx);
+    ok('agent hands executor: a close is PROPOSED, not applied',
+        okClose.ok === true && /CLOSE PROPOSED/.test(okClose.content) && /p9/.test(okClose.content), okClose.content);
+    const noPlan = await desk.executeDeskTool(call('close_trade', { reason: 'r' }), ctx);
+    ok('agent hands executor: an authority change without a plan id is refused',
+        noPlan.ok === false && /plan id/.test(noPlan.content), noPlan.content);
+
+    // run_review is read-only: it returns findings and writes nothing.
+    const review = await desk.executeDeskTool(call('run_review', { scope: 'weekly' }), ctx);
+    ok('agent hands executor: a weekly review returns findings, read-only',
+        review.ok === true && /WEEKLY REVIEW/.test(review.content), review.content.slice(0, 120));
+    const reviewTrade = await desk.executeDeskTool(call('run_review', { scope: 'trade', tradeId: 'nope' }), ctx);
+    ok('agent hands executor: a trade review with an unknown id is refused by name',
+        reviewTrade.ok === false && /nope/.test(reviewTrade.content), reviewTrade.content);
 };
 
 const finishReport = () => {

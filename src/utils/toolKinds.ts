@@ -137,6 +137,9 @@ const BY_LABEL: Record<string, ToolKindInfo> = {
     'chart timeframe': { kind: 'draw', activity: 'Changing the timeframe' },
     'chart study': { kind: 'draw', activity: 'Toggling a chart study' },
     'settlement correction': { kind: 'write', activity: 'Proposing a settlement correction' },
+    'trade level change': { kind: 'write', activity: 'Proposing a level change' },
+    'trade close': { kind: 'write', activity: 'Proposing a close' },
+    'review': { kind: 'read', activity: 'Running a review' },
     'draw detected': { kind: 'draw', activity: 'Drawing the detected setup' },
     'level marks': { kind: 'draw', activity: 'Marking levels' },
 
@@ -301,4 +304,7 @@ export const DESK_TOOL_NAMES: readonly string[] = [
     // The agent's proposed settlement fix (audit P-6). Records a proposal the
     // trader confirms on a card; it never writes the row itself.
     'correct_trade_outcome',
+    // The two AUTHORITY changes over an armed plan, and the read-only review.
+    // All three record a proposal (or read) and never act on the call.
+    'update_trade', 'close_trade', 'run_review',
 ];
