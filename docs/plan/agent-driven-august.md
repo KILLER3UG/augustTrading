@@ -124,15 +124,19 @@ trading keeps deterministic gates.
 
 ## Phases (each ships and gates independently)
 
-1. **Agent hands** — split in two. The five tools are `set_chart_timeframe`, `toggle_chart_study`,
-   `update_trade`, `close_trade`, `run_review`.
-   - **1a — definitions only.** Define the five tools in `src/services/analysis/DeskToolsService.ts`
-     and add their contract sections in `scripts/check-contracts.cjs`. They are **not registered in
-     the chat tool loop**, so the model cannot call them and nothing changes at runtime.
-     `update_trade` and `close_trade` are written here as gated tools — defined with their
-     confirmation requirement, not exposed without it.
-   - **1b — registration.** Register the five tools and wire the decision-receipt round-trip through
-     `src/services/trade/chatTurnRunner.ts`. The model can now act, and 1a is already proven green.
+1. **Agent hands** — three steps, each gated on the one before it.
+   - **1a — definitions only.** The five tools defined in
+     `AGENT_HAND_TOOL_DEFINITIONS`, contract-tested, in none of the three registries.
+   - **1b-i — the chart writes.** `set_chart_timeframe` and `toggle_chart_study` move into
+     `CHART_ACTION_TOOL_DEFS`, with executor branches and the settings subscription the chart
+     needs to hear an external write. Both are reversible visibility/frame changes: no record,
+     no risk, no card required.
+   - **1b-ii — the trade writes.** `update_trade` and `close_trade` are registered only with the
+     Phase 3 decision card. A proposal with no card to confirm it is a dead affordance, and a tool
+     that applied its change on the call would be the authority bug the 1a/1b split exists to
+     prevent. They stay defined and unreachable until the card ships.
+   - **1b-iii — `run_review`.** Waits on the review services' entry points and the harness turn
+     that carries their findings, not on the card.
 2. **One workspace** (the visible cut): merge dock + AgentsView; rail becomes New chat/Pinned/Recent/
    account + gear; composer mode menu (single/panel/room/bot); chart pane permanent.
    `src/App.tsx` surface switch extracted first (it is ~2,717 lines — O-105). render-probe re-anchored
