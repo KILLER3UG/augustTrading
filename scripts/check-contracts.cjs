@@ -866,6 +866,72 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
         && !/123456/.test(deriv), deriv);
 })();
 
+// ─── 13d. the agent's hands are DEFINED and UNREACHABLE (Phase 1a) ─────────
+// `update_trade` moves the levels on a plan the trader armed; `close_trade`
+// closes it. Defining such a tool and REGISTERING it are different commits on
+// purpose: a definition is text a reviewer can read, a registration is a
+// capability the model has. The failure this pins is silent — every other gate
+// checks that a REGISTERED name has a definition, never that an UNREGISTERED
+// one stayed out, so a later "finish the job" commit that adds a name to one of
+// the registries would turn nothing red.
+(() => {
+    const desk = loadModule('src/services/analysis/DeskToolsService.ts');
+    const kinds = loadModule('src/utils/toolKinds.ts');
+    const HANDS = ['set_chart_timeframe', 'toggle_chart_study', 'update_trade', 'close_trade', 'run_review'];
+    const hands = desk.AGENT_HAND_TOOL_DEFINITIONS.map(d => d.function.name);
+    const defs = desk.DESK_TOOL_DEFINITIONS.map(d => d.function.name);
+    const initial = [...desk.INITIAL_DESK_TOOL_NAMES];
+    const wire = [...kinds.DESK_TOOL_NAMES];
+    // The chart-action tools are the other half of TRADE_TOOLS: a hand added
+    // there would reach the wire without touching any of the lists above.
+    const chartActions = desk.CHART_ACTION_TOOL_DEFS.map(d => d.function.name);
+    const deferrable = desk.loadableDeskToolNamesFor(true, 'all');
+    const catalogue = desk.buildDeskToolCatalogue(deferrable);
+    const onTheWire = desk.toAnthropicTools().map(t => t.name);
+
+    ok('agent hands: all five are defined, in the one array that holds them',
+        HANDS.every(n => hands.includes(n)) && hands.length === HANDS.length, JSON.stringify(hands));
+    ok('agent hands: NOT in DESK_TOOL_DEFINITIONS - the wire cannot see them',
+        HANDS.every(n => !defs.includes(n)), JSON.stringify(HANDS.filter(n => defs.includes(n))));
+    ok('agent hands: NOT in INITIAL_DESK_TOOL_NAMES - no turn carries them',
+        HANDS.every(n => !initial.includes(n)), JSON.stringify(HANDS.filter(n => initial.includes(n))));
+    ok('agent hands: NOT in DESK_TOOL_NAMES - the trade seat allow-list refuses them',
+        HANDS.every(n => !wire.includes(n)), JSON.stringify(HANDS.filter(n => wire.includes(n))));
+    ok('agent hands: NOT among the chart-action tools either',
+        HANDS.every(n => !chartActions.includes(n)), JSON.stringify(HANDS.filter(n => chartActions.includes(n))));
+    ok('agent hands: no turn can defer them - they are not in the catalogue',
+        HANDS.every(n => !deferrable.includes(n) && !catalogue.includes(`- ${n}:`)),
+        JSON.stringify(HANDS.filter(n => deferrable.includes(n))));
+    ok('agent hands: a seat granted "all" still cannot reach them',
+        HANDS.every(n => !onTheWire.includes(n)), JSON.stringify(HANDS.filter(n => onTheWire.includes(n))));
+
+    // The schemas themselves: a real definition, not a stub, and the two gated
+    // ones say GATED where the model reads it.
+    const byName = new Map(desk.AGENT_HAND_TOOL_DEFINITIONS.map(d => [d.function.name, d]));
+    const params = n => byName.get(n)?.function.parameters;
+    ok('agent hands: every definition is a closed object schema naming fields that exist',
+        HANDS.every(n => {
+            const p = params(n);
+            return !!p && p.type === 'object' && p.additionalProperties === false
+                && Array.isArray(p.required) && p.required.length > 0
+                && p.required.every(r => r in p.properties);
+        }), JSON.stringify(HANDS.filter(n => !params(n))));
+    ok('agent hands: the timeframe and study enums are the app\'s own vocabularies',
+        (params('set_chart_timeframe').properties.interval.enum.length > 1)
+        && (params('toggle_chart_study').properties.id.enum.length > 1),
+        `${params('set_chart_timeframe').properties.interval.enum.length} intervals, `
+        + `${params('toggle_chart_study').properties.id.enum.length} studies`);
+    ok('agent hands: the two gated tools say GATED where the model reads it',
+        ['update_trade', 'close_trade'].every(n => /GATED/.test(byName.get(n).function.description)));
+    ok('agent hands: a gated tool cannot be called without a plan id and a reason',
+        ['update_trade', 'close_trade'].every(n => {
+            const req = params(n).required;
+            return req.includes('planId') && req.includes('reason');
+        }));
+    ok('agent hands: run_review changes nothing and says so',
+        /READ-ONLY/.test(byName.get('run_review').function.description));
+})();
+
 // ─── 15. profile memory: soft delete, undo, versions, observed context ─────
 (() => {
     const store = new Map();

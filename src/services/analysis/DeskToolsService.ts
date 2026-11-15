@@ -60,6 +60,8 @@ import {
 // grows it for every boot). Types are erased, so they may import statically.
 import type { ProfileAnchor, VwapAnchor } from './marketTools';
 import { candleAlignedTtlMs } from '../../utils/candleTtl';
+import { CHART_INTERVALS } from '../../utils/chartIntervals';
+import { CHART_INDICATOR_IDS } from '../trade/chartIndicatorSettings';
 
 /** The one lazy door to the market-structure tool adapters. */
 const importMarketTools = (): Promise<typeof import('./marketTools')> => import('./marketTools');
@@ -2635,6 +2637,127 @@ export const DESK_TOOL_DEFINITIONS: DeskToolDefinition[] = [
             description:
                 'INSTALLED APP ONLY, one time: clone the owner-configured August repository (AUGUSTTRADING_CLONE_URL) into the app data folder, install dependencies, build it, and switch the window onto that build. This is what makes the app self-hosted like a Hermes install. Takes minutes. It takes NO arguments — the URL is configured by the owner, never by the model.',
             parameters: { type: 'object', properties: {}, additionalProperties: false },
+        },
+    },
+];
+
+/**
+ * The agent's own hands — Phase 1a. DEFINED, REGISTERED NOWHERE.
+ *
+ * These five are deliberately NOT in `DESK_TOOL_DEFINITIONS`, NOT in
+ * `INITIAL_DESK_TOOL_NAMES`, and NOT in `toolKinds.DESK_TOOL_NAMES` — the list
+ * `chatTurnRunner`'s TRADE_TOOLS is built from, which is what the wire and the
+ * seat allow-lists read. Nothing reachable can call one yet, so the runtime is
+ * byte-identical to before this block existed. That is the whole point of 1a.
+ *
+ * The split is not ceremony. Two of these are an AUTHORITY change, not prep:
+ * `update_trade` moves the levels on a plan the trader already armed, and
+ * `close_trade` closes it. A tool the model can call is a capability the model
+ * has — "define it" and "arm it" have to be separate commits, because the
+ * first is reviewable as text and the second changes what the app does.
+ *
+ * Phase 1b registers them and wires the decision-receipt round-trip. Registering
+ * must NOT weaken the confirmation path each gated tool states in its own
+ * description: the description is where the gate is declared, and 1b's gate is
+ * that the executor still routes through the existing card, not around it.
+ *
+ * `check:contracts` pins both halves: every name is defined here, and none of
+ * them is reachable from any of the three registries.
+ */
+export const AGENT_HAND_TOOL_DEFINITIONS: DeskToolDefinition[] = [
+    {
+        type: 'function',
+        function: {
+            name: 'set_chart_timeframe',
+            description:
+                'Move the live chart to another timeframe. The chart redraws at that interval and the trader sees it, and your own reads follow the chart. This is the ONLY way to change the timeframe — the manual control is retired with the rest of the chart chrome.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    interval: {
+                        type: 'string',
+                        enum: [...CHART_INTERVALS],
+                        description: 'Target timeframe, e.g. 15m, 1h, 4h, 1D.',
+                    },
+                },
+                required: ['interval'],
+                additionalProperties: false,
+            },
+        },
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'toggle_chart_study',
+            description:
+                'Show or hide one study on the live chart — the same toggles the trader has. Pass the id exactly as listed. Turning a study off drops its computed state, so a later on starts a fresh read rather than reviving a stale value. This changes VISIBILITY only: the numbers come from the one series module the chart and your reads share, so no value can drift.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    id: {
+                        type: 'string',
+                        enum: [...CHART_INDICATOR_IDS],
+                        description: 'Study id: volume | ema20 | ema200 | boll | rsi | macd | tsi | vwap | avwap | volumeProfile | volumeProfileSession | sessionLevels | swings | cvd | funding.',
+                    },
+                    enabled: { type: 'boolean', description: 'true shows it, false hides it.' },
+                },
+                required: ['id', 'enabled'],
+                additionalProperties: false,
+            },
+        },
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'update_trade',
+            description:
+                'GATED. Propose moving the entry, the stop or the targets on a plan the trader has ARMED, or on a trade logged from one. Take the planId from the armed-plan list in this conversation — never from memory, and never invent one. Nothing moves on the chart or in the journal until the trader confirms the card: this call RECORDS a proposal, and the reason is printed on that card. Pass only the fields that change.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    planId: { type: 'string', description: 'The armed plan id exactly as the conversation lists it.' },
+                    entry: { type: 'number', description: 'New entry price.' },
+                    stopLoss: { type: 'number', description: 'New stop-loss price.' },
+                    takeProfits: { type: 'array', items: { type: 'number' }, description: 'Replacement targets, in order (1-5).' },
+                    reason: { type: 'string', description: 'Why this level moved — shown on the confirmation card and kept in the record.' },
+                },
+                required: ['planId', 'reason'],
+                additionalProperties: false,
+            },
+        },
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'close_trade',
+            description:
+                'GATED. Propose closing an armed plan, or a trade already logged from one. The position and its journal row stay open until the trader confirms the card — this call records the proposal and nothing else. Give the reason: it goes on the card and into the record.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    planId: { type: 'string', description: 'The armed plan id exactly as the conversation lists it.' },
+                    reason: { type: 'string', description: 'Why it is being closed — shown on the confirmation card and kept in the record.' },
+                },
+                required: ['planId', 'reason'],
+                additionalProperties: false,
+            },
+        },
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'run_review',
+            description:
+                'Run a review and put its findings into this conversation as chat turns: weekly or monthly over the journal, or one trade\'s post-mortem. READ-ONLY — it proposes rules and lessons, and changes nothing in the notebook, the risk settings or the record. Pass tradeId for scope "trade".',
+            parameters: {
+                type: 'object',
+                properties: {
+                    scope: { type: 'string', enum: ['weekly', 'monthly', 'trade'], description: 'What to review.' },
+                    tradeId: { type: 'string', description: 'Required for scope "trade": the journal row to review.' },
+                },
+                required: ['scope'],
+                additionalProperties: false,
+            },
         },
     },
 ];
