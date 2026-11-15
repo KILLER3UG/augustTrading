@@ -14,16 +14,51 @@
 import React from 'react';
 
 import type { TradeAnalysis } from '../../types/analysis';
+import {
+    CITATION_TAG_CITED,
+    CITATION_TAG_UNCITED,
+    citationTagText,
+    summarizeLevelCitations,
+    type LevelCitationMark,
+} from '../../services/trade/levelCitations';
 import { fmtPercent } from '../../utils/formatters';
 import { fmtRiskReward } from '../../utils/riskReward';
 import { ChevronDown } from '../shared/Icons';
 import StatusPill, { VerdictReviewPill } from '../ui/StatusPill';
 import VerdictAudit, { verdictNeedsAudit } from './VerdictAudit';
 
-const VerdictLine: React.FC<{ label: string; value: React.ReactNode }> = ({ label, value }) => (
+/**
+ * The provenance tag beside a level. `src:<id>` when the model named a source,
+ * `uncited` when it did not — a word, never a colour, because the charter
+ * reserves amber for a warning and green/red for direction, and "the model did
+ * not say where this number came from" is neither a warning nor a direction.
+ * It is a fact about the evidence, and the fact is the whole point: before this
+ * tag existed, an unsourced level was pixel-identical to a sourced one.
+ */
+const LevelTag: React.FC<{ mark: LevelCitationMark }> = ({ mark }) => {
+    const cited = mark.state === 'cited';
+    return (
+        <span
+            className={`max-w-[8rem] shrink-0 truncate font-mono text-ui-2xs uppercase tracking-wider ${cited ? 'text-zinc-500' : 'text-zinc-600'}`}
+            title={citationTagText(mark)}
+            data-testid={cited ? 'level-source-cited' : 'level-source-uncited'}
+        >
+            {cited ? CITATION_TAG_CITED(mark.sourceId ?? 'unknown') : CITATION_TAG_UNCITED}
+        </span>
+    );
+};
+
+const VerdictLine: React.FC<{
+    label: string;
+    value: React.ReactNode;
+    mark?: LevelCitationMark;
+}> = ({ label, value, mark }) => (
     <div className="flex items-baseline justify-between gap-3">
         <span className="font-mono text-ui-xs uppercase tracking-wider text-zinc-500">{label}</span>
-        <span className="font-mono text-ui-dense font-medium tabular-nums text-zinc-100">{value}</span>
+        <span className="flex min-w-0 items-baseline gap-1.5 font-mono text-ui-dense font-medium tabular-nums text-zinc-100">
+            <span className="truncate">{value}</span>
+            {mark && <LevelTag mark={mark} />}
+        </span>
     </div>
 );
 
@@ -34,6 +69,15 @@ const InlineVerdict: React.FC<{
     if (!a) return null;
     const up = a.direction === 'Long';
     const down = a.direction === 'Short';
+    // One call grades the plan, so the three tags and the count cannot disagree.
+    const citations = summarizeLevelCitations(
+        [
+            { kind: 'entry', label: 'entry' },
+            { kind: 'stop', label: 'stop' },
+            { kind: 'target', label: 'target' },
+        ],
+        a.levelCitations,
+    );
     return (
         <div className="mt-2.5 w-full max-w-lg border-t border-zinc-800/80 pt-2.5"
             data-testid="inline-verdict">
@@ -67,11 +111,22 @@ const InlineVerdict: React.FC<{
                 )}
             </div>
             <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 rounded-control border border-hairline bg-white/[0.02] p-2.5">
-                <VerdictLine label="entry" value={a.entryPoints?.[0]?.price ?? '—'} />
-                <VerdictLine label="stop" value={a.stopLoss ?? '—'} />
-                <VerdictLine label="target" value={a.takeProfit?.[0]?.price ?? '—'} />
+                <VerdictLine label="entry" value={a.entryPoints?.[0]?.price ?? '—'} mark={citations.byKind.entry} />
+                <VerdictLine label="stop" value={a.stopLoss ?? '—'} mark={citations.byKind.stop} />
+                <VerdictLine label="target" value={a.takeProfit?.[0]?.price ?? '—'} mark={citations.byKind.target} />
                 {typeof a.probability === 'number' && <VerdictLine label="probability" value={fmtPercent(a.probability, 0)} />}
             </div>
+            {/* The rate, not just the rows: three tags say this plan is unsourced,
+                the count says HOW OFTEN that happens. Rendered only when the model
+                declared at least one citation — with none declared, the three tags
+                already carry the whole message, and a second "0 of 3" would be
+                the same measurement drawn twice. */}
+            {citations.declared > 0 && (
+                <p className="mt-1 font-mono text-ui-2xs text-zinc-600" data-testid="level-citation-count">
+                    sources named for {citations.cited} of {citations.total} levels
+                    {citations.uncited > 0 ? ` · ${citations.uncited} uncited` : ''}
+                </p>
+            )}
             {/* Progressive disclosure for the audit — rendered ONLY when the
                 verdict actually needs explaining (a decline or a watch). An
                 always-on shell whose body returns null is a control that opens

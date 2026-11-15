@@ -249,7 +249,7 @@ export interface TradeAnalysis {
    */
   evidence?: EvidenceClaim[];
   /** Structured Entry/SL/TP cites (source ids). Preferred over free-text evidence match. */
-  levelCitations?: Array<{ label: string; price: string; sourceId: string }>;
+  levelCitations?: LevelCitation[];
   /**
    * Invalidation contract: the concrete conditions that falsify this setup.
    * Formalizes the invalidation thesis the prompts already require, so the
@@ -325,6 +325,24 @@ export interface EvidenceClaim {
   state: 'observed' | 'partial' | 'unobserved';
   /** Optional note explaining partial/unobserved state. */
   note?: string;
+}
+
+/**
+ * One level the model names a source for: which level it was describing, and
+ * which evidence source id it credits.
+ *
+ * `price` is the MODEL's own restatement of the level, not the value the chart
+ * draws — so it is never a match key (see `services/trade/levelCitations.ts`:
+ * matching is by `label`, because a citation whose price is compared can claim
+ * the source of a different level sitting at the same number).
+ */
+export interface LevelCitation {
+  /** The model's own name for the level ("Entry", "Stop Loss", "TP1"). */
+  label: string;
+  /** The price the model attached to that name, as a cleaned string. */
+  price: string;
+  /** The evidence source id being credited. */
+  sourceId: string;
 }
 
 /**

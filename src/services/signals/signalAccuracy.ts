@@ -22,6 +22,7 @@
  */
 
 import type { SignalBaseRate, SignalRecord, SignalRow } from '../../types/signal';
+import { fillRealismSummary, type FillRealism } from './signalCalibration';
 import { resolveSignal, SIGNAL_BAR_MS, type SignalCandle } from './signalResolver';
 
 /** Below this many filled signals the scorecard says THIN and the desk must
@@ -58,6 +59,12 @@ export interface SignalScorecard {
     /** 95% Wilson interval on hitRate. Null when nothing has filled. A wide
      *  interval IS the honest display at small samples. */
     hitCi: { low: number; high: number } | null;
+    /** How far the assumed entry and exit fills sat from the bar the resolver
+     *  actually saw. Every other number on this card is priced as if the level
+     *  printed; this is the measurement of how often it did not. `n` is the
+     *  fill count it was computed from — `0` means nothing has filled yet, and
+     *  the means are null rather than zero. */
+    fillRealism: FillRealism;
 }
 
 /**
@@ -149,5 +156,10 @@ export const scoreSignals = (rows: readonly SignalRow[]): SignalScorecard => {
         ambiguityRate: fills.length > 0 ? ambiguous / fills.length : null,
         slugging,
         hitCi: hitRate !== null ? wilsonInterval95(wins.length, fills.length) : null,
+        // Same fill set, second reader. Handed the ALREADY-filtered rows: the
+        // helper filters identically, so passing these or `rows` cannot produce
+        // two different denominators — and the floor it applies is its own,
+        // because a mean over three gaps is a rumour.
+        fillRealism: fillRealismSummary(fills),
     };
 };
