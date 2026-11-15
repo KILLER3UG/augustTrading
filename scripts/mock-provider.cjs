@@ -41,6 +41,9 @@ const MODEL = 'mock-mini';
  */
 const TOOL_SCENARIO = process.env.MOCK_TOOL_CALL === '1' || process.argv.includes('--tool-call');
 const TOOL_NAME = process.env.MOCK_TOOL_NAME || 'skill_write';
+/** How many scripted calls this process has emitted — the index into a
+ *  MOCK_SKILL_ARGS sequence (see toolScenario). */
+let scriptedCalls = 0;
 
 const DEFAULT_SKILL_ARGS = {
     slug: 'probe-session-open-fade-short',
@@ -95,7 +98,16 @@ function toolScenario(body) {
     const results = msgs.slice(lastUser + 1).filter(x => x && x.role === 'tool');
     let args = DEFAULT_SKILL_ARGS;
     if (process.env.MOCK_SKILL_ARGS) {
-        try { args = JSON.parse(process.env.MOCK_SKILL_ARGS); } catch { /* keep the default */ }
+        try {
+            const parsed = JSON.parse(process.env.MOCK_SKILL_ARGS);
+            // A SEQUENCE of arg-sets: each scripted emission consumes the next
+            // entry, so one run can drive two different tool calls (e.g. a
+            // correction the trader confirms, then one they dismiss). A single
+            // object behaves exactly as before.
+            args = Array.isArray(parsed)
+                ? parsed[Math.min(scriptedCalls, parsed.length - 1)]
+                : parsed;
+        } catch { /* keep the default */ }
     }
     let name = TOOL_NAME;
     if (name === 'skill_write') {
@@ -116,6 +128,7 @@ function toolScenario(body) {
             }
         }
     } else if (results.length) return null;
+    scriptedCalls += 1;
     return {
         model: MODEL,
         choices: [{

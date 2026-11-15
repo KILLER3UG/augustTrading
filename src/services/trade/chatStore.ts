@@ -50,6 +50,15 @@ export type LiveEntry = StoredChatEntry & {
     /** A trade the model PRESENTED via the present_trade tool — the dock
      *  renders it as a card with Log-this-trade / Cancel. Not persisted. */
     proposal?: TradeProposal;
+    /** A PROPOSED settlement fix (correct_trade_outcome) — the dock renders
+     *  it as a confirm card. Runtime-only like `proposal`: the proposal lives
+     *  in services/trade/settlementCorrection's store, the journal row is
+     *  written only when the trader confirms, and never by this entry. */
+    settlementCorrection?: import('./settlementCorrection').SettlementCorrectionProposal;
+    /** A PROPOSED action on an ARMED plan (update_trade / close_trade) —
+     *  rendered as a confirm card. Runtime-only; the watch/journal are
+     *  written only on the trader's confirm. */
+    tradeAction?: import('./tradeActionProposal').TradeActionProposal;
     /** The live-only "still working" line for a slow call; not persisted. */
     liveProgress?: string;
 };
@@ -180,7 +189,7 @@ const schedulePersist = (): void => {
             ...s,
             entries: s.entries
                 .filter(e => !e.streaming)
-                .map(({ streaming: _streaming, proposal: _proposal, liveProgress: _liveProgress, ...rest }) => rest),
+                .map(({ streaming: _streaming, proposal: _proposal, settlementCorrection: _correction, tradeAction: _action, liveProgress: _liveProgress, ...rest }) => rest),
             // openTrades / loggedTradeIds are runtime-only — persisted sessions
             // never carry them (a reload means "we have no live trade state"),
             // so strip them defensively here even though chatSessions.ts also

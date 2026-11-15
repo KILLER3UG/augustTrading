@@ -1771,9 +1771,18 @@ async function main() {
             'the Chat composer offered Send while the Chart AI turn was generating');
         const aiCharsOnChat = () => page.evaluate(() => [...document.querySelectorAll(
             '[data-testid="agent-message"][data-role="ai"]')].reduce((n, e) => n + (e.textContent || '').length, 0));
+        // The answer must GROW while observed on this surface. Two samples a
+        // fixed 700ms apart race the stream's own pacing: a loaded machine
+        // lands both samples inside one stream stall and calls a live mirror
+        // frozen. Sample repeatedly for up to 10s and pass on the FIRST
+        // observed growth — the claim (the mirrored answer is live on the
+        // other home) is unchanged.
         const growA = await aiCharsOnChat();
-        await sleep(700);
-        const growB = await aiCharsOnChat();
+        let growB = growA;
+        for (let i = 0; i < 50 && growB <= growA; i++) {
+            await sleep(200);
+            growB = await aiCharsOnChat();
+        }
         check('the answer keeps growing on the Agents surface', growB > growA && growA > 0,
             `${growA} -> ${growB} characters`);
         // The settle signal here is the CONTROL CHANGING IDENTITY, not becoming
@@ -2897,10 +2906,18 @@ async function main() {
             await openMenu(); await sleep(300);
             await navTo('Learning'); await settleSurface('Learning');
             // Learning IS the Health panel now (2026-11-08): Skills and Memory
-            // are surfaces of their own, so there is no tab to press.
-            await sleep(1200);
-            const shown = await page.locator('[data-testid="learn-system"]').count();
-            const resting = await page.locator('[data-testid="learn-resting"]').count();
+            // are surfaces of their own, so there is no tab to press. The
+            // panels are lazy chunks, so POLL for the block instead of
+            // sampling after a fixed sleep — on a loaded machine any fixed
+            // wait samples a pre-mount frame and blames the app for the
+            // probe's own timing.
+            let shown = 0;
+            let resting = 0;
+            for (let i = 0; i < 40 && shown === 0; i++) {
+                shown = await page.locator('[data-testid="learn-system"]').count();
+                resting = await page.locator('[data-testid="learn-resting"]').count();
+                if (shown === 0) await sleep(300);
+            }
             check('the loop telemetry shows with no preset behind it', shown === 1 && resting === 0,
                 `blocks=${shown} resting=${resting}`);
         }
@@ -4593,15 +4610,22 @@ async function main() {
         await attachInput.setInputFiles({
             name: 'probe-attach.png',
             mimeType: 'image/png',
-            buffer: Buffer.alloc(4 * 1024 * 1024, 0x89),
+            // 16 MB: the FileReader read must stay observably pending while
+            // the probe samples the chip. A smaller buffer decodes before the
+            // probe's own round-trip on a loaded machine, and the check then
+            // measures that race instead of the mount.
+            buffer: Buffer.alloc(16 * 1024 * 1024, 0x89),
         });
-        const mounting = await page.evaluate(() => {
+        // The chip mounts with the change event; waitForFunction polls IN the
+        // browser (50ms), so the first sample lands well inside the read. The
+        // handle is unwrapped to the plain state object.
+        const mounting = await page.waitForFunction(() => {
             const chip = document.querySelector('[data-testid="chat-attachment"]');
             return chip ? {
                 loading: chip.getAttribute('data-attachment-loading'),
                 pulse: !!chip.querySelector('.animate-pulse'),
             } : null;
-        });
+        }, null, { timeout: 5000, polling: 50 }).then((h) => h.jsonValue()).catch(() => null);
         check('an attached image mounts its chip before the decode lands',
             !!mounting && mounting.loading === 'true' && mounting.pulse === true,
             JSON.stringify(mounting));

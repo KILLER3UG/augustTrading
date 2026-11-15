@@ -405,7 +405,8 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
     const executePanelTool = async (call: DeskToolCall, turn: PanelTurnContext, planCapture?: { planId: string | null; symbol: string | null; playbookId: string | null; snapshot: CaptureSnapshot | null }): Promise<DeskToolResult | null> => {
         const name = call.name;
         if (name !== 'draw_on_chart' && name !== 'draw_detected' && name !== 'draw_tool_levels' && name !== 'mark_trade_levels' && name !== 'clear_chart_drawings'
-            && name !== 'present_trade' && name !== 'watch_price' && name !== 'wake_me' && name !== 'cancel_watch') return null;
+            && name !== 'present_trade' && name !== 'watch_price' && name !== 'wake_me' && name !== 'cancel_watch'
+            && name !== 'correct_trade_outcome' && name !== 'update_trade' && name !== 'close_trade') return null;
         const args = call.arguments ?? {};
         const receipt = (ok: boolean, content: string): DeskToolResult => ({ toolCallId: call.id, name, ok, content });
         // The chart snapshot is shared by every drawing branch: its live mark
@@ -477,6 +478,47 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
             return receipt(true, n > 0
                 ? `Cancelled ${n} watch${n === 1 ? '' : 'es'}. Still armed: ${left.join(', ') || 'none'}.`
                 : `Nothing to cancel (ids: ${ids.join(', ') || '—'}). Still armed: ${left.join(', ') || 'none'}.`);
+        }
+        // ── The decision-card tools (audit P-6; plan principle 5) ──────────
+        // correct_trade_outcome / update_trade / close_trade only RECORD a
+        // proposal in their own stores (the shared executor validates and
+        // stores; neither writes a journal row nor touches the watch). This
+        // sink then attaches the pending proposal to THIS turn's entry — the
+        // same patch chatSurfaceTurn makes onto the canonical row — so the
+        // dock renders the confirm card. The card holds no authority: the
+        // write happens only when the trader confirms, through App's journal
+        // and watch handlers.
+        if (name === 'correct_trade_outcome' || name === 'update_trade' || name === 'close_trade') {
+            const { executeDeskTool } = await import('../analysis/DeskToolsService');
+            const result = await executeDeskTool(call, {
+                defaultSymbol: turn.symbol ?? null,
+                allowedTools: TRADE_TOOLS,
+                trades,
+            });
+            if (result.ok && turn.entryId) {
+                if (name === 'correct_trade_outcome') {
+                    const { pendingSettlementCorrection } = await import('./settlementCorrection');
+                    const tradeId = typeof call.arguments?.tradeId === 'string' ? call.arguments.tradeId : '';
+                    const proposal = pendingSettlementCorrection(tradeId);
+                    if (proposal) {
+                        chatStore.mutate(turn.sid, s => ({
+                            ...s,
+                            entries: s.entries.map(en => (en.id === turn.entryId ? { ...en, settlementCorrection: proposal } : en)),
+                        }));
+                    }
+                } else {
+                    const { pendingTradeAction } = await import('./tradeActionProposal');
+                    const planId = typeof call.arguments?.planId === 'string' ? call.arguments.planId : '';
+                    const proposal = pendingTradeAction(planId);
+                    if (proposal) {
+                        chatStore.mutate(turn.sid, s => ({
+                            ...s,
+                            entries: s.entries.map(en => (en.id === turn.entryId ? { ...en, tradeAction: proposal } : en)),
+                        }));
+                    }
+                }
+            }
+            return result;
         }
         // present_trade: draw the plan, arm the harness level-watch, and surface a
         // "Log this trade" card on the streaming entry. The TRANSITION lives in

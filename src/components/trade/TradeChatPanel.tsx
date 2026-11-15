@@ -51,6 +51,8 @@ import { activeStrategiesBlock } from '../../services/learning/strategyStore';
 import { deleteSessionDrawings, type ChartDrawing } from '../../services/trade/chartDrawings';
 import type { MessageLevelLines } from '../../services/trade/keyLevels';
 import type { TradeProposal } from '../../services/trade/proposedTrade';
+import type { SettlementCorrectionProposal } from '../../services/trade/settlementCorrection';
+import type { TradeActionProposal } from '../../services/trade/tradeActionProposal';
 import type { WatchPlan } from '../../services/trade/tradePlanLevels';
 import { entriesForSession, PANEL_MAX_MODELS, type PanelSeatRef } from '../../services/trade/chatSessions';
 import * as chatStore from '../../services/trade/chatStore';
@@ -241,6 +243,13 @@ interface TradeChatPanelProps {
     onToggleWatch?: (messageId: string) => void;
     /** Message ids currently pinned, so the chip shows the real state. */
     pinnedMessageIds?: ReadonlySet<string>;
+    /** The dock's decision-card handlers (audit P-6): confirm/dismiss a
+     *  PROPOSED settlement fix or trade action. Confirm applies through App's
+     *  journal/watch writers — the same path the Chat surface's card takes. */
+    onConfirmSettlementCorrection?: (proposal: SettlementCorrectionProposal) => void;
+    onDismissSettlementCorrection?: (proposal: SettlementCorrectionProposal) => void;
+    onConfirmTradeAction?: (proposal: TradeActionProposal) => void;
+    onDismissTradeAction?: (proposal: TradeActionProposal) => void;
 }
 
 /** Empty-state starters. The glyph is a category cue so the row scans by
@@ -303,6 +312,8 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
     onSoloTurnCommit,
     onSyncConversation,
     onToggleWatch, pinnedMessageIds,
+    onConfirmSettlementCorrection, onDismissSettlementCorrection,
+    onConfirmTradeAction, onDismissTradeAction,
     onRefreshModels,
 }) => {
     // Session state lives in the module store (chatStore) so an in-flight
@@ -1278,6 +1289,11 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
                         onToggleWatch={onToggleWatch}
                         pinnedMessageIds={pinnedMessageIds}
                         onLogProposedTrade={onLogProposedTrade}
+                        trades={trades}
+                        onConfirmSettlementCorrection={onConfirmSettlementCorrection}
+                        onDismissSettlementCorrection={onDismissSettlementCorrection}
+                        onConfirmTradeAction={onConfirmTradeAction}
+                        onDismissTradeAction={onDismissTradeAction}
                     />
                 )}
             </div>

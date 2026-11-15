@@ -26,6 +26,8 @@ import { latestChartVerdict, verdictLevels } from '../../services/trade/chartDat
 import { loadSessionModelDrawings, flushDrawings, type ChartDrawing } from '../../services/trade/chartDrawings';
 import { drawingsControl, capDrawings } from '../../services/trade/drawingsControl';
 import type { TradeProposal } from '../../services/trade/proposedTrade';
+import type { SettlementCorrectionProposal } from '../../services/trade/settlementCorrection';
+import type { TradeActionProposal } from '../../services/trade/tradeActionProposal';
 import { getActiveUsername } from '../../utils/activeUser';
 import { fmtPercent, fmtPrice } from '../../utils/formatters';
 import * as levelWatch from '../../services/trade/levelWatchService';
@@ -155,6 +157,13 @@ interface TradeViewProps {
     /** Pin/unpin a verdict to the Pinned list (App owns the watched flag). */
     onToggleWatch?: (messageId: string) => void;
     pinnedMessageIds?: ReadonlySet<string>;
+    /** The dock's decision-card handlers (audit P-6): confirm/dismiss a
+     *  PROPOSED settlement fix or trade action, applied through App's own
+     *  journal/watch writers. Forwarded to the Chart AI dock. */
+    onConfirmSettlementCorrection?: (proposal: SettlementCorrectionProposal) => void;
+    onDismissSettlementCorrection?: (proposal: SettlementCorrectionProposal) => void;
+    onConfirmTradeAction?: (proposal: TradeActionProposal) => void;
+    onDismissTradeAction?: (proposal: TradeActionProposal) => void;
 }
 
 interface StripData {
@@ -328,7 +337,9 @@ export const useTickFlash = (price: number | undefined): { cls: string; seq: num
 
 
 const TradeView: React.FC<TradeViewProps> = ({
-    memoryEnabled, strategiesEnabled, providers, selectedChatModel, onSelectChatModel, onRefreshModels, verdict, bots = [], trades = [], botSessionRequest, groupSessionRequest, onRunAnalysis, onAnalysisError, onStopRun, botThreadRows, onBotTurnCommit, onSoloTurnCommit, onSyncConversation, conversationRows, onNewGroup, getAnalysisMessage, onLogProposedTrade, renderGroupSurface, groups = [], registerScrollToMessage, modeRequest, activeUsername, onTradeModeChange, onOpenChat, onToggleWatch, onOpenWatchList, watchOpenCount = 0, pinnedMessageIds }) => {
+    memoryEnabled, strategiesEnabled, providers, selectedChatModel, onSelectChatModel, onRefreshModels, verdict, bots = [], trades = [], botSessionRequest, groupSessionRequest, onRunAnalysis, onAnalysisError, onStopRun, botThreadRows, onBotTurnCommit, onSoloTurnCommit, onSyncConversation, conversationRows, onNewGroup, getAnalysisMessage, onLogProposedTrade, renderGroupSurface, groups = [], registerScrollToMessage, modeRequest, activeUsername, onTradeModeChange, onOpenChat,    onToggleWatch, onOpenWatchList, watchOpenCount = 0, pinnedMessageIds,
+    onConfirmSettlementCorrection, onDismissSettlementCorrection,
+    onConfirmTradeAction, onDismissTradeAction }) => {
     // The chart opens on the coin the SHARED chat session carries. Adopting only
     // from an effect is not enough: the dock mounts in the same commit, a child's
     // effect runs before its parent's, and the dock can re-bind the active session
@@ -887,6 +898,10 @@ const TradeView: React.FC<TradeViewProps> = ({
         pinnedMessageIds,
         onRefreshModels,
         registerScrollToMessage,
+        onConfirmSettlementCorrection,
+        onDismissSettlementCorrection,
+        onConfirmTradeAction,
+        onDismissTradeAction,
     };
 
     return (

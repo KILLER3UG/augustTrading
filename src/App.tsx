@@ -17,6 +17,8 @@ import { useAgentThreads } from './hooks/useAgentThreads';
 import { useWatchAndAutopilot } from './hooks/useWatchAndAutopilot';
 import { buildProposedTradeMessage, type TradeProposal } from './services/trade/proposedTrade';
 import { ensureStamp } from './services/trade/proposalGate';
+import { confirmSettlementCorrection, dismissSettlementCorrection, type SettlementCorrectionProposal } from './services/trade/settlementCorrection';
+import { confirmTradeAction, dismissTradeAction, type TradeActionProposal } from './services/trade/tradeActionProposal';
 import * as chatStore from './services/trade/chatStore';
 import * as watchService from './services/trade/watchService';
 import * as levelWatch from './services/trade/levelWatchService';
@@ -1632,6 +1634,51 @@ const App: React.FC = () => {
         return true;
     }, [updateMessages, loggedTrades, confirmDialog, messages, trackProposedTrade, toast]);
 
+    // ── Decision-card writers, shared by BOTH chat homes (audit P-6) ──────
+    // The AGENTS surface's card and the CHART AI dock's card apply through
+    // these same two callbacks: the journal's own correction hooks (so a
+    // confirmed correction carries correctedFrom/correctedAt/resolutionSource)
+    // and the watch service (re-arm with the confirmed levels, or disarm on
+    // close). The confirm half — marking the store's proposal decided — is
+    // the only part that differs per surface, because each home keys its card
+    // by its own row id.
+    const applySettlementCorrection = useCallback((proposal: SettlementCorrectionProposal): void => {
+        if (proposal.outcome !== undefined) handleUpdateTradeOutcome(proposal.tradeId, proposal.outcome);
+        if (proposal.pnlAmount !== undefined || proposal.pnlPercent !== undefined) {
+            handleUpdateTradePnL(proposal.tradeId, { pnlAmount: proposal.pnlAmount, pnlPercent: proposal.pnlPercent });
+        }
+    }, [handleUpdateTradeOutcome, handleUpdateTradePnL]);
+    const applyTradeAction = useCallback((proposal: TradeActionProposal): void => {
+        void (async () => {
+            const { arm, disarm, getArmedPlans } = await import('./services/trade/levelWatchService');
+            if (proposal.kind === 'close') {
+                disarm(proposal.planId);
+                return;
+            }
+            const plan = getArmedPlans().find(p => p.planId === proposal.planId);
+            if (!plan) return;
+            arm({
+                ...plan,
+                ...(proposal.entry !== undefined ? { entry: proposal.entry } : {}),
+                ...(proposal.stopLoss !== undefined ? { stopLoss: proposal.stopLoss } : {}),
+                ...(proposal.takeProfits !== undefined ? { takeProfits: proposal.takeProfits } : {}),
+            }, null);
+        })();
+    }, []);
+    /** The DOCK's confirm: settle the store's proposal, then apply. */
+    const confirmDockSettlementCorrection = useCallback((proposal: SettlementCorrectionProposal): void => {
+        if (confirmSettlementCorrection(proposal.tradeId)) applySettlementCorrection(proposal);
+    }, [applySettlementCorrection]);
+    const dismissDockSettlementCorrection = useCallback((proposal: SettlementCorrectionProposal): void => {
+        dismissSettlementCorrection(proposal.tradeId);
+    }, []);
+    const confirmDockTradeAction = useCallback((proposal: TradeActionProposal): void => {
+        if (confirmTradeAction(proposal.planId)) applyTradeAction(proposal);
+    }, [applyTradeAction]);
+    const dismissDockTradeAction = useCallback((proposal: TradeActionProposal): void => {
+        dismissTradeAction(proposal.planId);
+    }, []);
+
     /** The dock holds a settled verdict's message id, not a copy of the
      *  analysis — a persisted chat session would otherwise store a whole
      *  `TradeAnalysis` per answer. This lets it resolve the backing on demand.
@@ -2494,33 +2541,19 @@ const App: React.FC = () => {
                            SAME handlers the Journal's own editors
                            call, so a confirmed correction lands with
                            the audit trail a human edit gets. */
-                        onApplySettlementCorrection={(proposal) => {
-                            if (proposal.outcome !== undefined) handleUpdateTradeOutcome(proposal.tradeId, proposal.outcome);
-                            if (proposal.pnlAmount !== undefined || proposal.pnlPercent !== undefined) {
-                                handleUpdateTradePnL(proposal.tradeId, { pnlAmount: proposal.pnlAmount, pnlPercent: proposal.pnlPercent });
-                            }
-                        }}
+                        onApplySettlementCorrection={applySettlementCorrection}
                         /* The trade-action apply path: move the levels on the
                            armed plan (re-arm it with the confirmed levels) or
                            close it (disarm the watch). Written through the
                            watch service, not through this component. */
-                        onApplyTradeAction={(proposal) => {
-                            void (async () => {
-                                const { arm, disarm, getArmedPlans } = await import('./services/trade/levelWatchService');
-                                if (proposal.kind === 'close') {
-                                    disarm(proposal.planId);
-                                    return;
-                                }
-                                const plan = getArmedPlans().find(p => p.planId === proposal.planId);
-                                if (!plan) return;
-                                arm({
-                                    ...plan,
-                                    ...(proposal.entry !== undefined ? { entry: proposal.entry } : {}),
-                                    ...(proposal.stopLoss !== undefined ? { stopLoss: proposal.stopLoss } : {}),
-                                    ...(proposal.takeProfits !== undefined ? { takeProfits: proposal.takeProfits } : {}),
-                                }, null);
-                            })();
-                        }}
+                        onApplyTradeAction={applyTradeAction}
+                        /* The CHART AI dock's decision cards (audit P-6):
+                           confirm settles the store's proposal, then applies
+                           through the same writers above. */
+                        onConfirmSettlementCorrection={confirmDockSettlementCorrection}
+                        onDismissSettlementCorrection={dismissDockSettlementCorrection}
+                        onConfirmTradeAction={confirmDockTradeAction}
+                        onDismissTradeAction={dismissDockTradeAction}
                         onStopAgentsRun={handleStopAgentsRun}
                         workingBotId={workingBotId}
                         dmWorkingBotId={dmWorkingBotId}

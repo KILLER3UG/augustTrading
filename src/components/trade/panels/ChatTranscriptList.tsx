@@ -29,6 +29,12 @@ import type { TradeProposal } from '../../../services/trade/proposedTrade';
 import { formatSeatLabel } from '../../../utils/providerUtils';
 import ChatWorkTimeline from './ChatWorkTimeline';
 import TradeProposalCard, { TradeProposalLoggedRow } from './TradeProposalCard';
+import SettlementCorrectionCard from './SettlementCorrectionCard';
+import TradeActionCard from './TradeActionCard';
+import { settlementCorrectionStateOf, type SettlementCorrectionProposal } from '../../../services/trade/settlementCorrection';
+import { tradeActionStateOf, type TradeActionProposal } from '../../../services/trade/tradeActionProposal';
+import { getArmedPlans } from '../../../services/trade/levelWatchService';
+import type { LoggedTrade } from '../../../types';
 import VerdictAudit, { verdictNeedsAudit } from '../../analysis/VerdictAudit';
 import InlineVerdict from '../../analysis/InlineVerdict';
 import MemoryProvenanceStrip from '../../chat/MemoryProvenanceStrip';
@@ -136,12 +142,28 @@ interface ChatTranscriptListProps {
     /** "Log this trade" on a model proposal → App records an OPEN trade.
      *  Absent ⇒ the Log button is hidden (no journal attached). */
     onLogProposedTrade?: (proposal: TradeProposal) => void | Promise<boolean>;
+    /** The journal rows, so a settlement-correction card can show the "before"
+     *  half of what it changes (the same input the Chat row gets). */
+    trades?: LoggedTrade[];
+    /** Confirm a PROPOSED settlement fix. The handler applies it through the
+     *  SAME journal hooks a human edit calls; this list only renders the card
+     *  and reports the tap. Absent ⇒ the Confirm button is hidden. */
+    onConfirmSettlementCorrection?: (proposal: SettlementCorrectionProposal) => void;
+    /** Dismiss a PROPOSED settlement fix — the row is untouched. */
+    onDismissSettlementCorrection?: (proposal: SettlementCorrectionProposal) => void;
+    /** Confirm a PROPOSED action on an armed plan (move levels / close).
+     *  Applied through App's watch/journal writers, never from this row. */
+    onConfirmTradeAction?: (proposal: TradeActionProposal) => void;
+    /** Dismiss a PROPOSED trade action — the armed plan is untouched. */
+    onDismissTradeAction?: (proposal: TradeActionProposal) => void;
 }
 
 const ChatTranscriptList: React.FC<ChatTranscriptListProps> = ({
     entries, scrollParent, virtuosoRef, followOutput, onAtBottomChange, onTotalHeightChanged,
     send, setDraftText, getAnalysisMessage, resolveVerdictByIdentity, symbol, getMark, onChatLevels,
-    onToggleWatch, pinnedMessageIds, onLogProposedTrade,
+    onToggleWatch, pinnedMessageIds, onLogProposedTrade, trades,
+    onConfirmSettlementCorrection, onDismissSettlementCorrection,
+    onConfirmTradeAction, onDismissTradeAction,
 }) => {
     /** Re-render trigger for the module-scope proposal dispositions (see
      *  proposalDisposition): the disposition itself must SURVIVE a dock
@@ -151,6 +173,11 @@ const ChatTranscriptList: React.FC<ChatTranscriptListProps> = ({
      *  the module map) on purpose: it is a transient, and a pending await that
      *  survived an unmount would disable a button that no longer exists. */
     const [awaitingLogEntryId, setAwaitingLogEntryId] = useState<string | null>(null);
+    /** Re-render trigger for the module-scope decision-card stores (the
+     *  settlement-correction and trade-action dispositions). Like
+     *  `proposalTick`: the decision survives a dock unmount in its own store,
+     *  the state here only makes the resolved card leave the screen. */
+    const [decisionTick, setDecisionTick] = useState(0);
     /** Proposal card disposition for one entry — read from the MODULE map
      *  (see proposalDisposition), so the 'logged' state survives a dock
      *  unmount/remount and "Log this trade" can never be clicked twice for
@@ -414,6 +441,47 @@ const ChatTranscriptList: React.FC<ChatTranscriptListProps> = ({
                                 onChatLevels={onChatLevels}
                             />
                         )}
+                        {/* A PROPOSED settlement fix (correct_trade_outcome).
+                            The card holds no authority: Confirm routes to the
+                            SAME journal hooks a human edit calls, and nothing
+                            changes until that tap. The disposition lives in
+                            the correction store at module scope, so a decided
+                            card stays decided across a dock unmount — the same
+                            contract as the proposal map below. */}
+                        {(() => {
+                            void decisionTick;
+                            const p = e.settlementCorrection;
+                            if (!p || settlementCorrectionStateOf(p.tradeId) !== undefined) return null;
+                            const row = trades?.find(t => t.id === p.tradeId);
+                            return (
+                                <SettlementCorrectionCard
+                                    proposal={p}
+                                    current={row ? { outcome: row.outcome, pnlAmount: row.pnlAmount, pnlPercent: row.pnlPercent } : undefined}
+                                    onConfirm={() => { onConfirmSettlementCorrection?.(p); setDecisionTick(t => t + 1); }}
+                                    onDismiss={() => { onDismissSettlementCorrection?.(p); setDecisionTick(t => t + 1); }}
+                                />
+                            );
+                        })()}
+                        {/* A PROPOSED action on an ARMED plan (update_trade /
+                            close_trade). Confirm applies it through App's
+                            watch/journal writers; the card itself writes
+                            nothing. The plan's CURRENT levels come from the
+                            watch service — the dock is the surface that arms
+                            it, so the before/after is real here. */}
+                        {(() => {
+                            void decisionTick;
+                            const p = e.tradeAction;
+                            if (!p || tradeActionStateOf(p.planId) !== undefined) return null;
+                            const plan = getArmedPlans().find(x => x.planId === p.planId);
+                            return (
+                                <TradeActionCard
+                                    proposal={p}
+                                    current={plan ? { entry: plan.entry, stopLoss: plan.stopLoss, takeProfits: plan.takeProfits } : undefined}
+                                    onConfirm={() => { onConfirmTradeAction?.(p); setDecisionTick(t => t + 1); }}
+                                    onDismiss={() => { onDismissTradeAction?.(p); setDecisionTick(t => t + 1); }}
+                                />
+                            );
+                        })()}
                         {e.proposal && !proposalStateOf(e.id) && (
                             <TradeProposalCard
                                 proposal={e.proposal}

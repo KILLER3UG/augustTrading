@@ -132,6 +132,13 @@ export interface SurfaceOutletProps {
     onOpenWatchList: () => void;
     /** Jump straight to the Agents surface from the dock header. */
     onOpenAgents: () => void;
+    /** The dock's decision-card handlers (audit P-6): confirm/dismiss a
+     *  PROPOSED settlement fix or trade action. Confirm applies through the
+     *  SAME journal/watch writers the Chat surface's card uses. */
+    onConfirmSettlementCorrection: (proposal: SettlementCorrectionProposal) => void;
+    onDismissSettlementCorrection: (proposal: SettlementCorrectionProposal) => void;
+    onConfirmTradeAction: (proposal: TradeActionProposal) => void;
+    onDismissTradeAction: (proposal: TradeActionProposal) => void;
     watchOpenCount: number;
     watchOpenR: string | undefined;
     pinnedMessageIds: ReadonlySet<string>;
@@ -195,6 +202,8 @@ const SurfaceOutlet: React.FC<SurfaceOutletProps> = ({
     botSessionRequest, groupSessionRequest, onRunAnalysisFromChat, onAnalysisError,
     onCancelAnalysis, getAnalysisMessage, onLogProposedTrade, registerScrollToMessage,
     onToggleWatch, onOpenWatchList, onOpenAgents, watchOpenCount, watchOpenR, pinnedMessageIds,
+    onConfirmSettlementCorrection, onDismissSettlementCorrection,
+    onConfirmTradeAction, onDismissTradeAction,
     renderGroupSurface,
     groups, activeThread, onSelectThread, onNewBot, onSendBotTurn, onAnalyze,
     onApplySettlementCorrection, onApplyTradeAction, onStopAgentsRun,
@@ -280,6 +289,10 @@ const SurfaceOutlet: React.FC<SurfaceOutletProps> = ({
                         registerScrollToMessage={registerScrollToMessage}
                         onToggleWatch={onToggleWatch}
                         onOpenWatchList={onOpenWatchList}
+                        onConfirmSettlementCorrection={onConfirmSettlementCorrection}
+                        onDismissSettlementCorrection={onDismissSettlementCorrection}
+                        onConfirmTradeAction={onConfirmTradeAction}
+                        onDismissTradeAction={onDismissTradeAction}
                         watchOpenCount={watchOpenCount}
                         watchOpenR={watchOpenR}
                         pinnedMessageIds={pinnedMessageIds}
