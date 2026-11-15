@@ -22,6 +22,34 @@ palette/radii already in `src/index.css`. Two defaults chosen without your answe
 chat always side by side**, **rooms/bots: composer mode menu** — are marked adjustable in Open
 questions.
 
+## Status (2026-11-15)
+
+**Phase 1a and 1b are done and pushed.** All six agent hands are registered and callable:
+`set_chart_timeframe`, `toggle_chart_study`, `correct_trade_outcome`, `update_trade`,
+`close_trade`, `run_review`. The three that touch an armed trade only RECORD a proposal —
+the trader's confirm applies it. `run_review` is read-only.
+
+**The settlement-correction card and the trade-action card landed early (Phase 3 work), on the
+CHAT SURFACE only.** A correction or a level-change/close proposed from the chat surface renders
+its card and resolves on a confirm. The dock records and replies honestly but shows no card yet.
+
+**Phase 4 has not started** — correctly, it is gated on phases 1–3 being verified.
+
+### Still open
+
+| Item | Where | Why it is open |
+|---|---|---|
+| The dock's correction/action card sink | `src/services/trade/chatTurnRunner.ts`, `src/components/trade/panels/ChatTranscriptList.tsx` | A correction or level-change/close proposed from the DOCK records and replies honestly, but shows no card there: `chatTurnRunner` writes to `chatStore` entries and `ChatTranscriptList` does not draw the cards yet. |
+| The `App.tsx` surface-switch extraction, with the six-surface render probe re-anchored | `src/App.tsx`, `scripts/render-probe.cjs` | Phase 2's mandated first step. The probe's surface sweep must be re-anchored after the surfaces move — it is the only gate that sees a rendered row. |
+
+### Review and gating
+
+- **The early Phase 3 work (the correction and trade-action cards) still needs independent
+  review.** It was built alongside Phase 1b so the authority changes had a card to confirm
+  against, and no second pair of eyes has checked it.
+- **Phase 4 stays blocked** until the dock sink is done AND the settlement-correction card is
+  verified on every surface it can be proposed from — not just the chat surface.
+
 ## Audit (keep / merge / remove)
 
 | Area | Item | Verdict | Why |
@@ -131,12 +159,12 @@ trading keeps deterministic gates.
      `CHART_ACTION_TOOL_DEFS`, with executor branches and the settings subscription the chart
      needs to hear an external write. Both are reversible visibility/frame changes: no record,
      no risk, no card required.
-   - **1b-ii — the trade writes.** `update_trade` and `close_trade` are registered only with the
+   - **1b-ii — the trade writes.** `update_trade` and `close_trade` are registered against the
      Phase 3 decision card. A proposal with no card to confirm it is a dead affordance, and a tool
      that applied its change on the call would be the authority bug the 1a/1b split exists to
-     prevent. They stay defined and unreachable until the card ships.
-   - **1b-iii — `run_review`.** Waits on the review services' entry points and the harness turn
-     that carries their findings, not on the card.
+     prevent — so both RECORD a proposal and never act on the call.
+   - **1b-iii — `run_review`.** Read-only: it computes the review from the journal rows the turn
+     already carries and returns the findings. It writes nothing and arms nothing.
 2. **One workspace** (the visible cut): merge dock + AgentsView; rail becomes New chat/Pinned/Recent/
    account + gear; composer mode menu (single/panel/room/bot); chart pane permanent.
    `src/App.tsx` surface switch extracted first (it is ~2,717 lines — O-105). render-probe re-anchored
