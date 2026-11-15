@@ -498,7 +498,10 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
             if (result.ok && turn.entryId) {
                 if (name === 'correct_trade_outcome') {
                     const { pendingSettlementCorrection } = await import('./settlementCorrection');
-                    const tradeId = typeof call.arguments?.tradeId === 'string' ? call.arguments.tradeId : '';
+                    // The store keys by the TRIMMED id (checkSettlementCorrection
+                    // trims), so the read-back must trim too — a padded id would
+                    // store the proposal and then miss it here.
+                    const tradeId = typeof call.arguments?.tradeId === 'string' ? call.arguments.tradeId.trim() : '';
                     const proposal = pendingSettlementCorrection(tradeId);
                     if (proposal) {
                         chatStore.mutate(turn.sid, s => ({
@@ -508,7 +511,7 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
                     }
                 } else {
                     const { pendingTradeAction } = await import('./tradeActionProposal');
-                    const planId = typeof call.arguments?.planId === 'string' ? call.arguments.planId : '';
+                    const planId = typeof call.arguments?.planId === 'string' ? call.arguments.planId.trim() : '';
                     const proposal = pendingTradeAction(planId);
                     if (proposal) {
                         chatStore.mutate(turn.sid, s => ({

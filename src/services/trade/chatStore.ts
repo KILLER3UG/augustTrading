@@ -242,7 +242,7 @@ export const persistInterrupted = (): void => {
         if (!loaded || getActiveUsername() !== loadedFor) return;
         const stored: ChatSession[] = sessions.map(s => ({
             ...s,
-            entries: s.entries.map(({ streaming, proposal: _proposal, liveProgress: _liveProgress, ...rest }) => (streaming ? { ...rest, interrupted: true } : rest)),
+            entries: s.entries.map(({ streaming, proposal: _proposal, settlementCorrection: _correction, tradeAction: _action, liveProgress: _liveProgress, ...rest }) => (streaming ? { ...rest, interrupted: true } : rest)),
             openTrades: undefined,
             loggedTradeIds: undefined,
         }));

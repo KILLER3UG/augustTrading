@@ -280,6 +280,10 @@ async function main() {
                 && !!t.correctedAt && t.correctedFrom === 'LOSS';
         }, 'pt-2', { timeout: 15000 }).then(() => true).catch(() => false);
         check('one tap on Confirm writes the corrected outcome through the gated path', audit);
+        // The detail reads the row AGAIN, after the save has settled — a read
+        // raced against the debounced write printed a pre-commit snapshot and
+        // misreported a passing check (review finding).
+        await sleep(2000);
         const afterConfirm = await readTradeRow(page, 'pt-2');
         check('the confirmed correction carries the journal edit audit trail', audit,
             afterConfirm
