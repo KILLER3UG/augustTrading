@@ -36,6 +36,10 @@ export interface SurfaceRouterOptions {
     setIsLiveMarketVisible: (visible: boolean) => void;
     isWatchListVisible: boolean;
     setIsWatchListVisible: (visible: boolean) => void;
+    /** Opens the Settings modal at the Journal section — the Journal is a
+     *  section of the modal now, so the deep link and the launchers land
+     *  there instead of on a deleted surface. */
+    openSettingsSection?: (tab: 'journal') => void;
 }
 
 export interface SurfaceRouter {
@@ -53,6 +57,7 @@ export const useSurfaceRouter = (opts: SurfaceRouterOptions): SurfaceRouter => {
         isSettingsMenuVisible, setIsSettingsMenuVisible,
         isLiveMarketVisible, setIsLiveMarketVisible,
         isWatchListVisible, setIsWatchListVisible,
+        openSettingsSection,
     } = opts;
 
     // Top-level surfaces chosen from the header's hamburger menu
@@ -71,13 +76,14 @@ export const useSurfaceRouter = (opts: SurfaceRouterOptions): SurfaceRouter => {
     const openJournal = useCallback((tab: JournalUIState['tab'] = 'log'): void => {
         setJournalTab(tab);
         setJournalOpenNonce(n => n + 1);
-        // Overlays sit above surfaces — close them so the journal actually
-        // lands visible.
-        setIsSettingsMenuVisible(false);
+        // The Journal is a SECTION of the Settings modal now — the deep
+        // link and the launchers land on the modal's journal section.
         setIsLiveMarketVisible(false);
         setIsWatchListVisible(false);
-        setSurface('journal');
-    }, [setSurface, setIsSettingsMenuVisible, setIsLiveMarketVisible, setIsWatchListVisible]);
+        setSurface('trade');
+        openSettingsSection?.('journal');
+        setIsSettingsMenuVisible(true);
+    }, [setSurface, setIsSettingsMenuVisible, setIsLiveMarketVisible, setIsWatchListVisible, openSettingsSection]);
 
     /** Switching surfaces changes the CONTENT and nothing else — no slide, no
      *  resize tween. The hop used to carry a direction flag ('left' | 'right')
@@ -85,31 +91,20 @@ export const useSurfaceRouter = (opts: SurfaceRouterOptions): SurfaceRouter => {
      *  swap instead, so the flag has no reader and must not come back as dead
      *  plumbing. */
     const handleSurfaceSelect = useCallback((next: AppSurface): void => {
-        if (next === 'journal') {
-            openJournal();
-            return;
-        }
         setSurface(next);
-    }, [openJournal, setSurface]);
+    }, [setSurface]);
 
     useEffect(() => {
         const apply = (): void => {
             const route = parseAppHash(window.location.hash);
             applyingHashRef.current = true;
-            if (route.view === 'journal' && /^#\/journal\/learning/i.test(window.location.hash)) {
-                // WS-5.1: the Journal's old "Learn" tab moved onto the Learn
-                // surface, so a bookmarked #/journal/learning lands where the
-                // content actually lives now rather than a deleted tab. Matched
-                // on the RAW hash because parseAppHash folds dead tabs to the
-                // ledger — the fold must not strand this bookmark on Journal.
-                setSurface('learn');
-                setIsSettingsMenuVisible(false);
-                setIsLiveMarketVisible(false);
-                setIsWatchListVisible(false);
-            } else if (route.view === 'journal') {
+            if (route.view === 'journal') {
+                // The Journal is a section of the Settings modal now; the
+                // deep link (and the old learning bookmark) land there.
                 setJournalTab(route.tab || 'log');
-                setSurface('journal');
-                setIsSettingsMenuVisible(false);
+                setSurface('trade');
+                openSettingsSection?.('journal');
+                setIsSettingsMenuVisible(true);
                 setIsLiveMarketVisible(false);
                 setIsWatchListVisible(false);
             } else if (route.view === 'market') {
@@ -134,7 +129,7 @@ export const useSurfaceRouter = (opts: SurfaceRouterOptions): SurfaceRouter => {
         apply();
         window.addEventListener('hashchange', apply);
         return () => window.removeEventListener('hashchange', apply);
-    }, [setSurface, setIsSettingsMenuVisible, setIsLiveMarketVisible, setIsWatchListVisible]);
+    }, [setSurface, setIsSettingsMenuVisible, setIsLiveMarketVisible, setIsWatchListVisible, openSettingsSection]);
 
     useEffect(() => {
         if (applyingHashRef.current) return;
@@ -147,9 +142,7 @@ export const useSurfaceRouter = (opts: SurfaceRouterOptions): SurfaceRouter => {
                 ? { view: 'market' as const }
                 : isWatchListVisible
                     ? { view: 'watch' as const }
-                    : surface === 'journal'
-                        ? { view: 'journal' as const, tab: journalTab }
-                        : { view: 'chat' as const };
+                    : { view: 'chat' as const };
         if (route.view === 'chat' && !window.location.hash) return;
         const next = serializeAppHash(route);
         if (window.location.hash !== next) {

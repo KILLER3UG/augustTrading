@@ -7,8 +7,9 @@ import { AIProvider, LoggedTrade } from '../../types';
 import { CustomInstructionsMap } from '../../types/user';
 import { ProviderConfig, ApiFormat } from '../../types/provider';
 import type { JournalUIState } from '../../hooks/useJournalUI';
+import type { TradeOutcome } from '../../types';
 import { EmptyState } from '../ui/EmptyState';
-import {AISettingsIcon, HistoryIcon, SettingsIcon, CodeIcon, SearchIcon, CloseIcon, ChevronLeftIcon, User, FileText, Brain, BookOpen, Database, Search, ChevronRight, ArrowLeft, ArrowRight, PanelLeft, Info, X} from '../shared/Icons';
+import {AISettingsIcon, GraduationCap, HistoryIcon, LayersIcon, SettingsIcon, CodeIcon, SearchIcon, CloseIcon, ChevronLeftIcon, User, FileText, Brain, BookOpen, Database, Search, ChevronRight, ArrowLeft, ArrowRight, PanelLeft, Info, X} from '../shared/Icons';
 import { getIdleMotionEnabled, subscribeIdleMotion } from '../../services/desk/idleMotion';
 import { loadForgedTools } from '../../services/tools/toolForge';
 import { getHarnessSettings } from '../../utils/harnessSettings';
@@ -36,11 +37,11 @@ const TabFallback: React.FC = () => (
     <div className="p-6 text-ui-dense text-zinc-600">Loading…</div>
 );
 
-export type SettingsTab = 'profile' | 'general' | 'models' | 'journal' | 'instructions' | 'memory' | 'actions' | 'prompts' | 'strategies';
+export type SettingsTab = 'profile' | 'general' | 'models' | 'journal' | 'instructions' | 'memory' | 'actions' | 'prompts' | 'strategies' | 'learn' | 'skills';
 
 /** Tabs whose embedded manager owns the whole scroll container (their own
  *  padding, their own sticky headers) — the workspace adds none. */
-const FULL_BLEED_TABS: SettingsTab[] = ['prompts', 'instructions', 'strategies'];
+const FULL_BLEED_TABS: SettingsTab[] = ['prompts', 'instructions', 'strategies', 'journal', 'skills'];
 
 interface SettingsMenuProps {
     isVisible: boolean;
@@ -61,6 +62,34 @@ interface SettingsMenuProps {
     /** The Settings → Memory behavior switch. */
     isGlobalMemoryEnabled?: boolean;
     onToggleGlobalMemory?: () => void;
+    /** The active section - Journal, Learning, Skills and Memory are
+     *  sections of this modal now. Unset falls back to the internal tab
+     *  (the settings-native pages). */
+    section?: SettingsTab;
+    onSectionChange?: (tab: SettingsTab) => void;
+    /** Renders a former surface (Journal, Learning, Skills, Memory) as
+     *  the section content; unset renders the settings-native bodies. */
+    renderSection?: () => React.ReactNode;
+    setIsGlobalMemoryEnabled?: (enabled: boolean) => void;
+    reviewSummary?: string;
+    reviewLoading?: boolean;
+    onRegenerateReview?: () => void;
+    onOpenStrategySearch?: () => void;
+    skillFormatPair?: string;
+    onSkillFormatModelChange?: (model: string) => void;
+    currentRegime?: string;
+    journalTab?: JournalUIState['tab'];
+    journalOpenNonce?: number;
+    onDeleteTrades?: (ids: string[]) => void;
+    onClearAllTrades?: () => void;
+    modelIdToName?: Record<string, string>;
+    onUpdateInsights?: (ids: string[]) => void;
+    isSummarizing?: boolean;
+    currentInsightIds?: string[];
+    onUpdateTradeLeverage?: (id: string, leverage: number) => void;
+    onUpdateTradeType?: (id: string, tradeType: 'scalp' | 'swing') => void;
+    onUpdateOutcome?: (id: string, outcome: TradeOutcome) => void;
+    onUpdatePnL?: (id: string, pnl: { pnlAmount?: number; pnlPercent?: number }) => void;
     onMemoryConfigChange?: (config: ProviderConfig | null) => void;
     // Pure AI options
     // Instructions
@@ -141,7 +170,9 @@ const NavTabButton: React.FC<{
     <button
         type="button"
         onClick={onClick}
+        data-testid={'settings-section-' + label.toLowerCase().replace(/[^a-z]+/g, '-')}
         aria-current={active ? 'page' : undefined}
+        aria-label={label}
         className={`motion-press flex w-full items-center justify-between gap-2 rounded-control px-2.5 py-2 text-left text-ui-sm font-medium transition-colors ${
             active
                 ? 'bg-zinc-800 text-zinc-100 ring-1 ring-white/[0.09]'
@@ -152,7 +183,7 @@ const NavTabButton: React.FC<{
             <span className={`shrink-0 ${active ? 'text-zinc-100' : 'text-zinc-500'}`}>{icon}</span>
             <span className="truncate" title={label}>{label}</span>
         </span>
-        <span className="flex shrink-0 items-center gap-1.5">
+        <span className="flex shrink-0 items-center gap-1.5" aria-hidden="true">
             {flag && (
                 <span className={`rounded-full px-1.5 py-0.5 text-ui-2xs font-semibold leading-none ${
                     flag === 'New' ? 'bg-emerald-500/15 text-emerald-300' : 'bg-cyan-500/15 text-cyan-300'
@@ -207,6 +238,8 @@ const NAV_GROUPS: NavGroup[] = [
     {
         title: 'Learning',
         entries: [
+            { id: 'learn', label: 'Learning & accuracy', icon: <GraduationCap className={NAV_ICON} />, keywords: 'accuracy stats setups pool drawdown health telemetry' },
+            { id: 'skills', label: 'Skills', icon: <LayersIcon className={NAV_ICON} />, keywords: 'skill library catalog import studio format' },
             // Skills left this dialog for the Learning surface's own tab, so the
             // library and the notebook sit together instead of one being a
             // settings pane. The rail's Skills row and Alt+3 land there.
@@ -268,10 +301,14 @@ const SettingsMenu: React.FC<SettingsMenuProps> = (props) => {
     // configured, otherwise the Get Started provider setup (the onboarding
     // card points beginners there anyway). The old default was the most
     // technical tab (provider CRUD).
-    const [activeTab, setActiveTab] = useState<SettingsTab>(() => {
+    const [internalActiveTab, setInternalActiveTab] = useState<SettingsTab>(() => {
         const hasReadyProvider = (providerConfigs ?? []).some(isProviderReady);
         return hasReadyProvider ? 'general' : 'models';
     });
+    // The four former surfaces are sections of this modal; the App asks for
+    // one explicitly (folder cards, the journal launcher, deep links). The
+    // internal tab still serves the settings-native pages and the history.
+    const activeTab = props.section ?? internalActiveTab;
     const [isAdvancedOpen, setIsAdvancedOpen] = useState(false);
     const [deskToolsEnabled, setDeskToolsEnabled] = useState(() => getHarnessSettings().deskToolsEnabled);
     // Whether the infinite indicators stay still. Default is motion ON.
@@ -300,12 +337,16 @@ const SettingsMenu: React.FC<SettingsMenuProps> = (props) => {
      *  is nothing left for it to see, and it used to overwrite the choice. */
     const explicitTabChosenRef = useRef(false);
 
-    const navClick = useCallback((id: SettingsTab): void => {
+    const changeTab = useCallback((id: SettingsTab): void => {
         // A click IS the explicit choice: without this the landing effect
         // below can still overwrite it when providerConfigsLoaded arrives late.
         explicitTabChosenRef.current = true;
-        setActiveTab(id);
-    }, []);
+        if (props.onSectionChange) { props.onSectionChange(id); return; }
+        setInternalActiveTab(id);
+    }, [props.onSectionChange]);
+    const navClick = useCallback((id: SettingsTab): void => {
+        changeTab(id);
+    }, [changeTab]);
 
     // Closing with a staged (unsaved) provider draft would silently discard
     // the user's edits — confirm first (Escape, backdrop, and the X all route
@@ -354,7 +395,7 @@ const SettingsMenu: React.FC<SettingsMenuProps> = (props) => {
         // Do not step on a deliberate first landing: the very first Profile
         // click opened Analysis, because this effect ran after it.
         if (explicitTabChosenRef.current) return;
-        setActiveTab(readyConfigProviders.length > 0 ? 'general' : 'models');
+        setInternalActiveTab(readyConfigProviders.length > 0 ? 'general' : 'models');
     }, [isVisible, providerConfigsLoaded, readyConfigProviders.length]);
 
     // ── Standalone window chrome ───────────────────────────────────────────
@@ -390,7 +431,10 @@ const SettingsMenu: React.FC<SettingsMenuProps> = (props) => {
     useEffect(() => {
         if (!isVisible) return;
         document.body.setAttribute('data-settings-open', 'true');
-        return () => { document.body.removeAttribute('data-settings-open'); };
+        const onModalKey = (e: KeyboardEvent): void => { if (e.key === 'Escape') requestClose(); };
+        document.addEventListener('keydown', onModalKey);
+        return () => { document.removeEventListener('keydown', onModalKey); document.body.removeAttribute('data-settings-open'); };
+
     }, [isVisible]);
 
     const searchHits = useMemo<SettingsSearchHit[]>(() => {
@@ -402,7 +446,7 @@ const SettingsMenu: React.FC<SettingsMenuProps> = (props) => {
 
     const jumpTo = useCallback((hit: SettingsSearchHit): void => {
         explicitTabChosenRef.current = true;
-        setActiveTab(hit.tab);
+        setInternalActiveTab(hit.tab);
         setNavQuery('');
         setPendingJump(hit.label);
         setHelpOpen(false);
@@ -441,7 +485,7 @@ const SettingsMenu: React.FC<SettingsMenuProps> = (props) => {
         const next = history.index - 1;
         historyNavigationRef.current = true;
         setHistory({ ...history, index: next });
-        setActiveTab(history.stack[next]);
+        setInternalActiveTab(history.stack[next]);
     }, [history]);
 
     const goForward = useCallback((): void => {
@@ -449,7 +493,7 @@ const SettingsMenu: React.FC<SettingsMenuProps> = (props) => {
         const next = history.index + 1;
         historyNavigationRef.current = true;
         setHistory({ ...history, index: next });
-        setActiveTab(history.stack[next]);
+        setInternalActiveTab(history.stack[next]);
     }, [history]);
 
     if (!isVisible) return null;
@@ -462,13 +506,14 @@ const SettingsMenu: React.FC<SettingsMenuProps> = (props) => {
 
     return (
         <>
+            <div className="fixed inset-0 z-modal bg-black/70" onClick={requestClose} aria-hidden="true" />
             <div
                 ref={dialogRef}
                 role="dialog"
                 aria-modal="true"
                 aria-labelledby="settings-title"
                 data-testid="settings-window"
-                className="fixed inset-0 z-modal flex flex-col bg-zinc-950 motion-fade"
+                className="fixed left-1/2 top-1/2 z-modal flex h-[min(88vh,900px)] w-[min(1080px,96vw)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-bubble border border-hairline bg-zinc-950 shadow-elevated motion-fade"
             >
                 {/* Top bar — sidebar toggle, back/forward, breadcrumb, close. */}
                 <div className="flex h-11 shrink-0 items-center gap-1.5 border-b border-hairline bg-zinc-900/40 px-3">
@@ -539,7 +584,7 @@ const SettingsMenu: React.FC<SettingsMenuProps> = (props) => {
                                         onChange={e => setNavQuery(e.target.value)}
                                         onKeyDown={e => {
                                             if (e.key === 'Enter' && searchHits.length > 0) jumpTo(searchHits[0]);
-                                            if (e.key === 'Escape') setNavQuery('');
+                                            if (e.key === 'Escape') { e.stopPropagation(); setNavQuery(''); }
                                         }}
                                         placeholder="Search settings..."
                                         aria-label="Search settings"
@@ -625,10 +670,24 @@ const SettingsMenu: React.FC<SettingsMenuProps> = (props) => {
                         ref={contentRef}
                         role="region"
                         aria-label="Settings content"
-                        className="min-h-0 min-w-0 flex-1 overflow-y-auto bg-zinc-950 p-4 custom-scrollbar md:p-6"
+                        data-testid="settings-content-pane"
+                        className={`min-h-0 min-w-0 flex-1 bg-zinc-950 custom-scrollbar ${
+                            props.renderSection ? 'overflow-hidden' : 'overflow-y-auto p-4 md:p-6'
+                        }`}
                     >
+                        <div className="flex min-h-0 h-full flex-col">{(() => {
+                            // The shell renders the four migrated sections
+                            // (Journal, Learning, Skills) itself; a null from
+                            // renderSection means "this section is one of the
+                            // modal's own pages" — Memory, Data, AI setup and
+                            // the rest fall through to the bodies below.
+                            const section = props.renderSection ? props.renderSection() : null;
+                            return section ?? (
                         <div
                             key={activeTab}
+                            className="h-full min-h-0 overflow-y-auto custom-scrollbar"
+                        >
+                        <div
                             className={`mx-auto w-full max-w-[940px] motion-page rounded-bubble border border-hairline bg-zinc-900/50 ${
                                 FULL_BLEED_TABS.includes(activeTab) ? 'overflow-hidden' : 'p-6 md:p-8'
                             }`}
@@ -686,7 +745,7 @@ const SettingsMenu: React.FC<SettingsMenuProps> = (props) => {
                                         providerConfigsLoaded,
                                         onSwitchUser: props.onSwitchUser,
                                         onExportData: props.onExportData,
-                                        setActiveTab,
+                                        setActiveTab: changeTab,
                                     }} />
                                 </Suspense>
                             )}
@@ -761,6 +820,9 @@ const SettingsMenu: React.FC<SettingsMenuProps> = (props) => {
                                 </Suspense>
                             )}
                         </div>
+                        </div>
+                        );
+                        })()}</div>
                     </div>
                 </div>
 

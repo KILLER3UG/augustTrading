@@ -102,6 +102,7 @@ import { useWatchSideEffects } from './hooks/useWatchSideEffects';
 import { useSurfaceRouter } from './hooks/useSurfaceRouter';
 import { useColumnResize } from './hooks/useColumnResize';
 import type { AppSurface } from './hooks/useSurface';
+import type { SettingsTab } from './components/settings/SettingsMenu';
 import type { TradeMode } from './components/trade/TradeView';
 import type { SoloTurnRow } from './services/trade/chatTurnMirror';
 // The rail is DELETED (2026-10-28). Its live row and collapse threshold moved
@@ -502,12 +503,20 @@ const App: React.FC = () => {
         return () => clearTimeout(t);
     }, [surface]);
 
+    /** The Settings modal's active section — the four former surfaces
+     *  (Journal, Learning, Skills, Memory) are sections of the modal now. */
+    const [settingsSection, setSettingsSection] = useState<SettingsTab>('general');
+    /** Which view the Learning section shows: the accuracy dashboard or the
+     *  notebook browser (the folder cards' Open lands here). */
+    const [learnViewTab, setLearnViewTab] = useState<'health' | 'memory'>('health');
+
     /** The skill library, which is its own surface (2026-11-08). Alt+3 and the
      *  Settings → Skills launcher still route through here, so the chord keeps
      *  its meaning: "my skill library". */
     const openSkills = useCallback((): void => {
-        handleSurfaceSelect('skills');
-    }, [handleSurfaceSelect]);
+        setSettingsSection('skills');
+        setIsSettingsMenuVisible(true);
+    }, [setSettingsSection, setIsSettingsMenuVisible]);
     // The trade surface's collapsible left panel: the order book, opened and
     // closed from the toggle in the Chart's own market row. Persisted so the
     // layout survives reloads like the dock width.
@@ -1391,18 +1400,9 @@ const App: React.FC = () => {
             // Alt+1..6 jumps the nav-rail surfaces (Minara nav; Alt keeps
             // the browser/Electron Ctrl+number tab-switching intact).
             const SURFACE_KEYS: Record<string, AppSurface> = {
-                '1': 'trade', '2': 'journal', '3': 'skills',
-                '4': 'agents', '5': 'learn', '6': 'memory',
+                '1': 'trade', '4': 'agents',
             };
             if (e.altKey && !e.ctrlKey && !e.metaKey && SURFACE_KEYS[e.key]) {
-                // Alt+6 keeps its old Agents → Chart hop: the chord is muscle
-                // memory, and the hop BINDS the conversation, which Alt+1 does
-                // not. On every other surface Alt+6 is the Memory surface.
-                if (e.key === '6' && surface === 'agents') {
-                    e.preventDefault();
-                    openChartAi();
-                    return;
-                }
                 e.preventDefault();
                 selectSurface(SURFACE_KEYS[e.key]);
             }
@@ -1933,9 +1933,89 @@ const App: React.FC = () => {
     // They used to call a handler that re-opened Settings at its own Journal
     // tab — a launcher loop the audit caught (the surface was never reachable
     // from Settings). One route now, the same one every other affordance uses.
+    /** The four former surfaces render as sections of the Settings modal.
+     *  Same components, same props — a section of the modal instead of a
+     *  rail route. */
+    const renderSettingsSection = (): React.ReactNode => {
+        switch (settingsSection) {
+            case 'journal':
+                return <React.Suspense fallback={<SurfaceSkeleton />}>
+                    <Journal
+                        isVisible
+                        onClose={() => setIsSettingsMenuVisible(false)}
+                        initialTab={journalTab}
+                        openNonce={journalOpenNonce}
+                        username={activeUsername || undefined}
+                        trades={loggedTrades}
+                        onDeleteTrades={handleDeleteTrades}
+                        onClearAllTrades={handleClearAllTrades}
+                        modelIdToName={modelIdToName}
+                        onUpdateInsights={handleManualInsightsUpdate}
+                        isSummarizing={isSummaryInProgress}
+                        currentInsightIds={currentInsightIds}
+                        onUpdateTradeLeverage={handleUpdateTradeLeverage}
+                        onUpdateTradeType={handleUpdateTradeType}
+                        onUpdateOutcome={handleUpdateTradeOutcome}
+                        onUpdatePnL={handleUpdateTradePnL}
+                    />
+                </React.Suspense>;
+            case 'learn':
+                return <React.Suspense fallback={<SurfaceSkeleton />}>
+                    <LearnView
+                        username={activeUsername || 'default'}
+                        trades={loggedTrades}
+                        memoryConfig={memoryConfig}
+                        isGlobalMemoryEnabled={isGlobalMemoryEnabled}
+                        setIsGlobalMemoryEnabled={setIsGlobalMemoryEnabled}
+                        tab={learnViewTab}
+                        reviewSummary={finalTradeSummary}
+                        reviewLoading={isLoading}
+                        onRegenerateReview={handleRegenerateFinalSummary}
+                    />
+                </React.Suspense>;
+            case 'skills':
+                return <React.Suspense fallback={<SurfaceSkeleton />}>
+                    <LearnView
+                        username={activeUsername || 'default'}
+                        trades={loggedTrades}
+                        memoryConfig={memoryConfig}
+                        tab="skills"
+                        renderSkills={() => (
+                            <SkillsLibrary studio={(
+                                <React.Suspense fallback={<SurfaceSkeleton />}>
+                                    <StrategyStudio
+                                        trades={loggedTrades}
+                                        onOpenStrategySearch={() => setIsStrategySearchVisible(true)}
+                                        username={activeUsername || undefined}
+                                        memoryConfig={memoryConfig}
+                                        providers={providerConfigs}
+                                        formatModel={skillFormatPair}
+                                        onFormatModelChange={handleSkillFormatModelChange}
+                                        currentRegime={(currentHybridData as { regime?: { regime?: string } } | null)?.regime?.regime ?? undefined}
+                                    />
+                                </React.Suspense>
+                            )} />
+                        )}
+                    />
+                </React.Suspense>;
+            case 'memory':
+                // The modal renders its OWN Memory page here (the organized
+                // behavior card + folder cards + entries index) — renderSection
+                // returning null is the "this section is the modal's own"
+                // signal the pane falls through on.
+                return null;
+            default:
+                return null;
+        }
+    };
+
     const handleOpenJournal = useCallback((tab: JournalUIState['tab'] = 'log') => {
         openJournal(tab);
-    }, [openJournal]);
+        // openJournal routes to the modal's journal section (the router
+        // calls back into openSettingsSection); the flag keeps the modal
+        // open, which is the whole destination now.
+        setIsSettingsMenuVisible(true);
+    }, [openJournal, setIsSettingsMenuVisible]);
 
     const handleOpenLiveMarket = useCallback(() => {
         setIsLiveMarketVisible(true);
@@ -2176,15 +2256,7 @@ const App: React.FC = () => {
     // whichever component holds it, and `App` is not a button wrapper.
     /** What the content bar is about. The rail names the workspace; this names
      *  the thing being worked on. */
-    const shellTitle = surface === 'journal'
-        ? 'Journal'
-        : surface === 'learn'
-            ? 'Learning'
-            : surface === 'skills'
-                ? 'Skills'
-                : surface === 'memory'
-                    ? 'Memory'
-                    : (surface === 'agents' ? 'Chat AI' : 'Chart AI');
+    const shellTitle = surface === 'agents' ? 'Chat AI' : 'Chart AI';
     // Memoized because Header is memoized on purpose: a fresh element on every
     // price tick would re-render the whole bar for a label that has not moved.
     const shellContext = useMemo(
@@ -2260,14 +2332,12 @@ const App: React.FC = () => {
                 isVisible={isSettingsMenuVisible}
                 onClose={() => setIsSettingsMenuVisible(false)}
                 onOpenLearn={(tab) => {
-                    // The notebook and the library are surfaces now, so the
-                    // launcher routes by NAME rather than steering a tab.
-                    handleSurfaceSelect(
-                        tab === 'memory' ? 'memory'
-                            : tab === 'skills' ? 'skills'
-                                : 'learn',
-                    );
-                    setIsSettingsMenuVisible(false);
+                    // The notebook and the library are SECTIONS of the
+                    // Settings modal now: the launcher opens the modal at the
+                    // section (the notebook for folder cards).
+                    setLearnViewTab(tab === 'memory' ? 'memory' : 'health');
+                    setSettingsSection(tab === 'skills' ? 'skills' : 'learn');
+                    setIsSettingsMenuVisible(true);
                 }}
                 summaryCharLimit={summaryCharLimit}
                 onUpdateSummaryCharLimit={handleUpdateSummaryCharLimit}
@@ -2289,6 +2359,29 @@ const App: React.FC = () => {
                 setIsStrategiesEnabled={setIsStrategiesEnabled}
                 isGlobalMemoryEnabled={isGlobalMemoryEnabled}
                 onToggleGlobalMemory={() => setIsGlobalMemoryEnabled(!isGlobalMemoryEnabled)}
+                section={settingsSection}
+                onSectionChange={setSettingsSection}
+                renderSection={renderSettingsSection}
+                setIsGlobalMemoryEnabled={setIsGlobalMemoryEnabled}
+                reviewSummary={finalTradeSummary ?? undefined}
+                reviewLoading={isLoading}
+                onRegenerateReview={handleRegenerateFinalSummary}
+                onOpenStrategySearch={() => setIsStrategySearchVisible(true)}
+                skillFormatPair={skillFormatPair}
+                onSkillFormatModelChange={handleSkillFormatModelChange}
+                currentRegime={(currentHybridData as { regime?: { regime?: string } } | null)?.regime?.regime ?? undefined}
+                journalTab={journalTab}
+                journalOpenNonce={journalOpenNonce}
+                onDeleteTrades={handleDeleteTrades}
+                onClearAllTrades={handleClearAllTrades}
+                modelIdToName={modelIdToName}
+                onUpdateInsights={handleManualInsightsUpdate}
+                isSummarizing={isSummaryInProgress}
+                currentInsightIds={currentInsightIds}
+                onUpdateTradeLeverage={handleUpdateTradeLeverage}
+                onUpdateTradeType={handleUpdateTradeType}
+                onUpdateOutcome={handleUpdateTradeOutcome}
+                onUpdatePnL={handleUpdateTradePnL}
                 memoryConfig={memoryConfig}
                 onMemoryConfigChange={(config) => {
                     setMemoryConfig(config);
@@ -2479,89 +2572,14 @@ const App: React.FC = () => {
                                 />
                             </React.Suspense>
                         )}
-                        {surface === 'journal' && (
-                            <React.Suspense fallback={<SurfaceSkeleton />}>
-                                <Journal
-                                    isVisible={true}
-                                onClose={handleCloseJournal}
-                                initialTab={journalTab}
-                                openNonce={journalOpenNonce}
-                                username={activeUsername || undefined}
-                                trades={loggedTrades}
-                                onDeleteTrades={handleDeleteTrades}
-                                onClearAllTrades={handleClearAllTrades}
-                                modelIdToName={modelIdToName}
-                                onUpdateInsights={handleManualInsightsUpdate}
-                                isSummarizing={isSummaryInProgress}
-                                currentInsightIds={currentInsightIds}
-                                onUpdateTradeLeverage={handleUpdateTradeLeverage}
-                onUpdateTradeType={handleUpdateTradeType}
-                                onUpdateOutcome={handleUpdateTradeOutcome}
-                                onUpdatePnL={handleUpdateTradePnL}
-                                />
-                            </React.Suspense>
-                        )}
+
                         {/* Learning shows Health; Skills and Memory are surfaces
                             of their own (2026-11-08). LearnView is pinned per
                             surface, so the tab bar — chrome for a surface with
                             three destinations — is gone. */}
-                        {surface === 'learn' && (
-                            <React.Suspense fallback={<SurfaceSkeleton />}>
-                                <LearnView
-                                    username={activeUsername || 'default'}
-                                    trades={loggedTrades}
-                                    memoryConfig={memoryConfig}
-                                    isGlobalMemoryEnabled={isGlobalMemoryEnabled}
-                                    setIsGlobalMemoryEnabled={setIsGlobalMemoryEnabled}
-                                    tab="health"
-                                />
-                            </React.Suspense>
-                        )}
-                        {surface === 'skills' && (
-                            <React.Suspense fallback={<SurfaceSkeleton />}>
-                                <LearnView
-                                    username={activeUsername || 'default'}
-                                    trades={loggedTrades}
-                                    memoryConfig={memoryConfig}
-                                    tab="skills"
-                                    renderSkills={() => (
-                                        // Rendered lazily from the surface, not
-                                        // built as a node up top: the Studio reads
-                                        // the live regime, and a const here would
-                                        // evaluate before those values exist.
-                                        <SkillsLibrary studio={(
-                                            <React.Suspense fallback={<SurfaceSkeleton />}>
-                                                <StrategyStudio
-                                                    trades={loggedTrades}
-                                                    onOpenStrategySearch={() => setIsStrategySearchVisible(true)}
-                                                    username={activeUsername || undefined}
-                                                    memoryConfig={memoryConfig}
-                                                    providers={providerConfigs}
-                                                    formatModel={skillFormatPair}
-                                                    onFormatModelChange={handleSkillFormatModelChange}
-                                                    currentRegime={(currentHybridData as { regime?: { regime?: string } } | null)?.regime?.regime}
-                                                />
-                                            </React.Suspense>
-                                        )} />
-                                    )}
-                                />
-                            </React.Suspense>
-                        )}
-                        {surface === 'memory' && (
-                            <React.Suspense fallback={<SurfaceSkeleton />}>
-                                <LearnView
-                                    username={activeUsername || 'default'}
-                                    trades={loggedTrades}
-                                    memoryConfig={memoryConfig}
-                                    isGlobalMemoryEnabled={isGlobalMemoryEnabled}
-                                    setIsGlobalMemoryEnabled={setIsGlobalMemoryEnabled}
-                                    tab="memory"
-                                    reviewSummary={finalTradeSummary}
-                                    reviewLoading={isLoading}
-                                    onRegenerateReview={handleRegenerateFinalSummary}
-                                />
-                            </React.Suspense>
-                        )}
+
+
+
                         {surface === 'agents' && (
                             <React.Suspense fallback={<SurfaceSkeleton />}>
                                 <AgentsView

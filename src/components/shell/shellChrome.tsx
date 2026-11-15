@@ -26,7 +26,10 @@ export const NAV_RAIL_EXPANDED_PX = 240;
 export const NAV_RAIL_AUTO_COLLAPSE_PX = 1024;
 
 /** Exported because the Agents surface's single sidebar carries it once the rail is
- *  not rendered there — one account row per screen either way. */
+ *  not rendered there — one account row per screen either way. The expanded row
+ *  carries NO Settings gear of its own: the icon rail's gear
+ *  (`surface-switch-settings`) is the ONE Settings entry on every surface, so
+ *  the chat sidebar does not open a second, different-looking one beside it. */
 export const AccountRow: React.FC<{
     expanded: boolean;
     activeUsername: string | null;
@@ -84,17 +87,6 @@ export const AccountRow: React.FC<{
                     </button>
                 </Tip>
             )}
-            <Tip label="Settings" shortcut="Ctrl+,">
-                <button
-                    type="button"
-                    data-testid="nav-settings"
-                    onClick={onOpenSettings}
-                    aria-label="Settings"
-                    className="flex h-7 w-7 items-center justify-center rounded-control text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-zinc-100 focus-visible:ring-2 focus-visible:ring-zinc-400"
-                >
-                    <Settings className="h-4 w-4" aria-hidden="true" />
-                </button>
-            </Tip>
         </div>
     );
 };

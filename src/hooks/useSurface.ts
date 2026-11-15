@@ -12,18 +12,21 @@
 
 import { useEffect, useState } from 'react';
 
-export type AppSurface = 'trade' | 'journal' | 'agents' | 'learn' | 'skills' | 'memory';
+export type AppSurface = 'trade' | 'agents' | 'settings';
 
 const KEY = 'august_surface_v1';
-const VALID: readonly string[] = ['trade', 'journal', 'agents', 'learn', 'skills', 'memory'];
+const VALID: readonly string[] = ['trade', 'agents', 'settings'];
 
 export const useSurface = (): { surface: AppSurface; setSurface: (s: AppSurface) => void } => {
     const [surface, setSurface] = useState<AppSurface>(() => {
         try {
             const stored = localStorage.getItem(KEY);
             // 'boards' was the first name of the trade surface and 'chat' lost
-            // its surface — both land on trade. A stored 'skills' from before
-            // 2026-11-08 is a real surface again, so it is NOT migrated.
+            // its surface — both land on trade. The four record surfaces
+            // (journal/learn/skills/memory) became sections of the Settings
+            // modal (2026-11-13), so a stored choice for any of them lands on
+            // the trade surface, and the modal opens from the rail's Settings
+            // entry.
             if (stored === 'boards' || stored === 'chat') return 'trade';
             return stored && VALID.includes(stored) ? stored as AppSurface : 'trade';
         } catch { return 'trade'; }
