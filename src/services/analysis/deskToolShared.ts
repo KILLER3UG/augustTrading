@@ -15,6 +15,8 @@
 
 import { getHarnessSettings } from '../../utils/harnessSettings';
 import { PLAYBOOK_IDS } from '../../types/playbook';
+import { CHART_INTERVALS } from '../../utils/chartIntervals';
+import { CHART_INDICATOR_IDS, CHART_INDICATOR_LABELS } from '../trade/chartIndicatorSettings';
 import { extractSymbolFromPrompt } from './MarketDataService';
 import type { DeskToolDefinition } from './DeskToolsService';
 export const CHART_ACTION_TOOL_DEFS: DeskToolDefinition[] = [
@@ -213,6 +215,47 @@ export const CHART_ACTION_TOOL_DEFS: DeskToolDefinition[] = [
                     allForSymbol: { type: 'boolean', description: 'true = cancel every watch armed on the given/current symbol.' },
                     symbol: { type: 'string', description: 'Symbol for allForSymbol (default: the chart symbol).' },
                 },
+                additionalProperties: false,
+            },
+        },
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'set_chart_timeframe',
+            description:
+                'Move the live chart to another timeframe. The chart redraws at that interval and the trader sees it, and your own reads follow the chart. This is the ONLY way to change the timeframe — the manual control is retired with the rest of the chart chrome.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    interval: {
+                        type: 'string',
+                        enum: [...CHART_INTERVALS],
+                        description: 'Target timeframe, e.g. 15m, 1h, 4h, 1D.',
+                    },
+                },
+                required: ['interval'],
+                additionalProperties: false,
+            },
+        },
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'toggle_chart_study',
+            description:
+                'Show or hide one study on the live chart — the same toggles the trader has. Pass the id exactly as listed. Turning a study off drops its computed state, so a later on starts a fresh read rather than reviving a stale value. This changes VISIBILITY only: the numbers come from the one series module the chart and your reads share, so no value can drift.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    id: {
+                        type: 'string',
+                        enum: [...CHART_INDICATOR_IDS],
+                        description: `Study id: ${CHART_INDICATOR_IDS.map(id => `${id} (${CHART_INDICATOR_LABELS[id]})`).join(' | ')}.`,
+                    },
+                    enabled: { type: 'boolean', description: 'true shows it, false hides it.' },
+                },
+                required: ['id', 'enabled'],
                 additionalProperties: false,
             },
         },

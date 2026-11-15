@@ -61,7 +61,6 @@ import {
 import type { ProfileAnchor, VwapAnchor } from './marketTools';
 import { candleAlignedTtlMs } from '../../utils/candleTtl';
 import { CHART_INTERVALS } from '../../utils/chartIntervals';
-import { CHART_INDICATOR_IDS } from '../trade/chartIndicatorSettings';
 
 /** The one lazy door to the market-structure tool adapters. */
 const importMarketTools = (): Promise<typeof import('./marketTools')> => import('./marketTools');
@@ -1017,6 +1016,8 @@ const TOOL_LABELS: Record<string, string> = {
     run_screener: 'screener',
     find_best_setups: 'best setups',
     switch_chart_symbol: 'chart switch',
+    set_chart_timeframe: 'chart timeframe',
+    toggle_chart_study: 'chart study',
     run_monte_carlo: 'monte carlo',
     recall_chat: 'session search',
     project_future_price: 'price projection',
@@ -2642,70 +2643,31 @@ export const DESK_TOOL_DEFINITIONS: DeskToolDefinition[] = [
 ];
 
 /**
- * The agent's own hands — Phase 1a. DEFINED, REGISTERED NOWHERE.
+ * The agent's remaining hands — Phase 1b, part 2. DEFINED, REGISTERED NOWHERE.
  *
- * These five are deliberately NOT in `DESK_TOOL_DEFINITIONS`, NOT in
+ * These three are deliberately NOT in `DESK_TOOL_DEFINITIONS`, NOT in
  * `INITIAL_DESK_TOOL_NAMES`, and NOT in `toolKinds.DESK_TOOL_NAMES` — the list
  * `chatTurnRunner`'s TRADE_TOOLS is built from, which is what the wire and the
  * seat allow-lists read. Nothing reachable can call one yet, so the runtime is
- * byte-identical to before this block existed. That is the whole point of 1a.
+ * unchanged by their presence.
  *
  * The split is not ceremony. Two of these are an AUTHORITY change, not prep:
  * `update_trade` moves the levels on a plan the trader already armed, and
  * `close_trade` closes it. A tool the model can call is a capability the model
- * has — "define it" and "arm it" have to be separate commits, because the
- * first is reviewable as text and the second changes what the app does.
+ * has, so "define it" and "arm it" stay separate commits. Unlike the two chart
+ * writes that already shipped (`set_chart_timeframe`, `toggle_chart_study`,
+ * both in CHART_ACTION_TOOL_DEFS), these two cannot be registered honestly
+ * until the decision card exists: a proposal with no card to confirm it is a
+ * dead affordance, and a tool that applied its change on the call would be the
+ * authority bug this split exists to prevent.
  *
- * Phase 1b registers them and wires the decision-receipt round-trip. Registering
- * must NOT weaken the confirmation path each gated tool states in its own
- * description: the description is where the gate is declared, and 1b's gate is
- * that the executor still routes through the existing card, not around it.
+ * `run_review` waits on its own dependency — the review services' entry points
+ * and the harness turn that carries their findings — not on the card.
  *
  * `check:contracts` pins both halves: every name is defined here, and none of
  * them is reachable from any of the three registries.
  */
 export const AGENT_HAND_TOOL_DEFINITIONS: DeskToolDefinition[] = [
-    {
-        type: 'function',
-        function: {
-            name: 'set_chart_timeframe',
-            description:
-                'Move the live chart to another timeframe. The chart redraws at that interval and the trader sees it, and your own reads follow the chart. This is the ONLY way to change the timeframe — the manual control is retired with the rest of the chart chrome.',
-            parameters: {
-                type: 'object',
-                properties: {
-                    interval: {
-                        type: 'string',
-                        enum: [...CHART_INTERVALS],
-                        description: 'Target timeframe, e.g. 15m, 1h, 4h, 1D.',
-                    },
-                },
-                required: ['interval'],
-                additionalProperties: false,
-            },
-        },
-    },
-    {
-        type: 'function',
-        function: {
-            name: 'toggle_chart_study',
-            description:
-                'Show or hide one study on the live chart — the same toggles the trader has. Pass the id exactly as listed. Turning a study off drops its computed state, so a later on starts a fresh read rather than reviving a stale value. This changes VISIBILITY only: the numbers come from the one series module the chart and your reads share, so no value can drift.',
-            parameters: {
-                type: 'object',
-                properties: {
-                    id: {
-                        type: 'string',
-                        enum: [...CHART_INDICATOR_IDS],
-                        description: 'Study id: volume | ema20 | ema200 | boll | rsi | macd | tsi | vwap | avwap | volumeProfile | volumeProfileSession | sessionLevels | swings | cvd | funding.',
-                    },
-                    enabled: { type: 'boolean', description: 'true shows it, false hides it.' },
-                },
-                required: ['id', 'enabled'],
-                additionalProperties: false,
-            },
-        },
-    },
     {
         type: 'function',
         function: {
@@ -5279,6 +5241,74 @@ ${body}`);
                     rankBestSetups(scan.rows, { limit, minScore, direction: side }),
                     { top, interval, minScore },
                 );
+                break;
+            }
+            case 'set_chart_timeframe': {
+                // A UI WRITE, like switch_chart_symbol: the session row is the
+                // one place the chart, the dock and the Agents composer read
+                // their interval from, and TradeView already mirrors it back
+                // onto the canvas (a session interval that differs from the
+                // rendered one re-renders). So this writes the row and the
+                // chart follows — no second channel, no imperative call into
+                // a component.
+                const raw = asString(call.arguments.interval).trim();
+                if (!raw) return rejectedResult(call, 'set_chart_timeframe rejected: interval is required, e.g. 15m.');
+                const known = CHART_INTERVALS as readonly string[];
+                if (!known.includes(raw)) {
+                    return rejectedResult(call, `set_chart_timeframe rejected: "${raw}" is not a timeframe this chart draws. Choose one of: ${known.join(', ')}.`);
+                }
+                const { getActiveSession, mutate } = await import('../trade/chatStore');
+                const session = getActiveSession();
+                if (!session) {
+                    return rejectedResult(call, 'set_chart_timeframe rejected: no active chat session carries the chart.');
+                }
+                const before = asString(session.interval) || '15m';
+                if (before === raw) {
+                    content = `CHART TIMEFRAME ALREADY ${raw}. Nothing changed. The chart is on ${raw} now; no order was placed and no journal row was written.`;
+                    break;
+                }
+                mutate(session.id, s => ({ ...s, interval: raw }));
+                content = [
+                    `CHART TIMEFRAME: ${before} -> ${raw}.`,
+                    `The chart redraws at ${raw} and the trader sees it. Your own reads follow the chart — pass interval=${raw} when a market tool takes one, and say the frame you are reading on.`,
+                    'No order was placed, no journal row was written and no analysis was run.',
+                ].join(' ');
+                break;
+            }
+            case 'toggle_chart_study': {
+                // The same visibility the trader's own menu writes. The chart
+                // SUBSCRIBES to this store, so the repaint is not this branch's
+                // job: writing the row is the whole action, and the settings
+                // module's own doc is the reason the numbers cannot drift —
+                // visibility only, series still come from chartIndicators.
+                const id = asString(call.arguments.id).trim();
+                const enabled = call.arguments.enabled;
+                const { CHART_INDICATOR_IDS: ids, CHART_INDICATOR_LABELS: labels, readChartIndicatorSettings: read, writeChartIndicatorSettings: write } =
+                    await import('../trade/chartIndicatorSettings');
+                const knownIds = ids as readonly string[];
+                if (!knownIds.includes(id)) {
+                    return rejectedResult(call, `toggle_chart_study rejected: "${id}" is not a study this chart can draw. Choose one of: ${knownIds.join(', ')}.`);
+                }
+                if (typeof enabled !== 'boolean') {
+                    return rejectedResult(call, 'toggle_chart_study rejected: enabled must be true or false.');
+                }
+                const { getActiveUsername } = await import('../../utils/activeUser');
+                const user = getActiveUsername() || 'default';
+                const current = read(user);
+                if (current.visible[id as keyof typeof current.visible] === enabled) {
+                    const state = enabled ? 'already on' : 'already off';
+                    content = `${labels[id as keyof typeof labels]} is ${state}. Nothing changed.`;
+                    break;
+                }
+                const next = { visible: { ...current.visible, [id]: enabled } };
+                write(user, next);
+                content = [
+                    `${labels[id as keyof typeof labels]} ${enabled ? 'ON' : 'OFF'} on the chart.`,
+                    enabled
+                        ? 'Its series compute from the shared series module, so the line and the values you read are the same numbers. Read it with get_chart_studies when you need them.'
+                        : 'Its series are cleared, so a later on starts a fresh read rather than reviving a stale value. This changed what is DRAWN, not any price.',
+                    'No order was placed and no journal row was written.',
+                ].join(' ');
                 break;
             }
             case 'switch_chart_symbol': {

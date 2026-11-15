@@ -134,6 +134,8 @@ const BY_LABEL: Record<string, ToolKindInfo> = {
     'chart clear': { kind: 'draw', activity: 'Clearing the chart' },
     'chart draw': { kind: 'draw', activity: 'Drawing on the chart' },
     'chart switch': { kind: 'draw', activity: 'Switching the chart symbol' },
+    'chart timeframe': { kind: 'draw', activity: 'Changing the timeframe' },
+    'chart study': { kind: 'draw', activity: 'Toggling a chart study' },
     'draw detected': { kind: 'draw', activity: 'Drawing the detected setup' },
     'level marks': { kind: 'draw', activity: 'Marking levels' },
 

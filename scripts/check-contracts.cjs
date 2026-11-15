@@ -866,70 +866,70 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
         && !/123456/.test(deriv), deriv);
 })();
 
-// ─── 13d. the agent's hands are DEFINED and UNREACHABLE (Phase 1a) ─────────
-// `update_trade` moves the levels on a plan the trader armed; `close_trade`
-// closes it. Defining such a tool and REGISTERING it are different commits on
-// purpose: a definition is text a reviewer can read, a registration is a
-// capability the model has. The failure this pins is silent — every other gate
-// checks that a REGISTERED name has a definition, never that an UNREGISTERED
-// one stayed out, so a later "finish the job" commit that adds a name to one of
-// the registries would turn nothing red.
+// ─── 13d. the agent's hands: shipped chart writes, unshipped trade writes ──
+// The two chart writes are registered and reachable. The three that are not
+// (`update_trade`, `close_trade`, `run_review`) are defined and deliberately
+// unreachable: two of them move or close a trade the trader armed, and a tool
+// the model can call is a capability the model has. The failure this pins is
+// silent — every other gate checks that a REGISTERED name has a definition,
+// never that an UNREGISTERED one stayed out, so a later "finish the job" commit
+// that adds a name to a registry would turn nothing red.
 (() => {
     const desk = loadModule('src/services/analysis/DeskToolsService.ts');
     const kinds = loadModule('src/utils/toolKinds.ts');
-    const HANDS = ['set_chart_timeframe', 'toggle_chart_study', 'update_trade', 'close_trade', 'run_review'];
+    const SHIPPED = ['set_chart_timeframe', 'toggle_chart_study'];
+    const UNREGISTERED = ['update_trade', 'close_trade', 'run_review'];
     const hands = desk.AGENT_HAND_TOOL_DEFINITIONS.map(d => d.function.name);
+    const chartActions = desk.CHART_ACTION_TOOL_DEFS.map(d => d.function.name);
     const defs = desk.DESK_TOOL_DEFINITIONS.map(d => d.function.name);
     const initial = [...desk.INITIAL_DESK_TOOL_NAMES];
     const wire = [...kinds.DESK_TOOL_NAMES];
-    // The chart-action tools are the other half of TRADE_TOOLS: a hand added
-    // there would reach the wire without touching any of the lists above.
-    const chartActions = desk.CHART_ACTION_TOOL_DEFS.map(d => d.function.name);
-    const deferrable = desk.loadableDeskToolNamesFor(true, 'all');
-    const catalogue = desk.buildDeskToolCatalogue(deferrable);
-    const onTheWire = desk.toAnthropicTools().map(t => t.name);
+    // TRADE_TOOLS is DESK_TOOL_NAMES plus the chart-action defs; both halves
+    // have to be checked, because a hand added to either reaches the seat.
+    const tradeTools = [...new Set([...wire, ...chartActions])];
 
-    ok('agent hands: all five are defined, in the one array that holds them',
-        HANDS.every(n => hands.includes(n)) && hands.length === HANDS.length, JSON.stringify(hands));
-    ok('agent hands: NOT in DESK_TOOL_DEFINITIONS - the wire cannot see them',
-        HANDS.every(n => !defs.includes(n)), JSON.stringify(HANDS.filter(n => defs.includes(n))));
-    ok('agent hands: NOT in INITIAL_DESK_TOOL_NAMES - no turn carries them',
-        HANDS.every(n => !initial.includes(n)), JSON.stringify(HANDS.filter(n => initial.includes(n))));
-    ok('agent hands: NOT in DESK_TOOL_NAMES - the trade seat allow-list refuses them',
-        HANDS.every(n => !wire.includes(n)), JSON.stringify(HANDS.filter(n => wire.includes(n))));
-    ok('agent hands: NOT among the chart-action tools either',
-        HANDS.every(n => !chartActions.includes(n)), JSON.stringify(HANDS.filter(n => chartActions.includes(n))));
-    ok('agent hands: no turn can defer them - they are not in the catalogue',
-        HANDS.every(n => !deferrable.includes(n) && !catalogue.includes(`- ${n}:`)),
-        JSON.stringify(HANDS.filter(n => deferrable.includes(n))));
-    ok('agent hands: a seat granted "all" still cannot reach them',
-        HANDS.every(n => !onTheWire.includes(n)), JSON.stringify(HANDS.filter(n => onTheWire.includes(n))));
+    ok('agent hands: the three unshipped ones are still defined, in the one array',
+        UNREGISTERED.every(n => hands.includes(n)) && hands.length === UNREGISTERED.length,
+        JSON.stringify(hands));
+    ok('agent hands: every shipped hand has a definition - and exactly one',
+        SHIPPED.every(n => chartActions.filter(x => x === n).length === 1 && !hands.includes(n) && !defs.includes(n)),
+        JSON.stringify(SHIPPED.map(n => `${n}: chart=${chartActions.filter(x => x === n).length} hands=${hands.includes(n)}`)));
+    ok('agent hands: the shipped chart writes are in the trade seat allow-list',
+        SHIPPED.every(n => tradeTools.includes(n)), JSON.stringify(SHIPPED.filter(n => !tradeTools.includes(n))));
+    ok('agent hands: the unshipped ones are in NO registry - not the definitions, not the initial set, not the trade allow-list',
+        UNREGISTERED.every(n => !defs.includes(n) && !initial.includes(n) && !tradeTools.includes(n) && !chartActions.includes(n)),
+        JSON.stringify(UNREGISTERED.filter(n => defs.includes(n) || initial.includes(n) || tradeTools.includes(n))));
 
     // The schemas themselves: a real definition, not a stub, and the two gated
     // ones say GATED where the model reads it.
-    const byName = new Map(desk.AGENT_HAND_TOOL_DEFINITIONS.map(d => [d.function.name, d]));
-    const params = n => byName.get(n)?.function.parameters;
-    ok('agent hands: every definition is a closed object schema naming fields that exist',
-        HANDS.every(n => {
+    const all = new Map([...desk.AGENT_HAND_TOOL_DEFINITIONS, ...desk.CHART_ACTION_TOOL_DEFS]
+        .map(d => [d.function.name, d]));
+    const params = n => all.get(n)?.function.parameters;
+    ok('agent hands: every hand is a closed object schema naming fields that exist',
+        [...SHIPPED, ...UNREGISTERED].every(n => {
             const p = params(n);
             return !!p && p.type === 'object' && p.additionalProperties === false
                 && Array.isArray(p.required) && p.required.length > 0
                 && p.required.every(r => r in p.properties);
-        }), JSON.stringify(HANDS.filter(n => !params(n))));
+        }), JSON.stringify([...SHIPPED, ...UNREGISTERED].filter(n => !params(n))));
     ok('agent hands: the timeframe and study enums are the app\'s own vocabularies',
         (params('set_chart_timeframe').properties.interval.enum.length > 1)
         && (params('toggle_chart_study').properties.id.enum.length > 1),
         `${params('set_chart_timeframe').properties.interval.enum.length} intervals, `
         + `${params('toggle_chart_study').properties.id.enum.length} studies`);
+    ok('agent hands: a chart write cannot be called without its argument',
+        params('set_chart_timeframe').required.includes('interval')
+        && params('toggle_chart_study').required.includes('id')
+        && params('toggle_chart_study').required.includes('enabled'));
     ok('agent hands: the two gated tools say GATED where the model reads it',
-        ['update_trade', 'close_trade'].every(n => /GATED/.test(byName.get(n).function.description)));
+        ['update_trade', 'close_trade'].every(n => /GATED/.test(all.get(n).function.description)));
     ok('agent hands: a gated tool cannot be called without a plan id and a reason',
         ['update_trade', 'close_trade'].every(n => {
             const req = params(n).required;
             return req.includes('planId') && req.includes('reason');
         }));
     ok('agent hands: run_review changes nothing and says so',
-        /READ-ONLY/.test(byName.get('run_review').function.description));
+        /READ-ONLY/.test(all.get('run_review').function.description));
 })();
 
 // ─── 15. profile memory: soft delete, undo, versions, observed context ─────
@@ -5552,6 +5552,45 @@ const checkDesktopProfileStore = async () => {
     localStorage.removeItem('last_active_user');
 };
 
+// The agent hands' EXECUTOR, not just their schemas. The registries are pinned
+// above; this pins that a call actually reaches the branch, validates its
+// argument by name, and refuses rather than guessing. A node run has no active
+// chat session, so a VALID call stops at the session write — which is itself the
+// proof it got past validation and into the branch.
+const checkAgentHandExecutor = async () => {
+    const desk = loadModule('src/services/analysis/DeskToolsService.ts');
+    const ctx = { defaultSymbol: 'BTCUSDT', allowedTools: 'all' };
+    const call = (name, args) => ({ id: 'probe', name, arguments: args });
+
+    const badTf = await desk.executeDeskTool(call('set_chart_timeframe', { interval: '7m' }), ctx);
+    ok('agent hands executor: an unknown timeframe is refused by name, with the real list',
+        badTf.ok === false && /7m/.test(badTf.content) && /1D/.test(badTf.content), badTf.content);
+
+    const noArg = await desk.executeDeskTool(call('set_chart_timeframe', {}), ctx);
+    ok('agent hands executor: a missing argument is refused, never defaulted',
+        noArg.ok === false && /interval is required/.test(noArg.content), noArg.content);
+
+    const realTf = await desk.executeDeskTool(call('set_chart_timeframe', { interval: '1h' }), ctx);
+    ok('agent hands executor: a real timeframe writes the session row and says what moved',
+        realTf.ok === true && /CHART TIMEFRAME/.test(realTf.content) && /-> 1h/.test(realTf.content), realTf.content);
+
+    const sameTf = await desk.executeDeskTool(call('set_chart_timeframe', { interval: '1h' }), ctx);
+    ok('agent hands executor: setting the frame it is already on changes nothing',
+        sameTf.ok === true && /ALREADY 1h/.test(sameTf.content), sameTf.content);
+
+    const badStudy = await desk.executeDeskTool(call('toggle_chart_study', { id: 'nope', enabled: true }), ctx);
+    ok('agent hands executor: an unknown study is refused by name, with the real list',
+        badStudy.ok === false && /nope/.test(badStudy.content) && /volumeProfile/.test(badStudy.content), badStudy.content);
+
+    const badFlag = await desk.executeDeskTool(call('toggle_chart_study', { id: 'rsi', enabled: 'yes' }), ctx);
+    ok('agent hands executor: a non-boolean enabled is refused, not coerced',
+        badFlag.ok === false && /must be true or false/.test(badFlag.content), badFlag.content);
+
+    const realStudy = await desk.executeDeskTool(call('toggle_chart_study', { id: 'rsi', enabled: false }), ctx);
+    ok('agent hands executor: a real study write is announced, not silently dropped',
+        realStudy.ok === true && /RSI/.test(realStudy.content) && /OFF/.test(realStudy.content), realStudy.content);
+};
+
 const finishReport = () => {
     console.log(`contracts: ${passed} passed, ${failures.length} failed`);
     for (const f of failures) console.log(`  FAIL ${f}`);
@@ -5575,5 +5614,6 @@ checkSkillWrites()
     .then(checkInsightWriteDurability)
     .then(checkUntrustedGateCoversAllWriters)
     .then(checkDesktopProfileStore)
+    .then(checkAgentHandExecutor)
     .catch(e => { failures.push(`async runtime checks threw: ${e instanceof Error ? e.stack : String(e)}`); })
     .then(finishReport);

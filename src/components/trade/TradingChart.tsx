@@ -81,6 +81,7 @@ import { buildVolumeProfile } from '../../services/market/volumeProfileCore';
 import {
     CHART_INDICATOR_LABELS,
     readChartIndicatorSettings,
+    subscribeChartIndicatorSettings,
     writeChartIndicatorSettings,
     type ChartIndicatorId,
     type ChartIndicatorSettings,
@@ -468,6 +469,15 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
             return next;
         });
     };
+    // A study toggled from the DESK writes the same store this state came from.
+    // Without the subscription the write lands in localStorage and nothing
+    // repaints, which is a control that cannot fire — the exact defect
+    // chartIndicatorRegistry was written to stop, in a new place. The chart owns
+    // the canvas, so hearing about the write is the chart's job; the tool only
+    // writes the row.
+    useEffect(() => subscribeChartIndicatorSettings(next => {
+        setIndicatorSettings(next);
+    }), []);
 
     /** One legend row per visible study, OKX's order and names. Reads the same
      *  computed series the lines are drawn from, so a legend value can never

@@ -127,6 +127,24 @@ export const readChartIndicatorSettings = (username: string): ChartIndicatorSett
     }
 };
 
+/** Listeners for an EXTERNAL write to this store — the desk tool that shows or
+ *  hides a study writes it, and the chart that drew the study has to hear about
+ *  it or the toggle is a control that cannot fire (the `funding` defect, in a
+ *  new place). The chart subscribes on mount and unsubscribes on teardown. */
+type SettingsListener = (settings: ChartIndicatorSettings) => void;
+const settingsListeners = new Set<SettingsListener>();
+
+export const subscribeChartIndicatorSettings = (listener: SettingsListener): (() => void) => {
+    settingsListeners.add(listener);
+    return () => { settingsListeners.delete(listener); };
+};
+
 export const writeChartIndicatorSettings = (username: string, settings: ChartIndicatorSettings): void => {
     try { localStorage.setItem(keyFor(username), JSON.stringify(settings)); } catch { /* private mode */ }
+    for (const listener of [...settingsListeners]) {
+        // One broken listener must not stop the rest, and a write that failed
+        // to persist must still be announced: the caller's own state is what
+        // the chart is being asked to match.
+        try { listener(settings); } catch { /* a dead subscriber is not a write error */ }
+    }
 };
