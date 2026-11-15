@@ -22,16 +22,28 @@ palette/radii already in `src/index.css`. Two defaults chosen without your answe
 chat always side by side**, **rooms/bots: composer mode menu** — are marked adjustable in Open
 questions.
 
-## Status (2026-11-15)
+## Status (2026-11-15, Phase 2 in progress)
 
 **Phase 1a and 1b are done and pushed.** All six agent hands are registered and callable:
 `set_chart_timeframe`, `toggle_chart_study`, `correct_trade_outcome`, `update_trade`,
 `close_trade`, `run_review`. The three that touch an armed trade only RECORD a proposal —
 the trader's confirm applies it. `run_review` is read-only.
 
-**The settlement-correction card and the trade-action card landed early (Phase 3 work), on the
-CHAT SURFACE only.** A correction or a level-change/close proposed from the chat surface renders
-its card and resolves on a confirm. The dock records and replies honestly but shows no card yet.
+**The settlement-correction card and the trade-action card work from BOTH homes.** The dock
+sink is landed (`chatTurnRunner` attaches the recorded proposal to its own entry and
+`ChatTranscriptList` renders both cards); confirm settles the store's proposal and applies
+through App's shared journal/watch writers. Verified end to end from the dock by
+`scripts/dock-card-probe.cjs`: card renders, row untouched while open, one-tap confirm writes
+outcome + `correctedFrom`/`correctedAt`/`resolutionSource`, card resolves, dismissed proposal
+leaves the row untouched.
+
+**Phase 2's mandated first step is landed:** the surface switch is extracted out of `App.tsx`
+into `src/components/shell/SurfaceOutlet.tsx` (props-only, no behavior change), and
+`surface-shots`/`render-probe` are re-anchored (record surfaces route through their Settings
+sections; three load-sensitive samples poll instead of sleeping).
+
+**Still open in Phase 2:** merge the dock and AgentsView into one workspace, then rebuild the
+rail (New chat / Pinned / Recent / account + gear) — separate commits, next session.
 
 **Phase 4 has not started** — correctly, it is gated on phases 1–3 being verified.
 
@@ -39,16 +51,23 @@ its card and resolves on a confirm. The dock records and replies honestly but sh
 
 | Item | Where | Why it is open |
 |---|---|---|
-| The dock's correction/action card sink | `src/services/trade/chatTurnRunner.ts`, `src/components/trade/panels/ChatTranscriptList.tsx` | A correction or level-change/close proposed from the DOCK records and replies honestly, but shows no card there: `chatTurnRunner` writes to `chatStore` entries and `ChatTranscriptList` does not draw the cards yet. |
-| The `App.tsx` surface-switch extraction, with the six-surface render probe re-anchored | `src/App.tsx`, `scripts/render-probe.cjs` | Phase 2's mandated first step. The probe's surface sweep must be re-anchored after the surfaces move — it is the only gate that sees a rendered row. |
+| Merge the dock and AgentsView into one workspace | `src/components/agents/AgentsView.tsx`, `src/components/trade/TradeView.tsx` | Phase 2's visible cut: one transcript, one composer, chart pane permanent, composer mode menu (single/panel/room/bot). |
+| Rebuild the rail | `src/components/shell/ShellRail.tsx` | Phase 2's second cut: the rail becomes New chat / Pinned / Recent / account + gear. Lands AFTER the workspace merge, as its own commit. |
+
+Both are the remaining Phase 2 commits. The two items that blocked Phase 2's start — the
+`App.tsx` surface-switch extraction and the dock's correction/action card sink — are DONE
+(`a23d6d7a`, `6b1ac8ed`).
 
 ### Review and gating
 
 - **The early Phase 3 work (the correction and trade-action cards) still needs independent
   review.** It was built alongside Phase 1b so the authority changes had a card to confirm
   against, and no second pair of eyes has checked it.
-- **Phase 4 stays blocked** until the dock sink is done AND the settlement-correction card is
-  verified on every surface it can be proposed from — not just the chat surface.
+- **Dock-side verification is DONE** (`scripts/dock-card-probe.cjs`, `6b1ac8ed`): the card
+  renders from the dock, the row is untouched while it is open, one tap writes the corrected
+  outcome with the journal's audit trail, and a dismissed proposal changes nothing.
+- **Phase 4 stays blocked** until Phase 3's own P-6 proof is walked — the confirm AND the void
+  on every surface the card can be proposed from — plus the rest of the P-1…P-6 parity checks.
 
 ## Audit (keep / merge / remove)
 
