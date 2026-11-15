@@ -2840,9 +2840,14 @@ async function main() {
                 // chunk and judged a skeleton. Poll for the pane to carry
                 // the section before judging it.
                 let body = '';
-                for (let i = 0; i < 40 && body.length <= 40; i += 1) {
+                for (let i = 0; i < 40; i += 1) {
                     body = await surfaceText();
-                    if (body.length <= 40) await sleep(300);
+                    // Wait for THIS section to replace the previous one, not
+                    // merely for the pane to be non-empty. The previous section
+                    // already left the pane long, so a length-only check read
+                    // the old section and reported the new one as "unchanged".
+                    if (body.length > 40 && body !== prevSurfaceText) break;
+                    await sleep(300);
                 }
                 check(`${surface.label} section renders content`, body.length > 40, `${body.length} chars`);
                 check(`${surface.label} section replaced the one before it`,
