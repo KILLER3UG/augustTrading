@@ -147,13 +147,16 @@ trading keeps deterministic gates.
      in one tap, and it writes through the existing gated path. A correction and a void (delete) are
      separate explicit actions on the card. This is the replacement for P-6 — the journal's manual
      outcome/PnL/leverage editors and deletes, and the watchlist's manual Win/Loss — and Phase 4 does
-     not remove either until this card is verified. The producer is a `correct_trade_outcome` tool
-     that only RECORDS a proposal; the confirmation half (store, card, and the write through the
-     journal's own `handleUpdateTradeOutcome`/`handleUpdateTradePnL`) is in place. Two findings from
-     building it: the five hands in Phase 1 do not include a correction tool, so this one is new; and
-     its proposal must reach the transcript through the CONVERSATION store, not the dock's
-     `chatStore` entries — `AgentsView` reads `useConversations`, so a write onto a dock entry would
-     land in the wrong store and the receipt would claim a card that never renders.
+     not remove either until this card is verified. The producer is a
+     `correct_trade_outcome` tool that only RECORDS a proposal; the confirmation
+     half (store, card, and the write through the journal's own
+     `handleUpdateTradeOutcome`/`handleUpdateTradePnL`) is in place, and the tool
+     is registered with its sink on the chat surface
+     (`chatSurfaceTurn` › `req.patch`), which is the store `AgentsView` reads.
+     Still open: the DOCK path. `chatTurnRunner` writes its rows to `chatStore`
+     entries and renders them through `ChatTranscriptList`, which does not draw a
+     correction card yet — so a correction proposed from the dock records and
+     replies honestly, but shows no card there until that sink exists.
    - **Risk-limit and goal-change cards**, sharing the decision-card shape.
    - **Removal-parity proofs (P-1…P-6)**: each REMOVE row gets the check named in the parity table
      above — the replacement is reachable, and it produces what the control produced. Phase 4 deletes
