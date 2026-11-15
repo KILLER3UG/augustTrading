@@ -309,6 +309,10 @@ export interface Message {
    *  agent's correction tool; rendered as a confirm card. The row is untouched
    *  until the trader confirms — see services/trade/settlementCorrection. */
   settlementCorrection?: import('../services/trade/settlementCorrection').SettlementCorrectionProposal;
+  /** A PROPOSED action on an armed plan — move its levels (update) or close it.
+   *  Set by update_trade / close_trade; rendered as a confirm card. The plan is
+   *  untouched until the trader confirms — see services/trade/tradeActionProposal. */
+  tradeAction?: import('../services/trade/tradeActionProposal').TradeActionProposal;
   /** Persisted model side-effects: proposal tools and file
    *  creations this run produced, for the status rows on
    *  the bubble ("Saved to memory · N entries", "⚠ Memory write noted").

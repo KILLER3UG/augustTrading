@@ -2592,6 +2592,27 @@ const App: React.FC = () => {
                                             handleUpdateTradePnL(proposal.tradeId, { pnlAmount: proposal.pnlAmount, pnlPercent: proposal.pnlPercent });
                                         }
                                     }}
+                                    /* The trade-action apply path: move the levels on the
+                                       armed plan (re-arm it with the confirmed levels) or
+                                       close it (disarm the watch). Written through the
+                                       watch service, not through this component. */
+                                    onApplyTradeAction={(proposal) => {
+                                        void (async () => {
+                                            const { arm, disarm, getArmedPlans } = await import('./services/trade/levelWatchService');
+                                            if (proposal.kind === 'close') {
+                                                disarm(proposal.planId);
+                                                return;
+                                            }
+                                            const plan = getArmedPlans().find(p => p.planId === proposal.planId);
+                                            if (!plan) return;
+                                            arm({
+                                                ...plan,
+                                                ...(proposal.entry !== undefined ? { entry: proposal.entry } : {}),
+                                                ...(proposal.stopLoss !== undefined ? { stopLoss: proposal.stopLoss } : {}),
+                                                ...(proposal.takeProfits !== undefined ? { takeProfits: proposal.takeProfits } : {}),
+                                            }, null);
+                                        })();
+                                    }}
                                     onAnalysisError={(message) => toast.error(message)}
                                     onStopRun={handleStopAgentsRun}
                                     analysisRunning={isAnalysisInProgress}

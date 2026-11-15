@@ -80,6 +80,7 @@ import { conversationTitle } from '../../utils/conversationTitle';
 import AgentsDock from './dock/AgentsDock';
 import { proposalStateOf, rememberProposalState } from '../../services/trade/proposalDisposition';
 import { confirmSettlementCorrection, dismissSettlementCorrection, type SettlementCorrectionProposal } from '../../services/trade/settlementCorrection';
+import { confirmTradeAction, dismissTradeAction, type TradeActionProposal } from '../../services/trade/tradeActionProposal';
 import type { TradeProposal } from '../../services/trade/proposedTrade';
 import { mintPlanId } from '../../services/trade/proposedTrade';
 import { planFromProse } from '../../services/trade/tradeShapedProse';
@@ -118,6 +119,10 @@ interface AgentsViewProps {
      *  resolutionSource 'correction' because that hook writes them. Without it
      *  the card's Confirm is hidden rather than clicking into nothing. */
     onApplySettlementCorrection?: (proposal: SettlementCorrectionProposal) => void;
+    /** Apply a CONFIRMED trade action (move levels / close) to the armed plan.
+     *  The watch and the journal are written by App's own handlers; this
+     *  surface only records the decision and hides the card. */
+    onApplyTradeAction?: (proposal: TradeActionProposal) => void;
     /** Where a run that never started says why. The pipeline writes its own rows
      *  — including its error bubble — once it is running, so the only silent
      *  failures left are the pre-flight ones ("already running", "no providers"),
@@ -518,7 +523,7 @@ interface BotRow {
 const AgentsView: React.FC<AgentsViewProps> = ({
     username, bots, groups, messages, selection, onSelect, onNewBot, onNewGroup,
     onSendBotTurn, onAnalyze, onLogProposedTrade, onAnalysisError, onStopRun, analysisRunning = false, renderGroup, workingBotId, mailboxBusyBotIds,
-    trades = [], onApplySettlementCorrection,
+    trades = [], onApplySettlementCorrection, onApplyTradeAction,
     lastOpenedMap = {}, modelPicker, modelFallback = null, accountRow,
     railExpanded = true, sidebarExpanded = true, onToggleRailExpanded,
     railWidth = NAV_RAIL_EXPANDED_PX, railIsResizing = false,
@@ -743,6 +748,31 @@ const AgentsView: React.FC<AgentsViewProps> = ({
         if (proposal) dismissSettlementCorrection(proposal.tradeId);
         markCorrectionSettled(messageId);
     }, [messages, markCorrectionSettled]);
+
+    /** Trade actions on an ARMED plan - move levels / close. Same shape as the
+     *  settlement correction above: this surface records the decision and hides
+     *  the card; App applies it to the watch and the journal. */
+    const [settledActionRowIds, setSettledActionRowIds] = useState<ReadonlySet<string>>(() => new Set());
+    const markActionSettled = useCallback((messageId: string): void => {
+        setSettledActionRowIds(prev => {
+            if (prev.has(messageId)) return prev;
+            const next = new Set(prev);
+            next.add(messageId);
+            return next;
+        });
+    }, []);
+    const handleConfirmTradeAction = useCallback((messageId: string): void => {
+        const proposal = messages.find(m => m.id === messageId)?.tradeAction;
+        if (proposal && confirmTradeAction(proposal.planId)) {
+            onApplyTradeAction?.(proposal);
+        }
+        markActionSettled(messageId);
+    }, [messages, onApplyTradeAction, markActionSettled]);
+    const handleDismissTradeAction = useCallback((messageId: string): void => {
+        const proposal = messages.find(m => m.id === messageId)?.tradeAction;
+        if (proposal) dismissTradeAction(proposal.planId);
+        markActionSettled(messageId);
+    }, [messages, markActionSettled]);
 
     /** Minute bucket for the rows' relative-time labels — a CACHE KEY, not a
      *  new clock. An unchanged message reuses its cached row, and therefore its
@@ -1571,6 +1601,11 @@ const AgentsView: React.FC<AgentsViewProps> = ({
                                                 settlementCorrectionCurrent={currentForCorrection(m.settlementCorrection)}
                                                 onConfirmSettlementCorrection={handleConfirmSettlementCorrection}
                                                 onDismissSettlementCorrection={handleDismissSettlementCorrection}
+                                                tradeAction={
+                                                    settledActionRowIds.has(m.id) ? undefined : m.tradeAction
+                                                }
+                                                onConfirmTradeAction={handleConfirmTradeAction}
+                                                onDismissTradeAction={handleDismissTradeAction}
                                             />
                                         );
                                     })}

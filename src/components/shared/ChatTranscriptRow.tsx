@@ -33,6 +33,7 @@ import SignalCard, { signalIdFromActions, signalRowById } from '../trade/SignalC
 import InlineVerdict from '../analysis/InlineVerdict';
 import TradeProposalCard, { TradeProposalLoggedRow } from '../trade/panels/TradeProposalCard';
 import SettlementCorrectionCard from '../trade/panels/SettlementCorrectionCard';
+import TradeActionCard from '../trade/panels/TradeActionCard';
 import { parseKeyLevels, type ModelKeyLevel } from '../../services/trade/keyLevels';
 import type { TradeProposal } from '../../services/trade/proposedTrade';
 import type { ProposalState } from '../../services/trade/proposalDisposition';
@@ -164,6 +165,13 @@ export interface ChatTranscriptRowProps {
     settlementCorrectionCurrent?: { outcome?: import('../../types/enums').TradeOutcome; pnlAmount?: number; pnlPercent?: number };
     onConfirmSettlementCorrection?: (messageId: string) => void;
     onDismissSettlementCorrection?: (messageId: string) => void;
+    /** A PROPOSED action on an armed plan (move levels / close), and the two
+     *  clicks. Absent (no proposal, or the trader already decided) renders
+     *  nothing. */
+    tradeAction?: import('../../services/trade/tradeActionProposal').TradeActionProposal;
+    tradeActionCurrent?: { entry?: number; stopLoss?: number; takeProfits?: number[] };
+    onConfirmTradeAction?: (messageId: string) => void;
+    onDismissTradeAction?: (messageId: string) => void;
 }
 
 const ChatTranscriptRow: React.FC<ChatTranscriptRowProps> = ({
@@ -173,6 +181,7 @@ const ChatTranscriptRow: React.FC<ChatTranscriptRowProps> = ({
     onLogProposal, onDismissProposal,
     settlementCorrection, settlementCorrectionCurrent,
     onConfirmSettlementCorrection, onDismissSettlementCorrection,
+    tradeAction, tradeActionCurrent, onConfirmTradeAction, onDismissTradeAction,
 }) => {
     const isUser = row.role === 'user';
     const deskSpeaker = !row.speaker || row.speaker.trim().toLowerCase() === 'desk';
@@ -347,6 +356,17 @@ const ChatTranscriptRow: React.FC<ChatTranscriptRowProps> = ({
                             current={settlementCorrectionCurrent}
                             onConfirm={() => onConfirmSettlementCorrection?.(row.id)}
                             onDismiss={() => onDismissSettlementCorrection?.(row.id)}
+                        />
+                    )}
+                    {/* A PROPOSED action on an armed plan - move levels / close.
+                        The card holds no authority: confirm applies it through
+                        the journal/watch writers, never through this row. */}
+                    {tradeAction && (
+                        <TradeActionCard
+                            proposal={tradeAction}
+                            current={tradeActionCurrent}
+                            onConfirm={() => onConfirmTradeAction?.(row.id)}
+                            onDismiss={() => onDismissTradeAction?.(row.id)}
                         />
                     )}
                     {/* The seat DESCRIBED a plan and never called present_trade.
