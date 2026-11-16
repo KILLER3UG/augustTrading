@@ -69,6 +69,8 @@ import { getSessionContext } from '../infrastructure/SessionService';
 import { handleRecallTool } from '../learning/MemoryRetrievalService';
 import { formatFormingCandleLine, formatLiveMarkStamp, type FormingCandle } from '../trade/tradeChatContext';
 import { computeSetupClusterStats } from '../learning/setupClusterStats';
+import { wilsonInterval95 } from '../signals/signalAccuracy';
+import { MIN_RATE_SAMPLE } from './journalTools';
 import {
     RECEIPT_CHARS,
     clearToolArtifacts,
@@ -93,17 +95,22 @@ import { intersectGoalPolicy, type SeatToolGrant } from '../../utils/toolKinds';
  */
 export const toolActionFromResult = (name: string, ok: boolean, content: string, speaker: string): ToolAction | null => {
     const isProposal = name === 'forge_tool' || name === 'amend_memory' || name === 'skill_write' || name === 'write_memory_note'
-        || name === 'remember' || name === 'forget' || name === 'propose_strategy' || name === 'emit_signal';
+        || name === 'remember' || name === 'forget' || name === 'propose_strategy' || name === 'emit_signal'
+        // The canonical memory_* trio the always-on index instructs the seat
+        // to call: without these rows, a model rewriting a fact left no trace
+        // in the transcript ledger (the audit's top-2).
+        || name === 'memory_add' || name === 'memory_update' || name === 'memory_delete';
     const isCustom = name.startsWith('custom_');
     if (!isProposal && !isCustom) return null;
     const at = new Date().toISOString();
     const verbFor = (tool: string): string => (
         tool === 'forge_tool' || tool === 'propose_strategy' ? 'proposed'
-            : tool === 'skill_write' ? 'saved'
+            : tool === 'skill_write' || tool === 'memory_add' ? 'saved'
                     : tool === 'amend_memory' ? 'amended'
-                        : tool === 'forget' ? 'removed'
-                            : tool === 'emit_signal' ? 'emitted'
-                                : tool === 'remember' ? 'saved' : 'created');
+                        : tool === 'memory_update' ? 'updated'
+                            : tool === 'forget' || tool === 'memory_delete' ? 'removed'
+                                : tool === 'emit_signal' ? 'emitted'
+                                    : tool === 'remember' ? 'saved' : 'created');
     if (!ok) {
         return { at, speaker, tool: name, ok: false, verb: verbFor(name), label: 'rejected', review: '' };
     }
@@ -138,10 +145,13 @@ export const toolActionFromResult = (name: string, ok: boolean, content: string,
             review = parsed.tag === 'observed'
                 ? 'Settings → Memory (context only — never a rule)'
                 : 'Settings → Memory';
-        } else if (name === 'remember') {
+        } else if (name === 'remember' || name === 'memory_add') {
             label = `${parsed.kind ?? 'memory'}/${parsed.slug ?? 'entry'}`;
             review = 'your memory index';
-        } else if (name === 'forget') {
+        } else if (name === 'memory_update') {
+            label = String(parsed.slug ?? 'entry');
+            review = 'your memory index (previous value in the audit trail)';
+        } else if (name === 'forget' || name === 'memory_delete') {
             label = String(parsed.slug ?? 'entry');
             review = 'your memory index';
         } else {
@@ -159,6 +169,7 @@ const isActionableToolResult = (r: DeskToolResult): boolean =>
     r.name === 'forge_tool' || r.name === 'amend_memory' || r.name === 'skill_write' || r.name === 'write_memory_note'
         || r.name === 'propose_strategy' || r.name === 'emit_signal'
     || r.name === 'remember' || r.name === 'forget'
+    || r.name === 'memory_add' || r.name === 'memory_update' || r.name === 'memory_delete'
     || r.name.startsWith('custom_');
 
 export interface DeskToolDefinition {
@@ -458,7 +469,7 @@ const compactOutbound = (
  */
 export const TOOL_CACHE_TTL_MS = 30_000;
 
-/** One page of a spilled tool result. Sized to stay inside the 2400-char
+/** One page of a spilled tool result. Sized to stay inside the 12,000-char
  *  default budget WITH its continuation pointer, so a read-back never has to
  *  clip the body and can always say truthfully what remains. */
 export const READ_PAGE_CHARS = 2000;
@@ -624,14 +635,14 @@ export const MAX_TOOL_CONTENT_CHARS = 12_000;
 const TOOL_BUDGETS: Record<string, number> = {
     get_market_packet: 6000,
     run_screener: 4000,
-    // A ranked shortlist carries per-coin reasons, so the 2400 default would
+    // A ranked shortlist carries per-coin reasons, so the 12k default would
     // cut the LAST candidates off silently — the model would think the
     // market had fewer qualifying setups than the scan measured.
     find_best_setups: 4000,
     get_all_timeframes: 8000,
     // 60 OHLCV rows are ~64 chars each on a six-figure instrument, so 60 rows
     // is ~3.8k BEFORE the order-book block, the drawing notes and the header.
-    // At the 2400 default the tool lost roughly 23 of the 60 candles it
+    // At a 2400 cap (the folklore default; the real default is now 12k) the tool lost roughly 23 of the 60 candles it
     // advertises, on every call, with nothing marking the loss — the seat
     // believed it was reading a full chart. 8000 holds the whole read.
     // A seat that still overflows gets a spill receipt naming
@@ -642,14 +653,14 @@ const TOOL_BUDGETS: Record<string, number> = {
     // whole: a row is `2026-10-04T14:32:07.000Z BTCUSDT Long LOSS · +180.0% ·
     // -1.20R · breakout · [moved_stop]` ≈ 90 chars, plus the JSON quotes,
     // indentation and the tally line. Twenty rows measured ~2.7k, which the
-    // 2400 default would have cut to 17 rows SILENTLY to the seat — the exact
+    // 2400 cap would have cut to 17 rows SILENTLY to the seat — the exact
     // failure the get_chart_view budget exists to prevent.
     get_trade_log: 4000,
     // The self-change audit reads as rows, and a row the seat never saw is a
     // change it cannot revert. Measured on a ledger with a config row, a
     // promoted prompt row and a reverted row: 8 rows = 1,733 chars, widest row
     // 259 (`- <id> [<status> · <actor>] <target>: now <50> (was <50>; asked:
-    // <80>) · <evidence>`), so the all-widest payload is ~2.3k — which the 2,400
+    // <80>) · <evidence>`), so the all-widest payload is ~2.3k — which a 2,400
     // default would cut, silently dropping the oldest change off the list.
     list_self_changes: 2600,
     // The publishable block rides INSIDE this result: a clip that cut it in
@@ -658,7 +669,7 @@ const TOOL_BUDGETS: Record<string, number> = {
     get_key_levels: 4000,
     // The market-structure tools return one uniform JSON envelope. A session
     // profile with its bins and the auction-state composite are the widest
-    // payloads; 3600 holds either whole with headroom (the default 2400
+    // payloads; 3600 holds either whole with headroom (a 2400 cap
     // would silently truncate the bin list — the exact silent-loss failure
     // the get_chart_view budget exists to prevent).
     volume_profile: 3600,
@@ -696,6 +707,18 @@ const TOOL_BUDGETS: Record<string, number> = {
     // The meta-label read: a verdict with its reasons — the reasons ARE the
     // payload; a clip that cut them would leave a naked verdict.
     meta_label: 2800,
+    // The review payloads: a weekly/monthly report and the per-trade record.
+    // Unlisted tools ran under the 12k default; 4000 holds a report whole
+    // and marks the tool as capped deliberately.
+    run_review: 4000,
+    // The remaining unlisted tools, named so none of them silently rides the
+    // 12k default: the setup scanner is bounded by its detector count (60
+    // bars in), the projection prints 5 checkpoints, and the studies read
+    // returns formatted values only.
+    scan_setups: 4000,
+    project_future_price: 2400,
+    get_chart_studies: 3000,
+    get_setup_history_stats: 2600,
 };
 
 /**
@@ -1163,6 +1186,13 @@ const rawToolDigest = (name: string, content: string): string => {
             const s = Array.isArray(parsed.support) ? parsed.support.length : 0;
             const v = parsed.vwap && typeof parsed.vwap === 'object' ? ' · VWAP' : '';
             return `${r} resistance · ${s} support${v}`;
+        }
+        if (name === 'remember' || name === 'memory_add' || name === 'memory_update' || name === 'memory_delete' || name === 'forget') {
+            // The live digest names WHAT was remembered — "remember · ok" gave
+            // a model rewriting a fact a line that named nothing.
+            const slug = typeof parsed.slug === 'string' ? parsed.slug : '';
+            if (name === 'memory_update' && typeof parsed.mode === 'string') return `${slug} · ${parsed.mode}`;
+            return slug ? `${slug}${parsed.created === false ? ' · updated in place' : ''}` : 'ok';
         }
         if (name === 'load_tools') {
             const loaded = Array.isArray(parsed.loaded) ? parsed.loaded.length : 0;
@@ -2114,7 +2144,7 @@ export const DESK_TOOL_DEFINITIONS: DeskToolDefinition[] = [
         function: {
             name: 'setup_base_rate',
             description:
-                'The trader\'s OWN measured base rate for a setup type: wins/losses/sample over the matching journal rows, with a Wilson 95% interval and average R. Filter by coin/direction/family, and CONDITION on the decision-time regime or a scan_playbooks detector id when you need that bucket; a row without the recorded tag is excluded and the coverage count says how many. Refuses (says so) under 5 matching rows — no rate is quoted off a thin sample. Call before grading a setup as "this usually works".',
+                'The trader\'s OWN measured base rate for a setup type: wins/losses/sample over the matching journal rows, with a Wilson 95% interval and average R. Filter by coin/direction/family, and CONDITION on the decision-time regime or a scan_playbooks detector id when you need that bucket; a row without the recorded tag is excluded and the coverage count says how many. Refuses (says so) under 5 matching rows — no rate is quoted off a thin sample. Call before grading a setup as "this usually works". For the quick per-coin read with last outcome and worst lesson (no regime/playbook conditioning), call get_setup_history_stats.',
             parameters: {
                 type: 'object',
                 properties: {
@@ -2286,7 +2316,7 @@ export const DESK_TOOL_DEFINITIONS: DeskToolDefinition[] = [
         function: {
             name: 'get_setup_history_stats',
             description:
-                'Your own logged track record for a setup type: sample size, win rate, average R, last outcome, worst lesson. Use to check a claim like "this setup usually fails" against the journal before asserting it.',
+                'Your own logged track record for a setup type: sample size, win rate with its Wilson 95% interval, average R, last outcome, worst lesson. Use to check a claim like "this setup usually fails" against the journal before asserting it. For the sample-conditioned rate the signal loop measures (regime/playbook filters, refuses thin samples), call setup_base_rate instead.',
             parameters: {
                 type: 'object',
                 properties: {
@@ -2849,10 +2879,30 @@ export const LOAD_TOOLS_DEFINITION: DeskToolDefinition = {
 /** The catalogue line for one deferred tool: its exact name and a bounded
  *  description. The name is what `load_tools` takes; the line exists so the
  *  seat knows the tool is there at all. */
+/** Routing hints — the discriminator a 110-char line cuts off. The
+ *  near-synonym groups (the two stats tools, the three scanners, the two
+ *  chart-studies readers, the two market compendiums, mark-vs-present)
+ *  each get ONE clause appended VERBATIM after the truncation, so a model
+ *  picking from the catalogue line alone cannot confuse the pair. A hint
+ *  names the OTHER tool, never re-explains its own. */
+const ROUTING_HINTS: Record<string, string> = {
+    get_setup_history_stats: 'Quick per-coin read incl. worst lesson; for the sample-conditioned rate with a CI use setup_base_rate.',
+    setup_base_rate: 'Sample-conditioned rate with a Wilson CI (refuses thin samples); for the quick read use get_setup_history_stats.',
+    scan_setups: 'Chart-pattern scan for ONE symbol; market-wide table is run_screener; structure playbooks are scan_playbooks.',
+    run_screener: 'Market-wide table over all USDT perps; for one symbol use scan_setups.',
+    scan_playbooks: 'Structure playbooks (rotation, failed IB, spring/UTAD, sweep+shift); chart patterns are scan_setups.',
+    get_chart_studies: "Values on the chart's drawn lines; for a named study computed on demand use get_indicators.",
+    get_indicators: 'Named studies computed on demand; for the chart drawn values use get_chart_studies.',
+    get_market_packet: 'One-coin summaries + session/derivatives; per-timeframe candle rows are get_all_timeframes.',
+    get_all_timeframes: 'Per-timeframe candle rows + formations; one-coin summaries are get_market_packet.',
+    mark_trade_levels: 'Marks entry/stop/targets WITHOUT a card; presenting a trade for logging is present_trade.',
+};
+
 const catalogueLine = (def: DeskToolDefinition): string => {
     const desc = def.function.description.replace(/\s+/g, ' ').trim();
     const bounded = desc.length > 110 ? `${desc.slice(0, 110).replace(/\s+\S*$/, '')}…` : desc;
-    return `- ${def.function.name}: ${bounded}`;
+    const hint = ROUTING_HINTS[def.function.name];
+    return `- ${def.function.name}: ${bounded}${hint ? ` — ${hint}` : ''}`;
 };
 
 /** The deferred names a turn may load, gated by the seat's own allow-list.
@@ -3164,7 +3214,7 @@ async function runKeyLevels(symbol: string, interval: string): Promise<string> {
         return JSON.stringify({
             symbol,
             interval: tf,
-            error: `not enough candles (${klines?.length ?? 0}) to compute key levels`,
+            error: `not enough candles (${klines?.length ?? 0}) to compute key levels — the feed returned too little history; retry once, or grade without the levels rather than inferring them`,
         });
     }
     const T = await import('./TechnicalAnalysisService');
@@ -3661,7 +3711,8 @@ export async function executeDeskTool(
     // one chokepoint every transport passes through, so the list is enforced
     // HERE, before the cache and before the switch.
     if (!seatAllows(context.allowedTools, call.name)) {
-        return rejectedResult(call, `${call.name} rejected: this tool is not available on this seat.`);
+        return rejectedResult(call, `${call.name} rejected: this tool is not available on this seat.`
+            + ` The catalogue in your system prompt lists what THIS seat may load — call load_tools from it instead of retrying this name.`);
     }
     // The Settings switch is a PROMISE at the tool layer too, not just in the
     // prompt: with memory off, a seat that still has these tools offered must
@@ -5088,7 +5139,7 @@ ${body}`);
                 //
                 // The continuation pointer is NOT part of `content`. It was
                 // baked in before budgeting, and this tool has no TOOL_BUDGETS
-                // entry, so any page over the 2400-char default lost the one
+                // entry, so any page over a 2400-char cap lost the one
                 // line telling the seat how to fetch the rest — it was paid for
                 // and left with "first N of M" and no offset. `limit` is
                 // advertised up to 8000, so that was the normal case, not the
@@ -5363,20 +5414,52 @@ ${body}`);
                 // nothing and arms nothing.
                 const scope = (asString(call.arguments.scope) || 'weekly').toLowerCase();
                 const rows = context.trades ?? [];
+                // Pure JSON, no text prefix: the generic clipper is
+                // JSON-aware, and a `POST-MORTEM DATA:` prefix used to bypass
+                // it — a blind .slice could break the object mid-way. The
+                // trade scope returns the same compact record shape
+                // get_trade_log's `records` builds (the raw analysis blob
+                // never ships), with the notes cut where they say so.
                 if (scope === 'trade') {
                     const tradeId = asString(call.arguments.tradeId);
                     const row = rows.find(t => t.id === tradeId);
                     if (!row) return rejectedResult(call, `run_review rejected: no journal row "${tradeId}" among this turn's ${rows.length} rows. Call get_trade_log for the ids.`);
-                    content = 'POST-MORTEM DATA (read-only) for ' + tradeId + ': ' + JSON.stringify(row, null, 1).slice(0, 4000);
+                    content = JSON.stringify({
+                        tool: 'run_review', scope: 'trade', tradeId,
+                        record: {
+                            id: row.id,
+                            planId: row.planId ?? null,
+                            loggedAt: row.timestamp ?? null,
+                            symbol: row.analysis?.coinName ?? null,
+                            direction: row.analysis?.direction ?? null,
+                            outcome: row.outcome,
+                            entry: row.analysis?.entryPoints?.[0]?.price ?? null,
+                            stopLoss: row.analysis?.stopLoss ?? null,
+                            takeProfits: (row.analysis?.takeProfit ?? []).map(tp => tp.price),
+                            leverage: row.leverage ?? null,
+                            pnlAmount: row.pnlAmount ?? null,
+                            pnlPercent: row.pnlPercent ?? null,
+                            realizedR: row.realizedR ?? null,
+                            netR: row.netR ?? null,
+                            maxAdverseExcursion: row.maxAdverseExcursion ?? null,
+                            maxFavorableExcursion: row.maxFavorableExcursion ?? null,
+                            strategy: row.analysis?.strategy ?? null,
+                            confidence: row.analysis?.confidence ?? null,
+                            tags: [...(row.mistakeTags ?? []), ...(row.rootCauseClass ? [row.rootCauseClass] : [])],
+                            notes: typeof row.postMortem === 'string' && row.postMortem.length > 600
+                                ? `${row.postMortem.slice(0, 600)}… (${row.postMortem.length - 600} more chars — get_trade_log with records:true carries the same cut)`
+                                : (row.postMortem ?? null),
+                        },
+                    }, null, 1);
                     break;
                 }
                 if (scope === 'monthly') {
                     const { buildMonthReport } = await import('../learning/monthlyReport');
-                    content = 'MONTHLY REVIEW (read-only): ' + JSON.stringify(buildMonthReport(rows, Date.now()), null, 1).slice(0, 5000);
+                    content = JSON.stringify({ tool: 'run_review', scope: 'monthly', report: buildMonthReport(rows, Date.now()) }, null, 1);
                     break;
                 }
                 const { buildWeekStats } = await import('../learning/weeklyReview');
-                content = 'WEEKLY REVIEW (read-only): ' + JSON.stringify(buildWeekStats(rows, Date.now()), null, 1).slice(0, 5000);
+                content = JSON.stringify({ tool: 'run_review', scope: 'weekly', report: buildWeekStats(rows, Date.now()) }, null, 1);
                 break;
             }
             case 'propose_risk_change': {
@@ -5652,6 +5735,14 @@ ${body}`);
                 const dirArg = asString(call.arguments.direction).toUpperCase();
                 const direction: 'Long' | 'Short' | undefined = dirArg === 'LONG' ? 'Long' : dirArg === 'SHORT' ? 'Short' : undefined;
                 const stats = computeSetupClusterStats(coin, direction, undefined, context.trades || []);
+                // The rate ships with its Wilson 95% interval and a thin-sample
+                // warning, so this quick read can never assert a bare percent
+                // off two rows — that is the floor setup_base_rate refuses
+                // under, and the two tools answering the same question must
+                // not disagree about how much a small sample proves.
+                const ci = stats && stats.winRate !== null && stats.sample > 0
+                    ? wilsonInterval95(stats.wins, stats.sample)
+                    : null;
                 content = JSON.stringify(stats
                     ? {
                         coin,
@@ -5660,6 +5751,10 @@ ${body}`);
                         wins: stats.wins,
                         losses: stats.losses,
                         winRate: stats.winRate !== null ? Math.round(stats.winRate * 100) / 100 : null,
+                        wilson95: ci ? { low: Math.round(ci.low * 1000) / 1000, high: Math.round(ci.high * 1000) / 1000 } : null,
+                        ...(stats.sample < MIN_RATE_SAMPLE && stats.winRate !== null
+                            ? { thinSampleNote: `only ${stats.sample} closed rows — below the ${MIN_RATE_SAMPLE} floor setup_base_rate quotes at; treat this rate as indicative, not measured (setup_base_rate refuses to answer at this size)` }
+                            : {}),
                         avgR: stats.avgR !== null ? Math.round(stats.avgR * 100) / 100 : null,
                         lastOutcome: stats.lastOutcome,
                         lastDate: stats.lastDate ? stats.lastDate.slice(0, 10) : null,
@@ -5780,7 +5875,7 @@ ${body}`);
                 break;
             }
             default:
-                content = `Unknown tool: ${call.name}`;
+                content = `Unknown tool: ${call.name}. It is not a desk tool — the catalogue in your system prompt lists the names this seat may load; call load_tools to read a name's full schema before calling it.`;
                 return { toolCallId: call.id, name: call.name, ok: false, content };
         }
         // Freshness stamps are appended AFTER the budget and are NOT cached.

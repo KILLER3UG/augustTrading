@@ -44,6 +44,7 @@ import { storageService } from '../infrastructure/StorageService';
 import { indexBudgetFor } from '../../utils/promptIndexBudget';
 import { DEFAULT_CONTEXT_WINDOW_TOKENS, resolveContextWindow } from '../../utils/contextWindow';
 import { activeStrategiesBlock } from '../learning/strategyStore';
+import { recordSeatInjections } from '../learning/MemoryInjectionService';
 import { buildProfileMemoryIndex } from '../learning/profileMemory';
 import { buildGoalsIndex, focusedGoal, goalMatchesMessage, listGoals } from '../goals/GoalService';
 import { runToolTurn, type CaptureSnapshot, type ToolTurnEvents, type ToolTurnOutcome, type ToolTurnRequest } from './toolTurn';
@@ -158,7 +159,7 @@ export interface ChatSurfacePrompt {
  * trader their answer: the prompt simply carries less, the same way the dock's
  * `skillsIndexForPrompt` swallows and returns ''.
  */
-export const surfacePromptWith = (mandate: string, where: string, opts: { memoryEnabled?: boolean; strategiesEnabled?: boolean; windowTokens?: number; matchText?: string } = {}): ChatSurfacePrompt => {
+export const surfacePromptWith = (mandate: string, where: string, opts: { memoryEnabled?: boolean; strategiesEnabled?: boolean; windowTokens?: number; matchText?: string; record?: { runId?: string; coin?: string } } = {}): ChatSurfacePrompt => {
     const memoryEnabled = opts.memoryEnabled !== false;
     const budget = indexBudgetFor(opts.windowTokens ?? DEFAULT_CONTEXT_WINDOW_TOKENS);
     let skillsBlock: string;
@@ -254,6 +255,20 @@ export const surfacePromptWith = (mandate: string, where: string, opts: { memory
             /* an unreadable goal store costs the hint, never the answer */
         }
     }
+    // Opt-in telemetry, same rule getMemoryFilesContext enforces: a record
+    // claims what a run was SHOWN, so only a caller whose prompt actually
+    // sends opts in. This is what feeds the provenance strip on ordinary
+    // sends — it used to render nothing outside the bot path.
+    if (opts.record) {
+        recordSeatInjections({
+            runId: opts.record.runId,
+            coin: opts.record.coin,
+            skills,
+            hasRules: !!rulesBlock,
+            hasMemoryIndex: !!memoryBlock,
+            hasStrategies: !!strategiesBlock,
+        });
+    }
     return {
         text: [mandate, goalsBlock, skillsBlock, rulesBlock, topicsBlock, strategiesBlock, memoryBlock].filter(Boolean).join('\n\n'),
         skills,
@@ -266,7 +281,7 @@ export const surfacePromptWith = (mandate: string, where: string, opts: { memory
  * skills heading says "what the trader asks about", because there is no chart
  * here to match against, and the mandate forbids the tool calls the canvas owns.
  */
-export const chatSurfaceSystemPrompt = (opts: { memoryEnabled?: boolean; strategiesEnabled?: boolean; windowTokens?: number; matchText?: string } = {}): ChatSurfacePrompt =>
+export const chatSurfaceSystemPrompt = (opts: { memoryEnabled?: boolean; strategiesEnabled?: boolean; windowTokens?: number; matchText?: string; record?: { runId?: string; coin?: string } } = {}): ChatSurfacePrompt =>
     surfacePromptWith(CHAT_SURFACE_SYSTEM_PROMPT, 'what the trader asks about', opts);
 
 /** The speaker key for this surface's live tool feed — `chatRowFrom` flattens
@@ -562,6 +577,9 @@ export const runChatSurfaceTurn = async (req: ChatSurfaceTurnRequest): Promise<T
             // `surfacePromptWith`. A caller that brought its own mandate gets
             // that mandate verbatim and no hint.
             matchText: typeof req.prompt === 'string' ? req.prompt : undefined,
+            // This prompt IS the request's system text, so the injection is
+            // recorded — the provenance strip reads it.
+            record: { coin: req.symbol ?? undefined },
         });
     if (prompt.skills.length > 0) req.patch(m => ({ ...m, injectedSkills: prompt.skills }));
 

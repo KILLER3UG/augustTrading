@@ -1,3 +1,4 @@
+import { purgeDeletedProfileMemories } from './profileMemory';
 /**
  * memoryHygiene — the weekly notebook maintenance pass.
  *
@@ -91,6 +92,20 @@ export const runMemoryHygiene = async (
 
         if (notebookWantsCleanup()) {
             lines.push('Notebook is over its size budget — new files are refused until space is freed in Settings → Memory.');
+        }
+
+        // The forget window's other half: soft-deleted rows past the hard 30
+        // days are purged here. The pass used to clean NOTHING — a hygiene
+        // pass that only writes suggestions left tombstones and their bytes
+        // accumulating in the notebook blob forever, while the UI promised
+        // "restorable for 30 days" as a retention DISCIPLINE.
+        try {
+            const purged = purgeDeletedProfileMemories(username);
+            lines.push(purged > 0
+                ? `Purged ${purged} soft-deleted memor${purged === 1 ? 'y' : 'ies'} past the 30-day undo window.`
+                : 'No soft-deleted memories past the undo window.');
+        } catch (e) {
+            lines.push(`Tombstone purge skipped: ${e instanceof Error ? e.message : String(e)}.`);
         }
 
         await appendLog(username, now, lines);

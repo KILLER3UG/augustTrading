@@ -48,6 +48,7 @@ import {
     buildSkillsIndexForPrompt, TRADE_CHAT_SYSTEM_PROMPT,
 } from '../../services/trade/tradeChatContext';
 import { activeStrategiesBlock } from '../../services/learning/strategyStore';
+import { recordSeatInjections } from '../../services/learning/MemoryInjectionService';
 import { deleteSessionDrawings, type ChartDrawing } from '../../services/trade/chartDrawings';
 import type { MessageLevelLines } from '../../services/trade/keyLevels';
 import type { TradeProposal } from '../../services/trade/proposedTrade';
@@ -67,7 +68,7 @@ import BiasChips from './BiasChips';
 import { saveBot, type AgentBot } from '../../services/agents/agentRoster';
 import { resolveAgentContext, SINGLE_AGENT_MEMORY_BUDGET, type ResolvedAgentContext } from '../../services/agents/agentContext';
 import { getFirstReadyProvider, isProviderReady, formatModelDisplayName, computeChatModelFallback } from '../../utils/providerUtils';
-import { skillIndexRows } from '../../services/learning/SkillFileService';
+import { skillIndexRows, usableSkillRows } from '../../services/learning/SkillFileService';
 import { getMemoryFiles } from '../../services/learning/MemoryFilesService';
 import { buildNotebookTopicsIndex } from '../../services/learning/memoryTopics';
 import { indexBudgetFor } from '../../utils/promptIndexBudget';
@@ -554,6 +555,17 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
         // Same heading the desk uses (`buildBotSystemPrompt`) — one agent
         // should meet its own notes under one name wherever it is asked.
         const base = `${TRADE_CHAT_SYSTEM_PROMPT}${skillsBlock ? `\n\n${skillsBlock}` : ''}${strategiesBlock ? `\n\n${strategiesBlock}` : ''}${memoryBlock ? `\n\n${memoryBlock}` : ''}${agent?.notes ? `\n\n## Your private notes\n${agent.notes}` : ''}`;
+        // This prompt IS what the seat answers under, so record what it
+        // carried: the provenance strip's "what did the AI remember" row used
+        // to render nothing on ordinary dock sends (the log only heard the
+        // bot learner). Fire-and-forget; a failed record never breaks the send.
+        recordSeatInjections({
+            coin: symbol,
+            skills: skillsBlock ? usableSkillRows(skillIndexRows()).slice(0, 8).map(r => r.slug) : [],
+            hasRules: false,
+            hasMemoryIndex: !!memoryBlock,
+            hasStrategies: !!strategiesBlock,
+        });
         return persona ? `${base}\n\n## Your role\n${persona}` : base;
     }, [symbol, trades, memoryEnabled, strategiesEnabled]);
 

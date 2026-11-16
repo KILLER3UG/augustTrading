@@ -3,7 +3,7 @@
  * loss.
  *
  * THE PROBLEM. A desk-tool result is capped before it reaches a model
- * (`budgetToolContent`: 2400 chars, more for the compendium tools). The cap is
+ * (`budgetToolContent`: 12,000 chars by default, less per TOOL_BUDGETS). The cap is
  * necessary — tool output rides every subsequent prompt, so one 200 KB order
  * book compounds across a whole debate — but it means a seat asking about the
  * 92nd level of a book is told, correctly, that it was dropped. Before this the

@@ -58,6 +58,39 @@ export const recordMemoryInjection = async (
     }
 };
 
+/** Record what the SEAT PROMPT actually carried this turn. The injection log
+ *  used to be written only by the bot learner, so the provenance strip ("what
+ *  did the AI actually remember for this answer?") rendered nothing on
+ *  ordinary sends. Both seat-prompt builders (the chat surface's
+ *  `surfacePromptWith` and the dock's `systemPromptFor`) call this AFTER
+ *  assembling the blocks they genuinely send — the same rule
+ *  `getMemoryFilesContext` enforces with its opt-in: a record claims what a
+ *  run was shown, never what merely matched. Fire-and-forget; a failed
+ *  record must never break the send. */
+export const recordSeatInjections = (
+    opts: { runId?: string; coin?: string; skills?: string[]; hasRules?: boolean; hasMemoryIndex?: boolean; hasStrategies?: boolean },
+): void => {
+    const sources: InjectedSource[] = [
+        ...(opts.skills ?? []).map(slug => ({ kind: 'skill' as const, path: `skills/${slug}.md` })),
+        ...(opts.hasRules ? [{ kind: 'rules' as const, path: 'rules/learning-index' }] : []),
+        ...(opts.hasMemoryIndex ? [{ kind: 'identity' as const, path: 'profile/memory-index' }] : []),
+        ...(opts.hasStrategies ? [{ kind: 'playbook' as const, path: 'strategies/active' }] : []),
+    ];
+    if (sources.length === 0) return;
+    void (async () => {
+        try {
+            const { getActiveUsername } = await import('../../utils/activeUser');
+            await recordMemoryInjection(getActiveUsername(), {
+                stage: 'seat-prompt',
+                audience: 'seat',
+                coin: opts.coin,
+                sources,
+                runId: opts.runId,
+            });
+        } catch { /* telemetry must never break prompt assembly */ }
+    })();
+};
+
 export const getRecentMemoryInjections = async (
     username: string,
 ): Promise<MemoryInjectionRecord[]> => {

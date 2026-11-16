@@ -170,12 +170,12 @@ export const describePressure = (size: NotebookSize): string => {
         : size.pressure === 'trigger'
             // Says what is actually true, twice over. The old wording claimed
             // ALL notebook file creation had stopped; only model-note creation
-            // ever did. Skill creation stops at this tier too — but a hygiene
-            // pass merges duplicates into the ARCHIVE, which still counts
-            // toward these bytes, so it shrinks the active library and NOT the
-            // stored size. Only deleting a note reclaims space, and saying
-            // otherwise would promise a remedy that does not exist.
-            ? 'the harness has stopped adding new skills and model notes — existing skills still update and still count new outcomes; a hygiene pass merges duplicates into the archive, but only deleting a note in Settings frees stored space'
+            // ever did. Skill creation stops at this tier too. The hygiene
+            // pass writes the review suggestions and purges past-undo-window
+            // tombstones — it does NOT merge or archive anything (no such
+            // machinery exists), so only deleting a note reclaims space, and
+            // saying otherwise would promise a remedy that does not exist.
+            ? 'the harness has stopped adding new skills and model notes — existing skills still update and still count new outcomes; only deleting a note in Settings frees stored space'
             : 'the notebook writer is refused outright — nothing stored was deleted, but nothing new will be written';
     return `Notebook at ${mb} MB (${size.pressure})${where} — ${action}.`;
 };

@@ -37,7 +37,10 @@ import type { MarketToolEnvelope } from './marketTools';
 
 /** The floor every quoted rate shares: under this, the tool says why it is
  *  not quoting one. */
-const MIN_RATE_SAMPLE = 5;
+/** The floor a rate is quoted at. Exported: the quick stats tool's thin-sample
+ *  warning reads the SAME floor, so the two stats tools cannot disagree about
+ *  how small a sample may be before it proves nothing. */
+export const MIN_RATE_SAMPLE = 5;
 
 /**
  * The regime a caller asked for. A trailing numeric segment is a BAR COUNT

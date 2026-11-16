@@ -174,7 +174,10 @@ const matchedSkillBlock = (
     const match = bestMatchedSkill(query, asOfMs);
     if (!match) return { text: '', skill: null, name: '' };
     const { skill } = match;
-    return { text: `[skills/${skill.slug}] ${skillIndexLine(skill)}`, skill, name: skill.slug };
+    // The age rides the PUSHED line, not only the recall tool's readout — a
+    // months-old skill otherwise re-fires into every matching turn with no
+    // freshness cue at all.
+    return { text: `[skills/${skill.slug}] ${skillIndexLine(skill)} (${lastEditedNote(skill)})`, skill, name: skill.slug };
 };
 
 /**

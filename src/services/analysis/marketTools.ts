@@ -242,10 +242,13 @@ export const runVolumeProfileTool = async (
             price_position: position,
             total_volume: profile.totalVolume,
             bin_count: profile.bins.length,
-            bins: profile.bins.map(b => ({
-                lo: r4(b.priceLow), hi: r4(b.priceHigh), vol: b.volume,
-                ...(b.buyVolume !== undefined ? { buy: r4(b.buyVolume) } : {}),
-            })),
+            // The raw histogram does NOT ship: POC/VAH/VAL, the value-area
+            // zone, hvn and lvn already carry the decision a profile answers,
+            // and the bin rows are the textbook noisy array — at the 200-bin
+            // ceiling they were a field-shed ~11k blob riding a 3.6k budget.
+            // A model that truly needs a bin can ask volume_profile's shape
+            // through get_chart_view's drawn profile instead.
+            bins_omitted: profile.bins.length,
         };
         const dPoc = r2(Math.abs(last - profile.poc) / atr);
         return JSON.stringify(envelope({
@@ -266,7 +269,7 @@ export const runVolumeProfileTool = async (
             params: { anchor, bins }, barsUsed: candles.length,
             notes: [...notes, `fetch failed: ${(error as Error).message}`],
             values: null, distancesAtr: {}, evidence: 'structural', summary: '',
-            reason: 'candle fetch failed',
+            reason: 'candle fetch failed — retry once; if it fails again the feed is down, treat the read as UNKNOWN and say so rather than inferring a level',
         }));
     }
 };
@@ -365,7 +368,7 @@ export const runNakedPocsTool = async (
             params: { granularity, lookback }, barsUsed: 0,
             notes: [...notes, `fetch failed: ${(error as Error).message}`],
             values: null, distancesAtr: {}, evidence: 'documented', summary: '',
-            reason: 'candle fetch failed',
+            reason: 'candle fetch failed — retry once; if it fails again the feed is down, treat the read as UNKNOWN and say so rather than inferring a level',
         }));
     }
 };
@@ -446,7 +449,7 @@ export const runVwapTool = async (
             params: { anchor }, barsUsed: 0,
             notes: [`fetch failed: ${(error as Error).message}`],
             values: null, distancesAtr: {}, evidence: 'structural', summary: '',
-            reason: 'candle fetch failed',
+            reason: 'candle fetch failed — retry once; if it fails again the feed is down, treat the read as UNKNOWN and say so rather than inferring a level',
         }));
     }
 };
@@ -504,7 +507,7 @@ export const runOrderFlowTool = async (
             params: { window }, barsUsed: 0,
             notes: [`fetch failed: ${(error as Error).message}`],
             values: null, distancesAtr: {}, evidence: 'documented', summary: '',
-            reason: 'candle fetch failed',
+            reason: 'candle fetch failed — retry once; if it fails again the feed is down, treat the read as UNKNOWN and say so rather than inferring a level',
         }));
     }
 };
@@ -554,7 +557,7 @@ export const runEffortResultTool = async (
             params: {}, barsUsed: 0,
             notes: [`fetch failed: ${(error as Error).message}`],
             values: null, distancesAtr: {}, evidence: 'documented', summary: '',
-            reason: 'candle fetch failed',
+            reason: 'candle fetch failed — retry once; if it fails again the feed is down, treat the read as UNKNOWN and say so rather than inferring a level',
         }));
     }
 };
@@ -653,7 +656,7 @@ export const runAuctionStateTool = async (
             params: {}, barsUsed: 0,
             notes: [`fetch failed: ${(error as Error).message}`],
             values: null, distancesAtr: {}, evidence: 'documented', summary: '',
-            reason: 'candle fetch failed',
+            reason: 'candle fetch failed — retry once; if it fails again the feed is down, treat the read as UNKNOWN and say so rather than inferring a level',
         }));
     }
 };
@@ -693,7 +696,7 @@ export const runRegimeTool = async (
             params: {}, barsUsed: 0,
             notes: [`fetch failed: ${(error as Error).message}`],
             values: null, distancesAtr: {}, evidence: 'structural', summary: '',
-            reason: 'candle fetch failed',
+            reason: 'candle fetch failed — retry once; if it fails again the feed is down, treat the read as UNKNOWN and say so rather than inferring a level',
         }));
     }
 };
@@ -751,7 +754,7 @@ export const runTradeMathTool = async (
             params: { direction, entry, stopLoss }, barsUsed: 0,
             notes: [`fetch failed: ${(error as Error).message}`],
             values: null, distancesAtr: {}, evidence: 'structural', summary: '',
-            reason: 'candle fetch failed',
+            reason: 'candle fetch failed — retry once; if it fails again the feed is down, treat the read as UNKNOWN and say so rather than inferring a level',
         }));
     }
 };
@@ -1031,7 +1034,7 @@ export const runPlaybooksTool = async (
             tool: 'scan_playbooks', asof: asofMs, symbol, tf,
             params: {}, barsUsed: 0, notes: [`fetch failed: ${(error as Error).message}`],
             values: null, distancesAtr: {}, evidence: 'documented', summary: '',
-            reason: 'candle fetch failed',
+            reason: 'candle fetch failed — retry once; if it fails again the feed is down, treat the read as UNKNOWN and say so rather than inferring a level',
         }));
     }
 };
@@ -1093,7 +1096,7 @@ export const runBtcRelativeTool = async (
             tool: 'btc_relative', asof: asofMs, symbol, tf: '1h',
             params: { window }, barsUsed: 0, notes: [`fetch failed: ${(error as Error).message}`],
             values: null, distancesAtr: {}, evidence: 'documented', summary: '',
-            reason: 'candle fetch failed',
+            reason: 'candle fetch failed — retry once; if it fails again the feed is down, treat the read as UNKNOWN and say so rather than inferring a level',
         }));
     }
 };
@@ -1159,7 +1162,7 @@ export const runSwingStructureTool = async (
             tool: 'swing_structure', asof: asofMs, symbol, tf,
             params: {}, barsUsed: 0, notes: [`fetch failed: ${(error as Error).message}`],
             values: null, distancesAtr: {}, evidence: 'structural', summary: '',
-            reason: 'candle fetch failed',
+            reason: 'candle fetch failed — retry once; if it fails again the feed is down, treat the read as UNKNOWN and say so rather than inferring a level',
         }));
     }
 };
@@ -1238,7 +1241,7 @@ export const runLiquidityTool = async (
             tool: 'liquidity', asof: asofMs, symbol, tf,
             params: {}, barsUsed: 0, notes: [`fetch failed: ${(error as Error).message}`],
             values: null, distancesAtr: {}, evidence: 'structural', summary: '',
-            reason: 'candle fetch failed',
+            reason: 'candle fetch failed — retry once; if it fails again the feed is down, treat the read as UNKNOWN and say so rather than inferring a level',
         }));
     }
 };
@@ -1288,7 +1291,7 @@ export const runImbalancesTool = async (
             tool: 'imbalances', asof: asofMs, symbol, tf,
             params: {}, barsUsed: 0, notes: [`fetch failed: ${(error as Error).message}`],
             values: null, distancesAtr: {}, evidence: 'structural', summary: '',
-            reason: 'candle fetch failed',
+            reason: 'candle fetch failed — retry once; if it fails again the feed is down, treat the read as UNKNOWN and say so rather than inferring a level',
         }));
     }
 };
@@ -1341,7 +1344,7 @@ export const runSrZonesTool = async (
             tool: 'sr_zones', asof: asofMs, symbol, tf,
             params: {}, barsUsed: 0, notes: [`fetch failed: ${(error as Error).message}`],
             values: null, distancesAtr: {}, evidence: 'structural', summary: '',
-            reason: 'candle fetch failed',
+            reason: 'candle fetch failed — retry once; if it fails again the feed is down, treat the read as UNKNOWN and say so rather than inferring a level',
         }));
     }
 };
@@ -1399,7 +1402,7 @@ export const runWyckoffTool = async (
             tool: 'wyckoff_events', asof: asofMs, symbol, tf,
             params: {}, barsUsed: 0, notes: [`fetch failed: ${(error as Error).message}`],
             values: null, distancesAtr: {}, evidence: 'documented', summary: '',
-            reason: 'candle fetch failed',
+            reason: 'candle fetch failed — retry once; if it fails again the feed is down, treat the read as UNKNOWN and say so rather than inferring a level',
         }));
     }
 };
@@ -1447,7 +1450,7 @@ export const runKeyLevelsEnvelope = async (symbolInput: string, asofMs: number =
             tool: 'get_key_levels', asof: asofMs, symbol, tf: '1h',
             params: {}, barsUsed: 0, notes: [`fetch failed: ${(error as Error).message}`],
             values: null, distancesAtr: {}, evidence: 'structural', summary: '',
-            reason: 'candle fetch failed',
+            reason: 'candle fetch failed — retry once; if it fails again the feed is down, treat the read as UNKNOWN and say so rather than inferring a level',
         }));
     }
 };

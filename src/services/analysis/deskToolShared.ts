@@ -86,11 +86,11 @@ export const CHART_ACTION_TOOL_DEFS: DeskToolDefinition[] = [
         function: {
             name: 'mark_trade_levels',
             description:
-                'Mark a full trade plan on the chart: Entry (sky), Stop Loss (rose) and 1-5 Take Profits (amber) as labeled horizontal lines the user can see. Use this instead of three draw_on_chart calls when presenting a setup.',
+                'Mark a full trade plan on the chart: Entry (sky), Stop Loss (rose) and 1-5 Take Profits (amber) as labeled horizontal lines the user can see. At least one of stopLoss / takeProfits is REQUIRED beside the entry — the call is refused without one. Use this instead of three draw_on_chart calls when presenting a setup; if the plan is going to the trader for a decision, use present_trade instead (it draws these AND shows the card).',
             parameters: {
                 type: 'object',
                 properties: {
-                    entry: { type: 'number', description: 'Entry price.' },
+                    entry: { type: 'number', description: 'Entry price. Refused alone: name a stopLoss and/or takeProfits too.' },
                     stopLoss: { type: 'number', description: 'Stop-loss price.' },
                     takeProfits: { type: 'array', items: { type: 'number' }, description: '1-5 TP prices, in order.' },
                 },

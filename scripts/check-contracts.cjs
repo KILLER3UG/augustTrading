@@ -907,6 +907,18 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
         }));
     ok('agent hands: run_review changes nothing and says so',
         /READ-ONLY/i.test(defOf('run_review').function.description));
+    ok('agent hands: every catalogue routing hint names a real tool (drift guard)',
+        (() => {
+            const hints = desk.ROUTING_HINTS || {};
+            const names = new Set([...defs, ...chartActions]);
+            const bad = Object.keys(hints).filter(k => !names.has(k));
+            // The hint TEXT may name another tool; every named tool in the text
+            // must also be real, so a rename cannot leave a hint pointing at a
+            // ghost.
+            const textual = Object.values(hints).join(' ').match(/[a-z_]{4,}/g) || [];
+            const ghostTexts = [...new Set(textual)].filter(t => names.has(t) === false && /^(use|the|for|is|and|with|from|when|into|onto|this|that|lines|values|named|studies|computed|demand|table|per|coin|read|rate|quick|incl|worst|lesson|sample|conditioned|wilson|refuses|thin|samples|structure|playbooks|chart|patterns|scan|market|wide|all|summaries|session|derivatives|candle|rows|formations|timeframe|presenting|card|draws|marks|entry|stop|targets|without|trade|these|shows|instead|calls|three|rotation|failed|spring|utad|sweep|shift|full|usdt|shape|one|symbol|graphs?|its|own|drawing|marked)$/i.test(t) === false);
+            return bad.length === 0 && ghostTexts.length === 0, `bad=${bad} ghosts=${ghostTexts.slice(0, 6)}`;
+        })());
 })();
 
 // ─── 13e. the settlement-correction store: a proposal, never a write ───────
@@ -5710,13 +5722,33 @@ const checkAgentHandExecutor = async () => {
     ok('agent hands executor: an authority change without a plan id is refused',
         noPlan.ok === false && /plan id/.test(noPlan.content), noPlan.content);
 
-    // run_review is read-only: it returns findings and writes nothing.
+    // run_review is read-only: it returns findings and writes nothing. The
+    // payload is PURE JSON (the JSON-aware clipper reshapes it; a text
+    // prefix used to bypass the clipper and a blind .slice could break the
+    // object mid-way), and the trade scope returns the compact record shape,
+    // never the raw analysis blob.
     const review = await desk.executeDeskTool(call('run_review', { scope: 'weekly' }), ctx);
-    ok('agent hands executor: a weekly review returns findings, read-only',
-        review.ok === true && /WEEKLY REVIEW/.test(review.content), review.content.slice(0, 120));
+    ok('agent hands executor: a weekly review returns a JSON envelope, read-only',
+        review.ok === true && /"scope":\s*"weekly"/.test(review.content) && /"report"/.test(review.content), review.content.slice(0, 120));
     const reviewTrade = await desk.executeDeskTool(call('run_review', { scope: 'trade', tradeId: 'nope' }), ctx);
     ok('agent hands executor: a trade review with an unknown id is refused by name',
         reviewTrade.ok === false && /nope/.test(reviewTrade.content), reviewTrade.content);
+    const reviewRow = await desk.executeDeskTool(call('run_review', { scope: 'trade', tradeId: 't9' }), ctx);
+    ok('agent hands executor: a trade review returns the compact record, never the raw row',
+        reviewRow.ok === true && /"record"/.test(reviewRow.content) && /"outcome"/.test(reviewRow.content)
+        && !/"analysis"\s*:/.test(reviewRow.content), reviewRow.content.slice(0, 160));
+
+    // The quick stats tool carries its Wilson interval and its thin-sample
+    // warning, so two stats tools can never hand back contradictory answers
+    // about how much a small sample proves.
+    const statsCtx = { defaultSymbol: 'BTCUSDT', allowedTools: 'all', trades: [
+        { id: 's1', outcome: 'WIN', analysis: { coinName: 'ETHUSDT', direction: 'Long' } },
+        { id: 's2', outcome: 'LOSS', analysis: { coinName: 'ETHUSDT', direction: 'Long' } },
+    ] };
+    const statsThin = await desk.executeDeskTool(call('get_setup_history_stats', { symbol: 'ETHUSDT', direction: 'Long' }), statsCtx);
+    ok('agent hands executor: a thin-sample stats read carries the Wilson CI and the floor warning',
+        statsThin.ok === true && /"wilson95"/.test(statsThin.content) && /thinSampleNote/.test(statsThin.content)
+        && /setup_base_rate refuses/.test(statsThin.content), statsThin.content.slice(0, 200));
 
     // The risk hand: it RECORDS a proposal and never writes a setting.
     const badTarget = await desk.executeDeskTool(call('propose_risk_change', { target: 'equityUsd', value: 5, reason: 'r' }), ctx);
