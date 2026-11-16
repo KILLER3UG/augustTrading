@@ -58,6 +58,31 @@ Both are the remaining Phase 2 commits. The two items that blocked Phase 2's sta
 `App.tsx` surface-switch extraction and the dock's correction/action card sink — are DONE
 (`a23d6d7a`, `6b1ac8ed`).
 
+### Merge execution notes (scoped 2026-11-16, ready to execute)
+
+- **The composer mode menu already exists** — the dock's "New" menu offers New panel
+  (`up to N models`), New agent, New room, existing rooms (`· room`) and existing bots
+  (`· as bot`), and solo is the default session. Phase 2's "composer mode menu
+  (single/panel/room/bot)" is therefore satisfied by it; only the merge and the rail remain.
+- **The merge is surface-level first**: `SurfaceOutlet` renders the TradeView workspace for
+  BOTH `trade` and `agents` (the agents branch disappears; the stored `agents` route and Alt+4
+  stay valid — they land on the same page). `AgentsView.tsx` and its private helpers
+  (`RowMenu`, `ActiveGoalChip`, `AgentDetailCard` — verify references first) are deleted in the
+  same commit. App stops passing `onOpenAgents`, which auto-hides the dock's "Open in Agents"
+  menu item (it is already gated on the handler).
+- **The rail rebuild follows**: `ShellRail` drops the icon strip and mounts the conversation
+  column — ConversationGroups (New chat / Pinned / Recent) + `AccountRow` + a Settings gear —
+  on the workspace. AgentsView's own column dies with the merge, so there is never a second
+  conversation column.
+- **Probe re-anchor is the bulk**: 26 `agents-view`/`agents-rail` references in
+  `scripts/render-probe.cjs` (hop block ~1665/2368-2484, thinking-clock block ~2085-2130,
+  nav-rail block ~2500-2800, Agents sweep entry 2218 + settle map 2346, desk-pane checks
+  ~3222-3270, phone checks ~4417/4708). The Agents surface's checks re-target the workspace's
+  dock; the hop/mode-pill checks become same-page no-ops and are removed with their blocks.
+- **Order and gates**: merge commit → gates + render-probe green → rail commit → gates +
+  render-probe green → then the Phase 3 P-row proofs. Never render AgentsView and the
+  workspace at once.
+
 ### Review and gating
 
 - **The early Phase 3 work (the correction and trade-action cards) still needs independent
