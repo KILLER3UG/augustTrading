@@ -70,6 +70,16 @@ const PLAN_D = {
     rationale: 'Probe plan D — the reject walk.',
     invalidation: 'A push above the probe stop.',
 };
+// The risk-card walks: a TIGHTEN (one tap) and a LOOSEN (the explicit second
+// tap), then a revert inside the window.
+const RISK_TIGHTEN = {
+    __tool: 'propose_risk_change', target: 'riskPercent', value: 0.5,
+    reason: 'The range is tight; risk per trade comes down until it resolves.',
+};
+const RISK_LOOSEN = {
+    __tool: 'propose_risk_change', target: 'riskPercent', value: 2,
+    reason: 'The range resolved; risk per trade goes back up.',
+};
 
 async function waitForServer(url, timeoutMs = 30000) {
     const deadline = Date.now() + timeoutMs;
@@ -170,6 +180,17 @@ async function readTrades(page) {
 }
 
 const pendingRows = (rows) => rows.filter((r) => r.outcome === 'PENDING');
+
+/** Read the live riskPercent out of the settings store — the WRITE the risk
+ *  card's confirm must make through the app's own settings path. */
+async function readRiskPercent(page) {
+    return page.evaluate(() => {
+        try {
+            const v = JSON.parse(localStorage.getItem('harness_settings_v1') || '{}').riskPercent;
+            return typeof v === 'number' ? v : null;
+        } catch { return null; }
+    });
+}
 
 /** Poll the journal until at least `min` PENDING rows exist — the debounced
  *  DATA save (~1.5s) flushes behind the write, so a single read races it. */
@@ -320,8 +341,11 @@ async function dumpTranscriptState(page, label) {
         const boxes = [...document.querySelectorAll('[data-testid="trade-chat-panel"] .custom-scrollbar')]
             .map((el) => ({ ch: el.clientHeight, sh: el.scrollHeight, st: Math.round(el.scrollTop) }));
         const items = [...document.querySelectorAll('[data-testid="trade-chat-panel"] [data-index]')];
-        const cards = [...document.querySelectorAll('[data-testid="trade-proposal-card"]')]
-            .map((c) => c.textContent.replace(/\s+/g, ' ').slice(0, 80));
+        const cards = [
+            ...[...document.querySelectorAll('[data-testid="trade-proposal-card"]')].map((c) => 'TRADE ' + c.textContent.replace(/\s+/g, ' ').slice(0, 80)),
+            ...[...document.querySelectorAll('[data-testid="risk-change-card"]')].map((c) => 'RISK-PENDING ' + c.textContent.replace(/\s+/g, ' ').slice(0, 80)),
+            ...[...document.querySelectorAll('[data-testid="risk-change-applied"]')].map((c) => 'RISK-APPLIED ' + c.textContent.replace(/\s+/g, ' ').slice(0, 80)),
+        ];
         const lastTexts = items.slice(-3).map((el) => el.textContent.replace(/\s+/g, ' ').slice(0, 100));
         return {
             panelMounted: !!panel,
@@ -340,17 +364,56 @@ async function dumpTranscriptState(page, label) {
 }
 
 
-/** Wait for `needle` to appear anywhere in the transcript, SCANNING while it
- *  polls: the list is virtualized and the follow-scroll moves, so the row
- *  carrying the text is not always in the mounted window. A human scrolls;
- *  so does this. */
+/** Scroll-scan until a card matching `text` is MOUNTED in the virtualized
+ *  transcript, and return its locator (scoped: every interaction targets THIS
+ *  card, never "the newest one"). Null when the deadline passes. */
+async function waitForCard(page, cardSelector, text, timeoutMs = 45000) {
+    const deadline = Date.now() + timeoutMs;
+    const locate = () => page.locator(`[data-testid="trade-chat-panel"] [data-testid="${cardSelector}"]`, { hasText: text });
+    while (Date.now() < deadline) {
+        await scrollTranscriptToBottom(page);
+        await sleep(250);
+        if (await locate().count()) return locate().last();
+        for (let i = 0; i < 6; i++) {
+            await scrollTranscriptUp(page, 900);
+            await sleep(250);
+            if (await locate().count()) return locate().last();
+        }
+        await sleep(400);
+    }
+    return null;
+}
+
+/** The same scan for a bare testid (the settled logged row, which is a
+ *  sibling of the card, not a child). */
+async function waitForTestidScrolled(page, testid, timeoutMs = 25000) {
+    const deadline = Date.now() + timeoutMs;
+    const locate = () => page.locator(`[data-testid="trade-chat-panel"] [data-testid="${testid}"]`);
+    while (Date.now() < deadline) {
+        await scrollTranscriptToBottom(page);
+        await sleep(250);
+        if (await locate().count()) return true;
+        for (let i = 0; i < 6; i++) {
+            await scrollTranscriptUp(page, 900);
+            await sleep(250);
+            if (await locate().count()) return true;
+        }
+        await sleep(400);
+    }
+    return false;
+}
+
+
+/** Wait for `needle` to appear anywhere in the mounted transcript text,
+ *  SCANNING while it polls: the list is virtualized and the follow-scroll
+ *  moves, so the row carrying the text is not always mounted. */
 async function waitForTextScrolling(page, needle, timeoutMs = 45000) {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
         await scrollTranscriptToBottom(page);
         await sleep(250);
         if (await page.evaluate((n) => document.body.innerText.includes(n), needle)) return true;
-        for (let i = 0; i < 5; i++) {
+        for (let i = 0; i < 6; i++) {
             await scrollTranscriptUp(page, 900);
             await sleep(250);
             if (await page.evaluate((n) => document.body.innerText.includes(n), needle)) return true;
@@ -383,7 +446,7 @@ async function main() {
             ...process.env,
             MOCK_TOOL_CALL: '1',
             MOCK_TOOL_NAME: 'present_trade',
-            MOCK_SKILL_ARGS: JSON.stringify([PLAN_A, PLAN_B, PLAN_C, PLAN_D]),
+            MOCK_SKILL_ARGS: JSON.stringify([PLAN_A, PLAN_B, PLAN_C, PLAN_D, RISK_TIGHTEN, RISK_LOOSEN]),
         },
     });
     let serverOut = '';
@@ -431,8 +494,8 @@ async function main() {
 
         // ── Turn 1 (PLAN_A): present → Ask-why → Approve → receipt → Undo ──
         await sendInDock(page, 'PROBE_TOOL_ROUND present plan A');
-        await page.waitForSelector('[data-testid="trade-chat-panel"] [data-testid="trade-proposal-card"]',
-            { timeout: 45000 });
+        const cardA = await waitForCard(page, 'trade-proposal-card', 'Probe plan A');
+        if (!cardA) { await dumpTranscriptState(page, 'plan A card never mounted'); throw new Error('plan A card never rendered'); }
         check('a presented plan renders the decision card', true);
         await page.screenshot({ path: '.probe-artifacts/decision-card-presented.png' });
 
@@ -442,7 +505,7 @@ async function main() {
 
         // Ask-why: the composer pre-fills with the pushback prompt; nothing is
         // sent and the card stays.
-        await page.locator('[data-testid="proposal-ask-why"]').last().click();
+        await cardA.locator('[data-testid="proposal-ask-why"]').click();
         await sleep(400);
         const draft = await page.evaluate(() => {
             const ta = document.querySelector('textarea');
@@ -452,117 +515,89 @@ async function main() {
             /Why this trade\?/.test(draft) && /invalidat/i.test(draft),
             draft.slice(0, 120));
 
-        await approveToUndoWindow(page, consoleLog);
-        // The window is 12s and the debounced save lags the write, so every
-        // read here POLLS — and the undo tap happens before the lapse.
+        await approveToUndoWindow(page, consoleLog, cardA);
         const afterApprove = await waitForPendingRows(page, 1);
         check('one Approve logs exactly one PENDING journal row', afterApprove.length === 1,
             `${afterApprove.length} pending row(s) after the tap: ${JSON.stringify((await readTrades(page)).map((r) => [r.id, r.outcome]))}`);
         await page.screenshot({ path: '.probe-artifacts/decision-card-approved.png' });
-
-        // The receipt: a harness turn reaches the thread, so the model learns
-        // the decision in conversation. (Checked BEFORE the undo tap — the
-        // window is short and the note renders as soon as the turn starts.)
-        const receiptSeen = await waitForTextScrolling(page, 'APPROVAL RECEIPT', 12000);
-        check('the approval receipt reaches the conversation', receiptSeen);
-
-        // A second Approve tap cannot happen: the undo row replaced the
-        // buttons (and the disposition map would refuse a replay anyway).
-        const secondApprove = await page.locator('[data-testid="trade-chat-panel"] [data-testid="proposal-approve"]').count();
+        const secondApprove = await cardA.locator('[data-testid="proposal-approve"]').count();
         check('an approved card offers no second Approve tap', secondApprove === 0,
-            `${secondApprove} approve button(s) still visible`);
+            `${secondApprove} approve button(s) still visible on the card`);
 
-        // ── Undo: the whole approval reverses ──────────────────────────────
-        for (let i = 0; i < 8 && (await page.locator('[data-testid="proposal-undo"]').count()) === 0; i++) {
+        // The undo window is 12s and the receipt turns push the card around
+        // the virtualized window — tap Undo FIRST (with the scroll-retry),
+        // then assert the notes, which stay in the thread either way.
+        for (let i = 0; i < 8 && (await cardA.locator('[data-testid="proposal-undo"]').count()) === 0; i++) {
             await scrollTranscriptUp(page, 1200);
-            await sleep(300);
+            await sleep(250);
         }
-        const undoVisible = (await page.locator('[data-testid="proposal-undo"]').count()) > 0;
-        if (undoVisible) await page.locator('[data-testid="proposal-undo"]').last().click();
+        const undoVisible = (await cardA.locator('[data-testid="proposal-undo"]').count()) > 0;
+        if (undoVisible) await cardA.locator('[data-testid="proposal-undo"]').click();
         let undone = false;
         for (let i = 0; i < 24 && !undone; i++) {
             await sleep(500);
             const rows = pendingRows(await readTrades(page));
-            const buttonsBack = (await page.locator('[data-testid="trade-chat-panel"] [data-testid="proposal-approve"]').count()) > 0;
+            const buttonsBack = (await cardA.locator('[data-testid="proposal-approve"]').count()) > 0;
             undone = rows.length === 0 && buttonsBack;
         }
-        const undoNote = await waitForTextScrolling(page, 'APPROVAL UNDONE', 15000);
         check('Undo deletes the row and restores the card', undone,
             `rows=${JSON.stringify((await readTrades(page)).map((r) => r.outcome))}`);
+        const receiptSeen = await waitForTextScrolling(page, 'APPROVAL RECEIPT', 15000);
+        check('the approval receipt reaches the conversation', receiptSeen);
+        const undoNote = await waitForTextScrolling(page, 'APPROVAL UNDONE', 25000);
         check('the undo note reaches the thread', undoNote);
 
         // ── Turn 2 (PLAN_B): a re-approve after undo is a FRESH decision ────
         await sendInDock(page, 'PROBE_TOOL_ROUND present plan B');
-        if (!(await waitForTextScrolling(page, 'Probe plan B'))) {
-            await dumpTranscriptState(page, 'plan B card never mounted');
-            throw new Error('plan B card never rendered');
-        }
-        await approveToUndoWindow(page, consoleLog);
+        const cardB = await waitForCard(page, 'trade-proposal-card', 'Probe plan B');
+        if (!cardB) { await dumpTranscriptState(page, 'plan B card never mounted'); throw new Error('plan B card never rendered'); }
+        await approveToUndoWindow(page, consoleLog, cardB);
         const reapproved = await waitForPendingRows(page, 1);
         check('a re-approve after an undo logs a fresh row', reapproved.length === 1,
             `${reapproved.length} pending row(s)`);
 
-        // The undo window lapses: the approved plan settles into the logged
-        // row. (An earlier UNDONE plan's card stays live by design — the
-        // trader may approve it again — so the assertion is "no undo window
-        // anywhere + the row intact", not "no card anywhere".)
+        // The undo window lapses: the approved plan settles into the logged row.
         await sleep(13500);
-        const lapsed = (await page.locator('[data-testid="proposal-undo-window"]').count()) === 0;
+        const lapsed = (await cardB.locator('[data-testid="proposal-undo-window"]').count()) === 0;
         const stillLogged = pendingRows(await readTrades(page)).length === 1;
         check('past the undo window the approval settles and the row stands', lapsed && stillLogged,
             `undoWindowGone=${lapsed} rowIntact=${stillLogged}`);
-        // The settled logged row carries a testid; scan for it the same way
-        // (the virtualized window moves with the scroll).
-        const settleDeadline = Date.now() + 25000;
-        let settled = false;
-        while (Date.now() < settleDeadline && !settled) {
-            await scrollTranscriptToBottom(page);
-            await sleep(250);
-            settled = (await page.locator('[data-testid="proposal-logged-row"]').count()) > 0;
-            for (let i = 0; i < 5 && !settled; i++) {
-                await scrollTranscriptUp(page, 900);
-                await sleep(250);
-                settled = (await page.locator('[data-testid="proposal-logged-row"]').count()) > 0;
-            }
-            if (!settled) await sleep(400);
-        }
+        const settled = await waitForTestidScrolled(page, 'proposal-logged-row');
         check('the settled row says the trade is tracked', settled);
 
         // ── Turn 3 (PLAN_C): a STALE plan needs a re-confirm ────────────────
         await sendInDock(page, 'PROBE_TOOL_ROUND present plan C');
-        if (!(await waitForTextScrolling(page, 'Probe plan C'))) {
-            await dumpTranscriptState(page, 'plan C card never mounted');
-            await page.screenshot({ path: '.probe-artifacts/decision-card-planC-timeout.png' });
-            throw new Error('plan C card never rendered');
-        }
+        const cardC = await waitForCard(page, 'trade-proposal-card', 'Probe plan C');
+        if (!cardC) { await dumpTranscriptState(page, 'plan C card never mounted'); throw new Error('plan C card never rendered'); }
         await page.screenshot({ path: '.probe-artifacts/decision-card-stale.png' });
-        const staleShown = (await page.locator('[data-testid="trade-chat-panel"] [data-testid="proposal-stale"]').count()) > 0;
+        let staleShown = false;
+        for (let i = 0; i < 16 && !staleShown; i++) {
+            staleShown = (await cardC.locator('[data-testid="proposal-stale"]').count()) > 0;
+            if (!staleShown) await sleep(500);
+        }
         check('a plan priced far from the live mark shows the staleness block', staleShown);
-        const beforeTap = await page.locator('[data-testid="trade-chat-panel"] [data-testid="proposal-approve"]').last().innerText();
-        await page.locator('[data-testid="trade-chat-panel"] [data-testid="proposal-approve"]').last().click();
+        const beforeTap = await cardC.locator('[data-testid="proposal-approve"]').innerText();
+        await cardC.locator('[data-testid="proposal-approve"]').click();
         // Poll briefly for a SECOND row: one appearing within this window is
         // the silent approval this check exists to refuse.
-        const afterFirstTap = await waitForPendingRows(page, 2, 4000); // stays at 1 when nothing lands
+        const afterFirstTap = await waitForPendingRows(page, 2, 4000);
         const noSilentLog = afterFirstTap.length === 1; // still only plan B's row
         check('the first tap on a stale plan does not approve silently',
             /Re-confirm/i.test(beforeTap) && noSilentLog,
             `buttonBefore="${beforeTap.replace(/\s+/g, ' ').slice(0, 40)}" rows=${JSON.stringify(afterFirstTap.map((r) => r.outcome))}`);
-        await approveToUndoWindow(page, consoleLog);
+        await approveToUndoWindow(page, consoleLog, cardC);
         const staleRows = await waitForPendingRows(page, 2);
         check('the re-confirm tap approves the stale plan', staleRows.length === 2,
             `${staleRows.length} pending row(s)`);
 
         // ── Turn 4 (PLAN_D): Reject records the decline ─────────────────────
         await sendInDock(page, 'PROBE_TOOL_ROUND present plan D');
-        if (!(await waitForTextScrolling(page, 'Probe plan D'))) {
-            await dumpTranscriptState(page, 'plan D card never mounted');
-            throw new Error('plan D card never rendered');
-        }
-        await page.locator('[data-testid="trade-chat-panel"] [data-testid="proposal-decline-reason"]')
-            .last().fill('R:R too thin for the regime');
-        await page.locator('[data-testid="trade-chat-panel"] [data-testid="proposal-reject"]').last().click();
+        const cardD = await waitForCard(page, 'trade-proposal-card', 'Probe plan D');
+        if (!cardD) { await dumpTranscriptState(page, 'plan D card never mounted'); throw new Error('plan D card never rendered'); }
+        await cardD.locator('[data-testid="proposal-decline-reason"]').fill('R:R too thin for the regime');
+        await cardD.locator('[data-testid="proposal-reject"]').click();
         await sleep(1500);
-        const rejectGone = (await page.locator('[data-testid="trade-chat-panel"] [data-testid="trade-proposal-card"]').count()) === 0;
+        const rejectGone = (await cardD.locator('[data-testid="trade-proposal-card"]').count()) === 0;
         const declines = await readDeclines(page);
         const recorded = declines.some((d) => d.source === 'desk' && /R:R too thin for the regime/.test(d.reason || ''));
         check('Reject resolves the card and records the decline with its reason',
@@ -571,6 +606,66 @@ async function main() {
         const rejectLogged = pendingRows(await readTrades(page)).length === 2;
         check('a rejected plan logs nothing', rejectLogged,
             `${pendingRows(await readTrades(page)).length} pending row(s)`);
+
+        // ── Turn 5 (RISK TIGHTEN): one tap applies ──────────────────────────
+        await sendInDock(page, 'PROBE_TOOL_ROUND propose a risk change');
+        const cardR1 = await waitForCard(page, 'risk-change-card', 'The range is tight');
+        if (!cardR1) { await dumpTranscriptState(page, 'risk tighten card never mounted'); throw new Error('risk tighten card never rendered'); }
+        const tightenText = await cardR1.innerText();
+        check('a risk change renders the card with the before/after and its direction',
+            /tightens/i.test(tightenText) && /0\.5/.test(tightenText),
+            tightenText.replace(/\s+/g, ' ').slice(0, 140));
+        await page.screenshot({ path: '.probe-artifacts/decision-card-risk-tighten.png' });
+
+        await cardR1.locator('[data-testid="risk-change-confirm"]').click();
+        let riskApplied = false;
+        for (let i = 0; i < 12 && !riskApplied; i++) {
+            await sleep(500);
+            riskApplied = (await readRiskPercent(page)) === 0.5;
+        }
+        check('a TIGHTENING risk change applies with one tap', riskApplied,
+            `riskPercent=${await readRiskPercent(page)}`);
+        const appliedVisible = (await page.locator('[data-testid="risk-change-applied"]').count()) > 0;
+        check('the applied card carries the revert window', appliedVisible);
+        const appliedNote = await waitForTextScrolling(page, 'RISK CHANGE APPLIED', 15000);
+        check('the applied note reaches the thread', appliedNote);
+
+        // ── Turn 6 (RISK LOOSEN): the explicit second tap ───────────────────
+        await sendInDock(page, 'PROBE_TOOL_ROUND propose another risk change');
+        const cardR2 = await waitForCard(page, 'risk-change-card', 'risk per trade goes back up');
+        if (!cardR2) {
+            await dumpTranscriptState(page, 'risk loosen card never mounted');
+            await page.screenshot({ path: '.probe-artifacts/decision-card-riskLoosen-timeout.png' });
+            throw new Error('risk loosen card never rendered');
+        }
+        const armVisible = (await cardR2.locator('[data-testid="risk-change-arm"]').count()) > 0;
+        check('a LOOSENING risk change asks for the explicit confirm', armVisible);
+        await cardR2.locator('[data-testid="risk-change-arm"]').click();
+        await sleep(300);
+        await cardR2.locator('[data-testid="risk-change-confirm"]').click();
+        let riskLoosened = false;
+        for (let i = 0; i < 12 && !riskLoosened; i++) {
+            await sleep(500);
+            riskLoosened = (await readRiskPercent(page)) === 2;
+        }
+        check('the LOOSENING change applies only on the second tap', riskLoosened,
+            `riskPercent=${await readRiskPercent(page)}`);
+
+        // ── Revert inside the window: the replaced value comes back ─────────
+        // The applied card drops the reason text, so the rationale-scoped
+        // locator cannot see it — the newest applied card's revert is the one
+        // this turn produced.
+        const revertVisible = (await page.locator('[data-testid="risk-change-revert"]').count()) > 0;
+        if (revertVisible) await page.locator('[data-testid="risk-change-revert"]').last().click();
+        let riskReverted = false;
+        for (let i = 0; i < 12 && !riskReverted; i++) {
+            await sleep(500);
+            riskReverted = (await readRiskPercent(page)) === 0.5;
+        }
+        check('the revert puts the replaced value back', revertVisible && riskReverted,
+            `revertButton=${revertVisible} riskPercent=${await readRiskPercent(page)}`);
+        const revertedNote = await waitForTextScrolling(page, 'RISK CHANGE REVERTED', 15000);
+        check('the revert note reaches the thread', revertedNote);
 
         check('zero pageerrors across the decision-card run', pageErrors.length === 0,
             pageErrors.slice(0, 3).join(' | '));
@@ -593,7 +688,8 @@ async function main() {
     if (process.exitCode !== 1) {
         console.log('\nDECISION CARD PROBE OK — the card presents, Ask-why pre-fills, Approve logs one');
         console.log('row with a receipt the thread reads, Undo reverses the whole approval, a stale');
-        console.log('plan needs a re-confirm, and Reject records the decline with its reason.');
+        console.log('plan needs a re-confirm, Reject records the decline, and a risk change applies');
+        console.log("through the trader's own settings path (one tap tight, two taps loose, revert).");
     }
 }
 

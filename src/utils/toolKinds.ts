@@ -307,4 +307,7 @@ export const DESK_TOOL_NAMES: readonly string[] = [
     // The two AUTHORITY changes over an armed plan, and the read-only review.
     // All three record a proposal (or read) and never act on the call.
     'update_trade', 'close_trade', 'run_review',
+    // A risk-limit / guard-preset change is proposed, never applied: the card
+    // is the only writer, through the settings path the trader owns.
+    'propose_risk_change',
 ];

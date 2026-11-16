@@ -59,6 +59,11 @@ export type LiveEntry = StoredChatEntry & {
      *  rendered as a confirm card. Runtime-only; the watch/journal are
      *  written only on the trader's confirm. */
     tradeAction?: import('./tradeActionProposal').TradeActionProposal;
+    /** A PROPOSED change to one risk limit / the guard preset
+     *  (propose_risk_change) — rendered as a decision card. Runtime-only;
+     *  the setting is written only on the trader's confirm, through the
+     *  settings path the trader owns. */
+    riskChange?: import('./riskChangeProposal').RiskChangeProposal;
     /** The live-only "still working" line for a slow call; not persisted. */
     liveProgress?: string;
 };
@@ -189,7 +194,7 @@ const schedulePersist = (): void => {
             ...s,
             entries: s.entries
                 .filter(e => !e.streaming)
-                .map(({ streaming: _streaming, proposal: _proposal, settlementCorrection: _correction, tradeAction: _action, liveProgress: _liveProgress, ...rest }) => rest),
+                .map(({ streaming: _streaming, proposal: _proposal, settlementCorrection: _correction, tradeAction: _action, riskChange: _riskChange, liveProgress: _liveProgress, ...rest }) => rest),
             // openTrades / loggedTradeIds are runtime-only — persisted sessions
             // never carry them (a reload means "we have no live trade state"),
             // so strip them defensively here even though chatSessions.ts also
@@ -242,7 +247,7 @@ export const persistInterrupted = (): void => {
         if (!loaded || getActiveUsername() !== loadedFor) return;
         const stored: ChatSession[] = sessions.map(s => ({
             ...s,
-            entries: s.entries.map(({ streaming, proposal: _proposal, settlementCorrection: _correction, tradeAction: _action, liveProgress: _liveProgress, ...rest }) => (streaming ? { ...rest, interrupted: true } : rest)),
+            entries: s.entries.map(({ streaming, proposal: _proposal, settlementCorrection: _correction, tradeAction: _action, riskChange: _riskChange, liveProgress: _liveProgress, ...rest }) => (streaming ? { ...rest, interrupted: true } : rest)),
             openTrades: undefined,
             loggedTradeIds: undefined,
         }));

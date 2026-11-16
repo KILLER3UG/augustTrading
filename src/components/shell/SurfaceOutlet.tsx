@@ -97,6 +97,11 @@ export interface SurfaceOutletProps {
     onRejectProposedTrade: (proposal: TradeProposal, reason?: string) => boolean;
     /** Undo inside the approval window → App reverses the approval. */
     onUndoApproval: (decision: { rowId: string; planId?: string; entryId: string; sessionId?: string }) => void;
+    /** Confirm / dismiss / revert a PROPOSED risk-limit or guard-preset
+     *  change — App writes through the settings path the trader owns. */
+    onConfirmRiskChange: (proposal: import('../../services/trade/riskChangeProposal').RiskChangeProposal, sessionId?: string) => void;
+    onDismissRiskChange: (proposal: import('../../services/trade/riskChangeProposal').RiskChangeProposal) => void;
+    onRevertRiskChange: (proposal: import('../../services/trade/riskChangeProposal').RiskChangeProposal, sessionId?: string) => void;
     registerScrollToMessage: (fn: ((messageId: string) => void) | null) => void;
     onToggleWatch: (messageId: string) => void;
     onOpenWatchList: () => void;
@@ -124,7 +129,7 @@ const SurfaceOutlet: React.FC<SurfaceOutletProps> = ({
     activeUsername, onTradeModeChange, botThreadRows, onBotTurnCommit, onSoloTurnCommit,
     onSyncConversation, conversationRows, onNewGroup, verdict, bots, trades, groupTabs,
     botSessionRequest, groupSessionRequest, onRunAnalysisFromChat, onAnalysisError,
-    onCancelAnalysis, getAnalysisMessage, onLogProposedTrade, onRejectProposedTrade, onUndoApproval, registerScrollToMessage,
+    onCancelAnalysis, getAnalysisMessage, onLogProposedTrade, onRejectProposedTrade, onUndoApproval, onConfirmRiskChange, onDismissRiskChange, onRevertRiskChange, registerScrollToMessage,
     onToggleWatch, onOpenWatchList, watchOpenCount, watchOpenR, pinnedMessageIds,
     onConfirmSettlementCorrection, onDismissSettlementCorrection, onVoidSettlementCorrection,
     onConfirmTradeAction, onDismissTradeAction,
@@ -194,6 +199,9 @@ const SurfaceOutlet: React.FC<SurfaceOutletProps> = ({
                         onLogProposedTrade={onLogProposedTrade}
                         onRejectProposedTrade={onRejectProposedTrade}
                         onUndoApproval={onUndoApproval}
+                        onConfirmRiskChange={onConfirmRiskChange}
+                        onDismissRiskChange={onDismissRiskChange}
+                        onRevertRiskChange={onRevertRiskChange}
                         registerScrollToMessage={registerScrollToMessage}
                         onToggleWatch={onToggleWatch}
                         onOpenWatchList={onOpenWatchList}

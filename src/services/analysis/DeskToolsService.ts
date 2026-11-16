@@ -2715,6 +2715,31 @@ export const DESK_TOOL_DEFINITIONS: DeskToolDefinition[] = [
             },
         },
     },
+    {
+        type: 'function',
+        function: {
+            name: 'propose_risk_change',
+            description:
+                'GATED. Propose changing ONE risk limit or the session-guard preset: risk per trade (%), default leverage, the minimum-edge floor (R), the daily-loss limit (%), the max trades per day, or the guard preset. Nothing changes on this call — it RECORDS a proposal the trader confirms on a card. Tightening a limit confirms in one tap; LOOSENING one prints the before/after and needs the trader to confirm it explicitly. The current value is stamped onto the card automatically — state the reason, not the old number.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    target: {
+                        type: 'string',
+                        enum: ['riskPercent', 'defaultLeverage', 'minEdgeR', 'guardDailyLossPct', 'guardMaxTradesPerDay', 'guardPreset'],
+                        description: 'Which limit to change.',
+                    },
+                    value: {
+                        type: ['number', 'string'],
+                        description: 'The proposed new value. Numbers for every limit; for guardPreset the string "default" (tight) or "ftmo" (loose).',
+                    },
+                    reason: { type: 'string', description: 'Why the limit should move — printed on the confirmation card and kept in the record.' },
+                },
+                required: ['target', 'value', 'reason'],
+                additionalProperties: false,
+            },
+        },
+    },
 ];
 
 
@@ -5336,6 +5361,28 @@ ${body}`);
                 }
                 const { buildWeekStats } = await import('../learning/weeklyReview');
                 content = 'WEEKLY REVIEW (read-only): ' + JSON.stringify(buildWeekStats(rows, Date.now()), null, 1).slice(0, 5000);
+                break;
+            }
+            case 'propose_risk_change': {
+                // AUTHORITY OVER RISK is the trader's — the self-modification
+                // rails deny the agent every risk path by name. The agent may
+                // still PROPOSE: this records a card and changes nothing. The
+                // confirm writes through the ONE settings writer the trader's
+                // own Settings screen uses; the card's asymmetry (one tap to
+                // tighten, an explicit re-confirm to loosen) lives there.
+                const { proposeRiskChange } = await import('../trade/riskChangeProposal');
+                const checked = proposeRiskChange({
+                    target: call.arguments.target,
+                    value: call.arguments.value,
+                    reason: asString(call.arguments.reason),
+                });
+                if (!checked.ok) return rejectedResult(call, `${call.name} rejected: ${checked.refused}.`);
+                const p = checked.proposal;
+                content = [
+                    `RISK CHANGE PROPOSED: ${p.target} ${String(p.currentValue)} -> ${String(p.proposedValue)} (${p.direction}).`,
+                    'The trader sees a confirmation card; NOTHING changes until they confirm it. Tightening confirms in one tap; loosening asks them to confirm it again.',
+                    'No setting was written by this call.',
+                ].join(' ');
                 break;
             }
             case 'set_chart_timeframe': {

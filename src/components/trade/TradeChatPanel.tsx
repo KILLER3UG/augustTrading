@@ -53,6 +53,7 @@ import type { MessageLevelLines } from '../../services/trade/keyLevels';
 import type { TradeProposal } from '../../services/trade/proposedTrade';
 import type { SettlementCorrectionProposal } from '../../services/trade/settlementCorrection';
 import type { TradeActionProposal } from '../../services/trade/tradeActionProposal';
+import type { RiskChangeProposal } from '../../services/trade/riskChangeProposal';
 import type { WatchPlan } from '../../services/trade/tradePlanLevels';
 import { entriesForSession, PANEL_MAX_MODELS, type PanelSeatRef } from '../../services/trade/chatSessions';
 import * as chatStore from '../../services/trade/chatStore';
@@ -177,6 +178,13 @@ interface TradeChatPanelProps {
     /** Undo inside the approval window → App reverses the approval (row
      *  deleted, receipt message removed, plan watch disarmed). */
     onUndoApproval?: (decision: { rowId: string; planId?: string; entryId: string; sessionId?: string }) => void;
+    /** Confirm a PROPOSED risk-limit / guard-preset change → App writes it
+     *  through the settings writer the trader owns. */
+    onConfirmRiskChange?: (proposal: RiskChangeProposal, sessionId?: string) => void;
+    /** Dismiss a PROPOSED risk change — the setting is untouched. */
+    onDismissRiskChange?: (proposal: RiskChangeProposal) => void;
+    /** Revert a confirmed change inside its window. */
+    onRevertRiskChange?: (proposal: RiskChangeProposal, sessionId?: string) => void;
     /** Report a presented plan to the harness level-watch (TradeView arms
      *  it; a later price touch comes back as a [HARNESS SIGNAL] turn).
      *  `turn` carries the RUNNING turn's identity (see PanelTurnContext). */
@@ -313,7 +321,7 @@ export const ChartAiDockRail: React.FC<{
 const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
     memoryEnabled, strategiesEnabled, symbol, interval, providers, selectedChatModel, onSelectChatModel, live = false,
     chartLevels, chartDrawings, modelDrawings, addModelDrawings, clearModelDrawings, clearAllDrawings,
-    onCaptureChart, getChartSnapshot, bots = [], trades = [], botSessionRequest, groupSessionRequest, onRunAnalysis, onAnalysisError, onStopRun, getAnalysisMessage, onLogProposedTrade, onRejectProposedTrade, onUndoApproval, onPlanPresented,
+    onCaptureChart, getChartSnapshot, bots = [], trades = [], botSessionRequest, groupSessionRequest, onRunAnalysis, onAnalysisError, onStopRun, getAnalysisMessage, onLogProposedTrade, onRejectProposedTrade, onUndoApproval, onConfirmRiskChange, onDismissRiskChange, onRevertRiskChange, onPlanPresented,
     onChatLevelsChange,
     renderGroupSurface, groups = [],
     registerScrollToMessage,
@@ -1302,6 +1310,9 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
                         onLogProposedTrade={onLogProposedTrade}
                         onRejectProposedTrade={onRejectProposedTrade}
                         onUndoApproval={onUndoApproval}
+                        onConfirmRiskChange={onConfirmRiskChange}
+                        onDismissRiskChange={onDismissRiskChange}
+                        onRevertRiskChange={onRevertRiskChange}
                         trades={trades}
                         onConfirmSettlementCorrection={onConfirmSettlementCorrection}
                         onDismissSettlementCorrection={onDismissSettlementCorrection}

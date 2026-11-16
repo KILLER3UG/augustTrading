@@ -313,6 +313,11 @@ export interface Message {
    *  Set by update_trade / close_trade; rendered as a confirm card. The plan is
    *  untouched until the trader confirms — see services/trade/tradeActionProposal. */
   tradeAction?: import('../services/trade/tradeActionProposal').TradeActionProposal;
+  /** A PROPOSED change to one risk limit or the guard preset. Set by
+   *  propose_risk_change; rendered as a decision card. NOTHING is applied until
+   *  the trader confirms — the confirm writes through the same settings writer
+   *  the trader's own Settings screen uses (services/trade/riskChangeProposal). */
+  riskChange?: import('../services/trade/riskChangeProposal').RiskChangeProposal;
   /** Persisted model side-effects: proposal tools and file
    *  creations this run produced, for the status rows on
    *  the bubble ("Saved to memory · N entries", "⚠ Memory write noted").

@@ -131,6 +131,9 @@ export type ProjectedChatEntry = StoredChatEntry & {
      *  6b1ac8ed fixed). */
     settlementCorrection?: SettlementCorrectionProposal;
     tradeAction?: TradeActionProposal;
+    /** A PROPOSED risk-limit / guard-preset change (propose_risk_change) —
+     *  projected the same way; the confirm writes through the settings path. */
+    riskChange?: import('./riskChangeProposal').RiskChangeProposal;
 };
 
 export interface ChatSession {
@@ -633,6 +636,7 @@ export const liveEntryFromMessage = (m: Message): ProjectedChatEntry => {
         // confirm is the dead affordance the authority split exists to avoid.
         settlementCorrection: m.settlementCorrection,
         tradeAction: m.tradeAction,
+        riskChange: m.riskChange,
         // A row with an unparseable timestamp keeps `at` undefined rather than
         // stamping it as 0: the memory-attribution window join treats a real
         // stamp as meaningful and 0 as noise.

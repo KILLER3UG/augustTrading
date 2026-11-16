@@ -875,7 +875,7 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
 (() => {
     const desk = loadModule('src/services/analysis/DeskToolsService.ts');
     const kinds = loadModule('src/utils/toolKinds.ts');
-    const HANDS = ['set_chart_timeframe', 'toggle_chart_study', 'correct_trade_outcome', 'update_trade', 'close_trade', 'run_review'];
+    const HANDS = ['set_chart_timeframe', 'toggle_chart_study', 'correct_trade_outcome', 'update_trade', 'close_trade', 'run_review', 'propose_risk_change'];
     const defs = desk.DESK_TOOL_DEFINITIONS.map(d => d.function.name);
     const chartActions = desk.CHART_ACTION_TOOL_DEFS.map(d => d.function.name);
     const wire = [...kinds.DESK_TOOL_NAMES];
@@ -894,8 +894,8 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
                 && Array.isArray(p.required) && p.required.length > 0
                 && p.required.every(r => r in p.properties);
         }));
-    ok('agent hands: the two AUTHORITY changes say GATED where the model reads it',
-        ['update_trade', 'close_trade'].every(n => /GATED/.test(defOf(n).function.description)));
+    ok('agent hands: the AUTHORITY changes say GATED where the model reads it',
+        ['update_trade', 'close_trade', 'propose_risk_change'].every(n => /GATED/.test(defOf(n).function.description)));
     ok('agent hands: an authority change cannot be called without a plan id and a reason',
         ['update_trade', 'close_trade'].every(n => {
             const req = defOf(n).function.parameters.required;
@@ -5667,6 +5667,23 @@ const checkAgentHandExecutor = async () => {
     const reviewTrade = await desk.executeDeskTool(call('run_review', { scope: 'trade', tradeId: 'nope' }), ctx);
     ok('agent hands executor: a trade review with an unknown id is refused by name',
         reviewTrade.ok === false && /nope/.test(reviewTrade.content), reviewTrade.content);
+
+    // The risk hand: it RECORDS a proposal and never writes a setting.
+    const badTarget = await desk.executeDeskTool(call('propose_risk_change', { target: 'equityUsd', value: 5, reason: 'r' }), ctx);
+    ok('agent hands executor: a risk change for an unknown target is refused',
+        badTarget.ok === false && /known target/.test(badTarget.content), badTarget.content);
+    const noReason = await desk.executeDeskTool(call('propose_risk_change', { target: 'riskPercent', value: 0.5 }), ctx);
+    ok('agent hands executor: a risk change without a reason is refused',
+        noReason.ok === false && /reason/.test(noReason.content), noReason.content);
+    const riskOk = await desk.executeDeskTool(call('propose_risk_change', { target: 'riskPercent', value: 0.5, reason: 'the regime tightened' }), ctx);
+    ok('agent hands executor: a risk change is PROPOSED, not applied',
+        riskOk.ok === true && /RISK CHANGE PROPOSED/.test(riskOk.content) && /tighten/.test(riskOk.content), riskOk.content);
+    const riskLoosen = await desk.executeDeskTool(call('propose_risk_change', { target: 'riskPercent', value: 2, reason: 'the regime eased' }), ctx);
+    ok('agent hands executor: a LOOSENING risk change is proposed as loosen',
+        riskLoosen.ok === true && /loosen/.test(riskLoosen.content), riskLoosen.content);
+    const riskPreset = await desk.executeDeskTool(call('propose_risk_change', { target: 'guardPreset', value: 'ftmo', reason: 'r' }), ctx);
+    ok('agent hands executor: a guard-preset change is proposed with the preset name',
+        riskPreset.ok === true && /guardPreset/.test(riskPreset.content), riskPreset.content);
 };
 
 // ─── 13g. the decision card: approve, staleness, receipt, decline, undo ────
@@ -5754,6 +5771,74 @@ const checkAgentHandExecutor = async () => {
     td.clearUndoWindow('entry-2');
     ok('decision card: clearing the window forgets the entry',
         td.undoWindowOf('entry-2', t0) === undefined);
+})();
+
+// ─── 13h. the risk-change card: classification, bounds, store, revert ──────
+// The agent proposes; only the trader's tap writes — through the settings
+// writer the trader owns. The asymmetry (tighten = one tap, loosen = an
+// explicit second tap) is decided by classifyRiskChange and nowhere else.
+(() => {
+    const rc = loadModule('src/services/trade/riskChangeProposal.ts');
+
+    ok('risk card: lower risk %, leverage, daily-loss and trade caps are TIGHTEN',
+        rc.classifyRiskChange('riskPercent', 1, 0.5) === 'tighten'
+        && rc.classifyRiskChange('defaultLeverage', 10, 5) === 'tighten'
+        && rc.classifyRiskChange('guardDailyLossPct', 2, 1) === 'tighten'
+        && rc.classifyRiskChange('guardMaxTradesPerDay', 3, 2) === 'tighten');
+    ok('risk card: a HIGHER edge floor is TIGHTEN (it refuses more plans)',
+        rc.classifyRiskChange('minEdgeR', 0, 0.5) === 'tighten'
+        && rc.classifyRiskChange('minEdgeR', 0, -0.5) === 'loosen');
+    ok('risk card: the guard preset tightens toward default and loosens toward ftmo',
+        rc.classifyRiskChange('guardPreset', 'ftmo', 'default') === 'tighten'
+        && rc.classifyRiskChange('guardPreset', 'default', 'ftmo') === 'loosen');
+    ok('risk card: a proposal that changes nothing is refused',
+        rc.classifyRiskChange('riskPercent', 1, 1) === 'same');
+
+    // Bounds mirror the settings clamps; the store reads the LIVE setting for
+    // the card's "before".
+    rc.__clearRiskChangesForTests();
+    localStorage.setItem('harness_settings_v1', JSON.stringify({ riskPercent: 1, defaultLeverage: 10, minEdgeR: 0 }));
+    ok('risk card: out-of-bounds, malformed and no-op values are refused',
+        rc.proposeRiskChange({ target: 'riskPercent', value: 50, reason: 'r' }).ok === false
+        && rc.proposeRiskChange({ target: 'guardMaxTradesPerDay', value: 2.5, reason: 'r' }).ok === false
+        && rc.proposeRiskChange({ target: 'guardPreset', value: 'loose', reason: 'r' }).ok === false
+        && rc.proposeRiskChange({ target: 'riskPercent', value: 1, reason: 'r' }).ok === false);
+    ok('risk card: a proposal without a reason is refused',
+        rc.proposeRiskChange({ target: 'riskPercent', value: 0.5, reason: '  ' }).ok === false);
+
+    const proposed = rc.proposeRiskChange({ target: 'riskPercent', value: 0.5, reason: 'tighten for the range' });
+    ok('risk card: a proposal is recorded with the live current value and direction',
+        proposed.ok === true && proposed.proposal.currentValue === 1
+        && proposed.proposal.direction === 'tighten'
+        && rc.pendingRiskChange('riskPercent') !== undefined,
+        JSON.stringify(proposed.ok ? proposed.proposal : proposed));
+    const confirmed = rc.confirmRiskChange('riskPercent');
+    ok('risk card: the confirm resolves the proposal and clears it',
+        !!confirmed && confirmed.proposedValue === 0.5 && rc.pendingRiskChange('riskPercent') === undefined
+        && rc.riskChangeStateOf(confirmed.id) === 'confirmed');
+    const again = rc.proposeRiskChange({ target: 'riskPercent', value: 2, reason: 'eased back' });
+    ok('risk card: a new proposal supersedes a decided one (risk tuning is ongoing)',
+        again.ok === true && again.proposal.direction === 'loosen'
+        && rc.pendingRiskChange('riskPercent').proposedValue === 2
+        // THE masking bug: the new proposal is a NEW decision — the previous
+        // decision's state must not render it as already-applied.
+        && rc.riskChangeStateOf(again.proposal.id) === undefined
+        && rc.riskRevertOf(again.proposal.id) === undefined);
+    ok('risk card: the dismiss resolves without touching anything',
+        rc.dismissRiskChange('riskPercent') === true
+        && rc.riskChangeStateOf(again.proposal.id) === 'dismissed'
+        && rc.pendingRiskChange('riskPercent') === undefined);
+
+    rc.markRiskRevertWindow(again.proposal.id, 1, 1_000_000);
+    const rev = rc.riskRevertOf(again.proposal.id, 1_000_000 + 1_000);
+    ok('risk card: the revert window carries the replaced value',
+        rev !== undefined && rev.previousValue === 1 && rev.msLeft > 0);
+    ok('risk card: the revert window expires on its own',
+        rc.riskRevertOf(again.proposal.id, 1_000_000 + rc.RISK_REVERT_WINDOW_MS + 1) === undefined);
+    rc.markRiskRevertWindow(again.proposal.id, 1, 1_000_000);
+    rc.clearRiskRevertWindow(again.proposal.id);
+    ok('risk card: clearing the revert window forgets it',
+        rc.riskRevertOf(again.proposal.id, 1_000_000) === undefined);
 })();
 
 const finishReport = () => {

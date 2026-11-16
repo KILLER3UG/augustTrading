@@ -30,9 +30,11 @@ import { formatSeatLabel } from '../../../utils/providerUtils';
 import ChatWorkTimeline from './ChatWorkTimeline';
 import TradeProposalCard, { TradeProposalLoggedRow } from './TradeProposalCard';
 import SettlementCorrectionCard from './SettlementCorrectionCard';
+import RiskChangeCard from './RiskChangeCard';
 import TradeActionCard from './TradeActionCard';
 import { settlementCorrectionStateOf, type SettlementCorrectionProposal } from '../../../services/trade/settlementCorrection';
 import { tradeActionStateOf, type TradeActionProposal } from '../../../services/trade/tradeActionProposal';
+import { riskChangeStateOf, riskRevertOf, type RiskChangeProposal } from '../../../services/trade/riskChangeProposal';
 import { getArmedPlans } from '../../../services/trade/levelWatchService';
 import type { LoggedTrade } from '../../../types';
 import VerdictAudit, { verdictNeedsAudit } from '../../analysis/VerdictAudit';
@@ -171,6 +173,16 @@ interface ChatTranscriptListProps {
      *  receipt message, disarms the plan watch and clears the receipt dedupe
      *  (a later re-approve is a fresh decision). */
     onUndoApproval?: (decision: { rowId: string; planId?: string; entryId: string; sessionId?: string }) => void;
+    /** Confirm a PROPOSED risk-limit / guard-preset change → App writes it
+     *  through the ONE settings writer the trader's own Settings screen uses,
+     *  stamps the revert window and notes the thread. The card's asymmetry
+     *  (one tap to tighten, an explicit re-confirm to loosen) is the card's. */
+    onConfirmRiskChange?: (proposal: RiskChangeProposal, sessionId?: string) => void;
+    /** Dismiss a PROPOSED risk change — the setting is untouched. */
+    onDismissRiskChange?: (proposal: RiskChangeProposal) => void;
+    /** Revert a confirmed change inside its window → App restores the
+     *  replaced value through the same settings writer and notes the thread. */
+    onRevertRiskChange?: (proposal: RiskChangeProposal, sessionId?: string) => void;
     /** The journal rows, so a settlement-correction card can show the "before"
      *  half of what it changes (the same input the Chat row gets). */
     trades?: LoggedTrade[];
@@ -194,6 +206,7 @@ const ChatTranscriptList: React.FC<ChatTranscriptListProps> = ({
     entries, scrollParent, virtuosoRef, followOutput, onAtBottomChange, onTotalHeightChanged,
     send, setDraftText, getAnalysisMessage, resolveVerdictByIdentity, symbol, getMark, onChatLevels,
     onToggleWatch, pinnedMessageIds, onLogProposedTrade, sessionId, onRejectProposedTrade, onUndoApproval, trades,
+    onConfirmRiskChange, onDismissRiskChange, onRevertRiskChange,
     onConfirmSettlementCorrection, onDismissSettlementCorrection, onVoidSettlementCorrection,
     onConfirmTradeAction, onDismissTradeAction,
 }) => {
@@ -514,6 +527,39 @@ const ChatTranscriptList: React.FC<ChatTranscriptListProps> = ({
                                     onDismiss={() => { onDismissTradeAction?.(p); setDecisionTick(t => t + 1); }}
                                 />
                             );
+                        })()}
+                        {/* A PROPOSED risk-limit / guard-preset change
+                            (propose_risk_change). The card's asymmetry is the
+                            owner's rule: one tap to TIGHTEN, an explicit
+                            second tap to LOOSEN. Confirm writes through the
+                            settings writer the trader owns; a confirmed change
+                            stays for a short revert window. */}
+                        {(() => {
+                            void decisionTick;
+                            const p = e.riskChange;
+                            if (!p) return null;
+                            const state = riskChangeStateOf(p.id);
+                            const revert = riskRevertOf(p.id);
+                            if (!state && !revert) {
+                                return (
+                                    <RiskChangeCard
+                                        proposal={p}
+                                        onConfirm={() => { onConfirmRiskChange?.(p, sessionId); setDecisionTick(t => t + 1); }}
+                                        onDismiss={() => { onDismissRiskChange?.(p); setDecisionTick(t => t + 1); }}
+                                    />
+                                );
+                            }
+                            if (state === 'confirmed') {
+                                return (
+                                    <RiskChangeCard
+                                        proposal={p}
+                                        applied
+                                        revert={revert}
+                                        onRevert={revert ? () => { onRevertRiskChange?.(p, sessionId); setDecisionTick(t => t + 1); } : undefined}
+                                    />
+                                );
+                            }
+                            return null;
                         })()}
                         {e.proposal && (!proposalStateOf(e.id) || (proposalStateOf(e.id) === 'logged' && !!undoWindowOf(e.id))) && (
                             <TradeProposalCard

@@ -121,6 +121,14 @@ function toolScenario(body) {
         } catch { /* keep the default */ }
     }
     let name = TOOL_NAME;
+    // A sequence entry may name its own tool (`__tool`), so one run can drive
+    // DIFFERENT tools across its turns (a presented plan, then a risk change).
+    if (args && typeof args === 'object' && !Array.isArray(args) && typeof args.__tool === 'string') {
+        name = args.__tool;
+        const rest = { ...args };
+        delete rest.__tool;
+        args = rest;
+    }
     if (name === 'skill_write') {
         const index = results.find(x => toolPayload(x.content).includes('"skills":'));
         const read = results.find(x => /^# .*\nName:/.test(toolPayload(x.content)));

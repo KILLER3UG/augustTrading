@@ -23,6 +23,12 @@ import {
     formatApprovalReceiptForModel, formatApprovalUndoneForModel,
     markApprovalReceipt, clearApprovalReceipt, hasApprovalReceipt, recordTraderDecline,
 } from './services/trade/tradeDecision';
+import {
+    confirmRiskChange, dismissRiskChange, markRiskRevertWindow, riskRevertOf,
+    clearRiskRevertWindow, formatRiskChangeAppliedForModel, formatRiskChangeRevertedForModel,
+    type RiskChangeProposal,
+} from './services/trade/riskChangeProposal';
+import { getHarnessSettings, saveHarnessSettings, type HarnessSettings } from './utils/harnessSettings';
 import * as chatStore from './services/trade/chatStore';
 import * as watchService from './services/trade/watchService';
 import * as levelWatch from './services/trade/levelWatchService';
@@ -1665,6 +1671,38 @@ const App: React.FC = () => {
         chatStore.queueHarnessSignal(formatApprovalUndoneForModel({ planId, rowId }), sessionId);
     }, [loggedTrades, handleDeleteTrades, updateMessages, toast]);
 
+    // ── The risk-limit / guard-preset card (Phase 3) ────────────────────────
+    // The agent PROPOSES (propose_risk_change records a card); this is the only
+    // place a confirm turns into a write, and it goes through the SAME
+    // settings writer the trader's own Settings screen uses — the agent never
+    // touches a risk value. The asymmetry lives on the card (one tap to
+    // tighten, an explicit second tap to loosen); a confirmed change keeps a
+    // revert window, and the model learns both directions in the thread.
+    const handleConfirmRiskChange = useCallback((proposal: RiskChangeProposal, sessionId?: string): void => {
+        const confirmed = confirmRiskChange(proposal.target);
+        if (!confirmed) return;
+        // The bounds were checked at propose time; the write is the trader's
+        // own settings path, so the value lands exactly as Settings would
+        // write it.
+        const next = { ...getHarnessSettings(), [proposal.target]: proposal.proposedValue } as HarnessSettings;
+        saveHarnessSettings(next);
+        markRiskRevertWindow(proposal.id, proposal.currentValue);
+        chatStore.queueHarnessSignal(formatRiskChangeAppliedForModel(proposal), sessionId);
+    }, []);
+
+    const handleDismissRiskChange = useCallback((proposal: RiskChangeProposal): void => {
+        dismissRiskChange(proposal.target);
+    }, []);
+
+    const handleRevertRiskChange = useCallback((proposal: RiskChangeProposal, sessionId?: string): void => {
+        const window = riskRevertOf(proposal.id);
+        if (!window) return;
+        const next = { ...getHarnessSettings(), [proposal.target]: window.previousValue } as HarnessSettings;
+        saveHarnessSettings(next);
+        clearRiskRevertWindow(proposal.id);
+        chatStore.queueHarnessSignal(formatRiskChangeRevertedForModel(proposal), sessionId);
+    }, []);
+
     /** The dock holds a settled verdict's message id, not a copy of the
      *  analysis — a persisted chat session would otherwise store a whole
      *  `TradeAnalysis` per answer. This lets it resolve the backing on demand.
@@ -2488,6 +2526,9 @@ const App: React.FC = () => {
                         onLogProposedTrade={handleLogProposedTrade}
                         onRejectProposedTrade={handleRejectProposedTrade}
                         onUndoApproval={handleUndoApproval}
+                        onConfirmRiskChange={handleConfirmRiskChange}
+                        onDismissRiskChange={handleDismissRiskChange}
+                        onRevertRiskChange={handleRevertRiskChange}
                         registerScrollToMessage={registerScrollToMessage}
                         onToggleWatch={handleToggleWatch}
                         onOpenWatchList={() => setIsWatchListVisible(true)}

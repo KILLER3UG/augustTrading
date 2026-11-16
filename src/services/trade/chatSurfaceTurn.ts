@@ -108,6 +108,9 @@ export const CHAT_SURFACE_TOOLS = [
     'correct_trade_outcome',
     // The two AUTHORITY changes over an armed plan, and the read-only review.
     'update_trade', 'close_trade', 'run_review',
+    // A risk-limit / guard-preset change is proposed, never applied: the card
+    // is the only writer, through the settings path the trader owns.
+    'propose_risk_change',
     // Goal environments — durable work state the agent can shape mid-task.
     'list_goals', 'open_goal', 'create_goal', 'update_goal', 'restore_goal',
     // The harness's own change ledger. Reading it is always available; the two
@@ -479,7 +482,7 @@ export const runChatSurfaceTurn = async (req: ChatSurfaceTurnRequest): Promise<T
             // so the card actually renders. The row is untouched until the
             // trader confirms, and the confirm goes through App's journal
             // handlers, not through anything here.
-            if (call.name === 'correct_trade_outcome' || call.name === 'update_trade' || call.name === 'close_trade') {
+            if (call.name === 'correct_trade_outcome' || call.name === 'update_trade' || call.name === 'close_trade' || call.name === 'propose_risk_change') {
                 const { executeDeskTool } = await import('../analysis/DeskToolsService');
                 const result = await executeDeskTool(call, {
                     defaultSymbol: req.symbol ?? null,
@@ -492,6 +495,11 @@ export const runChatSurfaceTurn = async (req: ChatSurfaceTurnRequest): Promise<T
                         const tradeId = typeof call.arguments?.tradeId === 'string' ? call.arguments.tradeId : '';
                         const proposal = pendingSettlementCorrection(tradeId);
                         if (proposal) req.patch(m => ({ ...m, settlementCorrection: proposal }));
+                    } else if (call.name === 'propose_risk_change') {
+                        const { pendingRiskChange } = await import('./riskChangeProposal');
+                        const target = typeof call.arguments?.target === 'string' ? call.arguments.target : '';
+                        const proposal = pendingRiskChange(target as never);
+                        if (proposal) req.patch(m => ({ ...m, riskChange: proposal }));
                     } else {
                         const { pendingTradeAction } = await import('./tradeActionProposal');
                         const planId = typeof call.arguments?.planId === 'string' ? call.arguments.planId : '';
