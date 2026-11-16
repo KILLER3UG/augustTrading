@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo, useSyncExternalStore } from 'react';
 import { reapplyIdleMotionClass } from './services/desk/idleMotion';
 
 // Apply the user's persisted stillness preference to <body> on app startup,
@@ -1793,25 +1793,37 @@ const App: React.FC = () => {
 
 
 
-    /** The canonical conversation for whichever bot the dock is bound to, as
-     *  rows, recomputed whenever `messages` changes.
+    /** The dock's OWN binding, read from the module store. The canonical rows
+     *  projected into a dock session must be chosen by the session the dock is
+     *  actually SHOWING — not by the last roster click (`tradeBotRequest`,
+     *  which a dock-menu open never updates) and not by App's active
+     *  conversation (which a rail open used to change without binding the
+     *  dock, stitching two threads into one transcript). `chatStore` is the
+     *  single source of the binding; `tradeBotRequest` stays only as the
+     *  roster's open request, consumed by the dock's own effect. */
+    const dockSnapshot = useSyncExternalStore(chatStore.subscribe, chatStore.getSnapshot, chatStore.getSnapshot);
+    const dockActiveSession = useMemo(
+        () => dockSnapshot.sessions.find(s => s.id === dockSnapshot.activeId),
+        [dockSnapshot],
+    );
+
+    /** The canonical conversation for the bot the dock is bound to, as rows,
+     *  recomputed whenever `messages` changes.
      *
      *  This is what makes a bot session in the dock a VIEW of the conversation
      *  rather than a copy taken when it was opened: a turn said in the Chat
      *  surface appears in an already-open dock session with nothing to click.
      *
-     *  It rides `tradeBotRequest` — the bot the trader last pushed into the
-     *  dock — because App is the scope that holds `messages` and re-renders
-     *  when it changes. There is deliberately no second copy of this selection
-     *  anywhere: a filter here that disagreed with the Chat rail's would be a
-     *  filter that decides who owns a message, twice. */
+     *  There is deliberately no second copy of this selection anywhere: a
+     *  filter here that disagreed with the Chat rail's would be a filter that
+     *  decides who owns a message, twice. */
     const tradeBotThread = useMemo(() => {
-        const botId = tradeBotRequest?.botId;
+        const botId = dockActiveSession?.botId;
         if (!botId) return [];
         const b = bots.find(x => x.id === botId);
         if (!b) return [];
         return threadForProvider(messages, b.providerId, b.modelId, b.id);
-    }, [tradeBotRequest, bots, messages]);
+    }, [dockActiveSession, bots, messages]);
 
     /** A bot turn asked in the Chart AI dock, committed to the conversation
      *  that owns it.
@@ -2104,6 +2116,17 @@ const App: React.FC = () => {
     // starts closed and the rail's Chats icon opens it. Session state, not a
     // stored preference — the column is a peek, not a layout.
     const openDeskConversation = useCallback((id: string) => {
+        // Bind BEFORE loading: the dock renders `conversationRows` (App's
+        // `messages`, i.e. the active conversation) into the session bound to
+        // THAT conversation. Without the bind, a rail open used to change
+        // App's active conversation while the dock kept showing the PREVIOUS
+        // session — the newly-opened rows stitched into the wrong transcript,
+        // or invisible when the active dock session was chart-side — and the
+        // next dock send silently flipped App back to the session's own
+        // binding. bindConversation finds or mints the conversation's session
+        // and makes it active, so App's active conversation and the dock's
+        // active session name the same conversation by construction.
+        chatStore.bindConversation(id);
         handleLoadConversation(id);
         selectTeamThread();
         setSurface('agents');

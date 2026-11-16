@@ -134,6 +134,12 @@ export type ProjectedChatEntry = StoredChatEntry & {
     /** A PROPOSED risk-limit / guard-preset change (propose_risk_change) —
      *  projected the same way; the confirm writes through the settings path. */
     riskChange?: import('./riskChangeProposal').RiskChangeProposal;
+    /** The plan a PIPELINE turn presented (`present_trade` on the analysis
+     *  path) — projected from the canonical `Message.proposal`, same rule as
+     *  the three sinks above: no second home renders it anymore, and a
+     *  proposal with no card is the dead affordance the authority split
+     *  exists to avoid. */
+    proposal?: import('./proposedTrade').TradeProposal;
 };
 
 export interface ChatSession {
@@ -610,12 +616,15 @@ export const liveEntryFromMessage = (m: Message): ProjectedChatEntry => {
         // short answer and no recovery card.
         interrupted: m.interrupted,
         actions: m.toolActions,
-        // `proposal` is deliberately NOT projected. The dock keeps its card on the
-        // RUNTIME entry only (`chatStore.LiveEntry`, not `StoredChatEntry`) so a
-        // presented plan never rides the byte-capped session blob — and a plan
-        // presented on the Agents surface renders from its canonical
-        // `Message.proposal` THERE. One card per plan, in the home that asked for
-        // it; the disposition both homes consult is keyed by the shared row id.
+        // The plan a PIPELINE turn presented (the analysis path's sink attaches
+        // it to the Message). Projected like the other decision proposals below:
+        // there is no second home that renders `Message.proposal` anymore — the
+        // workspace merge made both routes one surface — so without this line a
+        // pipeline-presented plan is proposed and unactionable, the dead
+        // affordance the authority split exists to avoid. The card still never
+        // rides the byte-capped session blob: this is a re-derivation from the
+        // canonical Message on every load, and the persisted entry strips it.
+        proposal: m.proposal,
         image: m.images?.[0],
         // The pipeline path's frozen work time, so a dock row built from a
         // pipeline Message still shows its "Analyzed for Ns" after a reload.
