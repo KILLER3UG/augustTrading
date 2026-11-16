@@ -16,7 +16,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import type { LoggedTrade } from '../types';
-import { assessSession, guardEnforcement, type GuardEnforcement } from '../services/validation/SessionGuardService';
+import { assessSession, applyDailyStanddownLatch, guardEnforcement, type GuardEnforcement } from '../services/validation/SessionGuardService';
 import { getHarnessSettings, getSessionGuardConfig, subscribeHarnessSettings, type HarnessSettings } from '../utils/harnessSettings';
 
 export const useSessionGuardVerdict = (trades: LoggedTrade[] | undefined): GuardEnforcement => {
@@ -37,7 +37,17 @@ export const useSessionGuardVerdict = (trades: LoggedTrade[] | undefined): Guard
         return () => clearInterval(t);
     }, []);
     return useMemo(
-        () => guardEnforcement(assessSession(trades ?? [], settings.equityUsd, getSessionGuardConfig())),
+        () => {
+            const config = getSessionGuardConfig();
+            // F6 ruling: once the daily-loss limit trips for the UTC day, the
+            // standdown LATCHES — a riskPercent tighten cannot shrink today's
+            // settled losses past it; only a loosened limit clears it.
+            const verdict = applyDailyStanddownLatch(
+                assessSession(trades ?? [], settings.equityUsd, config),
+                config,
+            );
+            return guardEnforcement(verdict);
+        },
         [trades, settings, clockTick],
     );
 };

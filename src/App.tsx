@@ -36,7 +36,7 @@ import {
 import { harnessTurn } from './utils/harnessMarks';
 import { setStrategyStatus, type StrategyStatus } from './services/learning/strategyStore';
 import { getHarnessSettings, getSessionGuardConfig, saveHarnessSettings, type HarnessSettings } from './utils/harnessSettings';
-import { assessSession, guardEnforcement } from './services/validation/SessionGuardService';
+import { assessSession, applyDailyStanddownLatch, guardEnforcement } from './services/validation/SessionGuardService';
 import * as chatStore from './services/trade/chatStore';
 import * as watchService from './services/trade/watchService';
 import * as levelWatch from './services/trade/levelWatchService';
@@ -1513,7 +1513,13 @@ const App: React.FC = () => {
         // — never a same-moment override.
         const guardStateNow = () => {
             const settingsNow = getHarnessSettings();
-            const verdict = assessSession(liveLoggedTradesRef.current ?? loggedTrades, settingsNow.equityUsd, getSessionGuardConfig());
+            const config = getSessionGuardConfig();
+            // F6 ruling: the daily standdown latches for the UTC day — see
+            // applyDailyStanddownLatch.
+            const verdict = applyDailyStanddownLatch(
+                assessSession(liveLoggedTradesRef.current ?? loggedTrades, settingsNow.equityUsd, config),
+                config,
+            );
             return { verdict, guard: guardEnforcement(verdict) };
         };
         const guardBlockNow = (): string | null => guardStateNow().guard.block;

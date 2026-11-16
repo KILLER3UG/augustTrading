@@ -22,6 +22,7 @@
 
 import { LoggedTrade } from '../../types/trade';
 import { TradeOutcome } from '../../types/enums';
+import { getActiveUsername } from '../../utils/activeUser';
 
 export interface SessionGuardConfig {
     /** Daily loss limit as a fraction of equity (0.02 = 2%). */
@@ -305,6 +306,88 @@ export interface GuardEnforcement {
     /** Non-blocking lines the card prints (budget used, equity unset). */
     warnings: string[];
 }
+
+// ─── The daily standdown latch (review finding F6, owner ruling) ────────────
+// Tightening riskPercent for FUTURE trades must never retroactively shrink
+// today's already-settled losses to slip past a daily-loss standdown: the
+// budget converts pnlPercent-only rows with the CURRENT risk percent, so a
+// one-tap tighten used to shrink the measured loss and lift the block. The
+// ruling: once the daily-loss limit trips for a UTC day, the standdown LATCHES
+// for that day, and only a LOOSENED daily-loss limit (the trader's own
+// settings write — the same path the two-tap guard/risk loosen card uses)
+// clears it. Pure assessSession stays pure: the latch is applied by the
+// enforcement sites through applyDailyStanddownLatch, which both reads and
+// writes the day latch. localStorage-backed so a reload cannot clear a
+// standing standdown.
+
+const DAY_LATCH_KEY_PREFIX = 'guard_day_latch_v1_';
+
+interface DayLatch { dayStart: number; limitPct: number }
+
+const readDayLatch = (): DayLatch | null => {
+    try {
+        if (typeof localStorage === 'undefined') return null;
+        const raw = localStorage.getItem(`${DAY_LATCH_KEY_PREFIX}${getActiveUsername()}`);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw) as DayLatch;
+        return parsed && typeof parsed.dayStart === 'number' && typeof parsed.limitPct === 'number' ? parsed : null;
+    } catch { return null; }
+};
+
+const writeDayLatch = (latch: DayLatch): void => {
+    try {
+        if (typeof localStorage === 'undefined') return;
+        localStorage.setItem(`${DAY_LATCH_KEY_PREFIX}${getActiveUsername()}`, JSON.stringify(latch));
+    } catch { /* a latch that cannot persist still holds for this session */ }
+};
+
+/** Apply (and record) the daily standdown latch to one verdict.
+ *
+ *  - The verdict says the daily limit is HIT: latch the day (idempotent) and
+ *    return the verdict unchanged.
+ *  - A latch exists for TODAY and the configured limit has NOT been loosened
+ *    past the latched one: force `dailyLossHit` true regardless of what the
+ *    current conversion computes — a riskPercent tighten cannot un-trip it.
+ *  - The configured limit IS looser than the latched one: the trader loosened
+ *    the limit through the gated path — clear the latch and recompute
+ *    honestly. A TIGHTEN never clears it. */
+export const applyDailyStanddownLatch = (
+    verdict: SessionGuardVerdict,
+    config: SessionGuardConfig,
+    now: Date = new Date(),
+): SessionGuardVerdict => {
+    const dayStart = utcDayStart(now).getTime();
+    if (verdict.dailyLossHit) {
+        const existing = readDayLatch();
+        if (!existing || existing.dayStart !== dayStart || config.dailyLossLimitPct > existing.limitPct) {
+            writeDayLatch({ dayStart, limitPct: config.dailyLossLimitPct });
+        }
+        return verdict;
+    }
+    const latch = readDayLatch();
+    if (!latch || latch.dayStart !== dayStart) return verdict;
+    if (config.dailyLossLimitPct > latch.limitPct) {
+        // Loosened through the gated path: the standdown lifts.
+        clearDailyStanddownLatch();
+        return verdict;
+    }
+    if (verdict.level === 'standdown') return verdict;
+    return {
+        ...verdict,
+        dailyLossHit: true,
+        level: 'standdown',
+        warnings: [...verdict.warnings, 'The daily loss limit was consumed earlier today — the standdown is latched until the limit is loosened or the UTC day rolls over.'],
+    };
+};
+
+export const clearDailyStanddownLatch = (): void => {
+    try {
+        if (typeof localStorage === 'undefined') return;
+        localStorage.removeItem(`${DAY_LATCH_KEY_PREFIX}${getActiveUsername()}`);
+    } catch { /* nothing to clear */ }
+};
+
+export const __clearDailyLatchForTests = (): void => { clearDailyStanddownLatch(); };
 
 export const guardEnforcement = (v: SessionGuardVerdict): GuardEnforcement => {
     // KNOWN SIDE DOOR (review finding F6, accepted as a design tension): the

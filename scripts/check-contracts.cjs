@@ -6077,7 +6077,55 @@ const checkAgentHandExecutor = async () => {
                 && c.maxTradesPerDay === sg.DEFAULT_SESSION_GUARD.maxTradesPerDay
                 && c.tradeRiskPercent > 0;
         })());
+    ok('session guard: the daily standdown LATCHES for the UTC day (F6 — a tighten cannot un-trip it)',
+        (() => {
+            sg.__clearDailyLatchForTests();
+            const trip = sg.assessSession(
+                [row('a', halfDayMs, 'LOSS', { pnlAmount: -(EQUITY * cfg.dailyLossLimitPct + 1) })],
+                EQUITY, cfg);
+            const latched = sg.applyDailyStanddownLatch(trip, cfg);
+            // The trip latches; a later compute with a TIGHTER risk percent
+            // (same limit) still stands down even though pnlPercent rows
+            // would recompute smaller.
+            const later = sg.applyDailyStanddownLatch(
+                sg.assessSession([row('a', halfDayMs, 'LOSS', { pnlAmount: -(EQUITY * cfg.dailyLossLimitPct - 5) })], EQUITY, cfg),
+                cfg);
+            return latched.dailyLossHit === true
+                && later.dailyLossHit === true
+                && later.level === 'standdown'
+                && /latched/i.test(later.warnings.join(' '));
+        })());
+    ok('session guard: a LOOSENED daily-loss limit clears the latch, a tighten keeps it',
+        (() => {
+            const loosened = sg.applyDailyStanddownLatch(
+                sg.assessSession([row('a', halfDayMs, 'LOSS', { pnlAmount: -1 })], EQUITY, cfg),
+                { ...cfg, dailyLossLimitPct: cfg.dailyLossLimitPct * 2 });
+            sg.__clearDailyLatchForTests();
+            sg.applyDailyStanddownLatch(
+                sg.assessSession([row('a', halfDayMs, 'LOSS', { pnlAmount: -(EQUITY * cfg.dailyLossLimitPct + 1) })], EQUITY, cfg),
+                cfg);
+            const tightened = sg.applyDailyStanddownLatch(
+                sg.assessSession([row('a', halfDayMs, 'LOSS', { pnlAmount: -1 })], EQUITY, cfg),
+                { ...cfg, dailyLossLimitPct: cfg.dailyLossLimitPct / 2 });
+            return loosened.dailyLossHit === false
+                && tightened.dailyLossHit === true;
+        })());
+    ok('session guard: the latch does not survive a UTC-day roll',
+        (() => {
+            sg.__clearDailyLatchForTests();
+            sg.applyDailyStanddownLatch(
+                sg.assessSession([row('a', halfDayMs, 'LOSS', { pnlAmount: -(EQUITY * cfg.dailyLossLimitPct + 1) })], EQUITY, cfg),
+                cfg);
+            const tomorrow = new Date(sg.utcDayStart(new Date()).getTime() + 2 * 86_400_000);
+            const nextDay = sg.applyDailyStanddownLatch(
+                sg.assessSession([], EQUITY, cfg, tomorrow),
+                cfg,
+                tomorrow);
+            sg.__clearDailyLatchForTests();
+            return nextDay.dailyLossHit === false && nextDay.level === 'clear';
+        })());
 })();
+
 
 const finishReport = () => {
     console.log(`contracts: ${passed} passed, ${failures.length} failed`);
