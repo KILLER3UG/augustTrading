@@ -59,9 +59,23 @@ rebuilt) and **Phase 3's decision cards are landed**:
   double-approve guard, stale re-confirm, reject, risk tighten/loosen/revert). Contracts
   821/0. Full gate ladder green on both commits.
 
-**Still open in Phase 3**: the goal/strategy ACTIVATION card (the same shape; shows what
-changes on activation), the independent review checkpoint over the card work, and the
+**Still open in Phase 3**: the independent review checkpoint over the card work, and the
 removal-parity proofs P-1…P-5 (P-6 is proven). Phase 4 removes nothing until those land.
+
+**The strategy activation card is landed** (2026-11-17): `propose_strategy_activation`
+(GATED) records a proposal to move one plan between draft/active/retired; the card shows
+the before/after status and what changes (the plan joins or leaves every seat's context);
+the confirm writes through `setStrategyStatus` — the SAME writer the Settings screen uses —
+and a confirmed change keeps the risk card's 60s revert window. Skill "activation" needs no
+card: the library's own approval flow is the gate, and skills are documents, never executed.
+The decision-card probe walks the whole loop (propose draft → activation card → confirm
+applies → revert restores; 36 checks). The two flow flaws the takeover named are also
+closed: the session guard now ENFORCES its limits at the log path (the four active arms
+block; the recourse is the gated risk-change card), and the prompt A/B lane + shadow tier
+are removed (O-140/O-148 resolved by deletion — a label that changed no bytes is not a
+measurement). The dual-surface sync audit's three divergences are fixed: the dock's
+canonical rows derive from the binding the dock actually shows, a rail open binds the dock
+before loading, and a pipeline-presented plan renders its card.
 
 **Phase 4 has not started** — correctly, it is gated on phases 1–3 being verified.
 

@@ -940,6 +940,52 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
         })());
 })();
 
+// ─── 13j. the strategy activation card: the seat's rules are the trader's ──
+// propose_strategy_activation records a proposal for moving a plan between
+// draft/active/retired; nothing writes the plan's status but the trader's
+// confirm, through the SAME writer the Settings screen uses. The failure
+// this pins: a proposal that changes nothing (a same-status "change"), a
+// slug with no file behind it, and a decided card being re-opened.
+(() => {
+    const sa = loadModule('src/services/trade/strategyActivation.ts');
+    sa.__clearStrategyActivationsForTests();
+    ok('strategy activation: a proposal needs a slug, a known action and a reason',
+        sa.checkStrategyActivation({ slug: '', action: 'activate', reason: 'r', currentStatus: 'draft', slugExists: true }).ok === false
+        && sa.checkStrategyActivation({ slug: 's', action: 'enable', reason: 'r', currentStatus: 'draft', slugExists: true }).ok === false
+        && sa.checkStrategyActivation({ slug: 's', action: 'activate', reason: '', currentStatus: 'draft', slugExists: true }).ok === false
+        && sa.checkStrategyActivation({ slug: 's', action: 'activate', reason: 'r', currentStatus: 'draft', slugExists: false }).ok === false);
+    ok('strategy activation: a same-status proposal is refused, a real one carries before/after',
+        sa.checkStrategyActivation({ slug: 's', action: 'activate', reason: 'r', currentStatus: 'active', slugExists: true }).ok === false
+        && sa.checkStrategyActivation({ slug: 's', action: 'retire', reason: 'r', currentStatus: 'active', slugExists: true }).ok === true
+        && sa.checkStrategyActivation({ slug: 's', action: 'retire', reason: 'r', currentStatus: 'active', slugExists: true }).proposal.proposedStatus === 'retired');
+    ok('strategy activation: confirm resolves by slug and frees the slot',
+        (() => {
+            sa.__clearStrategyActivationsForTests();
+            const checked = sa.checkStrategyActivation({ slug: 'plan-a', action: 'activate', reason: 'r', currentStatus: 'draft', slugExists: true });
+            if (!checked.ok) return false;
+            // Seed the pending store the way the propose wrapper does (it reads
+            // the live notebook, which the sandbox has none of).
+            const pending = checked.proposal;
+            sa.__seedPendingStrategyForTests(pending);
+            if (sa.pendingStrategyActivation('plan-a') === undefined) return false;
+            const confirmed = sa.confirmStrategyActivation('plan-a');
+            return !!confirmed
+                && sa.pendingStrategyActivation('plan-a') === undefined
+                && sa.strategyActivationStateOf(pending.id) === 'confirmed';
+        })());
+    ok('strategy activation: the revert window opens, expires and clears',
+        (() => {
+            sa.__clearStrategyActivationsForTests();
+            const t0 = 1_000_000_000_000;
+            sa.markStrategyRevertWindow('p1', 'draft', t0);
+            const open = sa.strategyRevertOf('p1', t0 + 1000);
+            const gone = sa.strategyRevertOf('p1', t0 + sa.STRATEGY_REVERT_WINDOW_MS + 1);
+            sa.markStrategyRevertWindow('p2', 'active', t0);
+            sa.clearStrategyRevertWindow('p2');
+            return !!open && open.previousStatus === 'draft' && gone === undefined && sa.strategyRevertOf('p2', t0) === undefined;
+        })());
+})();
+
 // ─── 13f. the trade-action proposal store: an authority change needs a tap ─
 // update_trade moves the levels on an armed plan; close_trade closes it. Both
 // are authority changes, so both record a proposal here and neither may act on

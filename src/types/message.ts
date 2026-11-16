@@ -309,6 +309,10 @@ export interface Message {
    *  Set by update_trade / close_trade; rendered as a confirm card. The plan is
    *  untouched until the trader confirms — see services/trade/tradeActionProposal. */
   tradeAction?: import('../services/trade/tradeActionProposal').TradeActionProposal;
+  /** A PROPOSED strategy activation/retirement (propose_strategy_activation).
+   *  Rendered as a confirm card; the plan status is untouched until the trader
+   *  confirms — see services/trade/strategyActivation. */
+  strategyActivation?: import('../services/trade/strategyActivation').StrategyActivationProposal;
   /** A PROPOSED change to one risk limit or the guard preset. Set by
    *  propose_risk_change; rendered as a decision card. NOTHING is applied until
    *  the trader confirms — the confirm writes through the same settings writer

@@ -406,7 +406,8 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
         const name = call.name;
         if (name !== 'draw_on_chart' && name !== 'draw_detected' && name !== 'draw_tool_levels' && name !== 'mark_trade_levels' && name !== 'clear_chart_drawings'
             && name !== 'present_trade' && name !== 'watch_price' && name !== 'wake_me' && name !== 'cancel_watch'
-            && name !== 'correct_trade_outcome' && name !== 'update_trade' && name !== 'close_trade' && name !== 'propose_risk_change') return null;
+            && name !== 'correct_trade_outcome' && name !== 'update_trade' && name !== 'close_trade' && name !== 'propose_risk_change'
+            && name !== 'propose_strategy_activation') return null;
         const args = call.arguments ?? {};
         const receipt = (ok: boolean, content: string): DeskToolResult => ({ toolCallId: call.id, name, ok, content });
         // The chart snapshot is shared by every drawing branch: its live mark
@@ -488,7 +489,7 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
         // dock renders the confirm card. The card holds no authority: the
         // write happens only when the trader confirms, through App's journal
         // and watch handlers.
-        if (name === 'correct_trade_outcome' || name === 'update_trade' || name === 'close_trade' || name === 'propose_risk_change') {
+        if (name === 'correct_trade_outcome' || name === 'update_trade' || name === 'close_trade' || name === 'propose_risk_change' || name === 'propose_strategy_activation') {
             const { executeDeskTool } = await import('../analysis/DeskToolsService');
             const result = await executeDeskTool(call, {
                 defaultSymbol: turn.symbol ?? null,
@@ -517,6 +518,16 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
                         chatStore.mutate(turn.sid, s => ({
                             ...s,
                             entries: s.entries.map(en => (en.id === turn.entryId ? { ...en, riskChange: proposal } : en)),
+                        }));
+                    }
+                } else if (name === 'propose_strategy_activation') {
+                    const { pendingStrategyActivation } = await import('./strategyActivation');
+                    const slug = typeof call.arguments?.slug === 'string' ? call.arguments.slug : '';
+                    const proposal = pendingStrategyActivation(slug.trim());
+                    if (proposal) {
+                        chatStore.mutate(turn.sid, s => ({
+                            ...s,
+                            entries: s.entries.map(en => (en.id === turn.entryId ? { ...en, strategyActivation: proposal } : en)),
                         }));
                     }
                 } else {

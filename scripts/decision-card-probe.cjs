@@ -98,6 +98,18 @@ const GUARD_LOOSEN = {
     __tool: 'propose_risk_change', target: 'guardMaxTradesPerDay', value: 8,
     reason: 'The trader wants the session open; the cap goes back up explicitly.',
 };
+// The strategy walk: the model PROPOSES a draft plan (propose_strategy writes
+// the notebook), then PROPOSES its activation — the card is the only writer.
+const STRAT_PROPOSE = {
+    __tool: 'propose_strategy', name: 'Probe Range Reclaim',
+    entry: 'Reclaim of the daily range mid with a 15m close above it.',
+    invalidation: 'A 15m close back below the range mid.',
+    coin: 'BTCUSDT', direction: 'Long',
+};
+const STRAT_ACTIVATE = {
+    __tool: 'propose_strategy_activation', slug: 'probe-range-reclaim', action: 'activate',
+    reason: 'Its base rate cleared the bar; the seats should trade with it in context.',
+};
 
 async function waitForServer(url, timeoutMs = 30000) {
     const deadline = Date.now() + timeoutMs;
@@ -218,6 +230,26 @@ async function readRiskPercent(page) {
             const v = JSON.parse(localStorage.getItem('harness_settings_v1') || '{}').riskPercent;
             return typeof v === 'number' ? v : null;
         } catch { return null; }
+    });
+}
+
+/** The strategy plan's serialized status, read out of the notebook store the
+ *  app itself wrote — the activation confirm and its revert must both move it
+ *  through the same writer Settings uses. */
+async function readStrategyStatus(page) {
+    return page.evaluate(() => {
+        try {
+            const raw = localStorage.getItem('memory_files_v1_Probe User') || '';
+            // The slug appears in the graph-index note too — take the FIRST
+            // occurrence that is followed by a strategy frontmatter status.
+            const re = /status:\s*(draft|active|retired)/g;
+            let m;
+            while ((m = re.exec(raw)) !== null) {
+                const head = raw.slice(Math.max(0, m.index - 400), m.index);
+                if (head.includes('probe-range-reclaim')) return m[1];
+            }
+            return 'unparsed';
+        } catch { return 'read-failed'; }
     });
 }
 
@@ -496,7 +528,7 @@ async function main() {
             ...process.env,
             MOCK_TOOL_CALL: '1',
             MOCK_TOOL_NAME: 'present_trade',
-            MOCK_SKILL_ARGS: JSON.stringify([PLAN_A, PLAN_B, PLAN_C, PLAN_D, RISK_TIGHTEN, RISK_LOOSEN, PLAN_E, GUARD_TIGHTEN, GUARD_LOOSEN]),
+            MOCK_SKILL_ARGS: JSON.stringify([PLAN_A, PLAN_B, PLAN_C, PLAN_D, RISK_TIGHTEN, RISK_LOOSEN, PLAN_E, GUARD_TIGHTEN, GUARD_LOOSEN, STRAT_PROPOSE, STRAT_ACTIVATE]),
         },
     });
     let serverOut = '';
@@ -790,6 +822,65 @@ async function main() {
         check('the guarded recourse: the loosened cap lets the approve log', rowsAfterLoosen === rowsBeforeGuard + 1,
             `rows ${rowsBeforeGuard} -> ${rowsAfterLoosen}`);
 
+        // ── Turn 8 (STRATEGY WALK): propose → activation card → confirm → revert
+        // The agent PROPOSES a draft plan, then PROPOSES its activation. The
+        // card is the only writer: the confirm moves the plan through the
+        // SAME writer the Settings screen uses, and the revert puts the draft
+        // status back inside the window.
+        await sendInDock(page, 'PROBE_TOOL_ROUND propose a strategy plan');
+        let stratDraft = 'missing';
+        for (let i = 0; i < 20 && stratDraft !== 'draft'; i++) {
+            await sleep(500);
+            stratDraft = await readStrategyStatus(page);
+        }
+        check('a proposed strategy plan lands in the notebook as a draft', stratDraft === 'draft',
+            `status=${stratDraft}`);
+
+        await sendInDock(page, 'PROBE_TOOL_ROUND activate the probe strategy');
+        const cardS = await waitForCard(page, 'strategy-activation-card', 'activate');
+        if (!cardS) { await dumpTranscriptState(page, 'strategy activation card never mounted'); throw new Error('strategy activation card never rendered'); }
+        const stratText = await cardS.innerText();
+        check('the strategy activation card shows the before/after and what changes',
+            /draft/i.test(stratText) && /active/i.test(stratText) && /every seat/i.test(stratText),
+            stratText.replace(/\s+/g, ' ').slice(0, 160));
+        await page.screenshot({ path: '.probe-artifacts/decision-card-strategy-activation.png' });
+
+        await cardS.locator('[data-testid="strategy-activation-confirm"]').click();
+        let stratApplied = false;
+        for (let i = 0; i < 12 && !stratApplied; i++) {
+            await sleep(500);
+            stratApplied = (await page.locator('[data-testid="strategy-activation-applied"]').count()) > 0;
+        }
+        let stratActive = false;
+        for (let i = 0; i < 12 && !stratActive; i++) {
+            await sleep(500);
+            stratActive = (await readStrategyStatus(page)) === 'active';
+        }
+        const appliedTextS = (await page.locator('[data-testid="strategy-activation-applied"]').last().innerText().catch(() => 'NO CARD'));
+        check('the confirmed activation applies through the notebook writer', stratApplied && stratActive,
+            `appliedCard=${stratApplied} status=${await readStrategyStatus(page)} card=${appliedTextS.replace(/\s+/g, ' ').slice(0, 180)}`);
+        const appliedNoteS = await waitForTextScrolling(page, 'STRATEGY ACTIVATED', 15000);
+        check('the strategy note reaches the thread', appliedNoteS);
+
+        // The applied card may sit above the virtualized window: the strategy
+        // note turn pushed the newest rows down. Sweep up until the button
+        // mounts before counting or clicking it.
+        let revertBtnS = 0;
+        for (let i = 0; i < 10; i++) {
+            revertBtnS = await page.locator('[data-testid="strategy-activation-revert"]').count();
+            if (revertBtnS) break;
+            await scrollTranscriptUp(page, 900);
+            await sleep(300);
+        }
+        if (revertBtnS) await page.locator('[data-testid="strategy-activation-revert"]').last().click();
+        let stratDraftAgain = false;
+        for (let i = 0; i < 12 && !stratDraftAgain; i++) {
+            await sleep(500);
+            stratDraftAgain = (await readStrategyStatus(page)) === 'draft';
+        }
+        check('the revert puts the draft status back', revertBtnS > 0 && stratDraftAgain,
+            `revertButton=${revertBtnS} status=${await readStrategyStatus(page)}`);
+
         check('zero pageerrors across the decision-card run', pageErrors.length === 0,
             pageErrors.slice(0, 3).join(' | '));
         await browser.close();
@@ -815,7 +906,9 @@ async function main() {
         console.log("through the trader's own settings path (one tap tight, two taps loose, revert).");
         console.log('The session guard stands a consumed session down on the card and the writer');
         console.log('alike, and the only way back is a gated risk-change card (tight one tap,');
-        console.log('loose two taps).');
+        console.log('loose two taps). A strategy plan proposed as a draft can be proposed');
+        console.log('active by the agent and applied only by the tap, through the same writer');
+        console.log('Settings uses, with the same revert window.');
     }
 }
 

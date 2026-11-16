@@ -102,6 +102,9 @@ export interface SurfaceOutletProps {
     onConfirmRiskChange: (proposal: import('../../services/trade/riskChangeProposal').RiskChangeProposal, sessionId?: string) => void;
     onDismissRiskChange: (proposal: import('../../services/trade/riskChangeProposal').RiskChangeProposal) => void;
     onRevertRiskChange: (proposal: import('../../services/trade/riskChangeProposal').RiskChangeProposal, sessionId?: string) => void;
+    onConfirmStrategyActivation: (proposal: import('../../services/trade/strategyActivation').StrategyActivationProposal, sessionId?: string) => void;
+    onDismissStrategyActivation: (proposal: import('../../services/trade/strategyActivation').StrategyActivationProposal) => void;
+    onRevertStrategyActivation: (proposal: import('../../services/trade/strategyActivation').StrategyActivationProposal, sessionId?: string) => void;
     registerScrollToMessage: (fn: ((messageId: string) => void) | null) => void;
     onToggleWatch: (messageId: string) => void;
     onOpenWatchList: () => void;
@@ -129,7 +132,7 @@ const SurfaceOutlet: React.FC<SurfaceOutletProps> = ({
     activeUsername, onTradeModeChange, botThreadRows, onBotTurnCommit, onSoloTurnCommit,
     onSyncConversation, conversationRows, onNewGroup, verdict, bots, trades, groupTabs,
     botSessionRequest, groupSessionRequest, onRunAnalysisFromChat, onAnalysisError,
-    onCancelAnalysis, getAnalysisMessage, onLogProposedTrade, onRejectProposedTrade, onUndoApproval, onConfirmRiskChange, onDismissRiskChange, onRevertRiskChange, registerScrollToMessage,
+    onCancelAnalysis, getAnalysisMessage, onLogProposedTrade, onRejectProposedTrade, onUndoApproval, onConfirmRiskChange, onDismissRiskChange, onRevertRiskChange, onConfirmStrategyActivation, onDismissStrategyActivation, onRevertStrategyActivation, registerScrollToMessage,
     onToggleWatch, onOpenWatchList, watchOpenCount, watchOpenR, pinnedMessageIds,
     onConfirmSettlementCorrection, onDismissSettlementCorrection, onVoidSettlementCorrection,
     onConfirmTradeAction, onDismissTradeAction,
@@ -202,6 +205,9 @@ const SurfaceOutlet: React.FC<SurfaceOutletProps> = ({
                         onConfirmRiskChange={onConfirmRiskChange}
                         onDismissRiskChange={onDismissRiskChange}
                         onRevertRiskChange={onRevertRiskChange}
+                        onConfirmStrategyActivation={onConfirmStrategyActivation}
+                        onDismissStrategyActivation={onDismissStrategyActivation}
+                        onRevertStrategyActivation={onRevertStrategyActivation}
                         registerScrollToMessage={registerScrollToMessage}
                         onToggleWatch={onToggleWatch}
                         onOpenWatchList={onOpenWatchList}

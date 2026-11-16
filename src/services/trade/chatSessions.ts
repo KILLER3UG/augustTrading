@@ -136,10 +136,13 @@ export type ProjectedChatEntry = StoredChatEntry & {
     riskChange?: import('./riskChangeProposal').RiskChangeProposal;
     /** The plan a PIPELINE turn presented (`present_trade` on the analysis
      *  path) — projected from the canonical `Message.proposal`, same rule as
-     *  the three sinks above: no second home renders it anymore, and a
+     *  the sinks above: no second home renders it anymore, and a
      *  proposal with no card is the dead affordance the authority split
      *  exists to avoid. */
     proposal?: import('./proposedTrade').TradeProposal;
+    /** A PROPOSED strategy activation/retirement from a pipeline turn — same
+     *  projection rule as the proposal above. */
+    strategyActivation?: import('./strategyActivation').StrategyActivationProposal;
 };
 
 export interface ChatSession {
@@ -646,6 +649,7 @@ export const liveEntryFromMessage = (m: Message): ProjectedChatEntry => {
         settlementCorrection: m.settlementCorrection,
         tradeAction: m.tradeAction,
         riskChange: m.riskChange,
+        strategyActivation: m.strategyActivation,
         // A row with an unparseable timestamp keeps `at` undefined rather than
         // stamping it as 0: the memory-attribution window join treats a real
         // stamp as meaningful and 0 as noise.

@@ -482,7 +482,7 @@ export const runChatSurfaceTurn = async (req: ChatSurfaceTurnRequest): Promise<T
             // so the card actually renders. The row is untouched until the
             // trader confirms, and the confirm goes through App's journal
             // handlers, not through anything here.
-            if (call.name === 'correct_trade_outcome' || call.name === 'update_trade' || call.name === 'close_trade' || call.name === 'propose_risk_change') {
+            if (call.name === 'correct_trade_outcome' || call.name === 'update_trade' || call.name === 'close_trade' || call.name === 'propose_risk_change' || call.name === 'propose_strategy_activation') {
                 const { executeDeskTool } = await import('../analysis/DeskToolsService');
                 const result = await executeDeskTool(call, {
                     defaultSymbol: req.symbol ?? null,
@@ -500,6 +500,11 @@ export const runChatSurfaceTurn = async (req: ChatSurfaceTurnRequest): Promise<T
                         const target = typeof call.arguments?.target === 'string' ? call.arguments.target : '';
                         const proposal = pendingRiskChange(target as never);
                         if (proposal) req.patch(m => ({ ...m, riskChange: proposal }));
+                    } else if (call.name === 'propose_strategy_activation') {
+                        const { pendingStrategyActivation } = await import('./strategyActivation');
+                        const slug = typeof call.arguments?.slug === 'string' ? call.arguments.slug : '';
+                        const proposal = pendingStrategyActivation(slug.trim());
+                        if (proposal) req.patch(m => ({ ...m, strategyActivation: proposal }));
                     } else {
                         const { pendingTradeAction } = await import('./tradeActionProposal');
                         const planId = typeof call.arguments?.planId === 'string' ? call.arguments.planId : '';

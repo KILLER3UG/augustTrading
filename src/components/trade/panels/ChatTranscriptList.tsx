@@ -35,6 +35,8 @@ import TradeActionCard from './TradeActionCard';
 import { settlementCorrectionStateOf, type SettlementCorrectionProposal } from '../../../services/trade/settlementCorrection';
 import { tradeActionStateOf, type TradeActionProposal } from '../../../services/trade/tradeActionProposal';
 import { riskChangeStateOf, riskRevertOf, type RiskChangeProposal } from '../../../services/trade/riskChangeProposal';
+import { strategyActivationStateOf, strategyRevertOf, type StrategyActivationProposal } from '../../../services/trade/strategyActivation';
+import StrategyActivationCard from './StrategyActivationCard';
 import { getArmedPlans } from '../../../services/trade/levelWatchService';
 import type { GuardEnforcement } from '../../../services/validation/SessionGuardService';
 import type { LoggedTrade } from '../../../types';
@@ -205,6 +207,14 @@ interface ChatTranscriptListProps {
     onConfirmTradeAction?: (proposal: TradeActionProposal) => void;
     /** Dismiss a PROPOSED trade action — the armed plan is untouched. */
     onDismissTradeAction?: (proposal: TradeActionProposal) => void;
+    /** Confirm a PROPOSED strategy activation/retirement. Applied through the
+     *  SAME writer the Settings screen uses (setStrategyStatus); this list
+     *  only renders the card and reports the tap. */
+    onConfirmStrategyActivation?: (proposal: StrategyActivationProposal, sessionId?: string) => void;
+    /** Dismiss a PROPOSED strategy change — the plan is untouched. */
+    onDismissStrategyActivation?: (proposal: StrategyActivationProposal) => void;
+    /** Put the replaced status back inside the revert window. */
+    onRevertStrategyActivation?: (proposal: StrategyActivationProposal, sessionId?: string) => void;
 }
 
 const ChatTranscriptList: React.FC<ChatTranscriptListProps> = ({
@@ -215,6 +225,7 @@ const ChatTranscriptList: React.FC<ChatTranscriptListProps> = ({
     onConfirmRiskChange, onDismissRiskChange, onRevertRiskChange,
     onConfirmSettlementCorrection, onDismissSettlementCorrection, onVoidSettlementCorrection,
     onConfirmTradeAction, onDismissTradeAction,
+    onConfirmStrategyActivation, onDismissStrategyActivation, onRevertStrategyActivation,
 }) => {
     /** Re-render trigger for the module-scope proposal dispositions (see
      *  proposalDisposition): the disposition itself must SURVIVE a dock
@@ -562,6 +573,38 @@ const ChatTranscriptList: React.FC<ChatTranscriptListProps> = ({
                                         applied
                                         revert={revert}
                                         onRevert={revert ? () => { onRevertRiskChange?.(p, sessionId); setDecisionTick(t => t + 1); } : undefined}
+                                    />
+                                );
+                            }
+                            return null;
+                        })()}
+                        {/* A PROPOSED strategy activation/retirement
+                            (propose_strategy_activation). Same decision-card
+                            shape: Confirm applies through the writer the
+                            trader owns; a confirmed change stays for the same
+                            revert window as the risk card. */}
+                        {(() => {
+                            void decisionTick;
+                            const sp = e.strategyActivation;
+                            if (!sp) return null;
+                            const state = strategyActivationStateOf(sp.id);
+                            const revert = strategyRevertOf(sp.id);
+                            if (!state && !revert) {
+                                return (
+                                    <StrategyActivationCard
+                                        proposal={sp}
+                                        onConfirm={() => { onConfirmStrategyActivation?.(sp, sessionId); setDecisionTick(t => t + 1); }}
+                                        onDismiss={() => { onDismissStrategyActivation?.(sp); setDecisionTick(t => t + 1); }}
+                                    />
+                                );
+                            }
+                            if (state === 'confirmed') {
+                                return (
+                                    <StrategyActivationCard
+                                        proposal={sp}
+                                        applied
+                                        revert={revert}
+                                        onRevert={revert ? () => { onRevertStrategyActivation?.(sp, sessionId); setDecisionTick(t => t + 1); } : undefined}
                                     />
                                 );
                             }

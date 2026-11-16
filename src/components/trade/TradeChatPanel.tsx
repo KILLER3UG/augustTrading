@@ -269,6 +269,9 @@ interface TradeChatPanelProps {
     onVoidSettlementCorrection?: (proposal: SettlementCorrectionProposal) => void;
     onConfirmTradeAction?: (proposal: TradeActionProposal) => void;
     onDismissTradeAction?: (proposal: TradeActionProposal) => void;
+    onConfirmStrategyActivation?: (proposal: import('../../services/trade/strategyActivation').StrategyActivationProposal, sessionId?: string) => void;
+    onDismissStrategyActivation?: (proposal: import('../../services/trade/strategyActivation').StrategyActivationProposal) => void;
+    onRevertStrategyActivation?: (proposal: import('../../services/trade/strategyActivation').StrategyActivationProposal, sessionId?: string) => void;
 }
 
 /** Empty-state starters. The glyph is a category cue so the row scans by
@@ -333,6 +336,7 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
     onToggleWatch, pinnedMessageIds,
     onConfirmSettlementCorrection, onDismissSettlementCorrection, onVoidSettlementCorrection,
     onConfirmTradeAction, onDismissTradeAction,
+    onConfirmStrategyActivation, onDismissStrategyActivation, onRevertStrategyActivation,
     onRefreshModels,
 }) => {
     // Session state lives in the module store (chatStore) so an in-flight
@@ -1325,6 +1329,9 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
                         onVoidSettlementCorrection={onVoidSettlementCorrection}
                         onConfirmTradeAction={onConfirmTradeAction}
                         onDismissTradeAction={onDismissTradeAction}
+                        onConfirmStrategyActivation={onConfirmStrategyActivation}
+                        onDismissStrategyActivation={onDismissStrategyActivation}
+                        onRevertStrategyActivation={onRevertStrategyActivation}
                     />
                 )}
             </div>

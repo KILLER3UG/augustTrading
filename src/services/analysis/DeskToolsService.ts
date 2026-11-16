@@ -2740,6 +2740,24 @@ export const DESK_TOOL_DEFINITIONS: DeskToolDefinition[] = [
             },
         },
     },
+    {
+        type: 'function',
+        function: {
+            name: 'propose_strategy_activation',
+            description:
+                'GATED. Propose ACTIVATING or RETIRING one strategy plan: activate puts the plan\'s rules in front of every seat from the next turn (it joins the active-strategies context); retire takes them out (the record stays for evidence). Nothing changes on this call — it RECORDS a proposal the trader confirms on a card. The plan\'s current status is stamped onto the card automatically — state the reason, not the old status. Slugs come from get_notebook_map (the strategies folder).',
+            parameters: {
+                type: 'object',
+                properties: {
+                    slug: { type: 'string', description: 'The plan\'s slug (its notebook file name without .md), e.g. "btc-range-reclaim".' },
+                    action: { type: 'string', enum: ['activate', 'retire'], description: 'What to do with the plan.' },
+                    reason: { type: 'string', description: 'Why the plan should move — printed on the confirmation card and kept in the record.' },
+                },
+                required: ['slug', 'action', 'reason'],
+                additionalProperties: false,
+            },
+        },
+    },
 ];
 
 
@@ -5380,6 +5398,28 @@ ${body}`);
                     `RISK CHANGE PROPOSED: ${p.target} ${String(p.currentValue)} -> ${String(p.proposedValue)} (${p.direction}).`,
                     'The trader sees a confirmation card; NOTHING changes until they confirm it. Tightening confirms in one tap; loosening asks them to confirm it again.',
                     'No setting was written by this call.',
+                ].join(' ');
+                break;
+            }
+            case 'propose_strategy_activation': {
+                // AUTHORITY OVER THE SEAT'S PLAYING RULES is the trader's — a
+                // plan moving into or out of the active context changes what
+                // every seat is told each turn. The agent may still PROPOSE:
+                // this records a card and changes nothing. The confirm writes
+                // through the ONE writer the trader's own Settings screen uses
+                // (setStrategyStatus); the card shows the before/after status.
+                const { proposeStrategyActivation } = await import('../trade/strategyActivation');
+                const checked = proposeStrategyActivation({
+                    slug: call.arguments.slug,
+                    action: call.arguments.action,
+                    reason: asString(call.arguments.reason),
+                });
+                if (!checked.ok) return rejectedResult(call, `${call.name} rejected: ${checked.refused}.`);
+                const sp = checked.proposal;
+                content = [
+                    `STRATEGY ${sp.action.toUpperCase()} PROPOSED: "${sp.name}" (${sp.slug}) ${sp.currentStatus} -> ${sp.proposedStatus}.`,
+                    'The trader sees a confirmation card; NOTHING changes until they confirm it.',
+                    'No plan status was written by this call.',
                 ].join(' ');
                 break;
             }

@@ -310,4 +310,7 @@ export const DESK_TOOL_NAMES: readonly string[] = [
     // A risk-limit / guard-preset change is proposed, never applied: the card
     // is the only writer, through the settings path the trader owns.
     'propose_risk_change',
+    // A strategy plan's activation/retirement is proposed, never applied: the
+    // card is the only writer, through the store writer the trader owns.
+    'propose_strategy_activation',
 ];

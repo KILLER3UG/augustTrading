@@ -28,6 +28,12 @@ import {
     clearRiskRevertWindow, formatRiskChangeAppliedForModel, formatRiskChangeRevertedForModel,
     type RiskChangeProposal,
 } from './services/trade/riskChangeProposal';
+import {
+    confirmStrategyActivation, dismissStrategyActivation, markStrategyRevertWindow, strategyRevertOf,
+    clearStrategyRevertWindow, formatStrategyActivationAppliedForModel, formatStrategyActivationRevertedForModel,
+    type StrategyActivationProposal,
+} from './services/trade/strategyActivation';
+import { setStrategyStatus, type StrategyStatus } from './services/learning/strategyStore';
 import { getHarnessSettings, getSessionGuardConfig, saveHarnessSettings, type HarnessSettings } from './utils/harnessSettings';
 import { assessSession, guardEnforcement } from './services/validation/SessionGuardService';
 import * as chatStore from './services/trade/chatStore';
@@ -1723,6 +1729,41 @@ const App: React.FC = () => {
         chatStore.queueHarnessSignal(formatRiskChangeRevertedForModel(proposal), sessionId);
     }, []);
 
+    // ── The strategy activation card (the plan's draft/active/retired status) ─
+    // The agent PROPOSES (propose_strategy_activation records a card); this is
+    // the only place a confirm turns into a write, and it goes through the
+    // SAME writer the trader's own Settings screen uses (setStrategyStatus) —
+    // the agent never moves a plan's status. A confirmed change keeps the
+    // risk card's revert window, and the model learns the decision in thread.
+    const handleConfirmStrategyActivation = useCallback((proposal: StrategyActivationProposal, sessionId?: string): void => {
+        const confirmed = confirmStrategyActivation(proposal.slug);
+        if (!confirmed) return;
+        // The write is the trader's own path (the journal's notebook write),
+        // exactly as Settings → Strategy plans would write it. Best-effort:
+        // a write that fails (no notebook, no file) leaves the card resolved
+        // but the status unchanged — the failure is surfaced through the
+        // store's own failure channel, not silently swallowed.
+        void setStrategyStatus(proposal.slug, proposal.proposedStatus).then(ok => {
+            if (!ok) toast.error('The strategy change did not land', `The notebook refused the write for "${proposal.slug}" — check the strategies folder.`);
+        });
+        markStrategyRevertWindow(proposal.id, proposal.currentStatus);
+        chatStore.queueHarnessSignal(formatStrategyActivationAppliedForModel(proposal), sessionId);
+    }, [toast]);
+
+    const handleDismissStrategyActivation = useCallback((proposal: StrategyActivationProposal): void => {
+        dismissStrategyActivation(proposal.slug);
+    }, []);
+
+    const handleRevertStrategyActivation = useCallback((proposal: StrategyActivationProposal, sessionId?: string): void => {
+        const window = strategyRevertOf(proposal.id);
+        if (!window) return;
+        void setStrategyStatus(proposal.slug, window.previousStatus as StrategyStatus).then(ok => {
+            if (!ok) toast.error('The strategy revert did not land', `The notebook refused the write for "${proposal.slug}" — check the strategies folder.`);
+        });
+        clearStrategyRevertWindow(proposal.id);
+        chatStore.queueHarnessSignal(formatStrategyActivationRevertedForModel(proposal, window.previousStatus), sessionId);
+    }, [toast]);
+
     /** The dock holds a settled verdict's message id, not a copy of the
      *  analysis — a persisted chat session would otherwise store a whole
      *  `TradeAnalysis` per answer. This lets it resolve the backing on demand.
@@ -2572,6 +2613,9 @@ const App: React.FC = () => {
                         onConfirmRiskChange={handleConfirmRiskChange}
                         onDismissRiskChange={handleDismissRiskChange}
                         onRevertRiskChange={handleRevertRiskChange}
+                        onConfirmStrategyActivation={handleConfirmStrategyActivation}
+                        onDismissStrategyActivation={handleDismissStrategyActivation}
+                        onRevertStrategyActivation={handleRevertStrategyActivation}
                         registerScrollToMessage={registerScrollToMessage}
                         onToggleWatch={handleToggleWatch}
                         onOpenWatchList={() => setIsWatchListVisible(true)}
