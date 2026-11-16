@@ -98,6 +98,7 @@ export interface SurfaceOutletProps {
      *  SAME journal/watch writers the Chat surface's card used. */
     onConfirmSettlementCorrection: (proposal: SettlementCorrectionProposal) => void;
     onDismissSettlementCorrection: (proposal: SettlementCorrectionProposal) => void;
+    onVoidSettlementCorrection: (proposal: SettlementCorrectionProposal) => void;
     onConfirmTradeAction: (proposal: TradeActionProposal) => void;
     onDismissTradeAction: (proposal: TradeActionProposal) => void;
     watchOpenCount: number;
@@ -118,7 +119,7 @@ const SurfaceOutlet: React.FC<SurfaceOutletProps> = ({
     botSessionRequest, groupSessionRequest, onRunAnalysisFromChat, onAnalysisError,
     onCancelAnalysis, getAnalysisMessage, onLogProposedTrade, registerScrollToMessage,
     onToggleWatch, onOpenWatchList, watchOpenCount, watchOpenR, pinnedMessageIds,
-    onConfirmSettlementCorrection, onDismissSettlementCorrection,
+    onConfirmSettlementCorrection, onDismissSettlementCorrection, onVoidSettlementCorrection,
     onConfirmTradeAction, onDismissTradeAction,
     renderGroupSurface,
 }) => {
@@ -189,6 +190,7 @@ const SurfaceOutlet: React.FC<SurfaceOutletProps> = ({
                         onOpenWatchList={onOpenWatchList}
                         onConfirmSettlementCorrection={onConfirmSettlementCorrection}
                         onDismissSettlementCorrection={onDismissSettlementCorrection}
+                        onVoidSettlementCorrection={onVoidSettlementCorrection}
                         onConfirmTradeAction={onConfirmTradeAction}
                         onDismissTradeAction={onDismissTradeAction}
                         watchOpenCount={watchOpenCount}

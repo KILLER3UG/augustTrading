@@ -1582,6 +1582,14 @@ const App: React.FC = () => {
     const dismissDockSettlementCorrection = useCallback((proposal: SettlementCorrectionProposal): void => {
         dismissSettlementCorrection(proposal.tradeId);
     }, []);
+    /** The VOID arm of P-6: delete the row instead of applying the correction.
+     *  Gated on the store accepting the decision — the same symmetry the confirm
+     *  has — so a stale or already-resolved card cannot delete a row. The
+     *  journal's OWN delete path does the write (the same one the row menu
+     *  calls, cascade and baseline included); the card only dismisses. */
+    const voidDockSettlementCorrection = useCallback((proposal: SettlementCorrectionProposal): void => {
+        if (dismissSettlementCorrection(proposal.tradeId)) handleDeleteTrades([proposal.tradeId]);
+    }, [handleDeleteTrades]);
     const confirmDockTradeAction = useCallback((proposal: TradeActionProposal): void => {
         if (confirmTradeAction(proposal.planId)) applyTradeAction(proposal);
     }, [applyTradeAction]);
@@ -2418,6 +2426,7 @@ const App: React.FC = () => {
                            through the journal's own writers. */
                         onConfirmSettlementCorrection={confirmDockSettlementCorrection}
                         onDismissSettlementCorrection={dismissDockSettlementCorrection}
+                        onVoidSettlementCorrection={voidDockSettlementCorrection}
                         onConfirmTradeAction={confirmDockTradeAction}
                         onDismissTradeAction={dismissDockTradeAction}
                         watchOpenCount={watchedSignals.filter(s => !s.outcome || s.outcome === TradeOutcome.PENDING).length}

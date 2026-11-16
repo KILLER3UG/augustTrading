@@ -162,6 +162,7 @@ interface TradeViewProps {
      *  journal/watch writers. Forwarded to the Chart AI dock. */
     onConfirmSettlementCorrection?: (proposal: SettlementCorrectionProposal) => void;
     onDismissSettlementCorrection?: (proposal: SettlementCorrectionProposal) => void;
+    onVoidSettlementCorrection?: (proposal: SettlementCorrectionProposal) => void;
     onConfirmTradeAction?: (proposal: TradeActionProposal) => void;
     onDismissTradeAction?: (proposal: TradeActionProposal) => void;
 }
@@ -338,7 +339,7 @@ export const useTickFlash = (price: number | undefined): { cls: string; seq: num
 
 const TradeView: React.FC<TradeViewProps> = ({
     memoryEnabled, strategiesEnabled, providers, selectedChatModel, onSelectChatModel, onRefreshModels, verdict, bots = [], trades = [], botSessionRequest, groupSessionRequest, onRunAnalysis, onAnalysisError, onStopRun, botThreadRows, onBotTurnCommit, onSoloTurnCommit, onSyncConversation, conversationRows, onNewGroup, getAnalysisMessage, onLogProposedTrade, renderGroupSurface, groups = [], registerScrollToMessage, modeRequest, activeUsername, onTradeModeChange, onOpenChat,    onToggleWatch, onOpenWatchList, watchOpenCount = 0, pinnedMessageIds,
-    onConfirmSettlementCorrection, onDismissSettlementCorrection,
+    onConfirmSettlementCorrection, onDismissSettlementCorrection, onVoidSettlementCorrection,
     onConfirmTradeAction, onDismissTradeAction }) => {
     // The chart opens on the coin the SHARED chat session carries. Adopting only
     // from an effect is not enough: the dock mounts in the same commit, a child's
@@ -900,6 +901,7 @@ const TradeView: React.FC<TradeViewProps> = ({
         registerScrollToMessage,
         onConfirmSettlementCorrection,
         onDismissSettlementCorrection,
+        onVoidSettlementCorrection,
         onConfirmTradeAction,
         onDismissTradeAction,
     };

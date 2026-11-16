@@ -1,13 +1,16 @@
 /**
  * SettlementCorrectionCard — the agent's PROPOSED fix for one journal row, with
- * Confirm / Dismiss. The card is the whole point of P-6: the journal's manual
- * outcome and PnL editors are retired in favour of "the agent proposes, the
- * trader confirms", and this is the confirm.
+ * Confirm / Dismiss / Void. The card is the whole point of P-6: the journal's
+ * manual outcome and PnL editors — and its manual row DELETES — are retired in
+ * favour of "the agent proposes, the trader decides", and this is where the
+ * decision happens.
  *
  * The card holds no authority. Confirm calls `onConfirm`, which is the SAME hook
  * a human edit calls (`useTradeJournalActions`), so the correction lands with
  * `correctedFrom`, `correctedAt` and `resolutionSource: 'correction'` — the
- * audit trail a silent write would have skipped.
+ * audit trail a silent write would have skipped. Void is the SEPARATE explicit
+ * delete: the row goes through the journal's own delete path, and nothing
+ * applies without the trader's tap.
  */
 
 import React from 'react';
@@ -20,6 +23,10 @@ export interface SettlementCorrectionCardProps {
     current?: { outcome?: TradeOutcome; pnlAmount?: number; pnlPercent?: number };
     onConfirm: () => void;
     onDismiss: () => void;
+    /** VOID — delete the row instead of applying the correction. The separate
+     *  explicit action P-6's proof walks; optional so a host without the
+     *  journal's delete path renders the two-action card. */
+    onVoid?: () => void;
 }
 
 /** What the row says now, in the words the journal uses. */
@@ -36,7 +43,7 @@ const fmtPnl = (amount?: number, percent?: number): string => {
 };
 
 export const SettlementCorrectionCard: React.FC<SettlementCorrectionCardProps> = ({
-    proposal, current, onConfirm, onDismiss,
+    proposal, current, onConfirm, onDismiss, onVoid,
 }) => {
     const outcomeChanges = proposal.outcome !== undefined && proposal.outcome !== current?.outcome;
     const pnlChanges = (proposal.pnlAmount !== undefined && proposal.pnlAmount !== current?.pnlAmount)
@@ -86,8 +93,15 @@ export const SettlementCorrectionCard: React.FC<SettlementCorrectionCardProps> =
                     data-testid="settlement-correction-dismiss">
                     Dismiss
                 </button>
+                {onVoid && (
+                    <button type="button" onClick={onVoid}
+                        className="rounded-control border border-rose-500/40 px-2 py-1 text-ui-xs text-rose-300 hover:bg-rose-500/10"
+                        data-testid="settlement-correction-void">
+                        Void row
+                    </button>
+                )}
                 <span className="ml-auto font-mono text-ui-xs text-zinc-600">
-                    nothing changes until you confirm
+                    nothing changes until you tap
                 </span>
             </div>
         </div>

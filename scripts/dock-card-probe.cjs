@@ -14,7 +14,10 @@
  *   3. one tap on Confirm writes the row through the journal's own gated path
  *      (outcome updated, correctedFrom/correctedAt/resolutionSource stamped);
  *   4. the card resolves after the confirm;
- *   5. a second proposal, DISMISSED, leaves its row untouched.
+ *   5. a second proposal, DISMISSED, leaves its row untouched;
+ *   6. a third proposal, VOIDED, deletes its row through the journal's own
+ *      delete path — the separate explicit action P-6 retires the manual
+ *      deletes for.
  *
  *   node scripts/dock-card-probe.cjs     # self-hosts vite on 4185 + mock on 8789
  *
@@ -43,6 +46,11 @@ const CORRECTION_2 = {
     tradeId: 'pt-3',
     outcome: 'LOSS',
     reason: 'The target was never reached before the reversal; this was not a win.',
+};
+const CORRECTION_3 = {
+    tradeId: 'pt-4',
+    outcome: 'WIN',
+    reason: 'The level break never closed through; this row should not stand.',
 };
 
 async function waitForServer(url, timeoutMs = 30000) {
@@ -103,6 +111,7 @@ async function seed(page) {
             tradeLog: [
                 tradeRow('pt-2', 280, 'LOSS', 'scalp', 'Short', 'BTCUSDT'),
                 tradeRow('pt-3', 260, 'WIN', 'swing', 'Long', 'ETHUSDT'),
+                tradeRow('pt-4', 240, 'LOSS', 'scalp', 'Short', 'BTCUSDT'),
             ],
             tradeSummaries: [],
             finalTradeSummary: null,
@@ -200,8 +209,9 @@ async function main() {
             MOCK_TOOL_NAME: 'correct_trade_outcome',
             // A SEQUENCE: the first scripted call proposes the pt-2 correction
             // (the trader confirms it), the second proposes the pt-3 correction
-            // (the trader dismisses it).
-            MOCK_SKILL_ARGS: JSON.stringify([CORRECTION_1, CORRECTION_2]),
+            // (the trader dismisses it), the third proposes the pt-4 correction
+            // (the trader VOIDS the row).
+            MOCK_SKILL_ARGS: JSON.stringify([CORRECTION_1, CORRECTION_2, CORRECTION_3]),
         },
     });
     let serverOut = '';
@@ -311,6 +321,39 @@ async function main() {
         const card2Gone = (await page.locator('[data-testid="trade-chat-panel"] [data-testid="settlement-correction-card"]').count()) === 0;
         check('the dismissed card resolves too', card2Gone);
 
+        // ── Turn 3: propose the pt-4 correction, then VOID the row ────────
+        // The VOID arm of P-6: the journal's manual DELETES are retired with
+        // the editors, so the card carries the delete as its own explicit
+        // action, and the row goes through the journal's own delete path
+        // (cascade and baseline included) — the card only dismisses.
+        await sendInDock(page, 'PROBE_TOOL_ROUND and void pt-4 entirely');
+        await page.waitForSelector('[data-testid="trade-chat-panel"] [data-testid="settlement-correction-card"]',
+            { timeout: 45000 });
+        const beforeVoid = await readTradeRow(page, 'pt-4');
+        check('the void target exists while its card is open', !!beforeVoid,
+            beforeVoid ? `outcome=${beforeVoid.outcome}` : 'row missing');
+        await page.locator('[data-testid="trade-chat-panel"] [data-testid="settlement-correction-void"]')
+            .first().click();
+        // Poll for the SETTLED delete — the debounced DATA save (~1.5s) races a
+        // fixed read, which is exactly how the confirm check misreported once.
+        // Sample the whole window: a delete that lands and is then REWRITTEN by
+        // a stale save is a different defect from a delete that never lands,
+        // and the timeline tells them apart.
+        const timeline = [];
+        let sawGone = false;
+        for (let i = 0; i < 20; i++) {
+            await sleep(500);
+            const row = await readTradeRow(page, 'pt-4');
+            timeline.push(`${(i + 1) * 500}ms:${row ? 'present' : 'gone'}`);
+            if (!row) sawGone = true;
+        }
+        const afterVoid = await readTradeRow(page, 'pt-4');
+        const voided = sawGone && afterVoid === null;
+        check('one tap on Void deletes the row through the journal path', voided,
+            `${timeline.join(' ')}${afterVoid ? ` | RESURRECTED (outcome=${afterVoid.outcome})` : ' | still gone'}`);
+        const card3Gone = (await page.locator('[data-testid="trade-chat-panel"] [data-testid="settlement-correction-card"]').count()) === 0;
+        check('the voided card resolves too', card3Gone);
+
         check('zero pageerrors across the dock-card run', pageErrors.length === 0,
             pageErrors.slice(0, 3).join(' | '));
         await browser.close();
@@ -329,8 +372,8 @@ async function main() {
     }
     if (process.exitCode !== 1) {
         console.log('\nDOCK CARD PROBE OK — the dock proposes, the trader confirms in one tap,');
-        console.log('the journal row moves through the journal\'s own gated path, and nothing');
-        console.log('changes without that confirmation.');
+        console.log('the journal row moves through the journal\'s own gated path, the VOID tap');
+        console.log('deletes through the same path, and nothing changes without a tap.');
     }
 }
 

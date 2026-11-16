@@ -20,6 +20,8 @@ import { MessageRole } from '../../types/enums';
 import type { ReasoningEffort, WireAuditEntry } from '../../types/provider';
 import type { SessionTitleSource } from '../../types/trade';
 import { messageTraceText } from '../../utils/traceText';
+import type { SettlementCorrectionProposal } from './settlementCorrection';
+import type { TradeActionProposal } from './tradeActionProposal';
 
 /** One turn in a session. `role` stays 'user' | 'ai' for storage
  *  compatibility; an ai entry may belong to one panel seat (speaker). */
@@ -120,7 +122,16 @@ export interface PanelSeatRef { providerId: string; modelId: string; botId?: str
  *  whether the turn is still arriving. `chatStore.LiveEntry` is structurally the
  *  same thing; it is NOT imported here because the store imports THIS module,
  *  and a projection that reached back for its reader would be a cycle. */
-export type ProjectedChatEntry = StoredChatEntry & { streaming?: boolean };
+export type ProjectedChatEntry = StoredChatEntry & {
+    streaming?: boolean;
+    /** The decision proposals a PIPELINE turn recorded on its Message (the
+     *  analysis path's tool sink attaches them there). Projected so the dock
+     *  renders their cards; runtime-only — the persist strip keeps them out of
+     *  the session blob (a persisted card with no live proposal is the bug
+     *  6b1ac8ed fixed). */
+    settlementCorrection?: SettlementCorrectionProposal;
+    tradeAction?: TradeActionProposal;
+};
 
 export interface ChatSession {
     id: string;
@@ -616,6 +627,12 @@ export const liveEntryFromMessage = (m: Message): ProjectedChatEntry => {
         // …and the payload ids, so the dock's rows can open onto the real
         // output for a turn the Agents surface answered.
         toolIds: m.toolIds,
+        // The decision proposals a PIPELINE turn recorded (the analysis path's
+        // tool sink attaches them to the Message). Without this projection the
+        // dock renders the turn but not its card — a proposal with no card to
+        // confirm is the dead affordance the authority split exists to avoid.
+        settlementCorrection: m.settlementCorrection,
+        tradeAction: m.tradeAction,
         // A row with an unparseable timestamp keeps `at` undefined rather than
         // stamping it as 0: the memory-attribution window join treats a real
         // stamp as meaningful and 0 as noise.

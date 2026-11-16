@@ -151,6 +151,9 @@ interface ChatTranscriptListProps {
     onConfirmSettlementCorrection?: (proposal: SettlementCorrectionProposal) => void;
     /** Dismiss a PROPOSED settlement fix — the row is untouched. */
     onDismissSettlementCorrection?: (proposal: SettlementCorrectionProposal) => void;
+    /** VOID a PROPOSED settlement fix — the trader deletes the row instead of
+     *  applying the correction (P-6's separate explicit delete). */
+    onVoidSettlementCorrection?: (proposal: SettlementCorrectionProposal) => void;
     /** Confirm a PROPOSED action on an armed plan (move levels / close).
      *  Applied through App's watch/journal writers, never from this row. */
     onConfirmTradeAction?: (proposal: TradeActionProposal) => void;
@@ -162,7 +165,7 @@ const ChatTranscriptList: React.FC<ChatTranscriptListProps> = ({
     entries, scrollParent, virtuosoRef, followOutput, onAtBottomChange, onTotalHeightChanged,
     send, setDraftText, getAnalysisMessage, resolveVerdictByIdentity, symbol, getMark, onChatLevels,
     onToggleWatch, pinnedMessageIds, onLogProposedTrade, trades,
-    onConfirmSettlementCorrection, onDismissSettlementCorrection,
+    onConfirmSettlementCorrection, onDismissSettlementCorrection, onVoidSettlementCorrection,
     onConfirmTradeAction, onDismissTradeAction,
 }) => {
     /** Re-render trigger for the module-scope proposal dispositions (see
@@ -459,6 +462,7 @@ const ChatTranscriptList: React.FC<ChatTranscriptListProps> = ({
                                     current={row ? { outcome: row.outcome, pnlAmount: row.pnlAmount, pnlPercent: row.pnlPercent } : undefined}
                                     onConfirm={() => { onConfirmSettlementCorrection?.(p); setDecisionTick(t => t + 1); }}
                                     onDismiss={() => { onDismissSettlementCorrection?.(p); setDecisionTick(t => t + 1); }}
+                                    onVoid={() => { onVoidSettlementCorrection?.(p); setDecisionTick(t => t + 1); }}
                                 />
                             );
                         })()}

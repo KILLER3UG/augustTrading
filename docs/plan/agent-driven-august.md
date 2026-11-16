@@ -246,16 +246,16 @@ trading keeps deterministic gates.
      in one tap, and it writes through the existing gated path. A correction and a void (delete) are
      separate explicit actions on the card. This is the replacement for P-6 — the journal's manual
      outcome/PnL/leverage editors and deletes, and the watchlist's manual Win/Loss — and Phase 4 does
-     not remove either until this card is verified. The producer is a
-     `correct_trade_outcome` tool that only RECORDS a proposal; the confirmation
-     half (store, card, and the write through the journal's own
-     `handleUpdateTradeOutcome`/`handleUpdateTradePnL`) is in place, and the tool
-     is registered with its sink on the chat surface
-     (`chatSurfaceTurn` › `req.patch`), which is the store `AgentsView` reads.
-     Still open: the DOCK path. `chatTurnRunner` writes its rows to `chatStore`
-     entries and renders them through `ChatTranscriptList`, which does not draw a
-     correction card yet — so a correction proposed from the dock records and
-     replies honestly, but shows no card there until that sink exists.
+     not remove either until this card is verified. LANDED AND VERIFIED: the producer
+     (`correct_trade_outcome`, records a proposal only), the dock sink
+     (`6b1ac8ed` — `chatTurnRunner` › `chatStore` entry › `ChatTranscriptList` card), the VOID arm
+     (the card's third tap deletes the row through the journal's own `handleDeleteTrades`, gated on
+     the store accepting the decision), the pipeline-path projection
+     (`liveEntryFromMessage` carries `settlementCorrection`/`tradeAction` so an analysis-turn
+     proposal renders its card on the dock too), and the dock-card probe (13/13, including the
+     void's delete landing through the debounced save and staying gone). The independent review
+     returned **real-implementation** (one minor gate fix, applied). Still open in Phase 3:
+     approval receipts, risk-limit and goal-change cards, and the P-1…P-5 parity proofs.
    - **Risk-limit and goal-change cards**, sharing the decision-card shape.
    - **Removal-parity proofs (P-1…P-6)**: each REMOVE row gets the check named in the parity table
      above — the replacement is reachable, and it produces what the control produced. Phase 4 deletes

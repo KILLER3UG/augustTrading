@@ -248,6 +248,7 @@ interface TradeChatPanelProps {
      *  journal/watch writers — the same path the Chat surface's card takes. */
     onConfirmSettlementCorrection?: (proposal: SettlementCorrectionProposal) => void;
     onDismissSettlementCorrection?: (proposal: SettlementCorrectionProposal) => void;
+    onVoidSettlementCorrection?: (proposal: SettlementCorrectionProposal) => void;
     onConfirmTradeAction?: (proposal: TradeActionProposal) => void;
     onDismissTradeAction?: (proposal: TradeActionProposal) => void;
 }
@@ -312,7 +313,7 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
     onSoloTurnCommit,
     onSyncConversation,
     onToggleWatch, pinnedMessageIds,
-    onConfirmSettlementCorrection, onDismissSettlementCorrection,
+    onConfirmSettlementCorrection, onDismissSettlementCorrection, onVoidSettlementCorrection,
     onConfirmTradeAction, onDismissTradeAction,
     onRefreshModels,
 }) => {
@@ -1292,6 +1293,7 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
                         trades={trades}
                         onConfirmSettlementCorrection={onConfirmSettlementCorrection}
                         onDismissSettlementCorrection={onDismissSettlementCorrection}
+                        onVoidSettlementCorrection={onVoidSettlementCorrection}
                         onConfirmTradeAction={onConfirmTradeAction}
                         onDismissTradeAction={onDismissTradeAction}
                     />
