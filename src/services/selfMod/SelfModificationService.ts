@@ -9,40 +9,37 @@
  *    AUTO-REVERTED when the window closes. This is what makes the agent faster
  *    or less forgetful for the work in front of it, without letting a
  *    mid-task guess become tomorrow's default.
- *  - `shadow` tier — prompt overrides (`services/infrastructure/
- *    PromptOverrideService`). The app already A/Bs an edited corpus against the
- *    built-in text and already stamps `promptVersion` on every closed trade,
- *    so a self-edited instruction is judged by the trades it produced, not by
- *    the model's opinion of its own edit. It is refused unless that
- *    measurement is actually armed.
+ *
+ * There was also a `shadow` tier — prompt overrides judged against closed
+ * trades. It is GONE (O-148, owner ruling 2026-11-17): its comparison ran
+ * against an A/B lane that changed what no run was sent (O-140), so a
+ * promote/revert verdict measured noise. The ledger's legacy `shadow` /
+ * `promoted` rows still parse and still revert (the switch-off path and
+ * `revertSelfChange` handle them), but nothing writes the tier anymore, and
+ * the trader's Settings editor is the only prompt writer.
  *
  * What is NOT here, on purpose:
  *  - Risk. Sizing, leverage, the edge floor, the session guard and outcome
  *    settlement are the trader's, and the deny list says so by name.
- *  - The measuring instrument. `promptAbRate` is blocked because an agent
- *    that can disarm the A/B can make its own shadow edit unfalsifiable.
  *  - Privacy and the off-switch. `sensitiveMemoryEnabled` and the memory
  *    switch stay owner-only.
  *  - `selfModificationMode` itself. Nothing in this file may widen its own
  *    authority, and the desk tool that reaches this file cannot turn it on.
  *  - Skills. They are documents written through `writeSkillFile`; no
  *    self-change target may write one.
+ *  - Prompts. A prompt override is the trader's edit or nobody's; the tier
+ *    that let the agent write one measured nothing, so it does not exist.
  */
 
 import {
     getHarnessSettings, saveHarnessSettings, type HarnessSettings,
 } from '../../utils/harnessSettings';
 import { getActiveUsername } from '../../utils/activeUser';
-import { isRegisteredPromptId } from '../../constants/promptIds';
-import { scanSkillText } from '../../utils/skillFrontmatter';
-import {
-    getPromptOverrides, promptCorpusVersion, resetPromptOverride, savePromptOverride, validatePromptOverride,
-} from '../infrastructure/PromptOverrideService';
+import { resetPromptOverride } from '../infrastructure/PromptOverrideService';
 import {
     getSelfChange, listSelfChanges, liveSelfChanges, patchSelfChange, writeSelfChange,
 } from './SelfChangeLedger';
 import { SelfChangeSchema, type SelfChange, type SelfChangeActor, type SelfModMode } from '../../schemas/selfChange';
-import { TradeOutcome, type LoggedTrade } from '../../types';
 
 /** How long a config-tier change stays in force before it reverts itself. */
 export const SELF_CHANGE_WINDOW_MS = 24 * 3600_000;
@@ -51,18 +48,11 @@ export const SELF_CHANGE_WINDOW_MS = 24 * 3600_000;
 export const SELF_CHANGE_COOLDOWN_MS = 6 * 3600_000;
 /** Simultaneous in-force config changes, all tiers included. */
 export const MAX_LIVE_SELF_CHANGES = 8;
-/** The shadow settles on the same evidence bar the prompt A/B already uses —
- *  5 closed trades per side and an 8-point win-rate gap, the numbers
- *  `summarizePromptLanes` is read against. Restating a looser bar here would
- *  make a self-edit easier to promote than the app's own experiment. */
+/** LEGACY (read-only): the shadow tier's evidence bar, kept only as the
+ *  number the old ledger rows' evidence strings quote. Nothing settles
+ *  against it anymore. */
 export const SHADOW_MIN_TRADES_PER_SIDE = 5;
 export const SHADOW_MIN_WINRATE_GAP_PP = 8;
-export const PROMPT_OVERRIDE_MAX_CHARS = 6_000;
-
-/** Prompts the agent may never rewrite, whatever the mode: the text that
- *  carries the risk rules is the one override that would turn a shadow edit
- *  into a policy change. */
-export const BLOCKED_PROMPT_IDS: readonly string[] = ['analysis.risk_rules'];
 
 export type SelfModResult<T = SelfChange> =
     | { ok: true; change: T; note?: string }
@@ -125,12 +115,11 @@ const BLOCKED_KNOB_REASONS: Record<string, string> = {
     guardPostLossCooldownMin: 'the post-loss cooldown is a risk gate',
     outcomeSettlement: 'how outcomes are recorded is the trader\'s',
     sensitiveMemoryEnabled: 'the sensitive-memory privacy switch is the trader\'s',
-    promptAbRate: 'the measurement itself cannot be moved by the thing being measured',
     deskToolsEnabled: 'whether the desk may call live tools at all is the trader\'s',
     selfModificationMode: 'self-modification cannot be enabled by self-modification',
 };
 
-const modeRank: Record<SelfModMode, number> = { off: 0, config: 1, shadow: 2 };
+const modeRank: Record<SelfModMode, number> = { off: 0, config: 1 };
 
 export const getSelfModMode = (): SelfModMode => getHarnessSettings().selfModificationMode;
 
@@ -171,9 +160,7 @@ const requireMode = (need: SelfModMode, opts: SelfModActorOptions): string | nul
     if (opts.readOnly) {
         return 'self-modification is read-only on this seat: a detached or restricted run may audit changes, never make one.';
     }
-    return need === 'shadow'
-        ? `self-modification is "${mode}"; a prompt override needs "shadow". The trader turns it on in Settings → Analysis.`
-        : `self-modification is "${mode}"; the trader turns it on in Settings → Analysis.`;
+    return `self-modification is "${mode}"; the trader turns it on in Settings → Analysis.`;
 };
 
 const newestRowAt = (target: string): SelfChange | null =>
@@ -181,8 +168,8 @@ const newestRowAt = (target: string): SelfChange | null =>
 
 /** Who is allowed to ask at all. Checked first, so a seat that cannot write
  *  never learns anything about the value it wanted. */
-const permissionCheck = (tier: SelfChange['tier'], opts: SelfModActorOptions): string | null => {
-    const modeError = requireMode(tier, opts);
+const permissionCheck = (need: SelfModMode, opts: SelfModActorOptions): string | null => {
+    const modeError = requireMode(need, opts);
     if (modeError) return modeError;
     if (opts.readOnly) {
         return 'self-modification is read-only on this seat: a detached or restricted run may audit changes, never make one.';
@@ -272,84 +259,6 @@ export const proposeKnobChange = async (
     return { ok: true, change: row, note: `reverts automatically in ${SELF_CHANGE_WINDOW_MS / 3600_000}h unless the trader keeps it` };
 };
 
-/**
- * Rewrite what the model is told. Only with the mode at 'shadow', only for a
- * registered prompt, and only while the app's own A/B is armed — an override
- * that no control lane is compared against is an unmeasured change to the
- * harness, which is exactly what this tier is not allowed to be.
- */
-export const proposePromptOverride = async (
-    promptId: string,
-    text: string,
-    reason: string,
-    opts: SelfModActorOptions = {},
-): Promise<SelfModResult> => {
-    if (!reason || !reason.trim()) return { ok: false, error: 'a self-change must say why' };
-    if (!isRegisteredPromptId(promptId)) {
-        return { ok: false, error: `prompt "${promptId}" is not a registered prompt id, so no call site would resolve it.` };
-    }
-    if (BLOCKED_PROMPT_IDS.includes(promptId)) {
-        return { ok: false, error: `prompt "${promptId}" is blocked from self-modification: it carries the risk rules, which are the trader's.` };
-    }
-    const target = `prompt:${promptId}`;
-    const permission = permissionCheck('shadow', opts);
-    if (permission) return { ok: false, error: permission };
-    const body = text.trim();
-    if (!body) return { ok: false, error: `${target} rejected: an empty override would silently restore the built-in text — revert the row instead.` };
-    if (body.length > PROMPT_OVERRIDE_MAX_CHARS) {
-        return { ok: false, error: `${target} rejected: ${body.length} chars over the ${PROMPT_OVERRIDE_MAX_CHARS} ceiling. A prompt that long is a document; put the material where the model can read it on demand.` };
-    }
-    const scan = scanSkillText(body);
-    if (scan.length > 0) {
-        return { ok: false, error: `${target} rejected by the content scan: ${scan.map(h => `${h.severity}: ${h.what}`).join('; ')}` };
-    }
-    const warnings = validatePromptOverride(body);
-    if (warnings.some(w => w.startsWith('Unknown placeholders'))) {
-        return { ok: false, error: `${target} rejected: ${warnings.find(w => w.startsWith('Unknown placeholders'))}. A placeholder the harness does not substitute reaches the model as literal braces.` };
-    }
-
-    const settings = getHarnessSettings();
-    if (settings.promptAbRate <= 0) {
-        return {
-            ok: false,
-            error: `${target} refused: this override cannot be judged while the prompt A/B is disarmed (rate ${settings.promptAbRate}). `
-                + 'The trader sets a sampling rate above 0% in Settings → Usage; until then a shadow edit would go to every run with nothing to compare it against.',
-        };
-    }
-
-    const before = getPromptOverrides()[promptId] ?? '';
-    if (before === body) {
-        return { ok: false, error: `${target} already holds exactly this text — nothing changed, so nothing was ledgered.` };
-    }
-    const churn = churnCheck(target);
-    if (churn) return { ok: false, error: churn };
-    const username = opts.username || getActiveUsername();
-    try {
-        await savePromptOverride(promptId, body, username);
-    } catch (err) {
-        return { ok: false, error: `${target} could not be saved: ${err instanceof Error ? err.message : String(err)}` };
-    }
-    // The fingerprint of the corpus this text now produces, so the settle pass
-    // can attribute the trades that were actually decided under it.
-    const corpusVersion = promptCorpusVersion('live');
-    const row = await record({
-        tier: 'shadow',
-        target,
-        before,
-        after: body,
-        reason: reason.trim().slice(0, 600),
-        status: 'shadow',
-        actor: opts.actor || 'agent',
-        corpusVersion,
-        evidence: warnings.length > 0 ? `advisory: ${warnings.join(' | ')}`.slice(0, 1000) : undefined,
-    }, opts);
-    return {
-        ok: true,
-        change: row,
-        note: `the built-in text keeps the control lane; this override settles on ${SHADOW_MIN_TRADES_PER_SIDE}+ closed trades per side`,
-    };
-};
-
 /** The one undo path. Owner rows are not the agent's to revert. */
 export const revertSelfChange = async (
     id: string,
@@ -410,57 +319,8 @@ export const expireSelfChanges = async (
     return done;
 };
 
-const closedWinLoss = (trades: LoggedTrade[], version: string): { trades: number; winRate: number | null } => {
-    const rows = trades.filter(t =>
-        t.promptVersion === version
-        && (t.outcome === TradeOutcome.WIN || t.outcome === TradeOutcome.LOSS));
-    const wins = rows.filter(t => t.outcome === TradeOutcome.WIN).length;
-    return { trades: rows.length, winRate: rows.length > 0 ? Math.round((wins / rows.length) * 100) : null };
-};
 
-/**
- * Settle the shadow tier against closed trades. The comparison is the one the
- * app already runs — an edited corpus vs `defaults` — because that is what the
- * control lane resolves by construction. An override that loses to the
- * built-in text is reverted by this pass; one that wins is marked promoted and
- * stops being compared.
- */
-export const settleSelfChanges = async (
-    trades: LoggedTrade[],
-    opts: { username?: string } = {},
-): Promise<SelfChange[]> => {
-    const shadow = listSelfChanges().filter(r => r.status === 'shadow' && r.tier === 'shadow' && r.corpusVersion);
-    if (shadow.length === 0) return [];
-    const baseline = closedWinLoss(trades, 'defaults');
-    if (baseline.trades < SHADOW_MIN_TRADES_PER_SIDE || baseline.winRate === null) return [];
-    const settled: SelfChange[] = [];
-    for (const row of shadow) {
-        const mine = closedWinLoss(trades, row.corpusVersion!);
-        if (mine.trades < SHADOW_MIN_TRADES_PER_SIDE || mine.winRate === null) continue;
-        const gap = mine.winRate - baseline.winRate;
-        const label = `${mine.trades} trades at ${mine.winRate}% vs the built-in text at ${baseline.winRate}% on ${baseline.trades}`;
-        if (gap >= SHADOW_MIN_WINRATE_GAP_PP) {
-            const updated = await patchSelfChange(row.id, { status: 'promoted', evidence: `kept: ${label}` }, opts.username);
-            if (updated) settled.push(updated);
-            continue;
-        }
-        if (gap <= -SHADOW_MIN_WINRATE_GAP_PP) {
-            const reverted = await revertSelfChange(row.id, 'system', {
-                username: opts.username,
-                note: `auto-reverted: the edit lost to the built-in text — ${label}`,
-            });
-            if (!reverted.ok) {
-                console.warn(`[SelfMod] shadow lost but did not revert ("${row.id}"): ${reverted.error}`);
-                continue;
-            }
-            settled.push(reverted.change);
-        }
-        // Inside the band: still measuring. No verdict is the honest state.
-    }
-    return settled;
-};
 
-/** Names the open knobs for the tool description and the refusal message. */
 export const openKnobNames = (): string[] => Object.keys(KNOBS);
 
 export const knobHint = (key: string): string | undefined => KNOBS[key]?.hint;

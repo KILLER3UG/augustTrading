@@ -247,10 +247,9 @@ export const HarnessControls: React.FC = () => {
                     How far the agent may change the harness it is running in. Off (the
                     default) refuses every self-change. Config lets it move a behavior
                     knob you can see below — thinking effort — and
-                    each change reverts itself within 24 hours. Shadow additionally lets it
-                    rewrite one prompt, which then has to win on the trades that ran under
-                    it; that needs the Prompt A/B rate above 0% with no lane pin, or the
-                    edit cannot be judged. Risk limits, privacy, memory and this switch
+                    each change reverts itself within 24 hours. Prompts are not a
+                    target: the prompt editor below is the only prompt writer. Risk
+                    limits, privacy, memory and this switch
                     itself are blocked. Every change is written to the notebook
                     self-changes folder, with the value it replaced.
                 </span>
@@ -261,7 +260,6 @@ export const HarnessControls: React.FC = () => {
                         options={[
                             { value: 'off', label: 'Off — it changes nothing about itself' },
                             { value: 'config', label: 'Config — reversible behavior knobs, 24h window' },
-                            { value: 'shadow', label: 'Shadow — plus prompt text, judged by outcomes' },
                         ]}
                         aria-label="Self-modification"
                         className="w-full"
@@ -289,21 +287,6 @@ export const HarnessControls: React.FC = () => {
                         ]}
                     />
                 </span>
-            </label>
-            <label className="block text-ui-dense text-zinc-400">
-                Prompt A/B (control lane)
-                <SelectMenu
-                    value={String(settings.promptAbRate)}
-                    onChange={v => persist({ promptAbRate: Number(v) as 0 | 0.1 | 0.5 })}
-                    options={[
-                        { value: '0', label: 'Off' },
-                        { value: '0.1', label: '10%' },
-                        { value: '0.5', label: '50%' },
-                    ]}
-                    aria-label="Prompt A/B (control lane)"
-                    className="mt-1 w-full"
-                    triggerClassName="w-full rounded-control border border-zinc-700 bg-zinc-950 px-2 py-1 text-ui-sm hover:bg-zinc-800"
-                />
             </label>
             <label className="block text-ui-dense text-zinc-400">
                 Default thinking effort

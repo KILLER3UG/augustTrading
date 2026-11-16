@@ -67,7 +67,6 @@ import { threadForProvider } from '../utils/agentThreads';
 import { formatInvokedSkillSection, resolveInvokedSkills } from '../services/learning/SkillFileService';
 import { extractDebateTemplate, DebateTemplate } from '../utils/debateTemplates';
 import { parseComposerIntent, formatComposerSteer } from '../utils/composerMentions';
-import { beginPromptLane, promptCorpusVersion } from '../services/infrastructure/PromptOverrideService';
 import { parseDmMarkers } from '../services/agents/botMailbox';
 import { notify } from '../services/infrastructure/notify';
 
@@ -888,24 +887,15 @@ export function useAnalysisPipeline(params: UseAnalysisPipelineParams) {
         // bot's thread instead of vanishing from the scoped view.
         let casualErrorAttribution: Record<string, string> | undefined;
         try {
-            // The prompt A/B lane is a VALUE decided per run, begun BEFORE any
-            // prompt is resolved. It used to be a module flag flipped here and
-            // cleared in the `finally` below, so two runs deciding at once — a
-            // schedule and a human send — each answered with whichever lane the
-            // other had picked, and a run that threw before the finally still
-            // reset the OTHER one's flag. There is nothing to un-set now.
-            //
-            // What this does NOT yet do: resolve a prompt override on the turn
-            // path. Every `getPrompt` call site reachable from here is on the
-            // analysis/skill-craft surfaces, and the desk turn that answers this
-            // surface calls none of them — so the pair currently differs in what
-            // it RECORDS, not in what it SENDS. Registered as an open item
-            // (E-57 §3); the honest fix is to wire it or delete the dial. (O-55)
-            const promptLane = beginPromptLane();
-            // The corpus this run resolved, fingerprinted. Recorded so the journal
-            // row can be grouped by the prompt that produced it — the version and
-            // the lane are one measurement, not two. (O-47)
-            const promptVersion = promptCorpusVersion(promptLane);
+            // There is deliberately NO prompt A/B lane here anymore: the dial
+            // recorded a per-run label without changing what any turn was sent
+            // (no prompt on this path resolves an override), so a `control` and
+            // a `live` row were byte-identical runs wearing different stamps —
+            // a measurement of noise the journal presented as a measurement.
+            // Removed by the owner's ruling (O-140/O-148 resolved by deletion).
+            // The chat turn's journal row therefore carries NO prompt version:
+            // stamping a fingerprint that did not shape the answer is the one
+            // thing worse than stamping nothing.
             const currentMessages = [...messagesRef.current, userMessage];
                         // Debate template steering rides the custom instructions so every
             // seat + the moderator see the framing (Scalp / Swing / Devil's
@@ -1251,8 +1241,6 @@ export function useAnalysisPipeline(params: UseAnalysisPipelineParams) {
                 ...(toolTurn && !toolTurn.interrupted ? {
                     runStats: {
                         runId: `desk-${streamingMessageId}`,
-                        promptLane,
-                        promptVersion,
                         startedAt: new Date(turnStartedAt).toISOString(),
                         finishedAt: new Date(turnStartedAt + toolTurn.workedMs).toISOString(),
                         durationMs: toolTurn.workedMs,

@@ -78,7 +78,6 @@ export const trackedPositionFromJournalTrade = (trade: LoggedTrade): TrackedPosi
             evidenceRefs: trade.planId ? [`plan:${trade.planId}`] : [],
             ...(model ? { model } : {}),
             ...(provider ? { provider } : {}),
-            ...(trade.promptVersion ? { promptVersion: trade.promptVersion } : {}),
             ...(family ? { family } : {}),
             ...(trade.sourceRunId ? { runId: trade.sourceRunId } : {}),
             snapshot: {
@@ -176,8 +175,6 @@ export const mergePendingJournalRow = (pending: LoggedTrade, settled: LoggedTrad
     analysis: pending.analysis ?? settled.analysis,
     planId: pending.planId ?? settled.planId,
     sourceRunId: pending.sourceRunId ?? settled.sourceRunId,
-    promptVersion: pending.promptVersion ?? settled.promptVersion,
-    promptLane: pending.promptLane ?? settled.promptLane,
     modelsUsed: pending.modelsUsed ?? settled.modelsUsed,
     thoughtProcesses: pending.thoughtProcesses ?? settled.thoughtProcesses,
     ocrModelUsed: pending.ocrModelUsed ?? settled.ocrModelUsed,

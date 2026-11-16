@@ -38,7 +38,9 @@ export interface LoggedTrade {
   analysis: TradeAnalysis;
   /** Pattern-memory gate outcome at analysis time (journal badge). */
   patternMemoryGate?: PatternMemoryGateView;
-  /** Prompt-layer fingerprint from the originating run (journal A/B). */
+  /** LEGACY reads only — the A/B lane that stamped these was removed
+   *  (O-140/O-148: the label never changed what a run was sent). Old stored
+   *  rows keep their values; nothing writes either field anymore. */
   promptVersion?: string;
   promptLane?: 'live' | 'control';
   /** RunId of the originating verdict run (runStats.runId). Skill

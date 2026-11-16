@@ -155,7 +155,7 @@ DONE (`c9db95e2`). The rail rebuild is DONE (this commit).
 | Journal | Manual outcome/PnL/leverage editing, deletes | REMOVE | Agent correction via gated tool + confirm card; settlement autopilot already exists. |
 | Journal | Trade History list | KEEP | Read-only records view. |
 | Settings | AI setup/providers, Profile, Data/Backup | KEEP | Configuration is the trader's domain. |
-| Settings | AI-behavior toggles (hybrid, desk tools, effort, self-mod, A/B, settlement mode) | MERGE | Agent proposes via the existing self-change ledger (24h revert + audit). |
+| Settings | AI-behavior toggles (hybrid, desk tools, effort, self-mod, settlement mode) | MERGE | Agent proposes via the existing self-change ledger (24h revert + audit). The A/B dial is already gone: its lane recorded labels without changing what any run was sent (O-140/O-148, removed 2026-11-17). |
 | Settings | Risk dials (equity, risk %, min edge, leverage, daily loss) | KEEP | The Plan source of truth; agent-editable through a verify card. |
 | Settings | Prompt/Instructions editors | READ-ONLY | Agent writes under the shadow lane; the trader reads. |
 | Settings | Memory + AmendmentsInbox, Skills library, StrategyPlans & ToolForge gates, Playbooks upload | KEEP | These are approval/undo mechanisms, not duplication. |

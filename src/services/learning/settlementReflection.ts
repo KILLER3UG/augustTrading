@@ -37,14 +37,14 @@ import { sanitizeAIResponse } from '../../utils/sanitizers';
 import { tradeAdmitsTechnicalStrategyRule } from '../../utils/rootCause';
 import { clipNote } from '../../utils/harnessMarks';
 import { parseSettlementReflection, type SettlementReflection } from '../../schemas/learning';
-import { beginPromptLane, getPrompt, promptCorpusVersion, type PromptLane } from '../infrastructure/PromptOverrideService';
+import { getPrompt, promptCorpusVersion } from '../infrastructure/PromptOverrideService';
 import { resolveMemoryConfig } from './MemoryModelService';
 
 /**
  * The built-in instruction. Registered as `learning.settlement_reflection`
- * (`constants/promptRegistry.ts`), so the Settings prompt tab can edit it and
- * the A/B lane can measure it — the call site imports the registry's fallback
- * rather than restating it, which is how an override and a reset stay honest.
+ * (`constants/promptRegistry.ts`), so the Settings prompt tab can edit it —
+ * the call site imports the registry's fallback rather than restating it,
+ * which is how an override and a reset stay honest.
  */
 export const SETTLEMENT_REFLECTION_FALLBACK = `You write the post-mortem for ONE closed trade, from the facts given. They are the whole record: you were not watching the tape, so you did not see anything they do not name.
 
@@ -95,7 +95,6 @@ export interface ReflectionResult {
     wrote: boolean;
     reason: ReflectionSkipReason | 'written';
     model?: string;
-    lane?: PromptLane;
     promptVersion?: string;
     tier?: ReasoningEffort;
 }
@@ -274,16 +273,15 @@ export const reflectOnClosedTrade = async (
         for (const id of oldest) reflectedKeys.delete(id);
     }
 
-    const lane = beginPromptLane();
-    const promptVersion = promptCorpusVersion(lane);
+    const promptVersion = promptCorpusVersion();
     const tier = effortForTask('postMortem');
-    const meta = { model: config.selectedModel ?? '', lane, promptVersion, tier };
+    const meta = { model: config.selectedModel ?? '', promptVersion, tier };
 
     try {
         const raw = await sendChatRequest(
             config,
             [
-                { role: 'system', content: getPrompt('learning.settlement_reflection', SETTLEMENT_REFLECTION_FALLBACK, lane) },
+                { role: 'system', content: getPrompt('learning.settlement_reflection', SETTLEMENT_REFLECTION_FALLBACK) },
                 { role: 'user', content: reflectionPacket(trade, opts.injectedSkills) },
             ] as ChatMessage[],
             { maxTokens: TASK_BUDGETS.postMortem, temperature: 0.2, reasoningEffort: tier, signal: opts.signal },

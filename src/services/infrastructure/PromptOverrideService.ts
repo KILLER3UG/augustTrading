@@ -12,31 +12,12 @@
  */
 
 import { getPreferenceObject, setPreferenceObject, removePreference } from './PreferencesService';
-import { getHarnessSettings } from '../../utils/harnessSettings';
 import { isRegisteredPromptId } from '../../constants/promptIds';
 
 const OVERRIDES_KEY_PREFIX = 'prompt_overrides_v1_';
 
 /** Synchronous override cache — populated by initOverrides/save/reset. */
 let overridesCache: Record<string, string> = {};
-
-/**
- * Which A/B lane THIS run resolved. There is deliberately no module state: the
- * lane used to be `let controlLane`, flipped on by `beginPromptLane()` and back
- * by an `endPromptLane()` in a `finally`, so a detached job and a human
- * send deciding at the same moment overwrote each other and a run resolved
- * whichever lane the OTHER one happened to pick. The decision is returned as a
- * value now, and the caller hands it to `getPrompt` / `promptCorpusVersion` at
- * every resolve — nothing to un-set, so nothing can leak into the next run.
- */
-export type PromptLane = 'live' | 'control';
-
-export const beginPromptLane = (): PromptLane => {
-    const settings = getHarnessSettings();
-    const hasOverride = Object.keys(overridesCache).length > 0;
-    const rate = settings.promptAbRate;
-    return hasOverride && rate > 0 && Math.random() < rate ? 'control' : 'live';
-};
 
 /**
  * Load the active user's overrides into the sync cache.
@@ -56,35 +37,31 @@ export const initPromptOverrides = async (username: string): Promise<void> => {
  * Resolve the live prompt text for a registered prompt id.
  * Synchronous by design — prompt assembly happens inside provider calls.
  *
- * `lane` is the CALLER's run lane, defaulting to 'live'. A call site that does
- * not thread a lane is not silently getting the global one (there is none left
- * to get): it is always resolving the trader's edits. That is the honest reading
- * for the background learners — `notebook.chat_note`,
- * `strategy.ocr_page` and friends are separate runs with no A/B decision to
- * carry. The dock's tool turn resolves NO overrides at all today, and that gap
- * is registered (E-57 §3) rather than papered over by a default.
+ * There is no A/B lane: the lane machinery shipped as a dial that recorded a
+ * label without changing what any run was sent (O-140/O-148), and the owner
+ * ruled to remove it rather than measure noise. `getPrompt` resolves the
+ * trader's edit or the built-in default, one way, for every caller — the
+ * background learners (`notebook.chat_note`, `strategy.ocr_page` and friends)
+ * and the post-mortem runs all read the same store the Settings editor writes.
+ * The dock's tool turn resolves NO overrides at all today, and that gap is
+ * registered (E-57 §3) rather than papered over by a default.
  */
-export const getPrompt = (id: string, fallback: string, lane: PromptLane = 'live'): string => {
-    if (lane === 'control') return fallback;
+export const getPrompt = (id: string, fallback: string): string => {
     const override = overridesCache[id];
     return typeof override === 'string' && override.trim() ? override : fallback;
 };
 
 /**
- * A fingerprint of the prompt corpus THIS call resolves, for the journal row.
+ * A fingerprint of the prompt corpus THIS call resolves, for provenance.
  *
- * `promptVersion` and `promptLane` are stamped here so the profile card's A/B
- * rows and `summarizePromptVersions` have a writer at all. Whether the two
- * lanes actually send different bytes is a separate open question: the call
- * sites resolve `getPrompt` without a lane, so today they differ only in what
- * is RECORDED. Registered, not papered over.
- *
- * `defaults` means the run resolved the built-in text on every id — which is
- * what the control lane does by definition, and also what a live run with no
- * overrides does. `edited-<hash>` covers the exact override set the live lane
- * resolved, so two different edits are two versions. Nothing finer is available
- * here: a change to a BUILT-IN prompt ships with the app build and is recorded
- * by the app version, not by this string.
+ * `defaults` means the run resolved the built-in text on every id; `edited-<hash>`
+ * covers the exact override set the run resolved, so two different edits are
+ * two versions. Nothing finer is available here: a change to a BUILT-IN prompt
+ * ships with the app build and is recorded by the app version, not by this
+ * string. Stamped only by the runs that actually resolve overrides (the
+ * post-mortem path and the settlement reflection) — a journal row produced by
+ * the chat turn carries no version, because no prompt on that path resolves
+ * one; stamping it would present a fingerprint that did not shape the answer.
  *
  * Deliberately hashed over the in-memory override map rather than over
  * `PROMPT_REGISTRY`: importing the registry into a run path pulls all 1,245
@@ -92,12 +69,11 @@ export const getPrompt = (id: string, fallback: string, lane: PromptLane = 'live
  * the bundle over its 1,400 kB ratchet. The fingerprint cannot cost more than
  * the thing it names.
  */
-export const promptCorpusVersion = (lane: PromptLane = 'live'): string => {
-    if (lane === 'control') return 'defaults';
+export const promptCorpusVersion = (): string => {
     // Only ids the registry still knows. An override left behind by a prompt that
     // has since been deleted used to hash into every live run's fingerprint, so
-    // the A/B halves differed by a number that described nothing the model was
-    // ever sent — and "Reset all (N)" counted the same ghosts.
+    // a version label could describe nothing the model was ever sent — and
+    // "Reset all (N)" counted the same ghosts.
     const ids = Object.keys(overridesCache)
         .filter(id => (overridesCache[id] || '').trim() && isRegisteredPromptId(id))
         .sort();

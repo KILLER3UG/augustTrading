@@ -1,7 +1,6 @@
 import React, { useMemo } from 'react';
 import { LoggedTrade } from '../../../types';
 import type { PersonalizedLearningProfile } from '../../../services/learning/SelfLearningService';
-import { summarizePromptVersions, summarizePromptLanes } from '../../../utils/promptVersionStats';
 import { getCalibrationSummaries } from '../../../services/backtesting/ModelPerformanceService';
 import { StatCard } from './StatCard';
 import { getWinRateColor } from './shared';
@@ -23,8 +22,6 @@ export const TraderProfileCards: React.FC<TraderProfileCardsProps> = ({
         return { n: withAlpha.length, beatPct: Math.round((beat / withAlpha.length) * 100), avgAlpha: Math.round(avg * 10) / 10 };
     }, [closedWindowed]);
 
-    const promptVersions = useMemo(() => summarizePromptVersions(closedWindowed), [closedWindowed]);
-    const promptLanes = useMemo(() => summarizePromptLanes(closedWindowed), [closedWindowed]);
     const calibrationSummaries = useMemo(() => getCalibrationSummaries().filter(c => c.samples > 0), [trades]);
 
     return (
@@ -80,28 +77,6 @@ export const TraderProfileCards: React.FC<TraderProfileCardsProps> = ({
                     subtext: `(n=${r.count})`,
                     color: getWinRateColor(r.winRate)
                 }))}
-            />
-            <StatCard
-                title="Prompt versions"
-                items={promptVersions.slice(0, 5).map(v => ({
-                    name: v.version,
-                    value: v.winRate !== null ? `${v.winRate}%` : '-',
-                    subtext: v.avgDeclared !== null
-                        ? `(n=${v.trades} - said ${v.avgDeclared}% vs ${v.avgRealized}%)`
-                        : `(n=${v.trades})`,
-                    color: v.winRate !== null ? getWinRateColor(v.winRate) : 'text-zinc-500',
-                }))}
-                emptyText="Log closed trades after a run to compare prompt versions"
-            />
-            <StatCard
-                title="Prompt A/B lanes"
-                items={promptLanes.filter(l => l.trades > 0).map(l => ({
-                    name: l.lane,
-                    value: l.winRate !== null ? `${l.winRate}%` : '-',
-                    subtext: `(n=${l.trades})`,
-                    color: l.winRate !== null ? getWinRateColor(l.winRate) : 'text-zinc-500',
-                }))}
-                emptyText="Need closed trades on both live and control lanes"
             />
             <StatCard
                 title="Model calibration (Brier)"

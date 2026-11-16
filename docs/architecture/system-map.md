@@ -323,14 +323,19 @@ which is where the learning coin and the notebook
 slice come from, so dropping the fetch is NOT a byte-preserving cleanup — that is
 why it is an owner decision rather than something I removed silently. The loading
 state at `src/hooks/useAnalysisPipeline.ts › useAnalysisPipeline` still flips for a send whose result
-only the coin picker reads. Separately, the prompt A/B lane is a **per-run value**:
-`beginPromptLane` (`src/services/infrastructure/PromptOverrideService.ts › beginPromptLane`) returns
-`'live' | 'control'` and the caller threads it into `getPrompt` and
-`promptCorpusVersion` — E-57 §3 deleted the `let controlLane` singleton and the
-`endPromptLane()` in the `finally`, because two runs deciding at once each answered
-with the other's lane and a run that threw reset the flag out from under a run still
-using it. What is still open, and registered: **no live turn path resolves an
-override at all.** The `getPrompt` call sites are the background learners
+only the coin picker reads. Separately, there is NO prompt A/B lane anymore: the
+dial recorded a per-run label (`'live' | 'control'`) without changing what any
+turn was sent — no prompt on the path that answers the trader ever resolved an
+override — so the two lanes were byte-identical runs wearing different stamps
+(O-140), and the shadow tier that judged prompt edits on those labels measured
+noise (O-148). Removed by the owner's ruling (2026-11-17): `beginPromptLane` is
+gone, `getPrompt` resolves the trader's edit one way for every caller, and the
+corpus fingerprint (`promptCorpusVersion`) is stamped only by the runs that
+actually resolve overrides — the post-mortem diagnosis and the settlement
+reflection. The journal row a chat turn produces carries no prompt version at
+all: stamping a fingerprint that did not shape the answer is worse than
+stamping nothing. What is still open, and registered: **no live turn path
+resolves an override at all.** The `getPrompt` call sites are the background learners
 (settlement reflection, post-mortem diagnosis, the notebook writer, the strategy
 summariser, the PDF OCR reader) and `analyzeTradingView`, whose only wrapper has no caller — and the
 desk turn that answers this surface calls none, so the pair currently differs in
@@ -933,11 +938,14 @@ the eval scheduler, hygiene and the supervisor — and it says which legs are st
 
 ### G.6 Known gaps
 
-- **Prompt A/B lane** — decided per run and threaded as a value (E-57 §3), and the
-  corpus fingerprint counts only overrides for prompts that still exist; what
-  remains is that the desk turn resolves no override at all, so the two lanes
-  currently send the same bytes and record different labels. The “Reset all (N)”
-  count now ignores the ghosts too (`src/components/settings/PromptManager.tsx › PromptManager`).
+- **Prompt overrides are reader-side only** — there is no A/B lane anymore
+  (removed with the shadow tier, O-140/O-148, owner ruling 2026-11-17). What
+  remains is that the desk turn resolves no override at all: the `getPrompt`
+  call sites are the background learners and the (caller-less) analysis
+  wrapper, so an override the trader writes takes effect on those runs only.
+  The corpus fingerprint counts only overrides for prompts that still exist,
+  and the “Reset all (N)” count ignores the ghosts too
+  (`src/components/settings/PromptManager.tsx › PromptManager`).
 - **Harness lessons** — recorded and listed in Settings, and read live by
   the provider request path (`src/services/providers/GenericProviderService.ts`) and the reasoning
   controls. There is no prompt reader, and E-57 deleted the two
@@ -1065,33 +1073,29 @@ surfaces actually change how this app behaves:
   A knob cannot be re-changed inside the cooldown, and only a bounded number of
   changes may be in force at once —
   `churnCheck src/services/selfMod/SelfModificationService.ts › churnCheck`
-- `shadow`: one registered prompt, applied through
-  `proposePromptOverride src/services/selfMod/SelfModificationService.ts › proposePromptOverride`
-  It is refused unless the app's own prompt A/B is armed, because the built-in
-  text keeps the control lane and
-  `promptCorpusVersion src/services/infrastructure/PromptOverrideService.ts › promptCorpusVersion`
-  stamps the edited corpus onto every closed trade.
-  `settleSelfChanges src/services/selfMod/SelfModificationService.ts › settleSelfChanges` then
-  compares the two on those trades, on the same 5-per-side, 8-point bar declared
-  in `SHADOW_MIN_TRADES_PER_SIDE src/services/selfMod/SelfModificationService.ts › SHADOW_MIN_TRADES_PER_SIDE` — and
-  promotes, leaves in shadow, or auto-reverts. Time-based expiry is NOT this
-  path's job: `expireSelfChanges` runs from the learning heartbeat, at open and
-  on every sweep, so a window closes on schedule whether or not another trade
-  settles. It runs from the closed-trade
-  write-back in `useTradeLogging src/hooks/useTradeLogging.ts › useTradeLogging`,
-  so a self-edit is judged by outcomes, not by the model's opinion of its own
-  edit.
+There was also a `shadow` tier — one registered prompt, judged by the closed
+trades that ran under it. It is GONE (O-148, owner ruling 2026-11-17): the A/B
+lane it was measured against never changed what a run was sent (O-140), so the
+promote/revert verdict compared two identical corpora and called the difference
+evidence. The ledger's legacy `shadow`/`promoted` rows still parse and still
+revert — `revertSelfChange src/services/selfMod/SelfModificationService.ts › revertSelfChange`
+handles them, and turning the mode off undoes every agent row — but nothing
+writes the tier, and the trader's Settings prompt editor is the only prompt
+writer. `promptCorpusVersion src/services/infrastructure/PromptOverrideService.ts › promptCorpusVersion`
+still fingerprints the override corpus, stamped ONLY by the runs that actually
+resolve overrides (the post-mortem diagnosis and the settlement reflection).
+Time-based expiry is NOT this path's job: `expireSelfChanges` runs from the
+learning heartbeat, at open and on every sweep, so a window closes on schedule
+whether or not another trade settles.
 
 What is **not** open, named in the table the contract gate pins
 (`BLOCKED_KNOB_REASONS src/services/selfMod/SelfModificationService.ts › BLOCKED_KNOB_REASONS`): equity,
 risk, leverage, the edge floor, the session guard, outcome settlement, the skill
-veto, the starter shelf, auto-drafting, sensitive memory, desk tools, the A/B
-rate and lane pin, and the mode itself — an agent that could pin a lane could
-make its own shadow unfalsifiable. Skills keep the route they already had: the
+veto, the starter shelf, auto-drafting, sensitive memory, desk tools, and the
+mode itself. Prompts are not a self-change target at all now: there is no tier
+that grants them. Skills keep the route they already had: the
 human approval inbox plus `meta.shadow` and `settleShadow`, so a self-change
-never becomes a second way past the gate, and the prompt that carries the risk
-rules is refused by name in
-`BLOCKED_PROMPT_IDS src/services/selfMod/SelfModificationService.ts › BLOCKED_PROMPT_IDS`
+never becomes a second way past the gate.
 The seat is told about the capability only when the trader turned it on, in
 `deskToolsMandateFor src/services/analysis/DeskToolsService.ts › CHART_ACTION_TOOL_DEFS`
 a detached run reads the ledger and cannot write it, because the executor's own
@@ -1186,12 +1190,12 @@ grant — because a narrowing the seat cannot honour would strip it to `NO_TOOLS
 | 66 | heartbeat → hygiene | `useLearningHeartbeat src/hooks/useLearningHeartbeat.ts › useLearningHeartbeat` → `runMemoryHygiene src/services/learning/memoryHygiene.ts › runMemoryHygiene` — the skill lifecycle is gone |
 | 67 | failure → failure row | `toFriendlyProviderError src/services/providers/GenericProviderService.ts › errorCauseChain` preserves the cause chain → `Message.error` → `ChatFailureRow`, in both homes |
 | 68 | model control → tier | `ModelChip`/`ModelMenu`; `nextEffortTier src/components/shared/effortScale.ts › nextEffortTier`; `effortDialUp src/components/shared/effortDial.ts › effortDialUp` guards the chord |
-| 69 | run → prompt lane + corpus version | `beginPromptLane src/services/infrastructure/PromptOverrideService.ts › beginPromptLane` → `promptCorpusVersion src/services/infrastructure/PromptOverrideService.ts › promptCorpusVersion` → `runStats.promptLane`/`promptVersion` |
+| 69 | run → corpus version | `promptCorpusVersion src/services/infrastructure/PromptOverrideService.ts › promptCorpusVersion` — stamped ONLY by the runs that resolve overrides (post-mortem diagnosis, settlement reflection); the A/B lane and its journal stamps are removed (O-140) |
 | 70 | Settings → tool catalogue | `DESK_TOOL_DEFINITIONS src/services/analysis/DeskToolsService.ts › DESK_TOOL_DEFINITIONS` + `toolLabel src/services/analysis/DeskToolsService.ts › toolLabel` → `DeskToolCatalogue`, grouped by `toolKinds` |
 | 71 | skills index → skill_view → the body or one bundled file | `case 'skill_view' src/services/analysis/DeskToolsService.ts › executeDeskTool` — L1 body + bundled list, L2 one flat-named file (`..` refused); `${SKILL_DIR}`/`${SESSION_ID}` substitute, Hermes aliases accepted |
 | 72 | message → focused goal → a narrower toolset | `focusedGoal src/services/goals/GoalService.ts › focusedGoal` · `goalMatchesMessage src/services/goals/GoalService.ts › goalMatchesMessage` → `goalAllowedTools src/services/trade/chatSurfaceTurn.ts › runChatSurfaceTurn` → `intersectGoalPolicy src/utils/toolKinds.ts › intersectGoalPolicy` › `effectiveAllowed src/services/analysis/DeskToolsService.ts › withDeskToolsSystemPrompt`, an intersection — a goal may only narrow the seat, and narrowing to nothing leaves it `NO_TOOLS_ALLOWED src/utils/toolKinds.ts › NO_TOOLS_ALLOWED` rather than the whole desk |
 | 73 | seat → goal edit → snapshot → undo | `case 'update_goal' src/services/analysis/DeskToolsService.ts › executeDeskTool` → `updateGoal src/services/goals/GoalService.ts › updateGoal` keeps the previous snapshot → `case 'restore_goal' src/services/analysis/DeskToolsService.ts › executeDeskTool` → `restoreGoal src/services/goals/GoalService.ts › restoreGoal` |
-| 74 | seat → self-change → ledger → outcomes | `case 'propose_self_change' src/services/analysis/DeskToolsService.ts › executeDeskTool` → `proposeKnobChange src/services/selfMod/SelfModificationService.ts › proposeKnobChange` / `proposePromptOverride src/services/selfMod/SelfModificationService.ts › proposePromptOverride` → `writeSelfChange src/services/selfMod/SelfChangeLedger.ts › writeSelfChange` → `settleSelfChanges src/services/selfMod/SelfModificationService.ts › settleSelfChanges`, run from `useTradeLogging src/hooks/useTradeLogging.ts › useTradeLogging` |
+| 74 | seat → self-change → ledger | `case 'propose_self_change' src/services/analysis/DeskToolsService.ts › executeDeskTool` → `proposeKnobChange src/services/selfMod/SelfModificationService.ts › proposeKnobChange` → `writeSelfChange src/services/selfMod/SelfChangeLedger.ts › writeSelfChange`; the prompt arm is removed with the shadow tier (O-148), and config windows close via `expireSelfChanges` from the learning heartbeat |
 | 75 | goal focus / undo | `focusGoal src/services/goals/GoalService.ts › focusGoal` and `revertSelfChange src/services/selfMod/SelfModificationService.ts › revertSelfChange` are desk-tool presses (`open_goal` / `restore_goal`); the rail tab that used to host them was an orphan and died with the Agents surface |
 
 ---

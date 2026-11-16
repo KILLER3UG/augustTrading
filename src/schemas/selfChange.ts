@@ -16,13 +16,16 @@
 import { z } from 'zod';
 
 /** How much self-modification the trader has allowed. A ceiling, not a mode
- *  switch: 'config' permits reversible knob changes only; 'shadow' additionally
- *  permits edits to what the model is TOLD, which must earn their place on
- *  settled outcomes first. 'off' permits neither. */
-export const SELF_MOD_MODES = ['off', 'config', 'shadow'] as const;
+ *  switch: 'config' permits reversible knob changes only. 'off' permits
+ *  neither. There was a third value, 'shadow' — prompt overrides judged on
+ *  closed trades — removed with its tier (O-148): the A/B it measured against
+ *  never changed what a run was sent (O-140). A stored 'shadow' mode fails
+ *  to 'off' on read. */
+export const SELF_MOD_MODES = ['off', 'config'] as const;
 
 /** 'config' = a knob, applied now, auto-reverts at the end of its window.
- *  'shadow' = a decision-affecting artifact, measured against the incumbent. */
+ *  'shadow' = LEGACY: the removed prompt tier's rows still parse so an old
+ *  ledger reads one way, but nothing writes the tier anymore. */
 export const SELF_CHANGE_TIERS = ['config', 'shadow'] as const;
 
 export const SELF_CHANGE_STATUSES = ['active', 'shadow', 'promoted', 'reverted', 'rejected'] as const;

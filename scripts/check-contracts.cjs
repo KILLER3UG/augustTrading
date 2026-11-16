@@ -677,8 +677,8 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
     ok('selfmod: an unknown stored mode fails to off, not open',
         hs.getHarnessSettings().selfModificationMode === 'off', hs.getHarnessSettings().selfModificationMode);
     mem.set('harness_settings_v1', JSON.stringify({ selfModificationMode: 'shadow' }));
-    ok('selfmod: the two named modes are the whole vocabulary',
-        hs.getHarnessSettings().selfModificationMode === 'shadow');
+    ok("selfmod: a stored 'shadow' mode fails to off — the tier it belonged to is gone (O-148)",
+        hs.getHarnessSettings().selfModificationMode === 'off', hs.getHarnessSettings().selfModificationMode);
     delete global.localStorage;
 
     const defaults = hs.getHarnessSettings();
@@ -687,8 +687,12 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
         knobs.length > 0 && knobs.every(k => k in defaults), JSON.stringify(knobs));
     ok('selfmod: the mode itself is not a knob the seat can turn',
         !knobs.includes('selfModificationMode') && sm.isBlockedKnob('selfModificationMode') === true);
-    ok('selfmod: the risk-rules prompt is not a self-editable prompt',
-        sm.BLOCKED_PROMPT_IDS.includes('analysis.risk_rules'));
+    ok('selfmod: the mode vocabulary is off and config — no shadow tier to arm',
+        (() => {
+            const sc = loadModule('src/schemas/selfChange.ts');
+            return sc.SELF_MOD_MODES.length === 2 && sc.SELF_MOD_MODES.includes('off') && sc.SELF_MOD_MODES.includes('config')
+                && sc.SELF_MOD_MODES.includes('shadow') === false;
+        })());
 
     const row = {
         schemaVersion: 1, id: 'config-a1', tier: 'config', target: 'knob:responseEffort',

@@ -1,4 +1,3 @@
-export type PromptAbRate = 0 | 0.1 | 0.5;
 
 import {
     DEFAULT_SESSION_GUARD,
@@ -20,7 +19,6 @@ export interface HarnessSettings {
      *  below this, in R. 0 refuses only negative/zero edge; the trader can
      *  demand a positive floor. The card names the number it refused on. */
     minEdgeR: number;
-    promptAbRate: PromptAbRate;
     /** Analysts may call live desk tools (search, derivatives, session) before the brief. Default on. */
     deskToolsEnabled: boolean;
     /** Session-guard preset: 'default' = research-tight
@@ -78,7 +76,6 @@ const read = (): Partial<HarnessSettings> => {
 
 export const getHarnessSettings = (): HarnessSettings => {
     const stored = typeof localStorage === 'undefined' ? {} : read();
-    const rate = stored.promptAbRate;
     return {
         // 0 means "not configured" — sizing and the session guard fail closed
         // on it. The old $10,000 stand-in here made every downstream number
@@ -95,7 +92,6 @@ export const getHarnessSettings = (): HarnessSettings => {
         minEdgeR: typeof stored.minEdgeR === 'number' && Number.isFinite(stored.minEdgeR)
             ? Math.min(5, Math.max(-5, stored.minEdgeR))
             : 0,
-        promptAbRate: rate === 0 || rate === 0.1 || rate === 0.5 ? rate : 0.1,
         deskToolsEnabled: stored.deskToolsEnabled !== false,
         guardPreset: stored.guardPreset === 'ftmo' ? 'ftmo' : stored.guardPreset === 'default' ? 'default' : undefined,
         guardDailyLossPct: typeof stored.guardDailyLossPct === 'number' && stored.guardDailyLossPct > 0 ? stored.guardDailyLossPct : undefined,
@@ -115,8 +111,9 @@ export const getHarnessSettings = (): HarnessSettings => {
             : 'shadow',
         // Opt-IN, and the only rail on self-modification: an absent or
         // malformed value means the agent may change nothing about its own
-        // harness. Anything other than the two named levels fails to 'off'.
-        selfModificationMode: stored.selfModificationMode === 'config' || stored.selfModificationMode === 'shadow'
+        // harness. 'config' is the only open level; a stored 'shadow' fails
+        // to 'off' with the tier it belonged to (O-148).
+        selfModificationMode: stored.selfModificationMode === 'config'
             ? stored.selfModificationMode
             : 'off',
     };

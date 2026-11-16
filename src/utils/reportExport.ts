@@ -263,8 +263,6 @@ export const trainingRecordFor = (t: LoggedTrade): Record<string, unknown> => {
             modelsUsed: t.modelsUsed ?? null,
             moderator: t.moderatorModel ? { provider: t.moderatorProvider ?? null, model: t.moderatorModel } : null,
             sourceRunId: t.sourceRunId ?? null,
-            promptVersion: t.promptVersion ?? null,
-            promptLane: t.promptLane ?? null,
             // Size discipline: the transcript belongs in the reasoning export.
             // Count it; the bodies stay behind the run id.
             debateTurnCount: t.debateTurns?.length ?? 0,

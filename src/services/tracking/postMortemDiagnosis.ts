@@ -49,7 +49,6 @@ import { sendChatRequest, type ChatMessage } from '../providers/GenericProviderS
 import { TASK_BUDGETS } from '../providers/taskBudgets';
 import { effortForTask } from '../providers/reasoningControls';
 import {
-    beginPromptLane,
     getPrompt,
     promptCorpusVersion,
 } from '../infrastructure/PromptOverrideService';
@@ -336,8 +335,7 @@ export const runDiagnosisPass = async (
                 context: context.points,
             });
             const packetHash = fnv1a(packet);
-            const lane = beginPromptLane();
-            const promptVersion = promptCorpusVersion(lane);
+            const promptVersion = promptCorpusVersion();
             const tier = effortForTask('postMortem');
 
             let raw: string;
@@ -345,7 +343,7 @@ export const runDiagnosisPass = async (
                 raw = await sendChatRequest(
                     config,
                     [
-                        { role: 'system', content: getPrompt(DIAGNOSIS_PROMPT_ID, POST_MORTEM_DIAGNOSIS_FALLBACK, lane) },
+                        { role: 'system', content: getPrompt(DIAGNOSIS_PROMPT_ID, POST_MORTEM_DIAGNOSIS_FALLBACK) },
                         { role: 'user', content: packet },
                     ] as ChatMessage[],
                     {

@@ -36,14 +36,6 @@ const syncClosedTradeToNotebook = async (
     const { appendDiaryEntry, syncRecurringMistakes } = await import('../services/learning/MemoryFilesService');
     await appendDiaryEntry(trade, username);
     await syncRecurringMistakes(allTrades, username);
-    // A shadow prompt override is judged by the trades that actually ran under
-    // it. Best-effort, like the notebook writes above. Time-based expiry is NOT
-    // this path's job — the learning heartbeat owns the clock, so a window
-    // closes on schedule whether or not another trade ever settles.
-    void (async () => {
-        const { settleSelfChanges } = await import('../services/selfMod/SelfModificationService');
-        await settleSelfChanges(allTrades, { username });
-    })().catch(() => { /* settlement re-opens on the next closed trade */ });
 };
 
 import { netRiskReward, roundTripCostR, stopDistancePercent } from '../utils/netRiskReward';
@@ -479,8 +471,6 @@ export const useTradeLogging = (params: UseTradeLoggingParams) => {
             // Persist debate transcript for training data
             debateTurns: message.debateTurns,
             patternMemoryGate: message.patternMemoryGate,
-            promptVersion: message.runStats?.promptVersion,
-            promptLane: message.runStats?.promptLane,
             sourceRunId: message.runStats?.runId,
             // Pre-read capture: the committed prior rides the message —
             // copy it onto the trade so the journal can score it.
@@ -739,8 +729,6 @@ export const useTradeLogging = (params: UseTradeLoggingParams) => {
                 moderatorModel,
                 debateTurns: message.debateTurns,
                 patternMemoryGate: message.patternMemoryGate,
-                promptVersion: message.runStats?.promptVersion,
-                promptLane: message.runStats?.promptLane,
                 sourceRunId: message.runStats?.runId,
                 userPriorCall: message.userPriorCall,
             };
@@ -998,7 +986,6 @@ export const useTradeLogging = (params: UseTradeLoggingParams) => {
             correctedEntry: candidate.correctedEntry,
             modelsUsed: candidate.message.modelsUsed,
             patternMemoryGate: candidate.message.patternMemoryGate,
-            promptVersion: candidate.message.runStats?.promptVersion,
         };
         // Dedupe by id — a double-confirm (e.g. retrying after a capture
         // failure that actually logged) previously appended a second row

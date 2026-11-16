@@ -74,14 +74,10 @@ export interface RunStats {
   durationMs: number;
   /** Gate confidence cap (0-1) applied during the run, if any. */
   gateCap?: number;
-  /**
-   * Fingerprint of the effective prompt layers for this run (registry
-   * overrides + mode + lens state + hybrid toggle). Lets prompt changes be
-   * MEASURED against outcomes later (per-version win/calibration stats) —
-   * without it, editing a prompt globally could never be evaluated.
-   */
+  /** LEGACY reads only — the A/B lane that stamped these was removed
+   *  (O-140/O-148). Old stored rows keep their values; nothing writes
+   *  either field anymore. */
   promptVersion?: string;
-  /** live = registry overrides; control = built-in prompts (A/B). */
   promptLane?: 'live' | 'control';
   /** Debate-structure lane used by this run (standard/extended/efficient).
    * Deterministically assigned per setup — surfaced on the

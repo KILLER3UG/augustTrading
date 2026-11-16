@@ -24,8 +24,11 @@ trade, without writing a skill:
 
 - `appendDiaryEntry` and `syncRecurringMistakes` (`src/services/learning/MemoryFilesService.ts`) —
   the trader's diary, and the note that names a mistake once it repeats;
-- `expireSelfChanges` and `settleSelfChanges` (`src/services/selfMod/SelfModificationService.ts`) —
-  the harness's own change ledger, which grades a self-modification against what happened next.
+- `expireSelfChanges` (`src/services/selfMod/SelfModificationService.ts`) —
+  the harness's own change ledger, whose config-tier changes revert themselves when their
+  window closes. There was also `settleSelfChanges`, which graded a shadow prompt edit
+  against closed trades; it is deleted with its tier (O-148) — the A/B it compared against
+  never changed what a run was sent (O-140).
 
 ### 2. The settlement reflection
 
