@@ -116,8 +116,14 @@ interface TradeViewProps {
      *  Forwarded rather than copied: the dock keeps a message id, not a stored
      *  duplicate of the analysis. */
     getAnalysisMessage?: (messageId: string) => Message | undefined;
-    /** "Log this trade" on a Chart AI proposal → record an OPEN trade. */
-    onLogProposedTrade?: (proposal: TradeProposal) => void;
+    /** Approve on a decision card → App records the OPEN trade, queues the
+     *  approval receipt and opens the undo window (see TradeChatPanel). */
+    onLogProposedTrade?: (proposal: TradeProposal, sessionId?: string) => Promise<string | false> | string | false | void;
+    /** Reject on a decision card → App records the decline (HOLD ledger);
+     *  returns whether the record landed. */
+    onRejectProposedTrade?: (proposal: TradeProposal, reason?: string) => boolean;
+    /** Undo inside the approval window → App reverses the approval. */
+    onUndoApproval?: (decision: { rowId: string; planId?: string; entryId: string; sessionId?: string }) => void;
     /** Group rooms the Chart AI dock embeds as a session. The Coach inbox used
      *  to be handed through here for the dock's Chat | Coach switch; it is a
      *  tab on the Learning surface now. */
@@ -338,7 +344,7 @@ export const useTickFlash = (price: number | undefined): { cls: string; seq: num
 
 
 const TradeView: React.FC<TradeViewProps> = ({
-    memoryEnabled, strategiesEnabled, providers, selectedChatModel, onSelectChatModel, onRefreshModels, verdict, bots = [], trades = [], botSessionRequest, groupSessionRequest, onRunAnalysis, onAnalysisError, onStopRun, botThreadRows, onBotTurnCommit, onSoloTurnCommit, onSyncConversation, conversationRows, onNewGroup, getAnalysisMessage, onLogProposedTrade, renderGroupSurface, groups = [], registerScrollToMessage, modeRequest, activeUsername, onTradeModeChange, onOpenChat,    onToggleWatch, onOpenWatchList, watchOpenCount = 0, pinnedMessageIds,
+    memoryEnabled, strategiesEnabled, providers, selectedChatModel, onSelectChatModel, onRefreshModels, verdict, bots = [], trades = [], botSessionRequest, groupSessionRequest, onRunAnalysis, onAnalysisError, onStopRun, botThreadRows, onBotTurnCommit, onSoloTurnCommit, onSyncConversation, conversationRows, onNewGroup, getAnalysisMessage, onLogProposedTrade, onRejectProposedTrade, onUndoApproval, renderGroupSurface, groups = [], registerScrollToMessage, modeRequest, activeUsername, onTradeModeChange, onOpenChat,    onToggleWatch, onOpenWatchList, watchOpenCount = 0, pinnedMessageIds,
     onConfirmSettlementCorrection, onDismissSettlementCorrection, onVoidSettlementCorrection,
     onConfirmTradeAction, onDismissTradeAction }) => {
     // The chart opens on the coin the SHARED chat session carries. Adopting only
@@ -891,6 +897,8 @@ const TradeView: React.FC<TradeViewProps> = ({
         onStopRun,
         getAnalysisMessage,
         onLogProposedTrade,
+        onRejectProposedTrade,
+        onUndoApproval,
         onPlanPresented: handlePlanPresented,
         onChatLevelsChange: handleChatLevels,
         renderGroupSurface,

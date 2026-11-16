@@ -164,10 +164,19 @@ interface TradeChatPanelProps {
      *  a stored session would otherwise carry a whole `TradeAnalysis` per
      *  answer. Absent ⇒ the audit block does not render. */
     getAnalysisMessage?: (messageId: string) => Message | undefined;
-    /** "Log this trade" on a model proposal → App records it as an OPEN
-     *  (PENDING) trade the outcome autopilot later scores. Absent ⇒ the Log
-     *  button is hidden (no journal attached). */
-    onLogProposedTrade?: (proposal: TradeProposal) => void;
+    /** Approve on a decision card → App records it as an OPEN (PENDING)
+     *  trade the outcome autopilot later scores, queues the approval-receipt
+     *  harness turn and opens the undo window. Returns the journal ROW id on
+     *  success (the undo handle), false on a refusal or a cancelled confirm.
+     *  Absent ⇒ the Approve button is hidden (no journal attached). */
+    onLogProposedTrade?: (proposal: TradeProposal, sessionId?: string) => Promise<string | false> | string | false | void;
+    /** Reject on a decision card → App records the decline (the HOLD ledger,
+     *  source 'desk') with the card's optional reason. Returns whether the
+     *  record landed — false keeps the card live. */
+    onRejectProposedTrade?: (proposal: TradeProposal, reason?: string) => boolean;
+    /** Undo inside the approval window → App reverses the approval (row
+     *  deleted, receipt message removed, plan watch disarmed). */
+    onUndoApproval?: (decision: { rowId: string; planId?: string; entryId: string; sessionId?: string }) => void;
     /** Report a presented plan to the harness level-watch (TradeView arms
      *  it; a later price touch comes back as a [HARNESS SIGNAL] turn).
      *  `turn` carries the RUNNING turn's identity (see PanelTurnContext). */
@@ -304,7 +313,7 @@ export const ChartAiDockRail: React.FC<{
 const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
     memoryEnabled, strategiesEnabled, symbol, interval, providers, selectedChatModel, onSelectChatModel, live = false,
     chartLevels, chartDrawings, modelDrawings, addModelDrawings, clearModelDrawings, clearAllDrawings,
-    onCaptureChart, getChartSnapshot, bots = [], trades = [], botSessionRequest, groupSessionRequest, onRunAnalysis, onAnalysisError, onStopRun, getAnalysisMessage, onLogProposedTrade, onPlanPresented,
+    onCaptureChart, getChartSnapshot, bots = [], trades = [], botSessionRequest, groupSessionRequest, onRunAnalysis, onAnalysisError, onStopRun, getAnalysisMessage, onLogProposedTrade, onRejectProposedTrade, onUndoApproval, onPlanPresented,
     onChatLevelsChange,
     renderGroupSurface, groups = [],
     registerScrollToMessage,
@@ -1289,7 +1298,10 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
                         onChatLevels={handleCardLevels}
                         onToggleWatch={onToggleWatch}
                         pinnedMessageIds={pinnedMessageIds}
+                        sessionId={activeId}
                         onLogProposedTrade={onLogProposedTrade}
+                        onRejectProposedTrade={onRejectProposedTrade}
+                        onUndoApproval={onUndoApproval}
                         trades={trades}
                         onConfirmSettlementCorrection={onConfirmSettlementCorrection}
                         onDismissSettlementCorrection={onDismissSettlementCorrection}

@@ -31,5 +31,11 @@ export const rememberProposalState = (rowId: string, state: ProposalState): void
     disposition.set(rowId, state);
 };
 
+/** Forget one disposition — the UNDO path. Reversing an approval must put the
+ *  card back to undecided: the row was deleted and the receipt message
+ *  removed, so a stale 'logged' here would hide a card the trader can act on
+ *  again (re-approve or reject). */
+export const forgetProposalState = (rowId: string): void => { disposition.delete(rowId); };
+
 /** Test hook: forget every recorded proposal disposition. */
 export const __clearProposalStateForTests = (): void => { disposition.clear(); };

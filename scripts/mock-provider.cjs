@@ -81,12 +81,23 @@ function toolPayload(content) {
 }
 
 function toolScenario(body) {
-    // A request-scoped arming marker: the render probe sends one message
-    // containing PROBE_TOOL_ROUND. A second mock instance with MOCK_TOOL_CALL=1 was
-    // tried first and rejected, because it answers boot-time calls too and the app
-    // then never reaches the trade screen.
-    const marked = JSON.stringify((body && body.messages) || []).includes("PROBE_TOOL_ROUND");
-    if (!TOOL_SCENARIO && !marked) return null;
+    // A request-scoped arming marker: the probe sends one message containing
+    // PROBE_TOOL_ROUND, and only THAT message arms the scenario. Keyed on the
+    // LAST user message — not on the whole history — so a later HARNESS turn
+    // (an approval receipt, an undo receipt: app-authored notes that travel in
+    // the user role over a history that still contains the probe's marker)
+    // gets a plain reply instead of silently consuming the next scripted call.
+    const allMsgs = Array.isArray((body && body.messages) || []) ? (body && body.messages) || [] : [];
+    const lastUserMsg = [...allMsgs].reverse().find((m) => m && m.role === 'user');
+    const lastUserText = typeof (lastUserMsg && lastUserMsg.content) === 'string'
+        ? lastUserMsg.content
+        : JSON.stringify((lastUserMsg && lastUserMsg.content) || '');
+    const marked = lastUserText.includes('PROBE_TOOL_ROUND');
+    // The marker is the ONLY arm switch: a flag-on run must not script every
+    // unmarked tool-bearing turn (the outcome autopilot and the learning loop
+    // run model turns of their own, and a scripted present_trade landing in
+    // the middle of one minted a card the probe never asked for).
+    if (!marked) return null;
     if (!Array.isArray(body.tools) || body.tools.length === 0) return null;
     const msgs = Array.isArray(body.messages) ? body.messages : [];
     // One shot per TURN. After the app runs the tool it calls back with the

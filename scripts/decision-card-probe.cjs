@@ -1,0 +1,600 @@
+/**
+ * decision-card-probe — drive the proposal DECISION CARD (Approve / Reject /
+ * Ask-why / Undo) end to end in a real browser.
+ *
+ * WHY THIS EXISTS. Phase 3 turns the old "Track this trade" card into the
+ * trader's decision surface: Approve logs through the gated human path and
+ * queues an approval-receipt harness turn, Reject records a decline, Ask-why
+ * pre-fills a pushback prompt, a stale plan needs a re-confirm, and a short
+ * undo window reverses the whole approval. The pure logic is pinned by
+ * check-contracts (staleness math, receipt dedupe, decline ledger, undo
+ * window); this probe proves the RENDERED flows:
+ *
+ *   1. a presented plan renders the card; nothing logs until Approve;
+ *   2. Ask-why pre-fills the composer with the pushback prompt;
+ *   3. Approve writes ONE PENDING journal row, queues the APPROVAL RECEIPT
+ *      harness turn, and opens the undo window — and a second Approve tap
+ *      cannot log a second row;
+ *   4. Undo inside the window deletes the row, removes the receipt (the
+ *      APPROVAL UNDONE note reaches the thread) and puts the card back;
+ *   5. a plan past its undo window settles into the logged row and cannot be
+ *      approved twice;
+ *   6. a STALE plan (mark far from the proposed entry) refuses a silent
+ *      approval: the drift is printed and a re-confirm tap is required;
+ *   7. Reject records the decline (HOLD ledger, source 'desk') with the
+ *      card's optional reason.
+ *
+ *   node scripts/decision-card-probe.cjs   # self-hosts vite on 4187 + mock on 8791
+ *
+ * Exits non-zero on any failure. Companion to dock-card-probe (P-6); this is
+ * the Phase 3 decision-card evidence.
+ */
+
+const { spawn } = require('child_process');
+const net = require('net');
+const path = require('path');
+const { chromium } = require('@playwright/test');
+
+const PORT = process.env.PROBE_PORT ? Number(process.env.PROBE_PORT) : 4187;
+const MOCK_PORT = process.env.MOCK_PORT ? Number(process.env.MOCK_PORT) : 8791;
+const BASE = `http://127.0.0.1:${PORT}`;
+const ROOT = path.join(__dirname, '..');
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// The scripted present_trade calls, in the order the probe's turns fire.
+// Entries sit FAR from any live mark with a huge stop distance, so the
+// staleness rule (drift past half the stop distance) keeps them FRESH
+// whatever the synthetic tape prints; PLAN_C is the deliberate STALE case
+// (entry 100 with a 1-point stop: any real mark is miles past half the stop).
+const PLAN_A = {
+    symbol: 'BTCUSDT', direction: 'Long', entry: 84000, stopLoss: 1000,
+    takeProfits: [200000], confidence: 'Low',
+    rationale: 'Probe plan A — the approve / receipt / undo walk.',
+    invalidation: 'A close below the probe stop.',
+};
+const PLAN_B = {
+    symbol: 'BTCUSDT', direction: 'Long', entry: 84000, stopLoss: 1000,
+    takeProfits: [200000], confidence: 'Low',
+    rationale: 'Probe plan B — the double-approve and undo-lapse walk.',
+    invalidation: 'A close below the probe stop.',
+};
+const PLAN_C = {
+    symbol: 'BTCUSDT', direction: 'Long', entry: 100, stopLoss: 99.9,
+    takeProfits: [130], confidence: 'Low',
+    rationale: 'Probe plan C — deliberately stale against any live mark.',
+    invalidation: 'A close above 130.',
+};
+const PLAN_D = {
+    symbol: 'BTCUSDT', direction: 'Short', entry: 84000, stopLoss: 85000,
+    takeProfits: [80000], confidence: 'Low',
+    rationale: 'Probe plan D — the reject walk.',
+    invalidation: 'A push above the probe stop.',
+};
+
+async function waitForServer(url, timeoutMs = 30000) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+        try {
+            const res = await fetch(url);
+            if (res.ok || res.status === 404) return true;
+        } catch { /* not up yet */ }
+        await sleep(250);
+    }
+    return false;
+}
+
+/** Seed the profile the way dock-card-probe does (the mount-armed save flush
+ *  would overwrite an external write, so this runs from favicon.ico). */
+async function seed(page) {
+    await page.goto(`${BASE}/favicon.ico`, { waitUntil: 'domcontentloaded' });
+    await page.evaluate(() => {
+        localStorage.clear();
+        sessionStorage.clear();
+        localStorage.setItem('august_surface_v1', 'trade');
+        sessionStorage.setItem('activeUsername', 'Probe User');
+    });
+    await page.evaluate(async (mockPort) => {
+        const db = await new Promise((resolve, reject) => {
+            const request = indexedDB.open('FuturesAI-DB', 1);
+            request.onupgradeneeded = () => {
+                if (!request.result.objectStoreNames.contains('userProfiles')) {
+                    request.result.createObjectStore('userProfiles', { keyPath: 'username' });
+                }
+            };
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+        });
+        const analysis = (over) => ({
+            direction: 'Long', confidence: 'High', coinName: 'BTCUSDT',
+            entryPoints: [{ price: '84210.5', description: 'reclaim' }],
+            stopLoss: '83100', takeProfit: [{ price: '87900' }],
+            probability: 62, reasoning: 'Holding above the 200-EMA into thin sell-side.',
+            marketConditions: {}, activeStrategies: [], validationWarnings: [],
+            ...over,
+        });
+        const tradeRow = (id, minsAgo, outcome, tradeType, direction, coin) => ({
+            id,
+            outcome,
+            tradeType,
+            timestamp: new Date(Date.now() - minsAgo * 60000).toISOString(),
+            leverage: 10,
+            analysis: analysis({ direction, coinName: coin }),
+        });
+        const tx = db.transaction('userProfiles', 'readwrite');
+        tx.objectStore('userProfiles').put({
+            username: 'Probe User',
+            conversations: [],
+            tradeLog: [
+                tradeRow('pt-2', 280, 'LOSS', 'scalp', 'Short', 'BTCUSDT'),
+                tradeRow('pt-3', 260, 'WIN', 'swing', 'Long', 'ETHUSDT'),
+            ],
+            tradeSummaries: [],
+            finalTradeSummary: null,
+            settings: { activeFrameworks: [] },
+        });
+        await new Promise((resolve, reject) => {
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error);
+        });
+        db.close();
+        localStorage.setItem('provider_configs_v1', JSON.stringify([{
+            id: 'mock', name: 'Mock', apiKey: 'mock-key',
+            baseUrl: `http://127.0.0.1:${mockPort}/v1`,
+            apiFormat: 'chat_completions',
+            isEnabled: true, isBuiltIn: false,
+            models: ['mock-mini'], selectedModel: 'mock-mini',
+        }]));
+    }, MOCK_PORT);
+}
+
+/** Read the WHOLE journal back — the approve writes a PENDING row the
+ *  assertions count and the undo deletes. */
+async function readTrades(page) {
+    return page.evaluate(async () => {
+        const db = await new Promise((resolve, reject) => {
+            const request = indexedDB.open('FuturesAI-DB', 1);
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+        });
+        const row = await new Promise((resolve) => {
+            const get = db.transaction('userProfiles', 'readonly')
+                .objectStore('userProfiles').get('Probe User');
+            get.onsuccess = () => resolve(get.result || null);
+            get.onerror = () => resolve(null);
+        });
+        db.close();
+        return ((row && row.tradeLog) || []).map((t) => ({
+            id: t.id, outcome: t.outcome, planId: t.planId || null,
+        }));
+    });
+}
+
+const pendingRows = (rows) => rows.filter((r) => r.outcome === 'PENDING');
+
+/** Poll the journal until at least `min` PENDING rows exist — the debounced
+ *  DATA save (~1.5s) flushes behind the write, so a single read races it. */
+async function waitForPendingRows(page, min, timeoutMs = 15000) {
+    const deadline = Date.now() + timeoutMs;
+    let rows = [];
+    while (Date.now() < deadline) {
+        rows = pendingRows(await readTrades(page));
+        if (rows.length >= min) return rows;
+        await sleep(400);
+    }
+    return rows;
+}
+
+/** Read every decline ledger row (any user bucket) — the Reject check. */
+async function readDeclines(page) {
+    return page.evaluate(() => {
+        const out = [];
+        for (let i = 0; i < localStorage.length; i++) {
+            const k = localStorage.key(i);
+            if (k && k.startsWith('trade_declines_v1_')) {
+                try { out.push(...JSON.parse(localStorage.getItem(k) || '[]')); } catch { /* skip */ }
+            }
+        }
+        return out.map((d) => ({ symbol: d.symbol, reason: d.reason, source: d.source }));
+    });
+}
+
+/** Send one dock message the way a person does (native value setter + Send). */
+async function sendInDock(page, text) {
+    await scrollTranscriptToBottom(page);
+    await page.waitForFunction(() => {
+        const ta = document.querySelector('textarea');
+        if (!ta || ta.disabled) return false;
+        return [...document.querySelectorAll('button')].some((b) => !b.disabled && /send/i.test(
+            `${b.getAttribute('aria-label') || ''} ${b.title || ''} ${b.textContent || ''}`,
+        ));
+    }, null, { timeout: 30000 });
+    const sent = await page.evaluate((needle) => {
+        const ta = document.querySelector('textarea');
+        if (!ta || ta.disabled) return 'no composer';
+        Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')
+            .set.call(ta, needle);
+        ta.dispatchEvent(new Event('input', { bubbles: true }));
+        const btn = [...document.querySelectorAll('button')].find((b) => /send/i.test(
+            `${b.getAttribute('aria-label') || ''} ${b.title || ''} ${b.textContent || ''}`,
+        ));
+        if (!btn) return 'no send button';
+        if (btn.disabled) return 'send disabled';
+        btn.click();
+        return 'clicked';
+    }, text);
+    if (sent !== 'clicked') throw new Error(`send failed: ${sent}`);
+}
+
+const failures = [];
+const check = (name, ok, detail) => {
+    if (!ok) failures.push(`${name}${detail ? ` — ${detail}` : ''}`);
+    console.log(`${ok ? '  ok  ' : ' FAIL '} ${name}${detail ? ` (${detail})` : ''}`);
+};
+
+/** Scroll the dock transcript UP — the transcript is VIRTUALIZED, so a card
+ *  a couple of rows above the newest one can be unmounted, and the approval
+ *  receipt turns that follow an approve push it exactly there. A trader
+ *  scrolls back to the card; the probe does the same. */
+async function scrollTranscriptUp(page, amount = 1600) {
+    await page.evaluate((amt) => {
+        // The transcript scroller is the panel's .custom-scrollbar log box —
+        // not the tallest scrollable descendant (menus/drawers compete).
+        const boxes = [...document.querySelectorAll('[data-testid="trade-chat-panel"] .custom-scrollbar')]
+            .filter((el) => el.scrollHeight > el.clientHeight + 100)
+            .sort((a, b) => b.clientHeight - a.clientHeight);
+        const box = boxes[0];
+        if (box) box.scrollTop = Math.max(0, box.scrollTop - amt);
+    }, amount);
+}
+
+/** Scroll the dock transcript back to the newest row — Virtuoso follows the
+ *  newest row only when the list is AT the bottom, so a probe that scrolled
+ *  up must re-anchor before the next turn or the new row never mounts. */
+async function scrollTranscriptToBottom(page) {
+    await page.evaluate(() => {
+        const boxes = [...document.querySelectorAll('[data-testid="trade-chat-panel"] .custom-scrollbar')]
+            .filter((el) => el.scrollHeight > el.clientHeight + 100)
+            .sort((a, b) => b.clientHeight - a.clientHeight);
+        const box = boxes[0];
+        if (box) box.scrollTop = box.scrollHeight;
+    });
+}
+
+/** Click Approve and ride out the fail-closed confirms (an unmeasured gate
+ *  and an unverified plan each ask for an explicit confirm before the row
+ *  lands), then wait for the undo window. */
+async function approveToUndoWindow(page, consoleLog) {
+    await page.locator('[data-testid="proposal-approve"]').last().click();
+    for (let i = 0; i < 14; i++) {
+        if (await page.locator('[data-testid="proposal-undo-window"]').count()) return;
+        const dlg = page.locator('[data-testid="confirm-dialog-confirm"]');
+        if (await dlg.count()) {
+            consoleLog.push(`dialog[${i}]: clicked confirm`);
+            await dlg.first().click();
+            await sleep(400);
+        } else {
+            // The receipt turns that follow the approve push the card out of
+            // the virtualized window — scroll back to it each miss.
+            await scrollTranscriptUp(page, 1200);
+            await sleep(400);
+        }
+    }
+    if (await page.locator('[data-testid="proposal-undo-window"]').count()) return;
+    // Diagnose the miss: what does the card say, is the button disabled, is a
+    // dialog open, and what did the journal hold?
+    const diag = await page.evaluate(async () => {
+        const card = [...document.querySelectorAll('[data-testid="trade-proposal-card"]')].pop();
+        const btn = [...document.querySelectorAll('[data-testid="proposal-approve"]')].pop();
+        const dlg = document.querySelector('[role="dialog"]');
+        const db = await new Promise((resolve, reject) => {
+            const request = indexedDB.open('FuturesAI-DB', 1);
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+        });
+        const row = await new Promise((resolve) => {
+            const get = db.transaction('userProfiles', 'readonly')
+                .objectStore('userProfiles').get('Probe User');
+            get.onsuccess = () => resolve(get.result || null);
+            get.onerror = () => resolve(null);
+        });
+        db.close();
+        return {
+            card: card ? card.textContent.replace(/\s+/g, ' ').slice(0, 300) : 'NO CARD',
+            btnDisabled: btn ? btn.disabled : 'no button',
+            dialog: dlg ? dlg.textContent.replace(/\s+/g, ' ').slice(0, 200) : 'none',
+            rows: (((row && row.tradeLog) || [])).map((t) => [t.id, t.outcome, t.planId]),
+        };
+    });
+    console.error('  [diag] card:', diag.card);
+    console.error('  [diag] btnDisabled:', diag.btnDisabled, '| dialog:', diag.dialog);
+    console.error('  [diag] rows:', JSON.stringify(diag.rows));
+    await page.waitForSelector('[data-testid="proposal-undo-window"]', { timeout: 20000 });
+}
+
+
+/** Dump the transcript's mounted state — the virtualized window is the whole
+ *  difference between "the app rendered it" and "body.innerText saw it". */
+async function dumpTranscriptState(page, label) {
+    const d = await page.evaluate(() => {
+        const panel = document.querySelector('[data-testid="trade-chat-panel"]');
+        const boxes = [...document.querySelectorAll('[data-testid="trade-chat-panel"] .custom-scrollbar')]
+            .map((el) => ({ ch: el.clientHeight, sh: el.scrollHeight, st: Math.round(el.scrollTop) }));
+        const items = [...document.querySelectorAll('[data-testid="trade-chat-panel"] [data-index]')];
+        const cards = [...document.querySelectorAll('[data-testid="trade-proposal-card"]')]
+            .map((c) => c.textContent.replace(/\s+/g, ' ').slice(0, 80));
+        const lastTexts = items.slice(-3).map((el) => el.textContent.replace(/\s+/g, ' ').slice(0, 100));
+        return {
+            panelMounted: !!panel,
+            boxes,
+            mountedItems: items.length,
+            cards,
+            lastTexts,
+            bodyHas: {
+                planC: document.body.innerText.includes('Probe plan C'),
+                planD: document.body.innerText.includes('Probe plan D'),
+                logged: document.body.innerText.includes('Approved — tracking this trade'),
+            },
+        };
+    });
+    console.error(`  [state:${label}]`, JSON.stringify(d));
+}
+
+
+/** Wait for `needle` to appear anywhere in the transcript, SCANNING while it
+ *  polls: the list is virtualized and the follow-scroll moves, so the row
+ *  carrying the text is not always in the mounted window. A human scrolls;
+ *  so does this. */
+async function waitForTextScrolling(page, needle, timeoutMs = 45000) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+        await scrollTranscriptToBottom(page);
+        await sleep(250);
+        if (await page.evaluate((n) => document.body.innerText.includes(n), needle)) return true;
+        for (let i = 0; i < 5; i++) {
+            await scrollTranscriptUp(page, 900);
+            await sleep(250);
+            if (await page.evaluate((n) => document.body.innerText.includes(n), needle)) return true;
+        }
+        await sleep(400);
+    }
+    return false;
+}
+
+async function main() {
+    const free = (port) => new Promise((resolve) => {
+        const probe = net.createServer();
+        probe.once('error', () => resolve(false));
+        probe.once('listening', () => probe.close(() => resolve(true)));
+        probe.listen(port, '127.0.0.1');
+    });
+    for (const [label, port] of [['dev server', PORT], ['mock provider', MOCK_PORT]]) {
+        if (await free(port)) continue;
+        console.error(`DECISION CARD PROBE FAIL: port ${port} (${label}) is already owned — refusing to drive it.`);
+        process.exitCode = 1;
+        return;
+    }
+    const viteBin = path.join(ROOT, 'node_modules', 'vite', 'bin', 'vite.js');
+    const server = spawn(process.execPath, [viteBin, '--port', String(PORT), '--strictPort'], {
+        cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
+    });
+    const mock = spawn(process.execPath, [path.join(ROOT, 'scripts', 'mock-provider.cjs'), String(MOCK_PORT)], {
+        cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
+        env: {
+            ...process.env,
+            MOCK_TOOL_CALL: '1',
+            MOCK_TOOL_NAME: 'present_trade',
+            MOCK_SKILL_ARGS: JSON.stringify([PLAN_A, PLAN_B, PLAN_C, PLAN_D]),
+        },
+    });
+    let serverOut = '';
+    let mockOut = '';
+    const consoleLog = [];
+    server.stdout.on('data', (d) => { serverOut += String(d); });
+    server.stderr.on('data', (d) => { serverOut += String(d); });
+    mock.stdout.on('data', (d) => { mockOut += String(d); });
+    mock.stderr.on('data', (d) => { mockOut += String(d); });
+
+    try {
+        if (!(await waitForServer(BASE))) {
+            console.error('DECISION CARD PROBE FAIL: no vite dev server on', BASE, '\n', serverOut);
+            process.exitCode = 1;
+            return;
+        }
+        if (!(await waitForServer(`http://127.0.0.1:${MOCK_PORT}/models`))) {
+            console.error('DECISION CARD PROBE FAIL: mock provider never came up');
+            process.exitCode = 1;
+            return;
+        }
+        const browser = await chromium.launch({ headless: true });
+        const page = await browser.newPage();
+        const pageErrors = [];
+        page.on('pageerror', (err) => pageErrors.push(String(err && err.stack || err)));
+        page.on('console', (msg) => {
+            consoleLog.push(`[console.${msg.type()}] ${msg.text().slice(0, 200)}`);
+            if (consoleLog.length > 400) consoleLog.splice(0, consoleLog.length - 400);
+        });
+        page.on('requestfailed', (req) => consoleLog.push(`[reqfail] ${req.url().slice(0, 120)} ${req.failure() && req.failure().errorText}`));
+
+        await seed(page);
+        await page.goto(BASE + '/', { waitUntil: 'domcontentloaded' });
+        await page.waitForFunction(() => !document.querySelector('#splash'), null, { timeout: 45000 });
+        const ws = page.locator('input[placeholder="Create New Workspace"]');
+        if (await ws.count()) {
+            await ws.first().fill('Probe User');
+            await page.locator('button').filter({ hasText: /^Enter$/ }).first().click();
+            await sleep(1500);
+        }
+        await page.waitForSelector('[data-testid="trade-view"]', { timeout: 60000 });
+        const aiTab = page.locator('[role="tab"]', { hasText: /^AI$/ }).first();
+        if (await aiTab.count()) await aiTab.click();
+        await sleep(500);
+
+        // ── Turn 1 (PLAN_A): present → Ask-why → Approve → receipt → Undo ──
+        await sendInDock(page, 'PROBE_TOOL_ROUND present plan A');
+        await page.waitForSelector('[data-testid="trade-chat-panel"] [data-testid="trade-proposal-card"]',
+            { timeout: 45000 });
+        check('a presented plan renders the decision card', true);
+        await page.screenshot({ path: '.probe-artifacts/decision-card-presented.png' });
+
+        const beforeApprove = pendingRows(await readTrades(page));
+        check('nothing logs until you approve', beforeApprove.length === 0,
+            `${beforeApprove.length} pending row(s) before the tap`);
+
+        // Ask-why: the composer pre-fills with the pushback prompt; nothing is
+        // sent and the card stays.
+        await page.locator('[data-testid="proposal-ask-why"]').last().click();
+        await sleep(400);
+        const draft = await page.evaluate(() => {
+            const ta = document.querySelector('textarea');
+            return ta ? ta.value : '';
+        });
+        check('Ask-why pre-fills the composer with the pushback prompt',
+            /Why this trade\?/.test(draft) && /invalidat/i.test(draft),
+            draft.slice(0, 120));
+
+        await approveToUndoWindow(page, consoleLog);
+        // The window is 12s and the debounced save lags the write, so every
+        // read here POLLS — and the undo tap happens before the lapse.
+        const afterApprove = await waitForPendingRows(page, 1);
+        check('one Approve logs exactly one PENDING journal row', afterApprove.length === 1,
+            `${afterApprove.length} pending row(s) after the tap: ${JSON.stringify((await readTrades(page)).map((r) => [r.id, r.outcome]))}`);
+        await page.screenshot({ path: '.probe-artifacts/decision-card-approved.png' });
+
+        // The receipt: a harness turn reaches the thread, so the model learns
+        // the decision in conversation. (Checked BEFORE the undo tap — the
+        // window is short and the note renders as soon as the turn starts.)
+        const receiptSeen = await waitForTextScrolling(page, 'APPROVAL RECEIPT', 12000);
+        check('the approval receipt reaches the conversation', receiptSeen);
+
+        // A second Approve tap cannot happen: the undo row replaced the
+        // buttons (and the disposition map would refuse a replay anyway).
+        const secondApprove = await page.locator('[data-testid="trade-chat-panel"] [data-testid="proposal-approve"]').count();
+        check('an approved card offers no second Approve tap', secondApprove === 0,
+            `${secondApprove} approve button(s) still visible`);
+
+        // ── Undo: the whole approval reverses ──────────────────────────────
+        for (let i = 0; i < 8 && (await page.locator('[data-testid="proposal-undo"]').count()) === 0; i++) {
+            await scrollTranscriptUp(page, 1200);
+            await sleep(300);
+        }
+        const undoVisible = (await page.locator('[data-testid="proposal-undo"]').count()) > 0;
+        if (undoVisible) await page.locator('[data-testid="proposal-undo"]').last().click();
+        let undone = false;
+        for (let i = 0; i < 24 && !undone; i++) {
+            await sleep(500);
+            const rows = pendingRows(await readTrades(page));
+            const buttonsBack = (await page.locator('[data-testid="trade-chat-panel"] [data-testid="proposal-approve"]').count()) > 0;
+            undone = rows.length === 0 && buttonsBack;
+        }
+        const undoNote = await waitForTextScrolling(page, 'APPROVAL UNDONE', 15000);
+        check('Undo deletes the row and restores the card', undone,
+            `rows=${JSON.stringify((await readTrades(page)).map((r) => r.outcome))}`);
+        check('the undo note reaches the thread', undoNote);
+
+        // ── Turn 2 (PLAN_B): a re-approve after undo is a FRESH decision ────
+        await sendInDock(page, 'PROBE_TOOL_ROUND present plan B');
+        if (!(await waitForTextScrolling(page, 'Probe plan B'))) {
+            await dumpTranscriptState(page, 'plan B card never mounted');
+            throw new Error('plan B card never rendered');
+        }
+        await approveToUndoWindow(page, consoleLog);
+        const reapproved = await waitForPendingRows(page, 1);
+        check('a re-approve after an undo logs a fresh row', reapproved.length === 1,
+            `${reapproved.length} pending row(s)`);
+
+        // The undo window lapses: the approved plan settles into the logged
+        // row. (An earlier UNDONE plan's card stays live by design — the
+        // trader may approve it again — so the assertion is "no undo window
+        // anywhere + the row intact", not "no card anywhere".)
+        await sleep(13500);
+        const lapsed = (await page.locator('[data-testid="proposal-undo-window"]').count()) === 0;
+        const stillLogged = pendingRows(await readTrades(page)).length === 1;
+        check('past the undo window the approval settles and the row stands', lapsed && stillLogged,
+            `undoWindowGone=${lapsed} rowIntact=${stillLogged}`);
+        // The settled logged row carries a testid; scan for it the same way
+        // (the virtualized window moves with the scroll).
+        const settleDeadline = Date.now() + 25000;
+        let settled = false;
+        while (Date.now() < settleDeadline && !settled) {
+            await scrollTranscriptToBottom(page);
+            await sleep(250);
+            settled = (await page.locator('[data-testid="proposal-logged-row"]').count()) > 0;
+            for (let i = 0; i < 5 && !settled; i++) {
+                await scrollTranscriptUp(page, 900);
+                await sleep(250);
+                settled = (await page.locator('[data-testid="proposal-logged-row"]').count()) > 0;
+            }
+            if (!settled) await sleep(400);
+        }
+        check('the settled row says the trade is tracked', settled);
+
+        // ── Turn 3 (PLAN_C): a STALE plan needs a re-confirm ────────────────
+        await sendInDock(page, 'PROBE_TOOL_ROUND present plan C');
+        if (!(await waitForTextScrolling(page, 'Probe plan C'))) {
+            await dumpTranscriptState(page, 'plan C card never mounted');
+            await page.screenshot({ path: '.probe-artifacts/decision-card-planC-timeout.png' });
+            throw new Error('plan C card never rendered');
+        }
+        await page.screenshot({ path: '.probe-artifacts/decision-card-stale.png' });
+        const staleShown = (await page.locator('[data-testid="trade-chat-panel"] [data-testid="proposal-stale"]').count()) > 0;
+        check('a plan priced far from the live mark shows the staleness block', staleShown);
+        const beforeTap = await page.locator('[data-testid="trade-chat-panel"] [data-testid="proposal-approve"]').last().innerText();
+        await page.locator('[data-testid="trade-chat-panel"] [data-testid="proposal-approve"]').last().click();
+        // Poll briefly for a SECOND row: one appearing within this window is
+        // the silent approval this check exists to refuse.
+        const afterFirstTap = await waitForPendingRows(page, 2, 4000); // stays at 1 when nothing lands
+        const noSilentLog = afterFirstTap.length === 1; // still only plan B's row
+        check('the first tap on a stale plan does not approve silently',
+            /Re-confirm/i.test(beforeTap) && noSilentLog,
+            `buttonBefore="${beforeTap.replace(/\s+/g, ' ').slice(0, 40)}" rows=${JSON.stringify(afterFirstTap.map((r) => r.outcome))}`);
+        await approveToUndoWindow(page, consoleLog);
+        const staleRows = await waitForPendingRows(page, 2);
+        check('the re-confirm tap approves the stale plan', staleRows.length === 2,
+            `${staleRows.length} pending row(s)`);
+
+        // ── Turn 4 (PLAN_D): Reject records the decline ─────────────────────
+        await sendInDock(page, 'PROBE_TOOL_ROUND present plan D');
+        if (!(await waitForTextScrolling(page, 'Probe plan D'))) {
+            await dumpTranscriptState(page, 'plan D card never mounted');
+            throw new Error('plan D card never rendered');
+        }
+        await page.locator('[data-testid="trade-chat-panel"] [data-testid="proposal-decline-reason"]')
+            .last().fill('R:R too thin for the regime');
+        await page.locator('[data-testid="trade-chat-panel"] [data-testid="proposal-reject"]').last().click();
+        await sleep(1500);
+        const rejectGone = (await page.locator('[data-testid="trade-chat-panel"] [data-testid="trade-proposal-card"]').count()) === 0;
+        const declines = await readDeclines(page);
+        const recorded = declines.some((d) => d.source === 'desk' && /R:R too thin for the regime/.test(d.reason || ''));
+        check('Reject resolves the card and records the decline with its reason',
+            rejectGone && recorded,
+            `cardGone=${rejectGone} declines=${JSON.stringify(declines).slice(0, 160)}`);
+        const rejectLogged = pendingRows(await readTrades(page)).length === 2;
+        check('a rejected plan logs nothing', rejectLogged,
+            `${pendingRows(await readTrades(page)).length} pending row(s)`);
+
+        check('zero pageerrors across the decision-card run', pageErrors.length === 0,
+            pageErrors.slice(0, 3).join(' | '));
+        await browser.close();
+    } catch (err) {
+        console.error('DECISION CARD PROBE FAIL (driver):', err && err.message || err);
+        console.error('  [mock]', mockOut.slice(-400).split('\n').join(' | '));
+        for (const line of consoleLog.slice(-14)) console.error('  ·', line);
+        process.exitCode = 1;
+    } finally {
+        server.kill();
+        mock.kill();
+    }
+    if (failures.length) {
+        console.error(`\nDECISION CARD PROBE FAILED — ${failures.length} check(s):`);
+        for (const f of failures) console.error(' • ' + f);
+        process.exitCode = 1;
+        return;
+    }
+    if (process.exitCode !== 1) {
+        console.log('\nDECISION CARD PROBE OK — the card presents, Ask-why pre-fills, Approve logs one');
+        console.log('row with a receipt the thread reads, Undo reverses the whole approval, a stale');
+        console.log('plan needs a re-confirm, and Reject records the decline with its reason.');
+    }
+}
+
+void main();

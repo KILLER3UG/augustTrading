@@ -1,19 +1,35 @@
 /**
- * TradeProposalCard — the model's presented trade plan rendered as a card
- * with Log-this-trade / Cancel. This is the dock's half of the outcome
- * autopilot: logging hands App an OPEN (PENDING) trade that the autopilot
- * later scores. Extracted from TradeChatPanel unchanged.
+ * TradeProposalCard — the model's presented trade plan rendered as the
+ * DECISION CARD (redesign Phase 3): **Approve / Reject / Ask-why**, one tap
+ * each, no modal.
+ *
+ * Approve is the trader's "log + monitor": it runs the SAME gated human path
+ * the old "Track this trade" ran (gate scan, planId dedupe, PENDING row),
+ * then App enqueues the approval-receipt harness turn so the model learns the
+ * decision in conversation, and a short UNDO window opens (the receipt and
+ * the window live in `services/trade/tradeDecision`).
+ *
+ * Approve is never silent about a market that moved: the card checks the
+ * live mark against the proposed entry (staleness) at render time, and a
+ * stale plan needs a re-confirm tap — "Re-confirm: approve anyway" — with
+ * the drift printed on the card.
+ *
+ * Reject records a decline (the HOLD ledger) with an optional reason typed
+ * on the card. Ask-why pre-fills the composer with a pushback prompt — the
+ * host wires it through its draft setter, so nothing here touches the
+ * composer directly.
  *
  * The double-log guard and the disposition map stay in the dock (they live at
- * module scope so a 'logged' plan survives an unmount/remount); this card only
- * reflects `canLog` and forwards the two clicks.
+ * module scope so a 'logged' plan survives an unmount/remount); this card
+ * only reflects `canLog` and forwards the taps.
  */
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { CheckCircle } from '../../shared/Icons';
 import Disclosure from '../../shared/Disclosure';
 import type { TradeProposal } from '../../../services/trade/proposedTrade';
 import { computeRrRatio, buildTradePlan, modelStatedSize, proposedTicketSize } from '../../../services/trade/proposedTrade';
+import { assessProposalStaleness, undoWindowOf } from '../../../services/trade/tradeDecision';
 import { fmtRiskReward } from '../../../utils/riskReward';
 import { getHarnessSettings } from '../../../utils/harnessSettings';
 import { defaultLeverage } from '../../../utils/conversationUtils';
@@ -21,25 +37,48 @@ import { computeLiquidationBuffer } from '../../../utils/ticketSize';
 
 export interface TradeProposalCardProps {
     proposal: TradeProposal;
+    /** This card's transcript entry id — the key the undo window is stored
+     *  under (module scope, so it survives the virtualized list remounting
+     *  the card mid-window). */
+    entryId?: string;
     /** A journal is attached (App passed onLogProposedTrade) — without it the
-     *  Log button is hidden and only Cancel shows. */
+     *  Approve button is hidden and only Reject / Ask-why show. */
     canLog: boolean;
-    /** The log click is awaiting the gate scan. The button is disabled and
-     *  labelled for what it is waiting on, so a slow scan never reads as a dead
-     *  button — the failure mode this whole surface was built to avoid. */
+    /** The approve click is awaiting the gate scan. The button is disabled
+     *  and labelled for what it is waiting on, so a slow scan never reads as
+     *  a dead button — the failure mode this whole surface was built to
+     *  avoid. */
     awaitingLog?: boolean;
     /** The leverage the suggested size is computed against. Defaults to the
      *  app-wide default; a host that knows the conversation's leverage should
      *  pass it, because the exchange's notional ceiling depends on it. */
     leverage?: number;
-    onLog: () => void;
-    onCancel: () => void;
+    /** The freshest live mark — the staleness check at approve time reads it
+     *  from the chart's own snapshot, never a re-fetch. Absent ⇒ no drift is
+     *  claimed (the age half of staleness still applies). */
+    getMark?: () => number | null;
+    /** When the plan was presented (the transcript entry's timestamp), for
+     *  the validity-window half of the staleness check. */
+    presentedAt?: number;
+    /** Repaint trigger: the undo window lives at module scope, so the host
+     *  bumps this after an approve/undo for the card to re-read it. */
+    undoTick?: number;
+    /** The undo window lapsed while this card was showing it — the host must
+     *  re-render so the settled logged row replaces the card (without this,
+     *  the card would fall back to live Approve buttons over an already-
+     *  logged plan). */
+    onUndoWindowClose?: () => void;
+    onApprove: () => void;
+    onReject: (reason?: string) => void;
+    onAskWhy: () => void;
+    /** Reverse this approval inside the undo window. Absent ⇒ no undo row. */
+    onUndo?: () => void;
     /**
      * A caution printed on the card, in the app's own words, when the plan is
      * sound but the TURN that carried it was not — a run that stopped after
      * presenting the plan never delivered the rest of the reasoning.
      *
-     * It deliberately does NOT disable or hide "Log this trade". The plan object
+     * It deliberately does NOT disable or hide "Approve". The plan object
      * is machine-built and gate-checked; what went missing is the prose around
      * it. Removing a working control because something adjacent failed is the
      * inert-button failure mode this app already guards elsewhere, and it leaves
@@ -49,7 +88,10 @@ export interface TradeProposalCardProps {
     logNote?: string;
 }
 
-const TradeProposalCard: React.FC<TradeProposalCardProps> = ({ proposal, canLog, awaitingLog = false, leverage, logNote, onLog, onCancel }) => {
+const TradeProposalCard: React.FC<TradeProposalCardProps> = ({
+    proposal, entryId, canLog, awaitingLog = false, leverage, logNote,
+    getMark, presentedAt, undoTick = 0, onUndoWindowClose, onApprove, onReject, onAskWhy, onUndo,
+}) => {
     // The card shows levels the moment the model names them, but the probability,
     // the confidence tier and any grade come ONLY from the one plan object —
     // the same builder the journal row runs, so the card can never quote a
@@ -74,6 +116,47 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({ proposal, canLog,
     // trader's ticket is the app's number, and the model's is a claim to
     // compare it against.
     const stated = modelStatedSize(proposal.rationale);
+
+    // STALENESS — read at render time (the card re-renders on every store
+    // emit, so the mark is fresh whenever the trader is looking at it). A
+    // stale plan does not block the approval: it names the drift and makes
+    // the approval an explicit re-confirm.
+    const staleness = assessProposalStaleness({
+        entry: proposal.entry,
+        stopLoss: proposal.stopLoss,
+        mark: getMark?.() ?? null,
+        presentedAt: presentedAt ?? null,
+    });
+    const [staleAcknowledged, setStaleAcknowledged] = useState(false);
+    const needsStaleConfirm = staleness.stale && !staleAcknowledged;
+
+    // The undo window — module-scope, read through the host's tick so an
+    // approve (here or on a remount of this card) repaints it. A second-by-
+    // second local clock runs only while a window is open.
+    void undoTick;
+    const undo = entryId ? undoWindowOf(entryId) : undefined;
+    const [, setUndoClock] = useState(0);
+    useEffect(() => {
+        if (!undo) return;
+        const t = setInterval(() => {
+            // The window self-clears at its deadline; the tick notices and
+            // tells the host, so the settled logged row replaces this card
+            // instead of the buttons re-appearing over a logged plan.
+            if (entryId && !undoWindowOf(entryId)) {
+                setUndoClock(c => c + 1);
+                onUndoWindowClose?.();
+            } else {
+                setUndoClock(c => c + 1);
+            }
+        }, 1000);
+        return () => clearInterval(t);
+    }, [!!undo, undo?.rowId]);
+
+    // The optional decline reason — one compact line above the actions, read
+    // by the Reject tap. A decline without a reason is still a decline.
+    const [declineReason, setDeclineReason] = useState('');
+
+    const secondsLeft = undo ? Math.max(1, Math.ceil(undo.msLeft / 1000)) : 0;
     return (
     <div className="mt-1 rounded-control border border-hairline bg-white/[0.015] p-2.5" data-testid="trade-proposal-card">
         <div className="flex items-center gap-2">
@@ -110,6 +193,15 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({ proposal, canLog,
                 <div className="font-semibold text-emerald-400">{proposal.takeProfits.join(' / ')}</div>
             </div>
         </div>
+        {proposal.invalidation && (
+            // The invalidation is the plan's own falsifier — the thing the
+            // trader is approving the harness to watch for. Print it, don't
+            // bury it in the rationale.
+            <p className="mt-1.5 text-ui-dense leading-relaxed text-zinc-500" data-testid="proposal-invalidation">
+                <span className="font-mono text-ui-2xs uppercase tracking-wider text-zinc-600">Invalidated if </span>
+                {proposal.invalidation}
+            </p>
+        )}
         {liquidated && (
             // The risk the levels grid does not show: how far isolated
             // liquidation sits beyond the stop. At the old 100× default a 1 %
@@ -186,12 +278,28 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({ proposal, canLog,
                 )}
             </div>
         )}
+        {staleness.stale && (
+            // The market moved away from the proposed entry, or the plan
+            // outlived its validity window. Approving is still the trader's
+            // call — but it is a RE-CONFIRM with the drift on screen, never a
+            // silent one.
+            <div className="mt-1.5 rounded-control border border-amber-500/25 bg-amber-500/[0.05] p-2" data-testid="proposal-stale">
+                {staleness.reasons.map((r, i) => (
+                    <p key={i} className="text-ui-dense leading-relaxed text-amber-400/90">{r}</p>
+                ))}
+                {!staleAcknowledged && (
+                    <p className="mt-1 font-mono text-ui-2xs text-zinc-500">
+                        Approving asks for a re-confirm because of this.
+                    </p>
+                )}
+            </div>
+        )}
         {proposal.gate?.status === 'unavailable' && !refused && (
             // Fail closed: an unmeasurable plan is never quietly logged. The
             // handler asks for an explicit confirm, and the row it writes is
             // stamped `gate:unavailable` — never confidenceCap 0.
             <p className="mt-1.5 text-ui-dense text-amber-400/90" data-testid="proposal-gate-unavailable">
-                Gate could not be checked ({proposal.gate.reason}) — logging asks you to confirm, and the row is recorded UNCAPPED.
+                Gate could not be checked ({proposal.gate.reason}) — approving asks you to confirm, and the row is recorded UNCAPPED.
             </p>
         )}
         {logNote && (
@@ -199,32 +307,87 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({ proposal, canLog,
                 {logNote}
             </p>
         )}
-        <div className="mt-2.5 flex items-center gap-1.5">
-            {canLog && (
-                <button type="button"
-                    onClick={onLog}
-                    disabled={awaitingLog || !!refused}
-                    title={refused ? 'The gate refused this plan; the reason is printed above.' : undefined}
-                    className="rounded-control bg-emerald-600/90 px-2.5 py-1 text-ui-dense font-medium text-white transition-colors hover:bg-emerald-500 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-300">
-                    {refused ? 'Refused by the gate' : awaitingLog ? 'Checking the gate…' : 'Track this trade'}
-                </button>
-            )}
-            <button type="button"
-                onClick={onCancel}
-                className="rounded-control border border-hairline px-2.5 py-1 text-ui-dense text-zinc-400 transition-colors hover:bg-white/[0.04] hover:text-zinc-200">
-                Cancel
-            </button>
-        </div>
+        {undo ? (
+            // INSIDE THE UNDO WINDOW: the approval landed (the row is in the
+            // journal, the receipt is queued) and the trader may still reverse
+            // it — one tap, no dialog. When the window lapses this swaps to
+            // the settled logged row the host renders beside it.
+            <div className="mt-2.5 flex items-center gap-2 rounded-control border border-emerald-500/25 bg-emerald-500/[0.06] p-2" data-testid="proposal-undo-window">
+                <CheckCircle className="h-3.5 w-3.5 shrink-0 text-emerald-400" aria-hidden="true" />
+                <span className="text-ui-dense text-emerald-300">
+                    Approved{undo.planId ? ` — plan ${undo.planId} is logged and monitored` : ' — logged and monitored'}.
+                </span>
+                {onUndo && (
+                    <button type="button" onClick={onUndo}
+                        className="ml-auto shrink-0 rounded-control border border-hairline px-2 py-1 text-ui-dense text-zinc-300 transition-colors hover:bg-white/[0.06]"
+                        data-testid="proposal-undo">
+                        Undo ({secondsLeft}s)
+                    </button>
+                )}
+            </div>
+        ) : (
+            <div className="mt-2.5">
+                <input
+                    type="text"
+                    value={declineReason}
+                    onChange={e => setDeclineReason(e.target.value)}
+                    placeholder="Optional: why decline? (sent with Reject)"
+                    maxLength={300}
+                    className="w-full rounded-control border border-hairline bg-white/[0.02] px-2 py-1 text-ui-dense text-zinc-300 placeholder:text-zinc-600 focus:border-zinc-600 focus:outline-none"
+                    data-testid="proposal-decline-reason"
+                />
+                <div className="mt-1.5 flex items-center gap-1.5">
+                    {canLog && (
+                        <button type="button"
+                            onClick={() => {
+                                if (needsStaleConfirm) { setStaleAcknowledged(true); return; }
+                                onApprove();
+                            }}
+                            disabled={awaitingLog || !!refused}
+                            title={refused ? 'The gate refused this plan; the reason is printed above.' : undefined}
+                            data-testid="proposal-approve"
+                            className="rounded-control bg-emerald-600/90 px-2.5 py-1 text-ui-dense font-medium text-white transition-colors hover:bg-emerald-500 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-300">
+                            {refused
+                                ? 'Refused by the gate'
+                                : awaitingLog
+                                    ? 'Checking the gate…'
+                                    : needsStaleConfirm
+                                        ? 'Re-confirm: approve anyway'
+                                        : 'Approve — log & monitor'}
+                        </button>
+                    )}
+                    <button type="button"
+                        onClick={() => onReject(declineReason.trim() || undefined)}
+                        disabled={awaitingLog}
+                        data-testid="proposal-reject"
+                        className="rounded-control border border-rose-500/30 px-2.5 py-1 text-ui-dense text-rose-300/90 transition-colors hover:bg-rose-500/10 hover:text-rose-200 disabled:cursor-not-allowed disabled:opacity-40">
+                        Reject
+                    </button>
+                    <button type="button"
+                        onClick={onAskWhy}
+                        disabled={awaitingLog}
+                        data-testid="proposal-ask-why"
+                        className="rounded-control border border-hairline px-2.5 py-1 text-ui-dense text-zinc-400 transition-colors hover:bg-white/[0.04] hover:text-zinc-200 disabled:cursor-not-allowed disabled:opacity-40">
+                        Ask why
+                    </button>
+                    <span className="ml-auto font-mono text-ui-2xs text-zinc-600">
+                        nothing logs until you approve
+                    </span>
+                </div>
+            </div>
+        )}
     </div>
     );
 };
 
-/** The settled counterpart: a plan the trader already logged, left in the
- *  transcript so it can never be clicked twice. */
+/** The settled counterpart: a plan the trader already approved, left in the
+ *  transcript so it can never be clicked twice — shown once the undo window
+ *  has lapsed. */
 export const TradeProposalLoggedRow: React.FC = () => (
-    <p className="mt-1 flex items-center gap-1.5 text-ui-xs font-semibold uppercase tracking-wider text-emerald-400">
+    <p className="mt-1 flex items-center gap-1.5 text-ui-xs font-semibold uppercase tracking-wider text-emerald-400"
+        data-testid="proposal-logged-row">
         <CheckCircle className="h-3 w-3 shrink-0" aria-hidden="true" />
-        <span>✓ Tracking this trade — the harness will score it against the outcome.</span>
+        <span>✓ Approved — tracking this trade; the harness will score it against the outcome.</span>
     </p>
 );
 

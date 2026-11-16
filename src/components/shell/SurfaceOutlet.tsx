@@ -89,7 +89,14 @@ export interface SurfaceOutletProps {
     onAnalysisError: (message: string) => void;
     onCancelAnalysis: () => void;
     getAnalysisMessage: (messageId: string) => Message | undefined;
-    onLogProposedTrade: (proposal: TradeProposal) => Promise<boolean>;
+    /** Approve on the decision card → App's gated log path; resolves to the
+     *  journal ROW id (the undo handle) or false on refusal/cancel. */
+    onLogProposedTrade: (proposal: TradeProposal, sessionId?: string) => Promise<string | false>;
+    /** Reject on the decision card → App records the decline (HOLD ledger);
+     *  returns whether the record landed. */
+    onRejectProposedTrade: (proposal: TradeProposal, reason?: string) => boolean;
+    /** Undo inside the approval window → App reverses the approval. */
+    onUndoApproval: (decision: { rowId: string; planId?: string; entryId: string; sessionId?: string }) => void;
     registerScrollToMessage: (fn: ((messageId: string) => void) | null) => void;
     onToggleWatch: (messageId: string) => void;
     onOpenWatchList: () => void;
@@ -117,7 +124,7 @@ const SurfaceOutlet: React.FC<SurfaceOutletProps> = ({
     activeUsername, onTradeModeChange, botThreadRows, onBotTurnCommit, onSoloTurnCommit,
     onSyncConversation, conversationRows, onNewGroup, verdict, bots, trades, groupTabs,
     botSessionRequest, groupSessionRequest, onRunAnalysisFromChat, onAnalysisError,
-    onCancelAnalysis, getAnalysisMessage, onLogProposedTrade, registerScrollToMessage,
+    onCancelAnalysis, getAnalysisMessage, onLogProposedTrade, onRejectProposedTrade, onUndoApproval, registerScrollToMessage,
     onToggleWatch, onOpenWatchList, watchOpenCount, watchOpenR, pinnedMessageIds,
     onConfirmSettlementCorrection, onDismissSettlementCorrection, onVoidSettlementCorrection,
     onConfirmTradeAction, onDismissTradeAction,
@@ -185,6 +192,8 @@ const SurfaceOutlet: React.FC<SurfaceOutletProps> = ({
                         onStopRun={onCancelAnalysis}
                         getAnalysisMessage={getAnalysisMessage}
                         onLogProposedTrade={onLogProposedTrade}
+                        onRejectProposedTrade={onRejectProposedTrade}
+                        onUndoApproval={onUndoApproval}
                         registerScrollToMessage={registerScrollToMessage}
                         onToggleWatch={onToggleWatch}
                         onOpenWatchList={onOpenWatchList}

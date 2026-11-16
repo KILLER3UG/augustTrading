@@ -43,7 +43,8 @@ import SignalCard, { DeskScorecard, signalIdFromActions, signalRowById } from '.
 import Disclosure from '../../shared/Disclosure';
 import { JUMP_AWAY_PX } from '../../shared/JumpToLatestFab';
 import { ageMinutes, roundAgoHoursLabel } from '../../../utils/relativeTime';
-import { proposalStateOf as sharedProposalStateOf, rememberProposalState } from '../../../services/trade/proposalDisposition';
+import { proposalStateOf as sharedProposalStateOf, rememberProposalState, forgetProposalState } from '../../../services/trade/proposalDisposition';
+import { markUndoWindow, undoWindowOf, clearUndoWindow } from '../../../services/trade/tradeDecision';
 import { CopyChip, PinChip, RetryChip, ThinkingTierChip } from '../../shared/chatChips';
 import AnswerBody from '../../shared/AnswerBody';
 import ChatFailureRow from '../../shared/ChatFailureRow';
@@ -90,6 +91,16 @@ const provLine = (e: LiveEntry): string | null => {
  *  second clickable card behind. Re-exported: existing test hooks import this
  *  name from here. */
 export { __clearProposalStateForTests } from '../../../services/trade/proposalDisposition';
+
+/** The pushback prompt "Ask why" pre-fills the composer with. It names the
+ *  plan's actual numbers so the model answers about THIS setup, not about
+ *  trading in general — and it asks for the falsifier, because a plan the
+ *  trader cannot break is not a plan, it is a hope. */
+const askWhyPrompt = (p: TradeProposal): string => (
+    `Why this trade? Walk me through the ${p.direction.toLowerCase()} on ${p.symbol}`
+    + ` at ${p.entry} (stop ${p.stopLoss}, targets ${p.takeProfits.join('/')}).`
+    + ` What invalidates it, and what makes this entry worth the risk now?`
+);
 
 interface ChatTranscriptListProps {
     /** The merged conversation rows (a bot session is a VIEW of the
@@ -139,9 +150,27 @@ interface ChatTranscriptListProps {
     onToggleWatch?: (messageId: string) => void;
     /** Message ids currently pinned, so the chip shows the real state. */
     pinnedMessageIds?: ReadonlySet<string>;
-    /** "Log this trade" on a model proposal → App records an OPEN trade.
-     *  Absent ⇒ the Log button is hidden (no journal attached). */
-    onLogProposedTrade?: (proposal: TradeProposal) => void | Promise<boolean>;
+    /** Approve on a decision card → App runs the gated human log path and
+     *  returns the journal ROW id it wrote (or false/null/void when the gate
+     *  refused or the trader cancelled a confirm). The row id opens the
+     *  card's undo window. `sessionId` is the dock session the card lives
+     *  in — the approval-receipt harness turn is routed to that thread.
+     *  Absent ⇒ the Approve button is hidden (no journal attached). */
+    onLogProposedTrade?: (proposal: TradeProposal, sessionId?: string) => Promise<string | false> | string | false | void;
+    /** The dock session id the transcript belongs to — routed to the approve
+     *  handler so the receipt lands in the conversation that presented the
+     *  plan. */
+    sessionId?: string;
+    /** Reject on a decision card → App records the decline (the HOLD ledger,
+     *  source 'desk') with the card's optional reason. Returns whether the
+     *  record landed — false keeps the card live (a decline that failed to
+     *  write is not a decline). The disposition that takes the card off
+     *  screen stays here, and only runs when the record landed. */
+    onRejectProposedTrade?: (proposal: TradeProposal, reason?: string) => boolean;
+    /** Undo inside the approval window → App deletes the pending row and its
+     *  receipt message, disarms the plan watch and clears the receipt dedupe
+     *  (a later re-approve is a fresh decision). */
+    onUndoApproval?: (decision: { rowId: string; planId?: string; entryId: string; sessionId?: string }) => void;
     /** The journal rows, so a settlement-correction card can show the "before"
      *  half of what it changes (the same input the Chat row gets). */
     trades?: LoggedTrade[];
@@ -164,7 +193,7 @@ interface ChatTranscriptListProps {
 const ChatTranscriptList: React.FC<ChatTranscriptListProps> = ({
     entries, scrollParent, virtuosoRef, followOutput, onAtBottomChange, onTotalHeightChanged,
     send, setDraftText, getAnalysisMessage, resolveVerdictByIdentity, symbol, getMark, onChatLevels,
-    onToggleWatch, pinnedMessageIds, onLogProposedTrade, trades,
+    onToggleWatch, pinnedMessageIds, onLogProposedTrade, sessionId, onRejectProposedTrade, onUndoApproval, trades,
     onConfirmSettlementCorrection, onDismissSettlementCorrection, onVoidSettlementCorrection,
     onConfirmTradeAction, onDismissTradeAction,
 }) => {
@@ -486,16 +515,21 @@ const ChatTranscriptList: React.FC<ChatTranscriptListProps> = ({
                                 />
                             );
                         })()}
-                        {e.proposal && !proposalStateOf(e.id) && (
+                        {e.proposal && (!proposalStateOf(e.id) || (proposalStateOf(e.id) === 'logged' && !!undoWindowOf(e.id))) && (
                             <TradeProposalCard
                                 proposal={e.proposal}
+                                entryId={e.id}
                                 canLog={!!onLogProposedTrade}
                                 logNote={e.error
                                     ? 'This plan arrived on a run that stopped before it finished — the rest of the answer never came.'
                                     : undefined}
                                 awaitingLog={awaitingLogEntryId === e.id}
-                                onLog={async () => {
-                                    // Double-log guard: the disposition lives at module
+                                getMark={getMark}
+                                presentedAt={e.at}
+                                undoTick={proposalTick}
+                                onUndoWindowClose={() => setProposalTick(t => t + 1)}
+                                onApprove={async () => {
+                                    // Double-approve guard: the disposition lives at module
                                     // scope, so it survived even before this fix's second
                                     // half — the map lookup makes a re-click after a dock
                                     // unmount/remount (fresh component, same store entry)
@@ -507,22 +541,61 @@ const ChatTranscriptList: React.FC<ChatTranscriptListProps> = ({
                                     // been awaited (and, if it could not be measured,
                                     // once the trader has confirmed) — so the card must
                                     // stay live and clickable-to-cancel through that
-                                    // await instead of being marked logged up front.
-                                    let logged: boolean;
-                                    try { logged = (await onLogProposedTrade?.(stamped)) !== false; }
-                                    // A log that threw is NOT a log: the card
-                                    // stays live so the trader can retry instead
-                                    // of seeing ✓ Logged over a missing row.
-                                    catch { logged = false; }
+                                    // await instead of being marked approved up front.
+                                    // The handler returns the ROW id on success (the
+                                    // handle the undo window reverses); anything else is
+                                    // a refusal or a cancelled confirm.
+                                    let approved: string | null;
+                                    try {
+                                        const res = await onLogProposedTrade?.(stamped, sessionId);
+                                        approved = typeof res === 'string' ? res : null;
+                                    }
+                                    // An approve that threw is NOT an approval: the card
+                                    // stays live so the trader can retry instead of
+                                    // seeing ✓ Approved over a missing row.
+                                    catch { approved = null; }
                                     finally { setAwaitingLogEntryId(null); }
-                                    if (!logged) return;
+                                    if (!approved) return;
+                                    // The undo window opens on the ENTRY (the card's
+                                    // identity, stable across a virtualized remount) with
+                                    // the row id and plan it reverses.
+                                    markUndoWindow(e.id, approved, stamped.planId);
                                     rememberProposalState(e.id, 'logged');
                                     setProposalTick(t => t + 1);
                                 }}
-                                onCancel={() => { if (sharedProposalStateOf(e.id)) return; rememberProposalState(e.id, 'dismissed'); setProposalTick(t => t + 1); }}
+                                onReject={(reason) => {
+                                    if (sharedProposalStateOf(e.id)) return;
+                                    // The decline is RECORDED by App (the HOLD ledger,
+                                    // source 'desk', optional reason). A record that
+                                    // failed to land keeps the card live — a decline
+                                    // that was never written is not a decline.
+                                    const recorded = onRejectProposedTrade
+                                        ? onRejectProposedTrade(e.proposal!, reason)
+                                        : true;
+                                    if (!recorded) return;
+                                    rememberProposalState(e.id, 'dismissed');
+                                    setProposalTick(t => t + 1);
+                                }}
+                                onAskWhy={() => {
+                                    // Pre-fill the composer with the pushback prompt —
+                                    // the trader edits and sends it themselves; nothing
+                                    // is sent by tapping the card.
+                                    setDraftText?.(askWhyPrompt(e.proposal!));
+                                }}
+                                onUndo={() => {
+                                    const w = undoWindowOf(e.id);
+                                    if (!w) return;
+                                    clearUndoWindow(e.id);
+                                    onUndoApproval?.({ rowId: w.rowId, planId: w.planId, entryId: e.id, sessionId });
+                                    // The card returns to undecided: the row was deleted
+                                    // and the receipt message removed, so the trader can
+                                    // approve again (a fresh decision, a fresh receipt).
+                                    forgetProposalState(e.id);
+                                    setProposalTick(t => t + 1);
+                                }}
                             />
                         )}
-                        {e.proposal && proposalStateOf(e.id) === 'logged' && <TradeProposalLoggedRow />}
+                        {e.proposal && proposalStateOf(e.id) === 'logged' && !undoWindowOf(e.id) && <TradeProposalLoggedRow />}
                         </div>
                     </div>
                 )}

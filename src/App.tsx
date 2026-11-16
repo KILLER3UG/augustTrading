@@ -19,6 +19,10 @@ import { buildProposedTradeMessage, type TradeProposal } from './services/trade/
 import { ensureStamp } from './services/trade/proposalGate';
 import { confirmSettlementCorrection, dismissSettlementCorrection, type SettlementCorrectionProposal } from './services/trade/settlementCorrection';
 import { confirmTradeAction, dismissTradeAction, type TradeActionProposal } from './services/trade/tradeActionProposal';
+import {
+    formatApprovalReceiptForModel, formatApprovalUndoneForModel,
+    markApprovalReceipt, clearApprovalReceipt, hasApprovalReceipt, recordTraderDecline,
+} from './services/trade/tradeDecision';
 import * as chatStore from './services/trade/chatStore';
 import * as watchService from './services/trade/watchService';
 import * as levelWatch from './services/trade/levelWatchService';
@@ -1470,7 +1474,7 @@ const App: React.FC = () => {
     // so the cap has to be known here — and if the scan could not be measured,
     // logging fails CLOSED: an explicit confirm, a row stamped `gate:unavailable`,
     // and never a fabricated confidenceCap of 0.
-    const handleLogProposedTrade = useCallback(async (proposal: TradeProposal): Promise<boolean> => {
+    const handleLogProposedTrade = useCallback(async (proposal: TradeProposal, sessionId?: string): Promise<string | false> => {
         const gate = await ensureStamp(proposal, loggedTrades);
         const stamped: TradeProposal = { ...proposal, gate };
         if (gate.refusal) {
@@ -1515,7 +1519,9 @@ const App: React.FC = () => {
         if (duplicate) {
             // A prior attempt may have written the PENDING row/message but
             // failed to register the tracker. Retry registration for that
-            // pending receipt; a settled plan needs nothing.
+            // pending receipt; a settled plan needs nothing. The row id is
+            // returned either way: one plan, one row — a replayed approval
+            // resolves to the row that already exists, never a second one.
             const pendingReceipt = messages.find(m =>
                 m.planId === stamped.planId && m.outcome === TradeOutcome.PENDING);
             if (pendingReceipt) {
@@ -1524,8 +1530,14 @@ const App: React.FC = () => {
                     toast.error('Could not track this trade', tracked.error);
                     return false;
                 }
+                return pendingReceipt.id;
             }
-            return true;
+            const loggedRow = loggedTrades.find(t => t.planId === stamped.planId);
+            // No row and no pending receipt: the dedupe fired on a message
+            // whose row is gone — nothing reversible exists, so the approval
+            // did not land. (A SETTLED row's id is returned but the undo
+            // refuses non-PENDING rows, so this can never un-settle one.)
+            return loggedRow ? loggedRow.id : false;
         }
 
         // The plan's own answer row carries the model and run identity, so the
@@ -1541,7 +1553,26 @@ const App: React.FC = () => {
             toast.error('Could not track this trade', tracked.error);
             return false;
         }
-        return true;
+        // THE APPROVAL RECEIPT — one harness turn per decision, so the model
+        // learns in the conversation that its plan was approved and which row
+        // now owns it. A record, not a request: the receipt text fences
+        // authority (no level moves, closes or risk changes without a fresh
+        // card), and the authority tools themselves still only RECORD a
+        // proposal — the structural half of the same fence.
+        if (stamped.planId && !hasApprovalReceipt(stamped.planId)) {
+            markApprovalReceipt(stamped.planId);
+            chatStore.queueHarnessSignal(formatApprovalReceiptForModel({
+                planId: stamped.planId,
+                symbol: stamped.symbol,
+                direction: stamped.direction,
+                entry: stamped.entry,
+                stopLoss: stamped.stopLoss,
+                takeProfits: stamped.takeProfits,
+                rowId: pendingReceipt.id,
+                watchArmed: levelWatch.getArmedPlans().some(p => p.planId === stamped.planId),
+            }), sessionId);
+        }
+        return pendingReceipt.id;
     }, [updateMessages, loggedTrades, confirmDialog, messages, trackProposedTrade, toast]);
 
     // ── Decision-card writers, shared by BOTH chat homes (audit P-6) ──────
@@ -1596,6 +1627,43 @@ const App: React.FC = () => {
     const dismissDockTradeAction = useCallback((proposal: TradeActionProposal): void => {
         dismissTradeAction(proposal.planId);
     }, []);
+
+    // ── The decision card's REJECT and UNDO (Phase 3) ──────────────────────
+    /** Reject: the trader declines a presented plan. The decline lands in the
+     *  SAME HOLD ledger the model's own decline_trade writes (source 'desk'),
+     *  with the card's optional reason — "the trader declined this" is
+     *  evidence the learning loop can read. Returns whether the record
+     *  landed: false keeps the card live, so a failed write is never a
+     *  silently-lost decline. */
+    const handleRejectProposedTrade = useCallback((proposal: TradeProposal, reason?: string): boolean => {
+        const record = recordTraderDecline(proposal, reason);
+        if (!record) {
+            toast.error('Decline not recorded', 'The decline ledger refused the write; the card stays decidable.');
+            return false;
+        }
+        return true;
+    }, [toast]);
+
+    /** Undo inside the approval window: reverse the WHOLE approval, not just
+     *  the row — the receipt message leaves the transcript, the plan watch
+     *  disarms, and the receipt slot frees so a later re-approve is a fresh
+     *  decision with a fresh receipt. Refuses a non-PENDING row: the window
+     *  is short, but a replayed decision object must never un-settle a row
+     *  the harness already scored. */
+    const handleUndoApproval = useCallback(({ rowId, planId, sessionId }: { rowId: string; planId?: string; entryId: string; sessionId?: string }): void => {
+        const row = loggedTrades.find(t => t.id === rowId);
+        if (row && row.outcome !== TradeOutcome.PENDING) {
+            toast.error('Cannot undo', 'This trade has already been settled — the undo window only reverses a pending approval.');
+            return;
+        }
+        handleDeleteTrades([rowId]);
+        updateMessages(prev => prev.filter(m => m.id !== rowId));
+        if (planId) {
+            levelWatch.disarm(planId);
+            clearApprovalReceipt(planId);
+        }
+        chatStore.queueHarnessSignal(formatApprovalUndoneForModel({ planId, rowId }), sessionId);
+    }, [loggedTrades, handleDeleteTrades, updateMessages, toast]);
 
     /** The dock holds a settled verdict's message id, not a copy of the
      *  analysis — a persisted chat session would otherwise store a whole
@@ -2418,6 +2486,8 @@ const App: React.FC = () => {
                         onCancelAnalysis={handleCancelAnalysis}
                         getAnalysisMessage={getAnalysisMessage}
                         onLogProposedTrade={handleLogProposedTrade}
+                        onRejectProposedTrade={handleRejectProposedTrade}
+                        onUndoApproval={handleUndoApproval}
                         registerScrollToMessage={registerScrollToMessage}
                         onToggleWatch={handleToggleWatch}
                         onOpenWatchList={() => setIsWatchListVisible(true)}
