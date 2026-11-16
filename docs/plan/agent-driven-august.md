@@ -59,6 +59,17 @@ rebuilt) and **Phase 3's decision cards are landed**:
   double-approve guard, stale re-confirm, reject, risk tighten/loosen/revert). Contracts
   821/0. Full gate ladder green on both commits.
 
+**The P-5 rendering half is landed** (2026-11-17): the UI audit found the stats tools
+reachable but UNRENDERED — the numbers reached the trader only as model prose, which the
+P-5 row forbids. `statsCard` parses the receipt (the three stats tools' JSON after the
+untrusted fence) into a snapshot the transcript renders as a card on both paths (dock
+sink + pipeline Message + projection); the card holds the receipt's own fields verbatim
+(contract-pinned — a card that recomputes a number is the pinned failure). The parity
+probe caught a real unit bug in the process: the stats tool shipped winRate as a 0-1
+fraction while the digest read percent ("win 1%" on a 67% sample) — both stats tools now
+ship percents for win_rate and the Wilson bounds, unified with `setup_base_rate`. Probe:
+20 checks including the card mount with n visible.
+
 **Still open in Phase 3**: the parity proofs' live-model runs — the scripted-mock walks
 (`scripts/parity-proof-probe.cjs`, 19 checks: every replacement reachable, parameters
 accepted, payload shape right, Wilson + sample size on the stats) are green and repeat

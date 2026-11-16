@@ -407,7 +407,8 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
         if (name !== 'draw_on_chart' && name !== 'draw_detected' && name !== 'draw_tool_levels' && name !== 'mark_trade_levels' && name !== 'clear_chart_drawings'
             && name !== 'present_trade' && name !== 'watch_price' && name !== 'wake_me' && name !== 'cancel_watch'
             && name !== 'correct_trade_outcome' && name !== 'update_trade' && name !== 'close_trade' && name !== 'propose_risk_change'
-            && name !== 'propose_strategy_activation') return null;
+            && name !== 'propose_strategy_activation'
+            && name !== 'get_setup_history_stats' && name !== 'playbook_attribution' && name !== 'get_trade_log') return null;
         const args = call.arguments ?? {};
         const receipt = (ok: boolean, content: string): DeskToolResult => ({ toolCallId: call.id, name, ok, content });
         // The chart snapshot is shared by every drawing branch: its live mark
@@ -547,6 +548,31 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
         // present_trade: draw the plan, arm the harness level-watch, and surface a
         // "Log this trade" card on the streaming entry. The TRANSITION lives in
         // services/trade/presentTradeTool — the Agents surface presents the same plan
+        // P-5's rendering half: the three stats tools are READS whose output
+        // must reach the trader as a CARD, not as prose the model restates.
+        // Parse the receipt into a snapshot and attach it to THIS turn's
+        // entry — the card holds the receipt's own fields, so it can never
+        // disagree with the tool (a failed parse attaches nothing: prose from
+        // a non-JSON receipt stays prose).
+        if (name === 'get_setup_history_stats' || name === 'playbook_attribution' || name === 'get_trade_log') {
+            const { executeDeskTool } = await import('../analysis/DeskToolsService');
+            const result = await executeDeskTool(call, {
+                defaultSymbol: turn.symbol ?? null,
+                allowedTools: TRADE_TOOLS,
+                trades,
+            });
+            if (result.ok && turn.entryId) {
+                const { statsCardFromReceipt } = await import('./statsCard');
+                const card = statsCardFromReceipt(name, result.content);
+                if (card.ok) {
+                    chatStore.mutate(turn.sid, st => ({
+                        ...st,
+                        entries: st.entries.map(en => (en.id === turn.entryId ? { ...en, statsCard: card.snapshot } : en)),
+                    }));
+                }
+            }
+            return result;
+        }
         // through the same rules — so everything below is the DOCK'S SINK: four
         // writes onto the running entry, plus the canvas and the watch only this
         // surface owns.

@@ -497,7 +497,8 @@ export const runChatSurfaceTurn = async (req: ChatSurfaceTurnRequest): Promise<T
             // so the card actually renders. The row is untouched until the
             // trader confirms, and the confirm goes through App's journal
             // handlers, not through anything here.
-            if (call.name === 'correct_trade_outcome' || call.name === 'update_trade' || call.name === 'close_trade' || call.name === 'propose_risk_change' || call.name === 'propose_strategy_activation') {
+            if (call.name === 'correct_trade_outcome' || call.name === 'update_trade' || call.name === 'close_trade' || call.name === 'propose_risk_change' || call.name === 'propose_strategy_activation'
+                || call.name === 'get_setup_history_stats' || call.name === 'playbook_attribution' || call.name === 'get_trade_log') {
                 const { executeDeskTool } = await import('../analysis/DeskToolsService');
                 const result = await executeDeskTool(call, {
                     defaultSymbol: req.symbol ?? null,
@@ -515,6 +516,21 @@ export const runChatSurfaceTurn = async (req: ChatSurfaceTurnRequest): Promise<T
                         const target = typeof call.arguments?.target === 'string' ? call.arguments.target : '';
                         const proposal = pendingRiskChange(target as never);
                         if (proposal) req.patch(m => ({ ...m, riskChange: proposal }));
+                    } else if (call.name === 'get_setup_history_stats' || call.name === 'playbook_attribution' || call.name === 'get_trade_log') {
+                        // P-5's rendering half on the pipeline path: the stats
+                        // receipt becomes a card snapshot on the canonical row.
+                        const { executeDeskTool } = await import('../analysis/DeskToolsService');
+                        const result = await executeDeskTool(call, {
+                            defaultSymbol: req.symbol ?? null,
+                            allowedTools: CHAT_SURFACE_TOOLS,
+                            trades: req.trades,
+                        });
+                        if (result.ok) {
+                            const { statsCardFromReceipt } = await import('./statsCard');
+                            const card = statsCardFromReceipt(call.name, result.content);
+                            if (card.ok) req.patch(m => ({ ...m, statsCard: card.snapshot }));
+                        }
+                        return result;
                     } else if (call.name === 'propose_strategy_activation') {
                         const { pendingStrategyActivation } = await import('./strategyActivation');
                         const slug = typeof call.arguments?.slug === 'string' ? call.arguments.slug : '';

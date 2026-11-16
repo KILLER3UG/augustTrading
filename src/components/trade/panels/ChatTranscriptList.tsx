@@ -37,6 +37,7 @@ import { tradeActionStateOf, type TradeActionProposal } from '../../../services/
 import { riskChangeStateOf, riskRevertOf, type RiskChangeProposal } from '../../../services/trade/riskChangeProposal';
 import { strategyActivationStateOf, strategyRevertOf, type StrategyActivationProposal } from '../../../services/trade/strategyActivation';
 import StrategyActivationCard from './StrategyActivationCard';
+import StatsCard from './StatsCard';
 import { getArmedPlans } from '../../../services/trade/levelWatchService';
 import type { GuardEnforcement } from '../../../services/validation/SessionGuardService';
 import type { LoggedTrade } from '../../../types';
@@ -610,6 +611,13 @@ const ChatTranscriptList: React.FC<ChatTranscriptListProps> = ({
                             }
                             return null;
                         })()}
+                        {/* P-5's rendering half: a stats-tool receipt rendered
+                            as a card — the numbers ARE the tool output, the
+                            sample size is always visible, and the model
+                            never restates them in prose. */}
+                        {e.statsCard && (
+                            <StatsCard snapshot={e.statsCard} />
+                        )}
                         {e.proposal && (!proposalStateOf(e.id) || (proposalStateOf(e.id) === 'logged' && !!undoWindowOf(e.id))) && (
                             <TradeProposalCard
                                 proposal={e.proposal}

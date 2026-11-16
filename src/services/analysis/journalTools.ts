@@ -160,8 +160,12 @@ export const runSetupBaseRateTool = (
         sample: stats.sample,
         wins: stats.wins,
         losses: stats.losses,
-        win_rate: stats.winRate,
-        wilson_95: ci ? { low: Math.round(ci.low * 1000) / 1000, high: Math.round(ci.high * 1000) / 1000 } : null,
+        // win_rate and the Wilson bounds ship as PERCENTS (0-100), matching
+        // get_setup_history_stats — the two stats tools must not disagree
+        // about units any more than about samples. (The raw cluster stat is a
+        // 0-1 fraction; the interval's bounds are converted the same way.)
+        win_rate: stats.winRate !== null ? Math.round(stats.winRate * 10000) / 100 : null,
+        wilson_95: ci ? { low: Math.round(ci.low * 100000) / 1000, high: Math.round(ci.high * 100000) / 1000 } : null,
         avg_r: stats.avgR,
         min_sample: MIN_RATE_SAMPLE,
         last_outcome: stats.lastOutcome,

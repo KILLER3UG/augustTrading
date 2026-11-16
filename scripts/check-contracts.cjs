@@ -1035,6 +1035,28 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
 })();
 
 
+// ─── 13k. the stats card: the numbers are the receipt's own (P-5) ──────────
+// The dashboards' replacement renders stats-tool output as a card. The
+// failure this pins: a card that recomputes or invents a number (the card
+// holds the receipt's own fields, verbatim), a card minted from a non-stats
+// tool, and a card from prose (a non-JSON receipt attaches nothing).
+(() => {
+    const sc = loadModule('src/services/trade/statsCard.ts');
+    ok('stats card: the three stats tools parse into snapshots, other tools refuse',
+        sc.statsCardFromReceipt('get_setup_history_stats', JSON.stringify({ sample: 3, wins: 2, losses: 1, winRate: 66.7, wilson95: { low: 0.2, high: 0.9 } })).ok === true
+        && sc.statsCardFromReceipt('playbook_attribution', JSON.stringify({ detectors: [] })).ok === true
+        && sc.statsCardFromReceipt('get_trade_log', JSON.stringify({ returned: 2, records: [] })).ok === true
+        && sc.statsCardFromReceipt('get_price_snapshot', JSON.stringify({ price: 1 })).ok === false
+        && sc.statsCardFromReceipt('not_a_tool', '{}').ok === false);
+    ok('stats card: the snapshot carries the receipt fields verbatim (win rate, CI, sample)',
+        (() => {
+            const r = sc.statsCardFromReceipt('get_setup_history_stats', JSON.stringify({ sample: 3, wins: 2, losses: 1, winRate: 66.7, wilson95: { low: 0.2, high: 0.9 } }));
+            return r.ok && r.snapshot.payload.winRate === 66.7 && r.snapshot.payload.wilson95.low === 0.2 && r.snapshot.payload.sample === 3;
+        })());
+    ok('stats card: a prose receipt (non-JSON) attaches nothing',
+        sc.statsCardFromReceipt('get_setup_history_stats', 'plain prose answer').ok === false);
+})();
+
 // ─── 13f. the trade-action proposal store: an authority change needs a tap ─
 // update_trade moves the levels on an armed plan; close_trade closes it. Both
 // are authority changes, so both record a proposal here and neither may act on

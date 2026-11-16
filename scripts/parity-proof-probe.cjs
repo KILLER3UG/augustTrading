@@ -303,6 +303,17 @@ async function main() {
                     check('P-5 get_setup_history_stats carries the Wilson CI + sample size',
                         !!parsed && parsed.wilson95 && typeof parsed.sample === 'number',
                         content.slice(0, 160));
+                    // The RENDERING half: the card mounts in the dock with the
+                    // sample size visible — the model never restates the
+                    // numbers in prose alone.
+                    await sleep(900);
+                    check('P-5 the stats card renders in the dock (n visible, verbatim from the receipt)',
+                        (await page.locator('[data-testid="stats-card"]').count()) > 0
+                        && /n=\d+/i.test(await page.locator('[data-testid="stats-card"]').first().innerText()),
+                        (await page.locator('[data-testid="stats-card"]').count())
+                            ? (await page.locator('[data-testid="stats-card"]').first().innerText()).replace(/\s+/g, ' ').slice(0, 120)
+                            : 'no stats card mounted');
+                    await page.screenshot({ path: '.probe-artifacts/parity-stats-card.png' });
                     break;
                 case 'p5-attribution':
                     check('P-5 playbook_attribution returns per-detector rows',

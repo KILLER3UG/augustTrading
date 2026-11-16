@@ -5750,8 +5750,13 @@ ${body}`);
                         sample: stats.sample,
                         wins: stats.wins,
                         losses: stats.losses,
-                        winRate: stats.winRate !== null ? Math.round(stats.winRate * 100) / 100 : null,
-                        wilson95: ci ? { low: Math.round(ci.low * 1000) / 1000, high: Math.round(ci.high * 1000) / 1000 } : null,
+                        // winRate ships as a PERCENT (0-100, two decimals):
+                        // the raw cluster stat is a 0-1 fraction, and the
+                        // digest + the stats card both read this field as a
+                        // percent — a fraction here printed "win 1%" on a 67%
+                        // sample (the parity probe caught it).
+                        winRate: stats.winRate !== null ? Math.round(stats.winRate * 10000) / 100 : null,
+                        wilson95: ci ? { low: Math.round(ci.low * 100000) / 1000, high: Math.round(ci.high * 100000) / 1000 } : null,
                         ...(stats.sample < MIN_RATE_SAMPLE && stats.winRate !== null
                             ? { thinSampleNote: `only ${stats.sample} closed rows — below the ${MIN_RATE_SAMPLE} floor setup_base_rate quotes at; treat this rate as indicative, not measured (setup_base_rate refuses to answer at this size)` }
                             : {}),
