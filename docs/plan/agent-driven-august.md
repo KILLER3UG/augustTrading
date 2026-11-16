@@ -37,13 +37,20 @@ through App's shared journal/watch writers. Verified end to end from the dock by
 outcome + `correctedFrom`/`correctedAt`/`resolutionSource`, card resolves, dismissed proposal
 leaves the row untouched.
 
-**Phase 2's mandated first step is landed:** the surface switch is extracted out of `App.tsx`
+**Phase 2's first two steps are landed:** the surface switch is extracted out of `App.tsx`
 into `src/components/shell/SurfaceOutlet.tsx` (props-only, no behavior change), and
 `surface-shots`/`render-probe` are re-anchored (record surfaces route through their Settings
-sections; three load-sensitive samples poll instead of sleeping).
+sections; three load-sensitive samples poll instead of sleeping). The dock's correction/action
+card sink is landed and verified on the merged tree (`6b1ac8ed`, dock-card probe 10/10).
 
-**Still open in Phase 2:** merge the dock and AgentsView into one workspace, then rebuild the
-rail (New chat / Pinned / Recent / account + gear) — separate commits, next session.
+**The workspace merge is landed** (`c9db95e2`): `SurfaceOutlet` renders the TradeView workspace
+for both desk routes; `AgentsView` and its private helpers are deleted; the two-home machinery
+is gone; the probe, the contracts check and the docs describe the one workspace. All gates
+green on the merged tree (typecheck, lint, build, contracts, boundaries, docs, boot-probe,
+render-probe, dock-card probe).
+
+**Still open in Phase 2:** rebuild the rail (New chat / Pinned / Recent / account + gear) —
+the last Phase 2 commit, next session.
 
 **Phase 4 has not started** — correctly, it is gated on phases 1–3 being verified.
 
@@ -51,12 +58,11 @@ rail (New chat / Pinned / Recent / account + gear) — separate commits, next se
 
 | Item | Where | Why it is open |
 |---|---|---|
-| Merge the dock and AgentsView into one workspace | `src/components/agents/AgentsView.tsx`, `src/components/trade/TradeView.tsx` | Phase 2's visible cut: one transcript, one composer, chart pane permanent, composer mode menu (single/panel/room/bot). |
-| Rebuild the rail | `src/components/shell/ShellRail.tsx` | Phase 2's second cut: the rail becomes New chat / Pinned / Recent / account + gear. Lands AFTER the workspace merge, as its own commit. |
+| Rebuild the rail | `src/components/shell/ShellRail.tsx` | Phase 2's last cut: the rail becomes New chat / Pinned / Recent / account + gear. Lands AFTER the workspace merge (`c9db95e2`, done), as its own commit. The shell conversation column (`ConversationGroups` + `AccountRow`) already exists but mounts only off the two desk routes — the rebuild wires it into the workspace rail and brings the deleted column checks back. |
 
-Both are the remaining Phase 2 commits. The two items that blocked Phase 2's start — the
-`App.tsx` surface-switch extraction and the dock's correction/action card sink — are DONE
-(`a23d6d7a`, `6b1ac8ed`).
+The two items that blocked Phase 2's start — the `App.tsx` surface-switch extraction and the
+dock's correction/action card sink — are DONE (`a23d6d7a`, `6b1ac8ed`). The workspace merge is
+DONE (`c9db95e2`).
 
 ### Merge execution notes (executed 2026-11-16)
 
