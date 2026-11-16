@@ -1,24 +1,19 @@
 /**
  * The shell rail — the one navigation column the reference has.
  *
- * It lives beside the content, runs the full height of the window and owns
- * every route that is not a conversation: the Analyze ⇄ Agents mode switch,
- * New chat, Search, the sparse conversation list (ConversationGroups —
- * Pinned when there are pinned rows; Recent only off Analyze, where the
- * chart sidebar keeps chrome + pinned rows instead of a history list), Journal,
- * Learning, Skills and the account. The old top-bar tab strip is
- * gone, so the rail is the only place navigation is repeated; the collapsed
- * fallback still rides the content bar (see `shared/Header` and `AgentsView`).
+ * It lives beside the content, runs the full height of the window and is the
+ * SAME column on every surface (the workspace merge left one desk): the icon
+ * strip carries the two desk routes and the Settings gear, and the column
+ * beside it is New chat / Pinned / Recent (ConversationGroups) over the
+ * account row. The collapsed fallback still rides the content bar (see
+ * `shared/Header`): a put-away rail has no edge to click.
  *
  * The Approvals row died with the Approvals tab (2026-11-03): its queues
  * apply themselves, so a row with nothing behind it was the O-80 lie.
- * The Workspaces/Rooms sections are gone (mock-redesign-v3): the Sparse
- * conversation list is the only list; workspace switching lives in
- * Settings → Accounts.
- *
- * The Agents surface keeps its own richer middle (agents, rooms, goals) but
- * renders the same mode switch at the top and the same utility group above the
- * account, so hopping modes moves the content and not the chrome.
+ * The Workspaces/Rooms sections are gone (mock-redesign-v3): the conversation
+ * list is the only list; workspace switching lives in Settings → Accounts.
+ * Journal, Learning, Skills and Memory are sections of the Settings modal,
+ * so the rail carries the one gear instead of four rows.
  */
 import React, { useRef } from 'react';
 import {
@@ -135,11 +130,10 @@ const ShellRail: React.FC<ShellRailProps> = ({
     overlay = false, onCloseOverlay,
 }) => {
     void workspaces; void onSwitchWorkspace; void onAddWorkspace;
-    // The shell column mounts only on the record surfaces. Analyze is the
-    // icon rail alone, and the Chat surface already carries its OWN column
-    // (AgentsView, with the roster) — rendering this one there put two
-    // "New chat" rows and two conversation lists side by side.
-    const showConversationColumn = surface !== 'trade' && surface !== 'agents';
+    // One column on every surface: the workspace merge left ONE desk, so the
+    // conversation list (New chat / Pinned / Recent) and the account row ride
+    // beside the icon strip everywhere — there is no second surface left that
+    // would carry a duplicate list.
     const railRef = useRef<HTMLElement | null>(null);
 
     return (
@@ -159,7 +153,7 @@ const ShellRail: React.FC<ShellRailProps> = ({
                 data-expanded="true"
                 aria-label="August navigation"
                 style={{
-                    width: showConversationColumn ? width + RAIL_W : RAIL_W,
+                    width: width + RAIL_W,
                     ...(overlay ? { maxWidth: 'calc(100vw - 24px)' } : null),
                 }}
                 className={`flex h-full border-r border-hairline bg-zinc-950 ${
@@ -198,37 +192,39 @@ const ShellRail: React.FC<ShellRailProps> = ({
                         the one place the rail says who is signed in. */}
                 </nav>
 
-                {showConversationColumn && (
-                    <div className="flex min-w-0 flex-1 flex-col" style={{ width }}>
-                        <ConversationGroups
-                            conversations={conversations}
-                            activeConversationId={activeConversationId}
-                            onNewChat={onNewChat}
-                            onOpenConversation={onOpenConversation}
-                            onDeleteConversation={onDeleteConversation}
-                            onClearConversation={onClearConversation}
-                            onHideConversation={onCollapse}
-                        />
-                        <AccountRow
-                            expanded
-                            activeUsername={activeUsername}
-                            onOpenSettings={onOpenSettings}
-                            onOpenActivity={onOpenActivity}
-                        />
-                        <div
-                            role="separator"
-                            aria-orientation="vertical"
-                            aria-label="Resize navigation"
-                            data-testid="shell-rail-resize"
-                            onPointerDown={onResizeStart}
-                            onDoubleClick={onResizeReset}
-                            title="Drag to resize · double-click to reset"
-                            className="absolute inset-y-0 right-0 z-20 hidden w-1.5 cursor-col-resize touch-none items-center justify-center text-zinc-600 transition-colors hover:text-zinc-300 md:flex"
-                        >
-                            <span aria-hidden="true" className="block h-8 w-px bg-white/15 opacity-60" />
-                        </div>
+                {/* The conversation column: New chat / Pinned / Recent over
+                    the account row — the reference's one sidebar, on every
+                    surface. The resize edge is the column's own; the icon
+                    strip is fixed at 48px. */}
+                <div className="flex min-w-0 flex-1 flex-col" style={{ width }}>
+                    <ConversationGroups
+                        conversations={conversations}
+                        activeConversationId={activeConversationId}
+                        onNewChat={onNewChat}
+                        onOpenConversation={onOpenConversation}
+                        onDeleteConversation={onDeleteConversation}
+                        onClearConversation={onClearConversation}
+                        onHideConversation={onCollapse}
+                    />
+                    <AccountRow
+                        expanded
+                        activeUsername={activeUsername}
+                        onOpenSettings={onOpenSettings}
+                        onOpenActivity={onOpenActivity}
+                    />
+                    <div
+                        role="separator"
+                        aria-orientation="vertical"
+                        aria-label="Resize navigation"
+                        data-testid="shell-rail-resize"
+                        onPointerDown={onResizeStart}
+                        onDoubleClick={onResizeReset}
+                        title="Drag to resize · double-click to reset"
+                        className="absolute inset-y-0 right-0 z-20 hidden w-1.5 cursor-col-resize touch-none items-center justify-center text-zinc-600 transition-colors hover:text-zinc-300 md:flex"
+                    >
+                        <span aria-hidden="true" className="block h-8 w-px bg-white/15 opacity-60" />
                     </div>
-                )}
+                </div>
             </aside>
         </>
     );

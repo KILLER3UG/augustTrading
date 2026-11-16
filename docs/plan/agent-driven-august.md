@@ -49,8 +49,14 @@ is gone; the probe, the contracts check and the docs describe the one workspace.
 green on the merged tree (typecheck, lint, build, contracts, boundaries, docs, boot-probe,
 render-probe, dock-card probe).
 
-**Still open in Phase 2:** rebuild the rail (New chat / Pinned / Recent / account + gear) —
-the last Phase 2 commit, next session.
+**The rail rebuild is landed**: the shell rail is ONE column on every surface — the icon strip
+(the two desk routes + the Settings gear) beside the conversation column (New chat / Pinned /
+Recent over the account row, resize edge, hide icon). **Phase 2 is complete.**
+
+**Phase 3 is next** (on the owner's approval): the decision-card work (approval receipts,
+risk-limit and goal-change cards), the settlement-correction card's VOID arm walked like the
+confirm (P-6), the independent review of the card work, the removal-parity proofs P-1…P-5 and
+the agent-rendered stats (P-5).
 
 **Phase 4 has not started** — correctly, it is gated on phases 1–3 being verified.
 
@@ -58,11 +64,11 @@ the last Phase 2 commit, next session.
 
 | Item | Where | Why it is open |
 |---|---|---|
-| Rebuild the rail | `src/components/shell/ShellRail.tsx` | Phase 2's last cut: the rail becomes New chat / Pinned / Recent / account + gear. Lands AFTER the workspace merge (`c9db95e2`, done), as its own commit. The shell conversation column (`ConversationGroups` + `AccountRow`) already exists but mounts only off the two desk routes — the rebuild wires it into the workspace rail and brings the deleted column checks back. |
+| Phase 3: decision cards, the VOID arm (P-6), parity proofs P-1…P-5, agent-rendered stats | `docs/plan/agent-driven-august.md` § Phases | Phase 2 is done (`a23d6d7a`, `6b1ac8ed`, `c9db95e2`, rail rebuild). Phase 4 removes nothing until these P-rows are verified. |
 
 The two items that blocked Phase 2's start — the `App.tsx` surface-switch extraction and the
 dock's correction/action card sink — are DONE (`a23d6d7a`, `6b1ac8ed`). The workspace merge is
-DONE (`c9db95e2`).
+DONE (`c9db95e2`). The rail rebuild is DONE (this commit).
 
 ### Merge execution notes (executed 2026-11-16)
 

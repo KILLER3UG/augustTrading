@@ -159,24 +159,18 @@ the trader's journal in bulk; treat it accordingly.
 
 ## The shell
 
-- **One full-height rail, two shapes** (mock v3): a 48px icon strip — Analyze, Agents, then
-  Journal, Learning, Skills and Memory. There is no account avatar anywhere in the shell: no avatar button in the
-  strip, and the account row at the column's foot carries `name · Signed in · local-first` with no
-  initials block. Settings stays on Ctrl/Cmd+ and the account row's own control. On **Analyze**
-  the strip is the whole sidebar: the conversation column is NOT mounted, so the chart never pays
-  240px for an empty list, and the title-row toggle puts the rail away. On the surfaces that mount
-  the column (Journal, Learning, Skills, Memory; the Chat surface mounts its own open column), it
-  holds **New chat**
-  (Ctrl/Cmd+K still works, but no keycap badge is printed), **Pinned** (only when rows are
-  pinned), **Recent** (the heading itself is the hide control — label + icon in one button; a row
-  shows the side of the thread's latest signal — `Long`/`Short` — read from the ledger), and the
-  account row at its foot. No
-  Search row and no mode switch in the column: the rail owns the surfaces, the column owns the
-  record, and the desk's search lives in the Agents column's own field.
-- On the **Agents** surface the thread is CENTRED and the conversation column mounts OPEN with the
-  rail (conversations above the roster). The hide icon after RECENT puts the whole sidebar away,
-  and the title-row toggle brings it back; there is no clock/column icon in the icon rail. Its
-  Chats | Bots tab strip is DELETED: one scroll of sections.
+- **One full-height rail, one shape** (the workspace merge finished it): a 48px icon strip —
+  Analyze, Agents, then the Settings gear (Journal, Learning, Skills and Memory are sections of
+  the Settings modal) — beside the conversation column on EVERY surface. The column holds
+  **New chat** (Ctrl/Cmd+K still works, but no keycap badge is printed), **Pinned** (only when
+  rows are pinned), **Recent** (the heading itself is the hide control — label + icon in one
+  button; a row shows the side of the thread's latest signal — `Long`/`Short` — read from the
+  ledger), and the account row at its foot (`name · Signed in · local-first`, no initials block,
+  no avatar anywhere in the shell). No Search row and no mode switch in the column: the rail owns
+  the surfaces, the column owns the conversations.
+- The column's edge resizes it (double-click resets), the hide icon after RECENT puts the whole
+  rail away, and the title-row toggle brings it back. Below 1024px the rail is a drawer over the
+  content instead of a column that squeezes it.
 - The **content bar** is the hide-conversation toggle, the title, the instrument context and one
   **session chip that names the active region** (Asia / London / New York / `London · NY` during
   the overlap; off hours says so and carries the next open — the popover still carries sessions,

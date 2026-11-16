@@ -512,14 +512,16 @@ async function transcriptCensus(page) {
             reachedBottom: log.scrollTop + log.clientHeight >= log.scrollHeight - 2,
         };
     }, { sel: DOCK_LOG, awayPx: JUMP_AWAY_PX });
-    let census;
-    try {
-        census = await walk();
-    } catch (err) {
+    let census = await walk().catch(() => null);
+    if (!census || !census.ok) {
+        // A thrown walk (a reload or a swapped frame destroyed the context) or
+        // a walk that could not pin the box (the follow-scroll was still
+        // settling) both describe TIMING, not the conversation: the walk is a
+        // read-only, idempotent measurement, so settle and walk once more.
         await sleep(2000);
-        census = await walk();
+        census = await walk().catch(() => null);
     }
-    const rows = census.rows || [];
+    const rows = (census && census.rows) || [];
     return {
         ...census,
         rows,
@@ -1228,9 +1230,12 @@ async function main() {
         check('the settled turn grew the usage ledger the Learning panel reads',
             ledgerAfter > ledgerBefore, `ledger bytes ${ledgerBefore} -> ${ledgerAfter}`);
 
-        // ── The Analyze rail: the icon strip only ───────────────────────
-        // No conversation column, so no New chat, no Recent list and no
-        // conversation rows; the chart gets the width. No workspaces row.
+        // ── The rail: icon strip + the conversation column ──────────────
+        // The rebuild mounts the column on every surface: New chat, the
+        // Recent list (rows titled by their first question, one mono age
+        // each) and no workspaces row. Every conversation this run created
+        // is UNTITLED, so a row that still reads "New chat" is the wall of
+        // identical lines the sparse sidebar was meant to remove.
         const railShape = await page.evaluate(() => {
             const rows = [...document.querySelectorAll('[data-testid="conversation-row"]')];
             const ages = [...document.querySelectorAll('[data-testid="conversation-age"]')]
@@ -1243,19 +1248,17 @@ async function main() {
                 newChat: !!document.querySelector('[data-testid="rail-new-chat"]'),
                 workspaces: document.querySelectorAll('[data-testid^="shell-workspace-"]').length,
                 addWorkspace: !!document.querySelector('[data-testid="shell-add-workspace"]'),
-                // Every conversation this run created is UNTITLED, so the row
-                // must derive its name from the first question. A row that
-                // still reads "New chat" is the wall of identical lines the
-                // sparse sidebar was meant to remove.
                 untitled: titles.filter(t => /^New chat/.test(t)).length,
             };
         });
-        check('the Analyze rail is the icon strip only — no conversation column',
-            railShape.rows === 0
-            && railShape.ages === 0
-            && !railShape.newChat
+        check('the rail carries the conversation column — New chat and titled Recent rows',
+            railShape.rows >= 1
+            && railShape.ages === railShape.rows
+            && railShape.badAges.length === 0
+            && railShape.newChat
             && railShape.workspaces === 0
-            && !railShape.addWorkspace,
+            && !railShape.addWorkspace
+            && railShape.untitled === 0,
             JSON.stringify(railShape));
 
         // Chart head: one quiet line (SymbolPicker, hero price, change,
@@ -2265,20 +2268,23 @@ async function main() {
             await navTo('Analyze');
             await settleSurface('Analyze');
 
-            // The conversation column is the adjustable part, and Analyze no
-            // longer mounts it: the rail is the 48px icon strip with no resize
-            // handle. Prove the handle still drags where the column mounts
-            // (Journal), then come back for the collapse checks.
+            // The rail rebuild: the column (New chat / Pinned / Recent over the
+            // account row) mounts on EVERY surface now, beside the 48px icon
+            // strip. The whole rail is the strip + the dragged column width,
+            // and the column's edge is the resize handle.
             const railBox = () => page.evaluate(() => {
                 const el = document.querySelector('[data-testid="shell-rail"]');
                 return el ? Math.round(el.getBoundingClientRect().width) : -1;
             });
+            const navRailSrc = require('fs').readFileSync(
+                path.join(ROOT, 'src', 'components', 'shell', 'shellChrome.tsx'), 'utf8');
+            const navRailExpandedPx = Number((navRailSrc.match(/NAV_RAIL_EXPANDED_PX = (\d+)/) || [])[1]) || 240;
             const analyzeRailWidth = await railBox();
             const analyzeResize = await page.evaluate(() =>
                 !!document.querySelector('[data-testid="shell-rail-resize"]'));
-            check('the Analyze rail is 48px and has no conversation-column resize handle',
-                analyzeRailWidth === 48 && !analyzeResize,
-                `${analyzeRailWidth}px resize=${analyzeResize}`);
+            check('the rail is the icon strip plus the conversation column, handle on the edge',
+                analyzeRailWidth === 48 + navRailExpandedPx && analyzeResize,
+                `${analyzeRailWidth}px (want ${48 + navRailExpandedPx}) resize=${analyzeResize}`);
 
             await navTo('Analyze');
             await settleSurface('Analyze');
@@ -2351,10 +2357,8 @@ async function main() {
             check('the content bar brings the rail back at its stored width',
                 railRevived && railBack === railBefore, `${railBack}px (want ${railBefore})`);
 
-            // Analyze mounts no conversation column, so there is no list, no
-            // New chat and no in-column hide icon 40px from the title-row
-            // toggle. The column (with all of those) mounts on the record
-            // surfaces; the title-row toggle is the Analyze hide control.
+            // The column is ON the workspace now: the list, the New chat row,
+            // the in-column hide icon and the title-row toggle all coexist.
             const recent = await page.evaluate(() => {
                 const rail = document.querySelector('[data-testid="shell-rail"]');
                 return {
@@ -2365,17 +2369,96 @@ async function main() {
                     headerToggle: !!document.querySelector('[data-testid="shell-rail-collapse"]'),
                 };
             });
-            check('the Analyze rail mounts no conversation column and keeps the title-row toggle',
-                !recent.chatsIcon && !recent.listMounted && !recent.newChat
-                    && !recent.inColumnHide && recent.headerToggle,
+            check('the workspace rail mounts the conversation column and keeps the title-row toggle',
+                !recent.chatsIcon && recent.listMounted && recent.newChat
+                    && recent.inColumnHide && recent.headerToggle,
                 JSON.stringify(recent));
 
-            // (The Agents rail's resize/hide/account checks died with that
-            // rail. The shell conversation column those controls now live in
-            // mounts only off the two desk routes — which the app never routes
-            // to outside the Settings modal — so there is nothing to measure
-            // until the rail rebuild wires the column in; its coverage returns
-            // with that commit.)
+            // The record moved HERE. The same ConversationRow contract the old
+            // Agents rail carried: every row titled by its first question, one
+            // mono age each, no "New chat" placeholders.
+            const chatRailShape = await page.evaluate(() => {
+                const list = document.querySelector('[data-testid="shell-conversations"]');
+                const rows = list ? [...list.querySelectorAll('[data-testid="conversation-row"]')] : [];
+                const ages = list ? [...list.querySelectorAll('[data-testid="conversation-age"]')]
+                    .map(a => (a.textContent || '').trim()) : [];
+                const titles = rows.map(r => (r.textContent || '').replace(/\s+/g, ' ').trim());
+                return {
+                    rows: rows.length,
+                    ages: ages.length,
+                    badAges: ages.filter(t => !/^(now|\d+[mhd])$/.test(t)),
+                    untitled: titles.filter(t => /^New chat/.test(t)).length,
+                };
+            });
+            check('the rail lists each conversation by its first question, with a mono age',
+                chatRailShape.rows >= 1
+                && chatRailShape.ages === chatRailShape.rows
+                && chatRailShape.badAges.length === 0
+                && chatRailShape.untitled === 0,
+                JSON.stringify(chatRailShape));
+
+            // The column's own controls, where they now live: the edge handle
+            // drags and resets, the account row names the trader, and the
+            // in-column hide icon puts the whole rail away — the title-row
+            // toggle is the way back.
+            await settleRailWidth();
+            const columnBefore = await railBox();
+            const columnHandle = await page.locator('[data-testid="shell-rail-resize"]').boundingBox();
+            if (columnHandle) {
+                const y = columnHandle.y + Math.min(120, columnHandle.height / 2);
+                await page.mouse.move(columnHandle.x + columnHandle.width / 2, y);
+                await page.mouse.down();
+                await page.mouse.move(columnHandle.x + columnHandle.width / 2 + 40, y, { steps: 4 });
+                await page.mouse.up();
+            }
+            await sleep(300);
+            const columnWide = await railBox();
+            check('the conversation column resizes from its edge handle',
+                columnWide >= columnBefore + 32, `${columnBefore} -> ${columnWide}`);
+            const resetHandle = await page.locator('[data-testid="shell-rail-resize"]').boundingBox();
+            if (resetHandle) {
+                await page.mouse.dblclick(
+                    resetHandle.x + resetHandle.width / 2,
+                    resetHandle.y + Math.min(120, resetHandle.height / 2));
+            }
+            await sleep(350);
+            const columnReset = await railBox();
+            check('double-click restores the column width',
+                columnReset === columnBefore, `${columnWide} -> ${columnReset} (want ${columnBefore})`);
+            const account = await page.evaluate(() => {
+                const rail = document.querySelector('[data-testid="shell-rail"]');
+                return {
+                    name: !!rail?.querySelector('[data-testid="nav-account-name"]'),
+                    switchUserButton: !!rail?.querySelector('[data-testid="nav-switch-user"]'),
+                    railAvatar: !!document.querySelector('[data-testid="shell-account"]'),
+                };
+            });
+            check('the account row says who is signed in and carries no avatar',
+                account.name && !account.switchUserButton && !account.railAvatar,
+                `name=${account.name} switchButton=${account.switchUserButton} railAvatar=${account.railAvatar}`);
+            const away = async () => page.evaluate(() => ({
+                rail: !!document.querySelector('[data-testid="shell-rail"]'),
+                expand: !!document.querySelector('[data-testid="nav-rail-toggle-header"]'),
+            }));
+            const hideInSidebar = await page.evaluate(() => {
+                const b = document.querySelector('[data-testid="conversation-hide"]');
+                if (!b) return false;
+                b.click();
+                return true;
+            });
+            await page.waitForFunction(() => !document.querySelector('[data-testid="shell-rail"]'),
+                null, { timeout: 5000 }).catch(() => null);
+            const collapsed = await away();
+            check('the sidebar hide icon puts the rail away and leaves a way back',
+                hideInSidebar && !collapsed.rail && collapsed.expand,
+                JSON.stringify(collapsed));
+            await page.evaluate(() => document.querySelector('[data-testid="nav-rail-toggle-header"]')?.click());
+            await page.waitForSelector('[data-testid="shell-rail"]', { timeout: 5000 }).catch(() => null);
+            const backAgain = await away();
+            const backWidth = await railBox();
+            check('the title-row toggle brings the rail back at the shell width',
+                backAgain.rail && backWidth === 48 + navRailExpandedPx,
+                `${backWidth}px (want ${48 + navRailExpandedPx})`);
             // Leave the run on a known surface before the sweep.
             await navTo('Analyze');
             await settleSurface('Analyze');
