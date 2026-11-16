@@ -165,11 +165,17 @@ export const formatApprovalReceiptForModel = (p: {
     takeProfits: number[];
     rowId: string;
     watchArmed: boolean;
+    /** The session guard's state at approval time — 'clear' or the active
+     *  warnings. The deterministic limits live in code, not in this text, so
+     *  the model may READ the session state here but is never told it may
+     *  argue with it. */
+    sessionGuard?: string;
 }): string => harnessTurn(
     `[APPROVAL RECEIPT — the app, not the trader] The trader APPROVED your plan`
     + `${p.planId ? ` ${p.planId}` : ''}: ${p.direction} ${p.symbol} entry ${p.entry}, stop ${p.stopLoss}, targets ${p.takeProfits.join('/')}.`
     + ` It is logged as journal row "${p.rowId}" (PENDING — the harness settles it from the tape).`
     + ` ${p.watchArmed ? 'The level watch is armed and will wake you on a hit.' : 'No level watch is armed for it.'}`
+    + `${p.sessionGuard ? ` Session guard: ${p.sessionGuard}.` : ''}`
     + ` This receipt is a record, not a request: do not move levels, close the trade or change risk on your own — any of those needs a fresh proposal card the trader confirms. You may acknowledge the approval in one short line.`,
 );
 

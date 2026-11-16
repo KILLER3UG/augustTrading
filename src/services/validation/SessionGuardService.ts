@@ -285,3 +285,34 @@ export const formatGuardContextBlock = (verdict: SessionGuardVerdict): string =>
  */
 export const nextUtcMidnight = (now: Date = new Date()): Date =>
     new Date(utcDayStart(now).getTime() + MS_PER_DAY);
+
+// ─── Enforcement (the redesign's flow-flaw fix) ─────────────────────────────
+// The verdict machine above had no consumer: the limits were editable in
+// Settings and changeable through the risk-change card, but nothing refused a
+// log that breached them. The owner's ruling is that guard rules are enforced
+// DETERMINISTICALLY — the same way the min-edge floor refuses a sub-floor plan:
+// no same-moment override, the recourse is the gated path (a risk-change card
+// loosening the limit, two taps for a loosen). The four active arms block; the
+// budget tiers and an unset equity only warn.
+
+export interface GuardEnforcement {
+    /** Non-null when a NEW trade is refused right now. The card prints it and
+     *  the log writer refuses with it — both read this one function, so the
+     *  button and the writer cannot disagree. */
+    block: string | null;
+    /** Non-blocking lines the card prints (budget used, equity unset). */
+    warnings: string[];
+}
+
+export const guardEnforcement = (v: SessionGuardVerdict): GuardEnforcement => {
+    const block = v.dailyLossHit
+        ? `The daily loss limit is consumed (${(v.dayPnlPct * 100).toFixed(2)}% of equity today) — the session stands down until the next UTC day. Loosen the limit through a risk-change card if you mean it.`
+        : v.tradeCapHit
+            ? `The trade cap is reached (${v.tradesToday} today) — the session stands down. Raise the cap through a risk-change card if you mean it.`
+            : v.streakPauseActive
+                ? `${v.lossStreak} losses in a row — the streak pause stands the session down until a review.`
+                : v.cooldownActiveUntil
+                    ? `The post-loss cooldown runs until ${v.cooldownActiveUntil} — no new trade before it lifts.`
+                    : null;
+    return { block, warnings: block ? [] : v.warnings };
+};

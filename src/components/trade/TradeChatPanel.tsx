@@ -78,6 +78,7 @@ import { buildProfileMemoryIndex } from '../../services/learning/profileMemory';
 import { buildGoalsIndex } from '../../services/goals/GoalService';
 import type { ReasoningEffort } from '../../services/providers/reasoningControls';
 import { useChatAttachments } from '../../hooks/useChatAttachments';
+import { useSessionGuardVerdict } from '../../hooks/useSessionGuard';
 import ChatHistoryPalette, { relTime } from './panels/ChatHistoryPalette';
 import ChatTranscriptList from './panels/ChatTranscriptList';
 import ChatComposer from './panels/ChatComposer';
@@ -338,6 +339,10 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
     // answer survives switching to another surface tab and back — the panel
     // unmounts, but the run keeps streaming into the store.
     const snap = useSyncExternalStore(chatStore.subscribe, chatStore.getSnapshot, chatStore.getSnapshot);
+    // The session-guard verdict over the journal: whether a NEW trade may be
+    // approved right now. The card prints the block; the log writer in App
+    // refuses on the same computation, so a replayed card cannot log past it.
+    const sessionGuard = useSessionGuardVerdict(trades);
     const sessions = snap.sessions;
     const activeId = snap.activeId;
     const [draft, setDraft] = useState('');
@@ -1314,6 +1319,7 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
                         onDismissRiskChange={onDismissRiskChange}
                         onRevertRiskChange={onRevertRiskChange}
                         trades={trades}
+                        sessionGuard={sessionGuard}
                         onConfirmSettlementCorrection={onConfirmSettlementCorrection}
                         onDismissSettlementCorrection={onDismissSettlementCorrection}
                         onVoidSettlementCorrection={onVoidSettlementCorrection}

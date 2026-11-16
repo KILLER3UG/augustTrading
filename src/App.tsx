@@ -28,7 +28,8 @@ import {
     clearRiskRevertWindow, formatRiskChangeAppliedForModel, formatRiskChangeRevertedForModel,
     type RiskChangeProposal,
 } from './services/trade/riskChangeProposal';
-import { getHarnessSettings, saveHarnessSettings, type HarnessSettings } from './utils/harnessSettings';
+import { getHarnessSettings, getSessionGuardConfig, saveHarnessSettings, type HarnessSettings } from './utils/harnessSettings';
+import { assessSession, guardEnforcement } from './services/validation/SessionGuardService';
 import * as chatStore from './services/trade/chatStore';
 import * as watchService from './services/trade/watchService';
 import * as levelWatch from './services/trade/levelWatchService';
@@ -1546,6 +1547,24 @@ const App: React.FC = () => {
             return loggedRow ? loggedRow.id : false;
         }
 
+        // THE SESSION GUARD — the deterministic refusal of a NEW trade while a
+        // guard rule is active (daily loss consumed, trade cap reached, streak
+        // pause, post-loss cooldown). Checked HERE, not only on the card's
+        // button, because a replayed row or a schedule can reach this writer
+        // with no card in sight — the same fail-closed reasoning as the gate
+        // refusal above. The dedupe recovery above it stays reachable: an
+        // already-logged plan resolving to its existing row writes nothing
+        // new, so the guard governs the first write, not the receipt of an
+        // old decision. The recourse is the gated path — a risk-change card
+        // loosening the limit — never a same-moment override.
+        const settingsNow = getHarnessSettings();
+        const guardVerdict = assessSession(loggedTrades, settingsNow.equityUsd, getSessionGuardConfig());
+        const guard = guardEnforcement(guardVerdict);
+        if (guard.block) {
+            toast.error('The session guard refuses a new trade', guard.block);
+            return false;
+        }
+
         // The plan's own answer row carries the model and run identity, so the
         // accepted receipt copies them instead of arriving bare.
         const presenting = [...messages].reverse().find(m => m.role === MessageRole.AI && m.modelsUsed);
@@ -1576,6 +1595,7 @@ const App: React.FC = () => {
                 takeProfits: stamped.takeProfits,
                 rowId: pendingReceipt.id,
                 watchArmed: levelWatch.getArmedPlans().some(p => p.planId === stamped.planId),
+                sessionGuard: guard.warnings.length > 0 ? guard.warnings.join(' ') : 'clear',
             }), sessionId);
         }
         return pendingReceipt.id;

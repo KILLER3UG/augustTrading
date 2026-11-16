@@ -70,6 +70,12 @@ const PLAN_D = {
     rationale: 'Probe plan D — the reject walk.',
     invalidation: 'A push above the probe stop.',
 };
+const PLAN_E = {
+    symbol: 'BTCUSDT', direction: 'Long', entry: 84000, stopLoss: 1000,
+    takeProfits: [200000], confidence: 'Low',
+    rationale: 'Probe plan E — the session-guard walk.',
+    invalidation: 'A close below the probe stop.',
+};
 // The risk-card walks: a TIGHTEN (one tap) and a LOOSEN (the explicit second
 // tap), then a revert inside the window.
 const RISK_TIGHTEN = {
@@ -79,6 +85,18 @@ const RISK_TIGHTEN = {
 const RISK_LOOSEN = {
     __tool: 'propose_risk_change', target: 'riskPercent', value: 2,
     reason: 'The range resolved; risk per trade goes back up.',
+};
+// The session-guard walk: the agent PROPOSES the cap down to 1 (one tap, a
+// tighten), the plan-E approve must then be REFUSED by the deterministic
+// guard, and the only way back is the gated one — the agent proposes the cap
+// up to 8 (two taps, a loosen) and the same approve now lands.
+const GUARD_TIGHTEN = {
+    __tool: 'propose_risk_change', target: 'guardMaxTradesPerDay', value: 1,
+    reason: 'The tape is choppy; one attempt today, then a review.',
+};
+const GUARD_LOOSEN = {
+    __tool: 'propose_risk_change', target: 'guardMaxTradesPerDay', value: 8,
+    reason: 'The trader wants the session open; the cap goes back up explicitly.',
 };
 
 async function waitForServer(url, timeoutMs = 30000) {
@@ -102,6 +120,17 @@ async function seed(page) {
         sessionStorage.clear();
         localStorage.setItem('august_surface_v1', 'trade');
         sessionStorage.setItem('activeUsername', 'Probe User');
+    });
+    // Guard headroom for the early walks: the deterministic session guard
+    // (daily loss, trade cap, streak pause, cooldown) would otherwise refuse
+    // every approve — the seeded pt-2/pt-3 rows are trades today and the
+    // DEFAULT preset caps the day at 2. The guard's own walk later in this
+    // probe tightens the cap through the app's card path.
+    await page.evaluate(() => {
+        localStorage.setItem('harness_settings_v1', JSON.stringify({
+            equityUsd: 10000, riskPercent: 1,
+            guardMaxTradesPerDay: 20, guardDailyLossPct: 20, guardPostLossCooldownMin: 0,
+        }));
     });
     await page.evaluate(async (mockPort) => {
         const db = await new Promise((resolve, reject) => {
@@ -187,6 +216,17 @@ async function readRiskPercent(page) {
     return page.evaluate(() => {
         try {
             const v = JSON.parse(localStorage.getItem('harness_settings_v1') || '{}').riskPercent;
+            return typeof v === 'number' ? v : null;
+        } catch { return null; }
+    });
+}
+
+/** Read the live max-trades-per-day cap — the guard walk's tightened and
+ *  loosened values must both land in the settings store. */
+async function readGuardCap(page) {
+    return page.evaluate(() => {
+        try {
+            const v = JSON.parse(localStorage.getItem('harness_settings_v1') || '{}').guardMaxTradesPerDay;
             return typeof v === 'number' ? v : null;
         } catch { return null; }
     });
@@ -285,6 +325,16 @@ async function scrollTranscriptToBottom(page) {
  *  and an unverified plan each ask for an explicit confirm before the row
  *  lands), then wait for the undo window. */
 async function approveToUndoWindow(page, consoleLog) {
+    // The card may sit ABOVE the virtualized window: a receipt turn or a risk
+    // note that fired after its own turn ended pushes the newest rows down,
+    // and Virtuoso unmounts what scrolled away. Sweep up until the button
+    // mounts before the first click — the in-loop retries below only cover
+    // misses after a click landed.
+    for (let i = 0; i < 10; i++) {
+        if (await page.locator('[data-testid="proposal-approve"]').count()) break;
+        await scrollTranscriptUp(page, 900);
+        await sleep(300);
+    }
     await page.locator('[data-testid="proposal-approve"]').last().click();
     for (let i = 0; i < 14; i++) {
         if (await page.locator('[data-testid="proposal-undo-window"]').count()) return;
@@ -446,7 +496,7 @@ async function main() {
             ...process.env,
             MOCK_TOOL_CALL: '1',
             MOCK_TOOL_NAME: 'present_trade',
-            MOCK_SKILL_ARGS: JSON.stringify([PLAN_A, PLAN_B, PLAN_C, PLAN_D, RISK_TIGHTEN, RISK_LOOSEN]),
+            MOCK_SKILL_ARGS: JSON.stringify([PLAN_A, PLAN_B, PLAN_C, PLAN_D, RISK_TIGHTEN, RISK_LOOSEN, PLAN_E, GUARD_TIGHTEN, GUARD_LOOSEN]),
         },
     });
     let serverOut = '';
@@ -667,6 +717,79 @@ async function main() {
         const revertedNote = await waitForTextScrolling(page, 'RISK CHANGE REVERTED', 15000);
         check('the revert note reaches the thread', revertedNote);
 
+        // ── Turn 7 (GUARD WALK): the deterministic session guard ────────────
+        // The agent proposes the trade cap DOWN to 1 — a tighten, one tap —
+        // and the guard now refuses every new log: plan E's Approve button is
+        // DOWN and the card prints the standing reason. The only way back is
+        // the gated one: the agent proposes the cap UP to 8, the loosen needs
+        // the explicit second tap, and the same approve now lands. No row is
+        // written while the guard stands down.
+        await sendInDock(page, 'PROBE_TOOL_ROUND present plan E');
+        const cardE = await waitForCard(page, 'trade-proposal-card', 'Probe plan E');
+        if (!cardE) { await dumpTranscriptState(page, 'plan E card never mounted'); throw new Error('plan E card never rendered'); }
+
+        await sendInDock(page, 'PROBE_TOOL_ROUND tighten the trade cap');
+        const cardG1 = await waitForCard(page, 'risk-change-card', 'one attempt today');
+        if (!cardG1) { await dumpTranscriptState(page, 'guard tighten card never mounted'); throw new Error('guard tighten card never rendered'); }
+        await cardG1.locator('[data-testid="risk-change-confirm"]').click();
+        let capTightened = false;
+        for (let i = 0; i < 12 && !capTightened; i++) {
+            await sleep(500);
+            capTightened = (await readGuardCap(page)) === 1;
+        }
+        check('a TIGHTENING guard change applies with one tap (cap down to 1)', capTightened,
+            `guardMaxTradesPerDay=${await readGuardCap(page)}`);
+
+        // The guard verdict recomputes on the settings write: the card's own
+        // Approve goes down with the reason printed. Wait for the repaint —
+        // the listener push lands within a tick.
+        let blockSeen = null;
+        for (let i = 0; i < 10 && !blockSeen; i++) {
+            await sleep(400);
+            blockSeen = await cardE.evaluate((el) => {
+                const block = el.querySelector('[data-testid="proposal-guard-block"]');
+                const btn = el.querySelector('[data-testid="proposal-approve"]');
+                return btn && btn.disabled && block ? block.textContent : null;
+            });
+        }
+        check('the guard stands the session down on the card (Approve down, reason printed)',
+            !!blockSeen, blockSeen ? blockSeen.slice(0, 120) : 'no guard block on the card');
+        await page.screenshot({ path: '.probe-artifacts/decision-card-guard-block.png' });
+
+        const rowsBeforeGuard = pendingRows(await readTrades(page)).length;
+        // A disabled button cannot be clicked through Playwright's actionability
+        // rules — assert the no-write property by trying the click and polling
+        // for the row that must never appear.
+        await cardE.locator('[data-testid="proposal-approve"]').click({ force: true, timeout: 3000 }).catch(() => {});
+        await sleep(2500);
+        const rowsAfterGuardTap = pendingRows(await readTrades(page)).length;
+        check('a guarded approve logs nothing', rowsAfterGuardTap === rowsBeforeGuard,
+            `rows ${rowsBeforeGuard} -> ${rowsAfterGuardTap}`);
+
+        await sendInDock(page, 'PROBE_TOOL_ROUND loosen the trade cap');
+        const cardG2 = await waitForCard(page, 'risk-change-card', 'cap goes back up');
+        if (!cardG2) { await dumpTranscriptState(page, 'guard loosen card never mounted'); throw new Error('guard loosen card never rendered'); }
+        const armG = (await cardG2.locator('[data-testid="risk-change-arm"]').count()) > 0;
+        check('a LOOSENING guard change asks for the explicit confirm', armG);
+        await cardG2.locator('[data-testid="risk-change-arm"]').click();
+        await sleep(300);
+        await cardG2.locator('[data-testid="risk-change-confirm"]').click();
+        let capLoosened = false;
+        for (let i = 0; i < 12 && !capLoosened; i++) {
+            await sleep(500);
+            capLoosened = (await readGuardCap(page)) === 8;
+        }
+        check('the LOOSENING guard change applies only on the second tap (cap up to 8)', capLoosened,
+            `guardMaxTradesPerDay=${await readGuardCap(page)}`);
+
+        // The same plan, the same approve — now it lands: one new PENDING row
+        // and the undo window on the card.
+        await approveToUndoWindow(page, consoleLog);
+        await sleep(2000);
+        const rowsAfterLoosen = pendingRows(await readTrades(page)).length;
+        check('the guarded recourse: the loosened cap lets the approve log', rowsAfterLoosen === rowsBeforeGuard + 1,
+            `rows ${rowsBeforeGuard} -> ${rowsAfterLoosen}`);
+
         check('zero pageerrors across the decision-card run', pageErrors.length === 0,
             pageErrors.slice(0, 3).join(' | '));
         await browser.close();
@@ -690,6 +813,9 @@ async function main() {
         console.log('row with a receipt the thread reads, Undo reverses the whole approval, a stale');
         console.log('plan needs a re-confirm, Reject records the decline, and a risk change applies');
         console.log("through the trader's own settings path (one tap tight, two taps loose, revert).");
+        console.log('The session guard stands a consumed session down on the card and the writer');
+        console.log('alike, and the only way back is a gated risk-change card (tight one tap,');
+        console.log('loose two taps).');
     }
 }
 

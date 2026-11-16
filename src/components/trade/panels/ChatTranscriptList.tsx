@@ -36,6 +36,7 @@ import { settlementCorrectionStateOf, type SettlementCorrectionProposal } from '
 import { tradeActionStateOf, type TradeActionProposal } from '../../../services/trade/tradeActionProposal';
 import { riskChangeStateOf, riskRevertOf, type RiskChangeProposal } from '../../../services/trade/riskChangeProposal';
 import { getArmedPlans } from '../../../services/trade/levelWatchService';
+import type { GuardEnforcement } from '../../../services/validation/SessionGuardService';
 import type { LoggedTrade } from '../../../types';
 import VerdictAudit, { verdictNeedsAudit } from '../../analysis/VerdictAudit';
 import InlineVerdict from '../../analysis/InlineVerdict';
@@ -186,6 +187,10 @@ interface ChatTranscriptListProps {
     /** The journal rows, so a settlement-correction card can show the "before"
      *  half of what it changes (the same input the Chat row gets). */
     trades?: LoggedTrade[];
+    /** The session-guard enforcement verdict over those rows: non-null
+     *  `block` disables the proposal card's Approve (the log writer refuses on
+     *  the same computation); `warnings` print without blocking. */
+    sessionGuard?: GuardEnforcement;
     /** Confirm a PROPOSED settlement fix. The handler applies it through the
      *  SAME journal hooks a human edit calls; this list only renders the card
      *  and reports the tap. Absent ⇒ the Confirm button is hidden. */
@@ -206,6 +211,7 @@ const ChatTranscriptList: React.FC<ChatTranscriptListProps> = ({
     entries, scrollParent, virtuosoRef, followOutput, onAtBottomChange, onTotalHeightChanged,
     send, setDraftText, getAnalysisMessage, resolveVerdictByIdentity, symbol, getMark, onChatLevels,
     onToggleWatch, pinnedMessageIds, onLogProposedTrade, sessionId, onRejectProposedTrade, onUndoApproval, trades,
+    sessionGuard,
     onConfirmRiskChange, onDismissRiskChange, onRevertRiskChange,
     onConfirmSettlementCorrection, onDismissSettlementCorrection, onVoidSettlementCorrection,
     onConfirmTradeAction, onDismissTradeAction,
@@ -566,6 +572,8 @@ const ChatTranscriptList: React.FC<ChatTranscriptListProps> = ({
                                 proposal={e.proposal}
                                 entryId={e.id}
                                 canLog={!!onLogProposedTrade}
+                                guardBlock={sessionGuard?.block ?? null}
+                                guardWarnings={sessionGuard?.warnings ?? []}
                                 logNote={e.error
                                     ? 'This plan arrived on a run that stopped before it finished — the rest of the answer never came.'
                                     : undefined}

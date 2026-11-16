@@ -5841,6 +5841,84 @@ const checkAgentHandExecutor = async () => {
         rc.riskRevertOf(again.proposal.id, 1_000_000) === undefined);
 })();
 
+// ─── 13i. the session guard's enforcement: a limit is a limit ───────────────
+// The verdict machine (assessSession) had no consumer: the guard limits were
+// editable in Settings and changeable through the risk-change card, but
+// nothing refused a log that breached them. The enforcement split is pinned
+// here: the four ACTIVE arms block a new log; the budget tiers and an unset
+// equity only warn. The recourse is the gated path — a risk-change card
+// loosening the limit — never a same-moment override.
+(() => {
+    const sg = loadModule('src/services/validation/SessionGuardService.ts');
+    const now = new Date();
+    // Rows INSIDE today regardless of the wall clock: half the time elapsed
+    // since UTC midnight is always still today.
+    const halfDayMs = (now.getTime() - sg.utcDayStart(now).getTime()) / 2;
+    const iso = (msAgo) => new Date(now.getTime() - msAgo).toISOString();
+    const row = (id, msAgo, outcome, extra = {}) => ({
+        id, outcome,
+        timestamp: iso(msAgo),
+        analysis: { createdAt: iso(msAgo) },
+        ...extra,
+    });
+    const EQUITY = 10_000;
+    const cfg = { ...sg.DEFAULT_SESSION_GUARD, postLossCooldownMin: 0 };
+    ok('session guard: the daily loss limit blocks and names itself',
+        (sg.guardEnforcement(sg.assessSession(
+            [row('a', halfDayMs, 'LOSS', { pnlAmount: -(EQUITY * cfg.dailyLossLimitPct + 1) })],
+            EQUITY, cfg,
+        )).block || '').includes('daily loss limit'));
+    ok('session guard: the trade cap blocks and names itself',
+        (sg.guardEnforcement(sg.assessSession(
+            [row('a', halfDayMs, 'WIN'), row('b', halfDayMs, 'LOSS')],
+            EQUITY, cfg,
+        )).block || '').includes('trade cap'));
+    ok('session guard: the streak pause blocks and names itself',
+        (sg.guardEnforcement(sg.assessSession(
+            [row('a', halfDayMs, 'LOSS'), row('b', halfDayMs, 'LOSS')],
+            EQUITY, { ...cfg, maxTradesPerDay: 5 },
+        )).block || '').includes('streak pause'));
+    ok('session guard: the post-loss cooldown blocks while it runs, not after',
+        (sg.guardEnforcement(sg.assessSession(
+            [row('a', 10 * 60_000, 'LOSS', { pnlAmount: -1 })],
+            EQUITY, { ...cfg, postLossCooldownMin: 240 },
+        )).block || '').includes('cooldown')
+        && sg.guardEnforcement(sg.assessSession(
+            [row('a', 10 * 60_000, 'LOSS', { pnlAmount: -1 })],
+            EQUITY, { ...cfg, postLossCooldownMin: 0 },
+        )).block === null);
+    ok('session guard: a green day with room left does NOT block',
+        sg.guardEnforcement(sg.assessSession(
+            [row('a', halfDayMs, 'WIN', { pnlAmount: 50 })],
+            EQUITY, cfg,
+        )).block === null);
+    ok('session guard: soft tiers warn, never block',
+        (() => {
+            const e = sg.guardEnforcement(sg.assessSession(
+                [row('a', halfDayMs, 'LOSS', { pnlAmount: -(EQUITY * cfg.dailyLossLimitPct * 0.6) })],
+                EQUITY, cfg));
+            return e.block === null && e.warnings.length > 0;
+        })());
+    ok('session guard: an unset equity warns and does NOT block a new log',
+        (() => {
+            const e = sg.guardEnforcement(sg.assessSession([], 0, cfg));
+            return e.block === null && e.warnings.some(w => /equity/i.test(w));
+        })());
+    ok('session guard: a block never carries warnings (the card prints one or the other)',
+        sg.guardEnforcement(sg.assessSession(
+            [row('a', halfDayMs, 'LOSS'), row('b', halfDayMs, 'LOSS')],
+            EQUITY, cfg,
+        )).warnings.length === 0);
+    ok('session guard: the config resolves the shipped preset',
+        (() => {
+            const hs = loadModule('src/utils/harnessSettings.ts');
+            const c = hs.getSessionGuardConfig();
+            return c.dailyLossLimitPct === sg.DEFAULT_SESSION_GUARD.dailyLossLimitPct
+                && c.maxTradesPerDay === sg.DEFAULT_SESSION_GUARD.maxTradesPerDay
+                && c.tradeRiskPercent > 0;
+        })());
+})();
+
 const finishReport = () => {
     console.log(`contracts: ${passed} passed, ${failures.length} failed`);
     for (const f of failures) console.log(`  FAIL ${f}`);

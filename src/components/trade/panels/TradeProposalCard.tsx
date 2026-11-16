@@ -86,10 +86,20 @@ export interface TradeProposalCardProps {
      * incomplete, and let the trader decide.
      */
     logNote?: string;
+    /** The session guard's refusal of ANY new log right now (daily loss
+     *  consumed, trade cap reached, streak pause, post-loss cooldown). The
+     *  host computes it over the journal; the log writer refuses on the same
+     *  computation, so the disabled button and the writer cannot disagree.
+     *  Unlike the gate refusal this is about the SESSION, not the plan — the
+     *  recourse is a risk-change card, not a different plan. */
+    guardBlock?: string | null;
+    /** Non-blocking session-guard lines (budget used, equity unset). */
+    guardWarnings?: string[];
 }
 
 const TradeProposalCard: React.FC<TradeProposalCardProps> = ({
     proposal, entryId, canLog, awaitingLog = false, leverage, logNote,
+    guardBlock = null, guardWarnings = [],
     getMark, presentedAt, undoTick = 0, onUndoWindowClose, onApprove, onReject, onAskWhy, onUndo,
 }) => {
     // The card shows levels the moment the model names them, but the probability,
@@ -302,6 +312,19 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({
                 Gate could not be checked ({proposal.gate.reason}) — approving asks you to confirm, and the row is recorded UNCAPPED.
             </p>
         )}
+        {guardBlock && (
+            // The session guard refuses every new log — the card prints the
+            // standing reason and Approve stays down. Same treatment as a
+            // gate refusal: deterministic, no same-moment override.
+            <p className="mt-1.5 rounded-control border border-rose-500/20 bg-rose-500/[0.06] px-2 py-1.5 text-ui-dense text-rose-300" data-testid="proposal-guard-block">
+                Session guard — {guardBlock}
+            </p>
+        )}
+        {!guardBlock && guardWarnings.length > 0 && (
+            <p className="mt-1.5 text-ui-dense leading-relaxed text-amber-400/90" data-testid="proposal-guard-warning">
+                {guardWarnings[0]}
+            </p>
+        )}
         {logNote && (
             <p className="mt-1.5 text-ui-dense leading-relaxed text-amber-400/90" data-testid="proposal-log-note">
                 {logNote}
@@ -343,13 +366,19 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({
                                 if (needsStaleConfirm) { setStaleAcknowledged(true); return; }
                                 onApprove();
                             }}
-                            disabled={awaitingLog || !!refused}
-                            title={refused ? 'The gate refused this plan; the reason is printed above.' : undefined}
+                            disabled={awaitingLog || !!refused || !!guardBlock}
+                            title={refused
+                                ? 'The gate refused this plan; the reason is printed above.'
+                                : guardBlock
+                                    ? 'The session guard stands down; the reason is printed above.'
+                                    : undefined}
                             data-testid="proposal-approve"
                             className="rounded-control bg-emerald-600/90 px-2.5 py-1 text-ui-dense font-medium text-white transition-colors hover:bg-emerald-500 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-300">
                             {refused
                                 ? 'Refused by the gate'
-                                : awaitingLog
+                                : guardBlock
+                                    ? 'Guard stands down'
+                                    : awaitingLog
                                     ? 'Checking the gate…'
                                     : needsStaleConfirm
                                         ? 'Re-confirm: approve anyway'
