@@ -254,7 +254,10 @@ trading keeps deterministic gates.
      (`liveEntryFromMessage` carries `settlementCorrection`/`tradeAction` so an analysis-turn
      proposal renders its card on the dock too), and the dock-card probe (13/13, including the
      void's delete landing through the debounced save and staying gone). The independent review
-     returned **real-implementation** (one minor gate fix, applied). Still open in Phase 3:
+     returned **real-implementation**; all three of its findings are fixed: the void is gated on
+     the store accepting the decision, the executor refuses a correction for a row that does not
+     exist (pinned by a new contract check), and the dead two-action card renderer
+     (`ChatTranscriptRow`) is deleted. Still open in Phase 3:
      approval receipts, risk-limit and goal-change cards, and the P-1…P-5 parity proofs.
    - **Risk-limit and goal-change cards**, sharing the decision-card shape.
    - **Removal-parity proofs (P-1…P-6)**: each REMOVE row gets the check named in the parity table

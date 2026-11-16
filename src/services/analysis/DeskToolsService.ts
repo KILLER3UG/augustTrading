@@ -5259,6 +5259,13 @@ ${body}`);
                 if (!checked.ok) {
                     return rejectedResult(call, `correct_trade_outcome rejected: ${checked.refused}.`);
                 }
+                // The row must EXIST: a proposal for an id that is not in the
+                // journal (already deleted, or a hallucinated id) would render
+                // a ghost card whose confirm is a silent no-op write.
+                const rowExists = (context.trades ?? []).some(t => t.id === checked.proposal.tradeId);
+                if (!rowExists) {
+                    return rejectedResult(call, `correct_trade_outcome rejected: no journal row "${checked.proposal.tradeId}" exists to correct.`);
+                }
                 const stored = proposeSettlementCorrection(checked.proposal);
                 if (!stored.ok) {
                     return rejectedResult(call, `correct_trade_outcome rejected: ${stored.refused}.`);

@@ -5599,7 +5599,9 @@ const checkDesktopProfileStore = async () => {
 // proof it got past validation and into the branch.
 const checkAgentHandExecutor = async () => {
     const desk = loadModule('src/services/analysis/DeskToolsService.ts');
-    const ctx = { defaultSymbol: 'BTCUSDT', allowedTools: 'all' };
+    // The correction tool refuses a tradeId that is not in the journal, so the
+    // context carries the row its proposals act on.
+    const ctx = { defaultSymbol: 'BTCUSDT', allowedTools: 'all', trades: [{ id: 't9', outcome: 'WIN' }] };
     const call = (name, args) => ({ id: 'probe', name, arguments: args });
 
     const badTf = await desk.executeDeskTool(call('set_chart_timeframe', { interval: '7m' }), ctx);
@@ -5640,6 +5642,9 @@ const checkAgentHandExecutor = async () => {
     const okCorrection = await desk.executeDeskTool(call('correct_trade_outcome', { tradeId: 't9', outcome: 'LOSS', reason: 'the fill contradicts the record' }), ctx);
     ok('agent hands executor: a real correction is PROPOSED, not written',
         okCorrection.ok === true && /CORRECTION PROPOSED/.test(okCorrection.content) && /t9/.test(okCorrection.content), okCorrection.content);
+    const ghost = await desk.executeDeskTool(call('correct_trade_outcome', { tradeId: 'ghost-row', outcome: 'LOSS', reason: 'r' }), ctx);
+    ok('agent hands executor: a correction for a row that does not exist is refused',
+        ghost.ok === false && /no journal row/.test(ghost.content), ghost.content);
 
     // The two AUTHORITY changes: they record a proposal and never act.
     const badLevel = await desk.executeDeskTool(call('update_trade', { planId: 'p9', reason: 'r' }), ctx);
