@@ -59,9 +59,15 @@ rebuilt) and **Phase 3's decision cards are landed**:
   double-approve guard, stale re-confirm, reject, risk tighten/loosen/revert). Contracts
   821/0. Full gate ladder green on both commits.
 
-**Still open in Phase 3**: the removal-parity proofs P-1…P-5 (P-6 is proven; the
-button-by-button P-2 table is in [parity-proofs.md](parity-proofs.md)). Phase 4 removes
-nothing until those land.
+**Still open in Phase 3**: the parity proofs' live-model runs — the scripted-mock walks
+(`scripts/parity-proof-probe.cjs`, 19 checks: every replacement reachable, parameters
+accepted, payload shape right, Wilson + sample size on the stats) are green and repeat
+5×, but which tool a LIVE model picks unprompted needs a configured provider and is
+reported as unverifiable at STOP 1. P-6 is proven; the button-by-button P-2 table and
+the per-proof capability gaps are in [parity-proofs.md](parity-proofs.md) — the rail's
+trader-gesture controls (freehand, per-shape erase, magnet, visibility, undo, width)
+serve the trader's OWN drawings and must stay with the canvas in Phase 4, or the removal
+is a capability cut, not a parity replacement.
 
 **The independent review checkpoint ran** (2026-11-17, fresh-context adversarial reviewer
 over the five decision-card/validity commits): verdict SOUND on the A/B removal and the

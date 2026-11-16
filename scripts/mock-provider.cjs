@@ -354,11 +354,23 @@ const server = http.createServer((req, res) => {
         // assertion surface).
         try {
             const msgs = Array.isArray(body.messages) ? body.messages : [];
+            // Tool results ride tool_call_id, not a name — resolve the name
+            // from the assistant turn that issued the call, elsewhere in this
+            // same request history.
+            const idToName = new Map();
+            for (const m of msgs) {
+                if (m && m.role === 'assistant' && Array.isArray(m.tool_calls)) {
+                    for (const c of m.tool_calls) {
+                        if (c && c.id && c.function && typeof c.function.name === 'string') idToName.set(c.id, c.function.name);
+                    }
+                }
+            }
             for (const m of msgs) {
                 if (m && m.role === 'tool') {
                     RECEIPTS.push({
                         at: Date.now(),
-                        name: m.name || (typeof m.tool_call_id === 'string' ? m.tool_call_id : ''),
+                        name: (typeof m.name === 'string' && m.name)
+                            || (typeof m.tool_call_id === 'string' ? idToName.get(m.tool_call_id) || m.tool_call_id : ''),
                         content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content),
                     });
                 }
