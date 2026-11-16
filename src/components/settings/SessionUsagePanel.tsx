@@ -345,6 +345,30 @@ export const HarnessControls: React.FC = () => {
                         className="mt-1 w-full rounded-control border border-zinc-700 bg-zinc-950 px-2 py-1 text-zinc-100"
                     />
                 </label>
+                <label className="block text-ui-dense text-zinc-400">
+                    Streak pause (losses; 0 = off)
+                    <input
+                        type="number"
+                        min={0}
+                        max={20}
+                        placeholder="preset"
+                        value={settings.guardStreakPause ?? ''}
+                        onChange={e => persist({ guardStreakPause: e.target.value === '' ? undefined : Math.min(20, Math.max(0, Math.floor(Number(e.target.value)))) })}
+                        className="mt-1 w-full rounded-control border border-zinc-700 bg-zinc-950 px-2 py-1 text-zinc-100"
+                    />
+                </label>
+                <label className="block text-ui-dense text-zinc-400">
+                    Post-loss cooldown (min; 0 = off)
+                    <input
+                        type="number"
+                        min={0}
+                        max={1440}
+                        placeholder="preset"
+                        value={settings.guardPostLossCooldownMin ?? ''}
+                        onChange={e => persist({ guardPostLossCooldownMin: e.target.value === '' ? undefined : Math.min(1440, Math.max(0, Math.floor(Number(e.target.value)))) })}
+                        className="mt-1 w-full rounded-control border border-zinc-700 bg-zinc-950 px-2 py-1 text-zinc-100"
+                    />
+                </label>
             </div>
             {/* Pre-trade checklist: OFF by default; when on, the
                 capture modal shows the items and completion rides onto the

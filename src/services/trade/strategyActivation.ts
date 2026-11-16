@@ -131,21 +131,37 @@ export const strategyActivationStateOf = (proposalId: string): StrategyActivatio
 
 /** The trader confirmed. Clears the proposal — the applied status is the
  *  record from here. Returns the proposal so the applier knows what to write. */
-export const confirmStrategyActivation = (slug: string): StrategyActivationProposal | undefined => {
+/** The trader confirmed. Clears the proposal — the applied status is the
+ *  record from here. Returns the proposal so the applier knows what to write.
+ *  `expectedId` is the tapped card's proposal id: a pending proposal is
+ *  superseded in place, so two cards can exist for one slug, and resolving
+ *  by slug alone let the older card's tap apply the older change while
+ *  marking the newer proposal confirmed. A mismatch refuses — a no-op. */
+export const confirmStrategyActivation = (slug: string, expectedId?: string): StrategyActivationProposal | undefined => {
     const proposal = pending.get(slug);
     if (!proposal) return undefined;
+    if (expectedId !== undefined && proposal.id !== expectedId) return undefined;
     pending.delete(slug);
     decided.set(proposal.id, 'confirmed');
     return proposal;
 };
 
-/** The trader declined. Resolves the card; the plan is untouched. */
-export const dismissStrategyActivation = (slug: string): boolean => {
+/** The trader declined. Resolves the card; the plan is untouched. Same id
+ *  check as confirm. */
+export const dismissStrategyActivation = (slug: string, expectedId?: string): boolean => {
     const proposal = pending.get(slug);
     if (!proposal) return false;
+    if (expectedId !== undefined && proposal.id !== expectedId) return false;
     pending.delete(slug);
     decided.set(proposal.id, 'dismissed');
     return true;
+};
+
+/** A confirm whose WRITE failed puts the proposal back, so the card can be
+ *  retried instead of a resolved card sitting over an unchanged plan. */
+export const restorePendingStrategyActivation = (proposal: StrategyActivationProposal): void => {
+    pending.set(proposal.slug, proposal);
+    decided.delete(proposal.id);
 };
 
 // ── The revert window ────────────────────────────────────────────────────────

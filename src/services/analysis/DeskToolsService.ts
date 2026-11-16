@@ -2756,7 +2756,7 @@ export const DESK_TOOL_DEFINITIONS: DeskToolDefinition[] = [
                 properties: {
                     target: {
                         type: 'string',
-                        enum: ['riskPercent', 'defaultLeverage', 'minEdgeR', 'guardDailyLossPct', 'guardMaxTradesPerDay', 'guardPreset'],
+                        enum: ['riskPercent', 'defaultLeverage', 'minEdgeR', 'guardDailyLossPct', 'guardMaxTradesPerDay', 'guardStreakPause', 'guardPostLossCooldownMin', 'guardPreset'],
                         description: 'Which limit to change.',
                     },
                     value: {

@@ -36,11 +36,14 @@ export type RiskTarget =
     | 'minEdgeR'
     | 'guardDailyLossPct'
     | 'guardMaxTradesPerDay'
+    | 'guardStreakPause'
+    | 'guardPostLossCooldownMin'
     | 'guardPreset';
 
 export const RISK_TARGETS: readonly RiskTarget[] = [
     'riskPercent', 'defaultLeverage', 'minEdgeR',
-    'guardDailyLossPct', 'guardMaxTradesPerDay', 'guardPreset',
+    'guardDailyLossPct', 'guardMaxTradesPerDay', 'guardStreakPause',
+    'guardPostLossCooldownMin', 'guardPreset',
 ];
 
 export interface RiskChangeProposal {
@@ -71,6 +74,8 @@ export const RISK_TARGET_LIMITS: Record<Exclude<RiskTarget, 'guardPreset'>, { mi
     minEdgeR: { min: -5, max: 5, label: 'minimum edge (R)' },
     guardDailyLossPct: { min: 0.5, max: 10, label: 'daily loss limit (%)' },
     guardMaxTradesPerDay: { min: 1, max: 50, integer: true, label: 'max trades per day' },
+    guardStreakPause: { min: 0, max: 20, integer: true, label: 'loss-streak pause (trades; 0 disables)' },
+    guardPostLossCooldownMin: { min: 0, max: 1440, integer: true, label: 'post-loss cooldown (min; 0 disables)' },
 };
 
 const isRiskTarget = (v: unknown): v is RiskTarget =>
@@ -90,7 +95,10 @@ export const classifyRiskChange = (
     const c = typeof current === 'number' ? current : Number(current);
     const p = typeof proposed === 'number' ? proposed : Number(proposed);
     if (!Number.isFinite(c) || !Number.isFinite(p) || c === p) return 'same';
-    if (target === 'minEdgeR') return p > c ? 'tighten' : 'loosen';
+    // Two axes run the OTHER way: a HIGHER edge floor refuses more plans, and
+    // a LONGER cooldown keeps the seat out longer — more of either is tighter.
+    // The streak pause is the normal direction (pausing sooner is tighter).
+    if (target === 'minEdgeR' || target === 'guardPostLossCooldownMin') return p > c ? 'tighten' : 'loosen';
     return p < c ? 'tighten' : 'loosen';
 };
 
@@ -178,19 +186,31 @@ export const pendingRiskChange = (target: RiskTarget): RiskChangeProposal | unde
 export const riskChangeStateOf = (proposalId: string): RiskChangeState | undefined => decided.get(proposalId);
 
 /** The trader confirmed. Clears the proposal — the applied setting is the
- *  record from here. Returns the proposal so the applier knows what it wrote. */
-export const confirmRiskChange = (target: RiskTarget): RiskChangeProposal | undefined => {
+ *  record from here. Returns the proposal so the applier knows what it wrote.
+ *
+ *  `expectedId` is the id of the CARD the tap came from. A pending proposal
+ *  is superseded IN PLACE (one slot per target), and two cards can therefore
+ *  be on screen for one target: resolving by target alone let a tap on the
+ *  OLDER card apply the older change while marking the NEWER proposal
+ *  confirmed — one decision recorded, a different one applied, and the tapped
+ *  card still undecided. A mismatch refuses: the tap is a no-op, and the
+ *  stale card renders beside the live one instead of acting for it. */
+export const confirmRiskChange = (target: RiskTarget, expectedId?: string): RiskChangeProposal | undefined => {
     const proposal = pending.get(target);
     if (!proposal) return undefined;
+    if (expectedId !== undefined && proposal.id !== expectedId) return undefined;
     pending.delete(target);
     decided.set(proposal.id, 'confirmed');
     return proposal;
 };
 
-/** The trader declined. Resolves the card; the setting is untouched. */
-export const dismissRiskChange = (target: RiskTarget): boolean => {
+/** The trader declined. Resolves the card; the setting is untouched. Same id
+ *  check as confirm — a stale card's Dismiss must not dismiss the newer
+ *  proposal that superseded it. */
+export const dismissRiskChange = (target: RiskTarget, expectedId?: string): boolean => {
     const proposal = pending.get(target);
     if (!proposal) return false;
+    if (expectedId !== undefined && proposal.id !== expectedId) return false;
     pending.delete(target);
     decided.set(proposal.id, 'dismissed');
     return true;

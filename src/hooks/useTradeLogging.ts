@@ -1167,6 +1167,12 @@ export const useTradeLogging = (params: UseTradeLoggingParams) => {
     return {
         // State values and setters
         loggedTrades, setLoggedTrades,
+        /** Latest-ref mirror of loggedTrades, updated in the hook's own
+         *  effect — the freshness source the log writer consults. Exposed so
+         *  the approve path's session-guard check reads the rows AS THEY ARE
+         *  after its awaits (a settlement landing mid-await must be seen),
+         *  not the render closure. */
+        loggedTradesRef,
         tradeSummaries, setTradeSummaries,
         finalTradeSummary, setFinalTradeSummary,
         dataCaptureCandidate, setDataCaptureCandidate,

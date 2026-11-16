@@ -28,6 +28,10 @@ export interface HarnessSettings {
     guardDailyLossPct?: number;
     guardMaxTradesPerDay?: number;
     guardPostLossCooldownMin?: number;
+    /** Consecutive losses that trigger the streak pause. 0 disables it —
+     *  the preset's research-tight 2 is the shipped default, and the card
+     *  path (a risk change) is the agent's way to propose a different one. */
+    guardStreakPause?: number;
     /** Composer speed dial (port of Minara's Fast/Quality toggle):
      *  'quality' (default) = the built-in role→effort schedule; 'fast' =
      *  one step down on every reasoning task (verdicts still reason, just
@@ -97,6 +101,8 @@ export const getHarnessSettings = (): HarnessSettings => {
         guardDailyLossPct: typeof stored.guardDailyLossPct === 'number' && stored.guardDailyLossPct > 0 ? stored.guardDailyLossPct : undefined,
         guardMaxTradesPerDay: typeof stored.guardMaxTradesPerDay === 'number' && stored.guardMaxTradesPerDay >= 1 ? stored.guardMaxTradesPerDay : undefined,
         guardPostLossCooldownMin: typeof stored.guardPostLossCooldownMin === 'number' && stored.guardPostLossCooldownMin >= 0 ? stored.guardPostLossCooldownMin : undefined,
+        guardStreakPause: typeof stored.guardStreakPause === 'number' && stored.guardStreakPause >= 0 && stored.guardStreakPause <= 20
+            ? Math.floor(stored.guardStreakPause) : undefined,
         responseEffort: stored.responseEffort === 'fast' ? 'fast' : 'quality',
         // Both opt-OUT only on an explicit false: an absent key is the shipped
         // default, and a default that silently disabled the shelf or the veto would
@@ -160,7 +166,10 @@ export const getSessionGuardConfig = (): SessionGuardConfig => {
     return {
         dailyLossLimitPct: pct / 100,
         maxTradesPerDay: cap,
-        lossStreakPause: base.lossStreakPause,
+        // The streak pause is overridable like the other guard fields; 0
+        // disables it (assessSession treats 0 as off).
+        lossStreakPause: typeof s.guardStreakPause === 'number' && s.guardStreakPause >= 0 && s.guardStreakPause <= 20
+            ? Math.floor(s.guardStreakPause) : base.lossStreakPause,
         postLossCooldownMin: cool,
         tradeRiskPercent: s.riskPercent,
     };

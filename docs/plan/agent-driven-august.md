@@ -59,8 +59,29 @@ rebuilt) and **Phase 3's decision cards are landed**:
   double-approve guard, stale re-confirm, reject, risk tighten/loosen/revert). Contracts
   821/0. Full gate ladder green on both commits.
 
-**Still open in Phase 3**: the independent review checkpoint over the card work, and the
-removal-parity proofs P-1…P-5 (P-6 is proven). Phase 4 removes nothing until those land.
+**Still open in Phase 3**: the removal-parity proofs P-1…P-5 (P-6 is proven; the
+button-by-button P-2 table is in [parity-proofs.md](parity-proofs.md)). Phase 4 removes
+nothing until those land.
+
+**The independent review checkpoint ran** (2026-11-17, fresh-context adversarial reviewer
+over the five decision-card/validity commits): verdict SOUND on the A/B removal and the
+tool/memory pass; findings on the guard, the sync derivation and the activation card —
+ALL FIXED: the guard bypass through the dedupe-recovery path (the recovery CREATES a row
+when the receipt's row is gone — it runs the guard now, reading the live trades ref so a
+settlement landing mid-await is seen); the unload persist-strip leaking the strategy card
+into the session blob (interactive dead cards after reload); confirms resolving by
+slug/target instead of by the tapped card's id (a stale card's tap applied its own change
+while marking the newer proposal confirmed); the activation confirm reporting success
+before its write landed (now awaited, with the proposal restored and a truthful failure
+note on refusal); the streak pause being unconfigurable (now a setting and a risk-change
+target, 0 disables, and the cooldown is a target too — the pause arm has a real exit);
+the dock-side session switch leaving App's active conversation mismatched (App now
+follows the dock's binding); and the guard card going stale across UTC midnight (a
+minute tick). Documented, not fixed: the pnlPercent→dollars conversion lets a one-tap
+riskPercent TIGHTEN lift a daily-loss standdown (a genuine tighten that also shrinks the
+measured loss — flagged for the owner), and dock-turn decision cards never reach the
+canonical Message (consistent across all four cards; a reload before the confirm loses
+the pending proposal — needs an owner ruling on mirroring).
 
 **The strategy activation card is landed** (2026-11-17): `propose_strategy_activation`
 (GATED) records a proposal to move one plan between draft/active/retired; the card shows

@@ -996,7 +996,44 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
             sa.clearStrategyRevertWindow('p2');
             return !!open && open.previousStatus === 'draft' && gone === undefined && sa.strategyRevertOf('p2', t0) === undefined;
         })());
+    ok('strategy activation: a confirm with a stale card id refuses (F3)',
+        (() => {
+            sa.__clearStrategyActivationsForTests();
+            const first = sa.checkStrategyActivation({ slug: 'plan-x', action: 'activate', reason: 'a', currentStatus: 'draft', slugExists: true });
+            sa.__seedPendingStrategyForTests(first.ok ? first.proposal : { id: 'x', slug: 'plan-x', name: 'x', action: 'activate', reason: 'a', currentStatus: 'draft', proposedStatus: 'active', createdAt: '' });
+            const second = sa.checkStrategyActivation({ slug: 'plan-x', action: 'retire', reason: 'b supersedes', currentStatus: 'draft', slugExists: true });
+            if (!second.ok) return false;
+            sa.__seedPendingStrategyForTests(second.proposal);
+            return sa.confirmStrategyActivation('plan-x', first.ok ? first.proposal.id : 'x') === undefined
+                && sa.pendingStrategyActivation('plan-x') !== undefined
+                && sa.confirmStrategyActivation('plan-x', second.proposal.id)?.id === second.proposal.id;
+        })());
+    ok('strategy activation: a failed write restores the pending proposal (F4)',
+        (() => {
+            sa.__clearStrategyActivationsForTests();
+            const checked = sa.checkStrategyActivation({ slug: 'plan-y', action: 'activate', reason: 'r', currentStatus: 'draft', slugExists: true });
+            if (!checked.ok) return false;
+            sa.__seedPendingStrategyForTests(checked.proposal);
+            const confirmed = sa.confirmStrategyActivation('plan-y', checked.proposal.id);
+            if (!confirmed || sa.pendingStrategyActivation('plan-y') !== undefined) return false;
+            sa.restorePendingStrategyActivation(confirmed);
+            return sa.pendingStrategyActivation('plan-y')?.id === confirmed.id
+                && sa.strategyActivationStateOf(confirmed.id) === undefined;
+        })());
+    ok('strategy activation: streak pause 0 disables the arm',
+        (() => {
+            const sg2 = loadModule('src/services/validation/SessionGuardService.ts');
+            const now = new Date();
+            const halfDayMs2 = (now.getTime() - sg2.utcDayStart(now).getTime()) / 2;
+            const isoAt = (msAgo) => new Date(now.getTime() - msAgo).toISOString();
+            const rows = [{ id: 'a', outcome: 'LOSS', timestamp: isoAt(halfDayMs2), analysis: { createdAt: isoAt(halfDayMs2) } },
+                          { id: 'b', outcome: 'LOSS', timestamp: isoAt(halfDayMs2), analysis: { createdAt: isoAt(halfDayMs2) } }];
+            const on = sg2.assessSession(rows, 10000, { ...sg2.DEFAULT_SESSION_GUARD, postLossCooldownMin: 0, lossStreakPause: 2, maxTradesPerDay: 5 });
+            const off = sg2.assessSession(rows, 10000, { ...sg2.DEFAULT_SESSION_GUARD, postLossCooldownMin: 0, lossStreakPause: 0, maxTradesPerDay: 5 });
+            return on.streakPauseActive === true && off.streakPauseActive === false && off.level !== 'standdown';
+        })());
 })();
+
 
 // ─── 13f. the trade-action proposal store: an authority change needs a tap ─
 // update_trade moves the levels on an armed plan; close_trade closes it. Both
@@ -5921,7 +5958,26 @@ const checkAgentHandExecutor = async () => {
     rc.clearRiskRevertWindow(again.proposal.id);
     ok('risk card: clearing the revert window forgets it',
         rc.riskRevertOf(again.proposal.id, 1_000_000) === undefined);
+    ok('risk change: a confirm with a stale card id refuses (F3 - the newer proposal must not be resolved by the older card)',
+        (() => {
+            rc.__clearRiskChangesForTests();
+            const first = rc.proposeRiskChange({ target: 'riskPercent', value: 0.5, reason: 'a' });
+            const second = rc.proposeRiskChange({ target: 'riskPercent', value: 0.4, reason: 'b supersedes' });
+            if (!first.ok || !second.ok) return false;
+            // The first card's id no longer matches the pending slot.
+            return rc.confirmRiskChange('riskPercent', first.proposal.id) === undefined
+                && rc.pendingRiskChange('riskPercent') !== undefined
+                && rc.confirmRiskChange('riskPercent', second.proposal.id)?.id === second.proposal.id
+                && rc.dismissRiskChange('riskPercent', 'not-an-id') === false;
+        })());
+    ok('risk change: the streak pause and the cooldown are targets, on their own axes',
+        rc.RISK_TARGETS.includes('guardStreakPause') && rc.RISK_TARGETS.includes('guardPostLossCooldownMin')
+        && rc.classifyRiskChange('guardStreakPause', 2, 3) === 'loosen'
+        && rc.classifyRiskChange('guardStreakPause', 2, 1) === 'tighten'
+        && rc.classifyRiskChange('guardPostLossCooldownMin', 240, 60) === 'loosen'
+        && rc.classifyRiskChange('guardPostLossCooldownMin', 240, 480) === 'tighten');
 })();
+
 
 // ─── 13i. the session guard's enforcement: a limit is a limit ───────────────
 // The verdict machine (assessSession) had no consumer: the guard limits were

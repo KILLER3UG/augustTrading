@@ -208,7 +208,9 @@ export const assessSession = (
     const streak = currentLossStreak(trades, nowMs);
     const dailyLossHit = lossBudgetUsed >= 1;
     const tradeCapHit = tradesToday >= config.maxTradesPerDay;
-    const streakPauseActive = streak >= config.lossStreakPause;
+    // 0 = disabled: a trader (or a risk-change card) that sets the pause to
+    // 0 means "no streak pause", not "pause every session".
+    const streakPauseActive = config.lossStreakPause > 0 && streak >= config.lossStreakPause;
 
     // Post-loss cooldown: the most recent CLOSED trade is a loss and it is
     // younger than the cooldown window.
@@ -305,6 +307,16 @@ export interface GuardEnforcement {
 }
 
 export const guardEnforcement = (v: SessionGuardVerdict): GuardEnforcement => {
+    // KNOWN SIDE DOOR (review finding F6, accepted as a design tension): the
+    // daily-loss budget converts pnlPercent-only rows with the CURRENT risk
+    // percent, and riskPercent is a risk-change target where LOWER classifies
+    // as tighten = one tap. A one-tap tighten therefore also shrinks today's
+    // measured dollar loss and can lift a daily-loss standdown without the
+    // two-tap loosen. Accepted: a tighten genuinely reduces per-trade risk
+    // (the direction the asymmetry fast-paths), the conversion is an estimate
+    // for rows without pnlAmount, and the two-tap arm guards LOOSENING the
+    // limit itself. Flagged for the owner rather than papered over with a
+    // day-latched block.
     const block = v.dailyLossHit
         ? `The daily loss limit is consumed (${(v.dayPnlPct * 100).toFixed(2)}% of equity today) — the session stands down until the next UTC day. Loosen the limit through a risk-change card if you mean it.`
         : v.tradeCapHit

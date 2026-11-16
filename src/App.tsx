@@ -31,8 +31,9 @@ import {
 import {
     confirmStrategyActivation, dismissStrategyActivation, markStrategyRevertWindow, strategyRevertOf,
     clearStrategyRevertWindow, formatStrategyActivationAppliedForModel, formatStrategyActivationRevertedForModel,
-    type StrategyActivationProposal,
+    restorePendingStrategyActivation, type StrategyActivationProposal,
 } from './services/trade/strategyActivation';
+import { harnessTurn } from './utils/harnessMarks';
 import { setStrategyStatus, type StrategyStatus } from './services/learning/strategyStore';
 import { getHarnessSettings, getSessionGuardConfig, saveHarnessSettings, type HarnessSettings } from './utils/harnessSettings';
 import { assessSession, guardEnforcement } from './services/validation/SessionGuardService';
@@ -535,7 +536,7 @@ const App: React.FC = () => {
     // Bound names here are a contract: every one is used, and a test enforces
     // it. Thirteen dead bindings were removed when this surface shrank.
     const {
-        loggedTrades, setLoggedTrades,
+        loggedTrades, setLoggedTrades, loggedTradesRef: liveLoggedTradesRef,
         tradeSummaries, setTradeSummaries,
         finalTradeSummary, setFinalTradeSummary,
         dataCaptureCandidate, setDataCaptureCandidate,
@@ -1497,6 +1498,25 @@ const App: React.FC = () => {
             toast.error('Plan refused by the gate', gate.refusal);
             return false;
         }
+        // THE SESSION GUARD — the deterministic refusal of a NEW trade while a
+        // guard rule is active (daily loss consumed, trade cap reached, streak
+        // pause, post-loss cooldown). A closure read over `loggedTrades` here
+        // would be stale: the stamp await above can take seconds, and a
+        // settlement landing mid-await (autopilot trips the daily loss or
+        // fills the cap while the trader sits on the card) must be seen. So
+        // every decision point below reads the hook's LIVE ref, and the guard
+        // runs at BOTH write sites: the dedupe recovery (which CREATES a row
+        // when the receipt's row is gone — the bypass the independent review
+        // found) and the first write. An already-logged plan resolving to its
+        // existing row still needs no guard: nothing new is written. The
+        // recourse is the gated path — a risk-change card loosening the limit
+        // — never a same-moment override.
+        const guardStateNow = () => {
+            const settingsNow = getHarnessSettings();
+            const verdict = assessSession(liveLoggedTradesRef.current ?? loggedTrades, settingsNow.equityUsd, getSessionGuardConfig());
+            return { verdict, guard: guardEnforcement(verdict) };
+        };
+        const guardBlockNow = (): string | null => guardStateNow().guard.block;
         if (gate.status === 'unavailable') {
             const ok = await confirmDialog({
                 title: 'The gate could not be checked',
@@ -1538,6 +1558,19 @@ const App: React.FC = () => {
             const pendingReceipt = messages.find(m =>
                 m.planId === stamped.planId && m.outcome === TradeOutcome.PENDING);
             if (pendingReceipt) {
+                // The recovery CREATES a row whenever the receipt's row is
+                // gone (the trader deleted it, or the crash ate the write) —
+                // that is a NEW trade in the guard's terms, so the guard runs
+                // here too. A row that still exists is resolution, not a new
+                // write, and passes without the guard.
+                const rowStillExists = liveLoggedTradesRef.current.some(t => t.id === pendingReceipt.id);
+                if (!rowStillExists) {
+                    const blocked = guardBlockNow();
+                    if (blocked) {
+                        toast.error('The session guard refuses a new trade', blocked);
+                        return false;
+                    }
+                }
                 const tracked = await trackProposedTrade(pendingReceipt);
                 if (!tracked.ok) {
                     toast.error('Could not track this trade', tracked.error);
@@ -1553,21 +1586,10 @@ const App: React.FC = () => {
             return loggedRow ? loggedRow.id : false;
         }
 
-        // THE SESSION GUARD — the deterministic refusal of a NEW trade while a
-        // guard rule is active (daily loss consumed, trade cap reached, streak
-        // pause, post-loss cooldown). Checked HERE, not only on the card's
-        // button, because a replayed row or a schedule can reach this writer
-        // with no card in sight — the same fail-closed reasoning as the gate
-        // refusal above. The dedupe recovery above it stays reachable: an
-        // already-logged plan resolving to its existing row writes nothing
-        // new, so the guard governs the first write, not the receipt of an
-        // old decision. The recourse is the gated path — a risk-change card
-        // loosening the limit — never a same-moment override.
-        const settingsNow = getHarnessSettings();
-        const guardVerdict = assessSession(loggedTrades, settingsNow.equityUsd, getSessionGuardConfig());
-        const guard = guardEnforcement(guardVerdict);
-        if (guard.block) {
-            toast.error('The session guard refuses a new trade', guard.block);
+
+        const { guard: guardState } = guardStateNow();
+        if (guardState.block) {
+            toast.error('The session guard refuses a new trade', guardState.block);
             return false;
         }
 
@@ -1601,7 +1623,7 @@ const App: React.FC = () => {
                 takeProfits: stamped.takeProfits,
                 rowId: pendingReceipt.id,
                 watchArmed: levelWatch.getArmedPlans().some(p => p.planId === stamped.planId),
-                sessionGuard: guard.warnings.length > 0 ? guard.warnings.join(' ') : 'clear',
+                sessionGuard: guardState.warnings.length > 0 ? guardState.warnings.join(' ') : 'clear',
             }), sessionId);
         }
         return pendingReceipt.id;
@@ -1705,7 +1727,11 @@ const App: React.FC = () => {
     // tighten, an explicit second tap to loosen); a confirmed change keeps a
     // revert window, and the model learns both directions in the thread.
     const handleConfirmRiskChange = useCallback((proposal: RiskChangeProposal, sessionId?: string): void => {
-        const confirmed = confirmRiskChange(proposal.target);
+        // The tapped card's id must still BE the pending proposal: a slot is
+        // superseded in place, and resolving by target alone let a stale
+        // card's tap apply its own change while marking the newer proposal
+        // confirmed (review finding F3).
+        const confirmed = confirmRiskChange(proposal.target, proposal.id);
         if (!confirmed) return;
         // The bounds were checked at propose time; the write is the trader's
         // own settings path, so the value lands exactly as Settings would
@@ -1717,7 +1743,7 @@ const App: React.FC = () => {
     }, []);
 
     const handleDismissRiskChange = useCallback((proposal: RiskChangeProposal): void => {
-        dismissRiskChange(proposal.target);
+        dismissRiskChange(proposal.target, proposal.id);
     }, []);
 
     const handleRevertRiskChange = useCallback((proposal: RiskChangeProposal, sessionId?: string): void => {
@@ -1736,32 +1762,47 @@ const App: React.FC = () => {
     // the agent never moves a plan's status. A confirmed change keeps the
     // risk card's revert window, and the model learns the decision in thread.
     const handleConfirmStrategyActivation = useCallback((proposal: StrategyActivationProposal, sessionId?: string): void => {
-        const confirmed = confirmStrategyActivation(proposal.slug);
+        // Same id check as the risk card (review finding F3).
+        const confirmed = confirmStrategyActivation(proposal.slug, proposal.id);
         if (!confirmed) return;
         // The write is the trader's own path (the journal's notebook write),
-        // exactly as Settings → Strategy plans would write it. Best-effort:
-        // a write that fails (no notebook, no file) leaves the card resolved
-        // but the status unchanged — the failure is surfaced through the
-        // store's own failure channel, not silently swallowed.
+        // exactly as Settings → Strategy plans would write it. AWAITED, not
+        // fire-and-forget: the applied note and the revert window must
+        // describe a write that LANDED — a refusal (no strategies folder, no
+        // file) used to tell the model the status moved when it did not,
+        // while the trader got only a toast (review finding F4).
         void setStrategyStatus(proposal.slug, proposal.proposedStatus).then(ok => {
-            if (!ok) toast.error('The strategy change did not land', `The notebook refused the write for "${proposal.slug}" — check the strategies folder.`);
+            if (ok) {
+                markStrategyRevertWindow(proposal.id, proposal.currentStatus);
+                chatStore.queueHarnessSignal(formatStrategyActivationAppliedForModel(proposal), sessionId);
+            } else {
+                // Put the proposal back so the card can be retried, and tell
+                // the model the truth — the same posture the approval path
+                // takes when its write fails.
+                restorePendingStrategyActivation(proposal);
+                toast.error('The strategy change did not land', `The notebook refused the write for "${proposal.slug}" — check the strategies folder.`);
+                chatStore.queueHarnessSignal(harnessTurn(
+                    `[STRATEGY CHANGE FAILED — the app, not the trader] The trader confirmed the ${proposal.action} of plan "${proposal.slug}", but the notebook write was refused — the plan's status is UNCHANGED. Do not treat the plan as ${proposal.proposedStatus}; the trader may retry the card.`,
+                ), sessionId);
+            }
         });
-        markStrategyRevertWindow(proposal.id, proposal.currentStatus);
-        chatStore.queueHarnessSignal(formatStrategyActivationAppliedForModel(proposal), sessionId);
     }, [toast]);
 
     const handleDismissStrategyActivation = useCallback((proposal: StrategyActivationProposal): void => {
-        dismissStrategyActivation(proposal.slug);
+        dismissStrategyActivation(proposal.slug, proposal.id);
     }, []);
 
     const handleRevertStrategyActivation = useCallback((proposal: StrategyActivationProposal, sessionId?: string): void => {
         const window = strategyRevertOf(proposal.id);
         if (!window) return;
         void setStrategyStatus(proposal.slug, window.previousStatus as StrategyStatus).then(ok => {
-            if (!ok) toast.error('The strategy revert did not land', `The notebook refused the write for "${proposal.slug}" — check the strategies folder.`);
+            if (ok) {
+                clearStrategyRevertWindow(proposal.id);
+                chatStore.queueHarnessSignal(formatStrategyActivationRevertedForModel(proposal, window.previousStatus), sessionId);
+            } else {
+                toast.error('The strategy revert did not land', `The notebook refused the write for "${proposal.slug}" — the card keeps its revert window.`);
+            }
         });
-        clearStrategyRevertWindow(proposal.id);
-        chatStore.queueHarnessSignal(formatStrategyActivationRevertedForModel(proposal, window.previousStatus), sessionId);
     }, [toast]);
 
     /** The dock holds a settled verdict's message id, not a copy of the
@@ -1847,6 +1888,24 @@ const App: React.FC = () => {
         () => dockSnapshot.sessions.find(s => s.id === dockSnapshot.activeId),
         [dockSnapshot],
     );
+    // Follow the dock's binding (review finding F8): a dock-side session
+    // switch (history menu, roster) changes the store's active session only,
+    // and the dock merges App's ACTIVE conversation rows into any session
+    // with a conversationId — so a switch to a session bound to a DIFFERENT
+    // conversation used to render that conversation's entries stitched under
+    // the previous conversation's canonical rows until the next dock send
+    // flipped App. App now follows: when the dock's bound conversation
+    // changes, it becomes App's active conversation too, and `messages`
+    // (what conversationRows feeds the merge) names the same conversation the
+    // dock shows. A chart-side session has no binding — App stays where it
+    // is, and the merge is skipped for it by construction.
+    const lastFollowedConversationRef = useRef<string | null>(null);
+    useEffect(() => {
+        const bound = dockActiveSession?.conversationId ?? null;
+        if (!bound || bound === lastFollowedConversationRef.current) return;
+        lastFollowedConversationRef.current = bound;
+        if (bound !== activeConversationId) handleLoadConversation(bound);
+    }, [dockActiveSession?.conversationId, activeConversationId, handleLoadConversation]);
 
     /** The canonical conversation for the bot the dock is bound to, as rows,
      *  recomputed whenever `messages` changes.

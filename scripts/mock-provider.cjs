@@ -310,6 +310,9 @@ const streamToolCall = (res, call) => {
     res.end();
 };
 
+// The tool receipts captured from follow-up requests (see the capture below).
+const RECEIPTS = [];
+
 const server = http.createServer((req, res) => {
     cors(res, req);
     if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
@@ -325,6 +328,11 @@ const server = http.createServer((req, res) => {
         return;
     }
 
+    if (req.url.endsWith('/receipts') && req.method === 'GET') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(RECEIPTS));
+        return;
+    }
     if (!req.url.includes('/chat/completions')) {
         res.writeHead(404, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: { message: `mock-provider: no route ${req.url}` } }));
@@ -339,6 +347,24 @@ const server = http.createServer((req, res) => {
         // Opt-in scenario. Returns null unless MOCK_TOOL_CALL is on AND this
         // request carries tools AND no tool result is in the history yet, so a
         // flag-off run never reaches past the first statement.
+        // Parity-proof capture: every role:'tool' message in a follow-up is a
+        // desk-tool receipt the app sent back. Buffered and served at /receipts
+        // so a probe can assert on the PAYLOAD the model actually received
+        // (the transcript collapses tool rows, so DOM text cannot be the
+        // assertion surface).
+        try {
+            const msgs = Array.isArray(body.messages) ? body.messages : [];
+            for (const m of msgs) {
+                if (m && m.role === 'tool') {
+                    RECEIPTS.push({
+                        at: Date.now(),
+                        name: m.name || (typeof m.tool_call_id === 'string' ? m.tool_call_id : ''),
+                        content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content),
+                    });
+                }
+            }
+            if (RECEIPTS.length > 500) RECEIPTS.splice(0, RECEIPTS.length - 500);
+        } catch { /* capture must never break the scripted answer */ }
         const scripted = toolScenario(body);
         if (scripted) {
             const call = scripted.choices[0].message.tool_calls[0];

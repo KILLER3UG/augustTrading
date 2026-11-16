@@ -25,8 +25,19 @@ export const useSessionGuardVerdict = (trades: LoggedTrade[] | undefined): Guard
     // merged settings object — one state update per real save.
     const [settings, setSettings] = useState<HarnessSettings>(getHarnessSettings);
     useEffect(() => subscribeHarnessSettings(setSettings), []);
+    // The verdict also moves with the CLOCK: the day buckets roll at 00:00
+    // UTC (a card open across midnight would keep a stand-down that had
+    // lifted, or vice versa) and a cooldown expires without any trade or
+    // settings change. A one-minute tick keeps the card honest; the WRITER
+    // re-checks fresh at log time either way, so this only affects what the
+    // card shows.
+    const [clockTick, setClockTick] = useState(0);
+    useEffect(() => {
+        const t = setInterval(() => setClockTick(v => v + 1), 60_000);
+        return () => clearInterval(t);
+    }, []);
     return useMemo(
         () => guardEnforcement(assessSession(trades ?? [], settings.equityUsd, getSessionGuardConfig())),
-        [trades, settings],
+        [trades, settings, clockTick],
     );
 };
