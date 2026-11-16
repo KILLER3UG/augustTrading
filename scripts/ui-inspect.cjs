@@ -111,7 +111,7 @@ async function seed(page) {
  *  calls can straddle a resize and describe a layout that never existed. */
 const measureShell = () => {
     const box = (el) => el ? el.getBoundingClientRect() : null;
-    const rail = document.querySelector('[data-testid="agents-rail"]');
+    const rail = document.querySelector('[data-testid="shell-rail"]');
     const main = document.querySelector('main');
     // The thread pane, not <main>: the column now lives INSIDE main, so main's
     // width is unchanged by a collapse and only the pane beside it grows.
@@ -263,7 +263,7 @@ async function main() {
         await page.evaluate(() => document.querySelector('[data-testid="nav-rail-toggle-header"]')?.click());
         await sleep(600);
         const revived = await page.evaluate(() => {
-            const el = document.querySelector('[data-testid="agents-rail"]');
+            const el = document.querySelector('[data-testid="shell-rail"]');
             return !!el && el.offsetParent !== null;
         });
         check('the header toggle revives the hidden column', revived === true, `visible=${revived}`);

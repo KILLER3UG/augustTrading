@@ -25,14 +25,14 @@ flowchart TD
     APP --> US["useSurface src/hooks/useSurface.ts key, valid set"]
     US --> UR["useSurfaceRouter src/hooks/useSurfaceRouter.ts openJournal, hash read, serialize"]
     UR --> HASH["src/utils/appHash.ts — hash and state stay equal"]
-    APP --> HD["Header content bar src/App.tsx — guard surface !== 'agents' "]
-    APP --> SR["ShellRail src/components/shell/ShellRail.tsx — Analyze/Agents modes, ConversationGroups (sparse list), Journal/Learning, account"]
-    APP --> AV["AgentsView gets the same mode switch and utility nodes as props src/App.tsx"]
-    APP --> SG["SignalCard src/components/trade/SignalCard.tsx — shared dock + Chat card"]
-    APP --> CG["ConversationGroups src/components/shell/ConversationGroups.tsx — shared rail list"]
+    APP --> HD["Header content bar — rendered by SurfaceOutlet for the workspace routes src/components/shell/SurfaceOutlet.tsx"]
+    APP --> SR["ShellRail src/components/shell/ShellRail.tsx — Analyze/Agents/Settings icon rail"]
+    APP --> SO["SurfaceOutlet src/components/shell/SurfaceOutlet.tsx — the workspace switch: trade and agents are ONE page (chart + Chart AI dock)"]
+    APP --> SG["SignalCard src/components/trade/SignalCard.tsx — the dock's decision card"]
+    APP --> CG["ConversationGroups src/components/shell/ConversationGroups.tsx — the rail's conversation list"]
     SR --> T["Analyze · trade-view · src/App.tsx"]
     SR --> J["Journal · journal-view · src/App.tsx"]
-    SR --> C["Agents · agents-view · src/App.tsx"]
+    SR --> C["Agents · the same workspace · src/App.tsx"]
     SR --> K["Learning · learn-view · src/App.tsx"]
     K -.-> AP["NO Approvals tab (removed 2026-11-03) — the queues auto-apply; the memory corrections log is Settings → Memory"]
     NR["NavRail — DELETED (only the shell-chrome consts src/App.tsx remain), NEVER rendered (see correction 5); its AccountRow export IS, src/App.tsx; NAV_RAIL_AUTO_COLLAPSE_PX and NAV_RAIL_EXPANDED_PX are live too"]:::dead
@@ -49,10 +49,10 @@ Stored surface values `'chat'`, `'boards'`, `'skills'` all migrate to `'trade'`
 
 ```mermaid
 flowchart TD
-    subgraph CHAT["Agents surface (agents)"]
-        CB["composer textarea — src/components/agents/AgentsView.tsx ref, Enter"] --> D1{"send() branches on what is SELECTED"}
-        D1 -->|a bot is selected| BOT["onSendBotTurn src/components/agents/AgentsView.tsx → src/App.tsx → useBotMailbox → runBotTurn"]
-        D1 -->|no bot| AN["onAnalyze(prompt, images) src/components/agents/AgentsView.tsx → src/App.tsx handleRunAnalysisFromChat"]
+    subgraph CHAT["The workspace composer (the Chart AI dock, src/components/trade/TradeChatPanel.tsx)"]
+        CB["composer textarea — src/components/trade/panels/ChatComposer.tsx ref, Enter"] --> D1{"send() branches on the SESSION kind (solo / panel / room / bot)"}
+        D1 -->|a bot session| BOT["the dock's bot turn src/services/trade/chatTurnRunner.ts — the roster persona answers in its own session"]
+        D1 -->|solo| AN["onRunAnalysis src/components/trade/TradeView.tsx → src/App.tsx handleRunAnalysisFromChat"]
     end
     subgraph DOCK["Chart AI dock — inside Trade, src/components/trade/TradeView.tsx"]
         DC["src/components/trade/panels/ChatComposer.tsx "] --> D2{"chatTurnRunner.send src/services/trade/chatTurnRunner.ts — branches on seats"}
@@ -147,13 +147,12 @@ duplicate or hide it.
   `onSyncConversation`, which adopts the unused blank conversation or mints one
   and makes it active — a session that never had a thread used to keep its
   transcript entirely to itself.
-- Either home can stop it. The dock registers its controller under the
+- Either way the composer never lies about busy. The dock registers its controller under the
   CONVERSATION id as well as its session id, `cancelRunAt`
   (`src/hooks/useAnalysisPipeline.ts › useAnalysisPipeline`) falls back to that registry when it owns
-  no pipeline run, and `AgentsView` folds `snap.conversationRunning` into its
-  busy flag (`src/components/agents/AgentsView.tsx › AgentsView`) so the composer never
-  offers Send over an answer that is arriving. The dock does the same with
-  `conversationBusy` (`src/components/trade/TradeChatPanel.tsx › TradeChatPanel`).
+  no pipeline run, and the dock folds `snap.conversationRunning` into its
+  busy flag (`src/components/trade/TradeChatPanel.tsx › TradeChatPanel`) so the composer never
+  offers Send over an answer that is arriving.
 
 
 ### B.1 The row, the work, the wire and the control
@@ -502,7 +501,7 @@ editor prints the source that won (user, measured, model-reported or assumed).
 flowchart TD
     MSG["App messages — canonical, useConversations, no cap (owner ruling 2026-10-27)"] --> MER["entriesForSession src/services/trade/chatSessions.ts — App rows, dock entries overwrite by id"]
     CS["chatStore singleton — survives unmount, owns AbortControllers"] --> MER
-    MER --> PANE["agentThreads.ts read at AgentsView — drops room rows, keeps non-AI, drops only a POSITIVE botId claim"]
+    MER --> PANE["agentThreads.ts deskThread — the dock's desk pane drops room rows and drops only a POSITIVE botId claim"]
     CS --> LS["localStorage trade_chat_sessions_v1_&lt;user&gt; — debounced, streaming stripped"]
     MSG --> PP["useProfilePersistence → dbService"]
     PP --> IDB["web: IndexedDB FuturesAI-DB / userProfiles"]
@@ -1101,33 +1100,19 @@ included: `setSelfModMode src/services/selfMod/SelfModificationService.ts › se
 and the toggle sits beside the knobs it governs, in the Harness block at
 `Self-modification src/components/settings/SessionUsagePanel.tsx › HarnessControls`
 
-**Where the trader sees it.** The Agents rail's third tab is the audit and the
-undo for both kinds of state —
-`GoalRailPanel src/components/agents/GoalRailPanel.tsx › GoalRailPanel`
-lists every goal with its focus control, its status, its history restores and a
-delete that asks once before it commits, and under it the changes still in force
-with one Undo each
-(`rail-self-changes src/components/agents/GoalRailPanel.tsx › GoalRailPanel`).
-The panel mounts where the roster and the conversations do, on the same tab row
-(`railTab src/components/agents/AgentsView.tsx › AgentsView`). The header names the goal the
-seat is inside and its × releases it —
-`ActiveGoalChip src/components/agents/ActiveGoalChip.tsx › ActiveGoalChip`
-— because a focused goal changes which tools the NEXT turn is offered, so a
-trader who could not see it was being shaped by a state they never chose. A
-goal-only control gets no coverage from the inert-control sweep (it walks the
-Learn and Journal surfaces), so the presses are proven live instead.
+**Where the trader sees it.** The Agents rail's Goals tab and its panel were an ORPHAN —
+imported by nothing — and were DELETED with the Agents surface in the workspace merge
+(2026-11-16). Goal state is shaped and surfaced through the desk tools instead: the
+`open_goal` / `update_goal` / `restore_goal` environments focus a goal mid-task, the turn's
+receipt names the goal in the transcript, and the same tools carry the focus/restore presses
+the panel used to host.
 
-The same tab is the human's editor. `GoalEditor src/components/agents/GoalRailPanel.tsx › GoalEditor`
-opens in place over the row it edits and writes the fields the desk also writes —
-objective, next step, the phrases that resurface it, and the tool policy — through
-`saveGoal src/components/agents/GoalRailPanel.tsx › GoalRailPanel`, which carries the SAME
-`ifVersion` lock the desk uses: if the model changed the goal mid-edit the press
-names the revision that won, the editor stays open with the trader's text intact,
-and nothing is overwritten. Two rules the editor keeps: `mergeTriggers
-src/components/agents/GoalRailPanel.tsx › GoalRow` replaces only the message trigger, so a
-price trigger's watch id survives a prose edit, and the policy chips list only
-tools this seat can reach, because a narrowing the seat cannot honour would strip
-it to `NO_TOOLS_ALLOWED` rather than grant anything.
+The panel's human editor died with it. `updateGoal src/services/goals/GoalService.ts › updateGoal`
+keeps the SAME `ifVersion` lock the desk uses: if the model changed the goal mid-edit the
+loser names the revision that won, and nothing is overwritten. The editor's two rules hold in
+the tools that supersede it: the message trigger is replaced without touching a price
+trigger's watch id, and a tool policy can only ever NARROW to what the seat can reach — never
+grant — because a narrowing the seat cannot honour would strip it to `NO_TOOLS_ALLOWED`.
 
 ## H · Every arrow
 
@@ -1138,14 +1123,14 @@ it to `NO_TOOLS_ALLOWED` rather than grant anything.
 | 3 | App → useSurfaceRouter | surface + journalTab + journalOpenNonce, `useSurfaceRouter src/hooks/useSurfaceRouter.ts › useSurfaceRouter` |
 | 4 | useSurfaceRouter → useSurface | persisted value, key `august_surface_v1 src/hooks/useSurface.ts › KEY`, valid set `src/hooks/useSurface.ts › VALID` |
 | 5 | useSurfaceRouter → appHash | `#/journal\|market\|settings\|watch` ⇄ state `parseAppHash src/hooks/useSurfaceRouter.ts › useSurfaceRouter`, serialize `serializeAppHash src/hooks/useSurfaceRouter.ts › useSurfaceRouter` |
-| 6 | App → Header | content bar; guard `surface src/App.tsx › App` (the Agents surface keeps its own bar) |
-| 7 | App → 4 lazy surfaces | each wrapped in `SurfaceSkeleton` — `SurfaceSkeleton src/App.tsx › SurfaceSkeleton` TradeView, `SurfaceSkeleton src/App.tsx › SurfaceSkeleton` Journal, `SurfaceSkeleton src/App.tsx › SurfaceSkeleton` LearnView, `SurfaceSkeleton src/App.tsx › SurfaceSkeleton` StrategyStudio |
+| 6 | App → Header | content bar, rendered by `SurfaceOutlet src/components/shell/SurfaceOutlet.tsx › SurfaceOutlet` for the workspace routes |
+| 7 | App → lazy screens | each wrapped in `SurfaceSkeleton src/components/shell/SurfaceOutlet.tsx › SurfaceSkeleton` — TradeView, Journal, LearnView, StrategyStudio |
 | 8 | App → ShellRail | mode switch + utility rows, `ShellRail src/components/shell/ShellRail.tsx › ShellRail`, `NavBadge src/components/shell/ShellRail.tsx › NavBadge` |
-| 9 | App → AgentsView props | same mode switch + utilities + StatusCluster + AccountRow on `AgentsView src/App.tsx › App`, props `src/App.tsx › App` |
+| 9 | App → SurfaceOutlet props | the workspace switch: `trade` and `agents` are ONE page — `SurfaceOutlet src/components/shell/SurfaceOutlet.tsx › SurfaceOutlet`, props `src/App.tsx › App` |
 | 10 | TradeView → TradeChatPanel | the dock, inside Trade `TradeChatPanel src/components/trade/TradeView.tsx › TradeView` |
-| 11 | AgentsView.send → bot branch | the selected bot answered at `onSendBotTurn src/components/agents/AgentsView.tsx › AgentsView` |
-| 12 | bot branch → useBotMailbox | `runUserBotTurn src/hooks/useBotMailbox.ts › useBotMailbox` → `runBotTurn src/hooks/useBotMailbox.ts › useBotMailbox` |
-| 13 | AgentsView.send → analysis branch | `onAnalyze src/components/agents/AgentsView.tsx › AgentsView` → `handleRunAnalysisFromChat src/App.tsx › App` — the dock's `onRunAnalysis` reaches the SAME wrapper |
+| 11 | dock bot session → the bot's answer | a bot-bound session answers through `chatTurnRunner src/services/trade/chatTurnRunner.ts › createChatTurnRunner` with the roster persona |
+| 12 | bot branch → useBotMailbox | autonomous DMs: `runBotTurn src/hooks/useBotMailbox.ts › useBotMailbox` wakes the one thread |
+| 13 | dock composer → analysis branch | `onRunAnalysis src/components/trade/TradeView.tsx › TradeView` → `handleRunAnalysisFromChat src/App.tsx › App` — the Full-analysis button reaches the SAME wrapper |
 | 14 | dock Full analysis → the run slot | `runFullAnalysis src/components/trade/TradeChatPanel.tsx › TradeChatPanel` → `beginRun`/`endRunOwned`; it writes **no row**, the pipeline's own messages are projected into the session |
 | 15 | ChatComposer → chatTurnRunner.send | key `Enter src/components/trade/panels/ChatComposer.tsx › ChatComposer` / button `src/components/trade/panels/ChatComposer.tsx › ChatComposer` → `src/services/trade/chatTurnRunner.ts › createChatTurnRunner` |
 | 16 | solo → runSeatTurn | `src/services/trade/chatTurnRunner.ts › createChatTurnRunner` (definition `runSeatTurn src/services/trade/chatTurnRunner.ts › createChatTurnRunner`) |
@@ -1175,7 +1160,7 @@ it to `NO_TOOLS_ALLOWED` rather than grant anything.
 | 41 | notebook writes → byte tiers | a write asks `notebookPressureAllows src/services/learning/MemoryFilesService.ts › notebookPressureAllows` before the notebook may grow; the tiers come from utils/memoryBudget.ts and Settings Health reads memoryHealth.ts |
 | 42 | heartbeat → notebook hygiene | `useLearningHeartbeat src/hooks/useLearningHeartbeat.ts › useLearningHeartbeat` → `runMemoryHygieneIfDue src/services/learning/memoryHygiene.ts › runMemoryHygieneIfDue` |
 | 43 | ~~approval tray → badge~~ | DELETED (2026-11-03, owner request): the Approvals tab, its rail count and `collectApprovalItems` are gone; the queues apply themselves |
-| 44 | the pane filters what it shows | `deskThread src/utils/agentThreads.ts › deskThread` read at `AgentsView.tsx` |
+| 44 | the pane filters what it shows | `deskThread src/utils/agentThreads.ts › deskThread` — read by the dock's desk pane since the workspace merge |
 | 45 | `present_trade` → a card in either home | `runPresentTrade src/services/trade/presentTradeTool.ts › runPresentTrade` ← dock sink `chatTurnRunner.ts` / desk sink `chatSurfaceTurn.ts`; gate scan starts there, the cap binds at log time (`ensureStamp src/services/trade/proposalGate.ts › ensureStamp`), and the same stamp answers for the shape of the plan — `assessPlanShape src/services/trade/proposalGate.ts › assessPlanShape` refuses an inverted one and warns on a sub-floor ratio or an out-of-band stop, per ruling (c) of E-57 §5 |
 | 46 | `chatSurfaceSystemPrompt` → the desk arm's prompt | `chatSurfaceSystemPrompt src/services/trade/chatSurfaceTurn.ts › chatSurfaceSystemPrompt` — mandate (`CHAT_SURFACE_SYSTEM_PROMPT src/constants/prompts/chatPrompts.ts › CHAT_SURFACE_SYSTEM_PROMPT`) + skills index + active strategies and uploaded books + memory index, read FRESH per turn; the 30 slugs printed are the 30 recorded on the row (`src/types/message.ts › Message`) |
 | 47 | prose that never called the tool → the same decision | `planFromProse src/services/trade/tradeShapedProse.ts › planFromProse` reads the labelled entry/stop/target out of the row, parseTradeProposal decides whether that is a plan, and the chip mints the ONE plan-id shape (mintPlanId) before calling onLogProposedTrade — so a spoken plan reaches the journal the same way a presented one does |
@@ -1206,7 +1191,7 @@ it to `NO_TOOLS_ALLOWED` rather than grant anything.
 | 72 | message → focused goal → a narrower toolset | `focusedGoal src/services/goals/GoalService.ts › focusedGoal` · `goalMatchesMessage src/services/goals/GoalService.ts › goalMatchesMessage` → `goalAllowedTools src/services/trade/chatSurfaceTurn.ts › runChatSurfaceTurn` → `intersectGoalPolicy src/utils/toolKinds.ts › intersectGoalPolicy` › `effectiveAllowed src/services/analysis/DeskToolsService.ts › withDeskToolsSystemPrompt`, an intersection — a goal may only narrow the seat, and narrowing to nothing leaves it `NO_TOOLS_ALLOWED src/utils/toolKinds.ts › NO_TOOLS_ALLOWED` rather than the whole desk |
 | 73 | seat → goal edit → snapshot → undo | `case 'update_goal' src/services/analysis/DeskToolsService.ts › executeDeskTool` → `updateGoal src/services/goals/GoalService.ts › updateGoal` keeps the previous snapshot → `case 'restore_goal' src/services/analysis/DeskToolsService.ts › executeDeskTool` → `restoreGoal src/services/goals/GoalService.ts › restoreGoal` |
 | 74 | seat → self-change → ledger → outcomes | `case 'propose_self_change' src/services/analysis/DeskToolsService.ts › executeDeskTool` → `proposeKnobChange src/services/selfMod/SelfModificationService.ts › proposeKnobChange` / `proposePromptOverride src/services/selfMod/SelfModificationService.ts › proposePromptOverride` → `writeSelfChange src/services/selfMod/SelfChangeLedger.ts › writeSelfChange` → `settleSelfChanges src/services/selfMod/SelfModificationService.ts › settleSelfChanges`, run from `useTradeLogging src/hooks/useTradeLogging.ts › useTradeLogging` |
-| 75 | rail Goals tab → focus / undo → the header chip | `focusGoal src/services/goals/GoalService.ts › focusGoal` and `revertSelfChange src/services/selfMod/SelfModificationService.ts › revertSelfChange` pressed from `GoalRailPanel src/components/agents/GoalRailPanel.tsx › GoalRailPanel` → `ActiveGoalChip src/components/agents/ActiveGoalChip.tsx › ActiveGoalChip` names it, and its own press releases it |
+| 75 | goal focus / undo | `focusGoal src/services/goals/GoalService.ts › focusGoal` and `revertSelfChange src/services/selfMod/SelfModificationService.ts › revertSelfChange` are desk-tool presses (`open_goal` / `restore_goal`); the rail tab that used to host them was an orphan and died with the Agents surface |
 
 ---
 

@@ -30,7 +30,6 @@ import { latestChartVerdict } from './services/trade/chartData';
 import { useToastActions } from './components/shared/Toast';
 import { FORGED_PROPOSAL_EVENT } from './services/tools/toolForge';
 import { AMENDMENT_EVENT } from './services/learning/memoryAmendments';
-import { loadBotLearningStats } from './services/agents/botLearning';
 import { useConfirmDialog } from './components/shared/ConfirmDialog';
 import { useProviderConfigs } from './hooks/useProviderConfigs';
 import { useAppSettings } from './hooks/useAppSettings';
@@ -66,18 +65,16 @@ import SurfaceOutlet, { SurfaceSkeleton } from './components/shell/SurfaceOutlet
 import { effortDialUp } from './components/shared/effortDial';
 import { nextEffortTier } from './components/shared/effortScale';
 import { DEFAULT_FRAMEWORKS } from './constants/models';
-import { computeChatModelFallback, isProviderReady } from './utils/providerUtils';
+import { isProviderReady } from './utils/providerUtils';
 import { defaultLeverage, createNewConversation, findReusableEmptyConversation } from './utils/conversationUtils';
 import { type ThreadSelection, threadForProvider } from './utils/agentThreads';
 import {
-    updateBot, 
-    groupDisplayName, 
+    groupDisplayName,
     type AgentBot,
 } from './services/agents/agentRoster';
 import { useAgentGroups } from './hooks/useAgentGroups';
 import { useBotMailbox, type UseBotMailboxResult } from './hooks/useBotMailbox';
 import { buildBotSystemPrompt } from './services/agents/botMailbox';
-import { classifyBotAttention } from './services/agents/botAttention';
 import { readBotSystemMarkdown, readBotMemoryMarkdown } from './services/bots/BotMemoryService';
 import useNetworkStatus from './hooks/useNetworkStatus';
 import { useLearningHeartbeat } from './hooks/useLearningHeartbeat';
@@ -111,7 +108,7 @@ import type { SoloTurnRow } from './services/trade/chatTurnMirror';
 // This note stays where the old import sat: the account row and the collapse
 // threshold are the live pieces of that shell module, and the deletion is not
 // a rename that a future reader should undo.
-import { AccountRow, NAV_RAIL_AUTO_COLLAPSE_PX, NAV_RAIL_EXPANDED_PX } from './components/shell/shellChrome';
+import { NAV_RAIL_AUTO_COLLAPSE_PX, NAV_RAIL_EXPANDED_PX } from './components/shell/shellChrome';
 import ShellRail from './components/shell/ShellRail';
 // The Journal pulls recharts + react-virtuoso into its chunk — statically
 // importing it put both on the startup path for a surface most users open
@@ -272,11 +269,9 @@ const App: React.FC = () => {
         moderatorProviderId, moderatorModel,
 
         handleSetSelectedOcrModel,
-        // Revert and versions (2026-10-27). The RULE lives in the conversation
-        // store, not in a surface, because one conversation has two readers —
-        // this surface and the Chart AI dock — and a revert applied inside only
-        // one of them would be undone by the other's next merge.
-        revertToMessage, restoreParkedTurns, editMessageText, stepMessageGeneration,
+        // Revert and versions (2026-10-27): the RULE lives in the conversation
+        // store. The Agents surface's revert/version affordances died with the
+        // workspace merge; the store keeps the capability for the dock.
     } = useConversations();
 
 
@@ -339,7 +334,6 @@ const App: React.FC = () => {
     useEffect(() => {
         let timer: ReturnType<typeof setTimeout> | null = null;
         const unsubscribe = subscribeMemoryFilesChanged((username) => {
-            setMemoryNonce(n => n + 1);
             if (timer) clearTimeout(timer);
             timer = setTimeout(() => {
                 const config = memoryConfigRef.current || readyProvidersRef.current[0] || null;
@@ -394,60 +388,10 @@ const App: React.FC = () => {
         if (activeConversationId) chatStore.bindConversation(activeConversationId);
         handleSurfaceSelect('trade');
     }, [activeConversationId, handleSurfaceSelect]);
-    /** Arriving on either home shows the thread that is ANSWERING.
-     *
-     *  The pill in each header already routes the deliberate hop through
-     *  `openChartAi`, but the nav rail and the Alt+N chords switch surfaces
-     *  directly, and a switch that lands on a different thread than the one
-     *  still generating is the desync the trader reads as "it stopped answering
-     *  over here". Both directions, keyed on the run registries rather than on a
-     *  guess: the conversation's own registry for a Chat run, the session's for
-     *  a dock run. */
-    const hopSurfaceRef = useRef(surface);
-    useEffect(() => {
-        const from = hopSurfaceRef.current;
-        hopSurfaceRef.current = surface;
-        if (from === surface) return;
-        if (surface === 'trade') {
-            if (activeConversationId && chatStore.isConversationRunning(activeConversationId)) {
-                chatStore.bindConversation(activeConversationId);
-            }
-            return;
-        }
-        if (surface === 'agents') {
-            const sess = chatStore.getActiveSession();
-            if (sess?.conversationId && chatStore.getSnapshot().running[sess.id]) {
-                setActiveConversationId(sess.conversationId);
-            }
-        }
-    }, [surface, activeConversationId, setActiveConversationId]);
-
-    // The Chat ⇄ Chart AI hop is a mode switch, and a mode switch that stops to
-    // load a chunk is not one. Each side warms its PARTNER at idle so the press
-    // never waits on the network: measured in a real browser, the first hop goes
-    // 1680ms → 789ms with the warm-up in place. Only the partner is fetched, not
-    // both, because the surface you are looking at is already loading itself.
-    // The `import()` specifier matches the surface's own lazy declaration, so the
-    // bundler dedupes it to the same chunk rather than a second copy.
-    useEffect(() => {
-        const load = surface === 'agents'
-            ? () => import('./components/trade/TradeView')
-            : surface === 'trade'
-                ? () => import('./components/agents/AgentsView')
-                : null;
-        if (!load) return;
-        const warm = (): void => { void load(); };
-        const idle = window as Window & {
-            requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
-            cancelIdleCallback?: (id: number) => void;
-        };
-        if (idle.requestIdleCallback) {
-            const id = idle.requestIdleCallback(warm, { timeout: 2000 });
-            return () => idle.cancelIdleCallback?.(id);
-        }
-        const t = setTimeout(warm, 1200);
-        return () => clearTimeout(t);
-    }, [surface]);
+    // The Chat ⇄ Agents two-home machinery (the hop sync and the partner-chunk
+    // warm-up) died with the workspace merge: both routes render the SAME
+    // page, so there is no partner to warm and no second home to sync with.
+    // `openChartAi` above stays as the dock's bind-on-route.
 
     /** The Settings modal's active section — the four former surfaces
      *  (Journal, Learning, Skills, Memory) are sections of the modal now. */
@@ -715,14 +659,9 @@ const App: React.FC = () => {
     const [selectedChatModel, setSelectedChatModel] = useState(() => {
         try { return localStorage.getItem(PREF_KEYS.CASUAL_CHAT_MODEL) || ''; } catch { return ''; }
     });
-    /** The one model-change writer for every chat home: the app-wide default AND
-     *  the active session row. The dock and the Agents surface used to each spell
-     *  this pair — two statements for one decision, which is how two homes start
-     *  answering with different models. (E-51 Phase 2, G-4.) */
-    const changeChatSoloModel = useCallback((value: string): void => {
-        setSelectedChatModel(value);
-        chatStore.setActiveSoloModel(value);
-    }, []);
+    // The one model-change writer for every chat home is the dock composer's
+    // own handler (app-wide default AND the active session row); the Agents
+    // surface's separate chip died with the workspace merge.
     const chatModelReadyRef = useRef(false);
     useEffect(() => {
         let cancelled = false;
@@ -1110,14 +1049,13 @@ const App: React.FC = () => {
     // and roster CRUD with confirm dialogs.
     const {
         activeThread, setActiveThread,
-        threadOpenedMap,
         bots, groups,
         isNewBotOpen, setIsNewBotOpen,
         isNewGroupOpen, setIsNewGroupOpen,
         groupEditTarget, setGroupEditTarget,
         selectBotThread, selectGroupThread,
         createBot, createGroup, updateGroupMembers,
-        deleteBot, deleteGroup,
+        deleteGroup,
     } = useAgentThreads({
         activeUsername, setSelectedChatModel, confirmDialog,
     });
@@ -1172,21 +1110,6 @@ const App: React.FC = () => {
     });
     mailboxRef.current = mailbox;
     botThreadStateRef.current = { thread: activeThread, bots };
-    // Rail working-pulse merge: the group runner owns the pulse first; a
-    // draining DM queue shows the (first) busy bot when nothing else runs.
-    const dmWorkingBotId = mailbox.dmBusyBotIds[0] ?? null;
-    // needs-attention — classify each bot against
-    // the live configs + provider health so the rail row says WHY a bot
-    // can't work (missing key/model, auth, quota, benched) instead of the
-    // user discovering it through a silent failure.
-    const attentionMap = useMemo(() => {
-        const out: Record<string, string> = {};
-        for (const b of bots) {
-            const a = classifyBotAttention(b, providerConfigs);
-            if (a) out[b.id] = a.hint;
-        }
-        return out;
-    }, [bots, providerConfigs]);
     const sendGroupThread = useCallback((prompt: string) => {
         if (activeThread.kind !== 'group') return;
         const group = groups.find(g => g.id === activeThread.groupId);
@@ -1281,19 +1204,6 @@ const App: React.FC = () => {
             scrollToMessageRef.current?.(messageId);
         }
     }, [messages]);
-
-    // The Agents composer's Stop names its target, because App cannot guess
-    // it: two bots can stream at once (a user turn plus an autonomous DM)
-    // and a first-match abort kills the wrong one. The press routes to the
-    // pipeline, a dock run, or the bot whose composer was used.
-    const handleStopAgentsRun = useCallback((target?: { kind: 'analysis' } | { kind: 'dock'; conversationId: string } | { kind: 'bot'; botId: string }) => {
-        if (!target || target.kind === 'analysis') {
-            if (isAnalysisInProgress) handleCancelAnalysis();
-            return;
-        }
-        if (target.kind === 'bot') mailboxRef.current?.cancelDmTurn(target.botId);
-        else if (target.kind === 'dock') chatStore.abortConversationRun(target.conversationId);
-    }, [isAnalysisInProgress, handleCancelAnalysis]);
 
     // The model's watches and the trade-plan level hits subscribe HERE, on
     // the surface that never unmounts — but only for the OS ping: the
@@ -2055,12 +1965,6 @@ const App: React.FC = () => {
     });
     resetAppStateRef.current = userProfileResetAppState;
 
-    /** Bumped on any notebook write — the Agents rail's per-bot learning stats
-     *  read the notebook, so they refresh with it rather than every price tick. */
-    const [memoryNonce, setMemoryNonce] = useState(0);
-    // Per-bot learning stats for the Agents rail (WS-3.4). Walks the notebook,
-    // so it is keyed to notebook writes and the roster — not to price ticks.
-    const botStats = useMemo(() => loadBotLearningStats(), [bots, memoryNonce]);
     const selectTeamThread = useCallback(() => setActiveThread({ kind: 'team' }), []);
     // The Chat surface is a CENTRED thread in the mock: its conversation column
     // starts closed and the rail's Chats icon opens it. Session state, not a
@@ -2240,19 +2144,6 @@ const App: React.FC = () => {
     // (components/shell/SurfaceOutlet.tsx): every surface has exactly one bar,
     // and the Agents surface keeps its own header row — so the bar travels as
     // part of the switch, not as a node App assembles.
-
-    /** One read of "the chat's model pick is unusable", shared by the Chat
-     *  surface's model chip (which colours itself amber) and its banner. */
-    const chatModelFallback = useMemo(() => {
-        const f = computeChatModelFallback(providerConfigs, selectedChatModel);
-        return {
-            issue: f.issue ?? null,
-            providerName: f.provider?.name,
-            // The banner needs BOTH halves: a warning that cannot name a
-            // provider has nothing to tell the user.
-            notice: f.issue && f.provider ? { issue: f.issue, provider: f.provider } : null,
-        };
-    }, [providerConfigs, selectedChatModel]);
 
     return (
         // Outer Suspense boundary. fallback={null} so a suspending lazy
@@ -2464,6 +2355,7 @@ const App: React.FC = () => {
                         onClearConversation={(id) => { void handleClearChat(id); }}
                         activeUsername={activeUsername}
                         onOpenSettings={() => setIsSettingsMenuVisible(true)}
+                        onOpenActivity={() => setIsJobsDrawerVisible(true)}
                         width={railResize.width}
                         isResizing={railResize.isResizing}
                         onResizeStart={railResize.startResize}
@@ -2521,104 +2413,17 @@ const App: React.FC = () => {
                         registerScrollToMessage={registerScrollToMessage}
                         onToggleWatch={handleToggleWatch}
                         onOpenWatchList={() => setIsWatchListVisible(true)}
-                        onOpenAgents={() => handleSurfaceSelect('agents')}
-                        watchOpenCount={watchedSignals.filter(s => !s.outcome || s.outcome === TradeOutcome.PENDING).length}
-                        watchOpenR={watchOpenR}
-                        pinnedMessageIds={pinnedMessageIds}
-                        renderGroupSurface={renderGroupSurface}
-                        groups={groups}
-                        activeThread={activeThread}
-                        onSelectThread={t => {
-                            if (t.kind === 'bot') selectBotThread(t.botId);
-                            else if (t.kind === 'group') selectGroupThread(t.groupId);
-                            else selectTeamThread();
-                        }}
-                        onNewBot={() => setIsNewBotOpen(true)}
-                        onSendBotTurn={async (bot, prompt) =>
-                            (await mailboxRef.current?.runUserBotTurn(bot, prompt)) ?? false}
-                        onAnalyze={handleRunAnalysisFromChat}
-                        /* The settlement-correction write path: the
-                           SAME handlers the Journal's own editors
-                           call, so a confirmed correction lands with
-                           the audit trail a human edit gets. */
-                        onApplySettlementCorrection={applySettlementCorrection}
-                        /* The trade-action apply path: move the levels on the
-                           armed plan (re-arm it with the confirmed levels) or
-                           close it (disarm the watch). Written through the
-                           watch service, not through this component. */
-                        onApplyTradeAction={applyTradeAction}
                         /* The CHART AI dock's decision cards (audit P-6):
                            confirm settles the store's proposal, then applies
-                           through the same writers above. */
+                           through the journal's own writers. */
                         onConfirmSettlementCorrection={confirmDockSettlementCorrection}
                         onDismissSettlementCorrection={dismissDockSettlementCorrection}
                         onConfirmTradeAction={confirmDockTradeAction}
                         onDismissTradeAction={dismissDockTradeAction}
-                        onStopAgentsRun={handleStopAgentsRun}
-                        workingBotId={workingBotId}
-                        dmWorkingBotId={dmWorkingBotId}
-                        mailboxBusyBotIds={mailbox.dmBusyBotIds}
-                        threadOpenedMap={threadOpenedMap}
-                        attentionMap={attentionMap}
-                        botStats={botStats}
-                        onDeleteBot={deleteBot}
-                        onRenameBot={(botId, name) => updateBot(botId, { name })}
-                        onDeleteGroup={deleteGroup}
-                        onEditGroup={groupId => {
-                            const target = groups.find(g => g.id === groupId);
-                            if (!target) return;
-                            setGroupEditTarget(target);
-                            setIsNewGroupOpen(true);
-                        }}
-                        changeChatSoloModel={changeChatSoloModel}
-                        chatModelFallback={chatModelFallback}
-                        railExpanded={isNavRailOpen}
-                        /* Whole-rail state, separate from the Agents
-                           COLUMN state above: the top-bar toggle is
-                           about the rail, on every surface. */
-                        sidebarExpanded={isNavRailOpen}
-                        /* The content bar's toggle opens/closes the RAIL;
-                           the column's own put-away is a separate callback. */
-                        onToggleRailExpanded={toggleNavRail}
-                        railWidth={railResize.width}
-                        railIsResizing={railResize.isResizing}
-                        onRailResizeStart={railResize.startResize}
-                        onRailResizeReset={railResize.resetWidth}
-                        onRevertTo={revertToMessage}
-                        onEditPromptMessage={editMessageText}
-                        onStepVersion={stepMessageGeneration}
-                        parkedCount={(activeConversation?.parked ?? []).reduce((n, p) => n + p.rows.length, 0)}
-                        onRestoreParked={restoreParkedTurns}
-                        /* Navigation on this surface follows the same
-                           rule as the shell rail: the mode switch owns
-                           the top of the column at every width, the
-                           four-destination switch only comes back when
-                           the column is put away (the title bar then
-                           has to carry it), and Journal / Learning /
-                           Skills sit above the account. */
-                        accountRow={(
-                            <AccountRow
-                                expanded
-                                activeUsername={activeUsername}
-                                onOpenSettings={() => setIsSettingsMenuVisible(true)}
-                                onOpenActivity={() => setIsJobsDrawerVisible(true)}
-                            />
-                        )}
-                        conversations={conversationHistory}
-                        activeConversationId={activeConversationId}
-                        onLoadConversation={(id) => {
-                            // A loaded conversation's general rows land
-                            // in the desk pane's slice, so the selection
-                            // follows — otherwise the pane kept showing
-                            // the previous thread while the transcript
-                            // silently swapped underneath (stage-3 fix
-                            // for the silent-session-swap defect).
-                            handleLoadConversation(id);
-                            selectTeamThread();
-                        }}
-                        onDeleteConversation={handleDeleteConversationFromSidebar}
-                        onClearConversation={(id) => { void handleClearChat(id); }}
-                        onNewChat={handleStartNewConversation}
+                        watchOpenCount={watchedSignals.filter(s => !s.outcome || s.outcome === TradeOutcome.PENDING).length}
+                        watchOpenR={watchOpenR}
+                        pinnedMessageIds={pinnedMessageIds}
+                        renderGroupSurface={renderGroupSurface}
                     />
                 </main>
 

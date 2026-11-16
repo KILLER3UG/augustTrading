@@ -33,7 +33,9 @@ Anatomy, top to bottom:
 - **Chart AI dock** — `useRightPanel` default 364px (min 300 / max 820), resize + collapse rail. Dock body order: BiasChips line, SignalCard, KeyLevels Disclosure, DeskScorecard, user bubble (max 80%), AnalyzedRow, AnswerBody (font-reading), MemoryProvenanceStrip, VerdictAudit gate behind "Inspect evidence & gate" Disclosure, prov line (code-calculated only). `src/components/trade/panels/ChatTranscriptList.tsx` › `ChatTranscriptList`
 - **The answer formats as it arrives.** The streamed prefix goes through the SAME markdown pipeline as the settled answer (bold, lists, tables, code), bucketed at 24 received characters so the parse keeps up with the writing without re-parsing every letter. It used to render raw pre-wrapped text and parse once at settle, so the formatting arrived as a jump after the turn was over. `src/components/shared/chatChips.tsx` › `FadingText`
 - **The thinking row folds itself away when the trace settles.** A row opened during the run is being watched; once it is complete the answer is the thing to read, so the disclosure collapses on the running→settled transition. A row opened after the settle is untouched — the transition has already fired. `src/components/shared/ReasoningRow.tsx` › `ReasoningRow`
-- **The dock's chart draws into the same bucket as the Analyze chart.** `sessionId` is passed to the dock's Chart and Live views, so both charts of one instrument share the session's shapes. It was omitted, which left the dock on the legacy per-symbol store: a shape drawn in the dock never appeared on the main chart, and vice versa. `src/components/agents/dock/AgentDockViews.tsx` › `ChartView`
+- **One chart.** The workspace has ONE chart — the dock's transcript talks about the same
+  canvas the trader sees, and the dock's Chart and Live views were merged into it (there is no
+  second dock chart to keep in sync). `src/components/trade/TradingChart.tsx` › `TradingChart`
 - **Narrow <1024** — three-mode switcher **Chart | AI | Book**, one pane at a time.
 
 Live state: one websocket bundle per symbol drives strip + book + candles; REST polling takes over
@@ -54,25 +56,36 @@ separate evidence; learning is not limited to human-logged trades.
 
 ## Agents (`agents`)
 
-Three regions: a sparse rail, a main pane, and one pill composer. The rail's top is the
-**Analyze ⇄ Agents mode switch** — a route between the charted and focused forms of the same desk,
-not a per-turn mode. Journal, Learning, Skills and Memory sit at its foot.
+**Agents is a route onto the workspace, not a second page.** The `agents` id and the Alt+4
+chord land on the same chart + dock workspace as `trade` — one transcript, one composer, the
+chart always in view. What the old Agents page owned lives in the dock:
 
-- **Conversation list** — `ConversationGroups`, the SAME component `ShellRail` renders: New chat + Ctrl K, Pinned (only when there are pinned rows), Recent (always). Rows: hollow dot (filled active, amber pulsing running), truncated title, mono age (`workspaceAgeLabel`). No Goals/Agents/Rooms groups — chat-only. `src/components/shell/ConversationGroups.tsx` › `ConversationGroups`
-- **Chat full view = AgentsView** — id stays `agents`, label is **Chat**. Greeting sparse. `ChatTranscriptRow` renders bubble/failure/AI with `BotFace` + `ChatWorkTimeline` + `AnswerBody` + `SignalCard` + KeyLevels + chatChips incl. `FeedbackChips`. Follow-up line renders ONLY if backed by a real computed suggestion; otherwise omitted. `src/components/shared/ChatTranscriptRow.tsx` › `ChatTranscriptRow`
-- **SignalCard** — shared by dock + Chat. Headline Direction + COIN, meta (R:R, interval, conviction), 4-row kv (Entry=info cyan, Stop=trade-down, Target=trade-up, Prob. w/ bar+base tick ONLY if `SignalRecord` carries `probability`/`baseRate`/`sampleN` — else omitted), Trigger/Invalidation, evidence, actions (Show on chart/Log plan/Copy), mono sigmeta (signalId·age·expiresAt countdown·venue). `signalIdFromActions` reads `ToolAction.signalId` for `emit_signal`. Ledger via `readSignals`/`summariseSignals` only — never fabricate probability/confidence. `src/components/trade/SignalCard.tsx` › `SignalCard`
+- **The composer mode menu** — the dock's New menu is the mode switch: a solo desk turn
+  (default), a **panel** of up to five models, a **room** (group debate), or a **bot DM**
+  (a roster persona answers in its own dock session).
+- **The roster** — bots and rooms are created from the same menu (`New agent`, `New room`)
+  and managed through the row menus; the old roster column is gone.
+- **One thread** — every turn (desk, panel, room, bot) lands in the ONE canonical
+  conversation the dock renders; the two-stores-one-thread contract is now one store.
+- **Autonomous DMs** still wake the transcript through the mailbox bridge — a bot that
+  needs the trader sees its message in the same thread.
+- **SignalCard** — shared by the dock transcript. Headline Direction + COIN, meta (R:R,
+  interval, conviction), 4-row kv (Entry=info cyan, Stop=trade-down, Target=trade-up, Prob.
+  w/ bar+base tick ONLY if `SignalRecord` carries `probability`/`baseRate`/`sampleN` — else
+  omitted), Trigger/Invalidation, evidence, actions (Show on chart/Log plan/Copy), mono
+  sigmeta (signalId·age·expiresAt countdown·venue). `signalIdFromActions` reads
+  `ToolAction.signalId` for `emit_signal`. Ledger via `readSignals`/`summariseSignals` only —
+  never fabricate probability/confidence. `src/components/trade/SignalCard.tsx` › `SignalCard`
 - **DeskScorecard** — Disclosure "Scorecard · X% vs Y% base (n=N[, thin])". `src/components/trade/SignalCard.tsx` › `DeskScorecard`
-- **BiasChips** — 6px dots, one line, honest failure (nothing until data). Mounted in AgentsView too. `src/components/trade/BiasChips.tsx` › `BiasChips`
-- **Composer** — box-only (no context/quick-action chips). Keeps `ChatAttachmentStrip`, `ModelFallbackBanner`, disclaimer verbatim "Analysis and journaling only — it never places or signs a trade." Textarea autosize 1-line. `src/components/trade/panels/ChatComposer.tsx` › `ChatComposer`
+- **BiasChips** — 6px dots, one line, honest failure (nothing until data). Mounted in the dock. `src/components/trade/BiasChips.tsx` › `BiasChips`
+- **Composer** — box-only (no context/quick-action chips). Keeps `ChatAttachmentStrip`,
+  `ModelFallbackBanner`, disclaimer verbatim "Analysis and journaling only — it never places
+  or signs a trade." Textarea autosize 1-line. `src/components/trade/panels/ChatComposer.tsx` › `ChatComposer`
 
-- A send routes on **what is selected**, not on a send-mode switch (there is none inside the
-  composer): a selected bot answers through the bot turn path; nothing selected hands the text to
-  the real pipeline, so desk tools and memory run exactly as they do from the chart dock.
+- A send routes on **what the session is bound to**, not on a send-mode switch: a bot-bound
+  dock session answers through the bot's config; a solo session hands the text to the real
+  pipeline, so desk tools and memory run exactly as the desk always did.
 - Rooms delegate to the group-round view rather than reimplementing it.
-- **One thread across homes.** The Agents surface and the chart dock show the same conversation
-  under the same id; a run keeps its activity line when the trader switches surfaces. Two stores,
-  one thread — this is a contract, not an implementation detail.
-- An agent's card opens in `DetailModal`.
 - The product's one AI response is claimed by **identity** (`Message.botId`), never by
   provider+model.
 
@@ -186,13 +199,10 @@ the trader's journal in bulk; treat it accordingly.
   the column's own hide icon, in the sidebar, is the control.
   `src/components/shell/SidebarToggle.tsx` › `SidebarToggle` ·
   `src/components/shell/ConversationGroups.tsx` › `ConversationGroups`
-- The **Agents workspace dock** is the Chat surface's right panel: a vertical icon rail
-  (Files, Chart, Live, Evidence) beside a resizable panel. It uses the ONE right-panel
-  contract and supports two persisted modes — *all tabs open* and *one tab at a time*.
-  Views stay mounted while hidden, so switching never resets another view's state. Below
-  1024px the panel goes fullscreen instead of squeezing the centred thread.
-  `src/components/agents/dock/AgentsDock.tsx` › `AgentsDock` ·
-  `src/components/shared/ChartFrame.tsx` › `ChartFrame`
+- **One right-panel contract.** The workspace's resizable right panel (the Chart AI dock) and
+  its collapse rail use the ONE right-panel contract (`src/components/shell/RightPanel.tsx` ›
+  `RightPanel`); the old Agents workspace dock (Files/Chart/Live/Evidence) is deleted with the
+  second page it served.
 - Electron's floor is 800px wide. A layout that only breaks below 1024 is a bug.
 - Heavy surfaces are `React.lazy` with `SurfaceSkeleton`, never `fallback={null}`.
 - Overlays mount **outside** `<main>`. A probe that measures `<main>` after opening one re-reports

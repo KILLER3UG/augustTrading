@@ -2851,7 +2851,6 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
         && /autoJournalPolicyFor/.test(read('src/utils/autoJournalRules.ts')));
     ok('approvals: the rail row and both coach hops are removed, not orphaned',
         !/shell-approvals/.test(read('src/components/shell/ShellRail.tsx'))
-        && !/onOpenCoach/.test(read('src/components/agents/AgentsView.tsx'))
         && !/onOpenCoach/.test(read('src/components/trade/TradeView.tsx'))
         && !/onOpenCoach/.test(read('src/App.tsx')));
     ok('amend_memory: the tool writes DIRECTLY (applyAmendmentNow) — no approval gate to remove',
@@ -2867,7 +2866,7 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
 (() => {
     const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
     const app = read('src/App.tsx');
-    const agents = read('src/components/agents/AgentsView.tsx');
+    const dockPanel = read('src/components/trade/TradeChatPanel.tsx');
 
     // The mock's shell is an icon RAIL plus a conversation COLUMN: the rail
     // owns surfaces, the column owns the record. Folding them into one column
@@ -2889,8 +2888,7 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
     ok('chat: the conversation column mounts open with the rail, and the sidebar owns the hide',
         !/agentsColumnOpen/.test(app) && !/onToggleColumn=/.test(app)
             && !/onToggleColumn\?: \(\) => void/.test(read('src/components/shell/ShellRail.tsx'))
-            && /conversation-hide/.test(read('src/components/shell/ConversationGroups.tsx'))
-            && /onHideConversation=\{onToggleRailExpanded\}/.test(agents),
+            && /conversation-hide/.test(read('src/components/shell/ConversationGroups.tsx')),
         'the old Chats clock is gone; hiding is a sidebar control');
     ok('shell: an icon rail beside a conversation column',
         /data-testid="shell-surface-rail"/.test(read('src/components/shell/ShellRail.tsx'))
@@ -2906,12 +2904,12 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
         /startDeskChat\(\);/.test(read('src/App.tsx'))
             && /keydown/.test(read('src/App.tsx')),
         'a printed chord with no handler is the dead-control class');
-    ok('the Agents column has no conversation tabs',
-        !/role="tablist"/.test(agents) && !/rail-tab-/.test(agents) && !/railTab/.test(agents),
+    ok('the dock carries no conversation tabs',
+        !/role="tablist"/.test(dockPanel) && !/rail-tab-/.test(dockPanel),
         'a segmented control hides half the column at rest; the reference is one scroll');
-    ok('one conversation list component, rendered by both columns',
+    ok('one conversation list component, rendered by the shell column',
         (read('src/components/shell/ConversationGroups.tsx').match(/data-testid="conversation-row"/g) || []).length === 1
-            && /<ConversationGroups/.test(agents) && /<ConversationGroups/.test(read('src/components/shell/ShellRail.tsx')),
+            && /<ConversationGroups/.test(read('src/components/shell/ShellRail.tsx')),
         'two row implementations is how the two lists drift apart');
     // The rail carries the two desk modes and the Settings entry; the four
     // record surfaces are SECTIONS of the Settings modal (2026-11-13).
@@ -3099,14 +3097,12 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
         && /screener-best-trigger/.test(read('src/components/trade/ScreenerPanel.tsx')));
     const toggle = read('src/components/shell/SidebarToggle.tsx');
     const header = read('src/components/shared/Header.tsx');
-    const agentsView = read('src/components/agents/AgentsView.tsx');
     ok('shell: ONE top-bar toggle owns the whole rail, on the TITLE row',
         /shell-rail-collapse/.test(toggle) && /nav-rail-toggle-header/.test(toggle)
         && /aria-keyshortcuts/.test(toggle) && /aria-pressed=\{expanded\}/.test(toggle)
         && /aria-label="Toggle sidebar"/.test(toggle)
         && /<SidebarToggle expanded=\{navRailExpanded\}/.test(header)
         && header.indexOf('<SidebarToggle') < header.indexOf('header-surface-label')
-        && /<SidebarToggle expanded=\{sidebarExpanded\}/.test(agentsView)
         && /onToggleNavRail=\{toggleNavRail\}/.test(read('src/App.tsx'))
         && !/shell-rail-collapse/.test(rail)
         && !/shell-column-toggle/.test(rail)
@@ -3117,8 +3113,7 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
         !/onToggleColumn/.test(rail)
         && !/shell-column-toggle/.test(rail)
         && /conversation-hide/.test(read('src/components/shell/ConversationGroups.tsx'))
-        && /onHideConversation=\{onCollapse\}/.test(rail)
-        && /onHideConversation=\{onToggleRailExpanded\}/.test(agentsView),
+        && /onHideConversation=\{onCollapse\}/.test(rail),
         'the clock icon was a second toggle for a column the sidebar already hides');
     ok('new chat: the ⌘K keycap is gone, the Ctrl/Cmd+K chord still works',
         !/<kbd/.test(read('src/components/shell/ConversationGroups.tsx'))
@@ -5058,7 +5053,6 @@ const runCaptureChecks = async () => {
 (() => {
     const chartSrc = fs.readFileSync(path.join(ROOT, 'src/components/trade/TradingChart.tsx'), 'utf8');
     const liveSrc = fs.readFileSync(path.join(ROOT, 'src/components/market/LiveMarket.tsx'), 'utf8');
-    const dockSrc = fs.readFileSync(path.join(ROOT, 'src/components/agents/dock/AgentDockViews.tsx'), 'utf8');
     const tradeSrc = fs.readFileSync(path.join(ROOT, 'src/components/trade/TradeView.tsx'), 'utf8');
     ok('drawings: the chart never reads or writes the legacy per-symbol bucket (779cb746 was two live buckets)',
         !chartSrc.includes('loadDrawings(') && !chartSrc.includes('saveDrawings('));
@@ -5066,9 +5060,9 @@ const runCaptureChecks = async () => {
         /sessionId: string;/.test(chartSrc) && !/sessionId\?: string;/.test(chartSrc));
     ok('drawings: the Market surface pins a STABLE scope, so it cannot fall through to legacy',
         /sessionId="market"/.test(liveSrc));
-    ok('drawings: the dock chart has a required scope and no `?? undefined` escape at the call site',
-        /sessionId: string;/.test(dockSrc)
-        && !/sessionId=\{activeConversationId \?\? undefined\}/.test(fs.readFileSync(path.join(ROOT, 'src/components/agents/AgentsView.tsx'), 'utf8')));
+    ok('drawings: the dock chart IS the Analyze chart — one required scope, no legacy escape',
+        /sessionId: string;/.test(chartSrc)
+        && !/sessionId=\{activeConversationId \?\? undefined\}/.test(tradeSrc));
     ok('drawings: the Analyze chart scopes to the active conversation with a stable fallback',
         /sessionId=\{chatSnap\.activeId \?\? 'analyze'\}/.test(tradeSrc));
     // The chart's phase-3 studies read the DESK's cores, not reimplementations:

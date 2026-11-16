@@ -215,8 +215,9 @@ async function main() {
         const ROOTS = {
             trade: '[data-testid="trade-view"]',
             journal: '[data-testid="journal-view"]',
-            chat: '[data-testid="agents-view"]',
-            agents: '[data-testid="agents-view"]',
+            // The workspace merge: both desk routes render the ONE workspace.
+            chat: '[data-testid="trade-view"]',
+            agents: '[data-testid="trade-view"]',
             learn: '[data-testid="learn-view"]',
             // Skills and Memory are surfaces now (2026-11-08). All three panels
             // mount the SAME LearnView root, so the census measures the panel:

@@ -131,8 +131,7 @@ const waitStableAnswer = async (page) => {
                 if (!Number.isFinite(index)) continue;
                 if (!newest || index > newest.index) newest = { index, el };
             }
-            const row = newest ? newest.el
-                : [...document.querySelectorAll('[data-testid="agent-message"][data-role="ai"]')].pop();
+            const row = newest ? newest.el : null;
             return row ? (row.textContent || '').length : 0;
         });
         if (len > 0 && len === prev) return true;
@@ -421,7 +420,10 @@ async function counts(page, scope) {
  *  with no hole and no duplicate, which is what a dropped or doubled row breaks.
  *  `cards` counts the decision cards the rows carry, for the same reason. */
 async function transcriptCensus(page) {
-    const census = await page.evaluate(async ({ sel, awayPx }) => {
+    // The walk is a read-only, idempotent measurement, so it can retry once:
+    // a reload or a swapped frame mid-walk destroys the execution context, and
+    // a transient loss should not abort a whole run.
+    const walk = () => page.evaluate(async ({ sel, awayPx }) => {
         const nap = (ms) => new Promise((r) => setTimeout(r, ms));
         const log = document.querySelector(sel);
         if (!log) return { ok: false, why: 'no dock transcript scroller', rows: [] };
@@ -435,8 +437,9 @@ async function transcriptCensus(page) {
                     index,
                     id,
                     role: (el.getAttribute('data-testid') || '').replace('chat-entry-', ''),
-                    text: (el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 200),
+                    text: (el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 600),
                     verdicts: el.querySelectorAll('[data-testid="inline-verdict"]').length,
+                    audits: el.querySelectorAll('[data-testid="verdict-audit"]').length,
                 });
             }
         };
@@ -509,6 +512,13 @@ async function transcriptCensus(page) {
             reachedBottom: log.scrollTop + log.clientHeight >= log.scrollHeight - 2,
         };
     }, { sel: DOCK_LOG, awayPx: JUMP_AWAY_PX });
+    let census;
+    try {
+        census = await walk();
+    } catch (err) {
+        await sleep(2000);
+        census = await walk();
+    }
     const rows = census.rows || [];
     return {
         ...census,
@@ -516,6 +526,7 @@ async function transcriptCensus(page) {
         user: rows.filter((r) => r.role === 'user').length,
         ai: rows.filter((r) => r.role === 'ai').length,
         cards: rows.reduce((n, r) => n + r.verdicts, 0),
+        audits: rows.reduce((n, r) => n + (r.audits || 0), 0),
         contiguous: rows.every((r, i) => r.index === i),
         prompts: rows.filter((r) => r.role === 'user').map((r) => r.text),
         roles: rows.map((r) => r.role).join(','),
@@ -1634,13 +1645,10 @@ async function main() {
         // and the item lookup are TWO evaluates with a settle between them:
         // the menu is a React portal and one synchronous pass would query
         // before the commit.
-        // The dock header exists ONLY on the Analyze surface, and a synchronous
-        // query fired while the app is still mid-transition (an earlier check
-        // hops surfaces) reported "no menu button" — that report measured the
-        // probe's own timing, not the app, and it made this check flake. Wait
-        // for the header with the same bound the hop itself uses, then click in
-        // one synchronous pass. A header that really never arrives still fails,
-        // and now says which surface was live when it gave up.
+        // THE WORKSPACE MERGE removed the second home, so the dock menu no
+        // longer offers "Open in Agents" — there is no second page to jump to.
+        // The item was gated on the handler App used to pass; assert its
+        // absence here, where the hop used to be proven.
         const headerSeen = await page.locator('[aria-label="Customization"]')
             .waitFor({ state: 'attached', timeout: 8000 }).then(() => true).catch(() => false);
         const surfaceLive = headerSeen ? '' : await page.evaluate(() => [...document.querySelectorAll('[data-testid]')]
@@ -1654,160 +1662,24 @@ async function main() {
                 return 'opened';
             });
         await page.waitForTimeout(400);
-        const chatJump = menuOpened === 'opened'
+        const openInAgents = menuOpened === 'opened'
             ? await page.evaluate(() => {
                 const b = document.querySelector('[data-testid="dock-open-chat"]');
-                if (!b) return 'missing';
+                if (!b) return 'gone';
                 b.click();
-                return 'clicked';
+                return 'STILL PRESENT';
             })
             : menuOpened;
-        const landedOnChat = await page.locator('[data-testid="agents-view"]')
+        const stillOnWorkspace = await page.locator('[data-testid="trade-view"]')
             .waitFor({ timeout: 8000 }).then(() => true).catch(() => false);
-        check('the dock header jumps straight to Chat',
-            chatJump === 'clicked' && landedOnChat === true, `${chatJump}/${landedOnChat}`);
-        // And back again, so the probe resumes on the surface it expects.
-        // Navigation is the persistent NavRail (D2) — the rows are in the DOM at
-        // every width, so this is a direct row click with no menu to open.
-        if (landedOnChat) {
-            const backToTrade = await page.evaluate(() => {
-                const hit = document.querySelector('[data-testid="surface-switch-trade"]');
-                if (!hit) return 'not found';
-                hit.click();
-                return 'clicked';
-            });
-            const backLanded = await page.locator('[data-testid="trade-view"]')
-                .waitFor({ timeout: 8000 }).then(() => true).catch(() => false);
-            check('can return to Trade from the Chat hop',
-                backToTrade === 'clicked' && backLanded === true, `${backToTrade}/${backLanded}`);
-        }
+        check('the dock menu no longer offers "Open in Agents" — one workspace',
+            openInAgents === 'gone' && stillOnWorkspace === true, `${openInAgents}/onWorkspace=${stillOnWorkspace}`);
 
-        // ── ONE THREAD, TWO HOMES: the answer is still ARRIVING across the hop ──
-        // The requirement in one sentence: generating in Chart AI, switch to the
-        // Agents surface, STILL generating. Nothing above proves it. Every dock
-        // check waits for the reply to SETTLE before it moves on, and a mirror
-        // that commits only at settle passes all of them while the other home
-        // shows a silent thread mid-run. So this phase asks slowly — the mock's
-        // request-scoped `PROBE_SLOW_STREAM` scenario, ~5s of deltas — and
-        // crosses over while the stream is still up.
-        //
-        // The send has to HAPPEN, and it has to be visible when it does not.
-        // This used to be a raw evaluate that returned quietly when the
-        // composer was missing, disabled, or showing Stop instead of Send - so
-        // a busy composer (a run still in flight from the previous phase) made
-        // the whole phase a no-op: nothing was sent, the phase measured an
-        // OLDER turn that had already settled, and the failure read as "the
-        // answer stopped growing" when nothing had been asked. The wait and
-        // the loud failure are the same two steps `sendInDock` takes, minus
-        // its wait for the answer to SETTLE - which is the one thing this
-        // phase must not do.
-        if (!(await waitSendable(page))) {
-            throw new Error('the slow-stream phase: the composer never became sendable within 30s');
-        }
-        const slowSent = await page.evaluate((needle) => {
-            const ta = document.querySelector('textarea');
-            if (!ta || ta.disabled) return 'no composer (missing or disabled)';
-            Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')
-                .set.call(ta, needle);
-            ta.dispatchEvent(new Event('input', { bubbles: true }));
-            const btn = [...document.querySelectorAll('button')].find(b => !b.disabled && /send/i.test(
-                `${b.getAttribute('aria-label') || ''} ${b.title || ''} ${b.textContent || ''}`));
-            if (!btn) return 'no enabled send button';
-            btn.click();
-            return 'clicked';
-        }, 'PROBE_SLOW_STREAM does the answer cross the hop');
-        if (slowSent !== 'clicked') {
-            throw new Error(`the slow-stream phase: ${slowSent}`);
-        }
-        // At or below 1280 the rail is an OVERLAY, so the surface switch is not
-        // in the title bar — open the rail from its header toggle first. One
-        // helper for every hop to Agents so a layout change cannot silently
-        // turn a click into a no-op.
-        const openAgentsSurface = async () => {
-            const clickSwitch = () => page.evaluate(() => {
-                const hit = document.querySelector('[data-testid="surface-switch-agents"]');
-                if (!hit) return false;
-                hit.click();
-                return true;
-            });
-            const closeRail = () => page.evaluate(() => {
-                // Overlay mode: the rail leaves a backdrop that would intercept
-                // every later click. A rail-row click is supposed to close it;
-                // close it explicitly so a programmatic click cannot leave it up.
-                const b = document.querySelector('[data-testid="shell-rail-backdrop"]');
-                if (b) b.click();
-            });
-            if (await clickSwitch()) { await closeRail(); await sleep(250); return true; }
-            await page.evaluate(() => {
-                const t = document.querySelector('[data-testid="nav-rail-toggle-header"], [data-testid="rail-open"]');
-                if (t) t.click();
-            });
-            await sleep(400);
-            const clicked = await clickSwitch();
-            if (clicked) { await closeRail(); await sleep(250); }
-            return clicked;
-        };
-
-        // The dock has to be visibly working BEFORE the switch, or the phase
-        // measures a turn that already finished and reports a pass it did not earn.
-        let stillStreaming = false;
-        for (let i = 0; i < 25 && !stillStreaming; i++) {
-            stillStreaming = await page.evaluate(() => [...document.querySelectorAll('button')]
-                .some(b => !b.disabled && /stop/i.test(`${b.getAttribute('aria-label') || ''} ${b.title || ''}`)));
-            if (!stillStreaming) await sleep(100);
-        }
-        check('the dock turn is still generating before the hop', stillStreaming,
-            stillStreaming ? 'Stop was offered while the answer was arriving' : 'no Stop button within 2.5s of sending — the mock answered too fast to measure a live turn');
-        await openAgentsSurface();
-        await page.waitForSelector('main textarea', { timeout: 20000 });
-        await sleep(400);
-        // Two measurements on the OTHER home, both taken while the run is up:
-        // its composer offers Stop for a run it did not start (a row with no
-        // live flag fails this), and the answer grows between samples (a
-        // settle-only mirror fails this).
-        const busyOnChat = await page.evaluate(() => [...document.querySelectorAll('main button')]
-            .some(b => /stop/i.test(`${b.getAttribute('aria-label') || ''} ${b.title || ''}`)));
-        check('the Agents surface shows the dock’s turn as still running', busyOnChat,
-            'the Chat composer offered Send while the Chart AI turn was generating');
-        const aiCharsOnChat = () => page.evaluate(() => [...document.querySelectorAll(
-            '[data-testid="agent-message"][data-role="ai"]')].reduce((n, e) => n + (e.textContent || '').length, 0));
-        // The answer must GROW while observed on this surface. Two samples a
-        // fixed 700ms apart race the stream's own pacing: a loaded machine
-        // lands both samples inside one stream stall and calls a live mirror
-        // frozen. Sample repeatedly for up to 10s and pass on the FIRST
-        // observed growth — the claim (the mirrored answer is live on the
-        // other home) is unchanged.
-        const growA = await aiCharsOnChat();
-        let growB = growA;
-        for (let i = 0; i < 50 && growB <= growA; i++) {
-            await sleep(200);
-            growB = await aiCharsOnChat();
-        }
-        check('the answer keeps growing on the Agents surface', growB > growA && growA > 0,
-            `${growA} -> ${growB} characters`);
-        // The settle signal here is the CONTROL CHANGING IDENTITY, not becoming
-        // enabled: `waitSendable` asks for an enabled Send, and a composer with
-        // an empty draft is disabled by design on both homes. The run is over
-        // when the surface stops offering Stop.
-        let liveSettled = false;
-        for (let i = 0; i < 150 && !liveSettled; i++) {
-            liveSettled = await page.evaluate(() => ![...document.querySelectorAll('button')]
-                .some(b => /stop/i.test(`${b.getAttribute('aria-label') || ''} ${b.title || ''}`)));
-            if (!liveSettled) await sleep(200);
-        }
-        await waitStableAnswer(page);
-        const liveText = await page.evaluate(() => [...document.querySelectorAll(
-            '[data-testid="agent-message"][data-role="ai"]')].map(e => e.textContent || '')
-            .reduce((a, b) => (a.length >= b.length ? a : b), ''));
-        check('the turn that crossed the hop settles complete, not truncated',
-            liveSettled && liveText.length > 400 && /came from the local mock/.test(liveText),
-            `composer free: ${liveSettled}, ${liveText.length} chars`);
-        // Back to the dock, so the phase below resumes where it expects.
-        await page.evaluate(() => {
-            const hit = document.querySelector('[data-testid="surface-switch-trade"]');
-            if (hit) hit.click();
-        });
-        await page.locator('[data-testid="trade-view"]').waitFor({ timeout: 8000 }).catch(() => {});
+        // ── ONE THREAD, TWO HOMES block REMOVED (workspace merge) ──────────
+        // It sent a slow-stream turn and hopped to the Agents surface mid-run
+        // to prove the mirror. There is no second surface any more: both desk
+        // routes render THIS workspace, and the turn's live growth, Stop and
+        // settle are proven in place by the dock checks above and below.
 
         // ── THE STREAMING ANSWER FORMATS AS IT ARRIVES ────────────────────
         // ba2a4911: the streamed prefix renders through the SAME MarkdownContent
@@ -1903,14 +1775,11 @@ async function main() {
             const m = /Thinking\s*·\s*(\d+)s/.exec(text);
             return m ? Number(m[1]) : null;
         });
-        const agentsThinking = () => page.evaluate(() => {
-            const rows = [...document.querySelectorAll('[data-testid="agent-message"][data-role="ai"]')];
-            for (const row of rows) {
-                const m = /Thinking\s*·\s*(\d+)s/.exec(row.textContent || '');
-                if (m) return Number(m[1]);
-            }
-            return null;
-        });
+        // The merge made the stored Agents route render the SAME workspace, so
+        // the "other surface" reading is the same panel. What the hop now proves
+        // is that the route swap does not REMOUNT the workspace: a remount
+        // would reset the row's clock to 0s, and this reading would catch it.
+        const agentsThinking = dockThinking;
         const clockTurnSentAt = Date.now();
         await page.evaluate((needle) => {
             const ta = document.querySelector('textarea');
@@ -1974,196 +1843,96 @@ async function main() {
         await waitStableAnswer(page);
 
 
-        // ── The Agents surface (id/testids still "agents") ───────────────────────────────────────────
-        // It reads the App-side message array through a filter
-        // (`utils/agentThreads.deskThread`), which is a DIFFERENT store from the
-        // dock's chat session — so it gets driven and counted on its own. This
-        // is also the surface where a filter that drops a row by provider+model
-        // would show up as a missing message.
-        /** Rows in the transcript, counted by hook rather than by page text:
-         *  the left rail also carries message previews, so an innerText regex
-         *  double-counts and reports the wrong order. */
-        const agentRows = () => page.locator('[data-testid="agent-message"]').count();
-        const agentReplies = () => page
-            .locator('[data-testid="agent-message"][data-role="ai"]').count();
+        // ── The stored Agents route IS this workspace (the merge) ─────────
+        // There is no second transcript store any more: the Agents rail row
+        // routes onto the SAME TradeView workspace, so what is worth proving
+        // here is that the route swap shows the dock's own thread and that
+        // nothing about it needs a second home to render. The transcript rows
+        // are the dock's chat-entry-*.
+        // (Row counters for a second transcript died with the second home; the
+        // remaining transcript claims are walked via transcriptCensus below.)
 
         const openAgents = async () => {
             // Direct rail-row click. The rows carry the surface name in their
             // accessible name in BOTH rail widths (the collapsed 56px row has
             // no visible label at all), so matching on aria-label is what makes
-            // one click work at any width.
-        await openAgentsSurface();
-        await page.waitForSelector('main textarea', { timeout: 20000 });
-        await sleep(800);
-    };
-        await openAgents();
-        // This check used to assert the desk thread was EMPTY, which was a
-        // description of the SPLIT (two stores, two transcripts) rather than of
-        // a contract. A turn asked in the Chart AI dock now resolves a
-        // conversation and mirrors into it, so the Agents surface opens ON the
-        // dock's own exchange — and that is what is worth asserting here: the
-        // dock's prompts, rendered on the other home, from the same rows.
-        const mergedRows = await agentRows();
-        const mergedText = await page.evaluate(() => [...document.querySelectorAll(
-            '[data-testid="agent-message"]')].map(r => r.textContent || '').join('\n'));
-        // The dock's RECENT turns, not its oldest ones. Conversations are saved
-        // on a 1500 ms debounce (hooks/useConversations.ts:4), so a thread
-        // minted seconds before one of this probe's reloads is genuinely gone,
-        // and the dock rebinds to a live one on its next send — asserting the
-        // pre-reload rows were here would be measuring the save timer, not the
-        // sync. What must hold is that the thread the Agents surface opens on IS
-        // the one the dock last wrote to.
-        const hasLive = /PROBE_SLOW_STREAM/.test(mergedText);
-        const hasTool = /PROBE_TOOL_ROUND/.test(mergedText);
-        check('the Agents surface opens on the dock’s own exchange',
-            mergedRows >= 2 && hasLive && hasTool,
-            `${mergedRows} rows, the hop turn ${hasLive}, the tool turn ${hasTool}`);
-        // Then a clean thread, so the phase below counts what IT sends.
-        await page.evaluate(() => {
-            const b = document.querySelector('[data-testid="rail-new-chat"]');
-            if (b) b.click();
-        });
-        await sleep(600);
-        const freshRows = await agentRows();
-        check('a new chat on the Agents surface starts empty', freshRows === 0, `${freshRows} rows`);
-
-        const sendInAgents = async (text) => {
-            const before = await agentRows();
-            await page.evaluate((needle) => {
-                const ta = document.querySelector('main textarea');
-                if (!ta || ta.disabled) throw new Error('Agents composer missing/disabled');
-                Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')
-                    .set.call(ta, needle);
-                ta.dispatchEvent(new Event('input', { bubbles: true }));
-            }, text);
-            // The send affordance enables in the render that FOLLOWS the input
-            // event; reading it in the same tick raced React and reported a
-            // dead composer on a healthy app. Wait for the enabled state, and
-            // still fail (5s budget) when the composer is genuinely stuck.
-            const sendReady = await page.waitForFunction(() => {
-                const btn = [...document.querySelectorAll('main button')].find(b => /send/i.test(
-                    `${b.getAttribute('aria-label') || ''} ${b.title || ''} ${b.textContent || ''}`,
-                ));
-                return !!btn && !btn.disabled;
-            }, null, { timeout: 5000 }).then(() => true).catch(() => false);
-            if (!sendReady) throw new Error('Agents send button unavailable');
+            // one click work at any width. Post-merge the row is a ROUTE onto
+            // this same workspace, so the dock panel — not a second view —
+            // must be what appears.
             await page.evaluate(() => {
-                const btn = [...document.querySelectorAll('main button')].find(b => /send/i.test(
-                    `${b.getAttribute('aria-label') || ''} ${b.title || ''} ${b.textContent || ''}`,
-                ));
-                if (btn) btn.click();
+                const hit = document.querySelector('[data-testid="surface-switch-agents"]');
+                if (hit) hit.click();
             });
-            await page.waitForFunction((seen) => document
-                .querySelectorAll('[data-testid="agent-message"]').length >= seen + 2,
-            before, { timeout: 30000 });
-            // The composer is not free again until the stream ends.
-            await waitStableAnswer(page);
+            await page.waitForSelector('[data-testid="trade-chat-panel"]', { timeout: 20000 });
+            await sleep(800);
         };
+        await openAgents();
+        // The route swap must land on the SAME dock thread: the earlier dock
+        // turns are on screen with no second store to sync. The transcript is
+        // virtualized, so the claim is walked, not window-counted.
+        const routed = await transcriptCensus(page);
+        const routedText = routed.rows.map((r) => r.text).join('\n');
+        check('the stored Agents route renders the dock’s own exchange',
+            routed.ok && routed.rows.length >= 2 && /PROBE_TOOL_ROUND/.test(routedText),
+            `${routed.rows.length} rows walked, the tool turn ${/PROBE_TOOL_ROUND/.test(routedText)}`);
 
-        const AGENT_MARKS = ['AGENT ROW ONE', 'AGENT ROW TWO', 'AGENT ROW THREE'];
-        for (const text of AGENT_MARKS) await sendInAgents(text);
-
-        const finalRows = await agentRows();
-        check('Agents transcript shows all 6 rows (3 prompts + 3 replies)',
-            finalRows === 6, `${finalRows} rows`);
-        const finalReplies = await agentReplies();
-        check('every Agents reply rendered', finalReplies === 3, `${finalReplies}/3`);
-
-        const texts = await page.locator('[data-testid="agent-message"]').allInnerTexts();
-        const firstIdx = texts.findIndex(t => t.includes('AGENT ROW ONE'));
-        const lastIdx = texts.findIndex(t => t.includes('AGENT ROW THREE'));
-        check('rows are in send order, oldest first',
-            firstIdx >= 0 && lastIdx > firstIdx, `first=${firstIdx} last=${lastIdx}`);
-
-        /** The Agents surface reopens on its rail, not on an open thread, so a
-         *  reload that leaves the desk unselected reads as an empty conversation.
-         *  Click the desk row itself rather than assuming the selection stuck. */
-        /** The Chat column mounts OPEN with the rail now (the old Chats clock
-         *  is gone; the hide control lives in the sidebar after RECENT). This
-         *  just waits for the column, keeping ONE call site for its readers. */
-        const openChatColumn = async () => {
-            await page.waitForSelector('[data-testid="agents-rail"]', { timeout: 5000 }).catch(() => null);
-            await sleep(200);
-        };
-        const openDeskThread = async () => {
-            await openAgents();
-            await openChatColumn();
-            const desk = page.locator('main, aside, nav')
-                .getByText('Chart AI', { exact: true }).first();
-            if (await desk.count()) {
-                await desk.click();
-                await sleep(900);
-            }
-        };
-
-        // ── Reload: a row that renders but never persisted is the same symptom
-        //    as one that never renders at all.
-        await page.reload({ waitUntil: 'domcontentloaded' });
-        await page.waitForFunction(() => !document.querySelector('#splash'), null, { timeout: 25000 });
-        await page.waitForFunction(() => !!document.querySelector('[data-testid="surface-switch-agents"]'),
-            null, { timeout: 25000 }).catch(() => null);
-        await openDeskThread();
-        const afterReload = await agentRows();
-        check('the conversation survives a reload', afterReload === 6, `${afterReload}/6 rows`);
-
-        // The record moved HERE. The same ConversationRow contract the Analyze
-        // rail used to carry is measured on the Chat column: every row titled
-        // by its first question, one mono age each, no "New chat" placeholders.
-        const chatRailShape = await page.evaluate(() => {
-            const rail = document.querySelector('[data-testid="agents-rail"]');
-            const rows = rail ? [...rail.querySelectorAll('[data-testid="conversation-row"]')] : [];
-            const ages = rail ? [...rail.querySelectorAll('[data-testid="conversation-age"]')]
-                .map(a => (a.textContent || '').trim()) : [];
-            const titles = rows.map(r => (r.textContent || '').replace(/\s+/g, ' ').trim());
-            return {
-                rows: rows.length,
-                ages: ages.length,
-                badAges: ages.filter(t => !/^(now|\d+[mhd])$/.test(t)),
-                untitled: titles.filter(t => /^New chat/.test(t)).length,
-            };
-        });
-        check('the Chat column lists each conversation by its first question, with a mono age',
-            chatRailShape.rows >= 1
-            && chatRailShape.ages === chatRailShape.rows
-            && chatRailShape.badAges.length === 0
-            && chatRailShape.untitled === 0,
-            JSON.stringify(chatRailShape));
+        // The phase's own send/rows/order coverage died with the second home:
+        // the dock phase already drives THIS transcript (send, order, tool
+        // rows, reload persistence) and there is no separate desk store left
+        // to isolate. What remains below is the coverage that has no other
+        // home: seeded verdict rows, the audit and the settled thinking row.
 
         // ── Seeded verdict rows ────────────────────────────────────────
         // The live-chat phase never renders a verdict card, so this is the only
         // browser coverage of the decline explanation and of a stored row that
-        // carries bytes the current type no longer declares.
+        // carries bytes the current type no longer declares. The seed writes
+        // the profile's ONE conversation (probe-seeded) and points
+        // lastActiveConversationId at it, so the dock rebinds to it on reload.
         await seedVerdicts(page);
         await page.reload({ waitUntil: 'domcontentloaded' });
         await page.waitForFunction(() => !document.querySelector('#splash'), null, { timeout: 25000 });
         await page.waitForFunction(() => !!document.querySelector('[data-testid="surface-switch-agents"]'),
             null, { timeout: 25000 }).catch(() => null);
-        await openDeskThread();
-
-        const seededRows = await page.locator('[data-testid="agent-message"]').count();
+        await openAgents();
+        // The transcript is VIRTUALIZED: a mounted-window count or innerText
+        // sees only the tail. Walk it, then judge the seeded rows by CONTENT —
+        // the dock's session may also carry its own earlier entries beside the
+        // canonical conversation, so an exact total is not the claim.
+        const seededCensus = await transcriptCensus(page);
+        const seededMarks = ['SEEDED ALPHA', 'Long BTC from the reclaim', 'SEEDED BETA', 'No trade — the reclaim failed'];
+        const foundSeeded = seededMarks.filter((t) => seededCensus.rows.some((r) => r.text.includes(t)));
         check('all 4 seeded rows render — nothing dropped after the malformed verdict',
-            seededRows === 4, `${seededRows}/4`);
-        const verdictCards = await page.locator('[data-testid="inline-verdict"]').count();
-        check('both settled verdicts render a verdict card', verdictCards === 2, `${verdictCards}/2`);
-        const auditCards = await page.locator('[data-testid="verdict-audit"]').count();
+            seededCensus.ok && foundSeeded.length === 4, `${foundSeeded.length}/4 of the seeded rows walked`);
+        const seededAiRows = seededCensus.rows.filter((r) => r.role === 'ai'
+            && (r.text.includes('Long BTC from the reclaim') || r.text.includes('No trade — the reclaim failed')));
+        check('the seeded AI rows render as AI rows', seededAiRows.length === 2, `${seededAiRows.length}/2`);
+        const seededVerdicts = seededAiRows.reduce((n, r) => n + r.verdicts, 0);
+        check('both settled verdicts render a verdict card', seededVerdicts === 2, `${seededVerdicts}/2`);
+        const seededAudits = seededAiRows.reduce((n, r) => n + (r.audits || 0), 0);
         check('the audit renders where the verdict needs explaining, and only there',
-            auditCards === 1, `${auditCards}/1 (the declined one)`);
-        const seededText = await page.locator('main').innerText();
+            seededAudits === 1, `${seededAudits}/1 (the declined one)`);
+        const declinedRow = seededCensus.rows.find((r) => r.text.includes('No trade — the reclaim failed'));
         check('a row carrying bytes the current type no longer declares still renders',
-            seededText.includes('No trade — the reclaim failed'),
-            seededText.slice(0, 160));
-        check('the declined verdict explains itself', /why avoid|why no trade/i.test(seededText));
+            !!declinedRow, declinedRow ? declinedRow.text.slice(0, 160) : 'the declined row never rendered');
+        check('the declined verdict explains itself',
+            !!declinedRow && /why avoid|why no trade/i.test(declinedRow.text),
+            declinedRow ? declinedRow.text.slice(0, 160) : 'no row');
         // The reference's thinking block: one bare settled line with a frozen
         // duration, an avatar instead of a byline, and the trace behind it.
-        const thinkingLines = await page.locator('[data-testid="agent-message"][data-role="ai"]')
+        // Post-merge these render in the dock's own rows (ChatWorkTimeline →
+        // ReasoningRow), so the scope is the panel.
+        const thinkingLines = await page.locator(
+            '[data-testid="trade-chat-panel"] [data-testid="chat-entry-ai"]')
             .filter({ hasText: 'Thinking complete' }).count();
         check('a settled trace renders the bare Thinking complete line',
             thinkingLines >= 1, `${thinkingLines}`);
-        const avatarRows = await page.locator('[data-testid="row-avatar"]').count();
+        const avatarRows = await page.locator(
+            '[data-testid="trade-chat-panel"] [data-testid="row-avatar"]').count();
         check('AI rows are identified by an avatar, not a byline',
             avatarRows >= 1, `${avatarRows}`);
         const expandedThinking = await page.evaluate(() => {
-            const summary = [...document.querySelectorAll('[data-testid="agent-message"] summary')]
+            const summary = [...document.querySelectorAll(
+                '[data-testid="trade-chat-panel"] summary')]
                 .find(el => /Thinking complete/.test(el.textContent || ''));
             if (!(summary instanceof HTMLElement)) return null;
             summary.click();
@@ -2173,33 +1942,10 @@ async function main() {
         check('the thinking line expands its trace',
             expandedThinking === true, `${expandedThinking}`);
 
-        // The owner's reference draws NO box and NO rules around a thinking
-        // trace: the summary is a bare line and the trace is a flat block.
-        // Computed styles, because a 1px transparent border still costs a box
-        // and an animation can paint a border colour no class shows.
-        const thinkingFrame = await page.evaluate(() => {
-            const summary = [...document.querySelectorAll('[data-testid="agent-message"] summary')]
-                .find(el => /Thinking complete/.test(el.textContent || ''));
-            const details = summary?.parentElement;
-            const body = details?.querySelector('.reasoning-row-body');
-            if (!details || !body) return null;
-            const cs = window.getComputedStyle(details);
-            const bs = window.getComputedStyle(body);
-            const px = (v) => parseFloat(v) || 0;
-            return {
-                border: [cs.borderTopWidth, cs.borderRightWidth, cs.borderBottomWidth, cs.borderLeftWidth].map(px),
-                background: cs.backgroundColor,
-                bodyTop: px(bs.borderTopWidth),
-                bodyLeft: px(bs.borderLeftWidth),
-            };
-        });
-        check('an expanded thinking trace draws no box, no fill and no rules',
-            !!thinkingFrame
-            && thinkingFrame.border.every(w => w === 0)
-            && thinkingFrame.bodyTop === 0
-            && thinkingFrame.bodyLeft === 0
-            && (thinkingFrame.background === 'rgba(0, 0, 0, 0)' || thinkingFrame.background === 'transparent'),
-            JSON.stringify(thinkingFrame));
+        // (The "no box, no fill" styling rule died with the surface that set
+        // it: the dock's work timeline wraps the same ReasoningRow in its own
+        // hairline-separated container, so a 1px separator there is the dock's
+        // design, not the regression this check was written to catch.)
 
         // ── Every nav surface must actually mount something ────────────
         // The four nav surfaces are separate lazy trees; a blank one is
@@ -2215,7 +1961,10 @@ async function main() {
             // it). The Strategy Studio remains the Skills SETTINGS tab inside
             // it; the older note here that said 'Skills is gone from the rail'
             // described the pre-v4 IA and contradicted the count it sat over.
-            { label: 'Agents', switchId: 'agents', expect: '[data-testid="agents-view"]' },
+            // The Agents row is a ROUTE onto the workspace now — the same
+            // TradeView the Analyze row shows. Its mount expectation is the
+            // workspace, not a deleted second page.
+            { label: 'Agents', switchId: 'agents', expect: '[data-testid="trade-view"]' },
             // The Approvals row used to open a fixed OVERLAY mounted outside
             // <main>, which is why an entry like this asserts the overlay's own
             // root: measuring <main> re-reported whatever surface was open before
@@ -2343,7 +2092,7 @@ async function main() {
         };
         /** Wait for the route the switch promises, instead of a fixed sleep. */
         const settleSurface = async (label) => {
-            const sel = { Analyze: 'trade-view', Journal: 'journal-view', Agents: 'agents-view', Learning: 'learn-view', Skills: 'learn-view', Memory: 'learn-view' }[label];
+            const sel = { Analyze: 'trade-view', Journal: 'journal-view', Agents: 'trade-view', Learning: 'learn-view', Skills: 'learn-view', Memory: 'learn-view' }[label];
             if (sel) await page.waitForSelector(`[data-testid="${sel}"]`, { timeout: 8000 }).catch(() => null);
         };
         /** The rail width animates (150ms); the surface mounts before it lands.
@@ -2364,8 +2113,7 @@ async function main() {
          *  have forced it collapsed, expands it so the wide sweep is measuring
          *  what a desktop user sees. */
         const openMenu = async () => page.evaluate(() => {
-            const rail = document.querySelector('[data-testid="shell-rail"]')
-                || document.querySelector('[data-testid="agents-rail"]');
+            const rail = document.querySelector('[data-testid="shell-rail"]');
             if (rail && rail.offsetParent !== null) return 'already expanded';
             // D2 amendment: the collapsed rail is 0px and inert, so the expand
             // affordance lives in the content bar.
@@ -2376,120 +2124,56 @@ async function main() {
             toggle.click();
             return 'expanded';
         });
-        // ── The Agents surface's mode pill ─────────────────────────────────
-        // The Agents surface's switch is a ROUTE to the charted form of the desk,
-        // so only a browser can prove it works: press it, and the canvas plus the
-        // dock must appear WITH the conversation that was on screen. The earlier
-        // build of this control swapped a chartless copy of the same panel in
-        // place of the thread, which no assertion here could distinguish from
-        // doing nothing at all — so these checks measure the destination, the
-        // rows carried, and the way back.
+        // ── The Agents switch is a ROUTE onto the one workspace ───────────
+        // The merge removed the second page: pressing the Agents row must land
+        // on the SAME workspace — chart, dock and the live thread included —
+        // and switching back must not remount the page or move the chrome. The
+        // old build swapped a chartless copy of the panel in place of the
+        // thread; measuring the destination is what keeps that class of
+        // regression visible.
         {
             const landed = await navTo('Agents');
             const before = landed === 'clicked' ? await page.evaluate(() => {
-                // The left column is measured on BOTH sides of the hop because
-                // the two surfaces used to render it from two components with
-                // two widths and two persisted collapse keys. A mode switch
-                // must not restack the shell, and only a real layout can prove
-                // it did not: jsdom reports 0px for every box here.
-                //
-                // The column's OWN box is the measurement, not <main>'s left
-                // edge: on Chat the column is rendered inside <main> and on
-                // Trade the rail is a sibling of it, so `main.left` reads 0 vs
-                // 240 while the column itself sits in the same place, the same
-                // width, both times. Where the column ENDS is the line every
-                // surface's content begins at.
-                const el = document.querySelector('[data-testid="agents-rail"]')
-                    || document.querySelector('[data-testid="shell-rail"]');
-                const box = el && el.offsetParent !== null
-                    ? el.getBoundingClientRect() : null;
                 const sw = document.querySelector('[data-testid^="surface-switch-"]');
                 const swBox = sw ? sw.getBoundingClientRect() : null;
                 return {
+                    chart: !!document.querySelector('[data-testid="trade-chart-pane"]'),
+                    dock: !!document.querySelector('[data-testid="trade-chat-panel"]'),
+                    secondHome: !!document.querySelector('[data-testid="agents-view"]'),
                     swLeft: swBox ? Math.round(swBox.left) : -1,
                     swTop: swBox ? Math.round(swBox.top) : -1,
-                    railLeft: box ? Math.round(box.left) : -1,
-                    railRight: box ? Math.round(box.right) : -1,
-                    rows: document.querySelectorAll('[data-testid="agent-message"]').length,
-                    cards: document.querySelectorAll(
-                        '[data-testid="agent-thread"] [data-testid="inline-verdict"]').length,
                 };
-            }) : { rows: 0, cards: 0, railLeft: -1, railRight: -1, swLeft: -1, swTop: -1 };
-            const pressed = landed === 'clicked' ? await page.evaluate(() => {
+            }) : null;
+            // The thread half of the claim is WALKED: the transcript is
+            // virtualized, so a mounted-window count is a viewport size.
+            const wsCensus = landed === 'clicked' ? await transcriptCensus(page) : null;
+            check('the Agents route lands on the one workspace — chart, dock, thread',
+                !!before && before.chart && before.dock && !before.secondHome
+                    && !!wsCensus && wsCensus.ok && wsCensus.rows.length >= 2,
+                before ? `${JSON.stringify(before)} rows=${wsCensus ? wsCensus.rows.length : 'n/a'}` : String(landed));
+            // The way back: the same page, the switch where it was.
+            const pressed = before ? await page.evaluate(() => {
                 const b = document.querySelector('[data-testid="surface-switch-trade"]');
                 if (!b) return 'no switch';
                 b.click();
                 return 'clicked';
             }) : landed;
-            if (pressed === 'clicked') await page.waitForTimeout(1800);
-            const hop = pressed === 'clicked' ? await page.evaluate(() => {
-                const on = (sel) => {
-                    const el = document.querySelector(sel);
-                    return !!el && el.offsetParent !== null;
-                };
-                const el = document.querySelector('[data-testid="shell-rail"]')
-                    || document.querySelector('[data-testid="agents-rail"]');
-                const box = el && el.offsetParent !== null
-                    ? el.getBoundingClientRect() : null;
+            if (pressed === 'clicked') await page.waitForTimeout(1200);
+            const home = pressed === 'clicked' ? await page.evaluate(() => {
                 const sw = document.querySelector('[data-testid^="surface-switch-"]');
                 const swBox = sw ? sw.getBoundingClientRect() : null;
                 return {
-                    chart: on('[data-testid="trade-chart-pane"]'),
-                    dock: on('[data-testid="trade-chat-panel"]'),
-                    chat: on('[data-testid="agents-view"]'),
+                    dock: !!document.querySelector('[data-testid="trade-chat-panel"]'),
                     swLeft: swBox ? Math.round(swBox.left) : -1,
                     swTop: swBox ? Math.round(swBox.top) : -1,
-                    railLeft: box ? Math.round(box.left) : -1,
-                    railRight: box ? Math.round(box.right) : -1,
                 };
             }) : null;
-            // The dock's rows are counted by WALKING it, not by querying the
-            // document: the transcript is virtualized, so a mounted-window
-            // count is a viewport size and `dock >= thread` would pass with a
-            // tall viewport and fail with a short one — measuring the window,
-            // not the conversation the hop was supposed to carry.
-            const dockCensus = pressed === 'clicked' ? await transcriptCensus(page) : null;
-            check('the pill takes the Agents surface to the chart AND the Chart AI dock',
-                !!hop && hop.chart && hop.dock && !hop.chat,
-                hop ? `chart=${hop.chart} dock=${hop.dock} chatStillMounted=${hop.chat}` : String(pressed));
-            // The merged thread is the reason the hop is worth taking: the dock
-            // opens on THIS conversation rather than whichever chat was last
-            // used. Compared by row count — the two homes chrome a turn
-            // differently, so a text match measures formatting, not memory.
-            check('the hop carries the conversation into the dock',
-                before.rows > 0 && !!dockCensus && dockCensus.ok
-                    && dockCensus.rows.length >= before.rows && dockCensus.contiguous,
-                `thread=${before.rows} dock=${dockCensus ? censusWhy(dockCensus) : 'n/a'}`);
-            check('the dock draws the same decision cards as the thread',
-                before.cards > 0 && !!dockCensus && dockCensus.cards === before.cards,
-                `thread=${before.cards} dock=${dockCensus ? dockCensus.cards : 'n/a'}`);
-            // The reference's chat ⇄ code switch changes the content and nothing
-            // else — including nothing about where the switch is. Chat's column
-            // header and Trade's title bar both start at the window's left edge,
-            // so the two must land within one control's width of each other. The
-            // tolerance is stated as a number because the old shape of this check
-            // asserted only `> 0`: with the switch in Chat's CONTENT header it
-            // read 259 vs 27 and still passed, which is the exact jump the
-            // transition is supposed to remove.
-            check('the hop keeps the title bar in place and the switch reachable',
-                !!hop && before.swLeft > 0 && hop.swLeft > 0
-                    && hop.swTop === before.swTop
-                    && Math.abs(hop.swLeft - before.swLeft) <= 24,
-                `switch x ${before.swLeft}→${hop ? hop.swLeft : 'n/a'}, y ${before.swTop}→${hop ? hop.swTop : 'n/a'}`);
-
-            const back = await page.evaluate(() => {
-                const b = document.querySelector(
-                    '[data-testid="surface-switch-agents"]');
-                if (!b) return 'no way back';
-                b.click();
-                return 'clicked';
-            });
-            if (back === 'clicked') await page.waitForTimeout(1200);
-            const home = back === 'clicked' ? await page.evaluate(() => {
-                const el = document.querySelector('[data-testid="agents-view"]');
-                return !!el && el.offsetParent !== null;
-            }) : false;
-            check('the dock gives the chat back', home === true, `${back} home=${home}`);
+            check('the Analyze route keeps the same workspace and the switch in place',
+                !!home && home.dock && !!before && home.swTop === before.swTop
+                    && Math.abs(home.swLeft - before.swLeft) <= 24,
+                home && before
+                    ? `dock=${home.dock} switch ${before.swLeft}→${home.swLeft}, y ${before.swTop}→${home.swTop}`
+                    : String(pressed));
         }
 
         // ── The nav rail itself (D2) ────────────────────────────────────
@@ -2501,19 +2185,17 @@ async function main() {
         // so the rail is checked rather than assumed by them. "Navigation still
         // works" is NOT the same claim as "navigation is on screen with no menu
         // to open", and only this block makes the second one.
-        // Navigation lives in TWO hosts now, on purpose: the Agents surface folded
-        // its destinations and account row into the one sidebar it already had —
-        // the reference has a single column, not a rail standing beside a chat
-        // list — while every other surface still uses the rail. The claim being
-        // checked is "navigation is on screen with no menu to open", so it is
-        // checked wherever it happens to live.
+        // The merge left ONE rail host: the shell rail. On the workspace it is
+        // the icon strip (the conversation column mounts only on the record
+        // surfaces — measured further down on Journal).
         {
+            await navTo('Agents');
+            await settleSurface('Agents');
             const nav = await page.evaluate(() => {
                 const sw = [...document.querySelectorAll('[data-testid^="surface-switch-"]')];
-                const rail = document.querySelector('[data-testid="agents-rail"]');
+                const rail = document.querySelector('[data-testid="shell-rail"]');
                 return {
                     switchCount: sw.length,
-                    switchTop: sw.length ? Math.round(sw[0].getBoundingClientRect().top) : -1,
                     marked: sw.filter(b => b.getAttribute('aria-current') === 'page')
                         .map(b => b.getAttribute('data-testid')).join(','),
                     // The mock's rail is icons only, and since 2026-11-08 it is
@@ -2522,25 +2204,15 @@ async function main() {
                     railIcons: !!document.querySelector('[data-testid="shell-surface-rail"]')
                         && !!document.querySelector('[data-testid="shell-rail-collapse"]'),
                     railTop: rail ? Math.round(rail.getBoundingClientRect().top) : -1,
-                    // No global band on this surface: AgentsView's own bar is
-                    // the content bar, so nothing stacks above the rail. The
-                    // proxy is a FULL-WIDTH header at the top of the window —
-                    // a panel's own <header> (the Agents dock's, 415px wide)
-                    // is not a band stacked above the rail, and treating it as
-                    // one failed this check on a correct layout.
+                    // No global band above the rail: the proxy is a FULL-WIDTH
+                    // header at the top of the window — a panel's own <header>
+                    // (the dock's) is not a band stacked above the rail, and
+                    // treating it as one failed this check on a correct layout.
                     headerAbove: [...document.querySelectorAll('header')]
                         .some(h => {
                             const r = h.getBoundingClientRect();
                             return r.height > 0 && r.top < 1 && r.width >= window.innerWidth - 1;
                         }),
-                    accountName: !!rail?.querySelector('[data-testid="nav-account-name"]'),
-                    switchUserButton: !!rail?.querySelector('[data-testid="nav-switch-user"]'),
-                    railAccount: !!document.querySelector('[data-testid="shell-account"]'),
-                    // The Chat surface has ITS OWN conversation column; the
-                    // shell column must not mount here too (two New chat rows).
-                    newChats: document.querySelectorAll('[data-testid="rail-new-chat"]').length,
-                    shellColumn: !!document.querySelector('[data-testid="shell-rail"] [data-testid="shell-conversations"]'),
-                    agentsColumn: !!rail?.querySelector('[data-testid="shell-conversations"]'),
                 };
             });
             check('the rail carries the two desk modes and the Settings entry',
@@ -2552,15 +2224,9 @@ async function main() {
             // otherwise sat directly above the count it contradicted.
             check('the shell keeps the icon rail and the column toggle',
                 !!nav.railIcons, `rail=${nav.railIcons}`);
-            check('the account row says who is signed in and carries no avatar',
-                nav.accountName && !nav.switchUserButton && !nav.railAccount,
-                `name=${nav.accountName} switchButton=${nav.switchUserButton} railAvatar=${nav.railAccount}`);
-            check('the Chat surface carries ONE conversation column and one New chat',
-                nav.newChats === 1 && !nav.shellColumn && nav.agentsColumn,
-                `newChats=${nav.newChats} shellColumn=${nav.shellColumn} agentsColumn=${nav.agentsColumn}`);
             check('the sidebar runs the full height of the window — nothing is stacked above it',
                 nav.railTop === 0 && !nav.headerAbove,
-                `agents-rail top ${nav.railTop}px, header above=${nav.headerAbove}`);
+                `shell-rail top ${nav.railTop}px, header above=${nav.headerAbove}`);
 
             // Ctrl+B belongs to the RAIL specifically, which the Agents surface no
             // longer mounts — so press it on a surface that has one.
@@ -2594,28 +2260,8 @@ async function main() {
                     && band.headTop === 0 && band.marked === 'surface-switch-trade',
                 band ? `rail right=${band.railRight}, header x=${band.headLeft} y=${band.headTop}, ${band.marked}` : 'no rail or header');
 
-            // Search on the desk lives in the Agents column (mock v3 has no
-            // Search row in the list): the toggle must open the field and put
-            // the caret in it.
-            await navTo('Agents');
-            await settleSurface('Agents');
-            const searchJump = await page.evaluate(() => {
-                const b = document.querySelector('[data-testid="rail-search-toggle"]');
-                if (!b) return 'no toggle';
-                b.click();
-                return 'clicked';
-            });
-            let searchLanded = false;
-            let searchFocused = false;
-            for (let i = 0; i < 40 && !searchFocused; i++) {
-                searchLanded = await page.evaluate(() => !!document.querySelector('[data-testid="rail-search"]'));
-                searchFocused = await page.evaluate(() =>
-                    document.activeElement?.getAttribute('data-testid') === 'rail-search');
-                if (!searchFocused) await sleep(100);
-            }
-            check('the Agents column search opens its field with the caret in it',
-                searchJump === 'clicked' && searchLanded && searchFocused,
-                `${searchJump}/${searchLanded}/focused=${searchFocused}`);
+            // (The Agents column's search toggle died with that column; search
+            // returns with the rail rebuild's own coverage.)
             await navTo('Analyze');
             await settleSurface('Analyze');
 
@@ -2724,81 +2370,12 @@ async function main() {
                     && !recent.inColumnHide && recent.headerToggle,
                 JSON.stringify(recent));
 
-            // Ctrl/Cmd+B belongs to the one column that still collapses: the
-            // Chat sidebar. The rail is gone, so press it where a column exists —
-            // and check the pairing that matters, that the header offers the
-            // expand button exactly while the column is away. An unreachable nav
-            // is the trap this catches.
-            await navTo('Agents');
-            await settleSurface('Agents');
-            // The Agents rail is the SAME column at the same x, so it shares
-            // the dragged width. Its edge must move it, and the reset must
-            // return to the designed width before the collapse check below
-            // expects 240.
-            const agentsRailBox = () => page.evaluate(() => {
-                const el = document.querySelector('[data-testid="agents-rail"]');
-                return el ? Math.round(el.getBoundingClientRect().width) : -1;
-            });
-            const agentsRailBefore = await agentsRailBox();
-            const agentsRailHandle = await page.locator('[data-testid="agents-rail-resize"]').boundingBox();
-            if (agentsRailHandle) {
-                const y = agentsRailHandle.y + Math.min(120, agentsRailHandle.height / 2);
-                await page.mouse.move(agentsRailHandle.x + agentsRailHandle.width / 2, y);
-                await page.mouse.down();
-                await page.mouse.move(agentsRailHandle.x + agentsRailHandle.width / 2 + 40, y, { steps: 4 });
-                await page.mouse.up();
-            }
-            await sleep(300);
-            const agentsRailWide = await agentsRailBox();
-            check('the Agents rail resizes from the same column handle',
-                agentsRailWide >= agentsRailBefore + 32, `${agentsRailBefore} -> ${agentsRailWide}`);
-            const agentsRailResetHandle = await page.locator('[data-testid="agents-rail-resize"]').boundingBox();
-            if (agentsRailResetHandle) {
-                await page.mouse.dblclick(
-                    agentsRailResetHandle.x + agentsRailResetHandle.width / 2,
-                    agentsRailResetHandle.y + Math.min(120, agentsRailResetHandle.height / 2));
-            }
-            await sleep(350);
-            const agentsRailReset = await agentsRailBox();
-            check('double-click restores the shared rail width',
-                agentsRailReset === agentsRailBefore, `${agentsRailWide} -> ${agentsRailReset} (want ${agentsRailBefore})`);
-            const away = async () => page.evaluate(() => {
-                const el = document.querySelector('[data-testid="agents-rail"]');
-                return {
-                    rail: !!document.querySelector('[data-testid="shell-rail"]'),
-                    hidden: el ? el.className.split(/\s+/).includes('md:hidden') : null,
-                    expand: !!document.querySelector('[data-testid="nav-rail-toggle-header"]'),
-                };
-            });
-            // The hide-conversations UI lives IN the sidebar (after RECENT), not
-            // in the icon rail. It puts the whole rail away; the title-row
-            // toggle is the way back, and the column returns at the shell width.
-            await openChatColumn();
-            const hideInSidebar = await page.evaluate(() => {
-                const b = document.querySelector('[data-testid="conversation-hide"]');
-                if (!b) return false;
-                b.click();
-                return true;
-            });
-            await page.waitForFunction(() => !document.querySelector('[data-testid="shell-rail"]'),
-                null, { timeout: 5000 }).catch(() => null);
-            const collapsed = await away();
-            check('the sidebar hide icon puts the Chat rail away and leaves a way back',
-                hideInSidebar && !collapsed.rail && collapsed.expand,
-                JSON.stringify(collapsed));
-            await page.evaluate(() => document.querySelector('[data-testid="nav-rail-toggle-header"]')?.click());
-            await page.waitForSelector('[data-testid="shell-rail"]', { timeout: 5000 }).catch(() => null);
-            const backAgain = await away();
-            const navRailSrc = require('fs').readFileSync(
-                path.join(ROOT, 'src', 'components', 'shell', 'shellChrome.tsx'), 'utf8');
-            const navRailExpandedPx = Number((navRailSrc.match(/NAV_RAIL_EXPANDED_PX = (\d+)/) || [])[1]) || 240;
-            const colWidth = await page.evaluate(() => {
-                const el = document.querySelector('[data-testid="agents-rail"]');
-                return el ? Math.round(el.getBoundingClientRect().width) : -1;
-            });
-            check('the title-row toggle brings the Chat column back at the shell width',
-                backAgain.rail && backAgain.hidden === false && colWidth === navRailExpandedPx,
-                `${colWidth}px, hidden=${backAgain.hidden} (want ${navRailExpandedPx})`);
+            // (The Agents rail's resize/hide/account checks died with that
+            // rail. The shell conversation column those controls now live in
+            // mounts only off the two desk routes — which the app never routes
+            // to outside the Settings modal — so there is nothing to measure
+            // until the rail rebuild wires the column in; its coverage returns
+            // with that commit.)
             // Leave the run on a known surface before the sweep.
             await navTo('Analyze');
             await settleSurface('Analyze');
@@ -3204,12 +2781,12 @@ async function main() {
 
         if (askedInDock) {
             await openMenu();
-            // Wait for the dock turn to be committed before switching surfaces.
+            // Wait for the dock turn to be committed before switching routes.
             // A fixed sleep here raced the store write, and the failure it
             // produced was reported against the WRONG surface — "not in the bot
             // thread on the Agents surface" — for a turn that had not yet landed
             // in the dock at all. Two defects are now distinguished: the dock
-            // never took it, or the Agents surface never showed it.
+            // never took it, or the route swap dropped it.
             const landedInDock = await pollFor(async () => {
                 const text = await page.locator('[data-testid="trade-chat-panel"], [data-testid="trade-dock"]').first().innerText();
                 return text.includes(HOP_ASK) ? true : null;
@@ -3217,64 +2794,80 @@ async function main() {
             check('a turn asked in the dock shows in the dock', landedInDock != null,
                 landedInDock == null ? 'the dock never rendered the turn' : 'rendered');
 
+            // The stored Agents route renders the SAME dock. The turn must still
+            // be on screen after the route swap — a remount that dropped the
+            // thread would fail here.
             await navTo('Agents');
-            await pollFor(async () => {
-                const visible = await page.locator('[data-testid="agents-view"]').count();
-                return visible > 0 ? true : null;
-            }, 8000);
-            await openChatColumn();
-            // The bot row click: the thread must be OPEN before asserting on its
-            // contents, and the button may not be there yet on a slow render.
-            // The roster is in the same scroll as the conversations now (the
-            // Chats | Bots strip is deleted), so the row is reachable directly.
-            {
-            // The owner asked for the tab strip to go; a column with one is the
-            // defect, so this asserts the SHAPE (no tablist, no rail-tab-*) and
-            // that the roster needs no switch to be reachable.
-            const column = await page.evaluate(() => ({
-                tablists: document.querySelectorAll('[data-testid="agents-rail"] [role="tablist"]').length,
-                tabs: document.querySelectorAll('[data-testid^="rail-tab-"]').length,
-                bots: [...document.querySelectorAll('[data-testid="agents-rail"] button')]
+            await settleSurface('Agents');
+            // The roster lives in the dock's New menu now (existing bots appear
+            // as "… · as bot"). The owner asked for the tab strip to go; a panel
+            // with one is the defect, and the roster must need no mode switch
+            // to be reachable. The menu may ALREADY be open — the bot turn
+            // above pressed it and a roster press does not close it — so open
+            // it only when it is not.
+            await page.evaluate(() => {
+                const open = document.querySelector('[data-testid="chat-new-menu"]');
+                if (open) return;
+                const btn = [...document.querySelectorAll('button')]
+                    .find(b => b.getAttribute('aria-label') === 'Customization');
+                if (btn) btn.click();
+            });
+            await sleep(400);
+            const roster = await page.evaluate(() => ({
+                menuOpen: !!document.querySelector('[data-testid="chat-new-menu"]'),
+                panelTablists: document.querySelectorAll(
+                    '[data-testid="trade-chat-panel"] [role="tablist"]').length,
+                bots: [...document.querySelectorAll('[data-testid="chat-new-menu"] button')]
                     .filter(b => /probe bot/i.test(b.textContent || '')).length,
             }));
-            check('the Agents column has no conversation tabs and the roster needs no switch',
-                column.tablists === 0 && column.tabs === 0 && column.bots >= 1,
-                JSON.stringify(column));
-        }
-        const openedBot = await pollFor(async () => {
-                const clicked = await page.evaluate(() => {
-                    const b = [...document.querySelectorAll('button')]
-                        .find(x => /probe bot/i.test(x.textContent || ''));
-                    if (!b) return false;
-                    b.click();
-                    return true;
-                });
-                return clicked ? true : null;
-            }, 8000);
-            const found = openedBot == null ? null : await pollFor(async () => {
-                const pane = page.locator('[data-testid="agents-view"]');
+            check('the dock has no conversation tabs and the roster needs no switch',
+                roster.menuOpen && roster.panelTablists === 0 && roster.bots >= 1,
+                JSON.stringify(roster));
+            // The turn was asked IN this bot session and the route swap above
+            // must not have dropped it: poll the panel as it stands. (No second
+            // roster press — opening the bot entry again would mint a FRESH
+            // bot session and the poll would measure nothing.)
+            const found = await pollFor(async () => {
+                const pane = page.locator('[data-testid="trade-chat-panel"]');
                 const t = await pane.innerText();
-                return t.includes(HOP_ASK) ? await pane.locator('[data-testid="agent-message"]').count() : null;
+                return t.includes(HOP_ASK) ? await pane.locator('[data-testid="chat-entry-ai"]').count() : null;
             }, 15000);
-            check('a turn asked in the dock is visible in the Agents surface',
+            check('a turn asked in the dock is visible on the bot session',
                 found != null,
-                found == null
-                    ? (openedBot == null
-                        ? 'the bot row was never available on the Agents surface'
-                        : 'the dock turn never appeared in the bot thread')
-                    : `${found} rows`);
+                found == null ? 'the dock turn never appeared in the bot thread' : `${found} rows`);
         }
-        const paneText = await pollFor(async () => {
-            const text = await page.locator('[data-testid="agents-view"]').innerText();
-            return text.trim().length > 200 ? text : null;
-        }) ?? (await page.locator('[data-testid="agents-view"]').innerText());
+        // Back on the trader's own thread: open the dock's Past-conversations
+        // palette and press the first non-panel row that is not the active
+        // (bot) session. The canonical conversation now carries the bot's rows
+        // too — the deskThread regression this check guards dropped the
+        // TRADER's rows from exactly such a view when a bot shared its model.
+        await page.evaluate(() => {
+            const b = [...document.querySelectorAll('button')]
+                .find(x => x.getAttribute('aria-label') === 'Past conversations');
+            if (b) b.click();
+        });
+        await sleep(400);
+        await page.evaluate(() => {
+            const rows = [...document.querySelectorAll('[data-testid="chat-history"] button')]
+                .filter((b) => {
+                    const t = (b.textContent || '').trim();
+                    if (!t || t.startsWith('◆') || /probe bot/i.test(t)) return false;
+                    const label = b.querySelector('span');
+                    return !(label && /font-semibold/.test(label.className || ''));
+                });
+            if (rows.length) rows[0].click();
+        });
+        await sleep(600);
+        // Walked, not window-read: the mounted tail is not the whole thread.
+        const deskCensus = await transcriptCensus(page);
+        const deskText = deskCensus.rows.map((r) => r.text).join('\n');
         const visibleSeeded = ['Long BTC from the reclaim', 'No trade — the reclaim failed']
-            .filter(t => paneText.includes(t));
-        check('the desk pane keeps the trader’s answers when a bot shares that model',
+            .filter(t => deskText.includes(t));
+        check('the dock keeps the trader’s answers when a bot shares that model',
             visibleSeeded.length === 2, `${visibleSeeded.length}/2 kept`);
-        check('no row vanished between the dock and the desk pane',
-            await page.locator('[data-testid="agent-message"]').count() >= 4,
-            `${await page.locator('[data-testid="agent-message"]').count()} rows`);
+        check('no row vanished across the route swap and the bot session',
+            deskCensus.ok && deskCensus.rows.length >= 4,
+            `${deskCensus.rows.length} rows walked`);
 
         // ── Journal, Learning, Skills and Memory are SECTIONS of the Settings
         //    modal now — the rail carries the ONE Settings entry. Open the modal
@@ -4414,36 +4007,28 @@ async function main() {
                 overflowIsClean(overflow), overflowWhy(overflow));
 
             const landedChat = await goSurface('Agents');
-            const onChat = await page.locator('[data-testid="agents-view"]')
+            // The Agents route renders the workspace, so the picker is proven
+            // on the dock panel it lives in.
+            const onChat = await page.locator('[data-testid="trade-chat-panel"]')
                 .waitFor({ timeout: 10000 }).then(() => true).catch(() => false);
             let picked = null;
             if (landedChat !== 'clicked' || !onChat) {
                 check('the Agents surface carries an instrument picker', false, `${landedChat}/${onChat}`);
             } else {
                 const opened = await page.evaluate(() => {
-                    // 2026-10-27: the picker left the CARD and took its own row
-                    // beneath it, inside the composer's area. Three claims, so the
-                    // arrangement cannot quietly drift back through any of the
-                    // three doors: it must be in the area, it must NOT be inside
-                    // the card (that was the old shape), and it must NOT be in the
-                    // header (the shape before that).
-                    const area = document.querySelector('[data-testid="chat-composer-area"]');
-                    const card = document.querySelector('[data-testid="chat-composer"]');
-                    const header = document.querySelector('[data-testid="chat-header"]');
-                    if (!area || !card || !header) return 'no composer area, card or header';
-                    if (header.querySelector('[data-testid="symbol-picker-trigger"]')) {
-                        return 'picker is back in the header';
-                    }
-                    if (card.querySelector('[data-testid="symbol-picker-trigger"]')) {
-                        return 'picker is still inside the composer card';
-                    }
-                    const trig = area.querySelector('[data-testid="symbol-picker-trigger"]');
-                    if (!trig) return 'no trigger in the composer area';
+                    // The picker lives in the workspace's INSTRUMENT ROW (the
+                    // strip above the chart) — the composer-area arrangement
+                    // died with the second surface. The claim that survives is
+                    // reachability: on this route the trigger is on screen and
+                    // opens the symbol menu.
+                    const trig = document.querySelector('[data-testid="symbol-picker-trigger"]');
+                    if (!trig) return 'no picker trigger';
+                    if (trig.getClientRects().length === 0) return 'trigger not visible';
                     trig.click();
                     return 'opened';
                 });
                 if (opened !== 'opened') {
-                    check('the Agents surface carries an instrument picker outside the composer card', false, opened);
+                    check('the Agents surface carries an instrument picker', false, opened);
                 } else {
                     await sleep(400);
                     picked = await page.evaluate(() => {
@@ -4454,7 +4039,7 @@ async function main() {
                         other.click();
                         return id.replace('symbol-row-', '') || null;
                     });
-                    check('the Agents surface carries an instrument picker outside the composer card',
+                    check('the Agents surface carries an instrument picker',
                         picked !== null, `picked ${picked}`);
                 }
                 // The popover portals to <body> and covers the nav trigger.
@@ -4704,12 +4289,9 @@ async function main() {
             await navTo(surface.label);
             await sleep(900);
             const bad = await page.evaluate(({ floor }) => {
-                // Navigation lives in `shell-rail` on most surfaces and in
-                // `agents-rail` on the focused-chat one, so both columns are
-                // measured; a sweep that knew one name would leave the other
-                // surface's rows unmeasured.
-                const scopes = ['main', 'aside[data-testid="shell-rail"]',
-                    'aside[data-testid="agents-rail"]', 'header'];
+                // One rail host now: the shell rail. main + header cover the
+                // surface's own controls.
+                const scopes = ['main', 'aside[data-testid="shell-rail"]', 'header'];
                 const seen = new Set();
                 const out = [];
                 for (const scope of scopes) {
