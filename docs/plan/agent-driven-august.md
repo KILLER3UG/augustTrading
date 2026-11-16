@@ -22,6 +22,41 @@ palette/radii already in `src/index.css`. Two defaults chosen without your answe
 chat always side by side**, **rooms/bots: composer mode menu** — are marked adjustable in Open
 questions.
 
+## Status (2026-11-17, STOP 1 — Phase 3 complete, B audited)
+
+**Phase 3 is complete.** The decision cards (proposal, risk-limit/guard, strategy
+activation, settlement-correction incl. VOID, trade-action) are landed, probed and
+independently reviewed — the review's code findings are all fixed (commit `c9c1ef0e`).
+The two takeover flow flaws are closed: the session guard ENFORCES its limits at the log
+path (`68c762cc`), and the prompt A/B lane + shadow tier are removed (`89dc99b`,
+O-140/O-148 resolved by deletion). The dual-surface sync audit's three divergences are
+fixed (`ec1624de`). The tool & memory validity pass landed (`00ef4642`). The parity
+proofs P-1…P-5 are probed (`f6ffebf5`, `3b54cb6a` — P-6 was already proven); the P-2
+button-by-button table is in [parity-proofs.md](parity-proofs.md).
+
+**Phase B status (audited, not finished).** The UI inventory audit classifies every
+mounted surface: 63 KEEP, 12 AGENT-REPLACEABLE (each behind a P-row), 2 mounted GAP
+carriers, 13 BROKEN findings (9 dead files + 4 wiring breaks). Probes ARE the component
+test pass so far: render-probe (controls ≥24px, no sideways scroll, phone drawer, six
+surfaces, Settings→Data backup/export/import, skill library CRUD, health tab),
+decision-card (36), dock-card (13), parity (20), boot. Remaining before Phase 4:
+(a) the spec's `[Desk | Chat]` pill CONTRADICTS the owner-approved one-workspace layout —
+needs a ruling before anything is built; (b) the Settings "Tell August what to change"
+bar is unbuilt (pairs with the Phase-4 settings diet); (c) the semantic-color sweep
+(green/red only for direction/PnL/price) is un-run; (d) the BROKEN wiring (dead Pinned
+section, dead "Open in Agents" row + openChartAi, dead sidebar plumbing, Agents rail
+label promising a distinct page) needs either fixing or deletion — the rail must not lie.
+
+**For the owner at STOP 1** (open questions): (1) Desk|Chat pill vs one workspace — the
+plan's side-by-side default vs the takeover brief's two views; (2) F6's side door (a
+one-tap riskPercent tighten lifts a daily-loss standdown — a genuine tighten that also
+shrinks the measured loss): accept, latch the daily-loss block per UTC day, or freeze the
+conversion rate; (3) F10: mirror decision-card fields into canonical Messages so a
+reload restores pending cards (today a reload before the confirm loses the proposal —
+consistent across all four cards); (4) WorkspaceHome/messageFeedback/conversationPins —
+wire or drop (open question #4 still unanswered); (5) the audit's top GAPs: forged-tool
+approval as a card, entry-correction tool, proactive settlement sweep.
+
 ## Status (2026-11-16, Phase 3 in progress — decision cards landed)
 
 **Phase 1a and 1b are done and pushed.** All six agent hands are registered and callable:
