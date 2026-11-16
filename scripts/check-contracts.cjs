@@ -5669,6 +5669,93 @@ const checkAgentHandExecutor = async () => {
         reviewTrade.ok === false && /nope/.test(reviewTrade.content), reviewTrade.content);
 };
 
+// ─── 13g. the decision card: approve, staleness, receipt, decline, undo ────
+// Phase 3's decision card. Approve is idempotent and never silent about a
+// stale plan; the receipt is a record that grants no authority; a reject is
+// a recorded decline; the undo window reverses one approval cleanly.
+(() => {
+    const td = loadModule('src/services/trade/tradeDecision.ts');
+
+    // STALENESS: a fresh plan at its entry is not stale.
+    const fresh = td.assessProposalStaleness({ entry: 100, stopLoss: 98, mark: 100.2, presentedAt: Date.now() - 60_000 });
+    ok('decision card: a fresh plan at its entry is not stale',
+        fresh.stale === false && fresh.expired === false && fresh.reasons.length === 0, JSON.stringify(fresh));
+
+    // STALENESS: drift past half the stop distance is stale, with the numbers named.
+    const drifted = td.assessProposalStaleness({ entry: 100, stopLoss: 98, mark: 101.2, presentedAt: Date.now() - 60_000 });
+    ok('decision card: drift past half the stop distance is stale and names the drift',
+        drifted.stale === true && drifted.driftPct !== null && Math.abs(drifted.driftPct - 1.2) < 1e-9
+        && /101\.2/.test(drifted.reasons.join(' ')) && /stop distance/.test(drifted.reasons.join(' ')), JSON.stringify(drifted));
+
+    // STALENESS: the other side drifts too — a short into the same rule.
+    const driftedDown = td.assessProposalStaleness({ entry: 100, stopLoss: 102, mark: 98.9, presentedAt: Date.now() - 60_000 });
+    ok('decision card: drift below the entry is stale by the same rule',
+        driftedDown.stale === true && driftedDown.drift !== null && driftedDown.drift < 0, JSON.stringify(driftedDown));
+
+    // STALENESS: the validity window expires a plan even at the same price.
+    const old = td.assessProposalStaleness({ entry: 100, stopLoss: 98, mark: 100, presentedAt: Date.now() - (td.PROPOSAL_VALIDITY_MS + 60_000) });
+    ok('decision card: a plan past its validity window is expired even at its entry',
+        old.stale === true && old.expired === true && /validity window/.test(old.reasons.join(' ')), JSON.stringify(old));
+
+    // STALENESS: no mark and no timestamp degrade honestly — never a fake drift.
+    const blind = td.assessProposalStaleness({ entry: 100, stopLoss: 98, mark: null, presentedAt: null });
+    ok('decision card: no mark and no timestamp is not claimed as staleness',
+        blind.stale === false && blind.drift === null && blind.driftPct === null, JSON.stringify(blind));
+
+    // RECEIPT: one per decision — a replayed approve cannot enqueue a second.
+    td.__clearApprovalReceiptsForTests();
+    td.markApprovalReceipt('plan-a');
+    td.markApprovalReceipt('plan-a');
+    ok('decision card: a replayed approval does not mint a second receipt',
+        td.hasApprovalReceipt('plan-a') === true);
+    td.clearApprovalReceipt('plan-a');
+    ok('decision card: an undo frees the receipt slot for a fresh decision',
+        td.hasApprovalReceipt('plan-a') === false);
+
+    // RECEIPT: the text is a record, not an action. It speaks as the harness,
+    // names the row it produced, and FENCES authority behind a fresh card.
+    const receipt = td.formatApprovalReceiptForModel({
+        planId: 'plan-b', symbol: 'BTCUSDT', direction: 'Long',
+        entry: 100, stopLoss: 98, takeProfits: [104, 108], rowId: 'row-1', watchArmed: true,
+    });
+    ok('decision card: the approval receipt speaks as the harness and names the row',
+        receipt.includes('APPROVAL RECEIPT') && receipt.includes('row-1') && receipt.includes('plan-b')
+        && receipt.includes('BTCUSDT'), receipt.slice(0, 160));
+    ok('decision card: the receipt fences authority — no level moves, closes or risk changes without a fresh card',
+        /do not move levels, close the trade or change risk/.test(receipt)
+        && /fresh proposal card/.test(receipt), receipt.slice(-220));
+    ok('decision card: the receipt is a harness turn, never trader prose',
+        receipt.startsWith('HARNESS NOTE'));
+
+    // RECEIPT: the undone variant tells the model the approval was reversed.
+    const undone = td.formatApprovalUndoneForModel({ planId: 'plan-b', rowId: 'row-1' });
+    ok('decision card: the undo receipt says the row is deleted and nothing is tracked',
+        /APPROVAL UNDONE/.test(undone) && /deleted/.test(undone) && /nothing is tracked/.test(undone), undone.slice(0, 160));
+
+    // DECLINE: the trader's reject writes the HOLD ledger with source desk.
+    const declined = td.recordTraderDecline({ symbol: 'ethusdt', direction: 'Short', entry: 50, stopLoss: 52, takeProfits: [46], planId: 'plan-c' }, 'R:R too thin');
+    ok('decision card: a reject records a decline with the reason and desk source',
+        declined !== null && declined.symbol === 'ETHUSDT' && declined.source === 'desk'
+        && /R:R too thin/.test(declined.reason) && declined.direction === 'Short', JSON.stringify(declined));
+    const declinedBare = td.recordTraderDecline({ symbol: 'BTCUSDT', direction: 'Long', entry: 1, stopLoss: 0.9, takeProfits: [1.2] }, '   ');
+    ok('decision card: a reject without a reason is still recorded as a decline',
+        declinedBare !== null && /without a stated reason/.test(declinedBare.reason), JSON.stringify(declinedBare));
+
+    // UNDO: the window opens on approve, expires on its own, and clears.
+    td.__clearUndoWindowsForTests();
+    const t0 = 1_000_000_000;
+    td.markUndoWindow('entry-1', 'row-9', 'plan-d', t0);
+    const mid = td.undoWindowOf('entry-1', t0 + 1_000);
+    ok('decision card: the undo window opens with the row and plan it reverses',
+        mid !== undefined && mid.rowId === 'row-9' && mid.planId === 'plan-d' && mid.msLeft > 0, JSON.stringify(mid));
+    ok('decision card: the undo window closes itself after UNDO_WINDOW_MS',
+        td.undoWindowOf('entry-1', t0 + td.UNDO_WINDOW_MS + 1) === undefined);
+    td.markUndoWindow('entry-2', 'row-10', undefined, t0);
+    td.clearUndoWindow('entry-2');
+    ok('decision card: clearing the window forgets the entry',
+        td.undoWindowOf('entry-2', t0) === undefined);
+})();
+
 const finishReport = () => {
     console.log(`contracts: ${passed} passed, ${failures.length} failed`);
     for (const f of failures) console.log(`  FAIL ${f}`);
