@@ -157,8 +157,9 @@ duplicate or hide it.
 
 ### B.1 The row, the work, the wire and the control
 
-The two homes render one conversation furniture. `ChatTranscriptRow` is the Agents
-surface's row; `ChatTranscriptList` is the dock's; both mount
+The two homes render one conversation furniture. `ChatTranscriptList` is the one
+transcript row list — the workspace merge left one desk, so the dock's list is the
+only one — and it mounts
 `ChatWorkTimeline`, which draws the work as one expandable line plus rows:
 `AnalyzedRow` is the live activity line (`turnActivityLabel`) and the settled
 command count — `Ran N commands`, counted by `pairToolRows` so the headline and

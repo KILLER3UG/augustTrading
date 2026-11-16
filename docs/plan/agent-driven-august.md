@@ -22,7 +22,7 @@ palette/radii already in `src/index.css`. Two defaults chosen without your answe
 chat always side by side**, **rooms/bots: composer mode menu** — are marked adjustable in Open
 questions.
 
-## Status (2026-11-15, Phase 2 in progress)
+## Status (2026-11-16, Phase 3 in progress — decision cards landed)
 
 **Phase 1a and 1b are done and pushed.** All six agent hands are registered and callable:
 `set_chart_timeframe`, `toggle_chart_study`, `correct_trade_outcome`, `update_trade`,
@@ -37,26 +37,31 @@ through App's shared journal/watch writers. Verified end to end from the dock by
 outcome + `correctedFrom`/`correctedAt`/`resolutionSource`, card resolves, dismissed proposal
 leaves the row untouched.
 
-**Phase 2's first two steps are landed:** the surface switch is extracted out of `App.tsx`
-into `src/components/shell/SurfaceOutlet.tsx` (props-only, no behavior change), and
-`surface-shots`/`render-probe` are re-anchored (record surfaces route through their Settings
-sections; three load-sensitive samples poll instead of sleeping). The dock's correction/action
-card sink is landed and verified on the merged tree (`6b1ac8ed`, dock-card probe 10/10).
+**Phase 2 is complete** (the surface switch extracted, the workspace merged, the rail
+rebuilt) and **Phase 3's decision cards are landed**:
 
-**The workspace merge is landed** (`c9db95e2`): `SurfaceOutlet` renders the TradeView workspace
-for both desk routes; `AgentsView` and its private helpers are deleted; the two-home machinery
-is gone; the probe, the contracts check and the docs describe the one workspace. All gates
-green on the merged tree (typecheck, lint, build, contracts, boundaries, docs, boot-probe,
-render-probe, dock-card probe).
+- **The proposal card is the decision card** (`72a420a6`): Approve / Reject / Ask-why, one
+  tap each, no modal. Approve runs the gated human log path, enqueues the ONE
+  approval-receipt harness turn, and opens a 12s undo window (the undo reverses the row,
+  the receipt message, the plan watch and the receipt slot). A plan priced far from the
+  live mark (or past its 30m validity) is STALE — the drift is printed and a
+  "Re-confirm: approve anyway" tap is required. Reject records the decline in the HOLD
+  ledger (source 'desk') with the card's optional reason; Ask-why pre-fills the composer.
+- **The risk-limit / guard-preset card** (`a2bb7615`): `propose_risk_change` (GATED) records
+  a proposal for one of risk %, default leverage, the edge floor, the daily-loss limit, the
+  max trades/day or the guard preset. The asymmetry is the owner's rule: TIGHTENING
+  confirms in one tap, LOOSENING needs the explicit second tap. A confirmed change keeps a
+  60s revert window on the card, and the apply/revert are harness notes in the thread. The
+  decided/revert state keys on the proposal id — a new proposal for the same limit is a new
+  decision (the masking bug the probe caught is fixed and contract-pinned).
+- **Evidence**: `scripts/decision-card-probe.cjs` drives all of it in a real browser —
+  25 checks green (approve, receipt-in-thread, undo + undo note, re-approve, undo lapse,
+  double-approve guard, stale re-confirm, reject, risk tighten/loosen/revert). Contracts
+  821/0. Full gate ladder green on both commits.
 
-**The rail rebuild is landed**: the shell rail is ONE column on every surface — the icon strip
-(the two desk routes + the Settings gear) beside the conversation column (New chat / Pinned /
-Recent over the account row, resize edge, hide icon). **Phase 2 is complete.**
-
-**Phase 3 is next** (on the owner's approval): the decision-card work (approval receipts,
-risk-limit and goal-change cards), the settlement-correction card's VOID arm walked like the
-confirm (P-6), the independent review of the card work, the removal-parity proofs P-1…P-5 and
-the agent-rendered stats (P-5).
+**Still open in Phase 3**: the goal/strategy ACTIVATION card (the same shape; shows what
+changes on activation), the independent review checkpoint over the card work, and the
+removal-parity proofs P-1…P-5 (P-6 is proven). Phase 4 removes nothing until those land.
 
 **Phase 4 has not started** — correctly, it is gated on phases 1–3 being verified.
 
