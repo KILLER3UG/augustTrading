@@ -51,16 +51,21 @@ interface RightPanelProps {
     className?: string;
     style?: React.CSSProperties;
     testId?: string;
+    /** Chat focus mode: the panel IS the workspace. Drop the resize seam and
+     *  the tab strip (there is nothing beside it to resize or switch to), and
+     *  center its content in a reading column. The children stay mounted —
+     *  Alt+D changes geometry, never conversation state. */
+    focusMode?: boolean;
 }
 
 const RightPanel: React.FC<RightPanelProps> = ({
     presentation, isResizing, width, isActive, isHidden,
     docks, openIds, activeId,
     onSelectDock, onCloseDock, onResizeStart, onResizeReset,
-    label, children, className, style, testId,
+    label, children, className, style, testId, focusMode = false,
 }) => {
     const openDocks = docks.filter(d => openIds.includes(d.id));
-    const showStrip = openDocks.length > 1;
+    const showStrip = !focusMode && openDocks.length > 1;
 
     return (
         <aside
@@ -140,7 +145,7 @@ const RightPanel: React.FC<RightPanelProps> = ({
 
             {/* The handle is hidden when the panel is closed — there is nothing
                 to resize — and in fullscreen, where there is no edge to drag. */}
-            {!isHidden && presentation === 'push' && (
+            {!focusMode && !isHidden && presentation === 'push' && (
                 <div
                     role="separator"
                     aria-orientation="vertical"
@@ -160,7 +165,17 @@ const RightPanel: React.FC<RightPanelProps> = ({
                 </div>
             )}
 
-            <div className="flex min-h-0 flex-1 flex-col">{children}</div>
+            <div className="flex min-h-0 flex-1 flex-col">
+                {focusMode ? (
+                    /* The reading column: full-height, ~760px, centered. The
+                       outer panel still spans the workspace so the empty
+                       space is symmetric whitespace, not a dead black gutter
+                       on one side. */
+                    <div data-testid="chat-reading-column" className="mx-auto flex h-full w-full max-w-[760px] flex-col">
+                        {children}
+                    </div>
+                ) : children}
+            </div>
         </aside>
     );
 };

@@ -943,7 +943,7 @@ const TradeView: React.FC<TradeViewProps> = ({
                 dropped. The sparkline left with the merge: the live chart
                 sits directly below, and a second small chart of the same data
                 was the duplication the reference removes. */}
-            <div className="flex shrink-0 items-center gap-2 border-b border-hairline bg-zinc-950 px-3 py-2 sm:px-4">
+            <div className={`${chatLayout ? 'hidden' : 'flex'} shrink-0 items-center gap-2 border-b border-hairline bg-zinc-950 px-3 py-2 sm:px-4`}>
                 <div className="flex min-w-0 items-center gap-1.5">
                     <SymbolPicker symbols={symbols} value={symbol} onChange={changeSymbol}
                         onOpenScreener={() => setScreenerOpen(true)}
@@ -1055,7 +1055,7 @@ const TradeView: React.FC<TradeViewProps> = ({
                 MOUNTED-HIDDEN, and the container is overflow-hidden so the
                 active pane fills the height. At lg+ the original stacked-
                 scroll-then-row layout owns the height, untouched. */}
-            <div className={isBelowLg
+            <div data-testid="workspace-rows" className={isBelowLg
                 ? 'flex min-h-0 flex-1 flex-col overflow-hidden'
                 : 'flex min-h-0 flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-visible'}>
                 {/* Left sidebar (Antigravity's Explorer position): the order
@@ -1070,7 +1070,15 @@ const TradeView: React.FC<TradeViewProps> = ({
                     even when shut, which squeezed the chart to 138px at 1280.
                     Below lg the wrapper is `contents`, so the panes stay the
                     row's direct children and the mode switcher keeps working. */}
-                <div className={isBelowLg ? 'contents' : 'flex min-h-0 min-w-0 flex-1 flex-col'}>
+                <div data-testid="trade-chart-column" className={isBelowLg
+                    ? 'contents'
+                    : (chatLayout
+                        /* Chat focus: the chart column disappears entirely —
+                           no empty black gutter beside the reading column.
+                           `hidden` (not a conditional mount) keeps the canvas
+                           and its live feed alive across an Alt+D switch. */
+                        ? 'hidden'
+                        : 'flex min-h-0 min-w-0 flex-1 flex-col')}>
                 <div
                     data-testid="trade-chart-pane"
                     className={isBelowLg
@@ -1173,6 +1181,7 @@ const TradeView: React.FC<TradeViewProps> = ({
                     switcher are unusable below it. */}
                 <RightPanel
                     presentation="push"
+                    focusMode={chatLayout}
                     isResizing={rightPanel.isResizing}
                     width={dockWidth}
                     isActive={!dockCollapsed}
@@ -1189,10 +1198,11 @@ const TradeView: React.FC<TradeViewProps> = ({
                     className={isBelowLg
                         ? (mode === 'ai' ? 'min-h-0 w-full flex-1' : 'hidden')
                         : (chatLayout
-                            /* Chat layout: the stream IS the workspace — a
-                             * centered reading column at the reference's
-                             * ~760px, generous whitespace, no chart beside it. */
-                            ? 'h-96 w-full shrink-0 mx-auto lg:h-auto lg:w-[760px] lg:min-w-0 lg:max-w-[760px]'
+                            /* Chat layout: the dock becomes the WORKSPACE —
+                             * full width, no resize seam, with the reading
+                             * column centered inside it at the reference's
+                             * ~760px. There is no chart to resize against. */
+                            ? 'h-96 w-full shrink-0 mx-auto lg:h-auto lg:min-h-0 lg:flex-1 lg:shrink lg:w-full lg:max-w-none lg:min-w-0'
                             : `h-96 w-full shrink-0 lg:h-auto lg:w-[var(--panel-w)] lg:min-w-[300px] ${dockExpanded ? 'lg:!w-1/2 xl:!w-7/12 lg:!max-w-[calc(100%_-_420px)]' : 'lg:max-w-[calc(100%_-_420px)]'}`)}
                 >
                     <TradeChatPanel
@@ -1200,7 +1210,7 @@ const TradeView: React.FC<TradeViewProps> = ({
                         layoutMode={workspaceLayout}
                         memoryEnabled={memoryEnabled}
                         strategiesEnabled={strategiesEnabled}
-                        onToggleCollapsed={isBelowLg ? undefined : collapseDock}
+                        onToggleCollapsed={isBelowLg || chatLayout ? undefined : collapseDock}
                         expanded={dockExpanded}
                         onToggleExpanded={toggleDockExpanded}
                         onNewGroup={onNewGroup}

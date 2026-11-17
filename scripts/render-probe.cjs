@@ -4094,15 +4094,32 @@ async function main() {
             // on the dock panel it lives in.
             const onChat = await page.locator('[data-testid="trade-chat-panel"]')
                 .waitFor({ timeout: 10000 }).then(() => true).catch(() => false);
+            // The Agents route lands CHAT-FIRST by ruling (the rail's two
+            // icons name their layouts: Analyze opens the desk, Agents the
+            // chat focus view — one workspace, the layout mode is the
+            // difference), so the instrument row is hidden HERE by design.
+            // The picker's reachability claim now runs through the layout
+            // toggle: flip to desk ON this route and the row returns — same
+            // session, no second surface.
+            const deskFlip = await page.evaluate(() => {
+                const pill = document.querySelector('[data-testid="layout-pill-desk"]');
+                if (!pill) return 'no layout pill';
+                if (pill.getAttribute('aria-pressed') === 'true') return 'already desk';
+                pill.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+                return 'flipped to desk';
+            });
+            await sleep(600);
             let picked = null;
-            if (landedChat !== 'clicked' || !onChat) {
-                check('the Agents surface carries an instrument picker', false, `${landedChat}/${onChat}`);
+            if (landedChat !== 'clicked' || !onChat || !/desk/.test(deskFlip)) {
+                check('the Agents surface carries an instrument picker', false, `${landedChat}/${onChat}/${deskFlip}`);
             } else {
                 const opened = await page.evaluate(() => {
                     // The picker lives in the workspace's INSTRUMENT ROW (the
                     // strip above the chart) — the composer-area arrangement
-                    // died with the second surface. The claim that survives is
-                    // reachability: on this route the trigger is on screen and
+                    // died with the second surface, and the chat focus view
+                    // hides that row with the chart by ruling. The claim that
+                    // survives is reachability THROUGH THE LAYOUT TOGGLE: on
+                    // this route, desk mode puts the trigger on screen and it
                     // opens the symbol menu.
                     const trig = document.querySelector('[data-testid="symbol-picker-trigger"]');
                     if (!trig) return 'no picker trigger';
@@ -4507,38 +4524,57 @@ async function main() {
         await page.evaluate(() => localStorage.setItem('workspace_layout_v1', 'chat'));
         await page.reload({ waitUntil: 'domcontentloaded' });
         await sleep(2500);
-        const chatMode = await page.evaluate(() => ({
-            pillChat: document.querySelector('[data-testid="layout-pill-chat"]')?.getAttribute('aria-pressed'),
-            chartHidden: (() => {
-                const pane = document.querySelector('[data-testid="trade-chart-pane"]');
-                if (!pane) return 'no pane';
-                return pane.offsetWidth === 0 || pane.className.includes('hidden');
-            })(),
-            dockCentered: (() => {
-                const dock = document.querySelector('[data-testid="trade-dock"]');
-                if (!dock) return 'no dock';
-                return dock.offsetWidth > 0 && dock.offsetWidth <= 800;
-            })(),
-        }));
-        check('Chat layout hides the chart and centers the stream (pill pressed)',
-            chatMode.pillChat === 'true' && chatMode.chartHidden === true && chatMode.dockCentered === true,
-            JSON.stringify(chatMode));
+        const chatMode = await page.evaluate(() => {
+            const box = (sel) => {
+                const el = document.querySelector(sel);
+                if (!el) return null;
+                const r = el.getBoundingClientRect();
+                return { width: Math.round(r.width), center: r.left + r.width / 2 };
+            };
+            const g = {
+                pillChat: document.querySelector('[data-testid="layout-pill-chat"]')?.getAttribute('aria-pressed'),
+                workspace: box('main'),
+                chartColumn: box('[data-testid="trade-chart-column"]'),
+                dock: box('[data-testid="trade-dock"]'),
+                reading: box('[data-testid="chat-reading-column"]'),
+                priceHeaderVisible: (() => {
+                    const el = document.querySelector('[data-testid="hero-price"]');
+                    return !!el && el.getClientRects().length > 0;
+                })(),
+            };
+            return g;
+        });
+        // Real pixel boxes, not class-name guesses: a `hidden` chart pane
+        // inside a still-flexing wrapper LEFT THE BLACK GUTTER the old check
+        // called green because it measured the inner pane only.
+        const chatCenterDelta = chatMode.workspace && chatMode.reading
+            ? Math.abs(chatMode.workspace.center - chatMode.reading.center) : Number.NaN;
+        check('Chat layout removes the void: chart column 0px, full-width dock, centered 760px column',
+            chatMode.pillChat === 'true'
+            && chatMode.chartColumn?.width === 0
+            && chatMode.dock && chatMode.workspace
+            && Math.abs(chatMode.dock.width - chatMode.workspace.width) < 24
+            && chatMode.reading && chatMode.reading.width > 0 && chatMode.reading.width <= 760
+            && chatCenterDelta < 24
+            && chatMode.priceHeaderVisible === false,
+            `delta=${chatCenterDelta} ${JSON.stringify(chatMode)}`);
         await page.screenshot({ path: '.probe-artifacts/layout-chat.png' });
         await page.evaluate(() => {
             localStorage.setItem('workspace_layout_v1', 'desk');
             document.querySelector('[data-testid="layout-pill-desk"]')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
         });
         await sleep(600);
-        const deskMode = await page.evaluate(() => ({
-            pillDesk: document.querySelector('[data-testid="layout-pill-desk"]')?.getAttribute('aria-pressed'),
-            chartVisible: (() => {
-                const pane = document.querySelector('[data-testid="trade-chart-pane"]');
-                if (!pane) return 'no pane';
-                return pane.offsetWidth > 0 && !pane.className.includes('hidden');
-            })(),
-        }));
+        const deskMode = await page.evaluate(() => {
+            const pane = document.querySelector('[data-testid="trade-chart-pane"]');
+            const r = pane?.getBoundingClientRect();
+            return {
+                pillDesk: document.querySelector('[data-testid="layout-pill-desk"]')?.getAttribute('aria-pressed'),
+                chartVisible: !!pane && !!r && r.width > 0 && !pane.className.includes('hidden'),
+                chartColumnWidth: Math.round(document.querySelector('[data-testid="trade-chart-column"]')?.getBoundingClientRect().width ?? -1),
+            };
+        });
         check('Desk layout restores the chart beside the dock',
-            deskMode.pillDesk === 'true' && deskMode.chartVisible === true,
+            deskMode.pillDesk === 'true' && deskMode.chartVisible === true && deskMode.chartColumnWidth > 0,
             JSON.stringify(deskMode));
         await page.screenshot({ path: '.probe-artifacts/layout-desk.png' });
         await page.evaluate(() => localStorage.setItem('workspace_layout_v1', 'desk'));
