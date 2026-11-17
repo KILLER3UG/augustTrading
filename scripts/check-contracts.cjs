@@ -1057,6 +1057,44 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
         sc.statsCardFromReceipt('get_setup_history_stats', 'plain prose answer').ok === false);
 })();
 
+// ─── 13l. card hydration (F10): mirrored cards rebind by EVIDENCE ──────────
+// ONE bundle for the hydrator, the four stores AND the settings reader:
+// loadModule inlines relative imports per bundle — two loads would be two
+// module states, and the seeds would land in a store the assertions never
+// read.
+(() => {
+    const hy = loadModule('src/services/trade/cardHydration.ts', {
+        risk: 'src/services/trade/riskChangeProposal.ts',
+        strat: 'src/services/trade/strategyActivation.ts',
+        sett: 'src/services/trade/settlementCorrection.ts',
+        ta: 'src/services/trade/tradeActionProposal.ts',
+        hs: 'src/utils/harnessSettings.ts',
+    });
+    hy.risk.__clearRiskChangesForTests();
+    hy.strat.__clearStrategyActivationsForTests();
+    const mem = new Map();
+    global.localStorage = {
+        getItem: k => (mem.has(k) ? mem.get(k) : null),
+        setItem: (k, v) => mem.set(k, String(v)),
+        removeItem: k => mem.delete(k),
+    };
+    mem.set('harness_settings_v1', JSON.stringify({ riskPercent: 0.5 }));
+    const msg = (id, over) => ({ id, role: 'AI', text: 'x', createdAt: '2026-11-17T00:00:00.000Z', ...over });
+    const messages = [
+        msg('m1', { riskChange: { id: 'rc-landed', target: 'riskPercent', reason: 'r', currentValue: 1, proposedValue: 0.5, direction: 'tighten', createdAt: '2026-11-17T00:00:00.000Z' } }),
+        msg('m2', { riskChange: { id: 'rc-pending', target: 'minEdgeR', reason: 'r', currentValue: 0, proposedValue: 1, direction: 'tighten', createdAt: '2026-11-17T00:00:00.000Z' } }),
+    ];
+    hy.hydrateCardsFromMessages(messages, []);
+    const c1 = hy.risk.riskChangeStateOf('rc-landed') === 'confirmed';
+    const c2 = hy.risk.riskChangeStateOf('rc-pending') === undefined;
+    const c3 = hy.risk.pendingRiskChange('minEdgeR') !== undefined;
+    const c4 = hy.risk.pendingRiskChange('riskPercent') === undefined;
+    ok('hydration: a risk proposal the settings already match seeds CONFIRMED; the other seeds PENDING',
+        c1 && c2 && c3 && c4,
+        `c1=${c1} c2=${c2} c3=${c3} c4=${c4} settingsRisk=${hy.hs.getHarnessSettings().riskPercent}`);
+    delete global.localStorage;
+    hy.risk.__clearRiskChangesForTests();
+})();
 // ─── 13f. the trade-action proposal store: an authority change needs a tap ─
 // update_trade moves the levels on an armed plan; close_trade closes it. Both
 // are authority changes, so both record a proposal here and neither may act on

@@ -189,6 +189,16 @@ export const strategyRevertOf = (proposalId: string, nowMs = Date.now()): { prev
 
 export const clearStrategyRevertWindow = (proposalId: string): void => { revertWindows.delete(proposalId); };
 
+/** Hydration (F10): seed a mirrored pending card back into the store, or
+ *  record the decision evidence says already landed. */
+export const seedStrategyActivationForHydration = (proposal: StrategyActivationProposal, decidedState?: StrategyActivationState): void => {
+    if (decidedState) {
+        decided.set(proposal.id, decidedState!);
+        return;
+    }
+    pending.set(proposal.slug, proposal);
+};
+
 export const __clearStrategyActivationsForTests = (): void => {
     pending.clear();
     decided.clear();

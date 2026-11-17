@@ -256,7 +256,7 @@ export interface ChatTurnRunnerDeps {
      *  it; a later price touch comes back as a [HARNESS SIGNAL] turn). */
     onPlanPresented?: (plan: WatchPlan, turn?: PanelTurnContext) => void;
     /** Commit a bot turn asked HERE into the canonical conversation. */
-    onBotTurnCommit?: (bot: AgentBot, prompt: string, answer?: string, workedMs?: number, effort?: ReasoningEffort) => void;
+    onBotTurnCommit?: (bot: AgentBot, prompt: string, answer?: string, workedMs?: number, effort?: ReasoningEffort, cards?: SoloTurnRow['cards']) => void;
     /** Commit a SOLO (desk) turn asked HERE into the conversation this session is
      *  bound to — under the entry's OWN id.
      *
@@ -1339,7 +1339,20 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
                 // the conversation as though the seat had said something.
                 const settled = !!settledText.trim() && !/^Running the full ensemble/.test(settledText);
                 if (bot) {
-                    if (settled) onBotTurnCommit?.(bot, text, settledText, workedMsFor(soloStartedAt), turnEffort);
+                    if (settled) {
+                        // F10: the entry's decision cards mirror onto the
+                        // canonical Message, so a reload hydrates them.
+                        const entry = chatStore.getSnapshot().sessions.find(x => x.id === sid)?.entries.find(e => e.id === aiEntry.id);
+                        const cards = entry ? {
+                            ...(entry.proposal ? { proposal: entry.proposal } : {}),
+                            ...(entry.settlementCorrection ? { settlementCorrection: entry.settlementCorrection } : {}),
+                            ...(entry.tradeAction ? { tradeAction: entry.tradeAction } : {}),
+                            ...(entry.riskChange ? { riskChange: entry.riskChange } : {}),
+                            ...(entry.strategyActivation ? { strategyActivation: entry.strategyActivation } : {}),
+                            ...(entry.statsCard ? { statsCard: entry.statsCard } : {}),
+                        } : undefined;
+                        onBotTurnCommit?.(bot, text, settledText, workedMsFor(soloStartedAt), turnEffort, Object.keys(cards ?? {}).length > 0 ? cards : undefined);
+                    }
                 } else if (settled && turnConversationId) {
                     // Under the id the pane is ALREADY showing this answer by, so
                     // the Chat thread gains the row and this pane does not double

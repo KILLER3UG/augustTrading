@@ -413,6 +413,15 @@ export const useUserProfileLoader = (args: UseUserProfileLoaderArgs): UseUserPro
 
                 const loadedTrades = (profile.tradeLog || []).map(t => withTradeSource({ ...t, leverage: t.leverage || LEGACY_LEVERAGE }));
                 setLoggedTrades(loadedTrades);
+                // F10: pending decision cards mirrored into the persisted
+                // Messages rebind to their stores here — decided-by-evidence
+                // cards render resolved, unlanded ones interactive again, and
+                // the trade-proposal staleness check runs at render with the
+                // fresh mark. One pass per profile load.
+                try {
+                    const { hydrateCardsFromMessages } = await import('../services/trade/cardHydration');
+                    hydrateCardsFromMessages(convs.flatMap(c => c.messages), loadedTrades);
+                } catch { /* a failed hydration degrades to the pre-F10 behavior */ }
                 syncConfluenceFromTradeLog(loadedTrades);
 
                 void runWeeklyReviewIfDue(username, loadedTrades).then(res => {

@@ -123,6 +123,17 @@ export const dismissSettlementCorrection = (tradeId: string): boolean => {
     return true;
 };
 
+/** Hydration (F10): seed a mirrored pending correction back into the store, or
+ *  record the decision evidence says already landed. Keyed by row id, like the
+ *  confirm. */
+export const seedSettlementCorrectionForHydration = (proposal: SettlementCorrectionProposal, decidedState?: SettlementCorrectionState): void => {
+    if (decidedState) {
+        decided.set(proposal.tradeId, decidedState!);
+        return;
+    }
+    pending.set(proposal.tradeId, proposal);
+};
+
 /** Every open proposal, for a surface that renders a queue rather than a card. */
 export const openSettlementCorrections = (): SettlementCorrectionProposal[] => [...pending.values()];
 

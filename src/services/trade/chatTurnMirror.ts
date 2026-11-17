@@ -68,6 +68,19 @@ export interface SoloTurnRow {
      *  its own commit counted the turn ~2s young the moment the fetch was
      *  slow. One turn, one start, in both homes. */
     at?: number;
+    /** F10: the decision cards + stats snapshot this entry carries, mirrored
+     *  onto the canonical Message so a reload hydrates the pending card
+     *  instead of losing it (the runtime stores die with the tab; the
+     *  Message persists). Set once at sink time; present-but-unchanged turns
+     *  never re-commit (the signature covers them). */
+    cards?: {
+        proposal?: import('./proposedTrade').TradeProposal;
+        settlementCorrection?: import('./settlementCorrection').SettlementCorrectionProposal;
+        tradeAction?: import('./tradeActionProposal').TradeActionProposal;
+        riskChange?: import('./riskChangeProposal').RiskChangeProposal;
+        strategyActivation?: import('./strategyActivation').StrategyActivationProposal;
+        statsCard?: import('./statsCard').StatsCardSnapshot;
+    };
 }
 
 export type SoloTurnCommit = (row: SoloTurnRow, conversationId: string) => void;
@@ -126,6 +139,18 @@ export const startEntryMirror = (opts: {
             ...(typeof e.workedMs === 'number' ? { workedMs: e.workedMs } : {}),
             ...(e.effort ? { effort: e.effort } : {}),
             ...(opts.speakerKey ? { speakerKey: opts.speakerKey } : {}),
+            ...((e.proposal || e.settlementCorrection || e.tradeAction || e.riskChange || e.strategyActivation || e.statsCard)
+                ? {
+                    cards: {
+                        ...(e.proposal ? { proposal: e.proposal } : {}),
+                        ...(e.settlementCorrection ? { settlementCorrection: e.settlementCorrection } : {}),
+                        ...(e.tradeAction ? { tradeAction: e.tradeAction } : {}),
+                        ...(e.riskChange ? { riskChange: e.riskChange } : {}),
+                        ...(e.strategyActivation ? { strategyActivation: e.strategyActivation } : {}),
+                        ...(e.statsCard ? { statsCard: e.statsCard } : {}),
+                    },
+                }
+                : {}),
         };
         const signature = JSON.stringify(row);
         if (signature === last) return;

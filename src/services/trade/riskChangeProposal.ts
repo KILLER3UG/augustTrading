@@ -245,6 +245,18 @@ export const riskRevertOf = (proposalId: string, nowMs = Date.now()): { previous
 
 export const clearRiskRevertWindow = (proposalId: string): void => { revertWindows.delete(proposalId); };
 
+/** Hydration (F10): a pending card mirrored into a persisted Message comes
+ *  back after a reload with the stores empty — seed the slot so the card is
+ *  interactive again, or record the decision evidence says already landed.
+ *  Idempotent per proposal id: decided keys on the id, pending on the target. */
+export const seedRiskChangeForHydration = (proposal: RiskChangeProposal, decidedState?: RiskChangeState): void => {
+    if (decidedState) {
+        decided.set(proposal.id, decidedState!);
+        return;
+    }
+    pending.set(proposal.target, proposal);
+};
+
 export const __clearRiskChangesForTests = (): void => {
     pending.clear();
     decided.clear();

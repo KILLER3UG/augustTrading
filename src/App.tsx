@@ -1952,7 +1952,7 @@ const App: React.FC = () => {
      *  answer. Two calls rather than one, so the question is visible in the
      *  other surface while it is still being answered.
      */
-    const commitDockBotTurn = useCallback((bot: AgentBot, prompt: string, answer?: string, workedMs?: number, effort?: ReasoningEffort): void => {
+    const commitDockBotTurn = useCallback((bot: AgentBot, prompt: string, answer?: string, workedMs?: number, effort?: ReasoningEffort, cards?: SoloTurnRow['cards']): void => {
         const at = new Date().toISOString();
         const row: Message = answer === undefined
             ? { id: `dbu-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, role: MessageRole.USER, text: prompt, createdAt: at }
@@ -1972,6 +1972,8 @@ const App: React.FC = () => {
                 // measured duration, not stamped at the commit instant, or the
                 // row reports a run that began after it finished.
                 ...(typeof workedMs === 'number' ? { runStats: { runId: `dock-${bot.id}-${Date.now()}`, startedAt: new Date(Date.parse(at) - workedMs).toISOString(), finishedAt: at, durationMs: workedMs, ...(effort ? { effort } : {}) } } : {}),
+                // F10: the cards mirror onto the canonical Message.
+                ...(cards ?? {}),
             };
         updateMessages(prev => [...prev, row], activeConversationId ?? null);
     }, [updateMessages, activeConversationId]);
@@ -2010,6 +2012,10 @@ const App: React.FC = () => {
             ...(typeof row.workedMs === 'number'
                 ? { runStats: { runId: `desk-${row.id}`, startedAt: createdAt, finishedAt: createdAt, durationMs: row.workedMs, ...(row.effort ? { effort: row.effort } : {}) } }
                 : {}),
+            // F10: the decision cards mirror onto the canonical row, so a
+            // reload hydrates the pending card (see cardHydration) instead of
+            // losing it.
+            ...(row.cards ? { ...row.cards } : {}),
         });
         updateMessages(prev => {
             const idx = prev.findIndex(m => m.id === row.id);

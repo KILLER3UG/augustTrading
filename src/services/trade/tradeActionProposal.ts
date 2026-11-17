@@ -149,6 +149,16 @@ export const dismissTradeAction = (planId: string): boolean => {
 
 export const openTradeActionProposals = (): TradeActionProposal[] => [...pending.values()];
 
+/** Hydration (F10): seed a mirrored pending action back into the store, or
+ *  record the decision evidence says already landed. Keyed by plan id. */
+export const seedTradeActionForHydration = (proposal: TradeActionProposal, decidedState?: TradeActionState): void => {
+    if (decidedState) {
+        decided.set(proposal.id, decidedState!);
+        return;
+    }
+    pending.set(proposal.planId, proposal);
+};
+
 export const __clearTradeActionProposalsForTests = (): void => {
     pending.clear();
     decided.clear();
