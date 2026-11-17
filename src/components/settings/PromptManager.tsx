@@ -3,7 +3,6 @@ import { PROMPT_REGISTRY, PromptRegistryEntry } from '../../constants/promptRegi
 import {
     initPromptOverrides,
     getPromptOverrides,
-    savePromptOverride,
     resetPromptOverride,
     resetAllPromptOverrides,
     validatePromptOverride,
@@ -53,7 +52,6 @@ const PromptManager: React.FC<PromptManagerProps> = ({ username }) => {
     const [isDiff, setIsDiff] = useState(false);
     const [overrides, setOverrides] = useState<Record<string, string>>({});
     const [isLoading, setIsLoading] = useState(true);
-    const [isSaving, setIsSaving] = useState(false);
 
     const activeUser = username || 'default';
 
@@ -168,27 +166,6 @@ const PromptManager: React.FC<PromptManagerProps> = ({ username }) => {
         setIsDirty(false);
     }, [ensureNotDirty]);
 
-    const handleSave = useCallback(async () => {
-        if (!selectedEntry) return;
-        setIsSaving(true);
-        try {
-            await savePromptOverride(selectedEntry.id, draft, activeUser);
-            setOverrides(getPromptOverrides());
-            setIsDirty(false);
-            // Show the saved result rendered, like re-opening the md file.
-            setIsPreview(true);
-            if (draftWarnings.length > 0) {
-                toast.success('Prompt updated', `Saved with ${draftWarnings.length} advisory warning${draftWarnings.length === 1 ? '' : 's'}.`);
-            } else {
-                toast.success('Prompt updated', `"${selectedEntry.name}" now applies to new analyses.`);
-            }
-        } catch (e) {
-            console.error('[PromptManager] Save failed:', e);
-            toast.error('Could not save', e instanceof Error ? e.message : 'Unknown error');
-        } finally {
-            setIsSaving(false);
-        }
-    }, [selectedEntry, draft, draftWarnings, activeUser, toast]);
 
     const handleResetOne = useCallback(async () => {
         if (!selectedEntry) return;
@@ -272,13 +249,11 @@ const PromptManager: React.FC<PromptManagerProps> = ({ username }) => {
                             >
                                 {isPreview ? 'Write' : 'Preview'}
                             </button>
-                            <button
-                                onClick={handleSave}
-                                disabled={!isDirty || isSaving}
-                                className="px-3 py-1.5 rounded-control text-ui-base bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed text-zinc-100 transition-colors"
-                            >
-                                {isSaving ? 'Saving…' : 'Save'}
-                            </button>
+                            {/* Phase 4 (4.7): the trader no longer hand-edits
+                                prompts — read-only view + revert, and the Tell
+                                August bar at the modal's foot is the route to a
+                                change (the desk's gated self-mod ladder does
+                                the writing). */}
                             {isModified && (
                                 <button
                                     onClick={handleResetOne}
@@ -307,11 +282,11 @@ const PromptManager: React.FC<PromptManagerProps> = ({ username }) => {
                         ) : (
                             <textarea
                                 value={draft}
-                                onChange={e => { setDraft(e.target.value); setIsDirty(true); }}
+                                readOnly
                                 spellCheck={false}
-                                className="flex-1 w-full resize-none bg-transparent px-8 py-8 lg:px-10 lg:py-10 text-ui-lede leading-8 text-zinc-200 font-mono focus:outline-none custom-scrollbar"
+                                className="flex-1 w-full resize-none bg-transparent px-8 py-8 lg:px-10 lg:py-10 text-ui-lede leading-8 text-zinc-200 font-mono focus:outline-none custom-scrollbar cursor-default"
                                 placeholder="(empty override — the built-in default is used)"
-                                aria-label={`Edit ${selectedEntry.name}`}
+                                aria-label={`Read-only view of ${selectedEntry.name}`}
                             />
                         )}
                     </div>
