@@ -123,6 +123,14 @@ ship percents for win_rate and the Wilson bounds, unified with `setup_base_rate`
   plumbing are deleted. The two GAPs are closed: the settlement card's ENTRY arm
   (correctedEntry through the gated correction path) and the `refresh_journal_review`
   tool (the journal's own debounced synthesis, on request).
+- **Probe hardening** — the decision-card probe now runs on a HERMETIC market
+  tape: Playwright routes every Binance request to a synthetic candle series and
+  mocks the mark-price websocket, so the staleness walk no longer depends on the
+  live hosts answering from a CORS-restricted browser (the two red runs were the
+  feeds, not the code). Per-kind receipt occurrence tracking in the parity probe
+  (the eight draw kinds were asserting against the first kind's receipt) and a
+  one-retry per round for the live-feed flake. The live-model parity check
+  remains UNVERIFIABLE — no provider credentials exist in this environment.
 - **Ruling 5** — the Settings "Tell August what to change" bar routes through the seat
   (a normal message → gated tools → cards/pills); the semantic-color sweep converted the
   dock chrome's decorative green/red to warm gray (direction/PnL/price keep theirs);

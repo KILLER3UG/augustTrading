@@ -126,7 +126,7 @@ async function waitForServer(url, timeoutMs = 30000) {
 /** Seed the profile the way dock-card-probe does (the mount-armed save flush
  *  would overwrite an external write, so this runs from favicon.ico). */
 async function seed(page) {
-    await page.goto(`${BASE}/favicon.ico`, { waitUntil: 'domcontentloaded' });
+    await page.goto(`${BASE}/`, { waitUntil: 'domcontentloaded' });
     await page.evaluate(() => {
         localStorage.clear();
         sessionStorage.clear();
@@ -316,6 +316,24 @@ async function sendInDock(page, text) {
         return 'clicked';
     }, text);
     if (sent !== 'clicked') throw new Error(`send failed: ${sent}`);
+}
+
+
+/** Re-locate and read a card's text, tolerating a virtualized unmount mid-read
+ *  (the autopilot's scanning notices re-flow the transcript). */
+async function cardText(page, cardSelector, text, tries = 4) {
+    let last = '';
+    for (let i = 0; i < tries; i++) {
+        const card = await waitForCard(page, cardSelector, text, 20000);
+        if (card) {
+            try {
+                last = await card.innerText();
+                if (last) return last;
+            } catch { /* detached mid-read — re-locate */ }
+        }
+        await sleep(800);
+    }
+    return last;
 }
 
 const failures = [];
@@ -554,6 +572,39 @@ async function main() {
         const page = await browser.newPage();
         const pageErrors = [];
         page.on('pageerror', (err) => pageErrors.push(String(err && err.stack || err)));
+        // HERMETIC MARKET DATA: the staleness walk needs a live mark, which
+        // used to depend on the real Binance hosts answering from a
+        // CORS-restricted browser — when every host was blocked the mark
+        // vanished and the staleness check failed with no code change. A
+        // synthetic tape (a flat walk around 64k, the same rows for every
+        // interval) makes the walk deterministic: plan A (entry 84000, stop
+        // 1000) stays FRESH (drift < half the stop) and plan C (entry 100,
+        // stop 0.1) is always STALE. Also kills the CORS console noise.
+        const synthKlines = (n) => Array.from({ length: n }, (_, i) => {
+            const t = Date.now() - (n - i) * 900000;
+            const o = 64000 + Math.round(Math.sin(i / 6) * 400);
+            return [t, String(o), String(o + 300), String(o - 300), String(o + 100), '12.5', t + 899000, '100', 10, '6.25'];
+        });
+        await page.route(/binance\.com|fapi/, (route) => {
+            const url = route.request().url();
+            if (url.includes('/klines')) {
+                return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(synthKlines(250)) });
+            }
+            return route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+        });
+        // The mark stream too: a synthetic markPrice@1s push, so the live mark
+        // is deterministic (the REST tape alone leaves the chart's mark null,
+        // and the staleness walk degrades to 'not stale on that axis').
+        await page.routeWebSocket(/fstream\.binance\.com/, (ws) => {
+            const push = () => {
+                try {
+                    ws.send(JSON.stringify({ e: 'markPriceUpdate', p: '64100', i: '64100', P: '0.0001', T: Date.now() + 3600000 }));
+                    ws.send(JSON.stringify({ e: '24hrTicker', c: '64100', P: '1.2', q: '1000' }));
+                } catch { /* the page may have closed the socket */ }
+            };
+            push();
+            setInterval(push, 1000);
+        });
         page.on('console', (msg) => {
             consoleLog.push(`[console.${msg.type()}] ${msg.text().slice(0, 200)}`);
             if (consoleLog.length > 400) consoleLog.splice(0, consoleLog.length - 400);
@@ -693,7 +744,7 @@ async function main() {
         await sendInDock(page, 'PROBE_TOOL_ROUND propose a risk change');
         const cardR1 = await waitForCard(page, 'risk-change-card', 'The range is tight');
         if (!cardR1) { await dumpTranscriptState(page, 'risk tighten card never mounted'); throw new Error('risk tighten card never rendered'); }
-        const tightenText = await cardR1.innerText();
+        const tightenText = await cardText(page, 'risk-change-card', 'The range is tight');
         check('a risk change renders the card with the before/after and its direction',
             /tightens/i.test(tightenText) && /0\.5/.test(tightenText),
             tightenText.replace(/\s+/g, ' ').slice(0, 140));
@@ -839,7 +890,7 @@ async function main() {
         await sendInDock(page, 'PROBE_TOOL_ROUND activate the probe strategy');
         const cardS = await waitForCard(page, 'strategy-activation-card', 'activate');
         if (!cardS) { await dumpTranscriptState(page, 'strategy activation card never mounted'); throw new Error('strategy activation card never rendered'); }
-        const stratText = await cardS.innerText();
+        const stratText = await cardText(page, 'strategy-activation-card', 'activate');
         check('the strategy activation card shows the before/after and what changes',
             /draft/i.test(stratText) && /active/i.test(stratText) && /every seat/i.test(stratText),
             stratText.replace(/\s+/g, ' ').slice(0, 160));
