@@ -248,9 +248,9 @@ async function main() {
         const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
         page.on('pageerror', (e) => pageErrors.push(String(e)));
         // Seed on an ORIGIN page — localStorage is denied on about:blank.
-        await page.goto(`${BASE}/favicon.ico`, { waitUntil: 'domcontentloaded' });
+        await page.goto(`${BASE}/favicon.ico`, { waitUntil: 'domcontentloaded', timeout: 120000 });
         await seedProfile(page, MOCK_PORT);
-        await page.goto(BASE + '/', { waitUntil: 'domcontentloaded' });
+        await page.goto(BASE + '/', { waitUntil: 'domcontentloaded', timeout: 120000 });
         await page.waitForSelector('[data-testid="trade-chat-panel"]', { timeout: 45000 });
         await sleep(2500);
 

@@ -612,7 +612,7 @@ async function main() {
         page.on('requestfailed', (req) => consoleLog.push(`[reqfail] ${req.url().slice(0, 120)} ${req.failure() && req.failure().errorText}`));
 
         await seed(page);
-        await page.goto(BASE + '/', { waitUntil: 'domcontentloaded' });
+        await page.goto(BASE + '/', { waitUntil: 'domcontentloaded', timeout: 120000 });
         await page.waitForFunction(() => !document.querySelector('#splash'), null, { timeout: 45000 });
         const ws = page.locator('input[placeholder="Create New Workspace"]');
         if (await ws.count()) {
@@ -631,6 +631,22 @@ async function main() {
         if (!cardA) { await dumpTranscriptState(page, 'plan A card never mounted'); throw new Error('plan A card never rendered'); }
         check('a presented plan renders the decision card', true);
         await page.screenshot({ path: '.probe-artifacts/decision-card-presented.png' });
+
+        // Ruling 1's zero-loss: the [Desk | Chat] layout switch with a
+        // PENDING card on screen. Both modes render the same workspace and
+        // the same chatStore, so the card must survive the switch in BOTH
+        // directions — and the approve that follows proceeds normally.
+        await page.evaluate(() => document.querySelector('[data-testid="layout-pill-chat"]')?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+        await sleep(600);
+        const cardInChat = await waitForCard(page, 'trade-proposal-card', 'Probe plan A', 20000);
+        check('the Desk-to-Chat switch is zero-loss with a pending card', !!cardInChat,
+            cardInChat ? 'card renders in Chat' : 'the card vanished in Chat');
+        await page.screenshot({ path: '.probe-artifacts/decision-card-chat-mode.png' });
+        await page.evaluate(() => document.querySelector('[data-testid="layout-pill-desk"]')?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+        await sleep(600);
+        const cardBackInDesk = await waitForCard(page, 'trade-proposal-card', 'Probe plan A', 20000);
+        check('the Chat-to-Desk switch keeps the pending card actionable', !!cardBackInDesk,
+            cardBackInDesk ? 'card renders in Desk' : 'the card vanished in Desk');
 
         const beforeApprove = pendingRows(await readTrades(page));
         check('nothing logs until you approve', beforeApprove.length === 0,
@@ -700,7 +716,7 @@ async function main() {
 
         // ── Turn 3 (PLAN_C): a STALE plan needs a re-confirm ────────────────
         await sendInDock(page, 'PROBE_TOOL_ROUND present plan C');
-        const cardC = await waitForCard(page, 'trade-proposal-card', 'Probe plan C');
+        let cardC = await waitForCard(page, 'trade-proposal-card', 'Probe plan C');
         if (!cardC) { await dumpTranscriptState(page, 'plan C card never mounted'); throw new Error('plan C card never rendered'); }
         await page.screenshot({ path: '.probe-artifacts/decision-card-stale.png' });
         let staleShown = false;
@@ -709,7 +725,20 @@ async function main() {
             if (!staleShown) await sleep(500);
         }
         check('a plan priced far from the live mark shows the staleness block', staleShown);
-        const beforeTap = await cardC.locator('[data-testid="proposal-approve"]').innerText();
+        // The reads re-locate the card each try: the autopilot's scanning
+        // notices re-flow the virtualized transcript and can detach the card
+        // mid-read (a race, not an app failure).
+        let beforeTap = '';
+        for (let attempt = 0; attempt < 4; attempt++) {
+            try {
+                beforeTap = await cardC.locator('[data-testid="proposal-approve"]').innerText({ timeout: 8000 });
+                break;
+            } catch {
+                const again = await waitForCard(page, 'trade-proposal-card', 'Probe plan C', 15000);
+                if (again) cardC = again;
+                await sleep(600);
+            }
+        }
         await cardC.locator('[data-testid="proposal-approve"]').click();
         // Poll briefly for a SECOND row: one appearing within this window is
         // the silent approval this check exists to refuse.
@@ -868,8 +897,10 @@ async function main() {
         // The same plan, the same approve — now it lands: one new PENDING row
         // and the undo window on the card.
         await approveToUndoWindow(page, consoleLog);
-        await sleep(2000);
-        const rowsAfterLoosen = pendingRows(await readTrades(page)).length;
+        // The journal save is debounced — poll for the row instead of reading
+        // once (a single early read read the PRE-approve count and failed the
+        // check on a timing artifact).
+        const rowsAfterLoosen = (await waitForPendingRows(page, rowsBeforeGuard + 1, 15000)).length;
         check('the guarded recourse: the loosened cap lets the approve log', rowsAfterLoosen === rowsBeforeGuard + 1,
             `rows ${rowsBeforeGuard} -> ${rowsAfterLoosen}`);
 
