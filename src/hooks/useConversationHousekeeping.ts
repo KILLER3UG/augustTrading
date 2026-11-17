@@ -1,5 +1,5 @@
-import { useCallback, useEffect } from 'react';
-import { createNewConversation, findReusableEmptyConversation } from '../utils/conversationUtils';
+import { useCallback, useEffect, useRef } from 'react';
+import { createNewConversation, findReusableEmptyConversation, isThrowawayConversation } from '../utils/conversationUtils';
 import type { ConfirmOptions } from '../components/shared/ConfirmDialog';
 import type { Conversation, Message } from '../types';
 
@@ -47,6 +47,27 @@ export const useConversationHousekeeping = (args: UseConversationHousekeepingArg
         updateMessages, handleCancelAnalysis,
         confirmDialog, toast,
     } = args;
+
+    // Owner 1.3.2, the cleanup half: the duplicate-thread spam the previous
+    // layout minted (a failed turn left a non-blank thread, so every
+    // starter-chip click after it opened a twin) is swept ONCE, when the
+    // history first arrives from storage. A throwaway thread — blank, or a
+    // prompt and its error that never became an answer — is kept if it is
+    // the active one (the trader may be about to retry it) or the newest;
+    // the rest go. A thread with a real answer in it is never touched.
+    const pruneRef = useRef(false);
+    useEffect(() => {
+        if (pruneRef.current || conversationHistory.length === 0) return;
+        pruneRef.current = true;
+        setConversationHistory(prev => {
+            const throwaways = prev.filter(isThrowawayConversation);
+            if (throwaways.length <= 1) return prev;
+            const newest = [...throwaways].sort((a, b) => b.timestamp - a.timestamp)[0];
+            const keep = new Set<string>([activeConversationId ?? '', newest.id].filter(Boolean));
+            const kept = prev.filter(c => !isThrowawayConversation(c) || keep.has(c.id));
+            return kept.length === prev.length ? prev : kept;
+        });
+    }, [conversationHistory.length, activeConversationId]);
 
     const handleClearAllConversations = async () => {
         const prevHistory = conversationHistory;

@@ -67,6 +67,7 @@ import type { ChatTurnRunnerDeps, PanelTurnContext } from '../../services/trade/
 import type { ChartSnapshot } from './TradingChart';
 import type { ChartInterval } from '../../utils/chartIntervals';
 import BiasChips from './BiasChips';
+import SessionChip from '../shared/SessionChip';
 import { saveBot, type AgentBot } from '../../services/agents/agentRoster';
 import { resolveAgentContext, SINGLE_AGENT_MEMORY_BUDGET, type ResolvedAgentContext } from '../../services/agents/agentContext';
 import { getFirstReadyProvider, isProviderReady, formatModelDisplayName, computeChatModelFallback } from '../../utils/providerUtils';
@@ -82,7 +83,7 @@ import { buildGoalsIndex } from '../../services/goals/GoalService';
 import type { ReasoningEffort } from '../../services/providers/reasoningControls';
 import { useChatAttachments } from '../../hooks/useChatAttachments';
 import { useSessionGuardVerdict } from '../../hooks/useSessionGuard';
-import ChatHistoryPalette, { relTime } from './panels/ChatHistoryPalette';
+import ChatHistoryPalette from './panels/ChatHistoryPalette';
 import ChatTranscriptList from './panels/ChatTranscriptList';
 import ChatComposer from './panels/ChatComposer';
 import { consumePendingSkillTry } from '../chat/skillDeepLink';
@@ -273,6 +274,13 @@ interface TradeChatPanelProps {
     onDismissTradeAction?: (proposal: TradeActionProposal) => void;
     /** The workspace's layout mode (Desk | Chat) — the empty state reads it. */
     layoutMode?: 'desk' | 'chat';
+    /** Whether the pane holding this dock is on screen. Below lg the dock
+     *  pane is display:none-hidden when another mode owns the screen, and the
+     *  transcript's virtualizer must unmount in the SAME commit — Virtuoso
+     *  against a 0×0 scroller is the infinite-update loop the top boundary
+     *  catches. The async ResizeObserver gate (`scrollerVisible`) is the
+     *  second net; this prop is the synchronous one. */
+    paneVisible?: boolean;
     onConfirmStrategyActivation?: (proposal: import('../../services/trade/strategyActivation').StrategyActivationProposal, sessionId?: string) => void;
     onDismissStrategyActivation?: (proposal: import('../../services/trade/strategyActivation').StrategyActivationProposal) => void;
     onRevertStrategyActivation?: (proposal: import('../../services/trade/strategyActivation').StrategyActivationProposal, sessionId?: string) => void;
@@ -327,7 +335,7 @@ export const ChartAiDockRail: React.FC<{
 );
 
 const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
-    memoryEnabled, strategiesEnabled, symbol, interval, providers, selectedChatModel, onSelectChatModel, live = false,
+    memoryEnabled, strategiesEnabled, symbol, interval, providers, selectedChatModel, onSelectChatModel,
     chartLevels, chartDrawings, modelDrawings, addModelDrawings, clearModelDrawings, clearAllDrawings,
     onCaptureChart, getChartSnapshot, bots = [], trades = [], botSessionRequest, groupSessionRequest, onRunAnalysis, onAnalysisError, onStopRun, getAnalysisMessage, onLogProposedTrade, onRejectProposedTrade, onUndoApproval, onConfirmRiskChange, onDismissRiskChange, onRevertRiskChange, onPlanPresented,
     onChatLevelsChange,
@@ -342,6 +350,7 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
     onConfirmTradeAction, onDismissTradeAction,
     onConfirmStrategyActivation, onDismissStrategyActivation, onRevertStrategyActivation,
     layoutMode = 'desk',
+    paneVisible = true,
     onRefreshModels,
 }) => {
     // Session state lives in the module store (chatStore) so an in-flight
@@ -731,6 +740,23 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
      *  one rule for both homes, so neither yanks a reader the other one
      *  offered a button for. */
     const [scrolledAway, setScrolledAway] = useState(false);
+    /** Whether the scroller can be MEASURED at all. The dock pane below lg is
+     *  mounted-hidden (`hidden` class, the chart/AI/Book switch owns the pane),
+     *  and Virtuoso cannot survive a 0×0 scroller: its at-bottom math has no
+     *  stable answer there, and the flip-flop between publishes is the
+     *  infinite-update loop the top boundary catches. The transcript mounts
+     *  only when geometry exists; a hidden pane shows nothing anyway, and the
+     *  observer remounts the list the moment the pane returns. */
+    const [scrollerVisible, setScrollerVisible] = useState(false);
+    useEffect(() => {
+        if (!scrollEl) { setScrollerVisible(false); return; }
+        setScrollerVisible(scrollEl.clientHeight > 0);
+        const ro = new ResizeObserver((obs) => {
+            setScrollerVisible((obs[0]?.contentRect.height ?? 0) > 0);
+        });
+        ro.observe(scrollEl);
+        return () => ro.disconnect();
+    }, [scrollEl]);
     /** The scroll offset at the last observation — what tells the two reasons
      *  for leaving the bottom apart. A reader who scrolls up MOVES scrollTop;
      *  content that grows underneath leaves it where it was. */
@@ -755,6 +781,10 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
         return moved;
     }, []);
     const onAtBottomChange = useCallback((atBottom: boolean): void => {
+        // A 0×0 scroller (a mounted-hidden pane) has no meaningful bottom, and
+        // Virtuoso's answer there flip-flops between publishes — honouring it
+        // is the infinite update the top boundary catches.
+        if (!scrollRef.current || scrollRef.current.clientHeight === 0) return;
         const moved = readerMoved();
         if (atBottom) {
             stickToBottomRef.current = true;
@@ -1051,29 +1081,16 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
 
     return (
         <div className="relative flex h-full min-h-0 flex-col border-l border-hairline bg-transparent" data-testid="trade-chat-panel">
-            {/* Header — the reference's Agent-panel cluster: wordmark left,
-                + / history / ⋯ / × right, nothing else. Conversations are
-                reached through the Past Conversations palette, not a tab
-                strip. */}
+            {/* Header — the thread name left, + / history / ⋯ / × right, and
+                NOTHING else (owner 1.3.1): the "● Chart AI" prefix answered
+                "which app is this", a question the whole window already
+                answers, and the answered-age meta duplicated the recency the
+                sidebar rows carry. The market read lives in the bias row
+                under this header; conversations stay in the palette. */}
             <div className="@container flex shrink-0 items-center gap-2.5 border-b border-hairline bg-zinc-900/30 px-5 py-3">
-                <span className={`h-2 w-2 shrink-0 rounded-full ${busy ? 'animate-pulse bg-zinc-400' : live ? 'bg-zinc-300' : 'bg-zinc-600'}`} aria-label={live ? 'live market feed connected' : 'market feed polling'} />
-                {/* The dock is narrow and user-dragged, so the brand never
-                    yields: at 370px a squeezed "Chart AI" wrapped into two
-                    lines while the controls kept their width. The session
-                    title is the flexible element — it truncates. */}
-                <h2 className="shrink-0 whitespace-nowrap text-ui-base font-medium tracking-[-0.01em] text-zinc-100">Chart AI</h2>
-                <span className="min-w-0 flex-1 truncate text-ui-dense text-zinc-500" title={activeSession.title}>{activeSession.title}</span>
-                {(() => {
-                    // The prototype's "Analyzed 2m ago" meta, told honestly:
-                    // the session's last real activity, and only once a settled
-                    // answer exists to be "answered". Gated on the DOCK's width
-                    // (@container), not the viewport — `sm:` lit this up on a
-                    // 1440px window whose dock was 370px, which is what
-                    // squeezed the title in the first place.
-                    const hasAnswer = entries.some(x => x.role === 'ai' && !x.notice && !x.streaming && x.text);
-                    if (!hasAnswer) return null;
-                    return <span className="hidden shrink-0 text-ui-xs text-zinc-600 @min-[460px]:inline" data-testid="chat-answered-meta">answered {relTime(activeSession.updatedAt)}</span>;
-                })()}
+                {/* The dock is narrow and user-dragged, so the title is the
+                    flexible element — it truncates. */}
+                <span className="min-w-0 flex-1 truncate text-ui-base font-medium tracking-[-0.01em] text-zinc-100" title={activeSession.title}>{activeSession.title}</span>
                 <div className="ml-auto flex shrink-0 items-center gap-1">
                     {/* The same switch the Agents surface carries, so the hop is
                         visible from BOTH ends. The ⋯ menu's "Open in Agents" row
@@ -1264,9 +1281,19 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
             )}
             {activeSession.kind !== 'group' && (
             <>
-            {/* The prototype's bias read rides ABOVE the transcript: always
-                current, code-calculated — the tape's state, not a chat turn. */}
-            <BiasChips symbol={symbol} interval={interval as ChartInterval} />
+            {/* The market context line: the code-calculated bias read, and —
+                beside it — the session chip the content bar used to carry
+                (owner 1.3.1): "is it Asia or London right now" reads where
+                the market context already is. The chips truncate first, so
+                the disclosure trigger stays reachable at the dock's floor. */}
+            <div className="flex min-w-0 items-center" data-testid="bias-row">
+                <div className="min-w-0 flex-1">
+                    <BiasChips symbol={symbol} interval={interval as ChartInterval} />
+                </div>
+                <div className="shrink-0 pr-1">
+                    <SessionChip />
+                </div>
+            </div>
             {/* The transcript's own box, so the jump control floats over the
                 transcript's bottom-right corner and not over the composer. */}
             <div className="relative min-h-0 flex-1">
@@ -1307,7 +1334,7 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
                     leave Virtuoso scrolling a box it made up. Keyed by session
                     so a switch opens a fresh window on the newest row rather
                     than reusing the last thread's measured heights. */}
-                {scrollEl && entries.length > 0 && (
+                {scrollEl && scrollerVisible && paneVisible && entries.length > 0 && (
                     <ChatTranscriptList
                         key={activeId}
                         entries={entries}

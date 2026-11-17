@@ -1208,6 +1208,15 @@ const TradeView: React.FC<TradeViewProps> = ({
                     <TradeChatPanel
                         {...dockProps}
                         layoutMode={workspaceLayout}
+                        /* Sync with the pane's visibility: below lg the dock
+                            pane is display:none-hidden whenever another mode
+                            owns the screen, and the transcript's virtualizer
+                            must unmount in the SAME commit — rendering
+                            Virtuoso against a 0×0 scroller is the
+                            infinite-update loop the top boundary catches
+                            (the async ResizeObserver gate fires a frame too
+                            late for the resize commit). */
+                        paneVisible={isBelowLg ? mode === 'ai' : true}
                         memoryEnabled={memoryEnabled}
                         strategiesEnabled={strategiesEnabled}
                         onToggleCollapsed={isBelowLg || chatLayout ? undefined : collapseDock}

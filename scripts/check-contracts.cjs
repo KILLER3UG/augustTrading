@@ -3098,22 +3098,26 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
 // BOTH halves: gone from where the mock does not draw it, present where it does.
 (() => {
     const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
-    const header = read('src/components/shared/Header.tsx');
+    const sessionChip = read('src/components/shared/SessionChip.tsx');
     const trade = read('src/components/trade/TradeView.tsx');
     const composer = read('src/components/trade/panels/ChatComposer.tsx');
     const chart = read('src/components/trade/TradingChart.tsx');
     const chrome = read('src/components/shell/shellChrome.tsx');
     const app = read('src/App.tsx');
 
-    ok('content bar: title + context + a session chip that names the region, no brand mark and no status cluster',
-        !/aria-label="August"/.test(header) && !/StatusCluster/.test(header)
-            && /data-testid="session-chip"/.test(header)
-            && /SESSION_CHIP_LABEL\[sessionContext\.currentSession\]/.test(header)
-            && !/Live<\/span>/.test(header)
-            && !fs.existsSync(path.join(ROOT, 'src/components/shell/StatusCluster.tsx')),
+    // Ruling 1.3.1 removed the content bar entirely: the dock header names the
+    // thread, the bias row carries the session chip. The pins moved to where
+    // each piece actually lives now.
+    ok('session chip: names the region, no brand mark and no status cluster',
+        !fs.existsSync(path.join(ROOT, 'src/components/shared/Header.tsx'))
+            && !fs.existsSync(path.join(ROOT, 'src/components/shell/StatusCluster.tsx'))
+            && /data-testid="session-chip"/.test(sessionChip)
+            && /SESSION_CHIP_LABEL\[sessionContext\.currentSession\]/.test(sessionChip)
+            && !/Live<\/span>/.test(sessionChip)
+            && /SessionChip/.test(read('src/components/trade/TradeChatPanel.tsx')),
         'the mock bar has one live dot; the pill says WHICH session is live — a generic Live answers nothing');
-    ok('content bar: a FAILED save still speaks',
-        /data-testid="header-save-failed"/.test(header),
+    ok('a FAILED save still speaks — the account row now, the bar is gone',
+        /data-testid="header-save-failed"/.test(chrome),
         'silence is only fine while the write is healthy');
     ok('activity: the drawer keeps a door — the account row, not the bar',
         /nav-activity/.test(chrome) && /onOpenActivity/.test(app) && /<JobsDrawer/.test(app),
@@ -3260,16 +3264,19 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
         && /<ScreenerPanel open=\{screenerOpen\}/.test(trade)
         && /screener-best-trigger/.test(read('src/components/trade/ScreenerPanel.tsx')));
     const toggle = read('src/components/shell/SidebarToggle.tsx');
-    const header = read('src/components/shared/Header.tsx');
-    ok('shell: ONE top-bar toggle owns the whole rail, on the TITLE row',
+    const outlet = read('src/components/shell/SurfaceOutlet.tsx');
+    ok('shell: ONE collapse control per state — the rail\'s pill row when open, the header bar when away',
         /shell-rail-collapse/.test(toggle) && /nav-rail-toggle-header/.test(toggle)
         && /aria-keyshortcuts/.test(toggle) && /aria-pressed=\{expanded\}/.test(toggle)
         && /aria-label="Toggle sidebar"/.test(toggle)
-        && /<SidebarToggle expanded=\{navRailExpanded\}/.test(header)
-        && header.indexOf('<SidebarToggle') < header.indexOf('header-surface-label')
-        && /onToggleNavRail=\{toggleNavRail\}/.test(read('src/App.tsx'))
-        && !/shell-rail-collapse/.test(rail)
-        && !/shell-column-toggle/.test(rail)
+        // Ruling 1.2: the expanded sidebar carries its own collapse control,
+        // paired with the [Desk | Chat] pill; the content bar is gone
+        // (1.3.1), and the way back is the collapsed flow row SurfaceOutlet
+        // renders only while the rail is away.
+        && /<SidebarToggle expanded /.test(read('src/components/shell/ShellRail.tsx'))
+        && /<SidebarToggle expanded=\{false\}/.test(outlet)
+        && /collapsed-rail-bar/.test(outlet)
+        && !fs.existsSync(path.join(ROOT, 'src/components/shared/Header.tsx'))
         && /Hide conversation · Ctrl\+B/.test(toggle)
         && /Show conversation · Ctrl\+B/.test(toggle),
         'a collapsed rail is 0px: its control cannot live inside it');

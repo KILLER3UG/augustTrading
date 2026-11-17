@@ -257,11 +257,11 @@ const ChatComposer: React.FC<ChatComposerProps> = ({
                 </div>
             </div>
         </div>
-        {/* The footer row that used to hold the two chips is deleted with them;
-            the disclaimer keeps its own line under the card. */}
-        <p className="mt-1.5 px-2 text-ui-xs leading-relaxed text-zinc-600">
-            Analysis and journaling only — it never places or signs a trade.
-        </p>
+        {/* The footer row that used to hold the two chips is deleted with them,
+            and the disclaimer line died with ruling 1.3.1: a permanent caption
+            under the composer said what the decision cards and goal.md already
+            say — August places no trades. Honesty lives on the receipts, not
+            as furniture under every keystroke. */}
     </div>
     );
 };

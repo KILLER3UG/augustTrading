@@ -19,9 +19,9 @@
  * still dedupes it to one chunk.
  */
 
-import React, { useMemo } from 'react';
-import { Header } from '../shared/Header';
-import { DeskInstrument } from './ShellRail';
+import React from 'react';
+import SidebarToggle from './SidebarToggle';
+import { LayoutMiniToggle } from './LayoutSwitch';
 import type { AppSurface } from '../../hooks/useSurface';
 import type { TradeMode } from '../trade/TradeView';
 import type { Message, LoggedTrade, TradeAnalysis } from '../../types';
@@ -50,15 +50,7 @@ export const SurfaceSkeleton: React.FC = () => (
 
 export interface SurfaceOutletProps {
     surface: AppSurface;
-    /* ── The content bar ─────────────────────────────────────────────────── */
-    saveStatus: 'SAVED' | 'SAVING' | 'ERROR';
-    isAnalysisInProgress: boolean;
-    currentVisionData: string[];
-    pendingQueueCount: number;
-    liveMarketConditions: { volatility: 'High' | 'Medium' | 'Low'; liquidation: 'High' | 'Medium' | 'Low'; lastUpdated: string } | null;
-    liveMarketSymbol?: string;
-    onOpenLiveMarket: () => void;
-    onOpenVisionData: () => void;
+    /* ── The shell ────────────────────────────────────────────────────────── */
     onToggleNavRail: () => void;
     navRailExpanded: boolean;
     /* ── The workspace (chart + Chart AI dock) ───────────────────────────── */
@@ -122,8 +114,6 @@ export interface SurfaceOutletProps {
 
 const SurfaceOutlet: React.FC<SurfaceOutletProps> = ({
     surface,
-    saveStatus, isAnalysisInProgress, currentVisionData, pendingQueueCount,
-    liveMarketConditions, liveMarketSymbol, onOpenLiveMarket, onOpenVisionData,
     onToggleNavRail, navRailExpanded,
     memoryEnabled, strategiesEnabled, providers, selectedChatModel, onSelectChatModel,
     onRefreshModels, tradeModeRequest,
@@ -136,32 +126,28 @@ const SurfaceOutlet: React.FC<SurfaceOutletProps> = ({
     onConfirmTradeAction, onDismissTradeAction,
     renderGroupSurface,
 }) => {
-    // One workspace: whichever of the two desk routes is showing, the content
-    // bar names the same thing and the instrument line rides beside it.
+    // One workspace: whichever of the two desk routes is showing, the same
+    // page mounts — the layout pill is the difference, not the route.
     const showWorkspace = surface === 'trade' || surface === 'agents';
-    const shellTitle = 'Chart AI';
-    const shellContext = useMemo(() => <DeskInstrument />, []);
 
     return (
         <>
-            {/* The content bar. The rail owns navigation; this bar names
-                what is being worked on and carries the live state. */}
-            {showWorkspace && (
-                <Header
-                    saveStatus={saveStatus}
-                    isAnalysisInProgress={isAnalysisInProgress}
-                    currentVisionData={currentVisionData}
-                    pendingQueueCount={pendingQueueCount}
-                    liveMarketConditions={liveMarketConditions}
-                    liveMarketSymbol={liveMarketSymbol}
-                    onOpenLiveMarket={onOpenLiveMarket}
-                    onOpenVisionData={onOpenVisionData}
-                    hasVisionData={currentVisionData.length > 0}
-                    title={shellTitle}
-                    context={shellContext}
-                    onToggleNavRail={onToggleNavRail}
-                    navRailExpanded={navRailExpanded}
-                />
+            {/* The content bar is GONE (owner 1.3.1): the dock header names
+                the thread, the bias row carries the session read (SessionChip)
+                and the market state, the sidebar carries the routes. The one
+                thing the bar uniquely owned — the way back into a put-away
+                rail — is the compact flow row below, and only while the rail
+                is away: an expanded sidebar's collapse control lives in its
+                own pill row, and a second one here would be the duplicate the
+                ruling deleted. */}
+            {showWorkspace && !navRailExpanded && onToggleNavRail && (
+                <div
+                    data-testid="collapsed-rail-bar"
+                    className="flex shrink-0 items-center gap-1.5 border-b border-hairline bg-zinc-950 px-3 py-1.5"
+                >
+                    <SidebarToggle expanded={false} onToggle={onToggleNavRail} />
+                    <LayoutMiniToggle />
+                </div>
             )}
 
             {showWorkspace && (

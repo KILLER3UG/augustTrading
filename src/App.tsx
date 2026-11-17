@@ -85,7 +85,7 @@ import { effortDialUp } from './components/shared/effortDial';
 import { nextEffortTier } from './components/shared/effortScale';
 import { DEFAULT_FRAMEWORKS } from './constants/models';
 import { isProviderReady } from './utils/providerUtils';
-import { defaultLeverage, createNewConversation, findReusableEmptyConversation } from './utils/conversationUtils';
+import { defaultLeverage, createNewConversation, findReusableThrowawayConversation } from './utils/conversationUtils';
 import { type ThreadSelection, threadForProvider } from './utils/agentThreads';
 import {
     groupDisplayName,
@@ -451,13 +451,13 @@ const App: React.FC = () => {
         setCurrentSlOptimization,
  setCurrentSuggestedEntryPrice,
         setCurrentEntryTimingScore,
-        liveMarketConditions,
-        liveMarketSymbol,
     } = marketData;
 
     // Network status and offline queue
     const { isOnline, wasOffline } = useNetworkStatus();
-    const [pendingQueueCount, setPendingQueueCount] = useState<number>(0);
+    // The queue's count lost its last reader with the content bar (1.3.1);
+    // the setter stays — the offline queue still reports its drain.
+    const [, setPendingQueueCount] = useState<number>(0);
 
     // Journal and message expansion state
     // (journalState/setJournalState intentionally NOT consumed — the legacy
@@ -2047,12 +2047,12 @@ const App: React.FC = () => {
             if (conversationId !== activeConversationId) setActiveConversationId(conversationId);
             return conversationId;
         }
-        const reusable = findReusableEmptyConversation(conversationHistory, activeConversationId);
-        // A blank thread is only reusable if nothing is ANSWERING in it. The
-        // pipeline registers its run under the conversation id BEFORE the
-        // trader's row lands, so a thread can be empty and still mid-run — and
-        // adopting it would put two writers on one answer, which is the very
-        // desync this callback exists to remove.
+        // The SEND path's reuse (owner 1.3.2): a thread whose turn never
+        // landed — blank, or a prompt and its error — is the same turn again,
+        // not a new thread. Reusing it here is what stops the starter-chip /
+        // failed-turn spam from minting a twin sidebar row per click.
+        // Ctrl+N keeps the blank-only rule (handleNewConversation).
+        const reusable = findReusableThrowawayConversation(conversationHistory, activeConversationId);
         if (reusable && !chatStore.isConversationRunning(reusable.id)) {
             if (reusable.id !== activeConversationId) {
                 setConversationHistory(prev => [
@@ -2169,10 +2169,6 @@ const App: React.FC = () => {
         // open, which is the whole destination now.
         setIsSettingsMenuVisible(true);
     }, [openJournal, setIsSettingsMenuVisible]);
-
-    const handleOpenLiveMarket = useCallback(() => {
-        setIsLiveMarketVisible(true);
-    }, []);
 
     // ─── Outcome Autopilot ────────────────────────────────────────────────
     // Register PENDING analyses for automatic SL/TP detection; resolutions
@@ -2619,6 +2615,7 @@ const App: React.FC = () => {
                         onResizeStart={railResize.startResize}
                         onResizeReset={railResize.resetWidth}
                         onCollapse={toggleNavRail}
+                        saveStatus={saveStatus}
                         overlay={isNavOverlay}
                         onCloseOverlay={closeNavOverlay}
                     />
@@ -2626,18 +2623,12 @@ const App: React.FC = () => {
                 {/* Surfaces: pages, not modals. */}
                 <main className="flex-1 flex flex-col min-h-0 min-w-0 relative bg-zinc-950">
                     {/* The surface switch (extracted from App — plan O-105):
-                        the content bar plus the one surface the route names.
-                        Every handler is App's own; the switch only mounts. */}
+                        the one surface the route names. Every handler is
+                        App's own; the switch only mounts. The content bar
+                        died with ruling 1.3.1 — the dock header names the
+                        thread, the bias row carries the session read. */}
                     <SurfaceOutlet
                         surface={surface}
-                        saveStatus={saveStatus}
-                        isAnalysisInProgress={isAnalysisInProgress}
-                        currentVisionData={currentVisionData}
-                        pendingQueueCount={pendingQueueCount}
-                        liveMarketConditions={liveMarketConditions}
-                        liveMarketSymbol={liveMarketSymbol}
-                        onOpenLiveMarket={handleOpenLiveMarket}
-                        onOpenVisionData={() => setIsVisionDataVisible(true)}
                         onToggleNavRail={toggleNavRail}
                         navRailExpanded={isNavRailOpen}
                         memoryEnabled={isGlobalMemoryEnabled}

@@ -67,6 +67,8 @@ interface ShellRailProps {
     onResizeReset: () => void;
     /** Put the column away; the header's compact bar brings it back. */
     onCollapse: () => void;
+    /** The profile write's state — the account row speaks only on ERROR. */
+    saveStatus?: 'SAVED' | 'SAVING' | 'ERROR';
     /** Below the auto-collapse width the rail is a drawer over the content,
      *  not a column that squeezes it. */
     overlay?: boolean;
@@ -79,7 +81,7 @@ const ShellRail: React.FC<ShellRailProps> = ({
     onDeleteConversation, onClearConversation,
     activeUsername, onOpenSettings, onOpenActivity,
     width, isResizing, onResizeStart, onResizeReset, onCollapse,
-    overlay = false, onCloseOverlay,
+    saveStatus, overlay = false, onCloseOverlay,
 }) => {
     // One column on every surface: the workspace merge left ONE desk, so the
     // conversation list (New chat / Pinned / Recent) and the account row ride
@@ -156,6 +158,7 @@ const ShellRail: React.FC<ShellRailProps> = ({
                         activeUsername={activeUsername}
                         onOpenSettings={onOpenSettings}
                         onOpenActivity={onOpenActivity}
+                        saveStatus={saveStatus}
                     />
                     <div
                         role="separator"

@@ -8,10 +8,11 @@
  * sidebar carries once the rail is not rendered there.
  */
 import React from 'react';
-import { Settings, Inbox } from '../shared/Icons';
+import { Settings, Inbox, AlertTriangleIcon } from '../shared/Icons';
 import Tip from '../ui/Tip';
 import { useUpdateStatusDot } from '../shared/UpdateButton';
 import { useAutoUpdate } from '../../hooks/useAutoUpdate';
+import UpdateButton from '../shared/UpdateButton';
 
 /** The collapsed column is 0px: the rail leaves the layout entirely and its
  *  expand affordance lives in the header (nav-rail-toggle-header). */
@@ -27,9 +28,11 @@ export const NAV_RAIL_AUTO_COLLAPSE_PX = 1024;
 
 /** Exported because the shell column carries it on every surface — one account
  *  row per screen either way. The expanded row grew the Settings gear when the
- *  icon strip died (ruling 1.2): the row's gear (`surface-switch-settings`) is
- *  the ONE Settings entry on every surface, so the rail does not open a
- *  second, different-looking one beside it. */
+ *  icon strip died (ruling 1.2), and it grew the shell's status pieces when the
+ *  content bar died (ruling 1.3.1): the update control and the FAILED-save
+ *  badge live where the trader already is, at the column's foot. Both are
+ *  quiet at rest — a healthy write renders nothing, and so does Electron with
+ *  nothing to say. */
 export const AccountRow: React.FC<{
     expanded: boolean;
     activeUsername: string | null;
@@ -38,7 +41,10 @@ export const AccountRow: React.FC<{
      *  cluster; the v3 bar is the title, the context and one live dot, so the
      *  drawer's only door moved to the account row at the column's foot. */
     onOpenActivity?: () => void;
-}> = ({ expanded, activeUsername, onOpenSettings, onOpenActivity }) => {
+    /** The profile write's state. Only ERROR speaks — a silent save error is
+     *  data loss wearing a clean bar (the old header-save-failed chip). */
+    saveStatus?: 'SAVED' | 'SAVING' | 'ERROR';
+}> = ({ expanded, activeUsername, onOpenSettings, onOpenActivity, saveStatus = 'SAVED' }) => {
     const { isElectron } = useAutoUpdate();
     const updateDot = useUpdateStatusDot();
 
@@ -64,42 +70,58 @@ export const AccountRow: React.FC<{
     return (
         <div
             data-testid="nav-account"
-            className="flex shrink-0 items-center gap-2 border-t border-hairline px-3 py-2.5"
+            className="flex shrink-0 flex-col gap-1 border-t border-hairline px-3 py-2.5"
         >
-            <div
-                className="flex min-w-0 flex-1 items-center gap-2 rounded-control py-0.5"
-            >
-                <span className="min-w-0 flex-1">
-                    <span className="block truncate text-ui-caption text-zinc-300" data-testid="nav-account-name" title={activeUsername || 'No profile'}>{activeUsername || 'No profile'}</span>
-                    <span className="block truncate text-ui-2xs text-zinc-600" title="Signed in · local-first">Signed in · local-first</span>
+            {saveStatus === 'ERROR' && (
+                <span role="status" aria-label="Save failed"
+                    title="The profile could not be saved"
+                    data-testid="header-save-failed"
+                    className="flex items-center gap-1 self-start rounded-full border border-rose-500/30 bg-rose-500/10 px-1.5 py-0.5 text-ui-2xs font-medium text-rose-300">
+                    <AlertTriangleIcon className="h-3 w-3" aria-hidden="true" /> Save failed
                 </span>
+            )}
+            {/* The update control's ONLY reachable home since the content bar
+                died (ruling 1.3.1). It renders nothing in the browser and a
+                quiet version chip while healthy — the account row is the one
+                always-visible foot, so an available update has an action
+                without a second bar. */}
+            <UpdateButton />
+            <div className="flex items-center gap-2">
+                <div
+                    className="flex min-w-0 flex-1 items-center gap-2 rounded-control py-0.5"
+                >
+                    <span className="min-w-0 flex-1">
+                        <span className="block truncate text-ui-caption text-zinc-300" data-testid="nav-account-name" title={activeUsername || 'No profile'}>{activeUsername || 'No profile'}</span>
+                        <span className="block truncate text-ui-2xs text-zinc-600" title="Signed in · local-first">Signed in · local-first</span>
+                    </span>
+                </div>
+                {onOpenActivity && (
+                    <Tip label="Activity" shortcut="">
+                        <button
+                            type="button"
+                            data-testid="nav-activity"
+                            onClick={onOpenActivity}
+                            aria-label="Activity — skill audits"
+                            className="flex h-7 w-7 items-center justify-center rounded-control text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-zinc-100 focus-visible:ring-2 focus-visible:ring-zinc-400"
+                        >
+                            <Inbox className="h-4 w-4" aria-hidden="true" />
+                        </button>
+                    </Tip>
+                )}
+                {onOpenSettings && (
+                    <Tip label="Settings" shortcut="Ctrl+,">
+                        <button
+                            type="button"
+                            data-testid="surface-switch-settings"
+                            onClick={onOpenSettings}
+                            aria-label="Settings — Journal, Learning, Skills, Memory · Ctrl+,"
+                            className="flex h-7 w-7 items-center justify-center rounded-control text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-zinc-100 focus-visible:ring-2 focus-visible:ring-zinc-400"
+                        >
+                            <Settings className="h-4 w-4" aria-hidden="true" />
+                        </button>
+                    </Tip>
+                )}
             </div>
-            {onOpenActivity && (
-                <Tip label="Activity" shortcut="">
-                    <button
-                        type="button"
-                        data-testid="nav-activity"
-                        onClick={onOpenActivity}
-                        aria-label="Activity — skill audits"
-                        className="flex h-7 w-7 items-center justify-center rounded-control text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-zinc-100 focus-visible:ring-2 focus-visible:ring-zinc-400"
-                    >
-                        <Inbox className="h-4 w-4" aria-hidden="true" />
-                    </button>
-                </Tip>
-            )}
-            {onOpenSettings && (
-                <Tip label="Settings" shortcut="Ctrl+,">
-                    <button
-                        type="button"
-                        data-testid="surface-switch-settings"
-                        onClick={onOpenSettings}
-                        aria-label="Settings — Journal, Learning, Skills, Memory · Ctrl+,"
-                        className="flex h-7 w-7 items-center justify-center rounded-control text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-zinc-100 focus-visible:ring-2 focus-visible:ring-zinc-400"
-                    >
-                        <Settings className="h-4 w-4" aria-hidden="true" />
-                    </button>
-                </Tip>
-            )}
         </div>
     );
 };

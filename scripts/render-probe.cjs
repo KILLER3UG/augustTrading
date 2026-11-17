@@ -2244,31 +2244,29 @@ async function main() {
             await settleSurface('Analyze');
 
             // The shell rail is a sibling of <main> and runs full height, so
-            // the content bar begins exactly where the rail ends — at the
-            // window edge when the rail is put away, at the column's right
-            // edge when it is open.
+            // the workspace begins exactly where the rail ends — at the window
+            // edge when the rail is put away, at the column's right edge when
+            // it is open. (The content bar is gone since 1.3.1: there is no
+            // header inside main to measure any more.)
             const band = await page.evaluate(() => {
                 const rail = document.querySelector('[data-testid="shell-rail"]');
                 const main = document.querySelector('main');
-                const head = main ? main.querySelector('header') : null;
-                if (!rail || !main || !head) return null;
+                if (!rail || !main) return null;
                 const r = rail.getBoundingClientRect();
-                const h = head.getBoundingClientRect();
                 const m = main.getBoundingClientRect();
                 return {
                     railRight: Math.round(r.right),
-                    headLeft: Math.round(h.left),
-                    headTop: Math.round(h.top),
                     mainLeft: Math.round(m.left),
+                    railTop: Math.round(r.top),
                     marked: [...document.querySelectorAll('[data-testid^="layout-pill-"], [data-testid^="surface-switch-"]')]
                         .filter(b => b.getAttribute('aria-current') === 'page')
                         .map(b => b.getAttribute('data-testid')).join(','),
                 };
             });
-            check('the rail puts the content bar beside it and keeps the switch in the rail',
-                !!band && band.headLeft === band.mainLeft && band.headLeft === band.railRight
-                    && band.headTop === 0 && band.marked === 'layout-pill-desk',
-                band ? `rail right=${band.railRight}, header x=${band.headLeft} y=${band.headTop}, ${band.marked}` : 'no rail or header');
+            check('the rail puts the workspace beside it and keeps the switch in the rail',
+                !!band && band.mainLeft === band.railRight
+                    && band.railTop === 0 && band.marked === 'layout-pill-desk',
+                band ? `rail right=${band.railRight}, workspace x=${band.mainLeft}, ${band.marked}` : 'no rail');
 
             // (The Agents column's search toggle died with that column; search
             // returns with the rail rebuild's own coverage.)
@@ -2307,8 +2305,7 @@ async function main() {
             const placed = await page.evaluate(() => {
                 const b = document.querySelector('[data-testid="shell-rail-collapse"]');
                 const pill = document.querySelector('[data-testid="layout-pill"]');
-                const head = document.querySelector('main header');
-                if (!b || !pill || !head) return null;
+                if (!b || !pill) return null;
                 const br = b.getBoundingClientRect();
                 const pr = pill.getBoundingClientRect();
                 return {
@@ -2316,12 +2313,11 @@ async function main() {
                     sameRow: Math.abs((br.top + br.height / 2) - (pr.top + pr.height / 2)) < 12,
                     rightOfPill: br.left >= pr.right - 4,
                     pillText: (pill.textContent || '').trim(),
-                    inContentBar: head.contains(b),
                 };
             });
             check("the collapse control sits in the rail's pill row, right of [Desk | Chat]",
                 !!placed && placed.inRail && placed.sameRow && placed.rightOfPill
-                    && placed.pillText === 'DeskChat' && !placed.inContentBar,
+                    && placed.pillText === 'DeskChat',
                 JSON.stringify(placed));
             const railCollapsed = await page.evaluate(() => {
                 const b = document.querySelector('[data-testid="shell-rail-collapse"]');
@@ -4055,9 +4051,22 @@ async function main() {
             // session table exists for) was unreachable. The fixed inset
             // anchor is the claim; measured here so the check carries its own
             // viewport instead of trusting a later phase's app state.
+            // The chip lives in the dock's bias row (1.3.1), and below lg the
+            // dock shows only in the AI pane — so seed the mode and RELOAD:
+            // booting straight into the pane keeps this check measuring the
+            // popover rather than riding the pane flip (a flip mid-run is the
+            // mount-storm window the transcript's virtualizer is still
+            // sensitive to).
             const restoreViewport = page.viewportSize();
+            await page.evaluate(() =>
+                localStorage.setItem(`august_trade_mode_v1_${'Probe User'}`, 'ai'));
             await page.setViewportSize({ width: 390, height: 720 });
-            await sleep(600);
+            await page.reload({ waitUntil: 'domcontentloaded' });
+            await page.waitForFunction(() => !document.querySelector('#splash'), null, { timeout: 25000 }).catch(() => null);
+            // The workspace lazy-chunk mounts after the splash; wait for the
+            // chip itself rather than hoping a fixed sleep lands after it.
+            await page.waitForSelector('[data-testid="session-chip"]', { timeout: 15000 }).catch(() => null);
+            await sleep(400);
             await page.evaluate(() => document.querySelector('[data-testid="session-chip"]')?.click());
             await sleep(400);
             const phoneBox = await page.evaluate(() => {
@@ -4081,6 +4090,14 @@ async function main() {
                 phoneBox.mounted && phoneBox.fixed && phoneBox.left >= 0
                 && phoneBox.right <= phoneBox.vw && phoneBox.rows >= 3 && phoneClosed,
                 `fixed=${phoneBox.fixed} box=${phoneBox.left}..${phoneBox.right} vw=${phoneBox.vw} rows=${phoneBox.rows} esc=${phoneClosed}`);
+            // Restore the pane the rest of the run expects: chart mode, wide
+            // viewport, the workspace reloaded onto it.
+            await page.evaluate(() =>
+                localStorage.setItem(`august_trade_mode_v1_${'Probe User'}`, 'chart'));
+            if (restoreViewport) await page.setViewportSize(restoreViewport);
+            await page.reload({ waitUntil: 'domcontentloaded' });
+            await page.waitForFunction(() => !document.querySelector('#splash'), null, { timeout: 25000 }).catch(() => null);
+            await sleep(800);
         }
 
         // ── The instrument picker, and the claim it makes ────────────────
@@ -4615,6 +4632,25 @@ async function main() {
         // (boot-probe.cjs documents the same trap.) Set the code and return —
         // finally still runs and kills the children.
         console.error('RENDER PROBE FAIL (driver):', err);
+        // A driver timeout usually means the app crashed INTO the error
+        // boundary — the page's own record is the only thing that says why.
+        // `page`/`pageErrors` live inside the try, so reach the page through
+        // `browserRef` (the one handle the finally also trusts).
+        try {
+            const live = browserRef?.contexts().flatMap(c => c.pages()) ?? [];
+            for (const p of live) {
+                const text = await p.evaluate(() => document.body.innerText.slice(0, 800));
+                if (/Something went wrong|Technical Details/.test(text)) {
+                    await p.evaluate(() => {
+                        const details = [...document.querySelectorAll('summary, details, pre, code')]
+                            .map(el => (el.tagName === 'SUMMARY' ? el.click() && '' : el.textContent))
+                            .join('\n');
+                        return details;
+                    }).then(t => console.error('--- boundary details ---\n' + (t || 'none'))).catch(() => {});
+                    break;
+                }
+            }
+        } catch { /* the page may already be gone */ }
         process.exitCode = 1;
         return;
     } finally {

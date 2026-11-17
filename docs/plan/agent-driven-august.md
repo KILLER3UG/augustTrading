@@ -450,6 +450,21 @@ logic gets pinned contract sections in `scripts/check-contracts.cjs`.
 
 ## Open questions (defaults chosen, adjustable now)
 
+### Known open item (2026-11-18): the transcript virtualizer at a below-lg pane flip
+
+The dock's transcript (`ChatTranscriptList` → react-virtuoso) can hit React's
+"Maximum update depth" boundary when the dock pane FLIPS visibility below lg —
+a `Chart ⇄ AI` mode tap, or a breakpoint crossing, while a turn's rows exist.
+The loop is a publish→setState cycle inside react-virtuoso when its scroller is
+measured mid-relayout; it predates the 1.3 work (reproduces at `0bbf24b4`) and
+is timing-sensitive. Shipped containment: the transcript mounts only when the
+scroller can be measured (`scrollerVisible` ResizeObserver gate + the
+synchronous `paneVisible` prop from `TradeView`), and `onAtBottomChange`
+ignores a 0-height scroller. Booting straight into the AI pane at 390px is
+verified stable; the flip path is the remaining repro. Next step if it recurs:
+reproduce with React's dev profiler and pin the exact re-subscription cycle in
+`react-virtuoso`'s `props` layout effect before touching it again.
+
 1. **Layout**: chart + chat always side by side. Alternatives: chat-led with chart summoned on demand,
    or chart-led with a collapsible dock.
 2. **Rooms/bots**: composer mode menu. Alternatives: demote to Settings, or remove entirely.
