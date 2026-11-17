@@ -448,6 +448,31 @@ Phase-specific:
 The four honesty receipts in `tests/tradeChatPanelHarness.test.tsx` gain decision-card cases; paper-fill
 logic gets pinned contract sections in `scripts/check-contracts.cjs`.
 
+## Progress register (owner takeover 2026-11-18)
+
+- **Part 1 (live UI/layout/minimalism)** — LANDED, all gates green after each commit:
+  `003cc862` (1.1 the chat focus view owns the workspace; the probe measures pixels),
+  `0bbf24b4` (1.2 the one sidebar; the [Desk | Chat] pill IS the surface switch),
+  `1350dd5e` (1.3 the breadcrumb bar, duplicate instrument rows and the permanent
+  disclaimer leave; failed-thread reuse + boot sweep; the session chip lives in the
+  dock's bias row; Virtuoso geometry gates),
+  `c3cb5d00` (1.4 the clean chart: price + volume by default, one OHLCV legend line,
+  neutral chrome accents), `002993dc` (1.5 evidence in docs/evidence/). F6/F10/pins/
+  dead files/GAPs verified in code and contracts.
+- **Phase 4 removals** — LANDED as 4.1–4.7 plus the review fixes:
+  `23a521b4`, `2c74289b`, `2fc80c5f` (4.3), `67aca5e3`, `2f1e2857`, `6423c65d`,
+  `bc422c17`, `dd1b9df7`. Parity probe P-1…P-5 green before the cuts; the
+  independent review's blocker (prompts frozen with no writer) fixed by giving
+  `propose_self_change` a `kind:"prompt"` target (`proposePromptChange`; the revert
+  path already knew the `prompt:` shape), and every desk door now routes through
+  `utils/askDesk` (switch to the workspace, then deliver).
+- **Open items** — (a) the boolean AI-behavior toggles (Hybrid Intelligence, Desk
+  Tools) still have no card-backed writer: they need a bool proposal shape next to
+  `riskChangeProposal`; (b) the below-lg Virtuoso flip crash (see the known item
+  above); (c) bulk trade selection still deletes from the log — it builds memory,
+  but a bulk path through the desk may be wanted; (d) **Phase 5 and Phase 6 are NOT
+  started** — the owner's brief expects them next, with the plan text above intact.
+
 ## Open questions (defaults chosen, adjustable now)
 
 ### Known open item (2026-11-18): the transcript virtualizer at a below-lg pane flip
