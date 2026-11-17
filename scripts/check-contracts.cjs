@@ -3133,8 +3133,9 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
     ok('chart head: no tool buttons and no metrics band',
         !/screener-trigger/.test(trade.slice(0, trade.indexOf('<SymbolPicker')))
             && !/trade-pinned-trigger/.test(trade.slice(0, trade.indexOf('<SymbolPicker')))
-            && /onOpenScreener=\{/.test(trade) && /onOpenWatchList=\{onOpenWatchList\}/.test(trade),
-        'the tools moved into the symbol picker, so both the head and the picker must agree');
+            && !/onOpenScreener/.test(trade)
+            && /onOpenWatchList=\{onOpenWatchList\}/.test(trade),
+        'the tools moved into the symbol picker; the screener door left with P-3');
     ok('chart head: ONE book control — the drawer strip, not a second head toggle',
         !/trade-book-toggle/.test(trade) && /orderbook-drawer-strip/.test(trade),
         'two controls for one action is the chrome the mock deletes');
@@ -3267,10 +3268,14 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
     const picker = read('src/components/trade/SymbolPicker.tsx');
     const trade = read('src/components/trade/TradeView.tsx');
     const rail = read('src/components/shell/ShellRail.tsx');
-    ok('screener: the symbol picker foot is the door to the mounted panel',
-        /screener-trigger/.test(picker) && /onOpenScreener=\{/.test(trade)
-        && /<ScreenerPanel open=\{screenerOpen\}/.test(trade)
-        && /screener-best-trigger/.test(read('src/components/trade/ScreenerPanel.tsx')));
+    // Phase 4 (P-3, owner 2026-11-17): the screener PANEL left — the desk's
+    // run_screener / find_best_setups tools are the door now (parity probe
+    // P-3 proves the table and the ranked setups from the tool output).
+    ok('screener: the panel is gone; the desk tools are the door',
+        !fs.existsSync(path.join(ROOT, 'src/components/trade/ScreenerPanel.tsx'))
+            && !/screener-trigger/.test(picker)
+            && !/ScreenerPanel/.test(trade)
+            && /run_screener|find_best_setups/.test(read('src/services/analysis/DeskToolsService.ts')));
     const toggle = read('src/components/shell/SidebarToggle.tsx');
     const outlet = read('src/components/shell/SurfaceOutlet.tsx');
     ok('shell: ONE collapse control per state — the rail\'s pill row when open, the header bar when away',
@@ -3376,8 +3381,10 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
         sc.includes('degraded: boolean')
         && sc.includes("r.degraded ? '*' : ''")
         && sc.includes('spotMirrorSourceNote'));
-    ok('screener: the human panel renders the spot-mirror marker',
-        read('src/components/trade/ScreenerPanel.tsx').includes('degraded: r.degraded'));
+    // Phase 4 (P-3): the human panel is gone — the digest the desk tools print
+    // IS the render now, so the marker's one reader is `screener.ts` itself.
+    ok('screener: the spot-mirror marker rides the digest (the panel is gone)',
+        sc.includes("'*'") && !fs.existsSync(path.join(ROOT, 'src/components/trade/ScreenerPanel.tsx')));
     ok('the third ingestion path is gated: MarketDataService parses through candleShape',
         read('src/services/analysis/MarketDataService.ts').includes('coerceCandles')
         && read('src/utils/candleShape.ts').includes('MarketDataService'));

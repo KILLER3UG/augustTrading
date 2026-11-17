@@ -3956,49 +3956,28 @@ async function main() {
         await sweepSurface('Journal', 12, ['journal-tab-analytics']);
 
         // ── The screener's door ───────────────────────────────────────────
-        // The full-screen panel is MOUNTED on Analyze, so a foot that renders
-        // no screener button leaves a whole market-wide surface unreachable
-        // while every other gate stays green. Assert the door, the panel and
-        // that it portals outside <main> (the overlay doctrine). The scan may
-        // find no feed in a probe; the panel must still mount and be closable.
+        // Phase 4 (P-3, owner ruling): the full-screen panel is GONE — the
+        // desk's run_screener / find_best_setups tools answer the market-wide
+        // question (the parity probe walks them and reads the table they
+        // print). What must stay true here is the REMOVAL itself: no trigger
+        // in the picker foot, no panel anywhere, while the picker still
+        // carries the trader's other doors.
         {
-            const landed = await navTo('Analyze');
-            const onTrade = await page.locator('[data-testid="trade-view"]')
+            const doorState = await page.evaluate(() => ({
+                picker: !!document.querySelector('[data-testid="symbol-picker-trigger"]'),
+                screenerTrigger: !!document.querySelector('[data-testid="screener-trigger"]'),
+                screenerPanel: !!document.querySelector('[data-testid="screener-panel"]'),
+            }));
+            check('the screener panel is gone — the desk tools are the door',
+                doorState.picker && !doorState.screenerTrigger && !doorState.screenerPanel,
+                JSON.stringify(doorState));
+            // Back on the workspace for the sections that follow: the Journal
+            // sweep left the modal open over a dead surface, and the session
+            // chip the next block reads lives in the dock's bias row.
+            await navTo('Analyze');
+            await page.locator('[data-testid="trade-view"]')
                 .waitFor({ timeout: 12000 }).then(() => true).catch(() => false);
-            await sleep(700);
-            const openedPicker = await page.evaluate(() => {
-                const trigger = document.querySelector('[data-testid="symbol-picker-trigger"]');
-                if (!trigger) return 'no picker';
-                trigger.click();
-                return 'opened';
-            });
-            await sleep(250);
-            const pressed = await page.evaluate(() => {
-                const b = document.querySelector('[data-testid="screener-trigger"]');
-                if (!b) return 'no screener door';
-                b.click();
-                return 'clicked';
-            });
-            await sleep(450);
-            const panel = await page.evaluate(() => {
-                const el = document.querySelector('[data-testid="screener-panel"]');
-                const main = document.querySelector('main');
-                return {
-                    mounted: !!el,
-                    outsideMain: !!el && !!main && !main.contains(el),
-                    bestSetups: !!document.querySelector('[data-testid="screener-best-trigger"]'),
-                };
-            });
-            check('the symbol picker foot opens the screener outside <main>',
-                openedPicker === 'opened' && pressed === 'clicked'
-                    && panel.mounted && panel.outsideMain,
-                `${landed}/${onTrade} / ${openedPicker} / ${pressed} / ${JSON.stringify(panel)}`);
-            check('the screener offers the best-setups ranking',
-                panel.bestSetups, `bestSetups=${panel.bestSetups}`);
-            await page.evaluate(() => {
-                document.querySelector('[data-testid="screener-panel"] [aria-label="Close screener"]')?.click();
-            });
-            await sleep(250);
+            await sleep(600);
         }
 
         // ── The session chip names the region and opens the disclosure ────

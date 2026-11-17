@@ -53,7 +53,6 @@ import type { PanelTurnContext } from './TradeChatPanel';
 import type { SoloTurnRow } from '../../services/trade/chatTurnMirror';
 import type { ReasoningEffort } from '../../types/provider';
 import SymbolPicker from './SymbolPicker';
-import ScreenerPanel from './ScreenerPanel';
 import type { AgentBot } from '../../services/agents/agentRoster';
 
 interface TradeViewProps {
@@ -400,7 +399,6 @@ const TradeView: React.FC<TradeViewProps> = ({
     const { width: dockWidth } = rightPanel;
     const [dockCollapsed, setDockCollapsed] = useState(false);
     const [dockExpanded, setDockExpanded] = useState(false);
-    const [screenerOpen, setScreenerOpen] = useState(false);
     // Mobile 3-mode surface (<lg): the stacked panes collapse into one, and
     // the old `hidden md:block` sidebar + the below-md book overlay drawer the
     // md toggle used to summon are replaced by an explicit Chart | AI | Book
@@ -946,7 +944,6 @@ const TradeView: React.FC<TradeViewProps> = ({
             <div className={`${chatLayout ? 'hidden' : 'flex'} shrink-0 items-center gap-2 border-b border-hairline bg-zinc-950 px-3 py-2 sm:px-4`}>
                 <div className="flex min-w-0 items-center gap-1.5">
                     <SymbolPicker symbols={symbols} value={symbol} onChange={changeSymbol}
-                        onOpenScreener={() => setScreenerOpen(true)}
                         onOpenWatchList={onOpenWatchList}
                         watchOpenCount={watchOpenCount} />
                     {/* The design's price-block: the figure carries the session's
@@ -1240,7 +1237,6 @@ const TradeView: React.FC<TradeViewProps> = ({
                 the Book mode of the mobile switcher replaced it (same
                 OrderBookPanel, no backdrop, no `orderbook-drawer` testid —
                 grep of e2e/ + tests/ found zero references). */}
-            <ScreenerPanel open={screenerOpen} onClose={() => setScreenerOpen(false)} onChangeSymbol={changeSymbol} trades={trades} />
         </div>
     );
 };

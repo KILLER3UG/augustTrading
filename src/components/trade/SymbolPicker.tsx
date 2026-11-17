@@ -21,7 +21,6 @@ export interface SymbolPickerProps {
      *  market TOOLS that used to sit there live in this menu's foot, so they
      *  keep a door without decorating the head. The screener is one of them:
      *  without this door the full-screen panel is mounted but unreachable. */
-    onOpenScreener?: () => void;
     onOpenWatchList?: () => void;
     watchOpenCount?: number;
 }
@@ -29,7 +28,7 @@ export interface SymbolPickerProps {
 const display: (symbol: string) => string = symbolDisplay;
 
 export const SymbolPicker: React.FC<SymbolPickerProps> = ({
-    symbols, value, onChange, onOpenScreener, onOpenWatchList, watchOpenCount = 0,
+    symbols, value, onChange, onOpenWatchList, watchOpenCount = 0,
 }) => {
     const [open, setOpen] = useState(false);
     const [query, setQuery] = useState('');
@@ -178,16 +177,8 @@ export const SymbolPicker: React.FC<SymbolPickerProps> = ({
                                 </button>
                             ))}
                         </div>
-                        {(onOpenScreener || onOpenWatchList) && (
+                        {onOpenWatchList && (
                             <div className="flex items-center gap-1 border-t border-hairline px-2 py-1.5">
-                                {onOpenScreener && (
-                                    <button type="button" data-testid="screener-trigger"
-                                        onClick={() => { setOpen(false); onOpenScreener(); }}
-                                        aria-label="Open market screener" title="Market screener"
-                                        className="flex flex-1 items-center justify-center gap-1.5 rounded-control px-2 py-1 text-ui-dense text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-zinc-100">
-                                        Screener
-                                    </button>
-                                )}
                                 {onOpenWatchList && (
                                     <button type="button" data-testid="trade-pinned-trigger"
                                         onClick={() => { setOpen(false); onOpenWatchList(); }}
