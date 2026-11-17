@@ -71,7 +71,6 @@ const SettingsMenu = React.lazy(() => import('./components/settings/SettingsMenu
 // (LogTradeModal was removed — the capture flow uses DataCaptureModal.)
 const DataCaptureModal = React.lazy(() => import('./components/modals/DataCaptureModal').then(m => ({ default: m.DataCaptureModal })));
 const EntryNotHitCaptureModal = React.lazy(() => import('./components/modals/EntryNotHitCaptureModal').then(m => ({ default: m.EntryNotHitCaptureModal })));
-const VisionDataViewer = React.lazy(() => import('./components/analysis/VisionDataViewer'));
 const LiveMarket = React.lazy(() => import('./components/market/LiveMarket'));
 const UpdateOverlay = React.lazy(() => import('./components/shared/UpdateOverlay'));
 const StrategyStudio = React.lazy(() => import('./components/dashboards/StrategyStudio'));
@@ -203,7 +202,6 @@ const App: React.FC = () => {
         isStrategySearchVisible, setIsStrategySearchVisible,
         isSettingsMenuVisible, setIsSettingsMenuVisible,
         isLiveMarketVisible, setIsLiveMarketVisible,
-        isVisionDataVisible, setIsVisionDataVisible,
 
 
         isLoading, setIsLoading,
@@ -1169,14 +1167,13 @@ const App: React.FC = () => {
             const target = e.target as HTMLElement | null;
             const isTyping = !!target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable);
             if (isTyping) return;
-            const anyOverlayOpen = isSettingsMenuVisible || isLiveMarketVisible || isUserModalOpen || isVisionDataVisible || isStrategySearchVisible || isWatchListVisible;
+            const anyOverlayOpen = isSettingsMenuVisible || isLiveMarketVisible || isUserModalOpen || isStrategySearchVisible || isWatchListVisible;
             if (anyOverlayOpen) {
                 // Overlays with their own document-level Esc handlers
                 // (SettingsMenu, command palette, Journal, LiveMarket, dialogs)
                 // close themselves. Close the gate-owned overlays here so one
                 // Esc never both closes an overlay AND cancels a running
                 // analysis — but never cancels while anything is open.
-                if (isVisionDataVisible) setIsVisionDataVisible(false);
                 if (isStrategySearchVisible) setIsStrategySearchVisible(false);
                 if (isWatchListVisible) setIsWatchListVisible(false);
                 return;
@@ -1188,7 +1185,7 @@ const App: React.FC = () => {
         };
         document.addEventListener('keydown', onKeyDown);
         return () => document.removeEventListener('keydown', onKeyDown);
-    }, [isAnalysisInProgress, handleCancelAnalysis, toast, isSettingsMenuVisible, isLiveMarketVisible, isUserModalOpen, isVisionDataVisible, isStrategySearchVisible, isWatchListVisible]);
+    }, [isAnalysisInProgress, handleCancelAnalysis, toast, isSettingsMenuVisible, isLiveMarketVisible, isUserModalOpen, isStrategySearchVisible, isWatchListVisible]);
 
     // ─── View model reasoning (Think tab deep link) ────────────────────────
     // Opens the Trading Journal's Think tab focused on the reasoning records
@@ -2535,7 +2532,6 @@ const App: React.FC = () => {
                 onOpenJournal={handleOpenJournal}
             />
             </React.Suspense>
-            <VisionDataViewer isVisible={isVisionDataVisible} onClose={() => setIsVisionDataVisible(false)} visionData={currentVisionData} />
 
             {/* The band is no longer here. It renders as the first child of
                 <main>, so the sidebar runs the full height of the window the way
