@@ -1312,31 +1312,32 @@ async function main() {
             }
         }
 
-        // Drawing drag: a trendline is the one shape that must survive a real
-        // pointer gesture, and the store is the only proof it reached the
-        // session bucket. The rail's Undo is the DOM-observable proxy: disabled
-        // at zero drawings, enabled the moment one lands. Needs the tape (a
-        // shape is anchored in DATA space), so it skips with a reason on CI.
+        // Drawing drag: a FREEHAND stroke is the trader's pointer gesture (the
+        // shape tools left the rail in Phase 4 P-2 — the desk draws those), and
+        // the store is the only proof it reached the session bucket. The rail's
+        // Undo is the DOM-observable proxy: disabled at zero drawings, enabled
+        // the moment one lands. Needs the tape (a shape is anchored in DATA
+        // space), so it skips with a reason on CI.
         {
             const overlay = page.locator('[data-testid="draw-overlay"]');
             const undo = page.locator('button[title="Undo last drawing"]');
-            const trend = page.locator('button[title="Trendline — click start, click end"]');
+            const brush = page.locator('button[title="Freehand — drag to draw"]');
             const box = await overlay.boundingBox();
             if (!chartHead.heroIsPrice) {
                 console.log('  skip  drawing drag — no tape in this environment (CI has no Binance reach); a shape needs bars to anchor to');
-            } else if (!box || (await trend.count()) === 0 || (await undo.count()) === 0) {
-                check('a trend drag creates a drawing (undo becomes available)', false,
-                    `overlay=${!!box} trend=${await trend.count()} undo=${await undo.count()}`);
+            } else if (!box || (await brush.count()) === 0 || (await undo.count()) === 0) {
+                check('a freehand drag creates a drawing (undo becomes available)', false,
+                    `overlay=${!!box} brush=${await brush.count()} undo=${await undo.count()}`);
             } else {
                 const before = await undo.isDisabled();
-                await trend.first().click();
+                await brush.first().click();
                 await page.mouse.move(box.x + box.width * 0.3, box.y + box.height * 0.35);
                 await page.mouse.down();
                 await page.mouse.move(box.x + box.width * 0.65, box.y + box.height * 0.65, { steps: 10 });
                 await page.mouse.up();
                 await sleep(250);
                 const after = await undo.isDisabled();
-                check('a trend drag creates a drawing (undo becomes available)',
+                check('a freehand drag creates a drawing (undo becomes available)',
                     before === true && after === false,
                     `beforeDisabled=${before} afterDisabled=${after} box=${JSON.stringify(box)}`);
                 if (before === true && after === false) {

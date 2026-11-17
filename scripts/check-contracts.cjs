@@ -3033,10 +3033,18 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
     // The rest of the mock's details: four resting tools, four level lines, a
     // Long/Short tag read from the ledger, and a Chat surface whose column
     // starts closed (centred thread).
-    ok('chart: the resting tool rail is four tools; the rest stay one caret away',
-        /data-testid="more-tools-flyout"/.test(read('src/components/trade/ChartToolRail.tsx'))
-            && (read('src/components/trade/ChartToolRail.tsx').match(/<RailButton title=/g) || []).length >= 4,
-        'a rail of ten icons is the density the mock removes');
+    // Phase 4 (P-2, owner 2026-11-17): the SHAPE tools left the rail — the
+    // desk draws them (draw_on_chart / mark_trade_levels / clear_chart_drawings,
+    // parity probe P-2). What stays is the trader's hand: cursor, freehand,
+    // eraser, magnet, hide/show, undo, palette, width.
+    ok('chart: the rail carries the trader gestures only — the shape tools went to the desk',
+        !/Trendline|Ray —|Horizontal line|Fib retracement|Text note|more-tools-flyout|Clear all drawings/.test(read('src/components/trade/ChartToolRail.tsx'))
+            && /Freehand — drag to draw/.test(read('src/components/trade/ChartToolRail.tsx'))
+            && /Eraser — click a shape/.test(read('src/components/trade/ChartToolRail.tsx'))
+            && /Magnet/.test(read('src/components/trade/ChartToolRail.tsx'))
+            && /Undo last drawing/.test(read('src/components/trade/ChartToolRail.tsx'))
+            && (read('src/components/trade/ChartToolRail.tsx').match(/<RailButton\b/g) || []).length >= 7,
+        'shape buttons beside a desk that draws them is the duplication P-2 removes');
     ok('chart: a verdict draws at most four level lines',
         /\.slice\(0, 2\)/.test(read('src/services/trade/chartData.ts')),
         'five labelled lines turned the tape into a ladder');

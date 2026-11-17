@@ -2031,10 +2031,8 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
     };
 
     const undoDrawing = (): void => publishDrawings(drawings.slice(0, -1));
-    const clearDrawings = (): void => {
-        publishDrawings([]);
-        setTextEdit(null);
-    };
+    /* The rail's Clear-all left with P-2 (the desk's clear_chart_drawings is
+       the one clearer now); the local helper died with the button. */
     /** Live-rename the text note being edited (already published). */
     const renameTextDrawing = (id: string, label: string): void => {
         publishDrawings(drawingsRef.current.map(d => (d.id === id ? { ...d, label: label.slice(0, 80) } : d)));
@@ -2307,7 +2305,6 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                     onColorChange={setColor}
                     canUndo={drawings.length > 0}
                     onUndo={undoDrawing}
-                    onClear={clearDrawings}
                     hidden={drawingsHidden}
                     onToggleHidden={() => setDrawingsHidden(v => !v)}
                     magnet={magnet}
