@@ -231,7 +231,8 @@ async function main() {
             });
             await sleep(400);
             const clickSwitch = () => page.evaluate((surfaceId) => {
-                const el = document.querySelector(`[data-testid="surface-switch-${surfaceId}"]`);
+                const PILL = { trade: 'layout-pill-desk', agents: 'layout-pill-chat' };
+                const el = document.querySelector(`[data-testid="${PILL[surfaceId] || `surface-switch-${surfaceId}`}"]`);
                 if (!el) return 'missing';
                 el.click();
                 return 'clicked';
@@ -288,13 +289,13 @@ async function main() {
         // hop this surface has.
         await navTo('Agents');
         await sleep(1200);
-        const pill = page.locator('[data-testid="surface-switch-trade"]');
+        const pill = page.locator('[data-testid="layout-pill-desk"]');
         if (await pill.count()) {
             await pill.first().click();
             await sleep(2500);
             await page.screenshot({ path: path.join(SHOTS, 'surface-hop-chart-ai.png') });
             console.log('  Chat → Chart AI hop -> surface-hop-chart-ai.png');
-            await page.locator('[data-testid="surface-switch-agents"]').first().click();
+            await page.locator('[data-testid="layout-pill-chat"]').first().click();
             await sleep(800);
         } else {
             console.log('  Chat → Chart AI hop: NO SWITCH FOUND');

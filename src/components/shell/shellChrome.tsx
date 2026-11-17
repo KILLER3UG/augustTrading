@@ -25,11 +25,11 @@ export const NAV_RAIL_EXPANDED_PX = 240;
  *  widening the window restores what the user actually picked. */
 export const NAV_RAIL_AUTO_COLLAPSE_PX = 1024;
 
-/** Exported because the Agents surface's single sidebar carries it once the rail is
- *  not rendered there — one account row per screen either way. The expanded row
- *  carries NO Settings gear of its own: the icon rail's gear
- *  (`surface-switch-settings`) is the ONE Settings entry on every surface, so
- *  the chat sidebar does not open a second, different-looking one beside it. */
+/** Exported because the shell column carries it on every surface — one account
+ *  row per screen either way. The expanded row grew the Settings gear when the
+ *  icon strip died (ruling 1.2): the row's gear (`surface-switch-settings`) is
+ *  the ONE Settings entry on every surface, so the rail does not open a
+ *  second, different-looking one beside it. */
 export const AccountRow: React.FC<{
     expanded: boolean;
     activeUsername: string | null;
@@ -84,6 +84,19 @@ export const AccountRow: React.FC<{
                         className="flex h-7 w-7 items-center justify-center rounded-control text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-zinc-100 focus-visible:ring-2 focus-visible:ring-zinc-400"
                     >
                         <Inbox className="h-4 w-4" aria-hidden="true" />
+                    </button>
+                </Tip>
+            )}
+            {onOpenSettings && (
+                <Tip label="Settings" shortcut="Ctrl+,">
+                    <button
+                        type="button"
+                        data-testid="surface-switch-settings"
+                        onClick={onOpenSettings}
+                        aria-label="Settings — Journal, Learning, Skills, Memory · Ctrl+,"
+                        className="flex h-7 w-7 items-center justify-center rounded-control text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-zinc-100 focus-visible:ring-2 focus-visible:ring-zinc-400"
+                    >
+                        <Settings className="h-4 w-4" aria-hidden="true" />
                     </button>
                 </Tip>
             )}

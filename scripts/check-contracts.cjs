@@ -3049,11 +3049,13 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
             && !/onToggleColumn\?: \(\) => void/.test(read('src/components/shell/ShellRail.tsx'))
             && /conversation-hide/.test(read('src/components/shell/ConversationGroups.tsx')),
         'the old Chats clock is gone; hiding is a sidebar control');
-    ok('shell: an icon rail beside a conversation column',
-        /data-testid="shell-surface-rail"/.test(read('src/components/shell/ShellRail.tsx'))
+    ok('shell: the layout pill heads the one sidebar column (the icon strip is gone)',
+        /data-testid="layout-pill"/.test(read('src/components/shell/LayoutSwitch.tsx'))
+            && /<LayoutPill/.test(read('src/components/shell/ShellRail.tsx'))
+            && !/shell-surface-rail/.test(read('src/components/shell/ShellRail.tsx'))
             && !/shell-column-toggle/.test(read('src/components/shell/ShellRail.tsx'))
             && /shell-rail-resize/.test(read('src/components/shell/ShellRail.tsx')),
-        'one flat column of text rows is the shape the mock removes');
+        'ruling 1.2: the pill IS the surface switch; a second strip would be a second switch');
     ok('shell: the column has no Search row and no mode switch (the rail owns both)',
         !/shell-search/.test(read('src/components/shell/ShellRail.tsx'))
             && !/<ShellModeSwitch/.test(read('src/components/shell/ShellRail.tsx')),
@@ -3070,14 +3072,17 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
         (read('src/components/shell/ConversationGroups.tsx').match(/data-testid="conversation-row"/g) || []).length === 1
             && /<ConversationGroups/.test(read('src/components/shell/ShellRail.tsx')),
         'two row implementations is how the two lists drift apart');
-    // The rail carries the two desk modes and the Settings entry; the four
-    // record surfaces are SECTIONS of the Settings modal (2026-11-13).
-    // LearnView stays pinned per use — every mount names its tab — and the
-    // modal's own Memory page is the one the trader gets for memory.
-    ok('the rail is two desk modes + Settings, and LearnView is pinned per use',
-        /surface-switch-trade/.test(read('src/components/shell/ShellRail.tsx'))
-            && /surface-switch-agents/.test(read('src/components/shell/ShellRail.tsx'))
-            && /surface-switch-settings/.test(read('src/components/shell/ShellRail.tsx'))
+    // The rail carries the two desk modes as the [Desk | Chat] pill's two
+    // segments (ruling 1.2 — the pill IS the surface switch), and the
+    // Settings entry lives in the account row the same column closes with.
+    // The four record surfaces are SECTIONS of the Settings modal
+    // (2026-11-13). LearnView stays pinned per use — every mount names its
+    // tab — and the modal's own Memory page is the one the trader gets for
+    // memory.
+    ok('the rail is two desk modes (the pill) + Settings (the account row), and LearnView is pinned per use',
+        /layout-pill-desk/.test(read('src/components/shell/LayoutSwitch.tsx'))
+            && /layout-pill-chat/.test(read('src/components/shell/LayoutSwitch.tsx'))
+            && /surface-switch-settings/.test(read('src/components/shell/shellChrome.tsx'))
             && !/surface-switch-skills/.test(read('src/components/shell/ShellRail.tsx'))
             && !/surface-switch-memory/.test(read('src/components/shell/ShellRail.tsx'))
             && /tab="skills"/.test(app)

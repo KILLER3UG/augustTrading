@@ -2,6 +2,7 @@ import React, { memo, useState, useEffect, useRef } from 'react';
 import { UpdateButton } from './UpdateButton';
 import { ActivityIcon, AlertTriangleIcon } from './Icons';
 import SidebarToggle from '../shell/SidebarToggle';
+import { LayoutMiniToggle } from '../shell/LayoutSwitch';
 import { getSessionContext, getAllSessionsStatus, SessionContext, SessionStatus } from '../../services/infrastructure/SessionService';
 import { baseOf } from '../../utils/symbol';
 
@@ -157,9 +158,16 @@ export const Header: React.FC<HeaderProps> = memo(({
         <header className="sticky top-0 z-20 flex-shrink-0 border-b border-hairline bg-zinc-950/90 backdrop-blur px-3 sm:px-5 pt-[calc(env(safe-area-inset-top,0px)+0px)]">
             <div className="flex h-14 items-stretch justify-between gap-3">
                 <div className="flex min-w-0 items-stretch gap-2 sm:gap-4">
-                    {onToggleNavRail && (
-                        <div className="flex items-center">
-                            <SidebarToggle expanded={navRailExpanded} onToggle={onToggleNavRail} />
+                    {onToggleNavRail && !navRailExpanded && (
+                        /* The collapsed bar (ruling 1.2): the expand button +
+                            the compact [Desk | Chat] toggle. While the rail is
+                            open there is NOTHING here — the sidebar's pill row
+                            carries the one collapse control, and a second one
+                            beside the title is the duplicate the ruling
+                            deleted. */
+                        <div className="flex items-center gap-1.5">
+                            <SidebarToggle expanded={false} onToggle={onToggleNavRail} />
+                            <LayoutMiniToggle />
                         </div>
                     )}
                     {/* No brand mark in the bar: the mock's content bar is the

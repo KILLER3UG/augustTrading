@@ -26,7 +26,7 @@ flowchart TD
     US --> UR["useSurfaceRouter src/hooks/useSurfaceRouter.ts openJournal, hash read, serialize"]
     UR --> HASH["src/utils/appHash.ts — hash and state stay equal"]
     APP --> HD["Header content bar — rendered by SurfaceOutlet for the workspace routes src/components/shell/SurfaceOutlet.tsx"]
-    APP --> SR["ShellRail src/components/shell/ShellRail.tsx — desk routes + gear + the conversation column"]
+    APP --> SR["ShellRail src/components/shell/ShellRail.tsx — the Desk|Chat pill + collapse, the conversation column, the account row"]
     APP --> SO["SurfaceOutlet src/components/shell/SurfaceOutlet.tsx — the workspace switch: trade and agents are ONE page (chart + Chart AI dock)"]
     APP --> SG["SignalCard src/components/trade/SignalCard.tsx — the dock's decision card"]
     APP --> CG["ConversationGroups src/components/shell/ConversationGroups.tsx — the rail's conversation list"]
@@ -1130,7 +1130,7 @@ grant — because a narrowing the seat cannot honour would strip it to `NO_TOOLS
 | 5 | useSurfaceRouter → appHash | `#/journal\|market\|settings\|watch` ⇄ state `parseAppHash src/hooks/useSurfaceRouter.ts › useSurfaceRouter`, serialize `serializeAppHash src/hooks/useSurfaceRouter.ts › useSurfaceRouter` |
 | 6 | App → Header | content bar, rendered by `SurfaceOutlet src/components/shell/SurfaceOutlet.tsx › SurfaceOutlet` for the workspace routes |
 | 7 | App → lazy screens | each wrapped in `SurfaceSkeleton src/components/shell/SurfaceOutlet.tsx › SurfaceSkeleton` — TradeView, Journal, LearnView, StrategyStudio |
-| 8 | App → ShellRail | the one sidebar on every surface: desk-mode icons + Settings gear, then New chat / Pinned / Recent over the account row — `ShellRail src/components/shell/ShellRail.tsx › ShellRail`, `NavBadge src/components/shell/ShellRail.tsx › NavBadge` |
+| 8 | App → ShellRail | the one sidebar on every surface: the [Desk \| Chat] pill (the two desk modes' switch) + the collapse toggle, then New chat / Pinned / Recent over the account row with the one Settings gear — `ShellRail src/components/shell/ShellRail.tsx › ShellRail`, pill `LayoutSwitch src/components/shell/LayoutSwitch.tsx › LayoutPill` |
 | 9 | App → SurfaceOutlet props | the workspace switch: `trade` and `agents` are ONE page — `SurfaceOutlet src/components/shell/SurfaceOutlet.tsx › SurfaceOutlet`, props `src/App.tsx › App` |
 | 10 | TradeView → TradeChatPanel | the dock, inside Trade `TradeChatPanel src/components/trade/TradeView.tsx › TradeView` |
 | 11 | dock bot session → the bot's answer | a bot-bound session answers through `chatTurnRunner src/services/trade/chatTurnRunner.ts › createChatTurnRunner` with the roster persona |

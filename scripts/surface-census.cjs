@@ -205,7 +205,8 @@ async function main() {
         // happened to be mounted and still reported a number.
         const SWITCH_ID = { Analyze: 'trade', Journal: 'journal', Agents: 'agents', Learning: 'learn', Skills: 'skills', Memory: 'memory' };
         const navTo = async (name) => page.evaluate((id) => {
-            const hit = document.querySelector(`[data-testid="surface-switch-${id}"]`);
+            const PILL = { trade: 'layout-pill-desk', agents: 'layout-pill-chat' };
+            const hit = document.querySelector(`[data-testid="${PILL[id] || `surface-switch-${id}`}"]`);
             if (!hit) return false;
             hit.click(); return true;
         }, SWITCH_ID[name]);

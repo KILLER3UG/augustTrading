@@ -1189,7 +1189,7 @@ async function main() {
         // trade-view without clicking it was the earlier wrong half of the same
         // mistake, so both halves are here now: click, then wait for the mount.
         const navTrade = await page.evaluate(() => {
-            const sw = document.querySelector('[data-testid="surface-switch-trade"]');
+            const sw = document.querySelector('[data-testid="layout-pill-desk"]');
             if (!sw) return 'not found';
             sw.click();
             return 'clicked';
@@ -1804,7 +1804,7 @@ async function main() {
         await sleep(1200);
         const clockBeforeHop = await dockThinking();
         await page.evaluate(() => {
-            const hit = document.querySelector('[data-testid="surface-switch-agents"]');
+            const hit = document.querySelector('[data-testid="layout-pill-chat"]');
             if (hit) hit.click();
         });
         await page.waitForSelector('main textarea', { timeout: 20000 });
@@ -1825,7 +1825,7 @@ async function main() {
                 && clockOnAgentsLater !== null && clockOnAgentsLater >= clockOnAgents,
             `dock ${clockStart}s → ${clockBeforeHop}s; agents ${clockOnAgents}s at +${agentsElapsedAtSample.toFixed(1)}s, then ${clockOnAgentsLater}s`);
         await page.evaluate(() => {
-            const hit = document.querySelector('[data-testid="surface-switch-trade"]');
+            const hit = document.querySelector('[data-testid="layout-pill-desk"]');
             if (hit) hit.click();
         });
         await page.locator('[data-testid="trade-view"]').waitFor({ timeout: 8000 }).catch(() => {});
@@ -1863,7 +1863,7 @@ async function main() {
             // this same workspace, so the dock panel — not a second view —
             // must be what appears.
             await page.evaluate(() => {
-                const hit = document.querySelector('[data-testid="surface-switch-agents"]');
+                const hit = document.querySelector('[data-testid="layout-pill-chat"]');
                 if (hit) hit.click();
             });
             await page.waitForSelector('[data-testid="trade-chat-panel"]', { timeout: 20000 });
@@ -1894,7 +1894,7 @@ async function main() {
         await seedVerdicts(page);
         await page.reload({ waitUntil: 'domcontentloaded' });
         await page.waitForFunction(() => !document.querySelector('#splash'), null, { timeout: 25000 });
-        await page.waitForFunction(() => !!document.querySelector('[data-testid="surface-switch-agents"]'),
+        await page.waitForFunction(() => !!document.querySelector('[data-testid="layout-pill-chat"]'),
             null, { timeout: 25000 }).catch(() => null);
         await openAgents();
         // The transcript is VIRTUALIZED: a mounted-window count or innerText
@@ -2047,7 +2047,12 @@ async function main() {
                 return picked === 'clicked' ? 'clicked' : 'not found';
             }
             const clickSwitch = () => page.evaluate((surfaceId) => {
-                const el = document.querySelector(`[data-testid="surface-switch-${surfaceId}"]`);
+                // Ruling 1.2: the icon strip is gone; the [Desk | Chat] pill's
+                // segments ARE the two desk-mode switches now. The pill also
+                // flips the layout to match the segment — the same thing the
+                // old icons did through selectSurface.
+                const PILL = { trade: 'layout-pill-desk', agents: 'layout-pill-chat' };
+                const el = document.querySelector(`[data-testid="${PILL[surfaceId] || `surface-switch-${surfaceId}`}"]`);
                 if (!el) return 'missing';
                 const cs = window.getComputedStyle(el);
                 if (cs.visibility === 'hidden' || cs.display === 'none' || el.getClientRects().length === 0) {
@@ -2083,7 +2088,8 @@ async function main() {
             });
             if (revealed !== 'clicked') return 'not found';
             await page.waitForFunction((surfaceId) => {
-                const el = document.querySelector(`[data-testid="surface-switch-${surfaceId}"]`);
+                const PILL = { trade: 'layout-pill-desk', agents: 'layout-pill-chat' };
+                const el = document.querySelector(`[data-testid="${PILL[surfaceId] || `surface-switch-${surfaceId}`}"]`);
                 if (!el) return false;
                 const cs = window.getComputedStyle(el);
                 return cs.visibility !== 'hidden' && cs.display !== 'none' && el.getClientRects().length > 0;
@@ -2137,7 +2143,7 @@ async function main() {
         {
             const landed = await navTo('Agents');
             const before = landed === 'clicked' ? await page.evaluate(() => {
-                const sw = document.querySelector('[data-testid^="surface-switch-"]');
+                const sw = document.querySelector('[data-testid="layout-pill"]');
                 const swBox = sw ? sw.getBoundingClientRect() : null;
                 return {
                     chart: !!document.querySelector('[data-testid="trade-chart-pane"]'),
@@ -2156,14 +2162,14 @@ async function main() {
                 before ? `${JSON.stringify(before)} rows=${wsCensus ? wsCensus.rows.length : 'n/a'}` : String(landed));
             // The way back: the same page, the switch where it was.
             const pressed = before ? await page.evaluate(() => {
-                const b = document.querySelector('[data-testid="surface-switch-trade"]');
+                const b = document.querySelector('[data-testid="layout-pill-desk"]');
                 if (!b) return 'no switch';
                 b.click();
                 return 'clicked';
             }) : landed;
             if (pressed === 'clicked') await page.waitForTimeout(1200);
             const home = pressed === 'clicked' ? await page.evaluate(() => {
-                const sw = document.querySelector('[data-testid^="surface-switch-"]');
+                const sw = document.querySelector('[data-testid="layout-pill"]');
                 const swBox = sw ? sw.getBoundingClientRect() : null;
                 return {
                     dock: !!document.querySelector('[data-testid="trade-chat-panel"]'),
@@ -2196,15 +2202,17 @@ async function main() {
             await settleSurface('Agents');
             const nav = await page.evaluate(() => {
                 const sw = [...document.querySelectorAll('[data-testid^="surface-switch-"]')];
+                // Ruling 1.2: the two desk modes are the pill's segments; the
+                // gear (the modal sections' one entry) rides the account row.
+                const segs = [...document.querySelectorAll('[data-testid^="layout-pill-"]')];
                 const rail = document.querySelector('[data-testid="shell-rail"]');
                 return {
-                    switchCount: sw.length,
-                    marked: sw.filter(b => b.getAttribute('aria-current') === 'page')
+                    switchCount: segs.length + sw.length,
+                    marked: segs.concat(sw).filter(b => b.getAttribute('aria-current') === 'page')
                         .map(b => b.getAttribute('data-testid')).join(','),
-                    // The mock's rail is icons only, and since 2026-11-08 it is
-                    // SIX: Analyze, Agents, Journal, Learning, Skills, Memory.
-                    // What must exist is the rail itself and its column toggle.
-                    railIcons: !!document.querySelector('[data-testid="shell-surface-rail"]')
+                    // The mock's rail is one column, and since ruling 1.2 it
+                    // heads with the [Desk | Chat] pill and the column toggle.
+                    railIcons: !!document.querySelector('[data-testid="layout-pill"]')
                         && !!document.querySelector('[data-testid="shell-rail-collapse"]'),
                     railTop: rail ? Math.round(rail.getBoundingClientRect().top) : -1,
                     // No global band above the rail: the proxy is a FULL-WIDTH
@@ -2221,11 +2229,10 @@ async function main() {
             check('the rail carries the two desk modes and the Settings entry',
                 nav.switchCount === 3, `${nav.switchCount} entries in the rail switch`);
             check('the switch marks the screen you are actually on',
-                nav.marked === 'surface-switch-agents', nav.marked || 'nothing marked');
-            // The rail is icons only; Skills is one of the six (see the count
-            // above), not a tab of Learning — the pre-v4 note that said
-            // otherwise sat directly above the count it contradicted.
-            check('the shell keeps the icon rail and the column toggle',
+                nav.marked === 'layout-pill-chat', nav.marked || 'nothing marked');
+            // The pill heads the column since ruling 1.2 (the icon strip is
+            // gone); the collapse toggle sits beside it.
+            check('the shell keeps the layout pill and the column toggle',
                 !!nav.railIcons, `rail=${nav.railIcons}`);
             check('the sidebar runs the full height of the window — nothing is stacked above it',
                 nav.railTop === 0 && !nav.headerAbove,
@@ -2253,14 +2260,14 @@ async function main() {
                     headLeft: Math.round(h.left),
                     headTop: Math.round(h.top),
                     mainLeft: Math.round(m.left),
-                    marked: [...document.querySelectorAll('[data-testid^="surface-switch-"]')]
+                    marked: [...document.querySelectorAll('[data-testid^="layout-pill-"], [data-testid^="surface-switch-"]')]
                         .filter(b => b.getAttribute('aria-current') === 'page')
                         .map(b => b.getAttribute('data-testid')).join(','),
                 };
             });
             check('the rail puts the content bar beside it and keeps the switch in the rail',
                 !!band && band.headLeft === band.mainLeft && band.headLeft === band.railRight
-                    && band.headTop === 0 && band.marked === 'surface-switch-trade',
+                    && band.headTop === 0 && band.marked === 'layout-pill-desk',
                 band ? `rail right=${band.railRight}, header x=${band.headLeft} y=${band.headTop}, ${band.marked}` : 'no rail or header');
 
             // (The Agents column's search toggle died with that column; search
@@ -2268,10 +2275,11 @@ async function main() {
             await navTo('Analyze');
             await settleSurface('Analyze');
 
-            // The rail rebuild: the column (New chat / Pinned / Recent over the
-            // account row) mounts on EVERY surface now, beside the 48px icon
-            // strip. The whole rail is the strip + the dragged column width,
-            // and the column's edge is the resize handle.
+            // The rail rebuild: the column (pill row / New chat / Pinned /
+            // Recent over the account row) mounts on EVERY surface. Ruling 1.2
+            // folded the 48px icon strip into the pill row, so the whole rail
+            // is the dragged column width, and the column's edge is the
+            // resize handle.
             const railBox = () => page.evaluate(() => {
                 const el = document.querySelector('[data-testid="shell-rail"]');
                 return el ? Math.round(el.getBoundingClientRect().width) : -1;
@@ -2282,34 +2290,38 @@ async function main() {
             const analyzeRailWidth = await railBox();
             const analyzeResize = await page.evaluate(() =>
                 !!document.querySelector('[data-testid="shell-rail-resize"]'));
-            check('the rail is the icon strip plus the conversation column, handle on the edge',
-                analyzeRailWidth === 48 + navRailExpandedPx && analyzeResize,
-                `${analyzeRailWidth}px (want ${48 + navRailExpandedPx}) resize=${analyzeResize}`);
+            check('the rail is the one conversation column, handle on the edge',
+                analyzeRailWidth === navRailExpandedPx && analyzeResize,
+                `${analyzeRailWidth}px (want ${navRailExpandedPx}) resize=${analyzeResize}`);
 
             await navTo('Analyze');
             await settleSurface('Analyze');
             await settleRailWidth();
             const railBefore = await railBox();
-            // The collapse control belongs on the TITLE row, not at the rail's
-            // foot: a put-away rail is 0px and has no edge left to click.
+            // Ruling 1.2: the collapse control lives IN the sidebar, paired
+            // with the [Desk | Chat] pill (pill left, toggle right); the
+            // content bar carries nothing while the rail is open — the old
+            // title-row control is the duplicate the ruling deleted. A
+            // put-away rail is 0px, and the way back is the header's
+            // collapsed bar (asserted right after the click below).
             const placed = await page.evaluate(() => {
                 const b = document.querySelector('[data-testid="shell-rail-collapse"]');
-                const label = document.querySelector('[data-testid="header-surface-label"]');
+                const pill = document.querySelector('[data-testid="layout-pill"]');
                 const head = document.querySelector('main header');
-                if (!b || !label || !head) return null;
+                if (!b || !pill || !head) return null;
                 const br = b.getBoundingClientRect();
-                const lr = label.getBoundingClientRect();
+                const pr = pill.getBoundingClientRect();
                 return {
+                    inRail: !!b.closest('[data-testid="shell-rail"]'),
+                    sameRow: Math.abs((br.top + br.height / 2) - (pr.top + pr.height / 2)) < 12,
+                    rightOfPill: br.left >= pr.right - 4,
+                    pillText: (pill.textContent || '').trim(),
                     inContentBar: head.contains(b),
-                    sameRow: Math.abs((br.top + br.height / 2) - (lr.top + lr.height / 2)) < 12,
-                    leftOfTitle: br.right <= lr.left + 4,
-                    label: (label.textContent || '').trim(),
-                    railHasControl: !!document.querySelector('[data-testid="shell-rail"] [data-testid="shell-rail-collapse"]'),
                 };
             });
-            check('the collapse control sits on the Chart AI title row, outside the rail',
-                !!placed && placed.inContentBar && placed.sameRow && placed.leftOfTitle
-                    && placed.label === 'Chart AI' && !placed.railHasControl,
+            check("the collapse control sits in the rail's pill row, right of [Desk | Chat]",
+                !!placed && placed.inRail && placed.sameRow && placed.rightOfPill
+                    && placed.pillText === 'DeskChat' && !placed.inContentBar,
                 JSON.stringify(placed));
             const railCollapsed = await page.evaluate(() => {
                 const b = document.querySelector('[data-testid="shell-rail-collapse"]');
@@ -2457,8 +2469,8 @@ async function main() {
             const backAgain = await away();
             const backWidth = await railBox();
             check('the title-row toggle brings the rail back at the shell width',
-                backAgain.rail && backWidth === 48 + navRailExpandedPx,
-                `${backWidth}px (want ${48 + navRailExpandedPx})`);
+                backAgain.rail && backWidth === navRailExpandedPx,
+                `${backWidth}px (want ${navRailExpandedPx})`);
             // Leave the run on a known surface before the sweep.
             await navTo('Analyze');
             await settleSurface('Analyze');
@@ -2492,12 +2504,18 @@ async function main() {
                 // modal now — their testids derive from their labels, not from
                 // the old surface-switch ids.
                 const modalSection = { journal: 'journal', learn: 'learning-accuracy', skills: 'skills', memory: 'memory' }[id];
-                const testId = modalSection ? 'settings-section-' + modalSection : ('surface-switch-' + id);
+                // Ruling 1.2: the two desk modes are the [Desk | Chat] pill's
+                // segments, and the trader-facing name they promise is Desk /
+                // Chat (the surface ids trade/agents stay the router's business).
+                const PILL = { trade: 'layout-pill-desk', agents: 'layout-pill-chat' };
+                const testId = PILL[id]
+                    || (modalSection ? 'settings-section-' + modalSection : 'surface-switch-' + id);
                 const el = document.querySelector(`[data-testid="${testId}"]`);
                 return el ? ((el.getAttribute('aria-label') || '') + ' ' + (el.textContent || '')).trim() : null;
             }, surface.switchId);
+            const promised = { trade: 'Desk', agents: 'Chat' }[surface.switchId] || surface.label;
             check(`the ${surface.label} tab reads its own name`,
-                !!switchText && new RegExp('^' + surface.label + '($|[,. ])').test(switchText), String(switchText));
+                !!switchText && new RegExp('^' + promised + '($|[,. ])').test(switchText), String(switchText));
             const readsModal = surface.switchId !== 'trade' && surface.switchId !== 'agents';
             const surfaceText = async () => page.evaluate(() => {
                 const pane = document.querySelector('[data-testid="settings-content-pane"]');
@@ -4075,8 +4093,9 @@ async function main() {
         {
             const goSurface = async (name) => {
                 return page.evaluate((n) => {
-                    const IDS = { Analyze: 'trade', Journal: 'journal', Agents: 'agents', Learning: 'learn', Skills: 'skills', Memory: 'memory' };
-                    const sw = document.querySelector(`[data-testid="surface-switch-${IDS[n] || ''}"]`);
+                    // Ruling 1.2: the two desk modes are the pill's segments.
+                    const IDS = { Analyze: 'layout-pill-desk', Journal: 'journal', Agents: 'layout-pill-chat', Learning: 'learn', Skills: 'skills', Memory: 'memory' };
+                    const sw = document.querySelector(`[data-testid="${IDS[n] || ''}"]`);
                     if (sw) { sw.click(); return 'clicked'; }
                     const hit = [...document.querySelectorAll('[data-testid="surface-menu"] button')]
                         .find(b => new RegExp('^' + n, 'i').test((b.getAttribute('aria-label') || b.textContent || '').trim()));
@@ -4492,8 +4511,11 @@ async function main() {
                 rail: !!rail,
                 backdrop: !!document.querySelector('[data-testid="shell-rail-backdrop"]'),
                 position: rail ? window.getComputedStyle(rail).position : 'none',
-                switches: [...document.querySelectorAll('[data-testid^="surface-switch-"]')]
-                    .filter(visible).length,
+                // Ruling 1.2: the two desk modes are the pill's segments; the
+                // gear rides the account row. The drawer "carries every
+                // route" = 2 segments + 1 gear.
+                switches: [...document.querySelectorAll('[data-testid^="layout-pill-"], [data-testid^="surface-switch-"]')]
+                    .filter((el, i, all) => all.indexOf(el) === i && visible(el)).length,
             };
         });
         check('the phone rail opens as a drawer and carries every route',
