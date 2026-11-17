@@ -2,6 +2,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import TradeLogContent from './TradeLog';
 import { WeeklyReviewCard } from './WeeklyReviewCard';
+import { askDesk } from '../../utils/askDesk';
 import { MonthlyReportCard } from './MonthlyReportCard';
 import SignalFeed from './SignalFeed';
 import {HistoryIcon, ChartBarIcon, FileSpreadsheet, FileText, TargetIcon} from '../shared/Icons';
@@ -199,7 +200,7 @@ const JournalInner: React.FC<JournalProps> = ({
                         <button
                             type="button"
                             data-testid="journal-stats-trigger"
-                            onClick={() => window.dispatchEvent(new CustomEvent('august:desk-stats'))}
+                            onClick={() => askDesk('stats')}
                             className="mt-2.5 rounded-control border border-hairline px-3 py-1.5 text-ui-dense font-medium text-zinc-300 transition-colors hover:bg-white/[0.06] hover:text-zinc-100"
                         >
                             Ask the desk for my stats

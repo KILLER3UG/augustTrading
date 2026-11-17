@@ -13,6 +13,7 @@
  */
 import React, { useCallback, useEffect, useState } from 'react';
 import { listStrategies, type StrategyMeta } from '../../services/learning/strategyStore';
+import { askDesk } from '../../utils/askDesk';
 
 const STATUS_LABEL: Record<StrategyMeta['status'], string> = {
     draft: 'Draft',
@@ -23,12 +24,11 @@ const STATUS_LABEL: Record<StrategyMeta['status'], string> = {
 const Plan: React.FC<{ meta: StrategyMeta }> = ({ meta }) => {
     /* Phase 4 (ruling #12): the manual status flip left — the strategy-
         activation card is the WRITER (same store, same revert window, the
-        trader's tap). One tap here asks the desk to propose the change
-        through its card; `onChanged` refreshes once the trader confirms. */
+        trader's tap). One tap here switches to the workspace and asks the
+        desk to propose the change through its card; the status you see here
+        refreshes when this section remounts. */
     const propose = useCallback((action: 'activate' | 'retire'): void => {
-        window.dispatchEvent(new CustomEvent('august:desk-strategy', {
-            detail: { name: meta.name, action },
-        }));
+        askDesk('strategy', { name: meta.name, action });
     }, [meta.name]);
 
     const rows: Array<[string, string | undefined]> = [

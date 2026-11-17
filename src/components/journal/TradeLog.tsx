@@ -8,6 +8,7 @@ import ImageViewerModal from '../modals/ImageViewerModal';
 import { EmptyState } from '../ui/EmptyState';
 import StatusPill, { VerdictReviewPill, type PillTone } from '../ui/StatusPill';
 import { defaultLeverage } from '../../utils/conversationUtils';
+import { askDesk } from '../../utils/askDesk';
 import { captureEfficiencyPct } from '../../utils/disciplineAnalytics';
 import { useConfirmDialog } from '../shared/ConfirmDialog';
 import SetupLifecycleCard from '../analysis/SetupLifecycleCard';
@@ -125,9 +126,7 @@ const TradeDetailView: React.FC<{
                                     <button
                                         type="button"
                                         data-testid="trade-correct-in-chat"
-                                        onClick={() => window.dispatchEvent(new CustomEvent('august:desk-correct', {
-                                            detail: { tradeId: trade.id, symbol: coinName, at: timestamp },
-                                        }))}
+                                        onClick={() => askDesk('correct', { tradeId: trade.id, symbol: coinName, at: timestamp })}
                                         title="Ask the desk to propose the settlement correction (or the void) through its card"
                                         className="rounded-control border border-hairline px-3 py-1.5 text-ui-dense font-medium text-zinc-300 transition-colors hover:bg-white/[0.06] hover:text-zinc-100"
                                     >

@@ -15,8 +15,14 @@
  * against an A/B lane that changed what no run was sent (O-140), so a
  * promote/revert verdict measured noise. The ledger's legacy `shadow` /
  * `promoted` rows still parse and still revert (the switch-off path and
- * `revertSelfChange` handle them), but nothing writes the tier anymore, and
- * the trader's Settings editor is the only prompt writer.
+ * `revertSelfChange` handle them), but nothing writes the tier anymore.
+ *
+ * Phase 4 (4.7, owner 2026-11-18): the Settings prompt editor went READ-ONLY
+ * — the desk's `propose_self_change { kind: "prompt" }` is the one writer for
+ * a prompt override now (`proposePromptChange` below): applies immediately,
+ * ledgered with the previous text, NOT auto-reverted; `revertSelfChange` and
+ * the trader's Reset both restore. This is a real write, not the dead shadow
+ * lane: no run is A/B-judged, the ledger is the accountability.
  *
  * What is NOT here, on purpose:
  *  - Risk. Sizing, leverage, the edge floor, the session guard and outcome
@@ -27,15 +33,16 @@
  *    authority, and the desk tool that reaches this file cannot turn it on.
  *  - Skills. They are documents written through `writeSkillFile`; no
  *    self-change target may write one.
- *  - Prompts. A prompt override is the trader's edit or nobody's; the tier
- *    that let the agent write one measured nothing, so it does not exist.
+ *  - Skills. Already listed above; a prompt override is NOT a skill, and a
+ *    self-change target may not write one.
  */
 
 import {
     getHarnessSettings, saveHarnessSettings, type HarnessSettings,
 } from '../../utils/harnessSettings';
 import { getActiveUsername } from '../../utils/activeUser';
-import { resetPromptOverride } from '../infrastructure/PromptOverrideService';
+import { resetPromptOverride, savePromptOverride, validatePromptOverride } from '../infrastructure/PromptOverrideService';
+import { PROMPT_REGISTRY } from '../../constants/promptRegistry';
 import {
     getSelfChange, listSelfChanges, liveSelfChanges, patchSelfChange, writeSelfChange,
 } from './SelfChangeLedger';
@@ -260,6 +267,49 @@ export const proposeKnobChange = async (
 };
 
 /** The one undo path. Owner rows are not the agent's to revert. */
+/** A prompt override the agent proposes: the trader-readable text changes
+ *  NOW (like a knob) but is NOT time-boxed — the ledger row records the
+ *  previous text, and `revertSelfChange` already knows the `prompt:` shape. */
+export const proposePromptChange = async (
+    promptId: string,
+    text: string,
+    reason: string,
+    opts: SelfModActorOptions = {},
+): Promise<SelfModResult> => {
+    if (!reason || !reason.trim()) return { ok: false, error: 'a self-change must say why' };
+    const known = PROMPT_REGISTRY.find(p => p.id === promptId);
+    if (!known) {
+        const names = PROMPT_REGISTRY.map(p => p.id).join(', ');
+        return { ok: false, error: `prompt "${promptId}" is not a registered prompt. Registered ids: ${names}.` };
+    }
+    const target = `prompt:${promptId}`;
+    const permission = permissionCheck('config', opts);
+    if (permission) return { ok: false, error: permission };
+    const before = known.fallback ?? '';
+    const warnings = validatePromptOverride(text);
+    const churn = churnCheck(target);
+    if (churn) return { ok: false, error: churn };
+    try {
+        await savePromptOverride(promptId, text, opts.username || getActiveUsername());
+    } catch (err) {
+        return { ok: false, error: `${target} could not be applied: ${err instanceof Error ? err.message : String(err)}` };
+    }
+    const row = await record({
+        tier: 'config',
+        target,
+        before,
+        after: text.trim().slice(0, 200) || '(cleared override)',
+        reason: `${reason.trim().slice(0, 500)}${warnings.length ? ` [advisory: ${warnings.join('; ').slice(0, 90)}]` : ''}`,
+        status: 'active',
+        actor: opts.actor || 'agent',
+    }, opts);
+    return {
+        ok: true,
+        change: row,
+        note: `No auto-revert on a prompt: the previous text is in the ledger, and revert_self_change (or the trader's Reset) restores it.${warnings.length ? ` Advisory warnings: ${warnings.join('; ')}` : ''}`,
+    };
+};
+
 export const revertSelfChange = async (
     id: string,
     by: SelfChangeActor = 'owner',

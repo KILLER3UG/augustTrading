@@ -1371,6 +1371,18 @@ const App: React.FC = () => {
     // (handleApplyStrategy / handleRemoveStrategy left with the StrategySearch
     // overlay — P-4; the activation card is the writer now.)
 
+    // The record surfaces' desk doors (P-5/P-6): a tap anywhere switches the
+    // shell to the workspace first — the dock only mounts there — and the
+    // delayed second event (utils/askDesk) reaches the mounted panel.
+    useEffect(() => {
+        const onGotoWorkspace = (): void => {
+            setIsSettingsMenuVisible(false);
+            setSurface('trade');
+        };
+        window.addEventListener('august:goto-workspace', onGotoWorkspace);
+        return () => window.removeEventListener('august:goto-workspace', onGotoWorkspace);
+    }, [setSurface]);
+
     // F4: "Re-run debate" — re-dispatches the original prompt + chart images
     // through the normal pipeline so the user gets a fresh debate for the
     // same setup (also the missing retry path for failed analyst slots).

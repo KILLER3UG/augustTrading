@@ -1615,13 +1615,13 @@ export const DESK_TOOL_DEFINITIONS: DeskToolDefinition[] = [
         function: {
             name: 'propose_self_change',
             description:
-                'Change the harness you are running in, now. Only works when the trader enabled self-modification. kind:"knob" moves an open behavior knob (thinking effort, confirmed-skill library cap); it applies immediately and AUTO-REVERTS after 24h. Prompts are NOT a target: the Settings prompt editor is the only prompt writer, and the tier that let the agent write one measured nothing. Risk settings, privacy switches, the memory off-switch and self-modification itself are blocked. Say why in one sentence.',
+                'Change the harness you are running in, now. Only works when the trader enabled self-modification. kind:"knob" moves an open behavior knob (thinking effort, confirmed-skill library cap); it applies immediately and AUTO-REVERTS after 24h. kind:"prompt" writes a prompt OVERRIDE for one registered prompt id (target = the id, e.g. "analysis.master"); it applies now, does NOT auto-revert, and the ledger keeps the previous text for revert_self_change. Risk settings, privacy switches, the memory off-switch and self-modification itself are blocked. Say why in one sentence.',
             parameters: {
                 type: 'object',
                 properties: {
-                    kind: { type: 'string', enum: ['knob'], description: 'Which surface you are changing' },
-                    target: { type: 'string', description: 'Knob name (e.g. "responseEffort")' },
-                    value: { type: 'string', description: 'The value in JSON form: "fast" for an effort tier, 60 for a number.' },
+                    kind: { type: 'string', enum: ['knob', 'prompt'], description: 'Which surface you are changing' },
+                    target: { type: 'string', description: 'kind "knob": knob name (e.g. "responseEffort"). kind "prompt": the registered prompt id (e.g. "analysis.master").' },
+                    value: { type: 'string', description: 'The value in JSON form: "fast" for an effort tier, 60 for a number, the FULL prompt text for a prompt override.' },
                     reason: { type: 'string', description: 'Why this change makes the work better — verbatim in the audit ledger' },
                 },
                 required: ['kind', 'target', 'value', 'reason'],
@@ -4721,8 +4721,10 @@ ${body}`);
                     const opts = { actor: 'agent' as const, readOnly };
                     const res = kind === 'knob'
                         ? await svc.proposeKnobChange(target, value, reason, opts)
-                        : null;
-                    if (!res) return rejectedResult(call, 'propose_self_change rejected: kind must be "knob" — prompts are not a self-change target');
+                        : kind === 'prompt'
+                            ? await svc.proposePromptChange(target, value, reason, opts)
+                            : null;
+                    if (!res) return rejectedResult(call, 'propose_self_change rejected: kind must be "knob" or "prompt"');
                     if (!res.ok) return rejectedResult(call, `propose_self_change rejected: ${res.error}`);
                     content = JSON.stringify({
                         changed: true,

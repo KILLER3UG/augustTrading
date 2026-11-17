@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react';
+import { askDesk } from '../../utils/askDesk';
 import { TradeOutcome } from '../../types';
 import { CloseIcon, PinIcon } from '../shared/Icons';
 import { AutopilotResolution } from '../../services/ui/OutcomeAutopilotService';
@@ -140,9 +141,7 @@ const WatchListPanel: React.FC<WatchListPanelProps> = ({
                                         <button
                                             type="button"
                                             data-testid="watch-settle-in-chat"
-                                            onClick={() => window.dispatchEvent(new CustomEvent('august:desk-settle', {
-                                                detail: { messageId: signal.messageId, conversationId: signal.conversationId },
-                                            }))}
+                                            onClick={() => askDesk('settle', { messageId: signal.messageId, conversationId: signal.conversationId })}
                                             title="Ask the desk to propose this signal's settlement through its card"
                                             className="rounded-control border border-hairline px-2.5 py-1 text-ui-dense font-semibold text-zinc-200 hover:text-zinc-100"
                                         >

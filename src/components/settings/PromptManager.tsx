@@ -247,7 +247,7 @@ const PromptManager: React.FC<PromptManagerProps> = ({ username }) => {
                                 onClick={() => { setIsPreview(v => !v); setIsDiff(false); }}
                                 className="px-3 py-1.5 rounded-control text-ui-base text-zinc-400 hover:text-zinc-100 hover:bg-zinc-900 transition-colors"
                             >
-                                {isPreview ? 'Write' : 'Preview'}
+                                {isPreview ? 'Source' : 'Preview'}
                             </button>
                             {/* Phase 4 (4.7): the trader no longer hand-edits
                                 prompts — read-only view + revert, and the Tell
@@ -292,7 +292,7 @@ const PromptManager: React.FC<PromptManagerProps> = ({ username }) => {
                     </div>
                     <p className="shrink-0 text-ui-sm text-zinc-600 mt-4">
                         {isModified
-                            ? 'Your edited version is live. Saving an empty editor removes the override.'
+                            ? 'An override is live (Reset restores the built-in). A change goes through the Tell August bar.'
                             : 'No override yet — the built-in default above is what models currently see.'}
                     </p>
                 </div>
