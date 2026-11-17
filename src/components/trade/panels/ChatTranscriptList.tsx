@@ -519,7 +519,7 @@ const ChatTranscriptList: React.FC<ChatTranscriptListProps> = ({
                             return (
                                 <SettlementCorrectionCard
                                     proposal={p}
-                                    current={row ? { outcome: row.outcome, pnlAmount: row.pnlAmount, pnlPercent: row.pnlPercent } : undefined}
+                                    current={row ? { outcome: row.outcome, pnlAmount: row.pnlAmount, pnlPercent: row.pnlPercent, entry: row.analysis?.entryPoints?.[0]?.price ? Number(row.analysis.entryPoints[0].price) : undefined } : undefined}
                                     onConfirm={() => { onConfirmSettlementCorrection?.(p); setDecisionTick(t => t + 1); }}
                                     onDismiss={() => { onDismissSettlementCorrection?.(p); setDecisionTick(t => t + 1); }}
                                     onVoid={() => { onVoidSettlementCorrection?.(p); setDecisionTick(t => t + 1); }}

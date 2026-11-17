@@ -35,6 +35,10 @@ export interface SettlementCorrectionProposal {
     pnlAmount?: number;
     /** PnL as a percentage, when the row carries one. */
     pnlPercent?: number;
+    /** The entry the tape shows — for a row logged at a price the fill
+     *  contradicts, or an entry the tracker missed (the capture modal's
+     *  manual fill, as an agent-proposed card arm). */
+    correctedEntry?: number;
     /** Why the row is wrong, in the agent's words. Printed on the card. */
     reason: string;
 }
@@ -47,7 +51,7 @@ export type SettlementCorrectionState = 'confirmed' | 'dismissed';
 export type SettlementCorrectionRefusal =
     | 'a correction needs a trade row to correct'
     | 'a correction needs a reason the trader can read'
-    | 'a correction must change at least one field - outcome, pnlAmount or pnlPercent';
+    | 'a correction must change at least one field - outcome, pnlAmount, pnlPercent or correctedEntry';
 
 export type SettlementCorrectionCheck =
     | { ok: true; proposal: SettlementCorrectionProposal }
@@ -72,9 +76,10 @@ export const checkSettlementCorrection = (input: unknown): SettlementCorrectionC
     if (!reason) return { ok: false, refused: 'a correction needs a reason the trader can read' };
     const changesField = raw.outcome !== undefined
         || (typeof raw.pnlAmount === 'number' && Number.isFinite(raw.pnlAmount))
-        || (typeof raw.pnlPercent === 'number' && Number.isFinite(raw.pnlPercent));
+        || (typeof raw.pnlPercent === 'number' && Number.isFinite(raw.pnlPercent))
+        || (typeof raw.correctedEntry === 'number' && Number.isFinite(raw.correctedEntry));
     if (!changesField) {
-        return { ok: false, refused: 'a correction must change at least one field - outcome, pnlAmount or pnlPercent' };
+        return { ok: false, refused: 'a correction must change at least one field - outcome, pnlAmount, pnlPercent or correctedEntry' };
     }
     return { ok: true, proposal: { ...raw, tradeId, reason } as SettlementCorrectionProposal };
 };

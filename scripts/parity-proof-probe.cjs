@@ -160,20 +160,30 @@ async function sendInDock(page, text) {
     if (sent !== 'clicked') throw new Error(`send failed: ${sent}`);
 }
 
-/** Poll the mock's captured receipts until one for `tool` lands (the
- *  follow-up request carries the tool result the model read). */
-async function waitForReceipt(tool, timeoutMs = 45000) {
+/** Poll the mock's captured receipts until a NEW receipt for `tool` lands
+ *  (more than `before` copies exist) — draw_on_chart repeats 8×, so a plain
+ *  find-by-name would hand every kind the FIRST kind's receipt. Returns the
+ *  newest copy. */
+async function waitForReceipt(tool, before, timeoutMs = 45000) {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
         try {
             const res = await fetch(`${MOCK}/receipts`);
             const recs = await res.json();
-            const hit = recs.find((r) => r.name === tool);
-            if (hit) return hit.content;
+            const mine = recs.filter((r) => r.name === tool);
+            if (mine.length > before) return mine[mine.length - 1].content;
         } catch { /* mock not up yet */ }
         await sleep(500);
     }
     return null;
+}
+
+/** How many receipts `tool` has now. */
+async function receiptCount(tool) {
+    try {
+        const res = await fetch(`${MOCK}/receipts`);
+        return (await res.json()).filter((r) => r.name === tool).length;
+    } catch { return 0; }
 }
 
 const failures = [];
@@ -245,11 +255,22 @@ async function main() {
         await sleep(2500);
 
         // One round per scripted call; assert on the receipt.
+        const seen = {};
         for (const step of CALLS) {
+            seen[step.tool] = seen[step.tool] ?? await receiptCount(step.tool);
             await sendInDock(page, `PROBE_TOOL_ROUND parity ${step.id}`);
-            const content = await waitForReceipt(step.tool);
+            let content = await waitForReceipt(step.tool, seen[step.tool]);
             if (!content) {
-                check(`${step.id}: receipt captured`, false, `no ${step.tool} receipt reached the mock within 45s`);
+                // A live-feed failure can error the turn before the tool
+                // result reaches the mock. Retry the round ONCE before
+                // failing — the walk asserts payload shapes, and one dead
+                // feed should not end it (the repeat-run flake).
+                await sendInDock(page, `PROBE_TOOL_ROUND parity ${step.id} retry`);
+                content = await waitForReceipt(step.tool, seen[step.tool]);
+            }
+            seen[step.tool] = await receiptCount(step.tool);
+            if (!content) {
+                check(`${step.id}: receipt captured`, false, `no ${step.tool} receipt reached the mock within 45s (retried once)`);
                 continue;
             }
             const parsed = j(content);

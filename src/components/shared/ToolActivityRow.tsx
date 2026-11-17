@@ -125,8 +125,8 @@ const ToolRowGroupView: React.FC<{ group: ToolRowGroup; running: boolean }> = ({
 
     const line = (
         <div className="flex items-center gap-1.5 text-ui-caption leading-5 text-zinc-500" data-kind={kind}>
-            <Glyph className={`h-3 w-3 shrink-0 ${anyFailed ? 'text-rose-400/70' : 'text-zinc-600'}`} aria-hidden="true" />
-            <span className={`shrink-0 ${anyCalling ? 'text-zinc-500' : anyFailed ? 'text-rose-300' : 'text-zinc-300'}`}>
+            <Glyph className={`h-3 w-3 shrink-0 ${anyFailed ? 'text-zinc-400' : 'text-zinc-600'}`} aria-hidden="true" />
+            <span className={`shrink-0 ${anyCalling ? 'text-zinc-500' : anyFailed ? 'text-zinc-400' : 'text-zinc-300'}`}>
                 {group.label}
             </span>
             {group.count > 1 && (
@@ -137,7 +137,7 @@ const ToolRowGroupView: React.FC<{ group: ToolRowGroup; running: boolean }> = ({
             ) : detail ? (
                 <span className="min-w-0 truncate" title={detail}>· {detail}</span>
             ) : anyFailed ? (
-                <span className="min-w-0 truncate text-rose-300/80" title="failed">· failed</span>
+                <span className="min-w-0 truncate text-zinc-500" title="failed">· failed</span>
             ) : null}
             {/* The chevron the reference puts on every step that opens. */}
             {expandable && <ChevronRight className="h-3 w-3 shrink-0 text-zinc-600" aria-hidden="true" />}

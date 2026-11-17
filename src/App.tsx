@@ -439,17 +439,7 @@ const App: React.FC = () => {
     const [tradeModeRequest, setTradeModeRequest] = useState<{ mode: TradeMode; n: number } | null>(null);
     const tradeModeReqNRef = useRef(0);
     const lastRequestedTradeModeRef = useRef<TradeMode>('chart');
-    const isBelowLgNow = (): boolean => {
-        try { return !window.matchMedia('(min-width: 1024px)').matches; } catch { return false; }
-    };
-    const toggleTradeSidebar = useCallback(() => {
-        if (isBelowLgNow()) {
-            const next: TradeMode = lastRequestedTradeModeRef.current === 'book' ? 'chart' : 'book';
-            lastRequestedTradeModeRef.current = next;
-            setTradeModeRequest({ mode: next, n: ++tradeModeReqNRef.current });
-        }
-    
-    }, []);
+
     // Market data state and effects (extracted to hooks/useMarketData.ts)
     const marketData = useMarketData(isHybridIntelligenceEnabled);
     const {
@@ -1341,9 +1331,14 @@ const App: React.FC = () => {
             const d = (e as CustomEvent<{ id?: string; fileName?: string }>).detail;
             toast.warning('Memory correction', `${d?.fileName ?? 'A file'} has a model-written correction — the before/after log and Undo are in Settings → Memory.`);
         };
+        // GAP-b: the refresh_journal_review desk tool reaches this through the
+        // event — the SAME debounced regeneration a logged trade triggers.
+        const onJournalRefreshRequest = (): void => handleJournalAutoRefresh();
+        window.addEventListener('august:journal-refresh', onJournalRefreshRequest);
         window.addEventListener(FORGED_PROPOSAL_EVENT, onForged);
         window.addEventListener(AMENDMENT_EVENT, onAmendment);
         return () => {
+            window.removeEventListener('august:journal-refresh', onJournalRefreshRequest);
             window.removeEventListener(FORGED_PROPOSAL_EVENT, onForged);
             window.removeEventListener(AMENDMENT_EVENT, onAmendment);
         };
@@ -1379,6 +1374,7 @@ const App: React.FC = () => {
         handleUpdateTradeType,
         handleUpdateTradeOutcome,
         handleUpdateTradePnL,
+        handleUpdateTradeEntry,
         handleRegenerateFinalSummary,
     } = useTradeJournalActions({
         loggedTrades, setLoggedTrades,
@@ -1643,7 +1639,10 @@ const App: React.FC = () => {
         if (proposal.pnlAmount !== undefined || proposal.pnlPercent !== undefined) {
             handleUpdateTradePnL(proposal.tradeId, { pnlAmount: proposal.pnlAmount, pnlPercent: proposal.pnlPercent });
         }
-    }, [handleUpdateTradeOutcome, handleUpdateTradePnL]);
+        // The entry arm (GAP-a): the tape's price replaces the mis-logged one,
+        // through the same journal writer a human edit calls.
+        if (proposal.correctedEntry !== undefined) handleUpdateTradeEntry(proposal.tradeId, proposal.correctedEntry);
+    }, [handleUpdateTradeOutcome, handleUpdateTradePnL, handleUpdateTradeEntry]);
     const applyTradeAction = useCallback((proposal: TradeActionProposal): void => {
         void (async () => {
             const { arm, disarm, getArmedPlans } = await import('./services/trade/levelWatchService');
@@ -2463,6 +2462,7 @@ const App: React.FC = () => {
             <SettingsMenu
                 isVisible={isSettingsMenuVisible}
                 onClose={() => setIsSettingsMenuVisible(false)}
+                onAskAugust={() => setIsSettingsMenuVisible(false)}
                 onOpenLearn={(tab) => {
                     // The notebook and the library are SECTIONS of the
                     // Settings modal now: the launcher opens the modal at the
@@ -2648,7 +2648,7 @@ const App: React.FC = () => {
                         onRefreshModels={refreshModelCatalog}
                         tradeModeRequest={tradeModeRequest}
                         activeUsername={activeUsername}
-                        onTradeModeChange={(m) => { lastRequestedTradeModeRef.current = m; }}
+                        onTradeModeChange={(m) => { lastRequestedTradeModeRef.current = m; setTradeModeRequest({ mode: m, n: ++tradeModeReqNRef.current }); }}
                         botThreadRows={tradeBotThread}
                         onBotTurnCommit={commitDockBotTurn}
                         onSoloTurnCommit={commitSoloChatTurn}

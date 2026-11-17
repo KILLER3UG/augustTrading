@@ -313,4 +313,7 @@ export const DESK_TOOL_NAMES: readonly string[] = [
     // A strategy plan's activation/retirement is proposed, never applied: the
     // card is the only writer, through the store writer the trader owns.
     'propose_strategy_activation',
+    // The journal's AI review re-runs from the current trade log on request —
+    // the same synthesis every logged trade triggers.
+    'refresh_journal_review',
 ];

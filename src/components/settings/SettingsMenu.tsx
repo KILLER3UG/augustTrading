@@ -16,6 +16,7 @@ import { getHarnessSettings } from '../../utils/harnessSettings';
 import { isProviderReady } from '../../utils/providerUtils';
 import type { LearnTab } from '../learn/LearnView';
 import type { InstructionTab } from './CustomInstructionsEditor';
+import { TellAugustBar } from './TellAugustBar';
 
 
 // The tab bodies are code-split. Each used to be an inline IIFE in this file
@@ -46,6 +47,9 @@ const FULL_BLEED_TABS: SettingsTab[] = ['prompts', 'instructions', 'strategies',
 interface SettingsMenuProps {
     isVisible: boolean;
     onClose: () => void;
+    /** The Tell-August bar's submit: App closes the modal so the trader
+     *  watches the seat work in the dock. */
+    onAskAugust?: () => void;
     // Hybrid & Capturing
     isHybridIntelligenceEnabled: boolean;
     onToggleHybridIntelligence?: () => void;
@@ -292,6 +296,7 @@ const SettingsMenu: React.FC<SettingsMenuProps> = (props) => {
     const {
         isVisible,
         onClose,
+        onAskAugust,
         onOpenLearn,
         providerConfigs,
         providerConfigsLoaded,
@@ -863,6 +868,7 @@ const SettingsMenu: React.FC<SettingsMenuProps> = (props) => {
                 </div>
             </div>
             {ConfirmDialogComponent}
+            <TellAugustBar onSent={onAskAugust} />
         </>
     );
 };

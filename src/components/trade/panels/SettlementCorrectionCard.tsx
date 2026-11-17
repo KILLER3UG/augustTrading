@@ -20,7 +20,7 @@ import { TradeOutcome } from '../../../types/enums';
 export interface SettlementCorrectionCardProps {
     proposal: SettlementCorrectionProposal;
     /** The row's CURRENT outcome and PnL, so the card can show what changes. */
-    current?: { outcome?: TradeOutcome; pnlAmount?: number; pnlPercent?: number };
+    current?: { outcome?: TradeOutcome; pnlAmount?: number; pnlPercent?: number; entry?: number };
     onConfirm: () => void;
     onDismiss: () => void;
     /** VOID — delete the row instead of applying the correction. The separate
@@ -31,6 +31,7 @@ export interface SettlementCorrectionCardProps {
 
 /** What the row says now, in the words the journal uses. */
 const describeOutcome = (outcome?: TradeOutcome): string => outcome ?? 'unsettled';
+const fmt = (v?: number): string => (typeof v === 'number' && Number.isFinite(v) ? String(v) : '—');
 
 const fmtPnl = (amount?: number, percent?: number): string => {
     if (typeof amount === 'number' && Number.isFinite(amount)) {
@@ -48,6 +49,7 @@ export const SettlementCorrectionCard: React.FC<SettlementCorrectionCardProps> =
     const outcomeChanges = proposal.outcome !== undefined && proposal.outcome !== current?.outcome;
     const pnlChanges = (proposal.pnlAmount !== undefined && proposal.pnlAmount !== current?.pnlAmount)
         || (proposal.pnlPercent !== undefined && proposal.pnlPercent !== current?.pnlPercent);
+    const entryChanges = proposal.correctedEntry !== undefined && proposal.correctedEntry !== current?.entry;
 
     return (
         <div className="mt-1 rounded-control border border-amber-500/30 bg-amber-500/[0.04] p-2.5"
@@ -74,6 +76,11 @@ export const SettlementCorrectionCard: React.FC<SettlementCorrectionCardProps> =
                 </div>
                 <div>
                     <div className="font-mono text-ui-xs uppercase text-zinc-500">P&amp;L</div>
+                    {proposal.correctedEntry !== undefined && (
+                        <div className={entryChanges ? 'font-semibold text-amber-300' : 'text-zinc-400'}>
+                            Entry: {fmt(current?.entry)} → {fmt(proposal.correctedEntry)}
+                        </div>
+                    )}
                     <div className={pnlChanges ? 'font-semibold text-amber-300' : 'text-zinc-400'}>
                         {pnlChanges
                             ? `${fmtPnl(current?.pnlAmount, current?.pnlPercent)} → ${fmtPnl(proposal.pnlAmount, proposal.pnlPercent)}`

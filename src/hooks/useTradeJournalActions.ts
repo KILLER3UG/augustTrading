@@ -69,6 +69,7 @@ export interface UseTradeJournalActionsResult {
     handleUpdateTradeType: (id: string, tradeType: 'scalp' | 'swing') => void;
     handleUpdateTradeOutcome: (id: string, outcome: TradeOutcome) => void;
     handleUpdateTradePnL: (id: string, pnl: { pnlAmount?: number; pnlPercent?: number }) => void;
+    handleUpdateTradeEntry: (id: string, entry: number) => void;
     handleRegenerateFinalSummary: () => Promise<void>;
 }
 
@@ -421,6 +422,24 @@ export const useTradeJournalActions = (args: UseTradeJournalActionsArgs): UseTra
     // Fill in / correct PnL from the journal card (autopilot-logged trades
     // only carry the leveraged percent, so the dollar figure needs a manual
     // entry to make the dashboard PnL math meaningful).
+    /** Correct ONE row's entry price (the settlement card's entry arm): the
+     *  same audit trail the outcome correction keeps — the previous entry is
+     *  the record, and the correction never passes for the original call. */
+    const handleUpdateTradeEntry = useCallback((id: string, entry: number) => {
+        const correctedAt = new Date().toISOString();
+        setLoggedTrades(prev => prev.map(t => {
+            if (t.id !== id) return t;
+            const points = Array.isArray(t.analysis?.entryPoints) && t.analysis.entryPoints.length > 0
+                ? t.analysis.entryPoints.map((pt, i) => (i === 0 ? { ...pt, price: String(entry) } : pt))
+                : [{ price: String(entry), description: 'corrected from the tape' }];
+            return {
+                ...t,
+                analysis: t.analysis ? { ...t.analysis, entryPoints: points } : t.analysis,
+                correctedAt,
+                resolutionSource: 'correction' as const,
+            };
+        }));
+    }, [setLoggedTrades]);
     const handleUpdateTradePnL = useCallback((id: string, pnl: { pnlAmount?: number; pnlPercent?: number }) => {
         setLoggedTrades(prev => prev.map(t => t.id === id ? { ...t, ...pnl } : t));
     }, [setLoggedTrades]);
@@ -471,6 +490,7 @@ export const useTradeJournalActions = (args: UseTradeJournalActionsArgs): UseTra
         handleUpdateTradeType,
         handleUpdateTradeOutcome,
         handleUpdateTradePnL,
+        handleUpdateTradeEntry,
         handleRegenerateFinalSummary,
     };
 };

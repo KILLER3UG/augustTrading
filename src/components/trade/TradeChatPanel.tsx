@@ -49,6 +49,7 @@ import {
 } from '../../services/trade/tradeChatContext';
 import { activeStrategiesBlock } from '../../services/learning/strategyStore';
 import { WorkspaceGreeting } from './WorkspaceHome';
+import { AUGUST_ASK_EVENT } from '../settings/TellAugustBar';
 import { recordSeatInjections } from '../../services/learning/MemoryInjectionService';
 import { deleteSessionDrawings, type ChartDrawing } from '../../services/trade/chartDrawings';
 import type { MessageLevelLines } from '../../services/trade/keyLevels';
@@ -321,7 +322,7 @@ export const ChartAiDockRail: React.FC<{
             running map inside the panel, and reproducing that subscription out
             here to animate one 8px light on a 10px column would be a second
             source of truth for the same fact. One click away is the dock. */}
-        <span className={`h-2 w-2 rounded-full ${live ? 'bg-emerald-500' : 'bg-zinc-500'}`} />
+        <span className={`h-2 w-2 rounded-full ${live ? 'bg-zinc-300' : 'bg-zinc-600'}`} />
     </div>
 );
 
@@ -1055,7 +1056,7 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
                 reached through the Past Conversations palette, not a tab
                 strip. */}
             <div className="@container flex shrink-0 items-center gap-2.5 border-b border-hairline bg-zinc-900/30 px-5 py-3">
-                <span className={`h-2 w-2 shrink-0 rounded-full ${busy ? 'animate-pulse bg-cyan-400' : live ? 'bg-emerald-500' : 'bg-zinc-500'}`} aria-label={live ? 'live market feed connected' : 'market feed polling'} />
+                <span className={`h-2 w-2 shrink-0 rounded-full ${busy ? 'animate-pulse bg-zinc-400' : live ? 'bg-zinc-300' : 'bg-zinc-600'}`} aria-label={live ? 'live market feed connected' : 'market feed polling'} />
                 {/* The dock is narrow and user-dragged, so the brand never
                     yields: at 370px a squeezed "Chart AI" wrapped into two
                     lines while the controls kept their width. The session

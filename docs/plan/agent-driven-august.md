@@ -105,6 +105,31 @@ fraction while the digest read percent ("win 1%" on a 67% sample) — both stats
 ship percents for win_rate and the Wilson bounds, unified with `setup_base_rate`. Probe:
 20 checks including the card mount with n visible.
 
+**Phase B completion pass (2026-11-17, owner rulings executed)**:
+- **Ruling 1** — the `[Desk | Chat]` layout toggle is a MODE of the one workspace
+  (`workspaceLayout`, persisted): Chat hides the chart and centers the stream at ~760px;
+  Desk restores the side-by-side. The pill sits at the rail's top-left; Alt+D toggles;
+  the Analyze/Agents icons now set the mode too (the rail stops promising a second page).
+  Render-probe walks both modes with screenshots.
+- **Ruling 2 (F6)** — the daily standdown LATCHES for the UTC day; a riskPercent tighten
+  cannot shrink settled losses past it; only a loosened limit (the gated path) or the day
+  roll clears it. Contract-pinned (848→849).
+- **Ruling 3 (F10)** — pending dock cards mirror into the canonical Messages and hydrate
+  by evidence on boot (landed → resolved; unlanded → interactive; gone → dismissed).
+  Contract-pinned in one bundle (the loadModule harness inlines imports per bundle).
+- **Ruling 4** — WorkspaceHome's greeting is the fresh-conversation empty state;
+  conversationPins drives the rail's Pinned group (row-menu Pin/Unpin, persisted);
+  messageFeedback + six dead files + the dead "Open in Agents" row + the dead sidebar
+  plumbing are deleted. The two GAPs are closed: the settlement card's ENTRY arm
+  (correctedEntry through the gated correction path) and the `refresh_journal_review`
+  tool (the journal's own debounced synthesis, on request).
+- **Ruling 5** — the Settings "Tell August what to change" bar routes through the seat
+  (a normal message → gated tools → cards/pills); the semantic-color sweep converted the
+  dock chrome's decorative green/red to warm gray (direction/PnL/price keep theirs);
+  evidence screenshots live in docs/evidence/; the parity probe gained per-kind receipt
+  assertions and a one-retry per round (the repeat-run flake). The live-model parity
+  check remains UNVERIFIABLE — no provider credentials exist in this environment.
+
 **Still open in Phase 3**: the parity proofs' live-model runs — the scripted-mock walks
 (`scripts/parity-proof-probe.cjs`, 19 checks: every replacement reachable, parameters
 accepted, payload shape right, Wilson + sample size on the stats) are green and repeat

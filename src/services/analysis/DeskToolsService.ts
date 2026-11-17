@@ -2684,6 +2684,7 @@ export const DESK_TOOL_DEFINITIONS: DeskToolDefinition[] = [
                     outcome: { type: 'string', enum: ['WIN', 'LOSS'], description: 'The outcome you say is right. Omit to leave the outcome alone.' },
                     pnlAmount: { type: 'number', description: 'Corrected PnL in the row\'s own captured unit ($, or leveraged %).' },
                     pnlPercent: { type: 'number', description: 'Corrected PnL as a percentage, when the row carries one.' },
+                    correctedEntry: { type: 'number', description: 'The entry price the tape shows — for a row logged at a price the fill contradicts, or an entry the tracker missed.' },
                     reason: { type: 'string', description: 'Why the record is wrong — printed on the confirmation card.' },
                 },
                 required: ['tradeId', 'reason'],
@@ -2786,6 +2787,15 @@ export const DESK_TOOL_DEFINITIONS: DeskToolDefinition[] = [
                 required: ['slug', 'action', 'reason'],
                 additionalProperties: false,
             },
+        },
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'refresh_journal_review',
+            description:
+                'Re-run the journal AI review (pattern memory, confluence, per-model attribution, insights) from the current trade log — the same synthesis that runs automatically after every logged trade. Use when the trader asks for a fresh read of their own record, or after a correction, without making them press the regenerate button in the Journal section. The refreshed synthesis lands in the Journal; this tool writes no rows and settles nothing.',
+            parameters: { type: 'object', properties: {}, additionalProperties: false },
         },
     },
 ];
@@ -5341,6 +5351,7 @@ ${body}`);
                     outcome: call.arguments.outcome,
                     pnlAmount: call.arguments.pnlAmount,
                     pnlPercent: call.arguments.pnlPercent,
+                    correctedEntry: call.arguments.correctedEntry,
                     reason: asString(call.arguments.reason),
                 };
                 if (raw.outcome !== undefined && raw.outcome !== 'WIN' && raw.outcome !== 'LOSS') {
@@ -5504,6 +5515,18 @@ ${body}`);
                     'The trader sees a confirmation card; NOTHING changes until they confirm it.',
                     'No plan status was written by this call.',
                 ].join(' ');
+                break;
+            }
+            case 'refresh_journal_review': {
+                // GAP-b: the trader asked (through the seat) for a fresh read
+                // of their own record. The synthesis is App's own debounced
+                // regeneration — the SAME path every logged trade triggers —
+                // reached through the event App listens for. No rows are
+                // written here and nothing settles.
+                if (typeof window !== 'undefined') {
+                    window.dispatchEvent(new CustomEvent('august:journal-refresh'));
+                }
+                content = 'JOURNAL REVIEW REFRESH REQUESTED: the AI review (pattern memory, confluence, per-model attribution, insights) re-runs from the current trade log (debounced ~1.2s) and lands in the Journal. No rows were written by this call.';
                 break;
             }
             case 'set_chart_timeframe': {

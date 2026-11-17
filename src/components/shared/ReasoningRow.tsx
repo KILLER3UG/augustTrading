@@ -202,7 +202,7 @@ const ReasoningRow: React.FC<ReasoningRowProps> = ({
                     title={copied ? 'Copied' : 'Copy thinking'}
                     className="absolute right-0 top-0 flex h-6 w-6 items-center justify-center rounded-control text-zinc-500 opacity-100 transition-opacity hover:bg-white/[0.06] hover:text-zinc-200 focus-visible:opacity-100 sm:opacity-0 sm:group-hover/reasoning:opacity-100"
                 >
-                    {copied ? <Check className="h-3.5 w-3.5 text-emerald-400" aria-hidden="true" /> : <Copy className="h-3.5 w-3.5" aria-hidden="true" />}
+                    {copied ? <Check className="h-3.5 w-3.5 text-zinc-300" aria-hidden="true" /> : <Copy className="h-3.5 w-3.5" aria-hidden="true" />}
                 </button>
             </div>
         </Disclosure>
