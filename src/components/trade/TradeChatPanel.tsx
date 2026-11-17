@@ -1069,6 +1069,20 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
     };
 
     const ready = !!provider && (activeSession.kind !== 'panel' || (activeSession.panelModels?.length ?? 0) >= 2);
+    /** Journal's one-tap stats trigger (P-5): the analytics tab's button asks
+     *  the desk here, where the tools live, and the VERIFIED StatsCard renders
+     *  from the tool receipt — the card the parity probe walks, never a
+     *  second computation in the Journal. A read-only desk question, so the
+     *  send needs no confirmation; a busy dock simply stays quiet (the button
+     *  is a convenience, not a command). */
+    useEffect(() => {
+        const onDeskStats = (): void => {
+            if (busy || !ready) return;
+            void send('Show my setup stats: win rate with the Wilson 95% CI, per-playbook attribution, and the recent trade log rows.');
+        };
+        window.addEventListener('august:desk-stats', onDeskStats);
+        return () => window.removeEventListener('august:desk-stats', onDeskStats);
+    }, [send, busy, ready]);
 
     // Past Conversations palette rows: newest first, title-filtered, capped
     // at 8 until "Show N more…" (the reference's exact behavior).
