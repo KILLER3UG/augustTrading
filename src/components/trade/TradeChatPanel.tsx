@@ -1083,6 +1083,37 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
         window.addEventListener('august:desk-stats', onDeskStats);
         return () => window.removeEventListener('august:desk-stats', onDeskStats);
     }, [send, busy, ready]);
+    /** The settlement/strategy doors (P-6 + ruling #12): the Journal's trade
+     *  detail, the watchlist's rows and the plan library each carry ONE tap
+     *  that asks the desk to PROPOSE through its card — the card is the only
+     *  writer, and the tap works from every surface because the dock hears
+     *  them all. */
+    useEffect(() => {
+        const onDeskCorrect = (ev: Event): void => {
+            if (busy || !ready) return;
+            const detail = (ev as CustomEvent<{ tradeId?: string; symbol?: string; at?: string | number }>).detail ?? {};
+            const when = detail.at ? new Date(detail.at as string | number).toISOString().slice(0, 16) : 'the logged time';
+            void send(`Propose the settlement correction for the ${detail.symbol ?? 'logged'} trade recorded around ${when} (id ${detail.tradeId ?? 'unknown'}) — read the tape and my note, then propose the correction (or the void) through your card.`);
+        };
+        const onDeskSettle = (ev: Event): void => {
+            if (busy || !ready) return;
+            const detail = (ev as CustomEvent<{ messageId?: string }>).detail ?? {};
+            void send(`Settle the watched signal (message ${detail.messageId ?? 'unknown'}): read the tape since it fired, decide the outcome, and propose it through your settlement card.`);
+        };
+        const onDeskStrategy = (ev: Event): void => {
+            if (busy || !ready) return;
+            const detail = (ev as CustomEvent<{ name?: string; action?: 'activate' | 'retire' }>).detail ?? {};
+            void send(`Propose ${detail.action === 'retire' ? 'retiring' : 'activating'} my "${detail.name ?? 'trade plan'}" plan through your activation card.`);
+        };
+        window.addEventListener('august:desk-correct', onDeskCorrect);
+        window.addEventListener('august:desk-settle', onDeskSettle);
+        window.addEventListener('august:desk-strategy', onDeskStrategy);
+        return () => {
+            window.removeEventListener('august:desk-correct', onDeskCorrect);
+            window.removeEventListener('august:desk-settle', onDeskSettle);
+            window.removeEventListener('august:desk-strategy', onDeskStrategy);
+        };
+    }, [send, busy, ready]);
 
     // Past Conversations palette rows: newest first, title-filtered, capped
     // at 8 until "Show N more…" (the reference's exact behavior).

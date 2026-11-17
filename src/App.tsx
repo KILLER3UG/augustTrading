@@ -1295,8 +1295,6 @@ const App: React.FC = () => {
         handleDeleteTrades,
         handleClearAllTrades,
         handleManualInsightsUpdate,
-        handleUpdateTradeLeverage,
-        handleUpdateTradeType,
         handleUpdateTradeOutcome,
         handleUpdateTradePnL,
         handleUpdateTradeEntry,
@@ -2021,10 +2019,6 @@ const App: React.FC = () => {
                         onUpdateInsights={handleManualInsightsUpdate}
                         isSummarizing={isSummaryInProgress}
                         currentInsightIds={currentInsightIds}
-                        onUpdateTradeLeverage={handleUpdateTradeLeverage}
-                        onUpdateTradeType={handleUpdateTradeType}
-                        onUpdateOutcome={handleUpdateTradeOutcome}
-                        onUpdatePnL={handleUpdateTradePnL}
                     />
                 </React.Suspense>;
             case 'learn':
@@ -2410,10 +2404,6 @@ const App: React.FC = () => {
                 onUpdateInsights={handleManualInsightsUpdate}
                 isSummarizing={isSummaryInProgress}
                 currentInsightIds={currentInsightIds}
-                onUpdateTradeLeverage={handleUpdateTradeLeverage}
-                onUpdateTradeType={handleUpdateTradeType}
-                onUpdateOutcome={handleUpdateTradeOutcome}
-                onUpdatePnL={handleUpdateTradePnL}
                 memoryConfig={memoryConfig}
                 onMemoryConfigChange={(config) => {
                     setMemoryConfig(config);
@@ -2459,7 +2449,6 @@ const App: React.FC = () => {
                     activeConversationId={activeConversationId}
                     autopilotResolutions={autopilotResolutions}
                     onToggleWatch={handleToggleWatch}
-                    onLogTrade={(messageId, outcome, conversationId) => runWatchListAction(conversationId, { type: 'log', messageId, outcome })}
                     onOpenSignal={handleOpenWatchedSignal}
                     onConfirmAutopilot={(messageId, conversationId) => runWatchListAction(conversationId, { type: 'autopilot', messageId })}
                 />

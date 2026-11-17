@@ -12,8 +12,7 @@
  * how — and a trader comparing the two should see them side by side.
  */
 import React, { useCallback, useEffect, useState } from 'react';
-import { listStrategies, setStrategyStatus, strategyFileName, type StrategyMeta } from '../../services/learning/strategyStore';
-import { getActiveUsername } from '../../utils/activeUser';
+import { listStrategies, type StrategyMeta } from '../../services/learning/strategyStore';
 
 const STATUS_LABEL: Record<StrategyMeta['status'], string> = {
     draft: 'Draft',
@@ -21,18 +20,16 @@ const STATUS_LABEL: Record<StrategyMeta['status'], string> = {
     retired: 'Retired',
 };
 
-const Plan: React.FC<{ meta: StrategyMeta; onChanged: () => void }> = ({ meta, onChanged }) => {
-    const [busy, setBusy] = useState(false);
-    const act = useCallback(async (status: StrategyMeta['status']) => {
-        setBusy(true);
-        try {
-            // The canonical file name, not a second copy of the slug rule.
-            await setStrategyStatus(strategyFileName(meta.name).replace(/\.md$/i, ''), status, getActiveUsername());
-            onChanged();
-        } finally {
-            setBusy(false);
-        }
-    }, [meta.name, onChanged]);
+const Plan: React.FC<{ meta: StrategyMeta }> = ({ meta }) => {
+    /* Phase 4 (ruling #12): the manual status flip left — the strategy-
+        activation card is the WRITER (same store, same revert window, the
+        trader's tap). One tap here asks the desk to propose the change
+        through its card; `onChanged` refreshes once the trader confirms. */
+    const propose = useCallback((action: 'activate' | 'retire'): void => {
+        window.dispatchEvent(new CustomEvent('august:desk-strategy', {
+            detail: { name: meta.name, action },
+        }));
+    }, [meta.name]);
 
     const rows: Array<[string, string | undefined]> = [
         ['Entry', meta.entry],
@@ -69,11 +66,12 @@ const Plan: React.FC<{ meta: StrategyMeta; onChanged: () => void }> = ({ meta, o
                 </div>
                 <button
                     type="button"
-                    disabled={busy}
-                    onClick={() => void act(meta.status === 'active' ? 'retired' : 'active')}
-                    className="shrink-0 rounded-control border border-hairline bg-zinc-800 px-2.5 py-1 text-ui-dense font-bold uppercase tracking-wider text-zinc-200 hover:border-line hover:bg-zinc-700 disabled:opacity-50"
+                    data-testid="strategy-propose-in-chat"
+                    onClick={() => propose(meta.status === 'active' ? 'retire' : 'activate')}
+                    title="Ask the desk to propose the change through its activation card"
+                    className="shrink-0 rounded-control border border-hairline bg-zinc-800 px-2.5 py-1 text-ui-dense font-bold uppercase tracking-wider text-zinc-200 hover:border-line hover:bg-zinc-700"
                 >
-                    {meta.status === 'active' ? 'Retire' : 'Activate'}
+                    {meta.status === 'active' ? 'Retire via desk' : 'Activate via desk'}
                 </button>
             </div>
             <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5">
@@ -126,7 +124,7 @@ const StrategyPlans: React.FC = () => {
     return (
         <div className="flex flex-col gap-2">
             {plans.map(p => (
-                <Plan key={p.name} meta={p} onChanged={refresh} />
+                <Plan key={p.name} meta={p} />
             ))}
         </div>
     );

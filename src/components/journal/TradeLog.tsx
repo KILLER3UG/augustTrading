@@ -23,14 +23,10 @@ interface TradeLogContentProps {
     onUpdateInsights: (ids: string[]) => void;
     isSummarizing?: boolean;
     currentInsightIds: string[];
-    onUpdateTradeLeverage: (id: string, leverage: number) => void;
     /** Optional: the classifier labels automatically, and this is the way to
      *  disagree with it. Mounts that don't offer editing simply omit it. */
-    onUpdateTradeType?: (id: string, tradeType: 'scalp' | 'swing') => void;
     /** Correct a mis-logged outcome from the expanded card. */
-    onUpdateOutcome?: (id: string, outcome: TradeOutcome) => void;
     /** Edit PnL (dollar amount + leveraged percent) from the expanded card. */
-    onUpdatePnL?: (id: string, pnl: { pnlAmount?: number; pnlPercent?: number }) => void;
     /** Active user — scopes the reasoning-record lookup per trade. */
     username?: string;
     onDocumentOpenChange?: (open: boolean) => void;
@@ -65,41 +61,15 @@ const TradeDetailView: React.FC<{
     trade: LoggedTrade;
     onBack: () => void;
     modelIdToName: Record<string, string>;
-    onUpdateLeverage: (id: string, leverage: number) => void;
-    onUpdateType?: (id: string, tradeType: 'scalp' | 'swing') => void;
-    onUpdateOutcome?: (id: string, outcome: TradeOutcome) => void;
-    onUpdatePnL?: (id: string, pnl: { pnlAmount?: number; pnlPercent?: number }) => void;
     username?: string;
-}> = ({ trade, onBack, modelIdToName, onUpdateLeverage, onUpdateType, onUpdateOutcome, onUpdatePnL, username }) => {
+}> = ({ trade, onBack, modelIdToName, username }) => {
     const { analysis, outcome, timestamp, postMortem, postMortemCreatedAt, postMortemModel, postMortemImages, correctedEntry, correctedStopLoss, correctedTakeProfit, pnlAmount, pnlPercent, modelsUsed, geminiModelUsed, deepseekModelUsed, zhipuModelUsed, groqModelUsed, groqNewModelUsed, groqAlt2ModelUsed, openrouterModelUsed, moderatorModel, leverage } = trade;
     const { direction, stopLoss, stopLossPercentage, entryPoints, takeProfit, activeStrategies, coinName, invalidationCriteria } = analysis;
     const [viewerImageUrl, setViewerImageUrl] = useState<string | null>(null);
-    const [localLeverage, setLocalLeverage] = useState<string>(String(leverage || defaultLeverage()));
-    // PnL edit state — autopilot-logged trades only carry a percent, so the
-    // dollar figure often needs a manual fill.
-    const [pnlDraftAmount, setPnlDraftAmount] = useState<string>(pnlAmount !== undefined ? String(pnlAmount) : '');
-    const [pnlDraftPercent, setPnlDraftPercent] = useState<string>(pnlPercent !== undefined ? String(pnlPercent) : '');
-
     const safeDirection = direction || 'Neutral';
     // Realized share of the best move the tape offered. Null until the outcome
     // was recorded with a measured excursion window.
     const capture = captureEfficiencyPct(trade);
-
-    const handleLeverageBlur = () => {
-        let val = parseInt(localLeverage, 10);
-        if (isNaN(val)) val = defaultLeverage();
-        val = Math.max(1, Math.min(125, val));
-        setLocalLeverage(String(val));
-        if (val !== leverage) {
-            onUpdateLeverage(trade.id, val);
-        }
-    };
-
-    const handlePresetClick = (e: React.MouseEvent, val: number) => {
-        e.stopPropagation();
-        setLocalLeverage(String(val));
-        onUpdateLeverage(trade.id, val);
-    };
 
     // --- Dynamic Mode Styling ---
     const containerClass = "bg-zinc-900/50 border border-zinc-800";
@@ -137,135 +107,32 @@ const TradeDetailView: React.FC<{
                             <SetupLifecycleCard analysis={analysis} outcome={outcome} triggeredEntryIndices={trade.triggeredEntryIndices} compact embedded />
                             <div className="grid grid-cols-2 gap-4 text-ui-base pt-2 font-mono tabular-nums">
 
-                                {/* Trade Settings Row */}
+                                {/* Trade parameters, READ-ONLY (Phase 4, P-6):
+                                    the manual outcome / PnL / leverage / class
+                                    editors left — the desk's settlement-
+                                    correction card is the writer now (parity
+                                    probe P-6; the VOID arm deletes). One tap
+                                    asks the desk to propose the correction
+                                    through its card. */}
                                 <div className="col-span-2 flex items-center justify-between bg-zinc-950 p-3.5 rounded-control border border-zinc-800 mb-1 flex-wrap gap-3">
                                     <span className="text-ui-dense uppercase font-semibold text-zinc-500 tracking-widest">Trade Parameters</span>
                                     <div className="flex items-center gap-2.5 flex-wrap">
                                         <span className="text-ui-sm text-zinc-400">Leverage:</span>
-                                        <div className="flex items-center bg-zinc-800 rounded-control border border-zinc-700 px-2.5 py-1">
-                                            <input
-                                                type="number"
-                                                value={localLeverage}
-                                                onChange={(e) => setLocalLeverage(e.target.value)}
-                                                onBlur={handleLeverageBlur}
-                                                onKeyDown={(e) => e.key === 'Enter' && handleLeverageBlur()}
-                                                className="w-8 bg-transparent text-center font-mono font-bold text-zinc-200 outline-none text-ui-base"
-                                            />
-                                            <span className="text-zinc-600 text-ui-sm">x</span>
-                                        </div>
-
-                                        <div className="flex gap-1.5 ml-1 pl-3 border-l border-zinc-800">
-                                            {[25, 50, 75, 100].map(val => (
-                                                <button
-                                                    key={val}
-                                                    onClick={(e) => handlePresetClick(e, val)}
-                                                    className={`text-ui-xs px-2 py-1 rounded-control border transition-colors duration-[150ms] ease-[var(--ease-snappy)] ${parseInt(localLeverage) === val
-                                                        ? 'bg-zinc-700 border-zinc-500 text-zinc-100 font-semibold'
-                                                        : 'bg-zinc-800 border-zinc-700 text-zinc-500 hover:text-zinc-300'
-                                                        }`}
-                                                >
-                                                    {val}x
-                                                </button>
-                                            ))}
-                                        </div>
-
-                                        {/* Outcome correction — segmented buttons
-                                            (the old <select> dropdown is gone). */}
-                                        {onUpdateOutcome && (
-                                            <div className="flex items-center gap-1 ml-2 pl-2 border-l border-hairline flex-wrap">
-                                                <span className="text-ui-xs text-zinc-400">Outcome:</span>
-                                                {[TradeOutcome.WIN, TradeOutcome.LOSS, TradeOutcome.ENTRY_NOT_HIT, TradeOutcome.SKIPPED].map(o => (
-                                                    <button
-                                                        key={o}
-                                                        onClick={() => onUpdateOutcome(trade.id, o)}
-                                                        className={`px-1.5 py-0.5 rounded-control text-ui-2xs font-bold uppercase tracking-wider border transition-colors duration-[150ms] ease-[var(--ease-snappy)] ${
-                                                            trade.outcome === o
-                                                                ? o === TradeOutcome.WIN
-                                                                    ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300'
-                                                                    : o === TradeOutcome.LOSS
-                                                                        ? 'bg-rose-500/20 border-rose-500/40 text-rose-300'
-                                                                        : 'bg-zinc-700 border-line text-zinc-200'
-                                                                : 'bg-zinc-800 border-hairline text-zinc-500 hover:text-zinc-300'
-                                                        }`}
-                                                        title={`Set outcome to ${o === TradeOutcome.ENTRY_NOT_HIT ? 'NO ENTRY' : o}`}
-                                                    >
-                                                        {o === TradeOutcome.ENTRY_NOT_HIT ? 'NO ENTRY' : o}
-                                                    </button>
-                                                ))}
-                                            </div>
-                                        )}
-
-                                        {/* Class correction. Finalization labels every
-                                            verdict, so without this the class is
-                                            something the trader can filter by but
-                                            never disagree with — and the
-                                            `tradeTypeManualOverride` flag the detector
-                                            honours had no writer. Setting it here is
-                                            what makes the label stick: the classifier
-                                            skips any trade that already carries one. */}
-                                        {onUpdateType && (
-                                            <div className="flex items-center gap-1 ml-2 pl-2 border-l border-hairline" data-testid="trade-type-editor">
-                                                <span className="text-ui-xs text-zinc-400">Class:</span>
-                                                {(['scalp', 'swing'] as const).map(tt => (
-                                                    <button
-                                                        key={tt}
-                                                        type="button"
-                                                        aria-pressed={(trade.tradeType || analysis?.tradeType) === tt}
-                                                        onClick={() => onUpdateType(trade.id, tt)}
-                                                        title={analysis?.tradeTypeManualOverride
-                                                            ? 'Manually set — click to change'
-                                                            : 'Auto-detected — set it yourself'}
-                                                        className={`px-1.5 py-0.5 rounded-control text-ui-2xs font-bold uppercase tracking-wider border transition-colors duration-[150ms] ease-[var(--ease-snappy)] ${
-                                                            (trade.tradeType || analysis?.tradeType) === tt
-                                                                ? 'bg-zinc-700 border-line text-zinc-100'
-                                                                : 'bg-zinc-800 border-hairline text-zinc-500 hover:text-zinc-300'
-                                                        }`}
-                                                    >
-                                                        {tt === 'scalp' ? '◆ scalp' : '◇ swing'}
-                                                    </button>
-                                                ))}
-                                                {analysis?.tradeTypeManualOverride && (
-                                                    <span className="text-ui-2xs uppercase tracking-widest text-zinc-500">manual</span>
-                                                )}
-                                            </div>
-                                        )}
-
-                                        {/* PnL editing — dollar amount + leveraged percent
-                                            (autopilot trades only carry the percent). */}
-                                        {onUpdatePnL && (
-                                            <div className="flex items-center gap-1.5 ml-2 pl-2 border-l border-hairline">
-                                                <span className="text-ui-xs text-zinc-400">PnL $</span>
-                                                <input
-                                                    type="number"
-                                                    value={pnlDraftAmount}
-                                                    onChange={(e) => setPnlDraftAmount(e.target.value)}
-                                                    placeholder={pnlAmount !== undefined ? undefined : '—'}
-                                                    className="w-20 bg-zinc-800 border border-hairline rounded-control px-1.5 py-0.5 text-ui-xs font-mono text-zinc-300 outline-none focus:border-accent/40"
-                                                    aria-label="PnL in dollars"
-                                                />
-                                                <span className="text-ui-xs text-zinc-400">%</span>
-                                                <input
-                                                    type="number"
-                                                    value={pnlDraftPercent}
-                                                    onChange={(e) => setPnlDraftPercent(e.target.value)}
-                                                    placeholder={pnlPercent !== undefined ? undefined : '—'}
-                                                    className="w-14 bg-zinc-800 border border-hairline rounded-control px-1.5 py-0.5 text-ui-xs font-mono text-zinc-300 outline-none focus:border-accent/40"
-                                                    aria-label="PnL as leveraged percent"
-                                                />
-                                                <button
-                                                    type="button"
-                                                    onClick={() => onUpdatePnL(trade.id, {
-                                                        pnlAmount: pnlDraftAmount.trim() !== '' ? parseFloat(pnlDraftAmount) : undefined,
-                                                        pnlPercent: pnlDraftPercent.trim() !== '' ? parseFloat(pnlDraftPercent) : undefined,
-                                                    })}
-                                                    className="px-2 py-1 rounded-control bg-zinc-700 hover:bg-zinc-600 text-zinc-100 text-ui-xs font-semibold uppercase tracking-widest transition-colors"
-                                                    title="Save PnL"
-                                                >
-                                                    Save
-                                                </button>
-                                            </div>
-                                        )}
+                                        <span className="font-mono font-bold text-zinc-200">{leverage || defaultLeverage()}x</span>
+                                        <span className="text-ui-sm text-zinc-400">Class:</span>
+                                        <span className="text-ui-sm text-zinc-300">{(trade.tradeType || analysis?.tradeType || 'auto') === 'scalp' ? '◆ scalp' : '◇ swing'}</span>
                                     </div>
+                                    <button
+                                        type="button"
+                                        data-testid="trade-correct-in-chat"
+                                        onClick={() => window.dispatchEvent(new CustomEvent('august:desk-correct', {
+                                            detail: { tradeId: trade.id, symbol: coinName, at: timestamp },
+                                        }))}
+                                        title="Ask the desk to propose the settlement correction (or the void) through its card"
+                                        className="rounded-control border border-hairline px-3 py-1.5 text-ui-dense font-medium text-zinc-300 transition-colors hover:bg-white/[0.06] hover:text-zinc-100"
+                                    >
+                                        Correct in chat
+                                    </button>
                                 </div>
 
                                 <div className="p-4 bg-zinc-950 rounded-bubble border border-zinc-800">
@@ -518,7 +385,7 @@ const TradeLogRowImpl: React.FC<{
 const TradeLogRow = React.memo(TradeLogRowImpl);
 
 const TradeLogContent: React.FC<TradeLogContentProps> = ({
-    trades, onDeleteTrades, onClearAllTrades, modelIdToName, onUpdateInsights, isSummarizing, currentInsightIds, onUpdateTradeLeverage, onUpdateTradeType, onUpdateOutcome, onUpdatePnL, username,
+    trades, onDeleteTrades, onClearAllTrades, modelIdToName, onUpdateInsights, isSummarizing, currentInsightIds, username,
     onDocumentOpenChange,
 }) => {
     // Drill-down navigation: the trade currently on the full detail screen
@@ -596,10 +463,6 @@ const TradeLogContent: React.FC<TradeLogContentProps> = ({
                 trade={detailTrade}
                 onBack={() => setDetailTradeId(null)}
                 modelIdToName={modelIdToName}
-                onUpdateLeverage={onUpdateTradeLeverage}
-                onUpdateType={onUpdateTradeType}
-                onUpdateOutcome={onUpdateOutcome}
-                onUpdatePnL={onUpdatePnL}
                 username={username}
             />
         );

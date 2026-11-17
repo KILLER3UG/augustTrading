@@ -16,7 +16,6 @@ interface WatchListPanelProps {
     activeConversationId: string | null;
     autopilotResolutions?: Record<string, AutopilotResolution>;
     onToggleWatch: (messageId: string, conversationId: string) => void;
-    onLogTrade: (messageId: string, outcome: TradeOutcome.WIN | TradeOutcome.LOSS, conversationId: string) => void;
     onOpenSignal: (conversationId: string, messageId: string) => void;
     onConfirmAutopilot?: (messageId: string, conversationId: string) => void;
 }
@@ -33,7 +32,6 @@ const WatchListPanel: React.FC<WatchListPanelProps> = ({
     activeConversationId,
     autopilotResolutions = {},
     onToggleWatch,
-    onLogTrade,
     onOpenSignal,
     onConfirmAutopilot,
 }) => {
@@ -135,10 +133,21 @@ const WatchListPanel: React.FC<WatchListPanelProps> = ({
                                 )}
                                 <div className="mt-3 flex flex-wrap gap-1.5">
                                     {pending && !resolution && (
-                                        <>
-                                            <button type="button" onClick={() => onLogTrade(signal.messageId, TradeOutcome.WIN, signal.conversationId)} className="rounded-control border border-emerald-500/40 bg-emerald-500/15 px-2.5 py-1 text-ui-dense font-semibold text-emerald-300">Win</button>
-                                            <button type="button" onClick={() => onLogTrade(signal.messageId, TradeOutcome.LOSS, signal.conversationId)} className="rounded-control border border-rose-500/40 bg-rose-500/15 px-2.5 py-1 text-ui-dense font-semibold text-rose-300">Loss</button>
-                                        </>
+                                        /* Phase 4 (P-6): the manual Win/Loss
+                                            buttons left — the desk proposes the
+                                            settlement through its card, and the
+                                            one tap here asks it to. */
+                                        <button
+                                            type="button"
+                                            data-testid="watch-settle-in-chat"
+                                            onClick={() => window.dispatchEvent(new CustomEvent('august:desk-settle', {
+                                                detail: { messageId: signal.messageId, conversationId: signal.conversationId },
+                                            }))}
+                                            title="Ask the desk to propose this signal's settlement through its card"
+                                            className="rounded-control border border-hairline px-2.5 py-1 text-ui-dense font-semibold text-zinc-200 hover:text-zinc-100"
+                                        >
+                                            Settle in chat
+                                        </button>
                                     )}
                                     {pending && resolution && onConfirmAutopilot && (
                                         <button type="button" onClick={() => onConfirmAutopilot(signal.messageId, signal.conversationId)} className="rounded-control border border-accent/40 bg-accent/15 px-2.5 py-1 text-ui-dense font-semibold text-accent">Confirm autopilot</button>

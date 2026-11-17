@@ -9,7 +9,6 @@ import {HistoryIcon, ChartBarIcon, FileSpreadsheet, FileText, TargetIcon} from '
 import { exportTradesCSV, exportTradesHTML } from '../../utils/reportExport';
 import { LoggedTrade, TradeOutcome } from '../../types';
 import { computeJournalStats } from '../../utils/journalAnalytics';
-import { phtClock, phtDayKey } from '../../utils/timezone';
 import { getActiveUsername } from '../../utils/activeUser';
 import { useEscapeClose } from '../../hooks/useEscapeClose';
 
@@ -39,8 +38,6 @@ interface JournalProps {
     currentInsightIds: string[];
     /** (i/n) progress for manual insight-generation loops. */
     insightProgress?: { done: number; total: number } | null;
-    onUpdateTradeLeverage: (id: string, leverage: number) => void;
-    onUpdateTradeType: (id: string, tradeType: 'scalp' | 'swing') => void;
     /** Correct a mis-logged outcome from the expanded card. */
     onUpdateOutcome?: (id: string, outcome: TradeOutcome) => void;
     /** Edit PnL (dollar + percent) from the expanded card. */
@@ -107,7 +104,7 @@ const JournalInner: React.FC<JournalProps> = ({
     isVisible, onClose, initialTab,
     openNonce, username,
     // Trade Log Pass-through
-    trades, onDeleteTrades, onClearAllTrades, modelIdToName, onUpdateInsights, isSummarizing, currentInsightIds, onUpdateTradeLeverage, onUpdateTradeType, onUpdateOutcome, onUpdatePnL,
+    trades, onDeleteTrades, onClearAllTrades, modelIdToName, onUpdateInsights, isSummarizing, currentInsightIds,
 }) => {
     const [activeTab, setActiveTab] = useState<TabId>(resolveTab(initialTab));
     const [documentOpen, setDocumentOpen] = useState(false);
@@ -178,10 +175,6 @@ const JournalInner: React.FC<JournalProps> = ({
                 onUpdateInsights={onUpdateInsights}
                 isSummarizing={isSummarizing}
                 currentInsightIds={currentInsightIds}
-                onUpdateTradeLeverage={onUpdateTradeLeverage}
-                onUpdateTradeType={onUpdateTradeType}
-                onUpdateOutcome={onUpdateOutcome}
-                onUpdatePnL={onUpdatePnL}
                 username={activeUsername}
                 onDocumentOpenChange={setDocumentOpen}
             />
