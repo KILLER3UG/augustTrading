@@ -48,6 +48,7 @@ import {
     buildSkillsIndexForPrompt, TRADE_CHAT_SYSTEM_PROMPT,
 } from '../../services/trade/tradeChatContext';
 import { activeStrategiesBlock } from '../../services/learning/strategyStore';
+import { WorkspaceGreeting } from './WorkspaceHome';
 import { recordSeatInjections } from '../../services/learning/MemoryInjectionService';
 import { deleteSessionDrawings, type ChartDrawing } from '../../services/trade/chartDrawings';
 import type { MessageLevelLines } from '../../services/trade/keyLevels';
@@ -253,7 +254,6 @@ interface TradeChatPanelProps {
     /** Jump straight to the Agents surface from the dock header. Routed
      *  through App's surface select so the directional enter animation
      *  (Chat arrives from the left) fires like every other Chat hop. */
-    onOpenChat?: () => void;
     /** Triggers a fresh discovery of models from configured providers. */
     onRefreshModels?: () => Promise<void>;
     /** Pin / unpin the signal behind an entry. Only entries that carry an
@@ -270,6 +270,8 @@ interface TradeChatPanelProps {
     onVoidSettlementCorrection?: (proposal: SettlementCorrectionProposal) => void;
     onConfirmTradeAction?: (proposal: TradeActionProposal) => void;
     onDismissTradeAction?: (proposal: TradeActionProposal) => void;
+    /** The workspace's layout mode (Desk | Chat) — the empty state reads it. */
+    layoutMode?: 'desk' | 'chat';
     onConfirmStrategyActivation?: (proposal: import('../../services/trade/strategyActivation').StrategyActivationProposal, sessionId?: string) => void;
     onDismissStrategyActivation?: (proposal: import('../../services/trade/strategyActivation').StrategyActivationProposal) => void;
     onRevertStrategyActivation?: (proposal: import('../../services/trade/strategyActivation').StrategyActivationProposal, sessionId?: string) => void;
@@ -330,7 +332,7 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
     onChatLevelsChange,
     renderGroupSurface, groups = [],
     registerScrollToMessage,
-    onToggleCollapsed, expanded, onToggleExpanded, onOpenChat,
+    onToggleCollapsed, expanded, onToggleExpanded,
     onNewGroup, botThreadRows, conversationRows, onBotTurnCommit,
     onSoloTurnCommit,
     onSyncConversation,
@@ -338,6 +340,7 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
     onConfirmSettlementCorrection, onDismissSettlementCorrection, onVoidSettlementCorrection,
     onConfirmTradeAction, onDismissTradeAction,
     onConfirmStrategyActivation, onDismissStrategyActivation, onRevertStrategyActivation,
+    layoutMode = 'desk',
     onRefreshModels,
 }) => {
     // Session state lives in the module store (chatStore) so an in-flight
@@ -1137,13 +1140,6 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
                                         here from a dedicated header icon: it is a
                                         route, not a frequent toggle, and the
                                         header lost its last chrome row. */}
-                                    {onOpenChat && (
-                                        <button type="button" onClick={() => { setShowNewMenu(false); onOpenChat(); }}
-                                            data-testid="dock-open-chat"
-                                            className="block w-full rounded-control px-2 py-1.5 text-left text-ui-dense text-zinc-300 hover:bg-white/[0.06]">
-                                            Open in Agents
-                                        </button>
-                                    )}
                                     <div className="my-1 border-t border-hairline" />
                                     <p className="px-2 py-0.5 text-ui-2xs text-zinc-600">Start</p>
                                     <button type="button" onClick={() => addSession('panel')} className="block w-full rounded-control px-2 py-1.5 text-left text-ui-dense text-zinc-300 hover:bg-white/[0.06]">
@@ -1289,7 +1285,8 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
                 role="log" aria-live="polite" aria-busy={entries.some(e => e.streaming)}
                 aria-label="Chart AI conversation">
                 {entries.length === 0 && !panelPickerFor && (
-                    <div className="flex h-full flex-col items-center justify-center gap-5 px-4 text-center">
+                    <div className={`flex ${layoutMode === 'chat' ? 'flex-1' : 'h-full'} flex-col items-center justify-center gap-5 px-4 text-center`}>
+                        <WorkspaceGreeting compact={layoutMode !== 'chat'} />
                         <p className="max-w-[16rem] text-ui-caption leading-6 text-zinc-500">
                             It can see this chart, the book and your drawings.
                         </p>

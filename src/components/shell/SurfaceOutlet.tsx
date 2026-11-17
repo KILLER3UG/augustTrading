@@ -68,8 +68,6 @@ export interface SurfaceOutletProps {
     selectedChatModel: string;
     onSelectChatModel: (modelId: string) => void;
     onRefreshModels: () => Promise<void>;
-    tradeSidebarOpen: boolean;
-    onToggleTradeSidebar: () => void;
     tradeModeRequest: { mode: TradeMode; n: number } | null;
     activeUsername: string | null;
     onTradeModeChange: (mode: TradeMode) => void;
@@ -128,7 +126,7 @@ const SurfaceOutlet: React.FC<SurfaceOutletProps> = ({
     liveMarketConditions, liveMarketSymbol, onOpenLiveMarket, onOpenVisionData,
     onToggleNavRail, navRailExpanded,
     memoryEnabled, strategiesEnabled, providers, selectedChatModel, onSelectChatModel,
-    onRefreshModels, tradeSidebarOpen, onToggleTradeSidebar, tradeModeRequest,
+    onRefreshModels, tradeModeRequest,
     activeUsername, onTradeModeChange, botThreadRows, onBotTurnCommit, onSoloTurnCommit,
     onSyncConversation, conversationRows, onNewGroup, verdict, bots, trades, groupTabs,
     botSessionRequest, groupSessionRequest, onRunAnalysisFromChat, onAnalysisError,
@@ -175,8 +173,6 @@ const SurfaceOutlet: React.FC<SurfaceOutletProps> = ({
                         selectedChatModel={selectedChatModel}
                         onSelectChatModel={onSelectChatModel}
                         onRefreshModels={onRefreshModels}
-                        sidebarOpen={tradeSidebarOpen}
-                        onToggleSidebar={onToggleTradeSidebar}
                         modeRequest={tradeModeRequest ?? undefined}
                         activeUsername={activeUsername ?? undefined}
                         onTradeModeChange={onTradeModeChange}

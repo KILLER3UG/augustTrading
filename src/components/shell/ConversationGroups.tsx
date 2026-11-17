@@ -59,6 +59,8 @@ export interface ConversationGroupsProps {
     runningAgentIds?: ReadonlySet<string>;
     /** Pinned conversation ids — the Pinned group renders only when > 0. */
     pinnedIds?: ReadonlySet<string>;
+    /** Pin/unpin from the row's actions menu (the trader's own keep-at-top). */
+    onTogglePin?: (id: string) => void;
     onOpenSearch?: () => void;
     /** Put the conversation sidebar away. Lives on the RECENT heading; the
      *  Analyze surface does not mount this column at all. */
@@ -69,10 +71,12 @@ const ConversationRow: React.FC<{
     conversation: Conversation;
     selected: boolean;
     running: boolean;
+    pinned: boolean;
     onOpen: (id: string) => void;
     onDelete: (id: string) => void;
     onClear: (id: string) => void;
-}> = ({ conversation, selected, running, onOpen, onDelete, onClear }) => {
+    onTogglePin?: (id: string) => void;
+}> = ({ conversation, selected, running, pinned, onOpen, onDelete, onClear, onTogglePin }) => {
     const [menuOpen, setMenuOpen] = useState(false);
     // Inline rename: the row's own name becomes an input. Enter commits,
     // Escape cancels, a blur commits (unless Escape already cancelled it).
@@ -118,7 +122,7 @@ const ConversationRow: React.FC<{
     return (
         <div className={`group relative flex items-center rounded-control ${
             selected ? 'bg-white/[0.06] text-zinc-100' : 'text-zinc-500'
-        }`}>
+        } ${pinned ? 'border-l-2 border-zinc-400/70 pl-1' : ''}`}>
             {renaming ? (
                 <input
                     autoFocus
@@ -188,6 +192,13 @@ const ConversationRow: React.FC<{
                 >
                     <button
                         type="button"
+                        onClick={() => { setMenuOpen(false); onTogglePin?.(conversation.id); }}
+                        className="whitespace-nowrap px-3 py-1.5 text-left text-ui-xs text-zinc-400 transition-colors hover:bg-white/[0.05] hover:text-zinc-200"
+                    >
+                        {pinned ? 'Unpin' : 'Pin to top'}
+                    </button>
+                    <button
+                        type="button"
                         onClick={() => { setMenuOpen(false); setDraft(title); setRenaming(true); }}
                         className="whitespace-nowrap px-3 py-1.5 text-left text-ui-xs text-zinc-400 transition-colors hover:bg-white/[0.05] hover:text-zinc-200"
                     >
@@ -216,6 +227,7 @@ const ConversationRow: React.FC<{
 export const ConversationGroups: React.FC<ConversationGroupsProps> = ({
     conversations, activeConversationId, onNewChat, onOpenConversation,
     onDeleteConversation, onClearConversation, runningAgentIds, pinnedIds,
+    onTogglePin,
     onHideConversation,
 }) => {
     // A conversation with no messages is a placeholder, not a record: it is
@@ -262,6 +274,8 @@ export const ConversationGroups: React.FC<ConversationGroupsProps> = ({
                                 conversation={conversation}
                                 selected={conversation.id === activeConversationId}
                                 running={isRunning(conversation.id)}
+                                pinned
+                                onTogglePin={onTogglePin}
                                 onOpen={onOpenConversation}
                                 onDelete={onDeleteConversation}
                                 onClear={onClearConversation}
@@ -301,6 +315,8 @@ export const ConversationGroups: React.FC<ConversationGroupsProps> = ({
                             conversation={conversation}
                             selected={conversation.id === activeConversationId}
                             running={isRunning(conversation.id)}
+                                pinned={false}
+                                onTogglePin={onTogglePin}
                             onOpen={onOpenConversation}
                             onDelete={onDeleteConversation}
                             onClear={onClearConversation}

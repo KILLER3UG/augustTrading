@@ -351,7 +351,6 @@ const RAW_LOCAL_STORAGE_PREFIXES: readonly string[] = [
     // this list exists to prevent. The three crash breadcrumbs
     // (lastPromiseError, lastGlobalError, lastCrashError) stay OUT — telemetry,
     // not the trader's data.
-    'trade_sidebar_open_v1',
     'agent_threads_opened_v1',
     'desk_idle_motion_v1',
     'thinking_leak_bin_v1',
@@ -875,7 +874,6 @@ const RESTORABLE_PREFERENCE_KEY_PREFIXES: readonly string[] = [
     'trade_drawings_v1_',
     'trade_session_drawings_v1_',
     'trade_session_model_v1_',
-    'trade_sidebar_open_v1',
     'trade_tf_bar_v1',
     // Bots / agents / desk
     'agents_bots_v1',

@@ -34,6 +34,7 @@ import {
     restorePendingStrategyActivation, type StrategyActivationProposal,
 } from './services/trade/strategyActivation';
 import { harnessTurn } from './utils/harnessMarks';
+import { setWorkspaceLayout, toggleWorkspaceLayoutPersisted } from './utils/workspaceLayout';
 import { setStrategyStatus, type StrategyStatus } from './services/learning/strategyStore';
 import { getHarnessSettings, getSessionGuardConfig, saveHarnessSettings, type HarnessSettings } from './utils/harnessSettings';
 import { assessSession, applyDailyStanddownLatch, guardEnforcement } from './services/validation/SessionGuardService';
@@ -392,6 +393,11 @@ const App: React.FC = () => {
      *  pinned per surface. Declared here because the Alt+N chords below read it
      *  during the same render. */
     const selectSurface = useCallback((next: AppSurface) => {
+        // The two rail icons now name what they do (the UI audit's
+        // contradiction): Analyze opens the DESK layout, Agents the CHAT
+        // focus view — the same workspace, one state tree, the layout mode
+        // is the difference.
+        setWorkspaceLayout(next === 'agents' ? 'chat' : 'desk');
         handleSurfaceSelect(next);
     }, [handleSurfaceSelect]);
     /** The Agents surface's switch: go and talk to the desk WITH the chart.
@@ -402,10 +408,7 @@ const App: React.FC = () => {
      *  whichever chat was last used and the two surfaces become two transcripts
      *  wearing one conversation's name. Defined up here because the Alt+6 chord
      *  below reads it during the same render. */
-    const openChartAi = useCallback((): void => {
-        if (activeConversationId) chatStore.bindConversation(activeConversationId);
-        handleSurfaceSelect('trade');
-    }, [activeConversationId, handleSurfaceSelect]);
+
     // The Chat ⇄ Agents two-home machinery (the hop sync and the partner-chunk
     // warm-up) died with the workspace merge: both routes render the SAME
     // page, so there is no partner to warm and no second home to sync with.
@@ -428,9 +431,6 @@ const App: React.FC = () => {
     // The trade surface's collapsible left panel: the order book, opened and
     // closed from the toggle in the Chart's own market row. Persisted so the
     // layout survives reloads like the dock width.
-    const [tradeSidebarOpen, setTradeSidebarOpen] = useState<boolean>(() => {
-        try { return localStorage.getItem('trade_sidebar_open_v1') !== '0'; } catch { return true; }
-    });
     // Below lg there is no sidebar to toggle — the book is one of the mobile
     // Chart|AI|Book modes owned by TradeView. The icon therefore requests a
     // mode flip (nonce-keyed so a repeat 'book' request still applies)
@@ -447,12 +447,8 @@ const App: React.FC = () => {
             const next: TradeMode = lastRequestedTradeModeRef.current === 'book' ? 'chart' : 'book';
             lastRequestedTradeModeRef.current = next;
             setTradeModeRequest({ mode: next, n: ++tradeModeReqNRef.current });
-            return;
         }
-        setTradeSidebarOpen(prev => {
-            try { localStorage.setItem('trade_sidebar_open_v1', prev ? '0' : '1'); } catch { /* private mode */ }
-            return !prev;
-        });
+    
     }, []);
     // Market data state and effects (extracted to hooks/useMarketData.ts)
     const marketData = useMarketData(isHybridIntelligenceEnabled);
@@ -571,7 +567,6 @@ const App: React.FC = () => {
         onJournalAutoRefresh: handleJournalAutoRefresh,
     });
 
-    const [leverageInput, setLeverageInput] = useState<string>(String(defaultLeverage()));
     // The three leverage handlers useConversationLeverage used to return are
     // gone: nothing called them. The state stays — the composer and the desk
     // both bind to it — but the hook is pure derivation with no effects, so
@@ -913,11 +908,6 @@ const App: React.FC = () => {
     }, [loggedTrades]);
 
     // ... (useEffects) ...
-    useEffect(() => {
-        if (activeConversation) {
-            setLeverageInput(String(activeConversation.leverage));
-        }
-    }, [activeConversation?.id, activeConversation?.leverage]);
 
     // Offline Queue: Sync when coming back online
     useEffect(() => {
@@ -1279,6 +1269,11 @@ const App: React.FC = () => {
             if (e.altKey && !e.ctrlKey && !e.metaKey && SURFACE_KEYS[e.key]) {
                 e.preventDefault();
                 selectSurface(SURFACE_KEYS[e.key]);
+            }
+            // Alt+D — the [Desk | Chat] layout toggle (owner ruling 1).
+            if (e.altKey && !e.ctrlKey && !e.metaKey && (e.key === 'd' || e.key === 'D')) {
+                e.preventDefault();
+                setWorkspaceLayout(toggleWorkspaceLayoutPersisted());
             }
         };
         document.addEventListener('keydown', onKey);
@@ -2611,12 +2606,6 @@ const App: React.FC = () => {
                         // merged set guarantees the CURRENT profile always has
                         // a row, even on a profile whose name has not landed
                         // in the store list yet.
-                        workspaces={[...new Set([
-                            activeUsername || 'default',
-                            ...existingUsernames,
-                        ])].map(name => ({ name, active: name === (activeUsername || 'default') }))}
-                        onSwitchWorkspace={(name) => { void loadUserData(name); }}
-                        onAddWorkspace={() => setIsUserModalOpen(true)}
                         conversations={conversationHistory}
                         activeConversationId={activeConversationId}
                         onOpenConversation={openDeskConversation}
@@ -2657,8 +2646,6 @@ const App: React.FC = () => {
                         selectedChatModel={selectedChatModel}
                         onSelectChatModel={setSelectedChatModel}
                         onRefreshModels={refreshModelCatalog}
-                        tradeSidebarOpen={tradeSidebarOpen}
-                        onToggleTradeSidebar={toggleTradeSidebar}
                         tradeModeRequest={tradeModeRequest}
                         activeUsername={activeUsername}
                         onTradeModeChange={(m) => { lastRequestedTradeModeRef.current = m; }}

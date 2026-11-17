@@ -4497,6 +4497,52 @@ async function main() {
             phoneRailClosed === 'clicked' && phoneRailGone,
             `${phoneRailClosed} gone=${phoneRailGone}`);
 
+        // ── The [Desk | Chat] layout toggle (owner ruling 1): a LAYOUT mode of
+        // the one workspace. Chat hides the chart pane and centers the stream;
+        // Desk restores it. The switch must be instant and zero-loss — the
+        // same TradeView and chatStore stay mounted. The phone-drawer checks
+        // above shrank the viewport — the layout classes are lg+, so restore
+        // the desktop viewport first.
+        await page.setViewportSize({ width: 1440, height: 900 });
+        await page.evaluate(() => localStorage.setItem('workspace_layout_v1', 'chat'));
+        await page.reload({ waitUntil: 'domcontentloaded' });
+        await sleep(2500);
+        const chatMode = await page.evaluate(() => ({
+            pillChat: document.querySelector('[data-testid="layout-pill-chat"]')?.getAttribute('aria-pressed'),
+            chartHidden: (() => {
+                const pane = document.querySelector('[data-testid="trade-chart-pane"]');
+                if (!pane) return 'no pane';
+                return pane.offsetWidth === 0 || pane.className.includes('hidden');
+            })(),
+            dockCentered: (() => {
+                const dock = document.querySelector('[data-testid="trade-dock"]');
+                if (!dock) return 'no dock';
+                return dock.offsetWidth > 0 && dock.offsetWidth <= 800;
+            })(),
+        }));
+        check('Chat layout hides the chart and centers the stream (pill pressed)',
+            chatMode.pillChat === 'true' && chatMode.chartHidden === true && chatMode.dockCentered === true,
+            JSON.stringify(chatMode));
+        await page.screenshot({ path: '.probe-artifacts/layout-chat.png' });
+        await page.evaluate(() => {
+            localStorage.setItem('workspace_layout_v1', 'desk');
+            document.querySelector('[data-testid="layout-pill-desk"]')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        });
+        await sleep(600);
+        const deskMode = await page.evaluate(() => ({
+            pillDesk: document.querySelector('[data-testid="layout-pill-desk"]')?.getAttribute('aria-pressed'),
+            chartVisible: (() => {
+                const pane = document.querySelector('[data-testid="trade-chart-pane"]');
+                if (!pane) return 'no pane';
+                return pane.offsetWidth > 0 && !pane.className.includes('hidden');
+            })(),
+        }));
+        check('Desk layout restores the chart beside the dock',
+            deskMode.pillDesk === 'true' && deskMode.chartVisible === true,
+            JSON.stringify(deskMode));
+        await page.screenshot({ path: '.probe-artifacts/layout-desk.png' });
+        await page.evaluate(() => localStorage.setItem('workspace_layout_v1', 'desk'));
+
 
         check('zero pageerrors across the whole run', pageErrors.length === 0,
             pageErrors.length ? `\n---\n${pageErrors.join('\n---\n').slice(0, 3000)}` : '');

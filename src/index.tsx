@@ -78,6 +78,9 @@ installNavModalityTracking();
 // trip on launch, and no flash of an empty transcript while a file read lands.
 // On web this resolves immediately from localStorage, which is why it is awaited
 // rather than branched on.
+// Dead-store sweep: the removed sidebar flag (the dead prop the 2026-11-17
+// audit found) left bytes in older profiles — one delete at boot, best-effort.
+try { localStorage.removeItem('trade_sidebar_open_v1'); } catch { /* private mode */ }
 void primeChatSessions().finally(() => {
   const root = ReactDOM.createRoot(rootElement);
   root.render(

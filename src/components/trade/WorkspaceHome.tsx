@@ -16,6 +16,39 @@
 
 import React, { useState } from 'react';
 import { FolderIcon } from '../shared/Icons';
+import { getActiveUsername } from '../../utils/activeUser';
+
+/** The greeting line for the fresh-conversation empty state (owner ruling:
+ *  "Good afternoon, Sheesh" + centered composer in Chat mode). The name is
+ *  the signed-in profile — the greeting addresses the trader, not a hardcoded
+ *  handle. */
+export const greetingFor = (now: Date = new Date(), name = getActiveUsername()): string => {
+    const h = now.getHours();
+    const part = h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
+    const who = name && name.trim() ? name.trim().split(/\s+/)[0] : '';
+    return who ? `${part}, ${who}` : `${part}.`;
+};
+
+/** The calm empty state: a time-based greeting over a one-line invitation.
+ *  `compact` is the Desk layout (the chart is beside it); Chat mode gives it
+ *  the full centered column. */
+export const WorkspaceGreeting: React.FC<{ compact?: boolean; now?: Date }> = ({ compact = false, now }) => (
+    <div
+        data-testid="workspace-greeting"
+        className={compact
+            ? 'flex flex-col items-center gap-1 px-4 pt-10 pb-2 text-center'
+            : 'flex flex-1 flex-col items-center justify-center gap-2 px-4 pb-6 text-center'}
+    >
+        <p className={`font-semibold tracking-[-0.01em] text-zinc-100 ${compact ? 'text-ui-sm' : 'text-ui-lg'}`}>
+            {greetingFor(now)}
+        </p>
+        <p className="max-w-[26rem] text-ui-caption leading-5 text-zinc-500">
+            {compact
+                ? 'Ask about this chart, or switch to Chat for the full focus view.'
+                : 'What are we looking at? Ask about a chart, log a plan, or just think out loud — nothing executes without you.'}
+        </p>
+    </div>
+);
 
 /** The reference's age column: now, 5m, 3h, 48d — days for anything older. */
 export const workspaceAgeLabel = (timestamp: number): string => {

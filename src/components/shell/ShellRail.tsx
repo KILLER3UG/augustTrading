@@ -15,7 +15,7 @@
  * Journal, Learning, Skills and Memory are sections of the Settings modal,
  * so the rail carries the one gear instead of four rows.
  */
-import React, { useRef } from 'react';
+import React, { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import {
     ActivityIcon, MessageSquareIcon, SettingsIcon,
 } from '../shared/Icons';
@@ -25,6 +25,8 @@ import type { AppSurface } from '../../hooks/useSurface';
 import type { Conversation } from '../../types';
 import { display } from '../../utils/symbol';
 import * as chatStore from '../../services/trade/chatStore';
+import { getWorkspaceLayout, setWorkspaceLayout, subscribeWorkspaceLayout, type WorkspaceLayout } from '../../utils/workspaceLayout';
+import { readConversationPins, toggleConversationPin } from '../../services/trade/conversationPins';
 
 /** Live activity on a route: `active` is a working pulse, `count` a waiting
  *  number. Announced through the row's accessible name, never a bare dot. */
@@ -93,9 +95,6 @@ interface ShellRailProps {
     onNewChat: () => void;
     /** Legacy props — workspace switching moved to Settings → Accounts.
      *  Kept optional so App's existing call site compiles untouched. */
-    workspaces?: Array<{ name: string; active: boolean }>;
-    onSwitchWorkspace?: (name: string) => void;
-    onAddWorkspace?: () => void;
     conversations: Conversation[];
     activeConversationId: string | null;
     onOpenConversation: (id: string) => void;
@@ -120,21 +119,66 @@ interface ShellRailProps {
     onCloseOverlay?: () => void;
 }
 
+/** The [Desk | Chat] segmented pill — the workspace's layout mode at the
+ *  rail's top-left. Two 24px segments; the active one is the workspace's
+ *  current layout. Alt+D toggles it from anywhere. */
+const LayoutPill: React.FC = () => {
+    const layout = useSyncExternalStore(subscribeWorkspaceLayout, getWorkspaceLayout, getWorkspaceLayout);
+    const pick = (m: WorkspaceLayout): void => setWorkspaceLayout(m);
+    return (
+        <div
+            role="group"
+            aria-label="Workspace layout"
+            data-testid="layout-pill"
+            className="mb-1 flex w-10 flex-col rounded-control border border-hairline bg-zinc-900/60 p-0.5"
+        >
+            {(['desk', 'chat'] as const).map((m) => (
+                <button
+                    key={m}
+                    type="button"
+                    onClick={() => pick(m)}
+                    aria-pressed={layout === m}
+                    title={m === 'desk' ? 'Desk — chart + AI side by side (Alt+D toggles)' : 'Chat — pure chat focus view (Alt+D toggles)'}
+                    data-testid={`layout-pill-${m}`}
+                    className={`flex h-6 w-full items-center justify-center rounded-[4px] font-mono text-[10px] font-bold uppercase tracking-wide transition-colors ${
+                        layout === m
+                            ? 'bg-zinc-700/80 text-zinc-100'
+                            : 'text-zinc-500 hover:text-zinc-300'
+                    }`}
+                >
+                    {m === 'desk' ? 'D' : 'C'}
+                </button>
+            ))}
+        </div>
+    );
+};
+
 const ShellRail: React.FC<ShellRailProps> = ({
     surface, onSelectSurface, onNewChat,
-    workspaces, onSwitchWorkspace, onAddWorkspace,
     conversations, activeConversationId, onOpenConversation,
     onDeleteConversation, onClearConversation,
     activeUsername, onOpenSettings, onOpenActivity,
     width, isResizing, onResizeStart, onResizeReset, onCollapse,
     overlay = false, onCloseOverlay,
 }) => {
-    void workspaces; void onSwitchWorkspace; void onAddWorkspace;
     // One column on every surface: the workspace merge left ONE desk, so the
     // conversation list (New chat / Pinned / Recent) and the account row ride
     // beside the icon strip everywhere — there is no second surface left that
     // would carry a duplicate list.
     const railRef = useRef<HTMLElement | null>(null);
+    // The trader's own pins (F10 / the UI audit's dead Pinned section): the
+    // ids live in the conversationPins store; this column renders them as the
+    // Pinned group and flips them from the row menu. Refreshed on the
+    // profile and on any list-length change (a delete can remove a pinned
+    // row; a rename never changes ids).
+    const [pinnedIds, setPinnedIds] = useState<ReadonlySet<string>>(
+        () => new Set(readConversationPins(activeUsername ?? undefined)));
+    useEffect(() => {
+        setPinnedIds(new Set(readConversationPins(activeUsername ?? undefined)));
+    }, [activeUsername, conversations.length]);
+    const togglePin = useCallback((id: string) => {
+        setPinnedIds(new Set(toggleConversationPin(id, activeUsername ?? undefined)));
+    }, [activeUsername]);
 
     return (
         <>
@@ -171,6 +215,11 @@ const ShellRail: React.FC<ShellRailProps> = ({
                     data-testid="shell-surface-rail"
                     className="flex w-12 shrink-0 flex-col items-center gap-0.5 border-r border-hairline py-2"
                 >
+                    {/* The [Desk | Chat] layout pill — the owner's ruling: a
+                        LAYOUT MODE of the one workspace, never a second
+                        surface. Desk = chart + dock side by side; Chat hides
+                        the chart and centers the stream. Alt+D toggles it. */}
+                    <LayoutPill />
                     <RailIcon label="Analyze — chart and desk · Alt+1" testId="surface-switch-trade"
                         current={surface === 'trade'} onClick={() => onSelectSurface('trade')}>
                         <ActivityIcon className="h-[18px] w-[18px]" aria-hidden="true" />
@@ -200,6 +249,8 @@ const ShellRail: React.FC<ShellRailProps> = ({
                     <ConversationGroups
                         conversations={conversations}
                         activeConversationId={activeConversationId}
+                        pinnedIds={pinnedIds}
+                        onTogglePin={togglePin}
                         onNewChat={onNewChat}
                         onOpenConversation={onOpenConversation}
                         onDeleteConversation={onDeleteConversation}

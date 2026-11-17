@@ -45,6 +45,7 @@ import type { MessageLevelLines } from '../../services/trade/keyLevels';
 import { fetchKlines } from '../../services/analysis/KlineService';
 import { LevelAccuracyBadge } from './LevelAccuracyBadge';
 import OrderBookPanel from './OrderBookPanel';
+import { getWorkspaceLayout, subscribeWorkspaceLayout } from '../../utils/workspaceLayout';
 import TradeChatPanel, { ChartAiDockRail } from './TradeChatPanel';
 import RightPanel from '../shell/RightPanel';
 import { useRightPanel } from '../../hooks/useRightPanel';
@@ -144,13 +145,6 @@ interface TradeViewProps {
     registerScrollToMessage?: (fn: ((messageId: string) => void) | null) => void;
     /** Triggers a fresh discovery of models from configured providers. */
     onRefreshModels?: () => Promise<void>;
-    /** The left sidebar (the order book), open/closed. Below lg the same
-     *  toggle flips the surface mode instead, since there is no sidebar. */
-    sidebarOpen?: boolean;
-    /** Opens/closes that book. The activity bar used to own this on its active
-     *  Trade icon; with the surfaces moved into the hamburger menu the control
-     *  lives in this surface's own market row. */
-    onToggleSidebar?: () => void;
     /** A request to flip this surface's mode (nonce-keyed so a repeat request
      *  applies). Consumed only <lg, where the book is a mode, not a column. */
     modeRequest?: { mode: TradeMode; n: number };
@@ -161,7 +155,6 @@ interface TradeViewProps {
      *  mode is currently active) stay in sync with the user's own picks. */
     onTradeModeChange?: (mode: TradeMode) => void;
     /** Jump straight to the Agents surface from the dock header. */
-    onOpenChat?: () => void;
     /** Opens the WatchListPanel (pinned signals) — its one chrome home since
         stage 3 moved it off the app header. The count badge mirrors the
         header's old one. */
@@ -352,7 +345,7 @@ export const useTickFlash = (price: number | undefined): { cls: string; seq: num
 
 
 const TradeView: React.FC<TradeViewProps> = ({
-    memoryEnabled, strategiesEnabled, providers, selectedChatModel, onSelectChatModel, onRefreshModels, verdict, bots = [], trades = [], botSessionRequest, groupSessionRequest, onRunAnalysis, onAnalysisError, onStopRun, botThreadRows, onBotTurnCommit, onSoloTurnCommit, onSyncConversation, conversationRows, onNewGroup, getAnalysisMessage, onLogProposedTrade, onRejectProposedTrade, onUndoApproval, onConfirmRiskChange, onDismissRiskChange, onRevertRiskChange, onConfirmStrategyActivation, onDismissStrategyActivation, onRevertStrategyActivation, renderGroupSurface, groups = [], registerScrollToMessage, modeRequest, activeUsername, onTradeModeChange, onOpenChat,    onToggleWatch, onOpenWatchList, watchOpenCount = 0, pinnedMessageIds,
+    memoryEnabled, strategiesEnabled, providers, selectedChatModel, onSelectChatModel, onRefreshModels, verdict, bots = [], trades = [], botSessionRequest, groupSessionRequest, onRunAnalysis, onAnalysisError, onStopRun, botThreadRows, onBotTurnCommit, onSoloTurnCommit, onSyncConversation, conversationRows, onNewGroup, getAnalysisMessage, onLogProposedTrade, onRejectProposedTrade, onUndoApproval, onConfirmRiskChange, onDismissRiskChange, onRevertRiskChange, onConfirmStrategyActivation, onDismissStrategyActivation, onRevertStrategyActivation, renderGroupSurface, groups = [], registerScrollToMessage, modeRequest, activeUsername, onTradeModeChange,    onToggleWatch, onOpenWatchList, watchOpenCount = 0, pinnedMessageIds,
     onConfirmSettlementCorrection, onDismissSettlementCorrection, onVoidSettlementCorrection,
     onConfirmTradeAction, onDismissTradeAction }) => {
     // The chart opens on the coin the SHARED chat session carries. Adopting only
@@ -412,6 +405,11 @@ const TradeView: React.FC<TradeViewProps> = ({
     // the old `hidden md:block` sidebar + the below-md book overlay drawer the
     // md toggle used to summon are replaced by an explicit Chart | AI | Book
     // segmented control (the NavRail book toggle stays a lg+ control).
+    // The [Desk | Chat] layout mode (owner ruling): Chat hides the chart pane
+    // and centers the conversation column — the SAME workspace and store, so
+    // the switch is instant and zero-loss mid-stream.
+    const workspaceLayout = useSyncExternalStore(subscribeWorkspaceLayout, getWorkspaceLayout, getWorkspaceLayout);
+    const chatLayout = workspaceLayout === 'chat';
     const isBelowLg = useIsBelowLg();
 
     // The dock is the surface's first registered right panel. It is always
@@ -1082,7 +1080,9 @@ const TradeView: React.FC<TradeViewProps> = ({
                          * `lg:w-1/3 lg:flex-none`, which pinned its width while
                          * refusing to shrink, so the row could only widen past the
                          * viewport and clip the dock's right edge. */
-                        : 'min-h-[420px] flex-1 lg:min-h-0 lg:min-w-0'}
+                        : (chatLayout
+                            ? 'hidden'
+                            : 'min-h-[420px] flex-1 lg:min-h-0 lg:min-w-0')}
                 >
                     <ErrorBoundary pane label="The chart" resetKey={`${symbol}:${interval}`}>
                     <TradingChart symbol={symbol} interval={interval} onIntervalChange={changeInterval} sessionId={chatSnap.activeId ?? 'analyze'} verdict={chartVerdict} live={live} liveKline={feed.kline}
@@ -1107,7 +1107,7 @@ const TradeView: React.FC<TradeViewProps> = ({
                 {/* The order book is DETAIL THE USER PULLS: a 30px strip
                     (name, live state, spread) closed by default, expanding
                     on demand. Below lg the Book mode is a full-height pane. */}
-                {!isBelowLg && (
+                {!isBelowLg && !chatLayout && (
                     <div
                         data-testid="trade-sidebar"
                         data-book-open={bookOpen ? 'true' : 'false'}
@@ -1188,10 +1188,16 @@ const TradeView: React.FC<TradeViewProps> = ({
                     testId="trade-dock"
                     className={isBelowLg
                         ? (mode === 'ai' ? 'min-h-0 w-full flex-1' : 'hidden')
-                        : `h-96 w-full shrink-0 lg:h-auto lg:w-[var(--panel-w)] lg:min-w-[300px] ${dockExpanded ? 'lg:!w-1/2 xl:!w-7/12 lg:!max-w-[calc(100%_-_420px)]' : 'lg:max-w-[calc(100%_-_420px)]'}`}
+                        : (chatLayout
+                            /* Chat layout: the stream IS the workspace — a
+                             * centered reading column at the reference's
+                             * ~760px, generous whitespace, no chart beside it. */
+                            ? 'h-96 w-full shrink-0 mx-auto lg:h-auto lg:w-[760px] lg:min-w-0 lg:max-w-[760px]'
+                            : `h-96 w-full shrink-0 lg:h-auto lg:w-[var(--panel-w)] lg:min-w-[300px] ${dockExpanded ? 'lg:!w-1/2 xl:!w-7/12 lg:!max-w-[calc(100%_-_420px)]' : 'lg:max-w-[calc(100%_-_420px)]'}`)}
                 >
                     <TradeChatPanel
                         {...dockProps}
+                        layoutMode={workspaceLayout}
                         memoryEnabled={memoryEnabled}
                         strategiesEnabled={strategiesEnabled}
                         onToggleCollapsed={isBelowLg ? undefined : collapseDock}
@@ -1203,7 +1209,6 @@ const TradeView: React.FC<TradeViewProps> = ({
                         onSoloTurnCommit={onSoloTurnCommit}
                         onSyncConversation={onSyncConversation}
                         conversationRows={conversationRows}
-                        onOpenChat={onOpenChat}
                     />
                 </RightPanel>
                 {dockCollapsed && !isBelowLg && (
