@@ -379,7 +379,12 @@ const ChatTranscriptList: React.FC<ChatTranscriptListProps> = ({
                             data-testid="row-avatar"
                         >
                             <BotFace
-                                face={deskSpeaker ? { shape: 'circle', hue: '#4d9fff' } : 'auto'}
+                                /* Neutral face (owner 1.4.2): the desk's avatar
+                                    was a bright blue circle beside every answer
+                                    — a third accent in chrome that must stay
+                                    monochrome. Green/red belong to price and
+                                    direction; the desk is zinc. */
+                                face={deskSpeaker ? { shape: 'circle', hue: '#71717a' } : 'auto'}
                                 name={e.speaker ?? 'desk'}
                                 size={28}
                                 working={!!e.streaming}

@@ -1,11 +1,12 @@
 /**
  * chartIndicatorSettings — per-user chart indicator visibility and parameters.
  *
- * The reference defaults are the six studies OKX shows out of the box: Volume,
- * EMA(20), EMA(200), BOLL, RSI(14), MACD. Everything else August can draw
- * (TSI, VWAP, volume profile, session levels, swings, CVD, funding/OI) starts
- * OFF until the trader toggles it — a chart that opens with fifteen studies is
- * not a chart, it is a spreadsheet.
+ * The default is the CLEAN CHART (owner 1.4.1): price + volume. A chart that
+ * opens with six studies, three oscillator panes and an eight-line legend over
+ * the candles is a spreadsheet; the trader (or the desk's `toggle_chart_study`
+ * tool) turns a study on when the question needs it, and the choice persists
+ * per user. Everything else August can draw (TSI, VWAP, volume profile, session
+ * levels, swings, CVD, funding/OI) starts OFF until toggled.
  *
  * The series themselves come from `chartIndicators.ts`, the ONE module the
  * chart and the prompt both read. This file only stores which of them are
@@ -40,15 +41,15 @@ export const CHART_INDICATOR_IDS = [
     'tsi', 'vwap', 'avwap', 'volumeProfile', 'volumeProfileSession', 'sessionLevels', 'swings', 'cvd', 'funding',
 ] as const satisfies readonly ChartIndicatorId[];
 
-/** OKX's out-of-the-box set. */
+/** The clean chart: price + volume, nothing else (owner 1.4.1). */
 export const DEFAULT_CHART_INDICATOR_SETTINGS: ChartIndicatorSettings = {
     visible: {
         volume: true,
-        ema20: true,
-        ema200: true,
-        boll: true,
-        rsi: true,
-        macd: true,
+        ema20: false,
+        ema200: false,
+        boll: false,
+        rsi: false,
+        macd: false,
         tsi: false,
         vwap: false,
         avwap: false,

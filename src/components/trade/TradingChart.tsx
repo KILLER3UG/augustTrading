@@ -37,6 +37,7 @@ import {
     type UTCTimestamp,
 } from 'lightweight-charts';
 import { fetchKlines } from '../../services/analysis/KlineService';
+import { ChevronDown } from '../shared/Icons';
 import type { Kline } from '../../services/analysis/MarketDataService';
 import { sessionLevelRows, type LevelRow } from '../../services/market/levelsCore';
 import { readStructure, type StructureRead } from '../../services/market/swingStructureCore';
@@ -336,6 +337,10 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
      *  over the plot, otherwise the last bar. The values come from the same
      *  computed series the lines are drawn from. */
     const [legendBar, setLegendBar] = useState<LegendBar | null>(null);
+    /** The study readouts sit behind the legend's expand toggle (owner 1.4.1):
+     *  one compact OHLCV line at rest, the wall only when asked for. Session
+     *  state — a chart preference re-chosen per session, not persisted data. */
+    const [legendExpanded, setLegendExpanded] = useState(false);
     const legendTimeRef = useRef<number | null>(null);
     /** The last-price tag on the axis: price, its screen Y, the bar's open time
      *  (for the countdown) and the bar's direction (for the colour). */
@@ -2111,10 +2116,12 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                     overlay's color so the button and the line agree.
 
                     CHROME: the study toggle is a flat control on the toolbar —
-                    no box, no border — and its state is the amber fill the
-                    line itself wears. The reference's toolbars are a row of
-                    flat controls, and a bordered box on every one of them is
-                    what made this row read as a stack of chips. */}
+                    no box, no border — and its state is the pressed read, not a
+                    colour (owner 1.4.2: amber was a third accent in a chrome
+                    row; green and red belong to price, everything else here is
+                    neutral). The reference's toolbars are a row of flat
+                    controls, and a bordered box on every one of them is what
+                    made this row read as a stack of chips. */}
                 {/* The studies menu. One toggle per study; every SERIES comes from
                     chartIndicators, so the label on the line is the number in the
                     prompt. Studies that need their own pane are marked — the
@@ -2124,7 +2131,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                         aria-expanded={indicatorMenuOpen} title="Chart studies"
                         className={`rounded-control px-2 py-1 text-ui-dense font-medium transition-colors ${
                             indicatorsOn
-                                ? 'bg-amber-500/10 text-amber-300'
+                                ? 'bg-white/[0.06] text-zinc-100'
                                 : 'text-zinc-500 hover:bg-white/[0.05] hover:text-zinc-200'
                         }`}>
                         ƒ Studies
@@ -2142,7 +2149,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                                         <button key={id} type="button" role="menuitemcheckbox" aria-checked={on}
                                             onClick={() => toggleIndicator(id)}
                                             className="flex w-full items-center gap-2 px-2 py-1 text-left text-ui-dense text-zinc-300 hover:bg-white/[0.05]">
-                                            <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${on ? 'bg-amber-400' : 'bg-zinc-700'}`} />
+                                            <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${on ? 'bg-zinc-200' : 'bg-zinc-700'}`} />
                                             <span className="flex-1">{CHART_INDICATOR_LABELS[id]}</span>
                                             {CHART_INDICATOR_REGISTRY[id].delivery === 'sub-series' && (
                                                 <span className="text-ui-micro text-zinc-600">pane</span>
@@ -2185,27 +2192,53 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                            the first characters of every row were unreadable. */
                         className="pointer-events-none absolute left-12 top-1.5 z-10 max-w-[calc(100%-56px)] rounded-control bg-zinc-950/80 px-2 py-1 font-mono text-ui-dense text-zinc-500"
                     >
-                        <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                        {/* ONE compact OHLCV line (owner 1.4.1): time, the four
+                            prices and the volume. Everything else this legend
+                            knows — change, range, per-study readouts — sits
+                            behind the expand toggle, so a clean chart reads as
+                            one quiet line and a study-heavy one can still be
+                            interrogated. */}
+                        <div className="flex items-center gap-x-2">
                             <span>{phtAxisTick(legendBar.time, 'full')}</span>
                             {(['open', 'high', 'low', 'close'] as const).map(k => (
                                 <span key={k}>{k[0].toUpperCase()} <span className="text-zinc-300">{fmtPriceForChart(legendBar[k])}</span></span>
                             ))}
-                            <span>Change <span className={legendBar.close >= legendBar.open ? 'text-emerald-400' : 'text-rose-400'}>
-                                {fmtPriceForChart(legendBar.close - legendBar.open)} ({(((legendBar.close - legendBar.open) / legendBar.open) * 100).toFixed(2)}%)
-                            </span></span>
-                            <span>Range <span className="text-zinc-300">{(((legendBar.high - legendBar.low) / legendBar.open) * 100).toFixed(2)}%</span></span>
+                            {(() => {
+                                const vol = legendRef.current?.volumes.get(legendBar.time);
+                                return vol === undefined ? null : (
+                                    <span>VOL <span className="text-amber-300">{fmtUsdForChart(vol * legendBar.close)}</span></span>
+                                );
+                            })()}
+                            <button
+                                type="button"
+                                data-testid="legend-expand"
+                                aria-expanded={legendExpanded}
+                                title={legendExpanded ? 'Hide study readouts' : 'Show change, range and study readouts'}
+                                onClick={() => setLegendExpanded(v => !v)}
+                                /* 24px: the control floor every clickable target
+                                    is held to; the chevron stays 12px inside it. */
+                                className="pointer-events-auto ml-1 -mr-1.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-[4px] text-zinc-500 transition-colors hover:text-zinc-200"
+                            >
+                                <ChevronDown className={`h-3 w-3 transition-transform ${legendExpanded ? 'rotate-180' : ''}`} aria-hidden="true" />
+                            </button>
                         </div>
-                        {(() => {
-                            const vol = legendRef.current?.volumes.get(legendBar.time);
-                            if (vol === undefined) return null;
-                            return (
-                                <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                                    <span>VOL(Contracts) <span className="text-amber-300">{vol >= 1000 ? `${(vol / 1000).toFixed(3)}K` : vol.toFixed(3)}</span></span>
-                                    <span>VOL(USDT) <span className="text-amber-300">{fmtUsdForChart(vol * legendBar.close)}</span></span>
+                        {legendExpanded && (
+                            <>
+                                <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                                    <span>Change <span className={legendBar.close >= legendBar.open ? 'text-emerald-400' : 'text-rose-400'}>
+                                        {fmtPriceForChart(legendBar.close - legendBar.open)} ({(((legendBar.close - legendBar.open) / legendBar.open) * 100).toFixed(2)}%)
+                                    </span></span>
+                                    <span>Range <span className="text-zinc-300">{(((legendBar.high - legendBar.low) / legendBar.open) * 100).toFixed(2)}%</span></span>
+                                    {(() => {
+                                        const vol = legendRef.current?.volumes.get(legendBar.time);
+                                        return vol === undefined ? null : (
+                                            <span>VOL(Contracts) <span className="text-amber-300">{vol >= 1000 ? `${(vol / 1000).toFixed(3)}K` : vol.toFixed(3)}</span></span>
+                                        );
+                                    })()}
                                 </div>
-                            );
-                        })()}
-                        {legendSettingsRows(legendBar)}
+                                {legendSettingsRows(legendBar)}
+                            </>
+                        )}
                     </div>
                 )}
                 {/* The last-price tag on the axis: price, coloured by the last

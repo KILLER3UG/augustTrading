@@ -5180,18 +5180,25 @@ const runCaptureChecks = async () => {
         get length() { return store.size; },
     };
     const d = cs.DEFAULT_CHART_INDICATOR_SETTINGS.visible;
-    ok('chartIndicators: the default set is OKX’s six studies, everything else off',
-        d.volume && d.ema20 && d.ema200 && d.boll && d.rsi && d.macd
+    // Owner 1.4.1: the default chart is CLEAN — price + volume only. The
+    // trader (or the desk's toggle_chart_study tool) turns a study on when the
+    // question needs it; the choice persists per user.
+    ok('chartIndicators: the default set is the clean chart — volume only, everything else off',
+        d.volume
+        && !d.ema20 && !d.ema200 && !d.boll && !d.rsi && !d.macd
         && !d.tsi && !d.vwap && !d.volumeProfile && !d.sessionLevels && !d.swings && !d.cvd && !d.funding);
     ok('chartIndicators: a fresh user reads the default set',
-        cs.readChartIndicatorSettings('new-user').visible.boll === true);
-    cs.writeChartIndicatorSettings('u1', { visible: { ...d, boll: false } });
+        cs.readChartIndicatorSettings('new-user').visible.volume === true
+        && cs.readChartIndicatorSettings('new-user').visible.boll === false);
+    cs.writeChartIndicatorSettings('u1', { visible: { ...d, boll: true } });
     ok('chartIndicators: a write round-trips per user and does not leak across users',
-        cs.readChartIndicatorSettings('u1').visible.boll === false
-        && cs.readChartIndicatorSettings('u2').visible.boll === true);
+        cs.readChartIndicatorSettings('u1').visible.boll === true
+        && cs.readChartIndicatorSettings('u2').visible.boll === false);
     ok('chartIndicators: a malformed blob falls back to the default, not a half-initialised chart',
         (store.set('chart_indicators_v1_bad', '{"visible":{"boll":"yes","ema20":true}}'),
-         cs.readChartIndicatorSettings('bad').visible.boll === true
+         // "boll" is not a boolean, so it is dropped and takes the clean
+         // default; "ema20" IS a boolean for a known id, so it is honoured.
+         cs.readChartIndicatorSettings('bad').visible.boll === false
          && cs.readChartIndicatorSettings('bad').visible.ema20 === true));
     // The menu used to filter on a pane entry, so an id WITHOUT one was
     // silently un-toggleable (sessionLevels and swings were unreachable that
@@ -5799,9 +5806,12 @@ const checkAgentHandExecutor = async () => {
     ok('agent hands executor: a non-boolean enabled is refused, not coerced',
         badFlag.ok === false && /must be true or false/.test(badFlag.content), badFlag.content);
 
-    const realStudy = await desk.executeDeskTool(call('toggle_chart_study', { id: 'rsi', enabled: false }), ctx);
+    // The clean default has RSI off (owner 1.4.1), so the REAL write is the
+    // turn-on — the point this check has always carried is that a write that
+    // CHANGES something is announced, while a no-op says so in words.
+    const realStudy = await desk.executeDeskTool(call('toggle_chart_study', { id: 'rsi', enabled: true }), ctx);
     ok('agent hands executor: a real study write is announced, not silently dropped',
-        realStudy.ok === true && /RSI/.test(realStudy.content) && /OFF/.test(realStudy.content), realStudy.content);
+        realStudy.ok === true && /RSI/.test(realStudy.content) && /ON/.test(realStudy.content), realStudy.content);
 
     // The correction tool RECORDS a proposal; it never writes the row.
     const badOutcome = await desk.executeDeskTool(call('correct_trade_outcome', { tradeId: 't9', outcome: 'MAYBE', reason: 'r' }), ctx);

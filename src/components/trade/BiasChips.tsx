@@ -18,14 +18,15 @@ import { toKlineInterval, type ChartInterval } from '../../utils/chartIntervals'
 const REFRESH_MS = 60_000;
 
 /** Dot colors only: `bull`/`bear` are semantic (gain-side / loss-side, matching
- *  the theme's emerald = up and rose = down), `vwap` is a categorical label
- *  for the session-VWAP reference line — info, not a verdict. `neutral` is the
- *  no-direction state. */
+ *  the theme's emerald = up and rose = down). `vwap` and `neutral` carry NO
+ *  direction — position vs a reference line is information, not a verdict — so
+ *  they render neutral (owner 1.4.2: the cyan "Below VWAP" dot read as a
+ *  third accent in a chrome row). */
 const TONE: Record<BiasChip['tone'], string> = {
     bull: 'bg-emerald-400',
     bear: 'bg-rose-400',
     neutral: 'bg-zinc-500',
-    vwap: 'bg-cyan-400',
+    vwap: 'bg-zinc-400',
 };
 
 const BiasChips: React.FC<{ symbol: string; interval: ChartInterval }> = ({ symbol, interval }) => {
