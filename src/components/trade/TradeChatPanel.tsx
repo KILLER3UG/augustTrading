@@ -1092,11 +1092,12 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
                     flexible element — it truncates. */}
                 <span className="min-w-0 flex-1 truncate text-ui-base font-medium tracking-[-0.01em] text-zinc-100" title={activeSession.title}>{activeSession.title}</span>
                 <div className="ml-auto flex shrink-0 items-center gap-1">
-                    {/* The same switch the Agents surface carries, so the hop is
-                        visible from BOTH ends. The ⋯ menu's "Open in Agents" row
-                        stays, but a return route nobody can see is exactly the
-                        asymmetry that made the first version of this control a
-                        dead end — the render probe could get here and not back. */}
+                    {/* There is no "Open in Agents" row here (the render probe
+                        pins its absence): the Agents route IS this workspace —
+                        the [Desk | Chat] pill in the sidebar is the hop, and a
+                        second door to the same page was the lie the merge
+                        removed. The ⋯ menu carries re-run / panel models /
+                        customization, not navigation. */}
                     {/* The return hop used to be this panel's own ChatModePill.
                         The title-bar switch carries it now — the Chat entry is
                         the same route, from the same place, for every surface. */}
