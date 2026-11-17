@@ -32,8 +32,6 @@ import type { JournalUIState } from './useJournalUI';
 export interface SurfaceRouterOptions {
     isSettingsMenuVisible: boolean;
     setIsSettingsMenuVisible: (visible: boolean) => void;
-    isLiveMarketVisible: boolean;
-    setIsLiveMarketVisible: (visible: boolean) => void;
     isWatchListVisible: boolean;
     setIsWatchListVisible: (visible: boolean) => void;
     /** Opens the Settings modal at the Journal section — the Journal is a
@@ -55,7 +53,6 @@ export interface SurfaceRouter {
 export const useSurfaceRouter = (opts: SurfaceRouterOptions): SurfaceRouter => {
     const {
         isSettingsMenuVisible, setIsSettingsMenuVisible,
-        isLiveMarketVisible, setIsLiveMarketVisible,
         isWatchListVisible, setIsWatchListVisible,
         openSettingsSection,
     } = opts;
@@ -78,12 +75,11 @@ export const useSurfaceRouter = (opts: SurfaceRouterOptions): SurfaceRouter => {
         setJournalOpenNonce(n => n + 1);
         // The Journal is a SECTION of the Settings modal now — the deep
         // link and the launchers land on the modal's journal section.
-        setIsLiveMarketVisible(false);
         setIsWatchListVisible(false);
         setSurface('trade');
         openSettingsSection?.('journal');
         setIsSettingsMenuVisible(true);
-    }, [setSurface, setIsSettingsMenuVisible, setIsLiveMarketVisible, setIsWatchListVisible, openSettingsSection]);
+    }, [setSurface, setIsSettingsMenuVisible, setIsWatchListVisible, openSettingsSection]);
 
     /** Switching surfaces changes the CONTENT and nothing else — no slide, no
      *  resize tween. The hop used to carry a direction flag ('left' | 'right')
@@ -105,23 +101,15 @@ export const useSurfaceRouter = (opts: SurfaceRouterOptions): SurfaceRouter => {
                 setSurface('trade');
                 openSettingsSection?.('journal');
                 setIsSettingsMenuVisible(true);
-                setIsLiveMarketVisible(false);
-                setIsWatchListVisible(false);
-            } else if (route.view === 'market') {
-                setIsLiveMarketVisible(true);
-                setIsSettingsMenuVisible(false);
                 setIsWatchListVisible(false);
             } else if (route.view === 'settings') {
                 setIsSettingsMenuVisible(true);
-                setIsLiveMarketVisible(false);
                 setIsWatchListVisible(false);
             } else if (route.view === 'watch') {
                 setIsWatchListVisible(true);
                 setIsSettingsMenuVisible(false);
-                setIsLiveMarketVisible(false);
             } else if (window.location.hash) {
                 setIsSettingsMenuVisible(false);
-                setIsLiveMarketVisible(false);
                 setIsWatchListVisible(false);
             }
             queueMicrotask(() => { applyingHashRef.current = false; });
@@ -129,7 +117,7 @@ export const useSurfaceRouter = (opts: SurfaceRouterOptions): SurfaceRouter => {
         apply();
         window.addEventListener('hashchange', apply);
         return () => window.removeEventListener('hashchange', apply);
-    }, [setSurface, setIsSettingsMenuVisible, setIsLiveMarketVisible, setIsWatchListVisible, openSettingsSection]);
+    }, [setSurface, setIsSettingsMenuVisible, setIsWatchListVisible, openSettingsSection]);
 
     useEffect(() => {
         if (applyingHashRef.current) return;
@@ -138,8 +126,6 @@ export const useSurfaceRouter = (opts: SurfaceRouterOptions): SurfaceRouter => {
         // #/journal/reasoning round-trips.
         const route = isSettingsMenuVisible
             ? { view: 'settings' as const }
-            : isLiveMarketVisible
-                ? { view: 'market' as const }
                 : isWatchListVisible
                     ? { view: 'watch' as const }
                     : { view: 'chat' as const };
@@ -148,7 +134,7 @@ export const useSurfaceRouter = (opts: SurfaceRouterOptions): SurfaceRouter => {
         if (window.location.hash !== next) {
             history.replaceState(null, '', next);
         }
-    }, [surface, journalTab, isLiveMarketVisible, isSettingsMenuVisible, isWatchListVisible]);
+    }, [surface, journalTab, isSettingsMenuVisible, isWatchListVisible]);
 
     return {
         surface, setSurface,

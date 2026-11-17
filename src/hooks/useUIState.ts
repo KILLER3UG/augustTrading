@@ -7,10 +7,8 @@ import { useReducer, useCallback, useMemo } from 'react';
 interface UIStateShape {
     // Modal / Panel Visibility
     isUserModalOpen: boolean;
-    isStrategySearchVisible: boolean;
     isSavedAnalysesVisible: boolean;
     isSettingsMenuVisible: boolean;
-    isLiveMarketVisible: boolean;
     isVersionHistoryVisible: boolean;
     isVisionDataVisible: boolean;
     showScrollDown: boolean;
@@ -37,10 +35,8 @@ interface UIStateShape {
 
 const initialState: UIStateShape = {
     isUserModalOpen: false,
-    isStrategySearchVisible: false,
     isSavedAnalysesVisible: false,
     isSettingsMenuVisible: false,
-    isLiveMarketVisible: false,
     isVersionHistoryVisible: false,
     isVisionDataVisible: false,
     showScrollDown: false,

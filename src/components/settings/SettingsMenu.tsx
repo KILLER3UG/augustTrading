@@ -78,7 +78,6 @@ interface SettingsMenuProps {
     reviewSummary?: string;
     reviewLoading?: boolean;
     onRegenerateReview?: () => void;
-    onOpenStrategySearch?: () => void;
     skillFormatPair?: string;
     onSkillFormatModelChange?: (model: string) => void;
     currentRegime?: string;

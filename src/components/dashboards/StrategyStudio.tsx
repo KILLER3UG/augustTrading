@@ -17,7 +17,6 @@ interface StrategyStudioProps {
     username?: string;
     currentRegime?: string;
     memoryConfig?: ProviderConfig | null;
-    onOpenStrategySearch?: () => void;
     onClose?: () => void;
     /** Configured providers, for the format-with-model picker. */
     providers?: ProviderConfig[];

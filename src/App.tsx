@@ -52,7 +52,6 @@ import { AMENDMENT_EVENT } from './services/learning/memoryAmendments';
 import { useConfirmDialog } from './components/shared/ConfirmDialog';
 import { useProviderConfigs } from './hooks/useProviderConfigs';
 import { useAppSettings } from './hooks/useAppSettings';
-import { useJournalUI } from './hooks/useJournalUI';
 import type { JournalUIState } from './hooks/useJournalUI';
 import { ChevronDownIcon, CloseIcon } from './components/shared/Icons';
 
@@ -61,7 +60,6 @@ import { ChevronDownIcon, CloseIcon } from './components/shared/Icons';
 // Each lazy() call below produces a separate chunk loaded on demand when
 // the user opens the corresponding panel/modal. ChatArea and Header stay
 // eager (always-rendered, critical path).
-const StrategySearch = React.lazy(() => import('./components/shared/StrategySearch'));
 const UserProfileManager = React.lazy(() => import('./components/settings/UserProfileManager'));
 const WatchListPanel = React.lazy(() => import('./components/analysis/WatchListPanel'));
 const JobsDrawer = React.lazy(() => import('./components/settings/JobsDrawer'));
@@ -71,7 +69,6 @@ const SettingsMenu = React.lazy(() => import('./components/settings/SettingsMenu
 // (LogTradeModal was removed — the capture flow uses DataCaptureModal.)
 const DataCaptureModal = React.lazy(() => import('./components/modals/DataCaptureModal').then(m => ({ default: m.DataCaptureModal })));
 const EntryNotHitCaptureModal = React.lazy(() => import('./components/modals/EntryNotHitCaptureModal').then(m => ({ default: m.EntryNotHitCaptureModal })));
-const LiveMarket = React.lazy(() => import('./components/market/LiveMarket'));
 const UpdateOverlay = React.lazy(() => import('./components/shared/UpdateOverlay'));
 const StrategyStudio = React.lazy(() => import('./components/dashboards/StrategyStudio'));
 const NewBotDialog = React.lazy(() => import('./components/chat/NewBotDialog'));
@@ -199,9 +196,7 @@ const App: React.FC = () => {
     // UI visibility and progress state (extracted to hooks/useUIState.ts)
     const {
         isUserModalOpen, setIsUserModalOpen,
-        isStrategySearchVisible, setIsStrategySearchVisible,
         isSettingsMenuVisible, setIsSettingsMenuVisible,
-        isLiveMarketVisible, setIsLiveMarketVisible,
 
 
         isLoading, setIsLoading,
@@ -219,13 +214,6 @@ const App: React.FC = () => {
     /** Background-jobs drawer (status-stack pattern). */
     const [isJobsDrawerVisible, setIsJobsDrawerVisible] = useState(false);
 
-    // Lazy-on-demand: only mount the legacy StrategySearch + Analytics side
-    // panels once the user opens them at least once. They stay mounted
-    // thereafter so the open/close animation is instant on the second open.
-    const [isStrategySearchEverOpened, setIsStrategySearchEverOpened] = useState(false);
-    React.useEffect(() => {
-        if (isStrategySearchVisible) setIsStrategySearchEverOpened(true);
-    }, [isStrategySearchVisible]);
 
     // Provider configuration (API keys, base URLs, custom providers), plus the
     // display/lookup maps derived from that catalog — see useProviderConfigs.
@@ -382,7 +370,6 @@ const App: React.FC = () => {
         handleSurfaceSelect, openJournal,
     } = useSurfaceRouter({
         isSettingsMenuVisible, setIsSettingsMenuVisible,
-        isLiveMarketVisible, setIsLiveMarketVisible,
         isWatchListVisible, setIsWatchListVisible,
     });
     /** The rail's and the Alt+N chords' one entry point. Every surface is a
@@ -461,10 +448,6 @@ const App: React.FC = () => {
     // (journalState/setJournalState intentionally NOT consumed — the legacy
     // journal overlay is gone; the journal lives on its own surface, and the
     // deep-link tab/trade-id state is declared with the surface block below.)
-    const {
-        strategyToView, setStrategyToView,
-    } = useJournalUI();
-
 
     // Refs for functions defined later but needed by useTradeLogging (breaks circular dependency)
     //
@@ -850,50 +833,6 @@ const App: React.FC = () => {
     // run — a mode toggle can't conjure providers out of thin air (the
     // pipeline toasts "No AI Providers Enabled" on send).
 
-    const familyWinRates = useMemo(() => {
-        const stats: Record<string, { total: number; wins: number; winRate: number }> = {
-            'Family A': { total: 0, wins: 0, winRate: 0 },
-            'Family B': { total: 0, wins: 0, winRate: 0 },
-            'Family C': { total: 0, wins: 0, winRate: 0 },
-            'Family Omega': { total: 0, wins: 0, winRate: 0 },
-        };
-
-        loggedTrades.forEach(trade => {
-            if (trade.outcome === TradeOutcome.PENDING || trade.outcome === TradeOutcome.SKIPPED || trade.outcome === TradeOutcome.ENTRY_NOT_HIT) return;
-
-            let family = trade.analysis.detectedPatternFamily;
-
-            if (!family) {
-                const pat = (trade.analysis.marketConditions?.pattern || '').toUpperCase();
-                if (pat.includes('FAMILY A')) family = 'Family A';
-                else if (pat.includes('FAMILY B')) family = 'Family B';
-                else if (pat.includes('FAMILY C')) family = 'Family C';
-                else if (pat.includes('OMEGA')) family = 'Family Omega';
-            }
-
-            let key = '';
-            if (family?.toUpperCase().includes('FAMILY A')) key = 'Family A';
-            else if (family?.toUpperCase().includes('FAMILY B')) key = 'Family B';
-            else if (family?.toUpperCase().includes('FAMILY C')) key = 'Family C';
-            else if (family?.toUpperCase().includes('OMEGA')) key = 'Family Omega';
-
-            if (key && stats[key]) {
-                stats[key].total++;
-                if (trade.outcome === TradeOutcome.WIN) {
-                    stats[key].wins++;
-                }
-            }
-        });
-
-        Object.keys(stats).forEach(key => {
-            const s = stats[key];
-            if (s.total > 0) {
-                s.winRate = Math.round((s.wins / s.total) * 100);
-            }
-        });
-
-        return stats;
-    }, [loggedTrades]);
 
     // ... (useEffects) ...
 
@@ -1167,14 +1106,13 @@ const App: React.FC = () => {
             const target = e.target as HTMLElement | null;
             const isTyping = !!target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable);
             if (isTyping) return;
-            const anyOverlayOpen = isSettingsMenuVisible || isLiveMarketVisible || isUserModalOpen || isStrategySearchVisible || isWatchListVisible;
+            const anyOverlayOpen = isSettingsMenuVisible || isUserModalOpen || isWatchListVisible;
             if (anyOverlayOpen) {
                 // Overlays with their own document-level Esc handlers
                 // (SettingsMenu, command palette, Journal, LiveMarket, dialogs)
                 // close themselves. Close the gate-owned overlays here so one
                 // Esc never both closes an overlay AND cancels a running
                 // analysis — but never cancels while anything is open.
-                if (isStrategySearchVisible) setIsStrategySearchVisible(false);
                 if (isWatchListVisible) setIsWatchListVisible(false);
                 return;
             }
@@ -1185,7 +1123,7 @@ const App: React.FC = () => {
         };
         document.addEventListener('keydown', onKeyDown);
         return () => document.removeEventListener('keydown', onKeyDown);
-    }, [isAnalysisInProgress, handleCancelAnalysis, toast, isSettingsMenuVisible, isLiveMarketVisible, isUserModalOpen, isStrategySearchVisible, isWatchListVisible]);
+    }, [isAnalysisInProgress, handleCancelAnalysis, toast, isSettingsMenuVisible, isUserModalOpen, isWatchListVisible]);
 
     // ─── View model reasoning (Think tab deep link) ────────────────────────
     // Opens the Trading Journal's Think tab focused on the reasoning records
@@ -1341,12 +1279,6 @@ const App: React.FC = () => {
         };
     }, [toast]);
 
-    // Quota flagging UI never materialized (the old quotaExceededModels state
-    // was set but never read by any component) — keep the callback for the
-    // modal plumbing; quota errors surface via the OCR error state instead.
-    const handleQuotaExceeded = useCallback((_modelId: string) => {
-        // Intentional no-op.
-    }, []);
 
     // Update ref for useTradeLogging (breaks circular dependency)
     handleSendMessageRef.current = handleSendMessage;
@@ -1354,10 +1286,6 @@ const App: React.FC = () => {
 
     // ... (handleAssistantChat remains unchanged) ...
 
-    const handleLiveMarketAnalyze = (data: string) => {
-        setIsLiveMarketVisible(false);
-        setInput(data); // PREFILL INPUT, DO NOT SEND IMMEDIATELY
-    };
 
     const handleUpdateSummaryCharLimit = (limit: number) => setSummaryCharLimit(limit);
 
@@ -1442,18 +1370,8 @@ const App: React.FC = () => {
 
     const handleStartNewConversation = handleNewConversation;
 
-    // Stable handler identities — plain arrow functions here were recreated
-    // every render, defeating the chatContext memo and re-rendering every
-    // visible transcript row on each stream chunk / keystroke.
-    const handleApplyStrategy = useCallback((strategyName: string) => {
-        if (!activeFrameworks.includes(strategyName)) {
-            setActiveFrameworks(prev => [...prev, strategyName]);
-        }
-    }, [activeFrameworks]);
-
-    const handleRemoveStrategy = (strategyName: string) => {
-        setActiveFrameworks(prev => prev.filter(s => s !== strategyName));
-    };
+    // (handleApplyStrategy / handleRemoveStrategy left with the StrategySearch
+    // overlay — P-4; the activation card is the writer now.)
 
     // F4: "Re-run debate" — re-dispatches the original prompt + chart images
     // through the normal pipeline so the user gets a fresh debate for the
@@ -2135,7 +2053,6 @@ const App: React.FC = () => {
                                 <React.Suspense fallback={<SurfaceSkeleton />}>
                                     <StrategyStudio
                                         trades={loggedTrades}
-                                        onOpenStrategySearch={() => setIsStrategySearchVisible(true)}
                                         username={activeUsername || undefined}
                                         memoryConfig={memoryConfig}
                                         providers={providerConfigs}
@@ -2417,15 +2334,6 @@ const App: React.FC = () => {
                 <UpdateOverlay />
             </React.Suspense>
             <UserProfileManager isVisible={isUserModalOpen} isLoading={isLoading} onUserSelect={loadUserData} existingUsers={existingUsernames} onImportProfile={handleImportData} onDeleteUser={handleDeleteUser} onClose={() => setIsUserModalOpen(false)} />
-            {/* Mounted only while the overlay is open: LiveMarket now runs the
-                app's shared live feed (a combined futures socket PLUS a kline
-                socket), so leaving the panel mounted-but-hidden would hold two
-                sockets and a REST poller open for the whole session. The panel
-                returns null on !isVisible anyway, so nothing it can see
-                changes — it just stops paying for it while it is closed. */}
-            {isLiveMarketVisible && (
-                <LiveMarket isVisible onClose={() => setIsLiveMarketVisible(false)} onAnalyze={handleLiveMarketAnalyze} />
-            )}
             {dataCaptureCandidate && (
                 <DataCaptureModal
                     message={dataCaptureCandidate.message}
@@ -2491,7 +2399,6 @@ const App: React.FC = () => {
                 reviewSummary={finalTradeSummary ?? undefined}
                 reviewLoading={isLoading}
                 onRegenerateReview={handleRegenerateFinalSummary}
-                onOpenStrategySearch={() => setIsStrategySearchVisible(true)}
                 skillFormatPair={skillFormatPair}
                 onSkillFormatModelChange={handleSkillFormatModelChange}
                 currentRegime={(currentHybridData as { regime?: { regime?: string } } | null)?.regime?.regime ?? undefined}
@@ -2544,11 +2451,6 @@ const App: React.FC = () => {
                 <main> below — do not re-add an overlay or journalState-style
                 plumbing. */}
 
-            <React.Suspense fallback={null}>
-            {isStrategySearchEverOpened && (
-                <StrategySearch isVisible={isStrategySearchVisible} onClose={() => { setIsStrategySearchVisible(false); setStrategyToView(null); }} onApplyStrategy={handleApplyStrategy} onRemoveStrategy={handleRemoveStrategy} providerConfig={readyProviders[0] || moderatorConfig} activeFrameworks={activeFrameworks} defaultFrameworks={DEFAULT_FRAMEWORKS} initialViewStrategy={strategyToView} onQuotaExceeded={handleQuotaExceeded} familyWinRates={familyWinRates} />
-            )}
-            </React.Suspense>
             <React.Suspense fallback={null}>
                 <WatchListPanel
                     isVisible={isWatchListVisible}

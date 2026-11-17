@@ -21,12 +21,10 @@ export interface JournalUIState {
 
 export function useJournalUI() {
     const [selectedProbabilityMessageId, setSelectedProbabilityMessageId] = useState<string | null>(null);
-    const [strategyToView, setStrategyToView] = useState<string | null>(null);
     const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
 
     return {
         selectedProbabilityMessageId, setSelectedProbabilityMessageId,
-        strategyToView, setStrategyToView,
         copiedMessageId, setCopiedMessageId,
     };
 }

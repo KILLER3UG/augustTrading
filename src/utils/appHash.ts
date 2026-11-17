@@ -1,6 +1,6 @@
 import { JournalUIState } from '../hooks/useJournalUI';
 
-export type AppHashView = 'chat' | 'journal' | 'market' | 'settings' | 'watch';
+export type AppHashView = 'chat' | 'journal' | 'settings' | 'watch';
 
 export interface AppHashRoute {
     view: AppHashView;
@@ -19,7 +19,6 @@ export const parseAppHash = (hash: string): AppHashRoute => {
         const allowed: JournalUIState['tab'][] = ['log', 'analytics'];
         return { view: 'journal', tab: tab && allowed.includes(tab) ? tab : 'log' };
     }
-    if (head === 'market') return { view: 'market' };
     if (head === 'settings') return { view: 'settings' };
     if (head === 'watch') return { view: 'watch' };
     return { view: 'chat' };
@@ -27,7 +26,6 @@ export const parseAppHash = (hash: string): AppHashRoute => {
 
 export const serializeAppHash = (route: AppHashRoute): string => {
     if (route.view === 'journal') return route.tab && route.tab !== 'log' ? `#/journal/${route.tab}` : '#/journal';
-    if (route.view === 'market') return '#/market';
     if (route.view === 'settings') return '#/settings';
     if (route.view === 'watch') return '#/watch';
     return '#/';

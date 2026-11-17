@@ -5245,14 +5245,13 @@ const runCaptureChecks = async () => {
 // ─── 47. one drawing store: the chart cannot fall back to the legacy bucket ─
 (() => {
     const chartSrc = fs.readFileSync(path.join(ROOT, 'src/components/trade/TradingChart.tsx'), 'utf8');
-    const liveSrc = fs.readFileSync(path.join(ROOT, 'src/components/market/LiveMarket.tsx'), 'utf8');
     const tradeSrc = fs.readFileSync(path.join(ROOT, 'src/components/trade/TradeView.tsx'), 'utf8');
     ok('drawings: the chart never reads or writes the legacy per-symbol bucket (779cb746 was two live buckets)',
         !chartSrc.includes('loadDrawings(') && !chartSrc.includes('saveDrawings('));
     ok('drawings: TradingChartProps.sessionId is REQUIRED, not optional',
         /sessionId: string;/.test(chartSrc) && !/sessionId\?: string;/.test(chartSrc));
-    ok('drawings: the Market surface pins a STABLE scope, so it cannot fall through to legacy',
-        /sessionId="market"/.test(liveSrc));
+    // (The Market surface left with P-4 — its stable "market" scope died with
+    // the overlay; every drawing now lives behind one required sessionId.)
     ok('drawings: the dock chart IS the Analyze chart — one required scope, no legacy escape',
         /sessionId: string;/.test(chartSrc)
         && !/sessionId=\{activeConversationId \?\? undefined\}/.test(tradeSrc));
