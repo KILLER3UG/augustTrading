@@ -16,6 +16,7 @@ import type { LoggedTrade, TradeResolutionRecord } from '../../types/trade';
 import type { JournalOutcomeSnapshot, TrackedPosition } from '../../types/tracking';
 import { parsePrice } from '../../utils/analysisUtils';
 import { stopDistancePercent } from '../../utils/netRiskReward';
+import { isSimulatedTrade, normalizePaperFillAssumptions } from './paperExecution';
 import { TRACKED_BAR_MS } from './positionTracker';
 
 export const journalTrackedId = (tradeId: string): string => `journal-${tradeId}`;
@@ -209,6 +210,12 @@ export const trackedPositionFromJournalTrade = (trade: LoggedTrade): TrackedPosi
         timelinePointsDropped: 0,
         context: [],
         contextDownsampled: false,
+        ...(isSimulatedTrade(trade)
+            ? {
+                simulated: true,
+                fillAssumptions: normalizePaperFillAssumptions(trade.fillAssumptions ?? trade.analysis?.fillAssumptions),
+            }
+            : {}),
         version: 1,
     };
 };
@@ -316,6 +323,12 @@ export const mergePendingJournalRow = (pending: LoggedTrade, settled: LoggedTrad
         postMortem: settled.postMortem ?? pending.postMortem,
         postMortemCreatedAt: settled.postMortemCreatedAt ?? pending.postMortemCreatedAt,
         postMortemModel: settled.postMortemModel ?? pending.postMortemModel,
+        ...(pending.simulated !== undefined || settled.simulated !== undefined
+            ? { simulated: pending.simulated ?? settled.simulated }
+            : {}),
+        ...(pending.fillAssumptions || settled.fillAssumptions
+            ? { fillAssumptions: pending.fillAssumptions ?? settled.fillAssumptions }
+            : {}),
         outcome: settled.outcome,
         outcomeResolvedAt: settled.outcomeResolvedAt,
         resolutionSource: settled.resolutionSource,

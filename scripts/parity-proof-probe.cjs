@@ -334,6 +334,18 @@ async function main() {
                         (await page.locator('[data-testid="stats-card"]').count())
                             ? (await page.locator('[data-testid="stats-card"]').first().innerText()).replace(/\s+/g, ' ').slice(0, 120)
                             : 'no stats card mounted');
+                    const simStatusBefore = await page.locator('[data-testid="stats-card-simulated-status"]').first().innerText().catch(() => '');
+                    await page.locator('[data-testid="stats-card-simulated-toggle"]').first().click().catch(() => {});
+                    await sleep(200);
+                    const simStatusSimulated = await page.locator('[data-testid="stats-card-simulated-status"]').first().innerText().catch(() => '');
+                    await page.locator('[data-testid="stats-card-simulated-toggle"]').first().click().catch(() => {});
+                    await sleep(200);
+                    const simStatusRestored = await page.locator('[data-testid="stats-card-simulated-status"]').first().innerText().catch(() => '');
+                    check('P-6 stats card isolates simulated rows by default and toggles Real vs Simulated cleanly',
+                        /Simulated excluded/i.test(simStatusBefore)
+                        && /Simulated only/i.test(simStatusSimulated)
+                        && /Simulated excluded/i.test(simStatusRestored),
+                        `before=${simStatusBefore} sim=${simStatusSimulated} restored=${simStatusRestored}`);
                     await page.screenshot({ path: '.probe-artifacts/parity-stats-card.png' });
                     break;
                 case 'p5-attribution':

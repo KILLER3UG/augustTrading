@@ -16,7 +16,7 @@
  * Pure + dependency-free (bar the shared clamp helpers) so it is unit-tested.
  */
 
-import { TradeAnalysis, TradeOutcome, Message, MessageRole, type ProposalGate } from '../../types';
+import { TradeAnalysis, TradeOutcome, Message, MessageRole, type ProposalGate, type PaperFillAssumptions } from '../../types';
 import { asPlaybookId, type PlaybookId } from '../../types/playbook';
 import { baseOf, quoteOf } from '../../utils/symbol';
 import { plannedRiskReward } from '../../utils/riskReward';
@@ -24,6 +24,7 @@ import { clampProbabilityToGate, downgradeConfidenceForProbability } from '../..
 import { computeContractSize, type ContractSize } from '../../utils/ticketSize';
 import { netEdgeR, roundTripCostR } from '../../utils/netRiskReward';
 import { applyTradeTypeToAnalysis } from '../analysis/ScalpDetectionService';
+import { DEFAULT_PAPER_FILL_ASSUMPTIONS, PAPER_EXECUTION_RECEIPT, normalizePaperFillAssumptions } from '../tracking/paperExecution';
 
 /** Re-exported so existing importers keep one name for it; the definition lives
  *  in `types/analysis.ts`, because a stamped value has to survive onto a
@@ -74,6 +75,10 @@ export interface TradeProposal {
         sessionVwap: number | null;
         capturedAt: string;
     };
+    /** Paper execution lane (Phase 6): true by default on desk proposals. */
+    simulated?: boolean;
+    /** Explicit fee, spread, slippage, and gap-open fill assumptions. */
+    fillAssumptions?: PaperFillAssumptions;
 }
 
 /**
@@ -308,6 +313,12 @@ export const parseTradeProposal = (args: Record<string, unknown>): { proposal?: 
             // become a detector bucket of its own the stats could never join.
             // present_trade's receipt names the dropped value to the model.
             playbookId: asPlaybookId(args.playbook) ?? undefined,
+            simulated: args.simulated === false ? false : true,
+            fillAssumptions: normalizePaperFillAssumptions(
+                args.fillAssumptions && typeof args.fillAssumptions === 'object'
+                    ? (args.fillAssumptions as Partial<PaperFillAssumptions>)
+                    : DEFAULT_PAPER_FILL_ASSUMPTIONS,
+            ),
         },
     };
 };
@@ -393,6 +404,8 @@ export const buildProposedTradeAnalysis = (p: TradeProposal, createdAt = new Dat
         ...(plan.gate ? { gate: plan.gate } : {}),
         ...(plan.warnings.length > 0 ? { validationWarnings: plan.warnings } : {}),
         ...(p.playbookId ? { playbookId: p.playbookId } : {}),
+        simulated: p.simulated !== false,
+        fillAssumptions: normalizePaperFillAssumptions(p.fillAssumptions),
     });
 };
 
@@ -438,7 +451,7 @@ export const buildProposedTradeMessage = (
 ): Message => ({
     id,
     role: MessageRole.AI,
-    text: `Logged from Chart AI — ${p.direction} ${p.symbol}${p.planId ? ` · plan ${p.planId}` : ''}`,
+    text: `Logged from Chart AI — ${p.direction} ${p.symbol}${p.planId ? ` · plan ${p.planId}` : ''} · ${PAPER_EXECUTION_RECEIPT}`,
     createdAt: new Date().toISOString(),
     analysis: buildProposedTradeAnalysis(p),
     outcome: TradeOutcome.PENDING,

@@ -31,6 +31,7 @@
  */
 
 const { spawn } = require('child_process');
+const { mkdirSync } = require('fs');
 const net = require('net');
 const path = require('path');
 const { chromium } = require('@playwright/test');
@@ -557,6 +558,7 @@ async function main() {
     mock.stdout.on('data', (d) => { mockOut += String(d); });
     mock.stderr.on('data', (d) => { mockOut += String(d); });
 
+    const wsTimers = [];
     try {
         if (!(await waitForServer(BASE))) {
             console.error('DECISION CARD PROBE FAIL: no vite dev server on', BASE, '\n', serverOut);
@@ -603,7 +605,9 @@ async function main() {
                 } catch { /* the page may have closed the socket */ }
             };
             push();
-            setInterval(push, 1000);
+            const t = setInterval(push, 1000);
+            t.unref?.();
+            wsTimers.push(t);
         });
         page.on('console', (msg) => {
             consoleLog.push(`[console.${msg.type()}] ${msg.text().slice(0, 200)}`);
@@ -630,7 +634,14 @@ async function main() {
         const cardA = await waitForCard(page, 'trade-proposal-card', 'Probe plan A');
         if (!cardA) { await dumpTranscriptState(page, 'plan A card never mounted'); throw new Error('plan A card never rendered'); }
         check('a presented plan renders the decision card', true);
+        const hasSimBadge = (await cardA.locator('[data-testid="simulated-badge"]').count()) > 0;
+        const fillAssumptionsText = await cardA.locator('[data-testid="fill-assumptions"]').innerText().catch(() => '');
+        check('the proposal card renders the monochrome Simulated badge and explicit fill assumptions',
+            hasSimBadge && /Simulated.*fee.*spread.*slip.*gap-open.*nothing executed on any exchange/i.test(fillAssumptionsText),
+            `badge=${hasSimBadge} assumptions=${fillAssumptionsText}`);
+        mkdirSync(path.join(ROOT, 'docs', 'evidence'), { recursive: true });
         await page.screenshot({ path: '.probe-artifacts/decision-card-presented.png' });
+        await page.screenshot({ path: path.join(ROOT, 'docs', 'evidence', 'stop2-decision-cards.png') });
 
         // Ruling 1's zero-loss: the [Desk | Chat] layout switch with a
         // PENDING card on screen. Both modes render the same workspace and
@@ -972,6 +983,7 @@ async function main() {
         for (const line of consoleLog.slice(-14)) console.error('  ·', line);
         process.exitCode = 1;
     } finally {
+        for (const t of wsTimers) clearInterval(t);
         server.kill();
         mock.kill();
     }

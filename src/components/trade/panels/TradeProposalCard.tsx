@@ -29,6 +29,7 @@ import { CheckCircle } from '../../shared/Icons';
 import Disclosure from '../../shared/Disclosure';
 import type { TradeProposal } from '../../../services/trade/proposedTrade';
 import { computeRrRatio, buildTradePlan, modelStatedSize, proposedTicketSize } from '../../../services/trade/proposedTrade';
+import { formatPaperFillAssumptions, PAPER_EXECUTION_RECEIPT } from '../../../services/tracking/paperExecution';
 import { assessProposalStaleness, undoWindowOf } from '../../../services/trade/tradeDecision';
 import { fmtRiskReward } from '../../../utils/riskReward';
 import { getHarnessSettings } from '../../../utils/harnessSettings';
@@ -172,6 +173,14 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({
         <div className="flex items-center gap-2">
             <span className={`rounded-control px-1.5 py-0.5 text-ui-xs font-bold ${proposal.direction === 'Long' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-rose-500/15 text-rose-400'}`}>{proposal.direction}</span>
             <span className="font-mono text-ui-sm font-bold text-zinc-100">{proposal.symbol}</span>
+            {proposal.simulated !== false && (
+                <span
+                    data-testid="simulated-badge"
+                    className="rounded-control border border-hairline bg-white/[0.04] px-1.5 py-0.5 font-mono text-ui-2xs uppercase tracking-wider text-zinc-300"
+                >
+                    Simulated
+                </span>
+            )}
             {/* The number that gates "Log this trade" — from the canonical
                 planned-R:R util, the same chip the Agents surface header shows. */}
             {computeRrRatio(proposal) > 0 && (
@@ -196,13 +205,21 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({
             </div>
             <div>
                 <div className="font-mono text-ui-xs uppercase text-zinc-500">SL</div>
-                <div className="font-semibold text-rose-400">{proposal.stopLoss}</div>
+                <div className="font-semibold text-zinc-200">{proposal.stopLoss}</div>
             </div>
             <div>
                 <div className="font-mono text-ui-xs uppercase text-zinc-500">TP</div>
-                <div className="font-semibold text-emerald-400">{proposal.takeProfits.join(' / ')}</div>
+                <div className="font-semibold text-zinc-200">{proposal.takeProfits.join(' / ')}</div>
             </div>
         </div>
+        {proposal.simulated !== false && (
+            <p
+                data-testid="fill-assumptions"
+                className="mt-1.5 font-mono text-ui-2xs text-zinc-400"
+            >
+                {formatPaperFillAssumptions(proposal.fillAssumptions)} · {PAPER_EXECUTION_RECEIPT}
+            </p>
+        )}
         {proposal.invalidation && (
             // The invalidation is the plan's own falsifier — the thing the
             // trader is approving the harness to watch for. Print it, don't
@@ -413,10 +430,16 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({
  *  transcript so it can never be clicked twice — shown once the undo window
  *  has lapsed. */
 export const TradeProposalLoggedRow: React.FC = () => (
-    <p className="mt-1 flex items-center gap-1.5 text-ui-xs font-semibold uppercase tracking-wider text-zinc-300"
+    <p className="mt-1 flex flex-wrap items-center gap-1.5 text-ui-xs font-semibold uppercase tracking-wider text-zinc-300"
         data-testid="proposal-logged-row">
         <CheckCircle className="h-3 w-3 shrink-0" aria-hidden="true" />
-        <span>✓ Approved — tracking this trade; the harness will score it against the outcome.</span>
+        <span
+            data-testid="simulated-badge"
+            className="rounded-control border border-hairline bg-white/[0.04] px-1.5 py-0.5 font-mono text-ui-2xs uppercase tracking-wider text-zinc-300"
+        >
+            Simulated
+        </span>
+        <span>✓ Approved — tracking this simulated trade; nothing executed on any exchange.</span>
     </p>
 );
 

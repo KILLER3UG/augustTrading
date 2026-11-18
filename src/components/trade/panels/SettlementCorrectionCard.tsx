@@ -58,6 +58,12 @@ export const SettlementCorrectionCard: React.FC<SettlementCorrectionCardProps> =
                 <span className="rounded-control bg-white/[0.06] px-1.5 py-0.5 text-ui-xs font-bold text-zinc-200">
                     Correction
                 </span>
+                <span
+                    data-testid="simulated-badge"
+                    className="rounded-control border border-hairline bg-white/[0.04] px-1.5 py-0.5 font-mono text-ui-2xs uppercase tracking-wider text-zinc-300"
+                >
+                    Simulated
+                </span>
                 <span className="font-mono text-ui-xs uppercase tracking-wider text-zinc-500">
                     proposed settlement fix
                 </span>

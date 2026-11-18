@@ -15,6 +15,7 @@ import SetupLifecycleCard from '../analysis/SetupLifecycleCard';
 import MarkdownContent from '../shared/MarkdownContent';
 import TrackedPostMortem from './TrackedPostMortem';
 import { phtDayYear } from '../../utils/timezone';
+import { isSimulatedTrade, formatPaperFillAssumptions, PAPER_EXECUTION_RECEIPT } from '../../services/tracking/paperExecution';
 
 interface TradeLogContentProps {
     trades: LoggedTrade[];
@@ -108,9 +109,25 @@ const TradeDetailView: React.FC<{
                         {phtDayYear(timestamp)}
                     </p>
 
-                    <div className="mb-4">
+                    <div className="mb-4 flex flex-wrap items-center gap-2">
                         <OutcomeBadge outcome={outcome} />
+                        {isSimulatedTrade(trade) && (
+                            <span
+                                data-testid="simulated-badge"
+                                className="rounded-control border border-hairline bg-white/[0.04] px-2 py-0.5 font-mono text-ui-xs uppercase tracking-wider text-zinc-300"
+                            >
+                                Simulated
+                            </span>
+                        )}
                     </div>
+                    {isSimulatedTrade(trade) && (
+                        <p
+                            data-testid="fill-assumptions"
+                            className="mb-4 font-mono text-ui-xs text-zinc-400"
+                        >
+                            {formatPaperFillAssumptions(trade.fillAssumptions ?? analysis?.fillAssumptions)} · {PAPER_EXECUTION_RECEIPT}
+                        </p>
+                    )}
 
                     <details className="mt-10 group">
                         <summary className="cursor-pointer text-ui-base text-zinc-400 hover:text-zinc-200 list-none flex items-center gap-2">
@@ -377,6 +394,14 @@ const TradeLogRowImpl: React.FC<{
                     <div className="flex items-center gap-2 min-w-0">
                         <span className="text-ui-base font-medium text-zinc-100 truncate" title={coinName}>{coinName}</span>
                         <OutcomeBadge outcome={outcome} />
+                        {isSimulatedTrade(trade) && (
+                            <span
+                                data-testid="trade-log-simulated-badge"
+                                className="rounded-control border border-hairline bg-white/[0.04] px-1.5 py-0.5 font-mono text-ui-2xs uppercase tracking-wider text-zinc-300"
+                            >
+                                Simulated
+                            </span>
+                        )}
                         {analysis?.verdictReview && (
                             <VerdictReviewPill reason={analysis.verdictReview.reason} />
                         )}
@@ -408,6 +433,7 @@ const TradeLogContent: React.FC<TradeLogContentProps> = ({
     const [viewerImageUrl, setViewerImageUrl] = useState<string | null>(null);
     const [tradeTypeFilter, setTradeTypeFilter] = useState<'all' | 'scalp' | 'swing'>('all');
     const [outcomeFilter, setOutcomeFilter] = useState<'all' | TradeOutcome>('all');
+    const [simFilter, setSimFilter] = useState<'all' | 'real' | 'simulated'>('all');
 
     // Bulk-void gate. Two steps — arm, then confirm — replace the old
     // one-click modal delete, and a confirmed delete is reversible for 60s.
@@ -446,12 +472,14 @@ const TradeLogContent: React.FC<TradeLogContentProps> = ({
     const filteredTrades = useMemo(() => (trades || []).filter(trade => {
         if (tradeTypeFilter !== 'all') {
             const tt = trade.tradeType || trade.analysis?.tradeType;
-            if (tradeTypeFilter === 'scalp') return tt === 'scalp';
-            if (tradeTypeFilter === 'swing') return tt === 'swing' || !tt;
+            if (tradeTypeFilter === 'scalp' && tt !== 'scalp') return false;
+            if (tradeTypeFilter === 'swing' && tt && tt !== 'swing') return false;
         }
         if (outcomeFilter !== 'all' && trade.outcome !== outcomeFilter) return false;
+        if (simFilter === 'real' && isSimulatedTrade(trade)) return false;
+        if (simFilter === 'simulated' && !isSimulatedTrade(trade)) return false;
         return true;
-    }), [trades, tradeTypeFilter, outcomeFilter]);
+    }), [trades, tradeTypeFilter, outcomeFilter, simFilter]);
 
     /** How many rows carry a scalp/swing label at all. The filter reads a field
      *  the pipeline never writes automatically, so an empty Scalp list almost
@@ -595,13 +623,13 @@ const TradeLogContent: React.FC<TradeLogContentProps> = ({
         <div className="flex flex-col h-full bg-transparent w-full max-w-4xl mx-auto">
             {/* Filters: trade type + outcome */}
             <div className="px-8 pt-2 pb-6 shrink-0 space-y-5">
-                <div className="flex items-center gap-2 flex-wrap">
+                <div className="flex items-center gap-1.5 flex-wrap">
                     {(['all', 'scalp', 'swing'] as const).map(type => (
                         <button
                             key={type}
                             onClick={() => setTradeTypeFilter(type)}
                             aria-pressed={tradeTypeFilter === type}
-                            className={`px-3 py-1.5 text-ui-sm font-medium rounded-full transition-colors ${
+                            className={`px-2.5 py-1 text-ui-dense font-medium rounded-full transition-colors ${
                                 tradeTypeFilter === type
                                     ? 'bg-zinc-800 text-zinc-100'
                                     : 'text-zinc-500 hover:text-zinc-200 hover:bg-zinc-900'}`}
@@ -609,13 +637,13 @@ const TradeLogContent: React.FC<TradeLogContentProps> = ({
                             {type === 'scalp' ? '◆ ' : type === 'swing' ? '◇ ' : ''}{type}
                         </button>
                     ))}
-                    <span className="w-px h-4 bg-white/10 mx-1" />
+                    <span className="w-px h-4 bg-white/10 mx-0.5" />
                     {[TradeOutcome.WIN, TradeOutcome.LOSS, TradeOutcome.PENDING, TradeOutcome.ENTRY_NOT_HIT, TradeOutcome.SKIPPED].map(o => (
                         <button
                             key={o}
                             onClick={() => setOutcomeFilter(prev => prev === o ? 'all' : o)}
                             aria-pressed={outcomeFilter === o}
-                            className={`px-3 py-1.5 text-ui-sm font-medium rounded-full transition-colors ${
+                            className={`px-2.5 py-1 text-ui-dense font-medium rounded-full transition-colors ${
                                 outcomeFilter === o
                                     ? 'bg-zinc-800 text-zinc-100'
                                     : 'text-zinc-500 hover:text-zinc-200 hover:bg-zinc-900'
@@ -633,6 +661,23 @@ const TradeLogContent: React.FC<TradeLogContentProps> = ({
                             <X className="h-3 w-3" aria-hidden="true" />
                         </button>
                     )}
+                    <span className="w-px h-4 bg-white/10 mx-0.5" />
+                    {(['all', 'real', 'simulated'] as const).map(mode => (
+                        <button
+                            key={mode}
+                            type="button"
+                            data-testid={`trade-log-sim-filter-${mode}`}
+                            onClick={() => setSimFilter(mode)}
+                            aria-pressed={simFilter === mode}
+                            className={`px-2.5 py-1 text-ui-dense font-medium rounded-full capitalize transition-colors ${
+                                simFilter === mode
+                                    ? 'bg-zinc-800 text-zinc-100'
+                                    : 'text-zinc-500 hover:text-zinc-200 hover:bg-zinc-900'
+                            }`}
+                        >
+                            {mode}
+                        </button>
+                    ))}
                 </div>
             </div>
 
@@ -712,6 +757,7 @@ const TradeLogContent: React.FC<TradeLogContentProps> = ({
                         )}
                         <button
                             type="button"
+                            data-testid="bulk-delete-open"
                             onClick={handleOpenBulkVoidGate}
                             disabled={isSummarizing}
                             aria-expanded={gateOpen}

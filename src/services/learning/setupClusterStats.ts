@@ -20,6 +20,7 @@
 
 import type { LoggedTrade } from '../../types';
 import { baseOf } from '../../utils/symbol';
+import { filterTradesBySimulationMode, type SimulationStatsMode } from '../tracking/paperExecution';
 import { calculatePnlR } from './PatternMemorySynthesisService';
 
 export interface SetupClusterStats {
@@ -38,6 +39,8 @@ export interface SetupClusterFilter {
     coin?: string;
     direction?: string;
     family?: string;
+    /** Default `'real'`: simulated paper rows are excluded from real stats unless requested. */
+    simulationMode?: SimulationStatsMode;
 }
 
 /** Conditions applied on top of the row keys (the attributed bucket). */
@@ -47,6 +50,8 @@ export interface SetupClusterConditions {
     regime?: string;
     /** Only rows whose plan carried this `scan_playbooks` detector id. */
     playbook?: string;
+    /** Default `'real'`: simulated paper rows are excluded from real stats unless requested. */
+    simulationMode?: SimulationStatsMode;
 }
 
 const coinOf = (t: LoggedTrade): string => baseOf(t.analysis?.coinName || '');
@@ -89,7 +94,7 @@ export const regimeIdMatches = (recorded: string, wanted: string): boolean => {
  * read the same as a bucket that is thin because the trader loses there.
  */
 export const clusterRows = (trades: LoggedTrade[] | undefined, filter: SetupClusterFilter): LoggedTrade[] => {
-    const rows = trades ?? [];
+    const rows = filterTradesBySimulationMode(trades, filter.simulationMode ?? 'real');
     if (!filter.coin || rows.length === 0) return [];
     // Canonical base coin on BOTH sides of the comparison (utils/symbol) —
     // the caller may pass 'BTCUSDT' or a bare 'BTC'; per-trade coin names are
@@ -156,7 +161,7 @@ export const computeSetupClusterStats = (
     trades: LoggedTrade[],
     conditions?: SetupClusterConditions,
 ): SetupClusterStats | null =>
-    summariseClusterRows(clusterRows(trades, { coin, direction, family }).filter(t => {
+    summariseClusterRows(clusterRows(trades, { coin, direction, family, simulationMode: conditions?.simulationMode }).filter(t => {
         if (conditions?.regime) {
             const recorded = regimeIdOf(t);
             if (!recorded || !regimeIdMatches(recorded, conditions.regime)) return false;

@@ -186,6 +186,10 @@ export interface TrackedPosition {
     /** A recorded disagreement with the deterministic resolver, or a reason a
      *  plan was refused. Never silently overwritten. */
     discrepancy?: string;
+    /** Paper execution lane (Phase 6): true when tracking a simulated paper trade. */
+    simulated?: boolean;
+    /** Explicit fee/spread/slippage/gap-open fill assumptions for a simulated trade. */
+    fillAssumptions?: import('./analysis').PaperFillAssumptions;
     version: 1;
 }
 

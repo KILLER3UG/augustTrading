@@ -34,6 +34,7 @@ import { regimeRead } from '../market/regimeCore';
 import { atr14 } from '../../utils/smcStructure';
 import type { Kline } from '../../types/message';
 import type { MarketToolEnvelope } from './marketTools';
+import { filterTradesBySimulationMode, countSimulatedTrades, type SimulationStatsMode } from '../tracking/paperExecution';
 
 /** The floor every quoted rate shares: under this, the tool says why it is
  *  not quoting one. */
@@ -66,6 +67,8 @@ export interface SetupBaseRateParams {
     regime?: string;
     /** A `scan_playbooks` detector id — only plans stamped with it. */
     playbook?: string;
+    /** Default `'real'`: simulated paper rows are excluded from real base rates. */
+    simulationMode?: SimulationStatsMode;
 }
 
 /**
@@ -107,9 +110,16 @@ export const runSetupBaseRateTool = (
             one_line_summary: values === null ? (reason ?? 'unavailable') : summary,
         } satisfies MarketToolEnvelope<Record<string, unknown>>);
 
-    const rows = trades ?? [];
+    const simMode = params.simulationMode ?? 'real';
+    const simulatedExcluded = simMode === 'real' ? countSimulatedTrades(trades) : 0;
+    const rows = filterTradesBySimulationMode(trades, simMode);
+    if (simulatedExcluded > 0) {
+        notes.push(`Simulated excluded (${simulatedExcluded})`);
+    }
     if (rows.length === 0) {
-        return make(null, '', 'the journal has no rows yet — nothing to measure a base rate on');
+        return make(null, '', simulatedExcluded > 0
+            ? `the journal has no real rows yet (${simulatedExcluded} simulated row(s) excluded from real stats)`
+            : 'the journal has no rows yet — nothing to measure a base rate on');
     }
     // The playbook key is model-supplied, so it is proved against the detector
     // ids before it filters: a typo that matched zero rows would otherwise
@@ -123,7 +133,7 @@ export const runSetupBaseRateTool = (
         ? normaliseRegimeQuery(params.regime)
         : undefined;
 
-    const considered = clusterRows(rows, { coin: params.coin, direction: params.direction, family: params.family });
+    const considered = clusterRows(rows, { coin: params.coin, direction: params.direction, family: params.family, simulationMode: simMode });
     const withRegime = considered.filter(t => regimeIdOf(t) !== null).length;
     const withPlaybook = considered.filter(t => playbookIdOf(t) !== null).length;
     const matchingRegime = regime
@@ -131,7 +141,7 @@ export const runSetupBaseRateTool = (
         : null;
     const matchingPlaybook = playbook ? considered.filter(t => playbookIdOf(t) === playbook).length : null;
 
-    const stats = computeSetupClusterStats(params.coin, params.direction, params.family, rows, { regime, playbook });
+    const stats = computeSetupClusterStats(params.coin, params.direction, params.family, rows, { regime, playbook, simulationMode: simMode });
     if (!stats || stats.sample < MIN_RATE_SAMPLE || stats.winRate === null) {
         const bucket = [
             regime ? ` in regime ${regime}` : '',
@@ -173,6 +183,8 @@ export const runSetupBaseRateTool = (
         worst_lesson: stats.worstLesson,
         regime_conditioned: regime !== undefined,
         playbook_conditioned: playbook !== undefined,
+        simulated_excluded: simulatedExcluded,
+        simulation_mode: simMode,
         coverage: { considered: considered.length, with_regime: withRegime, with_playbook: withPlaybook },
     };
     const avg = stats.avgR !== null ? `${stats.avgR.toFixed(2)}R` : 'R n/a';
@@ -192,19 +204,23 @@ export const runSetupBaseRateTool = (
 export const runRiskStateTool = (
     trades: LoggedTrade[],
     asofMs: number = Date.now(),
+    opts?: { simulationMode?: SimulationStatsMode },
 ): string => {
     const tool = 'risk_state';
+    const simMode = opts?.simulationMode ?? 'real';
+    const simulatedExcluded = simMode === 'real' ? countSimulatedTrades(trades) : 0;
     const notes: string[] = [
         'source: the trader\'s logged journal rows',
         'advisory only — context for sizing and refusal decisions, never a P&L report',
+        ...(simulatedExcluded > 0 ? [`Simulated excluded (${simulatedExcluded})`] : []),
     ];
-    const rows = trades ?? [];
+    const rows = filterTradesBySimulationMode(trades, simMode);
     if (rows.length === 0) {
         return JSON.stringify({
             tool, asof: asofMs, symbol: '(journal)', tf: 'journal', params: {},
-            data_quality: { available: false, bars_used: 0, notes, reason: 'the journal has no rows yet' },
+            data_quality: { available: false, bars_used: 0, notes, reason: simulatedExcluded > 0 ? `the journal has no real rows yet (${simulatedExcluded} simulated row(s) excluded)` : 'the journal has no rows yet' },
             values: null, distances_atr: {}, evidence_level: 'documented',
-            one_line_summary: 'the journal has no rows yet',
+            one_line_summary: simulatedExcluded > 0 ? `the journal has no real rows yet (${simulatedExcluded} simulated row(s) excluded)` : 'the journal has no rows yet',
         } satisfies MarketToolEnvelope<null>);
     }
     const read = readRiskState(rows, asofMs);
@@ -227,13 +243,25 @@ export const runRiskStateTool = (
             }),
         },
         kelly_floor: MIN_TRADES_FOR_KELLY_FLOOR,
-    } as RiskStateRead & { kelly_floor: number };
+        simulated_excluded: simulatedExcluded,
+        simulation_mode: simMode,
+    } as RiskStateRead & { kelly_floor: number; simulated_excluded: number; simulation_mode: SimulationStatsMode };
     const summary = `${read.open.count} open plan(s)${read.open.correlated ? ' (CORRELATED)' : ''}, drawdown light ${read.drawdown.light} (day ${read.drawdown.todayR}R / week ${read.drawdown.weekR}R), Kelly ${read.kelly.available ? `half-Kelly ceiling ${read.kelly.halfKellyPct}%` : 'refused (thin sample)'}`;
+    const simRows = simMode === 'real' ? filterTradesBySimulationMode(trades, 'simulated') : [];
+    const simValues = simMode === 'real'
+        ? {
+            ...readRiskState(simRows, asofMs),
+            kelly_floor: MIN_TRADES_FOR_KELLY_FLOOR,
+            simulated_excluded: 0,
+            simulation_mode: 'simulated' as SimulationStatsMode,
+        }
+        : undefined;
     return JSON.stringify({
         tool, asof: asofMs, symbol: '(journal)', tf: 'journal', params: {},
         data_quality: { available: true, bars_used: rows.length, notes },
         values, distances_atr: {}, evidence_level: 'documented', one_line_summary: summary,
-    } satisfies MarketToolEnvelope<typeof values>);
+        ...(simValues ? { simulatedView: { values: simValues, sample: simRows.length } } : {}),
+    });
 };
 
 // ─── meta_label — the P3 advisory gate read ─────────────────────────────
@@ -380,17 +408,40 @@ export const runMetaLabelTool = async (
 export const runPlaybookAttributionTool = (
     trades: LoggedTrade[],
     asofMs: number = Date.now(),
+    opts?: { simulationMode?: SimulationStatsMode },
 ): string => {
     const tool = 'playbook_attribution';
+    const simMode = opts?.simulationMode ?? 'real';
+    const simulatedExcluded = simMode === 'real' ? countSimulatedTrades(trades) : 0;
     const notes: string[] = [
         'source: LOGGED plans carrying a scan_playbooks tag — not the detector fire count (scans are not persisted)',
         'a plan is tagged only when present_trade followed a scan match; an untagged plan is counted under coverage, never assigned to a detector',
         `a detector under ${MIN_RATE_SAMPLE} closed plans is marked thin with no interval, while its raw sample is still shown`,
+        ...(simulatedExcluded > 0 ? [`Simulated excluded (${simulatedExcluded})`] : []),
     ];
-    const rows = trades ?? [];
+    const rows = filterTradesBySimulationMode(trades, simMode);
     const closed = rows.filter(t => t.outcome === 'WIN' || t.outcome === 'LOSS');
     const tagged = closed.filter(t => playbookIdOf(t) !== null);
-    const coverage = { closed: closed.length, tagged: tagged.length, untagged: closed.length - tagged.length };
+    const coverage = { closed: closed.length, tagged: tagged.length, untagged: closed.length - tagged.length, simulated_excluded: simulatedExcluded };
+    const simClosed = simMode === 'real'
+        ? filterTradesBySimulationMode(trades, 'simulated').filter(t => t.outcome === 'WIN' || t.outcome === 'LOSS')
+        : [];
+    const simTagged = simClosed.filter(t => playbookIdOf(t) !== null);
+    const simDetectors = simMode === 'real'
+        ? PLAYBOOK_IDS.map(id => {
+            const st = summariseClusterRows(simTagged.filter(t => playbookIdOf(t) === id));
+            return {
+                playbook: id,
+                sample: st?.sample ?? 0,
+                wins: st?.wins ?? 0,
+                losses: st?.losses ?? 0,
+                win_rate: st?.winRate !== null && st?.winRate !== undefined ? Math.round(st.winRate * 10000) / 100 : null,
+            };
+        })
+        : undefined;
+    const simulatedView = simMode === 'real'
+        ? { sample: simClosed.length, coverage: { closed: simClosed.length, tagged: simTagged.length, untagged: simClosed.length - simTagged.length, simulated_excluded: 0 }, detectors: simDetectors, values: { playbooks: simDetectors } }
+        : undefined;
     const make = (values: unknown, summary: string, reason?: string): string =>
         JSON.stringify({
             tool, asof: asofMs, symbol: '(journal)', tf: 'journal', params: {},
@@ -401,7 +452,8 @@ export const runPlaybookAttributionTool = (
                 ...(reason !== undefined ? { reason } : {}),
             },
             values, distances_atr: {}, evidence_level: 'documented', one_line_summary: reason ?? summary,
-        } satisfies MarketToolEnvelope<unknown>);
+            ...(simulatedView ? { simulatedView } : {}),
+        });
 
     if (closed.length === 0) {
         return make(null, '', 'the journal has no closed rows yet — attribution needs resolved outcomes');

@@ -59,13 +59,23 @@ export interface WeeklyReviewDigest {
     providerName: string;
 }
 
+import { filterTradesBySimulationMode, countSimulatedTrades, type SimulationStatsMode } from '../tracking/paperExecution';
+
 const keyFor = (username: string): string =>
     `${KEY_PREFIX}${(username || 'default').trim() || 'default'}`;
 
-/** Deterministic week-stats assembly over the closed trades of the window. */
-export const buildWeekStats = (trades: LoggedTrade[], nowMs: number): WeeklyReviewDigest['stats'] => {
+/** Deterministic week-stats assembly over the closed trades of the window.
+ *  Simulated paper rows are excluded from real weekly stats by default. */
+export const buildWeekStats = (
+    trades: LoggedTrade[],
+    nowMs: number,
+    opts?: { simulationMode?: SimulationStatsMode },
+): WeeklyReviewDigest['stats'] & { simulatedExcluded?: number } => {
     const since = nowMs - WEEK_MS;
-    const closed = trades.filter(t =>
+    const mode = opts?.simulationMode ?? 'real';
+    const scoped = filterTradesBySimulationMode(trades, mode);
+    const simulatedExcluded = mode === 'real' ? countSimulatedTrades(trades) : 0;
+    const closed = scoped.filter(t =>
         (t.outcome === TradeOutcome.WIN || t.outcome === TradeOutcome.LOSS)
         && t.timestamp && Date.parse(t.timestamp) >= since);
     const wins = closed.filter(t => t.outcome === TradeOutcome.WIN);
@@ -88,6 +98,7 @@ export const buildWeekStats = (trades: LoggedTrade[], nowMs: number): WeeklyRevi
             : null,
         topMistake: topCost && topCost.totalPnlUsd < 0 ? topCost.tag : null,
         givebackDays: analytics.giveback.days,
+        simulatedExcluded,
     };
 };
 

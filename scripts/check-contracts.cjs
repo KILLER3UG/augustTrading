@@ -6375,6 +6375,113 @@ const checkAgentHandExecutor = async () => {
     }
 })();
 
+// ── Phase 4.7 (Slice 1B) & Phase 6: AI setting cards, paper execution, stats isolation ──
+(() => {
+    const ai = loadModule('src/services/trade/aiSettingProposal.ts');
+    const pe = loadModule('src/services/tracking/paperExecution.ts');
+    const pt = loadModule('src/services/tracking/positionTracker.ts');
+    const scs = loadModule('src/services/learning/setupClusterStats.ts');
+    const wr = loadModule('src/services/learning/weeklyReview.ts');
+    const mr = loadModule('src/services/learning/monthlyReport.ts');
+    const jtools = loadModule('src/services/analysis/journalTools.ts');
+
+    ai.__clearAiSettingChangesForTests();
+    const badTarget = ai.checkAiSettingProposal({ target: 'unknown', value: true, reason: 'r', currentValue: false });
+    const sameVal = ai.checkAiSettingProposal({ target: 'deskToolsEnabled', value: true, reason: 'r', currentValue: true });
+    ok('phase4.7: aiSettingProposal refuses unknown target and unchanged value', badTarget.ok === false && sameVal.ok === false);
+
+    const turnOff = ai.proposeAiSettingChange({ target: 'deskToolsEnabled', value: false, reason: 'tighten tools', currentValue: true });
+    ok('phase4.7: turning OFF a capability is a tighten proposal',
+        turnOff.ok === true && turnOff.proposal.direction === 'tighten' && ai.pendingAiSettingChange('deskToolsEnabled')?.id === turnOff.proposal.id);
+    const confirmedOff = ai.confirmAiSettingChange('deskToolsEnabled', turnOff.proposal.id);
+    ai.markAiSettingRevertWindow(turnOff.proposal.id, true, 1000);
+    ok('phase4.7: confirm transitions proposal and opens a 60s revert window',
+        !!confirmedOff && ai.aiSettingChangeStateOf(turnOff.proposal.id) === 'confirmed'
+        && !!ai.aiSettingRevertOf(turnOff.proposal.id, 10_000)
+        && ai.aiSettingRevertOf(turnOff.proposal.id, 61_001) === undefined);
+
+    const turnOn = ai.proposeAiSettingChange({ target: 'hybridIntelligence', value: true, reason: 'enable hybrid', currentValue: false });
+    ok('phase4.7: turning ON a capability is a loosen proposal',
+        turnOn.ok === true && turnOn.proposal.direction === 'loosen');
+    ai.__clearAiSettingChangesForTests();
+
+    const entryFill = pe.computePaperEntryFill({ direction: 'Long', referencePrice: 100, barOpen: 101 });
+    ok('phase6: paper entry fill models adverse gap-open + spread + slippage',
+        entryFill.gapAdjusted === true && entryFill.fillPrice > 101 && entryFill.costBpsOneWay === 10);
+
+    const stopExit = pe.computePaperExitFill({ direction: 'Long', exitKind: 'sl', referencePrice: 95, barOpen: 94 });
+    ok('phase6: paper stop exit fills at adverse gap-open minus half-spread and slippage',
+        stopExit.gapAdjusted === true && stopExit.fillPrice < 94);
+
+    const paperR = pe.computePaperNetR({ entryPrice: 100, exitPrice: 104, stopPrice: 98, direction: 'Long' });
+    const zeroCostR = pe.computePaperNetR({
+        entryPrice: 100, exitPrice: 104, stopPrice: 98, direction: 'Long',
+        assumptions: { feeBps: 0, spreadBps: 0, slippageBps: 0, gapFillMode: 'gap_open' },
+    });
+    ok('phase6: paper net R deducts round-trip fee + spread + slippage once from gross R, and zero bps gives netR === grossR',
+        paperR.grossR === 2 && paperR.costR === 0.09 && paperR.netR === 1.91
+        && zeroCostR.grossR === 2 && zeroCostR.costR === 0 && zeroCostR.netR === 2);
+
+    const baseTracked = {
+        id: 'journal-sim-1', source: 'journal', sourceId: 'sim-1', symbol: 'BTCUSDT',
+        direction: 'long', entry: 100, stop: 98, targets: [104], status: 'open',
+        openedAt: 1000, entryConfirmed: true, entryContext: { thesis: 'test', evidenceRefs: [] },
+        cursor: { lastClosedBarTime: 1000, timeframe: '5m' },
+        mfeR: 0, maeR: 0, mfePrice: 100, maePrice: 100, mfeAt: 1000, maeAt: 1000,
+        barsRead: 1, gaps: [], tapeCoversWindow: true, timeline: [], timelineDownsampled: false,
+        timelinePointsDropped: 0, context: [], contextDownsampled: false, version: 1,
+    };
+    const closedReal = pt.closePositionManually(baseTracked, 104, 2000);
+    const closedSim = pt.closePositionManually({ ...baseTracked, simulated: true }, 104, 2000);
+    ok('phase6: simulated tracked position models slippage on exit while real journal position keeps slippageModeled=false',
+        closedReal.exit?.slippageModeled === false
+        && closedSim.exit?.slippageModeled === true
+        && (closedSim.exit?.price ?? 0) < 104);
+
+    const nowIso = new Date().toISOString();
+    const mkTrade = (id, outcome, simulated) => ({
+        id, outcome, simulated, timestamp: nowIso, decidedAt: nowIso,
+        pnlAmount: outcome === 'WIN' ? 100 : -50, pnlPercent: outcome === 'WIN' ? 2 : -1,
+        realizedR: outcome === 'WIN' ? 2 : -1,
+        analysis: {
+            coinName: 'BTCUSDT', direction: 'Long', confidence: 'High', probability: 65,
+            entryPoints: [{ price: '100', description: 'e' }], stopLoss: '98', takeProfit: [{ price: '104' }],
+            marketConditions: {}, activeStrategies: [], validationWarnings: [], createdAt: nowIso,
+            playbookId: 'trend_pullback',
+        },
+    });
+    const mixed = [
+        mkTrade('r1', 'WIN', false), mkTrade('r2', 'WIN', false), mkTrade('r3', 'LOSS', false),
+        mkTrade('r4', 'WIN', false), mkTrade('r5', 'WIN', false),
+        mkTrade('s1', 'LOSS', true), mkTrade('s2', 'LOSS', true), mkTrade('s3', 'LOSS', true),
+    ];
+    const realStats = scs.computeSetupClusterStats('BTC', 'Long', undefined, mixed);
+    const simStats = scs.computeSetupClusterStats('BTC', 'Long', undefined, mixed, { simulationMode: 'simulated' });
+    ok('phase6: setupClusterStats isolates simulated trades out of real stats by default',
+        realStats?.sample === 5 && realStats?.wins === 4
+        && simStats?.sample === 3 && simStats?.losses === 3);
+
+    const weekReal = wr.buildWeekStats(mixed, Date.now());
+    const monthReal = mr.buildMonthReport(mixed, Date.now());
+    ok('phase6: weeklyReview and monthlyReport exclude simulated trades and report simulatedExcluded',
+        weekReal.closed === 5 && weekReal.simulatedExcluded === 3
+        && monthReal.whatHappened.closed === 5 && monthReal.simulatedExcluded === 3);
+
+    const baseRateJson = JSON.parse(jtools.runSetupBaseRateTool(mixed, { coin: 'BTC', direction: 'Long' }));
+    const simMixed = [
+        ...mixed,
+        mkTrade('s4', 'WIN', true), mkTrade('s5', 'WIN', true),
+    ];
+    const simBaseRateJson = JSON.parse(jtools.runSetupBaseRateTool(simMixed, { coin: 'BTC', direction: 'Long', simulationMode: 'simulated' }));
+    const riskJson = JSON.parse(jtools.runRiskStateTool(simMixed));
+    const attrJson = JSON.parse(jtools.runPlaybookAttributionTool(simMixed));
+    ok('phase6: journalTools exclude simulated rows by default, forward simulationMode="simulated", and attach simulatedView on risk_state and playbook_attribution',
+        baseRateJson.values?.sample === 5 && baseRateJson.values?.simulated_excluded === 3
+        && simBaseRateJson.values?.sample === 5 && simBaseRateJson.values?.simulation_mode === 'simulated'
+        && riskJson.values?.simulated_excluded === 5 && riskJson.simulatedView?.sample === 5
+        && attrJson.simulatedView?.sample === 5);
+})();
+
 const finishReport = () => {
     console.log(`contracts: ${passed} passed, ${failures.length} failed`);
     for (const f of failures) console.log(`  FAIL ${f}`);
@@ -6382,7 +6489,7 @@ const finishReport = () => {
         console.error('CONTRACT CHECK FAIL — a pinned contract broke; fix the module, not this file.');
         process.exit(1);
     }
-    console.log('CONTRACT CHECK OK — risk/reward math, retry classification, harness marks, notebook pressure, tool-pair compaction, AI-boundary coercion, the import security scan, the shared index budget, both policy tables (self-modification, goal tool narrowing), the desk tool budget, the kline row PHT unit, the desk digest units, the startup call gates, the insight store pin, the signal loop (resolver order, costs, gap fills, ledger, venue data), the signal accuracy fold, the skill document (description, hash version, ledger-stripping migration, duplicate scan), the skill pen and its refusal text, the journal-rules store, the post-mortem clause, the memory page export, the raw-storage lists (no orphan, no half-migration), the tracked position (signal adoption, ledger-wins resolution, exit order, gaps, excursions, capped path, independence, diagnosis queue), journal tracking (pending registration, settlement payload, plan-preserving merge, orphan handling), the post-mortem diagnosis (authoritative outcome, packet facts/absences, refusal audit, journal-note parse), the candle shape gate, the truncated-answer continuation and the silent empty-round repair, and the Phase 5 session-plan confirm/revert, exact promotion refusals, hindsight separation, candidate dedupe, rule TTL pruning, resolution record and risk-state card, authoritative stored settlement, gap-not-zero reversal, user-scoped dismissals and dateKey round-trip all hold.');
+    console.log('CONTRACT CHECK OK — risk/reward math, retry classification, harness marks, notebook pressure, tool-pair compaction, AI-boundary coercion, the import security scan, the shared index budget, both policy tables (self-modification, goal tool narrowing), the desk tool budget, the kline row PHT unit, the desk digest units, the startup call gates, the insight store pin, the signal loop (resolver order, costs, gap fills, ledger, venue data), the signal accuracy fold, the skill document (description, hash version, ledger-stripping migration, duplicate scan), the skill pen and its refusal text, the journal-rules store, the post-mortem clause, the memory page export, the raw-storage lists (no orphan, no half-migration), the tracked position (signal adoption, ledger-wins resolution, exit order, gaps, excursions, capped path, independence, diagnosis queue), journal tracking (pending registration, settlement payload, plan-preserving merge, orphan handling), the post-mortem diagnosis (authoritative outcome, packet facts/absences, refusal audit, journal-note parse), the candle shape gate, the truncated-answer continuation and the silent empty-round repair, the Phase 5 session-plan confirm/revert, exact promotion refusals, hindsight separation, candidate dedupe, rule TTL pruning, resolution record and risk-state card, authoritative stored settlement, gap-not-zero reversal, user-scoped dismissals and dateKey round-trip, and the Phase 6 AI-setting cards, paper execution fill model and real-vs-simulated stats isolation all hold.');
 
 };
 // The async blocks above settle in microtasks; the report waits for them so

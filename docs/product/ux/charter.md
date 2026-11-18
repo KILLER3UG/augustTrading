@@ -115,7 +115,18 @@ container and it resolves against the nearest positioned ancestor and inflates t
 
 - [ ] **A label names the function, never a capability the app lacks.** The six surfaces are
       Analyze · Journal · Agents · Learning · Skills · Memory for exactly this reason ("Trade does
-      not trade").
+      not trade"). Paper-lane proposals, tracked rows, and receipts carry an explicit monochrome
+      `Simulated` badge and fill-assumptions line (`src/components/trade/panels/TradeProposalCard.tsx` › `TradeProposalLoggedRow`,
+      `src/services/tracking/paperExecution.ts` › `formatPaperFillAssumptions`) stating that nothing
+      executes on any exchange.
+- [ ] **Strict monochrome chrome and dual-view discipline.** The workspace switches cleanly between
+      `Desk` (chart + AI dock) and `Chat` (chart-free centered `760px` reading column at all
+      viewports, `src/components/trade/TradeView.tsx` › `TradeView`). Surface canvas (`#0a0a0b`),
+      panels (`#111113`), raised cards (`#18181b`), and decision cards (`RiskChangeCard`,
+      `AiSettingCard`, `SessionPlanCard`, `RuleProposalCard`, `SettlementCorrectionCard`,
+      `TradeActionCard`) use neutral monochrome chrome; green (`#22c55e`) and red (`#ef4444`) are
+      reserved strictly for candlestick bodies/wicks, price/PnL numeric deltas, and Long/Short
+      direction badges.
 - [ ] A surface's information architecture follows the thing it models. Skills → Memory → Learning
       is the loop's own order — where it lives, what it reads, whether it's sound — and each is a
       surface of its own (2026-11-08), with the decisions themselves applying automatically.

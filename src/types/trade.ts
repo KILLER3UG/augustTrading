@@ -339,6 +339,12 @@ export interface LoggedTrade {
    * the review loop cannot turn hindsight into a rule. Absent on legacy rows.
    */
   resolutionRecord?: TradeResolutionRecord;
+  /** Paper execution lane (Phase 6): true when this trade is a simulated paper
+   *  fill over live market prices rather than a real execution. Simulated rows
+   *  are excluded from real performance stats by default. */
+  simulated?: boolean;
+  /** Explicit fee/spread/slippage/gap-open fill assumptions stamped on paper trades. */
+  fillAssumptions?: import('./analysis').PaperFillAssumptions;
 }
 
 export interface StrategySearchResult {

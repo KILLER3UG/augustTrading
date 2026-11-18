@@ -429,11 +429,14 @@ const TradeView: React.FC<TradeViewProps> = ({
         // width commit, and re-announcing per drag tick is pure noise.
     }, [rightPanel.register]);
     const [mode, setMode] = useState<TradeMode>(readTradeMode);
-    const pickMode = useCallback((m: TradeMode): void => {
+    const applyMode = useCallback((m: TradeMode): void => {
         setMode(m);
         writeTradeMode(m);
+    }, []);
+    const pickMode = useCallback((m: TradeMode): void => {
+        applyMode(m);
         onTradeModeChange?.(m);
-    }, [onTradeModeChange]);
+    }, [applyMode, onTradeModeChange]);
     // Segmented-control thumb: the pill is ONE surface that slides between
     // tabs, so the active read is motion rather than three backgrounds
     // swapping color. Measured from real geometry (labels differ in width) and
@@ -482,8 +485,10 @@ const TradeView: React.FC<TradeViewProps> = ({
         if (!modeRequest) { lastModeReqNRef.current = undefined; return; }
         if (lastModeReqNRef.current === modeRequest.n) return;
         lastModeReqNRef.current = modeRequest.n;
-        pickMode(modeRequest.mode);
-    }, [modeRequest, pickMode]);
+        // Apply an incoming request locally without echoing back through
+        // onTradeModeChange (echoing increments a new nonce and loops).
+        applyMode(modeRequest.mode);
+    }, [modeRequest, applyMode]);
     // Profile switch: the persisted mode is per-user — re-read it so B gets
     // B's layout instead of inheriting A's until a reload (audit R6 #23).
     const prevModeUserRef = useRef<string | undefined>(activeUsername);

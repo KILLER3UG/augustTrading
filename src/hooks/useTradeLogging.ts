@@ -487,6 +487,12 @@ export const useTradeLogging = (params: UseTradeLoggingParams) => {
                 feedback.pnlPercent,
                 leverageUsed,
             ),
+            ...(message.analysis?.simulated === true
+                ? {
+                    simulated: true,
+                    ...(message.analysis.fillAssumptions ? { fillAssumptions: message.analysis.fillAssumptions } : {}),
+                }
+                : {}),
         };
         // The structured record is built HERE, where the row is constructed,
         // so every write path (manual, autopilot, tracker bridge) carries the
@@ -553,7 +559,8 @@ export const useTradeLogging = (params: UseTradeLoggingParams) => {
                 const symbol = analysis.coinName || '—';
                 const dir = String(analysis.direction || '');
                 const leverage = activeConversationLeverage || defaultLeverage();
-                const loggedLine = `[HARNESS] Trade logged: ${symbol} ${dir} @ ${entryStr}, SL ${analysis.stopLoss || '—'}, TP ${tpStr}, leverage ${leverage}x · ${outcome}${message.userPriorCall ? ' (user-prior: ' + message.userPriorCall.direction + ' @ ' + message.userPriorCall.confidencePct + '%)' : ''}`;
+                const simTag = loggedTrade.simulated ? ' · Simulated — nothing executed on any exchange' : '';
+                const loggedLine = `[HARNESS] Trade logged: ${symbol} ${dir} @ ${entryStr}, SL ${analysis.stopLoss || '—'}, TP ${tpStr}, leverage ${leverage}x · ${outcome}${simTag}${message.userPriorCall ? ' (user-prior: ' + message.userPriorCall.direction + ' @ ' + message.userPriorCall.confidencePct + '%)' : ''}`;
                 const targetSid = chatStore.findSessionByEntryId(message.id) || undefined;
                 chatStore.addOpenTrade({
                     tradeId: loggedTrade.id,
@@ -635,7 +642,7 @@ export const useTradeLogging = (params: UseTradeLoggingParams) => {
         // plan's outcome would otherwise enter the confidence-vs-outcome
         // statistics, which are the numbers that tell the user how well this
         // seat's confidence tracks reality.
-        if (message.analysis?.confidence && !message.analysis.levelsCorrected) {
+        if (message.analysis?.confidence && !message.analysis.levelsCorrected && !loggedTrade.simulated) {
             const confidence = message.analysis.confidence as ConfidenceLevel;
             const coin = message.analysis.coinName ||
                 (message.text?.match(/\b([A-Z]{2,10}USDT?)\b/)?.[1]) || undefined;
@@ -743,6 +750,12 @@ export const useTradeLogging = (params: UseTradeLoggingParams) => {
                 patternMemoryGate: message.patternMemoryGate,
                 sourceRunId: message.runStats?.runId,
                 userPriorCall: message.userPriorCall,
+                ...(analysis.simulated === true
+                    ? {
+                        simulated: true,
+                        ...(analysis.fillAssumptions ? { fillAssumptions: analysis.fillAssumptions } : {}),
+                    }
+                    : {}),
             };
             loggedTradesRef.current = [pending, ...loggedTradesRef.current.filter(t => t.id !== pending.id)];
             setLoggedTrades(prev => [pending, ...prev.filter(t => t.id !== pending.id)]);

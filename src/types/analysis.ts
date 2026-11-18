@@ -309,6 +309,19 @@ export interface TradeAnalysis {
   amendsMessageId?: string;
   /** Human diff of what moved vs the prior version (empty when unchanged). */
   planDiff?: string;
+  /** Paper execution lane (Phase 6): true when this setup/proposal is a
+   *  simulated paper trade rather than a manually logged real execution. */
+  simulated?: boolean;
+  /** Explicit fee, spread, slippage, and gap-open fill assumptions applied to
+   *  this paper trade. */
+  fillAssumptions?: PaperFillAssumptions;
+}
+
+export interface PaperFillAssumptions {
+  feeBps: number;
+  spreadBps: number;
+  slippageBps: number;
+  gapFillMode: 'gap_open';
 }
 
 /**

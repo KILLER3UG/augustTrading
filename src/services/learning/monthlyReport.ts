@@ -160,10 +160,20 @@ export const ensembleLineFromTranscript = (turns: DebateTurn[] | undefined): num
     return (1 / (1 + Math.exp(-meanLogit))) * 100;
 };
 
-/** Deterministic month-stats assembly + grade-the-panel over the window. */
-export const buildMonthReport = (trades: LoggedTrade[], nowMs: number): MonthlyReportCard => {
+import { filterTradesBySimulationMode, countSimulatedTrades, type SimulationStatsMode } from '../tracking/paperExecution';
+
+/** Deterministic month-stats assembly + grade-the-panel over the window.
+ *  Simulated paper rows are excluded from real monthly reports by default. */
+export const buildMonthReport = (
+    trades: LoggedTrade[],
+    nowMs: number,
+    opts?: { simulationMode?: SimulationStatsMode },
+): MonthlyReportCard & { simulatedExcluded?: number } => {
     const since = nowMs - MONTH_MS;
-    const period = trades.filter(t => {
+    const mode = opts?.simulationMode ?? 'real';
+    const scoped = filterTradesBySimulationMode(trades, mode);
+    const simulatedExcluded = mode === 'real' ? countSimulatedTrades(trades) : 0;
+    const period = scoped.filter(t => {
         const ts = t.analysis?.createdAt ? Date.parse(t.analysis.createdAt) : NaN;
         const open = Number.isFinite(ts) ? ts : Date.parse(t.timestamp);
         return isClosed(t) && Number.isFinite(open) && open >= since;
@@ -281,6 +291,7 @@ export const buildMonthReport = (trades: LoggedTrade[], nowMs: number): MonthlyR
         whatLearned: { adherenceFollowedPct, biggestMistake: topCost && topCost.totalPnlUsd < 0 ? topCost.tag : null, bestTrade, tide },
         needsAttention,
         panel: { seats, moderator, ensembleLine },
+        simulatedExcluded,
     };
 };
 

@@ -66,6 +66,32 @@ and invalidation, and the measured result feeds the next signal. The journal loo
 trader's own record and the loop August will need when it can execute; it is not what the next
 feature should serve. See [focus.md](focus.md).
 
+## The Paper Execution Lane (Phase 6)
+
+When a trader approves a proposal from `present_trade`, it enters the **Paper Execution Lane**
+(`src/services/tracking/paperExecution.ts` › `computePaperExitFill`), reusing the existing
+position tracker (`src/services/tracking/positionTracker.ts` › `advancePosition`), journal tracking
+bridge (`src/services/tracking/journalTracking.ts` › `trackedPositionFromJournalTrade`), and outcome
+bridge (`src/services/tracking/journalOutcomeBridge.ts` › `registerJournalOutcomeBridge`) with zero
+new persistence stores, zero exchange keys, and zero live order placement:
+
+- **Explicit fill assumptions:** Every paper trade stamps `simulated: true` alongside explicit fee
+  bps, bid-ask spread bps, slippage bps, and gap-open fills (`src/services/tracking/paperExecution.ts` › `formatPaperFillAssumptions`).
+- **Prominent labelling:** Proposal cards, settlement cards, trade-action cards, pinned signals, and
+  journal rows carry a monochrome `Simulated` badge and the receipt `"Simulated — nothing executed on any exchange."`
+- **Strict stats isolation:** Simulated rows are excluded by default from real base rates, cluster
+  stats (`src/services/learning/setupClusterStats.ts` › `computeSetupClusterStats`), risk state
+  (`src/services/analysis/journalTools.ts` › `runRiskStateTool`), and weekly/monthly reviews, with an
+  explicit `Real | Simulated` toggle on `src/components/trade/panels/StatsCard.tsx` › `StatsCard`.
+- **Plan & Review loop (Phase 5):** Session plans (`src/services/trade/sessionPlan.ts` › `proposeSessionPlan`)
+  are confirmed once per session; closed trades capture a structured `TradeResolutionRecord`
+  (`src/services/tracking/journalTracking.ts` › `buildTradeResolutionRecord`), and post-trade reviews
+  (`src/services/learning/candidateRuleLoop.ts` › `evaluatePostTradeReview`) enforce a strict
+  anti-hindsight separation (`knowableAtEntry` vs `visibleOnlyAfterResolution`), four-quadrant
+  classification, single-trade rule refusal (`"one trade is not a lesson"`), $N \ge 2$ promotion to a
+  gated `src/components/trade/panels/RuleProposalCard.tsx` › `RuleProposalCard`, and automatic TTL
+  expiry by time and trade count.
+
 ## Who this is for
 
 The trader who owns it. Every UI decision is judged by one question: does this help one person make

@@ -22,6 +22,7 @@ import type { LoggedTrade } from '../../types';
 import type { DeskToolCall, DeskToolResult } from '../analysis/DeskToolsService';
 import type { ProposalGate } from './proposedTrade';
 import { parseTradeProposal, mintPlanId, buildTradePlan, type TradeProposal } from './proposedTrade';
+import { formatPaperFillAssumptions, PAPER_EXECUTION_RECEIPT } from '../tracking/paperExecution';
 import { beginGateScan, cancelGateScan, gateReceiptLine } from './proposalGate';
 import { drawingsFromLevelTool, type ChartDrawing } from './chartDrawings';
 import { staleLevelsAtArm, type WatchPlan } from './tradePlanLevels';
@@ -199,10 +200,13 @@ export const runPresentTrade = (ctx: PresentTradeContext, sink: PresentTradeSink
         ? gateReceiptLine(proposal.gate)
         : 'Gate: scanning now — no probability is shown on the card or recorded on the row until the scan answers, and the logged plan is capped by it.';
     const playbookLine = playbookAttributionLine(args.playbook, proposal.playbookId);
+    const paperLine = proposal.simulated !== false
+        ? ` Paper lane: ${formatPaperFillAssumptions(proposal.fillAssumptions)} (${PAPER_EXECUTION_RECEIPT})`
+        : '';
     return receipt(
         call,
         name,
         true,
-        `Presented ${proposal.direction} ${proposal.symbol} @ ${proposal.entry}, SL ${proposal.stopLoss}, TP ${proposal.takeProfits.join('/')}, R:R ~${rr}:1. ${gateLine} The user sees a "Log this trade" card.${playbookLine} ${watchLine}${ctx.canvasNote}`,
+        `Presented ${proposal.direction} ${proposal.symbol} @ ${proposal.entry}, SL ${proposal.stopLoss}, TP ${proposal.takeProfits.join('/')}, R:R ~${rr}:1. ${gateLine} The user sees a "Log this trade" card.${playbookLine}${paperLine} ${watchLine}${ctx.canvasNote}`,
     );
 };

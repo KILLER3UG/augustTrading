@@ -438,9 +438,11 @@ const App: React.FC = () => {
     // mode flip (nonce-keyed so a repeat 'book' request still applies)
     // instead of silently mutating a flag nothing reads (audit R6 #4: the
     // old toggle did exactly that on phones).
-    const [tradeModeRequest, setTradeModeRequest] = useState<{ mode: TradeMode; n: number } | null>(null);
-    const tradeModeReqNRef = useRef(0);
+    const [tradeModeRequest] = useState<{ mode: TradeMode; n: number } | null>(null);
     const lastRequestedTradeModeRef = useRef<TradeMode>('chart');
+    const handleTradeModeChange = useCallback((m: TradeMode): void => {
+        lastRequestedTradeModeRef.current = m;
+    }, []);
 
     // Market data state and effects (extracted to hooks/useMarketData.ts)
     const marketData = useMarketData(isHybridIntelligenceEnabled);
@@ -2657,7 +2659,7 @@ const App: React.FC = () => {
                         onRefreshModels={refreshModelCatalog}
                         tradeModeRequest={tradeModeRequest}
                         activeUsername={activeUsername}
-                        onTradeModeChange={(m) => { lastRequestedTradeModeRef.current = m; setTradeModeRequest({ mode: m, n: ++tradeModeReqNRef.current }); }}
+                        onTradeModeChange={handleTradeModeChange}
                         botThreadRows={tradeBotThread}
                         onBotTurnCommit={commitDockBotTurn}
                         onSoloTurnCommit={commitSoloChatTurn}

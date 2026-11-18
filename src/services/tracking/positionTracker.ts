@@ -424,6 +424,8 @@ const signalExit = (
     };
 };
 
+import { computePaperEntryFill, computePaperExitFill, computePaperNetR } from './paperExecution';
+
 const journalExit = (
     position: TrackedPosition,
     bars: readonly Kline[],
@@ -574,6 +576,54 @@ const journalExit = (
         gapped = adjusted.gapped;
     }
 
+    const exitBar = bars[exitIndex];
+    if (position.simulated === true) {
+        const paperDir = isLong(position) ? 'Long' : 'Short';
+        const entryBar = entryIndex >= 0 ? bars[entryIndex] : undefined;
+        const paperEntry = computePaperEntryFill({
+            direction: paperDir,
+            referencePrice: position.entry,
+            barOpen: entryBar?.open,
+            assumptions: position.fillAssumptions,
+        });
+        const paperExit = computePaperExitFill({
+            direction: paperDir,
+            exitKind: win ? 'tp' : 'sl',
+            referencePrice: price,
+            barOpen: exitBar?.open,
+            assumptions: position.fillAssumptions,
+        });
+        // Pass the gap-adjusted pre-friction reference prices into R math so
+        // round-trip fee + spread + slippage are deducted exactly ONCE in costR.
+        const entryBase = paperEntry.gapAdjusted && entryBar ? entryBar.open : paperEntry.referencePrice;
+        const exitBase = paperExit.gapAdjusted && exitBar ? exitBar.open : paperExit.referencePrice;
+        const paperR = computePaperNetR({
+            entryPrice: entryBase,
+            exitPrice: exitBase,
+            stopPrice: position.stop,
+            direction: paperDir,
+            assumptions: position.fillAssumptions,
+        });
+        return {
+            status: 'closed',
+            exitIndex,
+            entryIndex,
+            exit: {
+                reason: win ? 'target' : 'stop',
+                price: paperExit.fillPrice,
+                at: exitBar?.time ?? now,
+                sameCandle: sameCandleBoth ? 'stop-first' : 'single-level',
+                ambiguous: sameCandleBoth,
+                gapAtOpen: gapped || paperEntry.gapAdjusted || paperExit.gapAdjusted,
+                barsRead: bars.length,
+                realizedR: paperR.grossR,
+                costR: paperR.costR,
+                netR: paperR.netR,
+                slippageModeled: true,
+            },
+        };
+    }
+
     const grossR = realizedRFromPrices(position.entry, position.stop, price, isLong(position));
     const cost = grossR !== null
         ? netRiskReward({
@@ -581,7 +631,6 @@ const journalExit = (
             stopDistancePct: stopDistancePercent(position.entry, position.stop),
         })
         : null;
-    const exitBar = bars[exitIndex];
 
     return {
         status: 'closed',
@@ -768,6 +817,45 @@ export const closePositionManually = (
     // A pending entry has no position to close; closing it at a price would
     // invent a fill the tape never gave. The caller cancels it instead.
     if (position.status !== 'open' || !finite(price) || price <= 0) return position;
+    if (position.simulated === true) {
+        const paperDir = isLong(position) ? 'Long' : 'Short';
+        const paperEntry = computePaperEntryFill({
+            direction: paperDir,
+            referencePrice: position.entry,
+            assumptions: position.fillAssumptions,
+        });
+        const paperExit = computePaperExitFill({
+            direction: paperDir,
+            exitKind: 'manual',
+            referencePrice: price,
+            assumptions: position.fillAssumptions,
+        });
+        const paperR = computePaperNetR({
+            entryPrice: paperEntry.referencePrice,
+            exitPrice: paperExit.referencePrice,
+            stopPrice: position.stop,
+            direction: paperDir,
+            assumptions: position.fillAssumptions,
+        });
+        return {
+            ...position,
+            status: 'closed',
+            closedAt: at,
+            exit: {
+                reason: 'manual',
+                price: paperExit.fillPrice,
+                at,
+                sameCandle: 'single-level',
+                ambiguous: false,
+                gapAtOpen: paperExit.gapAdjusted,
+                barsRead: position.barsRead,
+                realizedR: paperR.grossR,
+                costR: paperR.costR,
+                netR: paperR.netR,
+                slippageModeled: true,
+            },
+        };
+    }
     const grossR = realizedRFromPrices(position.entry, position.stop, price, isLong(position));
     // ONE cost model for both sources: a signal position and a journal
     // position with the same entry/stop/exit must net the same R. The old

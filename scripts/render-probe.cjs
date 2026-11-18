@@ -4537,18 +4537,22 @@ async function main() {
         // same TradeView and chatStore stay mounted. The phone-drawer checks
         // above shrank the viewport — the layout classes are lg+, so restore
         // the desktop viewport first.
+        const evidenceDir = path.join(ROOT, 'docs', 'evidence');
+        mkdirSync(evidenceDir, { recursive: true });
         await page.setViewportSize({ width: 1440, height: 900 });
         await page.evaluate(() => localStorage.setItem('workspace_layout_v1', 'chat'));
         await page.reload({ waitUntil: 'domcontentloaded' });
         await sleep(2500);
-        const chatMode = await page.evaluate(() => {
+        const measureChatGeometry = () => page.evaluate(() => {
             const box = (sel) => {
                 const el = document.querySelector(sel);
                 if (!el) return null;
                 const r = el.getBoundingClientRect();
-                return { width: Math.round(r.width), center: r.left + r.width / 2 };
+                return { width: Math.round(r.width), height: Math.round(r.height), left: Math.round(r.left), right: Math.round(r.right), center: r.left + r.width / 2 };
             };
-            const g = {
+            return {
+                vw: window.innerWidth,
+                scrollW: document.documentElement.scrollWidth,
                 pillChat: document.querySelector('[data-testid="layout-pill-chat"]')?.getAttribute('aria-pressed'),
                 workspace: box('main'),
                 chartColumn: box('[data-testid="trade-chart-column"]'),
@@ -4558,9 +4562,13 @@ async function main() {
                     const el = document.querySelector('[data-testid="hero-price"]');
                     return !!el && el.getClientRects().length > 0;
                 })(),
+                modeSwitcherVisible: (() => {
+                    const el = document.querySelector('[data-testid="trade-mode-switcher"]');
+                    return !!el && el.getClientRects().length > 0;
+                })(),
             };
-            return g;
         });
+        const chatMode = await measureChatGeometry();
         // Real pixel boxes, not class-name guesses: a `hidden` chart pane
         // inside a still-flexing wrapper LEFT THE BLACK GUTTER the old check
         // called green because it measured the inner pane only.
@@ -4573,14 +4581,97 @@ async function main() {
             && Math.abs(chatMode.dock.width - chatMode.workspace.width) < 24
             && chatMode.reading && chatMode.reading.width > 0 && chatMode.reading.width <= 760
             && chatCenterDelta < 24
-            && chatMode.priceHeaderVisible === false,
+            && chatMode.priceHeaderVisible === false
+            && chatMode.scrollW <= chatMode.vw + 1,
             `delta=${chatCenterDelta} ${JSON.stringify(chatMode)}`);
         await page.screenshot({ path: '.probe-artifacts/layout-chat.png' });
+        await page.screenshot({ path: path.join(evidenceDir, 'stop2-chat-1440x900.png') });
+
+        // Check Chat layout at 1280x800 and 960x720 (< lg) — zero dead gutter, centered 760px column.
+        await page.setViewportSize({ width: 1280, height: 800 });
+        await sleep(400);
+        const chat1280 = await measureChatGeometry();
+        const delta1280 = chat1280.workspace && chat1280.reading ? Math.abs(chat1280.workspace.center - chat1280.reading.center) : Number.NaN;
+        check('Chat layout at 1280x800 stays centered <=760px with 0px chart column and no overflow',
+            chat1280.chartColumn?.width === 0
+            && chat1280.reading && chat1280.reading.width > 0 && chat1280.reading.width <= 760
+            && delta1280 < 24 && chat1280.scrollW <= chat1280.vw + 1,
+            `delta1280=${delta1280} ${JSON.stringify(chat1280)}`);
+        await page.screenshot({ path: path.join(evidenceDir, 'stop2-chat-1280x800.png') });
+
+        await page.setViewportSize({ width: 960, height: 720 });
+        await sleep(400);
+        const chat960 = await measureChatGeometry();
+        const delta960 = chat960.workspace && chat960.reading ? Math.abs(chat960.workspace.center - chat960.reading.center) : Number.NaN;
+        check('Chat layout at 960x720 (<lg) stays chart-free, hides mobile mode switcher, and centers <=760px column',
+            chat960.chartColumn?.width === 0
+            && chat960.modeSwitcherVisible === false
+            && chat960.reading && chat960.reading.width > 0 && chat960.reading.width <= 760
+            && delta960 < 24 && chat960.scrollW <= chat960.vw + 1,
+            `delta960=${delta960} ${JSON.stringify(chat960)}`);
+        await page.screenshot({ path: path.join(evidenceDir, 'stop2-chat-960x720.png') });
+
+        // At 960x720 (< lg), flip Desk <-> Chat and Chart <-> AI <-> Book mid-conversation:
+        // must produce zero "Maximum update depth exceeded" / zero pageerrors.
+        const errorsBeforeFlip = pageErrors.length;
         await page.evaluate(() => {
             localStorage.setItem('workspace_layout_v1', 'desk');
-            document.querySelector('[data-testid="layout-pill-desk"]')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+            const miniDesk = document.querySelector('[data-testid="layout-pill-mini-desk"]');
+            const railDesk = document.querySelector('[data-testid="layout-pill-desk"]');
+            const target = (miniDesk && miniDesk.getClientRects().length > 0) ? miniDesk : railDesk;
+            target?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
         });
-        await sleep(600);
+        await sleep(500);
+        const switcherVisibleAt960 = await page.evaluate(() => {
+            const sw = document.querySelector('[data-testid="trade-mode-switcher"]');
+            return !!sw && sw.getClientRects().length > 0;
+        });
+        const flipStates = [];
+        for (const tabLabel of ['AI', 'Chart', 'AI', 'Book', 'AI']) {
+            await page.evaluate((lbl) => {
+                const tabs = [...document.querySelectorAll('[data-testid="trade-mode-switcher"] [role="tab"]')];
+                const match = tabs.find(t => (t.textContent || '').trim().toLowerCase() === lbl.toLowerCase());
+                match?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+            }, tabLabel);
+            await sleep(250);
+            const st = await page.evaluate(() => ({
+                chart: (document.querySelector('[data-testid="trade-chart-pane"]')?.getBoundingClientRect().width ?? 0) > 0,
+                dock: (document.querySelector('[data-testid="trade-dock"]')?.getBoundingClientRect().width ?? 0) > 0,
+                book: (document.querySelector('[data-testid="trade-sidebar"]')?.getBoundingClientRect().width ?? 0) > 0,
+            }));
+            flipStates.push(`${tabLabel}:${st.chart ? 'C' : ''}${st.dock ? 'A' : ''}${st.book ? 'B' : ''}`);
+        }
+        // Let Virtuoso finish its initial bottom-alignment measurement frame before capturing evidence.
+        await page.waitForFunction(() => {
+            const items = [...document.querySelectorAll('[data-testid="trade-dock"] [data-index]')];
+            return items.length > 0 && items.some(el => window.getComputedStyle(el).visibility === 'visible' && el.getBoundingClientRect().height > 0);
+        }, { timeout: 5000 });
+        await page.screenshot({ path: path.join(evidenceDir, 'stop2-desk-ai-960x720.png') });
+        const crashDump = await page.evaluate(() => localStorage.getItem('lastCrashError') || '');
+        check('<lg mid-conversation Desk/Chat and Chart/AI/Book flips switch panes cleanly with zero pageerrors',
+            pageErrors.length === errorsBeforeFlip
+            && switcherVisibleAt960
+            && flipStates[0] === 'AI:A'
+            && flipStates[1] === 'Chart:C'
+            && flipStates[3] === 'Book:B'
+            && flipStates[4] === 'AI:A',
+            `switcher=${switcherVisibleAt960} flips=${flipStates.join(',')} errs=${pageErrors.slice(errorsBeforeFlip).join(' | ')} crash=${crashDump.slice(0, 1200)}`);
+
+        // Desk mode at 1280x800 & 1440x900
+        await page.setViewportSize({ width: 1280, height: 800 });
+        await sleep(400);
+        await page.evaluate(() => {
+            localStorage.setItem('workspace_layout_v1', 'desk');
+            const miniDesk = document.querySelector('[data-testid="layout-pill-mini-desk"]');
+            const railDesk = document.querySelector('[data-testid="layout-pill-desk"]');
+            const target = (railDesk && railDesk.getClientRects().length > 0) ? railDesk : miniDesk;
+            target?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        });
+        await sleep(500);
+        await page.screenshot({ path: path.join(evidenceDir, 'stop2-desk-1280x800.png') });
+
+        await page.setViewportSize({ width: 1440, height: 900 });
+        await sleep(500);
         const deskMode = await page.evaluate(() => {
             const pane = document.querySelector('[data-testid="trade-chart-pane"]');
             const r = pane?.getBoundingClientRect();
@@ -4594,7 +4685,73 @@ async function main() {
             deskMode.pillDesk === 'true' && deskMode.chartVisible === true && deskMode.chartColumnWidth > 0,
             JSON.stringify(deskMode));
         await page.screenshot({ path: '.probe-artifacts/layout-desk.png' });
-        await page.evaluate(() => localStorage.setItem('workspace_layout_v1', 'desk'));
+        await page.screenshot({ path: path.join(evidenceDir, 'stop2-desk-1440x900.png') });
+
+        // Settings → Analysis read-only AI-behavior settings + "Change in chat"
+        await page.evaluate(() => {
+            const btn = document.querySelector('[data-testid="shell-settings-button"]')
+                || [...document.querySelectorAll('button')].find(b => /settings/i.test(b.getAttribute('aria-label') || b.title || ''));
+            btn?.click();
+        });
+        await sleep(500);
+        await page.evaluate(() => {
+            const tab = [...document.querySelectorAll('[role="dialog"] button')].find(b => /analysis|general/i.test((b.textContent || '').trim()));
+            tab?.click();
+        });
+        await sleep(400);
+        const settingsReadOnly = await page.evaluate(() => ({
+            hybridStatus: !!document.querySelector('[data-testid="setting-status-hybridIntelligence"]'),
+            deskStatus: !!document.querySelector('[data-testid="setting-status-deskToolsEnabled"]'),
+            hybridAsk: !!document.querySelector('[data-testid="setting-ask-hybridIntelligence"]'),
+            deskAsk: !!document.querySelector('[data-testid="setting-ask-deskToolsEnabled"]'),
+        }));
+        check('Settings → Analysis renders read-only status pills and Change-in-chat triggers for Hybrid Intelligence and Desk Tools',
+            settingsReadOnly.hybridStatus && settingsReadOnly.deskStatus && settingsReadOnly.hybridAsk && settingsReadOnly.deskAsk,
+            JSON.stringify(settingsReadOnly));
+        await page.screenshot({ path: path.join(evidenceDir, 'stop2-settings-analysis.png') });
+
+        // Journal 2-step bulk delete gate card (no raw Clear all button)
+        await page.evaluate(() => {
+            document.querySelector('[data-testid="settings-section-journal"]')?.click();
+        });
+        await sleep(600);
+        await page.evaluate(() => {
+            const historyTab = [...document.querySelectorAll('[role="dialog"] button')].find(b => /^history$/i.test((b.textContent || '').trim()));
+            historyTab?.click();
+        });
+        await sleep(400);
+        const clearAllPresent = await page.evaluate(() =>
+            [...document.querySelectorAll('[role="dialog"] button')].some(b => /clear all/i.test((b.textContent || '').trim())));
+        const visibleCb = page.locator('[role="dialog"] input.form-checkbox:visible');
+        const cbCount = await visibleCb.count();
+        if (cbCount > 0) {
+            await visibleCb.first().click();
+            await sleep(300);
+        }
+        const openGateBtn = page.locator('[role="dialog"] [data-testid="bulk-delete-open"]:visible');
+        if (await openGateBtn.count()) {
+            await openGateBtn.first().click();
+            await sleep(300);
+        }
+        const gateControls = await page.evaluate(() => ({
+            card: !!document.querySelector('[data-testid="bulk-delete-gate-card"]'),
+            arm: !!document.querySelector('[data-testid="bulk-delete-arm"]'),
+            askDesk: !!document.querySelector('[data-testid="bulk-delete-ask-desk"]'),
+        }));
+        check('Journal removes Clear all and gates bulk delete behind a 2-step card with Void-in-chat',
+            clearAllPresent === false && cbCount > 0 && gateControls.card && gateControls.arm && gateControls.askDesk,
+            JSON.stringify({ clearAllPresent, cbCount, ...gateControls }));
+        await page.screenshot({ path: path.join(evidenceDir, 'stop2-journal-bulk-gate.png') });
+        await page.evaluate(() => {
+            document.querySelector('[data-testid="bulk-delete-cancel"]')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        });
+        await page.keyboard.press('Escape');
+        await sleep(300);
+        await page.evaluate(() => {
+            localStorage.setItem('workspace_layout_v1', 'desk');
+            document.querySelector('[data-testid="layout-pill-desk"]')?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        });
+        await sleep(400);
 
 
         check('zero pageerrors across the whole run', pageErrors.length === 0,

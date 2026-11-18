@@ -37,6 +37,7 @@ import { carryOverSkillBodies, compactForWire } from '../providers/contextCompac
 import { DEFAULT_OUTPUT_RESERVE_TOKENS, outputTokenBudget } from '../../utils/contextWindow';
 import { stepEffortDown, type ReasoningEffort } from '../providers/reasoningControls';
 import { calculateCorrelationRisk } from './CorrelationRiskService';
+import { filterTradesBySimulationMode, countSimulatedTrades, isSimulatedTrade, type SimulationStatsMode } from '../tracking/paperExecution';
 import { MARKET_TOOLS, CHART_ACTION_TOOL_DEFS, deskToolsMandateFor, TEXT_TOOL_FALLBACK_PROMPT } from './deskToolShared';
 import { PLAYBOOK_IDS } from '../../types/playbook';
 // The moved vocabulary is re-exported for the lazy consumers and the
@@ -5999,38 +6000,40 @@ ${body}`);
                 const coin = baseOf(symRaw);
                 const dirArg = asString(call.arguments.direction).toUpperCase();
                 const direction: 'Long' | 'Short' | undefined = dirArg === 'LONG' ? 'Long' : dirArg === 'SHORT' ? 'Short' : undefined;
-                const stats = computeSetupClusterStats(coin, direction, undefined, context.trades || []);
-                // The rate ships with its Wilson 95% interval and a thin-sample
-                // warning, so this quick read can never assert a bare percent
-                // off two rows — that is the floor setup_base_rate refuses
-                // under, and the two tools answering the same question must
-                // not disagree about how much a small sample proves.
-                const ci = stats && stats.winRate !== null && stats.sample > 0
-                    ? wilsonInterval95(stats.wins, stats.sample)
-                    : null;
-                content = JSON.stringify(stats
-                    ? {
-                        coin,
-                        direction: direction ?? 'any',
-                        sample: stats.sample,
-                        wins: stats.wins,
-                        losses: stats.losses,
-                        // winRate ships as a PERCENT (0-100, two decimals):
-                        // the raw cluster stat is a 0-1 fraction, and the
-                        // digest + the stats card both read this field as a
-                        // percent — a fraction here printed "win 1%" on a 67%
-                        // sample (the parity probe caught it).
-                        winRate: stats.winRate !== null ? Math.round(stats.winRate * 10000) / 100 : null,
-                        wilson95: ci ? { low: Math.round(ci.low * 100000) / 1000, high: Math.round(ci.high * 100000) / 1000 } : null,
-                        ...(stats.sample < MIN_RATE_SAMPLE && stats.winRate !== null
-                            ? { thinSampleNote: `only ${stats.sample} closed rows — below the ${MIN_RATE_SAMPLE} floor setup_base_rate quotes at; treat this rate as indicative, not measured (setup_base_rate refuses to answer at this size)` }
-                            : {}),
-                        avgR: stats.avgR !== null ? Math.round(stats.avgR * 100) / 100 : null,
-                        lastOutcome: stats.lastOutcome,
-                        lastDate: stats.lastDate ? stats.lastDate.slice(0, 10) : null,
-                        worstLesson: stats.worstLesson,
-                    }
-                    : { coin, direction: direction ?? 'any', sample: 0, note: `No closed trades logged for ${coin}${direction ? ` ${direction}` : ''}.` }, null, 2);
+                const simArg = asString(call.arguments.simulated).toLowerCase();
+                const simMode: SimulationStatsMode = simArg === 'only' || simArg === 'simulated' ? 'simulated' : simArg === 'all' ? 'all' : 'real';
+                const allTrades = context.trades || [];
+                const simulatedExcluded = simMode === 'real' ? countSimulatedTrades(allTrades) : 0;
+                const buildStatsView = (mode: SimulationStatsMode) => {
+                    const st = computeSetupClusterStats(coin, direction, undefined, allTrades, { simulationMode: mode });
+                    const ciVal = st && st.winRate !== null && st.sample > 0 ? wilsonInterval95(st.wins, st.sample) : null;
+                    return st
+                        ? {
+                            coin,
+                            direction: direction ?? 'any',
+                            sample: st.sample,
+                            wins: st.wins,
+                            losses: st.losses,
+                            winRate: st.winRate !== null ? Math.round(st.winRate * 10000) / 100 : null,
+                            wilson95: ciVal ? { low: Math.round(ciVal.low * 100000) / 1000, high: Math.round(ciVal.high * 100000) / 1000 } : null,
+                            ...(st.sample < MIN_RATE_SAMPLE && st.winRate !== null
+                                ? { thinSampleNote: `only ${st.sample} closed rows — below the ${MIN_RATE_SAMPLE} floor setup_base_rate quotes at; treat this rate as indicative, not measured (setup_base_rate refuses to answer at this size)` }
+                                : {}),
+                            avgR: st.avgR !== null ? Math.round(st.avgR * 100) / 100 : null,
+                            lastOutcome: st.lastOutcome,
+                            lastDate: st.lastDate ? st.lastDate.slice(0, 10) : null,
+                            worstLesson: st.worstLesson,
+                        }
+                        : { coin, direction: direction ?? 'any', sample: 0, note: `No closed trades logged for ${coin}${direction ? ` ${direction}` : ''}.` };
+                };
+                const primaryView = buildStatsView(simMode);
+                const simulatedView = buildStatsView('simulated');
+                content = JSON.stringify({
+                    ...primaryView,
+                    simulationMode: simMode,
+                    simulatedExcluded,
+                    simulatedView,
+                }, null, 2);
                 break;
             }
             case 'decline_trade': {
@@ -6080,11 +6083,16 @@ ${body}`);
                     strategy: asString(call.arguments.strategy) || undefined,
                     since: asString(call.arguments.since) || undefined,
                 };
+                const simArg = asString(call.arguments.simulated).toLowerCase();
+                const simMode: SimulationStatsMode = simArg === 'only' || simArg === 'simulated' ? 'simulated' : simArg === 'all' ? 'all' : 'real';
+                const allTrades = context.trades ?? [];
+                const simulatedExcluded = simMode === 'real' ? countSimulatedTrades(allTrades) : 0;
+                const scopedTrades = filterTradesBySimulationMode(allTrades, simMode);
                 // `by: 'logged'` because the description above, and `since`, say
                 // LOGGED. The tool used to read the decision clock, so a trade
                 // written on the 27th from a call made on the 25th printed the
                 // 25th and was invisible to `since: 2026-10-26` (the 2026-10-27 audit T-4).
-                const rows = selectRecentTrades(context.trades ?? [], { ...filter, by: 'logged', limit });
+                const rows = selectRecentTrades(scopedTrades, { ...filter, by: 'logged', limit });
                 if (wantsRecords) {
                     // `records` is the review payload: everything a post-mortem or a
                     // training row needs, without the raw analysis blob. Notes are
@@ -6094,6 +6102,8 @@ ${body}`);
                         ...filter,
                         limit,
                         returned: rows.length,
+                        simulationMode: simMode,
+                        simulatedExcluded,
                         records: rows.map(t => ({
                             id: t.id,
                             planId: t.planId ?? null,
@@ -6103,6 +6113,8 @@ ${body}`);
                             symbol: t.analysis?.coinName ?? null,
                             direction: t.analysis?.direction ?? null,
                             outcome: t.outcome,
+                            simulated: isSimulatedTrade(t),
+                            fillAssumptions: t.fillAssumptions ?? t.analysis?.fillAssumptions ?? null,
                             entry: t.analysis?.entryPoints?.[0]?.price ?? null,
                             stopLoss: t.analysis?.stopLoss ?? null,
                             takeProfits: (t.analysis?.takeProfit ?? []).map(tp => tp.price),
@@ -6133,12 +6145,21 @@ ${body}`);
                     break;
                 }
                 const brief = buildRecentTradesBrief(rows);
+                const simRows = selectRecentTrades(filterTradesBySimulationMode(allTrades, 'simulated'), { ...filter, by: 'logged', limit });
+                const simBrief = buildRecentTradesBrief(simRows);
                 content = JSON.stringify({
                     ...filter,
                     limit,
                     returned: rows.length,
+                    simulationMode: simMode,
+                    simulatedExcluded,
                     tally: tallyLine(brief, `Last ${rows.length} logged trades`),
                     rows: brief.rows.map(r => r.line),
+                    simulatedView: {
+                        returned: simRows.length,
+                        tally: tallyLine(simBrief, `Last ${simRows.length} simulated trades`),
+                        rows: simBrief.rows.map(r => r.line),
+                    },
                     ...(rows.length === 0
                         ? { note: 'No journal row matches that filter. That is not evidence of inactivity — only of no match.' }
                         : {}),
