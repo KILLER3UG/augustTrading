@@ -1392,11 +1392,21 @@ export const syncRecurringMistakesUnlocked = async (trades: LoggedTrade[], usern
 export const syncRecurringMistakes = (trades: LoggedTrade[], username: string): Promise<void> =>
     withNotebookWriteLock(() => syncRecurringMistakesUnlocked(trades, username));
 
-/** Pure content builder for recurring-mistakes.md (exported for tests). */
+/**
+ * Pure content builder for recurring-mistakes.md (exported for tests).
+ *
+ * REGISTRY FORMAT (O-39): one SYMPTOM line per loss cluster — coin +
+ * direction + count + cost + recency — and a POINTER to where the detail
+ * lives. The verbose post-mortems stay behind the pointer, in the journal
+ * rows the cluster was built from; the injected line (`MemoryRetrievalService
+ * › uncoveredMistakeLine`) is one of these rows, so the LOAD surface carries
+ * the index and the seat opens the detail on demand (get_trade_log) instead
+ * of the prompt paying for prose the same on every row.
+ */
 export const buildRecurringMistakesContent = (trades: LoggedTrade[]): string => {
     const lines: string[] = [
         '# My Recurring Mistakes (auto-synced from my trade log)',
-        '> Loss clusters of 2+ trades on the same coin + direction. These are the setups where I keep losing — I check this list before recommending any trade.',
+        '> Loss clusters of 2+ trades on the same coin + direction. Symptom → pointer: the row names the losing setup; the post-mortems behind it are the detail (get_trade_log).',
         '',
     ];
     const losses = trades.filter(t => t.outcome === TradeOutcome.LOSS);
@@ -1405,10 +1415,11 @@ export const buildRecurringMistakesContent = (trades: LoggedTrade[]): string => 
         return lines.join('\n');
     }
 
-    const clusters = new Map<string, { count: number; pnlPct: number[]; last: string }>();
+    const clusters = new Map<string, { count: number; pnlPct: number[]; last: string; coin: string }>();
     losses.forEach(t => {
-        const key = `${t.analysis?.coinName ?? 'UNKNOWN'} ${t.analysis?.direction ?? '?'}`;
-        const c = clusters.get(key) ?? { count: 0, pnlPct: [], last: '' };
+        const coin = t.analysis?.coinName ?? 'UNKNOWN';
+        const key = `${coin} ${t.analysis?.direction ?? '?'}`;
+        const c = clusters.get(key) ?? { count: 0, pnlPct: [], last: '', coin };
         c.count += 1;
         if (typeof t.pnlPercent === 'number') c.pnlPct.push(t.pnlPercent);
         if (!c.last || t.timestamp > c.last) c.last = t.timestamp;
@@ -1428,7 +1439,7 @@ export const buildRecurringMistakesContent = (trades: LoggedTrade[]): string => 
                 ? ` avg ${(c.pnlPct.reduce((a, b) => a + b, 0) / c.pnlPct.length).toFixed(1)}%`
                 : '';
             const last = new Date(c.last).toLocaleDateString();
-            lines.push(`- ⚠️ **${c.count}× ${key}**${avgPct} — last ${last}. I keep losing here; I need fresh confirmation before taking this setup again.`);
+            lines.push(`- ⚠️ ${key} ×${c.count}${avgPct} — last ${last} → detail: the ${c.count} post-mortems behind this row (get_trade_log ${c.coin})`);
         });
     }
     return lines.join('\n');

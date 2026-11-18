@@ -6603,6 +6603,83 @@ const checkDiaryRetrieval = async () => {
     localStorage.removeItem('last_active_user');
 };
 
+// ─── O-39: one sentence, one injection — the registry seam ─────────────────
+// Skills, risk-rules and recurring-mistakes are written independently, so the
+// same rule used to ride the prompt twice — the notebook slice pushed both
+// copies and the seat prompt joined its skills+rules indexes raw. The seam
+// now runs BOTH joins through ONE sentence-level dedup, and the
+// recurring-mistakes file is a REGISTRY: a symptom line with a pointer to the
+// post-mortems behind it, not prose.
+(() => {
+    const d = loadModule('src/utils/memoryInjectionDedup.ts');
+
+    ok('o-39 dedup: a reworded rule is dropped at sentence level',
+        d.dedupeInjectionLines([
+            '- Never risk more than 1% per trade.',
+            '- Never risk more than 1% of the account on one trade.',
+        ]).lines.length === 1,
+        JSON.stringify(d.dedupeInjectionLines([
+            '- Never risk more than 1% per trade.',
+            '- Never risk more than 1% of the account on one trade.',
+        ])));
+
+    ok('o-39 dedup: a genuinely different rule survives the same seam',
+        d.dedupeInjectionLines([
+            '- Never risk more than 1% per trade.',
+            '- Stop after two consecutive losses and review the day.',
+        ]).lines.length === 2
+        && d.dedupeInjectionLines([
+            '- Never risk more than 1% per trade.',
+            '- Risk 1% per trade and stop after two losses.',
+        ]).lines.length === 2,
+        'a compound rule is a different rule; so is a different rule entirely');
+
+    ok('o-39 dedup: a repeated rule bullet loses to the line that carried it first',
+        (() => {
+            const r = d.dedupeInjectionLines([
+                'funding-fade: Use when funding is stretched. Fade only at the upper band.',
+                '- Use when funding is stretched beyond 2 standard deviations.',
+            ]);
+            return r.lines.length === 1 && r.droppedSentences === 1 && r.lines[0].includes('upper band');
+        })());
+
+    ok('o-39 dedup: headers and short structural lines are never eaten',
+        d.dedupeInjectionBlocks(['[rules/risk-rules.md]', '[rules/risk-rules.md]']).blocks.length === 2);
+
+    ok('o-39 dedup: cross-block — the second section loses the repeated rule, keeps its header',
+        (() => {
+            const r = d.dedupeInjectionBlocks([
+                '[skills/breakout-retest]\nbreakout-retest: Never risk more than 1% per trade.',
+                '[rules/risk-rules.md]\n- Never risk more than 1% of the account on one trade.',
+            ]);
+            return r.droppedSentences === 1 && r.blocks.length === 2
+                && !r.blocks[1].includes('Never risk')
+                && r.blocks[1].includes('[rules/risk-rules.md]');
+        })());
+
+    // The registry: symptom → pointer, detail behind it.
+    const mfReg = loadModule('src/services/learning/MemoryFilesService.ts');
+    const mkLoss = (id, coin, dir, pct, ts) => ({
+        id, outcome: 'LOSS', timestamp: ts, pnlPercent: pct,
+        analysis: { coinName: coin, direction: dir },
+    });
+    const registry = mfReg.buildRecurringMistakesContent([
+        mkLoss('a1', 'BTCUSDT', 'Short', -1.2, '2026-11-10T10:00:00.000Z'),
+        mkLoss('a2', 'BTCUSDT', 'Short', -0.8, '2026-11-12T10:00:00.000Z'),
+        mkLoss('a3', 'ETHUSDT', 'Long', -1.0, '2026-11-13T10:00:00.000Z'),
+    ]);
+    const row = registry.split('\n').find(l => l.includes('BTCUSDT Short'));
+    ok('o-39 registry: the mistake row is symptom → pointer, one line, no prose',
+        Boolean(row)
+        && /×2/.test(row)
+        && /get_trade_log BTCUSDT/.test(row)
+        && !/I keep losing here/.test(row),
+        row);
+    ok('o-39 registry: the row still carries the coin where the retrieval matcher looks',
+        Boolean(row) && row.includes('BTCUSDT '),
+        'uncoveredMistakeLine matches ` ${COIN} ` — a registry row without it is unread');
+})();
+
 const finishReport = () => {
     console.log(`contracts: ${passed} passed, ${failures.length} failed`);
     for (const f of failures) console.log(`  FAIL ${f}`);

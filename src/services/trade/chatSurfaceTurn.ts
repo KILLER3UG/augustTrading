@@ -40,6 +40,7 @@ import { skillIndexRows } from '../learning/SkillFileService';
 import { getMemoryFiles } from '../learning/MemoryFilesService';
 import { buildNotebookTopicsIndex } from '../learning/memoryTopics';
 import { buildLearningRulesIndex } from '../../utils/learningRulesIndex';
+import { dedupeInjectionBlocks } from '../../utils/memoryInjectionDedup';
 import { storageService } from '../infrastructure/StorageService';
 import { indexBudgetFor } from '../../utils/promptIndexBudget';
 import { DEFAULT_CONTEXT_WINDOW_TOKENS, resolveContextWindow } from '../../utils/contextWindow';
@@ -275,8 +276,16 @@ export const surfacePromptWith = (mandate: string, where: string, opts: { memory
             hasStrategies: !!strategiesBlock,
         });
     }
+    // O-39: the skills index and the learned-rules index are written
+    // independently and can phrase the same rule twice — the seat prompt used
+    // to push both copies. ONE sentence-level dedup (the notebook slice's
+    // seam reads the same module) drops the second phrasing across the pair;
+    // headers and short lines always survive.
+    const [skillsRulesSkills, skillsRulesRules] = skillsBlock && rulesBlock
+        ? dedupeInjectionBlocks([skillsBlock, rulesBlock]).blocks
+        : [skillsBlock, rulesBlock];
     return {
-        text: [mandate, goalsBlock, skillsBlock, rulesBlock, topicsBlock, strategiesBlock, memoryBlock].filter(Boolean).join('\n\n'),
+        text: [mandate, goalsBlock, skillsRulesSkills, skillsRulesRules, topicsBlock, strategiesBlock, memoryBlock].filter(Boolean).join('\n\n'),
         skills,
     };
 };

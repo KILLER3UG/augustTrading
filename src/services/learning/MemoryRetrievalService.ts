@@ -24,6 +24,7 @@
 
 import { LoggedTrade } from '../../types';
 import { clipNote } from '../../utils/harnessMarks';
+import { dedupeInjectionBlocks } from '../../utils/memoryInjectionDedup';
 import {
     RECENT_TRADES_WINDOW,
     briefFingerprint,
@@ -323,35 +324,13 @@ export const recentFormBlock = (
         : `**Your logged trades**\n${neutralRowsText(brief)}`;
 };
 
-/** Cross-block dedup key: lowercase alphanumerics only. */
-const dedupKey = (line: string): string =>
-    line.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
-
-/**
- * Drop substantive lines that an EARLIER block already injected. Skills,
- * risk rules, similar trades and the doctrine are written independently and
- * routinely phrase the same lesson twice — the second copy only burns budget
- * and teaches the model nothing. Short/structural lines (headers, bullets
- * under 12 normalized chars) are always kept.
- */
-const dedupeContentLines = (sections: string[]): string[] => {
-    const seen = new Set<string>();
-    const out: string[] = [];
-    for (const section of sections) {
-        const kept: string[] = [];
-        for (const line of section.split('\n')) {
-            const key = dedupKey(line);
-            if (key.length >= 12) {
-                if (seen.has(key)) continue;
-                seen.add(key);
-            }
-            kept.push(line);
-        }
-        const text = kept.join('\n').replace(/\n{3,}/g, '\n\n').trim();
-        if (text) out.push(text);
-    }
-    return out;
-};
+/** Cross-block dedup: the seam's sentence-level rule lives in ONE module
+ *  (O-39) so the seat prompt's skills+rules join in `chatSurfaceTurn` and this
+ *  slice drop the same reworded rule the same way. The old line-equality
+ *  version missed a reworded rule ("never risk more than 1%" vs "risk no more
+ *  than 1%") — a content-word jaccard over sentences is the match now. */
+const dedupeContentLines = (sections: string[]): string[] =>
+    dedupeInjectionBlocks(sections).blocks;
 
 export function listRetrievedMemorySources(
     query?: MemoryRetrievalQuery,
