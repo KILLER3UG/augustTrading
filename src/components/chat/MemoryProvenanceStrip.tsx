@@ -134,7 +134,7 @@ const MemoryProvenanceStrip: React.FC<MemoryProvenanceStripProps> = ({
                 <div className="mt-0.5 mb-1 space-y-0.5 pl-1">
                     {grouped.skills.map(slug => (
                         <div key={slug} className="flex items-center gap-1.5">
-                            <span className="w-9 shrink-0 font-mono text-ui-2xs uppercase tracking-wider text-cyan-300/80">skill</span>
+                            <span className="w-9 shrink-0 font-mono text-ui-2xs uppercase tracking-wider text-zinc-400">skill</span>
                             <button type="button" onClick={() => openSkillCard(slug)}
                                 className="min-w-0 flex-1 truncate text-left font-mono text-ui-xs text-zinc-300 hover:underline" title={`/${slug}`}>
                                 /{slug}

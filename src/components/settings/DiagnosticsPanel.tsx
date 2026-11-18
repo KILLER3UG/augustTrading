@@ -102,7 +102,7 @@ export const DiagnosticsPanel: React.FC = () => {
                 </div>
             ) : (
                 <p className="text-ui-sm text-zinc-500 flex items-center gap-1.5">
-                    <CheckCircle className="h-3.5 w-3.5 text-emerald-400" aria-hidden="true" />
+                    <CheckCircle className="h-3.5 w-3.5 text-zinc-300" aria-hidden="true" />
                     <span>No runtime errors recorded.</span>
                 </p>
             )}

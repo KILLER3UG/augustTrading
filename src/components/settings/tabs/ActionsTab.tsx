@@ -110,7 +110,7 @@ const ActionsTab: React.FC<{ tab: ActionsTabProps }> = ({ tab: props }) => {
                         data-testid="training-capture-toggle"
                         onClick={flipCapture}
                         className={`shrink-0 rounded-control border px-3 py-1.5 text-ui-xs font-semibold transition-colors ${(capture?.enabled ?? false)
-                            ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
+                            ? 'border-zinc-500/40 bg-zinc-500/10 text-zinc-200'
                             : 'border-hairline bg-zinc-900 text-zinc-400 hover:border-line'}`}
                     >
                         {(capture?.enabled ?? false) ? 'Recording ON' : 'Recording OFF'}

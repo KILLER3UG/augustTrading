@@ -618,7 +618,7 @@ const ProviderManager: React.FC<ProviderManagerProps> = ({
                                                     </span>
                                                     <span className="truncate text-ui-caption font-medium" title={c.name}>{c.name}</span>
                                                 </span>
-                                                <span className={` h-1.5 w-1.5 shrink-0 rounded-full ${isReady ? 'bg-emerald-400' : 'bg-zinc-600'}`} />
+                                                <span className={` h-1.5 w-1.5 shrink-0 rounded-full ${isReady ? 'bg-zinc-200' : 'bg-zinc-600'}`} />
                                             </button>
                                         );
                                     })}
@@ -691,7 +691,7 @@ const ProviderManager: React.FC<ProviderManagerProps> = ({
                                         </>
                                     )}
                                     <div className=" ml-1 flex items-center gap-1">
-                                        <span className={`rounded-control px-2 py-0.5 text-ui-dense font-semibold ${selected.isEnabled ? 'bg-emerald-500 text-zinc-950' : 'bg-zinc-800 text-zinc-400'}`}>
+                                        <span className={`rounded-control px-2 py-0.5 text-ui-dense font-semibold ${selected.isEnabled ? 'bg-zinc-200 text-zinc-950' : 'bg-zinc-800 text-zinc-400'}`}>
                                             {selected.isEnabled ? 'Enabled' : 'Disabled'}
                                         </span>
                                         <button type="button" onClick={() => { void onToggleProvider(selected.id); }} className="rounded-control px-2 py-0.5 text-ui-dense text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200">
@@ -758,7 +758,7 @@ const ProviderManager: React.FC<ProviderManagerProps> = ({
                                     which; say it rather than let the UI keep
                                     implying "encrypted at rest". */}
                                 {selected.apiKeyPlaintext && (
-                                    <p className="mt-1 text-ui-sm text-amber-300" data-testid="provider-key-plaintext-warning">
+                                    <p className="mt-1 text-ui-sm text-zinc-400" data-testid="provider-key-plaintext-warning">
                                         This key is stored unencrypted on this machine: no OS keyring is available to protect it. Anyone with access to this device or its backup can read it.
                                     </p>
                                 )}
@@ -844,7 +844,7 @@ const ProviderManager: React.FC<ProviderManagerProps> = ({
                                                 <p className="px-3.5 text-ui-dense text-zinc-500">Testing…</p>
                                             )}
                                             {modelTest && !isTestingThis && modelTest.ok && (
-                                                <p className=" px-3.5 text-ui-dense font-medium text-emerald-400">Connected!</p>
+                                                <p className=" px-3.5 text-ui-dense font-medium text-zinc-300">Connected!</p>
                                             )}
                                             {modelTest && !isTestingThis && !modelTest.ok && (
                                                 <p className=" px-3.5 text-ui-dense leading-relaxed text-rose-400">{modelTest.message}</p>
@@ -880,7 +880,7 @@ const ProviderManager: React.FC<ProviderManagerProps> = ({
                             disabled={!isDirty || saveState === 'saving'}
                             className={`rounded-control px-4 py-2 text-ui-sm font-bold uppercase tracking-wider ${
                                 saveState === 'saved'
-                                    ? 'border border-emerald-500/40 bg-emerald-500/20 text-emerald-300'
+                                    ? 'border border-zinc-500/40 bg-zinc-500/20 text-zinc-200'
                                     : isDirty
                                         ? 'bg-zinc-100 text-zinc-950'
                                         : 'cursor-not-allowed border border-zinc-800 text-zinc-600'

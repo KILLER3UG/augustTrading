@@ -234,7 +234,7 @@ export const HarnessControls: React.FC = () => {
                         checked={settings.sensitiveMemoryEnabled === true}
                         onChange={e => persist({ sensitiveMemoryEnabled: e.target.checked })}
                         data-testid="harness-sensitive-memory"
-                        className="h-3.5 w-3.5 accent-cyan-400"
+                        className="h-3.5 w-3.5 accent-zinc-100"
                     />
                     <span className="text-ui-dense text-zinc-300">
                         {settings.sensitiveMemoryEnabled === true ? 'Allowed — stored flagged' : 'Refused'}

@@ -63,7 +63,7 @@ const ModelsTab: React.FC<{ tab: ModelsTabProps }> = ({ tab: props }) => {
                 description="Connect a provider, then choose the model the desk answers with."
             />
             {providerConfigsLoaded && readyConfigProviders.length === 0 && (
-                <div className="rounded-bubble border border-cyan-500/20 bg-cyan-500/[0.05] p-4">
+                <div className="rounded-bubble border border-hairline bg-zinc-900/60 p-4">
                     <h3 className="text-ui-base font-semibold text-zinc-100">Connect an AI service to get started</h3>
                     <p className="mt-1 text-ui-sm leading-relaxed text-zinc-400">
                         Add a provider below, paste its key, pick a model, then use Test before running your first analysis.

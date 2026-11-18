@@ -111,6 +111,14 @@ const STRAT_ACTIVATE = {
     __tool: 'propose_strategy_activation', slug: 'probe-range-reclaim', action: 'activate',
     reason: 'Its base rate cleared the bar; the seats should trade with it in context.',
 };
+// The evidence walk (UI audit bug 12): the card shape the probe had no
+// capture for. The settlement correction targets a SEEDED row id (`pt-2`,
+// above) — the executor refuses a hallucinated id, so the fixture must be
+// real. (The stats card's evidence lives in parity-proof-probe, P-5.)
+const SETTLEMENT_FIX = {
+    __tool: 'correct_trade_outcome', tradeId: 'pt-2', outcome: 'WIN', pnlPercent: 2.4,
+    reason: 'The tape shows the shelf held — this row recorded backwards.',
+};
 
 async function waitForServer(url, timeoutMs = 30000) {
     const deadline = Date.now() + timeoutMs;
@@ -485,6 +493,42 @@ async function waitForCard(page, cardSelector, text, timeoutMs = 45000) {
     return null;
 }
 
+/**
+ * Evidence-shot guard (UI audit bug 12): a card outside the viewport makes a
+ * screenshot that does not show the thing it names (the stale
+ * decision-card-*.png set). Scroll the target into the MIDDLE of the
+ * viewport, assert it actually intersects the viewport box, then capture.
+ * Bug 2's half: NEVER capture with a modal covering the screen — a Settings
+ * window or any aria-modal dialog over the shot is a blocked screenshot,
+ * exactly what the render-probe refuses for its layout evidence.
+ */
+async function shootCard(page, filePath, locator, label) {
+    if (!locator) throw new Error(`${label}: no card locator to capture`);
+    const blocked = await page.evaluate(() => {
+        const win = document.querySelector('[data-testid="settings-window"]');
+        if (win) return 'settings-window open';
+        const dlg = [...document.querySelectorAll('[role="dialog"][aria-modal="true"]')]
+            .find((d) => d.getClientRects().length > 0);
+        return dlg ? 'a modal dialog is open' : null;
+    });
+    if (blocked) throw new Error(`${label}: refusing to capture — ${blocked}`);
+    const el = locator.first();
+    // The transcript is VIRTUALIZED: a scrollIntoView can be followed by a
+    // follow-output re-scroll that unmounts the row mid-assert. Retry the
+    // scroll-assert pair; the assertion itself stays strict.
+    let onScreen = false;
+    for (let attempt = 0; attempt < 4 && !onScreen; attempt++) {
+        await el.evaluate((node) => node.scrollIntoView({ block: 'center' })).catch(() => {});
+        await sleep(300 + attempt * 200);
+        onScreen = await el.evaluate((node) => {
+            const r = node.getBoundingClientRect();
+            return r.width > 0 && r.height > 0 && r.bottom > 0 && r.top < window.innerHeight;
+        }).catch(() => false);
+    }
+    if (!onScreen) throw new Error(`${label}: target is not inside the viewport after scrollIntoView`);
+    await page.screenshot({ path: filePath });
+}
+
 /** The same scan for a bare testid (the settled logged row, which is a
  *  sibling of the card, not a child). */
 async function waitForTestidScrolled(page, testid, timeoutMs = 25000) {
@@ -521,6 +565,11 @@ async function waitForTextScrolling(page, needle, timeoutMs = 45000) {
         }
         await sleep(400);
     }
+    // A failed scan must be explainable: dump what the transcript actually
+    // shows at its tail, so a needle that can never match is visible in the
+    // failure output instead of guessed at.
+    const tail = await page.evaluate(() => (document.body.innerText || '').slice(-700)).catch(() => '');
+    console.log(`  [scan-miss] needle="${needle}" transcript tail: ${tail.replace(/\s+/g, ' ').slice(0, 400)}`);
     return false;
 }
 
@@ -547,7 +596,7 @@ async function main() {
             ...process.env,
             MOCK_TOOL_CALL: '1',
             MOCK_TOOL_NAME: 'present_trade',
-            MOCK_SKILL_ARGS: JSON.stringify([PLAN_A, PLAN_B, PLAN_C, PLAN_D, RISK_TIGHTEN, RISK_LOOSEN, PLAN_E, GUARD_TIGHTEN, GUARD_LOOSEN, STRAT_PROPOSE, STRAT_ACTIVATE]),
+            MOCK_SKILL_ARGS: JSON.stringify([PLAN_A, PLAN_B, PLAN_C, PLAN_D, RISK_TIGHTEN, RISK_LOOSEN, PLAN_E, GUARD_TIGHTEN, GUARD_LOOSEN, STRAT_PROPOSE, STRAT_ACTIVATE, SETTLEMENT_FIX]),
         },
     });
     let serverOut = '';
@@ -640,8 +689,8 @@ async function main() {
             hasSimBadge && /Simulated.*fee.*spread.*slip.*gap-open.*nothing executed on any exchange/i.test(fillAssumptionsText),
             `badge=${hasSimBadge} assumptions=${fillAssumptionsText}`);
         mkdirSync(path.join(ROOT, 'docs', 'evidence'), { recursive: true });
-        await page.screenshot({ path: '.probe-artifacts/decision-card-presented.png' });
-        await page.screenshot({ path: path.join(ROOT, 'docs', 'evidence', 'stop2-decision-cards.png') });
+        await shootCard(page, '.probe-artifacts/decision-card-presented.png', cardA, 'presented card');
+        await shootCard(page, path.join(ROOT, 'docs', 'evidence', 'stop2-decision-cards.png'), cardA, 'stop2 decision card');
 
         // Ruling 1's zero-loss: the [Desk | Chat] layout switch with a
         // PENDING card on screen. Both modes render the same workspace and
@@ -652,7 +701,7 @@ async function main() {
         const cardInChat = await waitForCard(page, 'trade-proposal-card', 'Probe plan A', 20000);
         check('the Desk-to-Chat switch is zero-loss with a pending card', !!cardInChat,
             cardInChat ? 'card renders in Chat' : 'the card vanished in Chat');
-        await page.screenshot({ path: '.probe-artifacts/decision-card-chat-mode.png' });
+        if (cardInChat) await shootCard(page, '.probe-artifacts/decision-card-chat-mode.png', cardInChat, 'chat-mode card');
         await page.evaluate(() => document.querySelector('[data-testid="layout-pill-desk"]')?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
         await sleep(600);
         const cardBackInDesk = await waitForCard(page, 'trade-proposal-card', 'Probe plan A', 20000);
@@ -679,7 +728,7 @@ async function main() {
         const afterApprove = await waitForPendingRows(page, 1);
         check('one Approve logs exactly one PENDING journal row', afterApprove.length === 1,
             `${afterApprove.length} pending row(s) after the tap: ${JSON.stringify((await readTrades(page)).map((r) => [r.id, r.outcome]))}`);
-        await page.screenshot({ path: '.probe-artifacts/decision-card-approved.png' });
+        await shootCard(page, '.probe-artifacts/decision-card-approved.png', cardA, 'approved card');
         const secondApprove = await cardA.locator('[data-testid="proposal-approve"]').count();
         check('an approved card offers no second Approve tap', secondApprove === 0,
             `${secondApprove} approve button(s) still visible on the card`);
@@ -702,9 +751,9 @@ async function main() {
         }
         check('Undo deletes the row and restores the card', undone,
             `rows=${JSON.stringify((await readTrades(page)).map((r) => r.outcome))}`);
-        const receiptSeen = await waitForTextScrolling(page, 'APPROVAL RECEIPT', 15000);
+        const receiptSeen = await waitForTextScrolling(page, 'Plan approved — logged & monitoring', 15000);
         check('the approval receipt reaches the conversation', receiptSeen);
-        const undoNote = await waitForTextScrolling(page, 'APPROVAL UNDONE', 25000);
+        const undoNote = await waitForTextScrolling(page, 'Plan approval undone', 25000);
         check('the undo note reaches the thread', undoNote);
 
         // ── Turn 2 (PLAN_B): a re-approve after undo is a FRESH decision ────
@@ -729,7 +778,7 @@ async function main() {
         await sendInDock(page, 'PROBE_TOOL_ROUND present plan C');
         let cardC = await waitForCard(page, 'trade-proposal-card', 'Probe plan C');
         if (!cardC) { await dumpTranscriptState(page, 'plan C card never mounted'); throw new Error('plan C card never rendered'); }
-        await page.screenshot({ path: '.probe-artifacts/decision-card-stale.png' });
+        await shootCard(page, '.probe-artifacts/decision-card-stale.png', cardC, 'stale card');
         let staleShown = false;
         for (let i = 0; i < 16 && !staleShown; i++) {
             staleShown = (await cardC.locator('[data-testid="proposal-stale"]').count()) > 0;
@@ -788,7 +837,7 @@ async function main() {
         check('a risk change renders the card with the before/after and its direction',
             /tightens/i.test(tightenText) && /0\.5/.test(tightenText),
             tightenText.replace(/\s+/g, ' ').slice(0, 140));
-        await page.screenshot({ path: '.probe-artifacts/decision-card-risk-tighten.png' });
+        await shootCard(page, '.probe-artifacts/decision-card-risk-tighten.png', cardR1, 'risk tighten card');
 
         await cardR1.locator('[data-testid="risk-change-confirm"]').click();
         let riskApplied = false;
@@ -800,7 +849,7 @@ async function main() {
             `riskPercent=${await readRiskPercent(page)}`);
         const appliedVisible = (await page.locator('[data-testid="risk-change-applied"]').count()) > 0;
         check('the applied card carries the revert window', appliedVisible);
-        const appliedNote = await waitForTextScrolling(page, 'RISK CHANGE APPLIED', 15000);
+        const appliedNote = await waitForTextScrolling(page, 'The trader CONFIRMED your proposal', 15000);
         check('the applied note reaches the thread', appliedNote);
 
         // ── Turn 6 (RISK LOOSEN): the explicit second tap ───────────────────
@@ -837,7 +886,7 @@ async function main() {
         }
         check('the revert puts the replaced value back', revertVisible && riskReverted,
             `revertButton=${revertVisible} riskPercent=${await readRiskPercent(page)}`);
-        const revertedNote = await waitForTextScrolling(page, 'RISK CHANGE REVERTED', 15000);
+        const revertedNote = await waitForTextScrolling(page, 'The trader reverted your confirmed change', 15000);
         check('the revert note reaches the thread', revertedNote);
 
         // ── Turn 7 (GUARD WALK): the deterministic session guard ────────────
@@ -877,7 +926,7 @@ async function main() {
         }
         check('the guard stands the session down on the card (Approve down, reason printed)',
             !!blockSeen, blockSeen ? blockSeen.slice(0, 120) : 'no guard block on the card');
-        await page.screenshot({ path: '.probe-artifacts/decision-card-guard-block.png' });
+        await shootCard(page, '.probe-artifacts/decision-card-guard-block.png', cardE, 'guard block card');
 
         const rowsBeforeGuard = pendingRows(await readTrades(page)).length;
         // A disabled button cannot be clicked through Playwright's actionability
@@ -936,7 +985,7 @@ async function main() {
         check('the strategy activation card shows the before/after and what changes',
             /draft/i.test(stratText) && /active/i.test(stratText) && /every seat/i.test(stratText),
             stratText.replace(/\s+/g, ' ').slice(0, 160));
-        await page.screenshot({ path: '.probe-artifacts/decision-card-strategy-activation.png' });
+        await shootCard(page, '.probe-artifacts/decision-card-strategy-activation.png', cardS, 'strategy activation card');
 
         await cardS.locator('[data-testid="strategy-activation-confirm"]').click();
         let stratApplied = false;
@@ -952,7 +1001,7 @@ async function main() {
         const appliedTextS = (await page.locator('[data-testid="strategy-activation-applied"]').last().innerText().catch(() => 'NO CARD'));
         check('the confirmed activation applies through the notebook writer', stratApplied && stratActive,
             `appliedCard=${stratApplied} status=${await readStrategyStatus(page)} card=${appliedTextS.replace(/\s+/g, ' ').slice(0, 180)}`);
-        const appliedNoteS = await waitForTextScrolling(page, 'STRATEGY ACTIVATED', 15000);
+        const appliedNoteS = await waitForTextScrolling(page, 'The trader CONFIRMED your proposal', 15000);
         check('the strategy note reaches the thread', appliedNoteS);
 
         // The applied card may sit above the virtualized window: the strategy
@@ -973,6 +1022,40 @@ async function main() {
         }
         check('the revert puts the draft status back', revertBtnS > 0 && stratDraftAgain,
             `revertButton=${revertBtnS} status=${await readStrategyStatus(page)}`);
+
+        // ── Evidence captures (UI audit bugs 2 + 12) ────────────────────────
+        // The FULL card set lands in docs/evidence next to the layout
+        // evidence, every one through shootCard's guards: no modal over the
+        // shot (bug 2), the target scrolled into view and asserted inside the
+        // viewport (bug 12 — the stale decision-card-*.png set died of the
+        // opposite). The shape the probe never drove is here too: a settlement
+        // correction on a SEEDED row (the executor refuses a hallucinated id).
+        // The stats card's evidence lives in parity-proof-probe (P-5), which
+        // drives get_setup_history_stats on its own harness page and captures
+        // docs/evidence/stop2-stats-card.png through the same guards.
+        const evidenceDir = path.join(ROOT, 'docs', 'evidence');
+        mkdirSync(evidenceDir, { recursive: true });
+
+        await sendInDock(page, 'PROBE_TOOL_ROUND propose a settlement correction');
+        const cardSC = await waitForCard(page, 'settlement-correction-card', 'recorded backwards');
+        if (!cardSC) { await dumpTranscriptState(page, 'settlement correction card never mounted'); throw new Error('settlement correction card never rendered'); }
+        const scText = await cardText(page, 'settlement-correction-card', 'recorded backwards');
+        check('a settlement correction renders the confirmation card with its reason',
+            /WIN/i.test(scText) && /recorded backwards/.test(scText),
+            scText.replace(/\s+/g, ' ').slice(0, 140));
+        await shootCard(page, path.join(evidenceDir, 'stop2-settlement-correction.png'), cardSC, 'settlement correction card');
+
+        // The rest of the set: the cards this run already stood up, captured
+        // into docs/evidence the same way (the .probe-artifacts copies stay
+        // for the failure triage).
+        const riskCards = page.locator('[data-testid="trade-chat-panel"] [data-testid="risk-change-card"]');
+        if (await riskCards.count() > 0) {
+            await shootCard(page, path.join(evidenceDir, 'stop2-risk-change.png'), riskCards.last(), 'risk change card');
+        }
+        const presentedCards = page.locator('[data-testid="trade-chat-panel"] [data-testid="trade-proposal-card"]');
+        if (await presentedCards.count() > 0) {
+            await shootCard(page, path.join(evidenceDir, 'stop2-presented.png'), presentedCards.last(), 'presented plan card');
+        }
 
         check('zero pageerrors across the decision-card run', pageErrors.length === 0,
             pageErrors.slice(0, 3).join(' | '));

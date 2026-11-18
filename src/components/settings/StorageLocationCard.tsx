@@ -98,7 +98,7 @@ export const StorageLocationCard: React.FC = () => {
                 </span>
             </p>
             {backend === 'browser-storage' && (
-                <p className="text-ui-xs text-amber-400/90 mt-1">
+                <p className="text-ui-xs text-zinc-400 mt-1">
                     This build keeps chats and the notebook in the browser's storage, which is capped and can be
                     cleared. The desktop build writes them to app files instead.
                 </p>
@@ -110,7 +110,7 @@ export const StorageLocationCard: React.FC = () => {
                 </p>
             )}
             {evictable(info) && (
-                <p className="text-ui-xs text-amber-400/90 mt-1" data-testid="storage-location-warning">
+                <p className="text-ui-xs text-zinc-400 mt-1" data-testid="storage-location-warning">
                     Browser and WebView storage can be cleared by the system under disk pressure. Keep an exported backup.
                 </p>
             )}

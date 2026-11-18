@@ -11,8 +11,8 @@ import { ForgedTool, loadForgedTools, approveForgedTool, retireForgedTool, delet
 
 const StatusBadge: React.FC<{ tool: ForgedTool }> = ({ tool }) => {
     const map: Record<ForgedTool['status'], string> = {
-        candidate: 'bg-amber-950/60 text-amber-400',
-        confirmed: 'bg-emerald-950/60 text-emerald-400',
+        candidate: 'bg-zinc-800 text-zinc-300',
+        confirmed: 'bg-zinc-700 text-zinc-100',
         retired: 'bg-zinc-900 text-zinc-600 line-through',
     };
     return (

@@ -172,7 +172,7 @@ const UserProfileManager: React.FC<UserProfileManagerProps> = ({ isVisible, isLo
                     <button 
                         type="submit" 
                         disabled={isBusy || !newUsername.trim()}
-                        className="absolute right-2 top-2 bottom-2 px-4 bg-accent hover:bg-amber-500 text-accent-ink font-bold rounded-control disabled:opacity-0 disabled:translate-x-4 transition-[background-color,opacity,transform] duration-[150ms] ease-[var(--ease-snappy)]"
+                        className="absolute right-2 top-2 bottom-2 px-4 bg-accent hover:bg-zinc-300 text-accent-ink font-bold rounded-control disabled:opacity-0 disabled:translate-x-4 transition-[background-color,opacity,transform] duration-[150ms] ease-[var(--ease-snappy)]"
                     >
                         Enter
                     </button>

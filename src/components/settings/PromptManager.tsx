@@ -431,7 +431,7 @@ const PromptDiffView: React.FC<{ baseText: string; currentText: string }> = ({ b
         <div className="flex-1 overflow-y-auto custom-scrollbar text-ui-sm font-mono leading-5">
             <div className="sticky top-0 z-10 flex items-center justify-between border-b border-zinc-800 bg-zinc-900 px-4 py-2 text-ui-dense font-sans">
                 <span className="text-zinc-500">Built-in default ← → your version</span>
-                <span className={changed > 0 ? 'text-amber-400' : 'text-zinc-500'}>
+                <span className={changed > 0 ? 'text-zinc-300' : 'text-zinc-500'}>
                     {changed > 0 ? `${changed} changed line${changed === 1 ? '' : 's'}` : 'identical'}
                 </span>
             </div>
@@ -439,13 +439,13 @@ const PromptDiffView: React.FC<{ baseText: string; currentText: string }> = ({ b
                 <div
                     key={index}
                     className={`grid grid-cols-2 gap-0 border-b border-hairline ${
-                        row.op === 'add' ? 'bg-emerald-500/5' : row.op === 'remove' ? 'bg-rose-500/5' : ''
+                        row.op === 'add' ? 'bg-zinc-500/5' : row.op === 'remove' ? 'bg-zinc-500/5' : ''
                     }`}
                 >
-                    <div className={`whitespace-pre-wrap break-words px-4 py-0.5 ${row.op === 'remove' ? 'text-rose-300' : 'text-zinc-500'} ${row.op === 'add' ? 'opacity-40' : ''}`}>
+                    <div className={`whitespace-pre-wrap break-words px-4 py-0.5 ${row.op === 'remove' ? 'text-zinc-400' : 'text-zinc-500'} ${row.op === 'add' ? 'opacity-40' : ''}`}>
                         {row.baseLine ?? ''}
                     </div>
-                    <div className={`whitespace-pre-wrap break-words border-l border-hairline px-4 py-0.5 ${row.op === 'add' ? 'text-emerald-300' : 'text-zinc-500'} ${row.op === 'remove' ? 'opacity-40' : ''}`}>
+                    <div className={`whitespace-pre-wrap break-words border-l border-hairline px-4 py-0.5 ${row.op === 'add' ? 'text-zinc-200' : 'text-zinc-500'} ${row.op === 'remove' ? 'opacity-40' : ''}`}>
                         {row.currentLine ?? ''}
                     </div>
                 </div>

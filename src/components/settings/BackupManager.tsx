@@ -260,7 +260,7 @@ export const BackupManager: React.FC<BackupManagerProps> = ({ username, onProfil
           <button
             onClick={handleCreate}
             disabled={isCreating}
-            className="flex items-center gap-2 px-3 py-2 rounded-control bg-accent hover:bg-amber-500 text-accent-ink text-ui-sm font-bold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="flex items-center gap-2 px-3 py-2 rounded-control bg-accent hover:bg-zinc-300 text-accent-ink text-ui-sm font-bold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isCreating ? <LoadingIcon className="w-4 h-4" aria-hidden="true" /> : <PlusIcon className="w-4 h-4" aria-hidden="true" />}
             {isCreating ? 'Backing up…' : 'Back up now'}
@@ -302,9 +302,9 @@ export const BackupManager: React.FC<BackupManagerProps> = ({ username, onProfil
         <div
           data-testid="backup-status"
           className={`text-ui-sm px-3 py-2 rounded-control border ${status.kind === 'success'
-          ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'
+          ? 'bg-zinc-500/10 border-zinc-500/20 text-zinc-300'
           : status.kind === 'warn'
-            ? 'bg-amber-500/10 border-amber-500/20 text-amber-300'
+            ? 'bg-zinc-500/10 border-zinc-500/20 text-zinc-400'
             : 'bg-rose-500/10 border-rose-500/20 text-rose-400'}`}>
           {status.text}
         </div>
@@ -345,7 +345,7 @@ export const BackupManager: React.FC<BackupManagerProps> = ({ username, onProfil
                 <button
                   onClick={() => handleRestore(backup.id, backup.username)}
                   disabled={busyId === backup.id}
-                  className="p-2 rounded-control hover:bg-zinc-800 text-zinc-400 hover:text-emerald-400 transition-colors"
+                  className="p-2 rounded-control hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 transition-colors"
                   aria-label="Restore this backup"
                   title="Restore"
                 >

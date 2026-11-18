@@ -59,7 +59,7 @@ export const AutoJournalRulesCard: React.FC<AutoJournalRulesCardProps> = ({ user
                         <span
                             aria-hidden="true"
                             className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-control border border-hairline bg-white/[0.04] ${
-                                rule.policy === 'always' ? 'text-emerald-400' : 'text-rose-400'
+                                rule.policy === 'always' ? 'text-zinc-300' : 'text-zinc-600'
                             }`}
                         >
                             {rule.policy === 'always'

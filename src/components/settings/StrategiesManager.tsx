@@ -262,7 +262,7 @@ const StrategiesManager: React.FC<StrategiesManagerProps> = ({
                         type="button"
                         onClick={() => fileInputRef.current?.click()}
                         disabled={isProcessing}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-control bg-accent hover:bg-amber-500 disabled:opacity-50 text-accent-ink text-ui-sm font-medium transition-colors"
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-control bg-accent hover:bg-zinc-300 disabled:opacity-50 text-accent-ink text-ui-sm font-medium transition-colors"
                     >
                         <UploadIcon className="w-3.5 h-3.5" aria-hidden="true" />
                         {isProcessing ? 'Working…' : 'Upload PDF book'}
@@ -282,7 +282,7 @@ const StrategiesManager: React.FC<StrategiesManagerProps> = ({
                         </span>
                     )}
                     {!readyProvider && !isProcessing && (
-                        <span className="text-ui-xs text-amber-400/90">No ready AI provider — uploads will summarize once one is enabled.</span>
+                        <span className="text-ui-xs text-zinc-400">No ready AI provider — uploads will summarize once one is enabled.</span>
                     )}
                 </div>
             </div>
@@ -340,7 +340,7 @@ const StrategiesManager: React.FC<StrategiesManagerProps> = ({
                                             <button
                                                 type="button"
                                                 onClick={() => handleSaveEdit(doc)}
-                                                className="px-3 py-1.5 rounded-control bg-accent hover:bg-amber-500 text-accent-ink text-ui-xs font-bold uppercase tracking-widest transition-colors"
+                                                className="px-3 py-1.5 rounded-control bg-accent hover:bg-zinc-300 text-accent-ink text-ui-xs font-bold uppercase tracking-widest transition-colors"
                                             >
                                                 Save
                                             </button>

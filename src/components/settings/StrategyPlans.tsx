@@ -51,10 +51,10 @@ const Plan: React.FC<{ meta: StrategyMeta }> = ({ meta }) => {
                         <span
                             className={`shrink-0 rounded-control px-1.5 py-0.5 text-ui-2xs font-bold uppercase tracking-wider ${
                                 meta.status === 'active'
-                                    ? 'bg-emerald-500/15 text-emerald-300'
+                                    ? 'bg-zinc-700 text-zinc-100'
                                     : meta.status === 'retired'
                                         ? 'bg-zinc-800 text-zinc-500'
-                                        : 'bg-amber-500/15 text-amber-300'
+                                        : 'bg-zinc-800 text-zinc-400'
                             }`}
                         >
                             {STATUS_LABEL[meta.status]}

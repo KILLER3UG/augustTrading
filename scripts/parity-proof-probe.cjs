@@ -334,6 +334,35 @@ async function main() {
                         (await page.locator('[data-testid="stats-card"]').count())
                             ? (await page.locator('[data-testid="stats-card"]').first().innerText()).replace(/\s+/g, ' ').slice(0, 120)
                             : 'no stats card mounted');
+                    // Evidence capture (UI audit bugs 2 + 12): the stats card
+                    // into docs/evidence, through the same two guards the other
+                    // probes use — no modal over the shot, the card scrolled
+                    // into view and asserted inside the viewport.
+                    {
+                        const cardEl = page.locator('[data-testid="stats-card"]').first();
+                        const blocked = await page.evaluate(() => {
+                            if (document.querySelector('[data-testid="settings-window"]')) return 'settings-window open';
+                            const dlg = [...document.querySelectorAll('[role="dialog"][aria-modal="true"]')]
+                                .find((d) => d.getClientRects().length > 0);
+                            return dlg ? 'a modal dialog is open' : null;
+                        });
+                        if (blocked) throw new Error(`stats card evidence: refusing to capture — ${blocked}`);
+                        let onScreen = false;
+                        for (let attempt = 0; attempt < 4 && !onScreen; attempt++) {
+                            await cardEl.evaluate((node) => node.scrollIntoView({ block: 'center' })).catch(() => {});
+                            await sleep(300 + attempt * 200);
+                            onScreen = await cardEl.evaluate((node) => {
+                                const r = node.getBoundingClientRect();
+                                return r.width > 0 && r.height > 0 && r.bottom > 0 && r.top < window.innerHeight;
+                            }).catch(() => false);
+                        }
+                        if (!onScreen) throw new Error('stats card evidence: target is not inside the viewport after scrollIntoView');
+                        const { mkdirSync } = require('fs');
+                        const dir = path.join(ROOT, 'docs', 'evidence');
+                        mkdirSync(dir, { recursive: true });
+                        await page.screenshot({ path: path.join(dir, 'stop2-stats-card.png') });
+                        console.log('[parity] evidence: docs/evidence/stop2-stats-card.png');
+                    }
                     const simStatusBefore = await page.locator('[data-testid="stats-card-simulated-status"]').first().innerText().catch(() => '');
                     await page.locator('[data-testid="stats-card-simulated-toggle"]').first().click().catch(() => {});
                     await sleep(200);
