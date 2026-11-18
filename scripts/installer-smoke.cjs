@@ -352,17 +352,14 @@ async function verifyTradeSurface(page) {
     await chartPane.waitFor({ state: 'visible', timeout: PROBE_TIMEOUT_MS });
     await dock.waitFor({ state: 'visible', timeout: PROBE_TIMEOUT_MS });
     await panel.waitFor({ state: 'visible', timeout: PROBE_TIMEOUT_MS });
-    // The dock's identity control, either shape it has had: the static
-    // "Chart AI" title, or -- since 7069795 (2026-09-18), when the Coach inbox
-    // became a first-class surface -- the Chat/Coach tablist that replaced that
-    // label. Which one renders depends on whether the coach surface has
-    // hydrated yet, so BOTH are accepted, and the same locator is re-sampled
-    // below: asserting the old string alone has failed every packaged run
-    // since, and release.yml only fires on a tag, so nothing noticed for three
-    // days. Either way the probe still fails on a dock with no header identity.
-    const dockIdentity = panel.getByRole('tab', { name: 'Chat' })
-        .or(panel.getByText('Chart AI', { exact: true }))
-        .first();
+    // The dock's identity: since the STOP-2 dual-view redesign (582cbf98) the
+    // header carries the CONVERSATION TITLE (no Chat/Coach tablist, no static
+    // "Chart AI" label — both locators timed out on every packaged run after
+    // it). The one affordance every dock shape has carried is the COMPOSER —
+    // `composer-input`, disabled or not (this smoke seeds no provider, so the
+    // placeholder reads "Configure a provider…" and a placeholder locator
+    // would miss it).
+    const dockIdentity = panel.getByTestId('composer-input').first();
     await dockIdentity.waitFor({ state: 'visible', timeout: PROBE_TIMEOUT_MS });
     console.log('[smoke] Analyze surface and expanded Chart AI dock are visible');
 
