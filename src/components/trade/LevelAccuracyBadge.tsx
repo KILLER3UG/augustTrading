@@ -50,8 +50,10 @@ export const LevelAccuracyBadge: React.FC<Props> = ({ drawings, candles, classNa
     // Only draw attention when it is informative. A near-perfect record and a
     // near-empty one both read as "fine" in a single number, and the user is
     // better served by the number itself than by a colour implying more.
+    // MONOCHROME (owner 1.4.2): green and red are reserved for price,
+    // candles, PnL and the Long/Short badges — an accuracy percentage is
+    // neither, so it reads in ink.
     const pct = Math.round((ratio ?? 0) * 100);
-    const tone = pct >= 60 ? 'text-emerald-400' : pct >= 30 ? 'text-amber-500' : 'text-rose-400';
 
     return (
         <div
@@ -66,7 +68,7 @@ export const LevelAccuracyBadge: React.FC<Props> = ({ drawings, candles, classNa
             <span className="text-ui-xs font-bold text-zinc-500 uppercase tracking-wider">
                 Levels
             </span>
-            <span className={`font-mono tabular-nums ${tone}`}>{pct}%</span>
+            <span className="font-mono tabular-nums text-zinc-300">{pct}%</span>
             <span className="text-zinc-600">
                 reached ({reached}/{judged})
             </span>
