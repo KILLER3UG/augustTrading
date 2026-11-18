@@ -69,6 +69,7 @@ import { SCORE_FORMULA } from '../trade/bestSetups';
 import { getSessionContext } from '../infrastructure/SessionService';
 import { handleRecallTool } from '../learning/MemoryRetrievalService';
 import { formatFormingCandleLine, formatLiveMarkStamp, type FormingCandle } from '../trade/tradeChatContext';
+import type { SignalMemoryRecipe } from '../../types/signal';
 import { computeSetupClusterStats } from '../learning/setupClusterStats';
 import { wilsonInterval95 } from '../signals/signalAccuracy';
 import { MIN_RATE_SAMPLE } from './journalTools';
@@ -3694,6 +3695,10 @@ export interface DeskToolContext {
      *  this reads 'unknown' rather than guessing. */
     modelName?: string;
     providerId?: string;
+    /** Attribution stamp (Enhancement 5): the task-context slice recipe the
+     *  caller composed for this turn. `emit_signal` stamps it onto the
+     *  ledger row so hit-rate-vs-base-rate can be measured PER RECIPE. */
+    memoryRecipe?: SignalMemoryRecipe;
 }
 
 /** Tools whose RESULT is text this app did not write and the trader did not
@@ -4156,6 +4161,9 @@ ${hitContent}`, ...resolvedSymbolField(call, fallback) };
                         formingCandle: (context.getFormingCandle?.() ?? context.formingCandle) ?? null,
                         model: context.modelName,
                         provider: context.providerId,
+                        // Enhancement 5: WHICH memory slice recipe the emitting
+                        // turn read — the attribution join key on the ledger.
+                        ...(context.memoryRecipe ? { memoryRecipe: context.memoryRecipe } : {}),
                     });
                     if (!outcome.ok) {
                         return rejectedResult(call, `emit_signal rejected: ${outcome.error}`);
@@ -6600,6 +6608,10 @@ export async function runDeskToolLoop(params: {
     /** See `DeskToolContext.lastUserMessage` (the forget guard). */
     lastUserMessage?: string;
     trades?: LoggedTrade[];
+    /** Attribution stamp (Enhancement 5): the task-context slice recipe the
+     *  caller composed for this turn — executeDeskTools stamps it onto
+     *  emitted signals. */
+    memoryRecipe?: SignalMemoryRecipe;
     /** Additional tool definitions merged into the desk set (e.g. debate mail). */
     extraToolDefs?: DeskToolDefinition[];
     /** Dispatch for extra tools. Return null to fall through to executeDeskTools. */
@@ -6647,6 +6659,7 @@ export async function runDeskToolLoop(params: {
         memoryEnabled,
         lastUserMessage,
         trades,
+        memoryRecipe,
         extraToolDefs = [],
         executeExtraTool,
         appendSystemNotice,
@@ -7204,6 +7217,7 @@ export async function runDeskToolLoop(params: {
                 allowedTools,
                 memoryEnabled,
                 lastUserMessage,
+                memoryRecipe,
                 skillReview: { indexVersion: skillIndexVersion, opened: openedSkillVersions },
                 untrustedSeen,
                 modelName: config.selectedModel,
@@ -7399,6 +7413,9 @@ export interface StreamWithDeskToolsOptions extends ChatRequestOptions {
     /** See the main options interface — same contract, so a payload can be
      *  persisted from the streaming loop too. */
     onToolPayload?: (payload: ToolPayload) => void;
+    /** Attribution stamp (Enhancement 5): the task-context slice recipe the
+     *  caller composed for this turn, stamped onto emitted signals. */
+    memoryRecipe?: SignalMemoryRecipe;
     allowedTools?: SeatToolGrant;
     /** Closed-trade log for the `recall` notebook tool. */
     trades?: LoggedTrade[];
@@ -7545,6 +7562,7 @@ export async function* streamChatWithDeskTools(
     const {
         defaultSymbol,
         memoryEnabled,
+        memoryRecipe,
         lastUserMessage: optsLastUserMessage,
         afterToolsNudge,
         chartInterval,
@@ -7711,6 +7729,7 @@ export async function* streamChatWithDeskTools(
         nativeTools,
         allowedTools: effectiveAllowed,
         memoryEnabled,
+        memoryRecipe,
         lastUserMessage: optsLastUserMessage,
         trades,
         requireFirstToolRound,

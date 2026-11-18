@@ -402,6 +402,10 @@ export interface ChatSurfaceTurnRequest {
     strategiesEnabled?: boolean;
     /** See the note beside `contextBlock` in the executor. */
     extraContext?: string;
+    /** Attribution stamp (Enhancement 5): the task-context slice recipe the
+     *  caller composed for THIS turn. Rides the desk transport so an
+     *  emit_signal records which LOAD recipe accompanied the call. */
+    memoryRecipe?: import('../../types/signal').SignalMemoryRecipe;
     symbol?: string | null;
     interval?: string;
     /** The silent 80% digest for turns this request has outgrown. Written by
@@ -492,6 +496,9 @@ export const runChatSurfaceTurn = async (req: ChatSurfaceTurnRequest): Promise<T
     const planCapture: { planId: string | null; symbol: string | null; playbookId: string | null; snapshot: CaptureSnapshot | null } = { planId: null, symbol: null, playbookId: null, snapshot: null };
     const transport: ToolTurnRequest['transport'] = {
         defaultSymbol: req.symbol ?? null,
+        // Enhancement 5: rides the transport to the desk executor, where an
+        // emit_signal stamps it onto the ledger row (the attribution half).
+        memoryRecipe: req.memoryRecipe,
         allowedTools: CHAT_SURFACE_TOOLS,
         goalAllowedTools: focusedGoal()?.policy.allowedTools,
         maxTokens: TASK_BUDGETS.chat,

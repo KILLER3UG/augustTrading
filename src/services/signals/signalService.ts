@@ -20,6 +20,7 @@
 import type {
     SignalGateShadow,
     SignalGroundingShadow,
+    SignalMemoryRecipe,
     SignalRecord,
     SignalRefusalRecord,
     SignalRefusalResolution,
@@ -89,6 +90,9 @@ export interface EmitSignalContext {
     provider?: string;
     model?: string;
     user?: string;
+    /** Attribution (Enhancement 5): the task-context slice recipe the
+     *  emitting turn read. Stamped onto the record when present. */
+    memoryRecipe?: SignalMemoryRecipe;
 }
 
 export type EmitSignalOutcome =
@@ -200,6 +204,9 @@ export const emitSignal = (input: EmitSignalInput, context: EmitSignalContext = 
         provider: context.provider || 'unknown',
         model: context.model || 'unknown',
         promptVersion: EMIT_SIGNAL_PROMPT_VERSION,
+        // Attribution (Enhancement 5): WHICH LOAD recipe accompanied this call,
+        // so hit-rate-vs-base-rate can be measured per recipe.
+        ...(context.memoryRecipe ? { memoryRecipe: context.memoryRecipe } : {}),
         source: 'signal',
         thesis: thesis.length > 280 ? `${thesis.slice(0, 277)}…` : thesis,
     };

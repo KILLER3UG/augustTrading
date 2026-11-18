@@ -932,6 +932,14 @@ export function useAnalysisPipeline(params: UseAnalysisPipelineParams) {
             // TRADER NOTEBOOK stage (extracted): notebook slices, bot
             // memory, similar-setups record, regime weighting, loss priming.
             const { assemblePipelineMemoryContext, formatLossPrimingContext } = await import('./analysisPipeline/memoryContext');
+            // THE TASK NAMES THE SLICE (Enhancement 5): a full analysis (the
+            // trader pressed the button) composes the whole bundle; an
+            // ordinary desk read is a 'scan' and skips the blocks a quick
+            // answer does not weigh (the provider-accuracy table, the coin's
+            // diagnosis brief). The recipe id + footprint are stamped onto
+            // runStats and the signal ledger below, so hit-rate-vs-base-rate
+            // attribution can measure which recipe accompanied hits vs misses.
+            const taskContext: 'scan' | 'plan' = options?.fullAnalysis === true ? 'plan' : 'scan';
             const {
                 detectedLearningCoin,
                 pendingDirection,
@@ -941,6 +949,7 @@ export function useAnalysisPipeline(params: UseAnalysisPipelineParams) {
                 regimeWeightingContext,
                 lossPrimingRows,
                 asOfMs: memoryAsOfMs,
+                recipe: sliceRecipe,
             } = await assemblePipelineMemoryContext(
                 effectiveInput,
                 loggedTrades,
@@ -955,6 +964,7 @@ export function useAnalysisPipeline(params: UseAnalysisPipelineParams) {
                 // The same switch the seat prompts obey. Full analysis used to
                 // read the profile index whatever the trader had chosen.
                 isGlobalMemoryEnabled !== false,
+                taskContext,
             );
 
             // One context bundle for every moderator surface (autoplay debate,
@@ -1034,7 +1044,9 @@ export function useAnalysisPipeline(params: UseAnalysisPipelineParams) {
             // invisible to an ordinary answer otherwise, and must not be
             // reachable only when the seat happens to emit a signal. The block
             // swallows its own read failure, so it costs itself, never the run.
-            if (detectedLearningCoin) {
+            // Recipe-gated (Enhancement 5): a scan skips it — a quick read does
+            // not weigh the diary's last lesson.
+            if (detectedLearningCoin && sliceRecipe.includeDiagnosisBrief) {
                 const { diagnosisBriefBlock } = await import('../services/tracking/diagnosisBrief');
                 const briefCoin = /USDT?$/i.test(detectedLearningCoin)
                     ? detectedLearningCoin.toUpperCase()
@@ -1043,15 +1055,16 @@ export function useAnalysisPipeline(params: UseAnalysisPipelineParams) {
                 if (briefBlock) contextParts.push(briefBlock);
             }
             // 3. The journal's own track record for this setup (win rate / EV).
-            if (similarSetupsContext) contextParts.push(similarSetupsContext);
+            if (sliceRecipe.includeSimilarSetups && similarSetupsContext) contextParts.push(similarSetupsContext);
             // 4. The model's track record in the CURRENT regime — the other
             //    block the memory stage composed and no consumer read.
-            if (regimeWeightingContext) contextParts.push(regimeWeightingContext);
+            if (sliceRecipe.includeRegimeWeighting && regimeWeightingContext) contextParts.push(regimeWeightingContext);
             // 5. The notebook slice (skills, bot memory).
             if (memoryFilesContext) contextParts.push(memoryFilesContext);
             // 6. Provider accuracy weighting — the moderator's tiebreaker, the
             //    least coin-specific block, so it is the first to be cut.
-            if (learningInjection) contextParts.push(learningInjection);
+            //    Recipe-gated: only a plan weighs votes by past provider wins.
+            if (sliceRecipe.includeLearningInjection && learningInjection) contextParts.push(learningInjection);
             // ========== GATE KEEPER: Two-Stage Gate Scan ==========
             // The authoritative symbol is the one detected at the top of the
             // run: extractSymbolFromPrompt (canonical pair extraction), then
@@ -1080,7 +1093,24 @@ export function useAnalysisPipeline(params: UseAnalysisPipelineParams) {
             // ========== END GATE KEEPER ==========
 
             const extraContext = contextParts.filter(Boolean).join('\n\n');
-            devLog('[Hybrid Intelligence] Retrieved context length:', extraContext.length);
+            // The attribution stamp (Enhancement 5): WHICH recipe, HOW BIG, and
+            // which LOAD blocks composed it. Rides runStats on the canonical
+            // row and, through the desk transport, every emit_signal row —
+            // the join key hit-rate-vs-base-rate attribution reads by recipe.
+            const memoryRecipeFootprint = {
+                id: sliceRecipe.id,
+                chars: extraContext.length,
+                blocks: [
+                    'reflections',
+                    ...(lossPrimingRows.length > 0 ? ['loss-priming'] : []),
+                    ...(detectedLearningCoin && sliceRecipe.includeDiagnosisBrief ? ['diagnosis-brief'] : []),
+                    ...(sliceRecipe.includeSimilarSetups && similarSetupsContext ? ['similar-setups'] : []),
+                    ...(sliceRecipe.includeRegimeWeighting && regimeWeightingContext ? ['regime-weighting'] : []),
+                    ...(memoryFilesContext ? ['notebook-slice'] : []),
+                    ...(sliceRecipe.includeLearningInjection && learningInjection ? ['provider-weighting'] : []),
+                ],
+            } as const;
+            devLog('[Hybrid Intelligence] Retrieved context length:', extraContext.length, 'recipe:', sliceRecipe.id);
             devLog('[AI Learning] Has learning injection:', learningInjection.length > 0);
             devLog('[Hybrid Intelligence] ======= END =======');
 
@@ -1187,6 +1217,10 @@ export function useAnalysisPipeline(params: UseAnalysisPipelineParams) {
                     memoryEnabled: isGlobalMemoryEnabled !== false,
                     strategiesEnabled: isStrategiesEnabled !== false,
                     extraContext,
+                    // Attribution stamp (Enhancement 5): rides the transport
+                    // so an emit_signal on THIS turn records which LOAD recipe
+                    // accompanied the call.
+                    memoryRecipe: memoryRecipeFootprint,
                     // An attached screenshot is SENT, not mentioned: before
                     // this the camera on this surface painted a bubble the
                     // model never received.
@@ -1254,6 +1288,9 @@ export function useAnalysisPipeline(params: UseAnalysisPipelineParams) {
                         completionTokens: toolTurn.usage.completionTokens,
                         analystCount: 1,
                         costUsd: estimateCostUsd(toolTurn.usage, provider.config),
+                        // WHICH memory slice recipe this answer read (Enhancement
+                        // 5) — the row-level half of the ledger attribution.
+                        memoryRecipe: memoryRecipeFootprint,
                     },
                 } : {}),
                 // The tools-off / reasoning-only truth belongs IN the

@@ -58,7 +58,71 @@ export interface PipelineMemoryContext {
      *  mirrored onto runStats.asOfMs so a simulated run records its own
      *  leak-prevention posture. Absent on live runs. */
     asOfMs?: number;
+    /** The task-context slice recipe this assembly ran under (Enhancement 5,
+     *  2026-11-18): the send's task decides which optional blocks compose, so
+     *  hit-rate-vs-base-rate attribution can measure WHICH recipe accompanied
+     *  hits vs misses. The caller stamps the id + footprint onto runStats and
+     *  the signal ledger. */
+    recipe: MemorySliceRecipe;
 }
+
+// ─── Task-context slice recipes (Enhancement 5) ─────────────────────────────
+
+/** The task a send performs, as the LOAD surface now names it. */
+export type MemorySliceRecipeId = 'scan' | 'plan' | 'review';
+
+export interface MemorySliceRecipe {
+    id: MemorySliceRecipeId;
+    /** One line for the logs; the card-facing name stays the recipe id. */
+    label: string;
+    /** The coin's last stored post-mortem, forward-fed as reference. A quick
+     *  scan skips it: a "what's the funding on BTC" read does not need the
+     *  diary's last lesson to answer, and the block costs real bytes. */
+    includeDiagnosisBrief: boolean;
+    /** The journal's own track record for this setup (win rate / EV). */
+    includeSimilarSetups: boolean;
+    /** The model's track record in the CURRENT regime. */
+    includeRegimeWeighting: boolean;
+    /** Per-provider historical accuracy weighting — the moderator's
+     *  tiebreaker. Only a presented plan weighs votes; a scan and a review
+     *  answer with evidence, not with who usually wins. */
+    includeLearningInjection: boolean;
+}
+
+/** The three recipes. `plan` is the FULL bundle (what every send did before
+ *  the recipe table existed), so existing behavior is exactly the 'plan' row.
+ *  The pipeline composes `contextParts` by these flags and stamps the id +
+ *  footprint onto `runStats.memoryRecipe` and, through the desk transport,
+ *  onto every `emit_signal` row in `signal_ledger_v1`. */
+export const MEMORY_SLICE_RECIPES: Record<MemorySliceRecipeId, MemorySliceRecipe> = {
+    scan: {
+        id: 'scan',
+        label: 'an ordinary desk read',
+        includeDiagnosisBrief: false,
+        includeSimilarSetups: true,
+        includeRegimeWeighting: true,
+        includeLearningInjection: false,
+    },
+    plan: {
+        id: 'plan',
+        label: 'a full analysis / a presented plan',
+        includeDiagnosisBrief: true,
+        includeSimilarSetups: true,
+        includeRegimeWeighting: true,
+        includeLearningInjection: true,
+    },
+    review: {
+        id: 'review',
+        label: 'a review pass over settled history',
+        includeDiagnosisBrief: true,
+        includeSimilarSetups: true,
+        includeRegimeWeighting: true,
+        includeLearningInjection: false,
+    },
+};
+
+export const sliceRecipeFor = (taskContext?: MemorySliceRecipeId): MemorySliceRecipe =>
+    (taskContext && MEMORY_SLICE_RECIPES[taskContext]) || MEMORY_SLICE_RECIPES.scan;
 
 /** Render the loss-priming rows as the prompt block: the trader's own recent
  *  closed outcomes on this setup, newest first, one line each.
@@ -110,7 +174,13 @@ export const assemblePipelineMemoryContext = async (
      *  index itself is not in this bundle; it is the seat prompt's block (see
      *  `memoryFilesContext` below). */
     memoryEnabled?: boolean,
+    /** The send's task context (Enhancement 5): 'scan' (default — an
+     *  ordinary desk read), 'plan' (a full analysis / a presented plan) or
+     *  'review'. Selects the slice recipe; the bundle carries it back so the
+     *  caller can stamp the recipe + footprint onto its row and ledger. */
+    taskContext?: MemorySliceRecipeId,
 ): Promise<PipelineMemoryContext> => {
+    const recipe = sliceRecipeFor(taskContext);
     const detectedLearningCoin = mineCoinFromPrompt(effectiveInput);
     const pendingDirection = mineDirectionFromPrompt(effectiveInput);
     const pendingPattern = minePatternFromPrompt(effectiveInput);
@@ -262,5 +332,6 @@ export const assemblePipelineMemoryContext = async (
         regimeWeightingContext,
         lossPrimingRows,
         asOfMs,
+        recipe,
     };
 };

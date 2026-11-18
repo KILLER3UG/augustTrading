@@ -11,6 +11,19 @@
 
 export type SignalDirection = 'long' | 'short';
 
+/** WHICH task-context memory slice recipe the emitting turn read
+ *  (Enhancement 5, 2026-11-18). The ledger half of the attribution: joined
+ *  with resolutions, hit-rate-vs-base-rate can be measured PER RECIPE —
+ *  which LOAD recipe accompanied hits vs misses. Absent on rows emitted
+ *  before the field shipped (and on turns that composed no slice). */
+export interface SignalMemoryRecipe {
+    id: 'scan' | 'plan' | 'review';
+    /** The composed slice's size as sent (chars). */
+    chars: number;
+    /** Which LOAD blocks composed the slice, in composition order. */
+    blocks: readonly string[];
+}
+
 /** Where a signal stands. `open` means the expiry has not passed and neither
  *  level has been touched; every other value is terminal. There is no
  *  `ambiguous` STATUS — an unknowable bar order resolves stop-first and carries
@@ -45,6 +58,9 @@ export interface SignalRecord extends SignalLevels {
     /** The emit_signal prompt revision, so a change in the tool's wording is
      *  visible in the record even when the model id is unchanged. */
     promptVersion: string;
+    /** The task-context memory slice recipe the emitting turn read — see
+     *  `SignalMemoryRecipe`. Omitted when the turn composed none. */
+    memoryRecipe?: SignalMemoryRecipe;
     source: 'signal';
     thesis: string;
     /** The model's own evidence-anchored conviction (1-4, the written rubric

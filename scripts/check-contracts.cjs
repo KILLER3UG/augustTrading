@@ -6680,6 +6680,53 @@ const checkDiaryRetrieval = async () => {
         'uncoveredMistakeLine matches ` ${COIN} ` — a registry row without it is unread');
 })();
 
+// ─── Enhancement 5: task-context slice recipes, stamped for attribution ────
+// Hit-rate-vs-base-rate is measured per emitted signal, but WHICH memory
+// slice accompanied the call was unknowable — every send composed the same
+// bundle. The recipe table makes the bundle a function of the task
+// ('scan' | 'plan' | 'review'), and the id + footprint ride runStats and the
+// signal ledger. This pins the table invariants and the whole threading path.
+(() => {
+    const mc = loadModule('src/hooks/analysisPipeline/memoryContext.ts');
+    const { MEMORY_SLICE_RECIPES: recipes } = mc;
+
+    ok('e5 recipes: exactly scan/plan/review, and plan is the FULL bundle',
+        Object.keys(recipes).sort().join(',') === 'plan,review,scan'
+        && recipes.plan.includeDiagnosisBrief && recipes.plan.includeSimilarSetups
+        && recipes.plan.includeRegimeWeighting && recipes.plan.includeLearningInjection,
+        JSON.stringify(Object.keys(recipes)));
+
+    ok('e5 recipes: a scan and a review do NOT weigh provider votes',
+        recipes.scan.includeLearningInjection === false && recipes.review.includeLearningInjection === false);
+
+    ok('e5 recipes: an unknown task falls back to scan (never to plan)',
+        mc.sliceRecipeFor(undefined).id === 'scan' && mc.sliceRecipeFor('nonsense').id === 'scan');
+
+    ok('e5 recipes: a scan still reads the journal record (it is a leaner read, not a blinder)',
+        recipes.scan.includeSimilarSetups === true && recipes.scan.includeRegimeWeighting === true);
+
+    // The threading path: pipeline → desk request → transport → executor →
+    // ledger. A break anywhere leaves the ledger unable to answer
+    // "which recipe accompanied this call".
+    const pipelineSrc = fs.readFileSync(path.join(ROOT, 'src/hooks/useAnalysisPipeline.ts'), 'utf8');
+    const turnSrc = fs.readFileSync(path.join(ROOT, 'src/services/trade/chatSurfaceTurn.ts'), 'utf8');
+    const deskSrc = fs.readFileSync(path.join(ROOT, 'src/services/analysis/DeskToolsService.ts'), 'utf8');
+    const sigSrc = fs.readFileSync(path.join(ROOT, 'src/services/signals/signalService.ts'), 'utf8');
+    ok('e5 threading: the pipeline derives the task, stamps runStats and the desk request',
+        /options\?\.fullAnalysis === true \? 'plan' : 'scan'/.test(pipelineSrc)
+        && /memoryRecipe: memoryRecipeFootprint,/.test(pipelineSrc)
+        && pipelineSrc.split('memoryRecipe: memoryRecipeFootprint,').length - 1 === 2);
+    ok('e5 threading: the desk turn rides the stamp on its transport',
+        /memoryRecipe: req\.memoryRecipe,/.test(turnSrc)
+        && /memoryRecipe\?: import\('\.\.\/\.\.\/types\/signal'\)\.SignalMemoryRecipe;/.test(turnSrc));
+    ok('e5 threading: the loop hands it to the executor, and emit_signal to the ledger',
+        /memoryRecipe,/.test(deskSrc)
+        && /context\.memoryRecipe \? \{ memoryRecipe: context\.memoryRecipe \} : \{\}/.test(deskSrc)
+        && /memoryRecipe\?: SignalMemoryRecipe;/.test(deskSrc));
+    ok('e5 threading: emitSignal writes the recipe onto the record',
+        /\.\.\.\(context\.memoryRecipe \? \{ memoryRecipe: context\.memoryRecipe \} : \{\}\)/.test(sigSrc));
+})();
+
 const finishReport = () => {
     console.log(`contracts: ${passed} passed, ${failures.length} failed`);
     for (const f of failures) console.log(`  FAIL ${f}`);

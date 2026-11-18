@@ -94,6 +94,11 @@ export interface RunStats {
   mcEV?: number;
   /** How many analysts ran. */
   analystCount?: number;
+  /** WHICH task-context memory slice recipe this run read (Enhancement 5,
+   *  2026-11-18): the recipe id, the composed slice's size and the LOAD
+   *  blocks that composed it. The row-level half of the hit-rate-vs-recipe
+   *  attribution; the ledger half rides each emitted signal. */
+  memoryRecipe?: import('./signal').SignalMemoryRecipe;
   /** Live-backtest summary: similar historical setups found for this plan. */
   btMatches?: number;
   btWinRate?: number;
