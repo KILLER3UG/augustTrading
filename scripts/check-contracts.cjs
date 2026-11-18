@@ -3059,11 +3059,13 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
         /signalRowById/.test(read('src/components/shell/ConversationGroups.tsx'))
             && /conversationSide/.test(read('src/components/shell/ConversationGroups.tsx')),
         'a guessed side is a fabricated claim');
-    ok('chat: the conversation column mounts open with the rail, and the sidebar owns the hide',
+    ok('chat: the conversation column mounts open with the rail, and the sidebar owns the ONE hide',
         !/agentsColumnOpen/.test(app) && !/onToggleColumn=/.test(app)
             && !/onToggleColumn\?: \(\) => void/.test(read('src/components/shell/ShellRail.tsx'))
-            && /conversation-hide/.test(read('src/components/shell/ConversationGroups.tsx')),
-        'the old Chats clock is gone; hiding is a sidebar control');
+            && !/conversation-hide/.test(read('src/components/shell/ConversationGroups.tsx'))
+            && !/PanelLeftClose/.test(read('src/components/shell/ConversationGroups.tsx'))
+            && /<SidebarToggle expanded /.test(read('src/components/shell/ShellRail.tsx')),
+        'the old Chats clock is gone; hiding is the rail header\'s one control, not a second icon by RECENT');
     ok('shell: the layout pill heads the one sidebar column (the icon strip is gone)',
         /data-testid="layout-pill"/.test(read('src/components/shell/LayoutSwitch.tsx'))
             && /<LayoutPill/.test(read('src/components/shell/ShellRail.tsx'))
@@ -3303,8 +3305,9 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
     ok('conversations: the hide control lives in the sidebar, not the icon rail',
         !/onToggleColumn/.test(rail)
         && !/shell-column-toggle/.test(rail)
-        && /conversation-hide/.test(read('src/components/shell/ConversationGroups.tsx'))
-        && /onHideConversation=\{onCollapse\}/.test(rail),
+        && !/onHideConversation/.test(rail)
+        && !/onHideConversation/.test(read('src/components/shell/ConversationGroups.tsx'))
+        && /<SidebarToggle expanded onToggle=\{onCollapse\}/.test(rail),
         'the clock icon was a second toggle for a column the sidebar already hides');
     ok('new chat: the ⌘K keycap is gone, the Ctrl/Cmd+K chord still works',
         !/<kbd/.test(read('src/components/shell/ConversationGroups.tsx'))
@@ -6480,6 +6483,45 @@ const checkAgentHandExecutor = async () => {
         && simBaseRateJson.values?.sample === 5 && simBaseRateJson.values?.simulation_mode === 'simulated'
         && riskJson.values?.simulated_excluded === 5 && riskJson.simulatedView?.sample === 5
         && attrJson.simulatedView?.sample === 5);
+})();
+
+// ─── O-145: the composed memory slice reaches the wire ─────────────────────
+// The pipeline composes the LOAD slice (loss priming, the coin's diagnosis
+// brief, similar setups, regime weighting, the notebook slice, provider
+// weighting, decision reflections) into `extraContext`. For months that bundle
+// was built and thrown away — every arm sent the bare prompt. Today the DESK
+// arm is the arm that carries it (the schedule sink was deleted 2026-10-24 and
+// bot threads are chat-only by the stage-20 ruling), so the pin is a SOURCE
+// contract: the composition hands `extraContext` to the desk turn, and the
+// desk turn interpolates it into the SYSTEM text the model actually reads —
+// guidance rides the system role, capped by EXTRA_CONTEXT_CHAR_CAP.
+(() => {
+    const pipelineSrc = fs.readFileSync(path.join(ROOT, 'src/hooks/useAnalysisPipeline.ts'), 'utf8');
+    const turnSrc = fs.readFileSync(path.join(ROOT, 'src/services/trade/chatSurfaceTurn.ts'), 'utf8');
+
+    ok('O-145: the pipeline composes the slice and hands extraContext to the DESK turn',
+        /const extraContext = contextParts\.filter\(Boolean\)\.join/.test(pipelineSrc)
+        && /extraContext,/.test(pipelineSrc)
+        && pipelineSrc.indexOf('extraContext,') > pipelineSrc.indexOf('runChatSurfaceTurn({'),
+        'the bundle is composed but no arm receives it — O-145 again');
+
+    ok('O-145: every composed block feeds contextParts (no compose-and-drop)',
+        /contextParts\.push\(formatLossPrimingContext\(lossPrimingRows\)\)/.test(pipelineSrc)
+        && /contextParts\.push\(similarSetupsContext\)/.test(pipelineSrc)
+        && /contextParts\.push\(regimeWeightingContext\)/.test(pipelineSrc)
+        && /contextParts\.push\(memoryFilesContext\)/.test(pipelineSrc)
+        && /contextParts\.push\(learningInjection\)/.test(pipelineSrc)
+        && /contextParts\.unshift\(reflectionBlock\)/.test(pipelineSrc));
+
+    ok('O-145: the desk turn puts extraContext into the SYSTEM text, capped',
+        /const contextBlock = extraContext/.test(turnSrc)
+        && /EXTRA_CONTEXT_CHAR_CAP/.test(turnSrc)
+        && /\$\{prompt\.text\}\$\{contextBlock\}/.test(turnSrc),
+        'guidance must ride the system role the seat reads, under the one cap');
+
+    ok('O-145: the bot thread stays chat-only by ruling (no context argument to add)',
+        /BOTS STAY CHAT-ONLY/.test(pipelineSrc),
+        'stage 20: bots answer their persona; the bundle is a desk-path carrier');
 })();
 
 const finishReport = () => {
