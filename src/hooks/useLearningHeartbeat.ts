@@ -34,6 +34,7 @@ import { runMemoryHygieneIfDue } from '../services/learning/memoryHygiene';
 import { settleDueSignals, settleRefusedSignals } from '../services/signals/signalService';
 import { migrateSkillLibrary } from '../services/learning/SkillFileService';
 import { expireSelfChanges } from '../services/selfMod/SelfModificationService';
+import { runHarnessOptimizationPass } from '../services/selfMod/harnessOptimization';
 
 /** How often a foreground session wakes the loop. Frequent enough that a
  *  trader sees a stale-skill proposal inside the hour; rare enough that four
@@ -96,9 +97,27 @@ export const useLearningHeartbeat = (activeUsername: string | null, trades: Logg
         };
         expireWindows();
 
+        // Boot pass of the harness-optimization loop (Enhancement 3): the
+        // due-check inside makes a boot call free when the 24h has not elapsed,
+        // and a window that closed while the app was shut gets looked at now —
+        // the same reasoning as the expiry pass above.
+        void runHarnessOptimizationPass(username, tradesRef.current)
+            .catch(e => console.warn('[HarnessOpt] boot pass failed:', e instanceof Error ? e.message : e));
+
         const sweep = (): void => {
             const log = tradesRef.current;
             expireWindows();
+            // Enhancement 3 (2026-11-18): the trader-gated harness-optimization
+            // pass rides the same clock. It PROPOSES at most one revision (the
+            // card lives in Journal → analytics); nothing applies without the
+            // trader's tap, so firing it here is safe — the gate is the card.
+            void runHarnessOptimizationPass(username, log)
+                .then(res => {
+                    if (res?.proposal?.status === 'pending') {
+                        console.log('[HarnessOpt] proposal staged:', res.proposal.kind, '— awaiting the trader in Journal');
+                    }
+                })
+                .catch(e => console.warn('[HarnessOpt] pass failed:', e instanceof Error ? e.message : e));
             void runWeeklyReviewIfDue(username, log)
                 .then(res => { if (res) console.log('[WeeklyReview] digest generated:', res.impulse.slice(0, 80)); })
                 .catch(e => console.warn('[WeeklyReview] pass failed:', e instanceof Error ? e.message : e));

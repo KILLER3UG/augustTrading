@@ -2,6 +2,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import TradeLogContent from './TradeLog';
 import { WeeklyReviewCard } from './WeeklyReviewCard';
+import { HarnessOptimizationCard } from './HarnessOptimizationCard';
 import { askDesk } from '../../utils/askDesk';
 import { MonthlyReportCard } from './MonthlyReportCard';
 import SignalFeed from './SignalFeed';
@@ -190,6 +191,11 @@ const JournalInner: React.FC<JournalProps> = ({
         ) : activeTab === 'analytics' ? (
             <div className="h-full overflow-y-auto">
                 <div className="p-6 sm:p-8 space-y-8">
+                    {/* Enhancement 3 (2026-11-18): the trader's gate on the ONE
+                        harness revision the heartbeat pass proposes — pending,
+                        approved-under-holdout, or revert-recommended. Nothing
+                        applies without a tap here. */}
+                    <HarnessOptimizationCard username={activeUsername} />
                     <WeeklyReviewCard username={activeUsername} />
                     <MonthlyReportCard username={activeUsername} />
                     <JournalAnalyticsSummary trades={trades} />

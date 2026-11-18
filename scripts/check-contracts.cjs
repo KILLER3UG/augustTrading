@@ -6727,6 +6727,75 @@ const checkDiaryRetrieval = async () => {
         /\.\.\.\(context\.memoryRecipe \? \{ memoryRecipe: context\.memoryRecipe \} : \{\}\)/.test(sigSrc));
 })();
 
+// ─── Enhancement 3: the trader-gated harness-optimization pass ─────────────
+// 37 of 44 unverified prompt revisions failed their paper. The pass therefore
+// reads the ledger's own evidence, meets a thin-sample floor (N ≥ 2 of the
+// SAME entry-knowable kind), stages AT MOST ONE proposal — and never writes
+// a prompt: only a trader tap reaches proposePromptChange, and the approved
+// revision is measured against a holdout of subsequent resolved signals.
+(() => {
+    const ho = loadModule('src/services/selfMod/harnessOptimization.ts');
+    const now = Date.now();
+    const lossRow = (id, at, extra = {}) => ({
+        signal: { id, coin: 'BTC', direction: 'long', emittedAt: at },
+        resolution: { status: 'lost', outcomeR: -1, at, ...extra },
+    });
+    const mkTrade = (id, ts) => ({
+        id, outcome: 'LOSS', timestamp: new Date(ts).toISOString(),
+        analysis: { coinName: 'BTCUSDT', direction: 'Short' },
+        resolutionRecord: { slHitThenReversedToTp: true },
+    });
+
+    ok('harness-opt: the N ≥ 2 floor — one failure of a kind proposes nothing',
+        ho.collectFailureKinds([], [lossRow('s1', now - 1000, { entryOpenR: -0.4 })]).length === 0);
+
+    ok('harness-opt: two entry-slippage losses meet the floor, with the measured facts cited',
+        (() => {
+            const kinds = ho.collectFailureKinds([], [
+                lossRow('s1', now - 1000, { entryOpenR: -0.4 }),
+                lossRow('s2', now - 2000, { entryOpenR: -0.3 }),
+            ]);
+            return kinds.length === 1 && kinds[0].spec.kind === 'entry-slippage' && kinds[0].evidence.length === 2;
+        })());
+
+    ok('harness-opt: a WIN and a never_triggered row are not evidence',
+        ho.collectFailureKinds([], [
+            { signal: { id: 'w', coin: 'BTC', direction: 'long', emittedAt: now }, resolution: { status: 'won', outcomeR: 2, entryOpenR: -0.9, at: now } },
+            lossRow('nt', now, { entryOpenR: -0.9 }),
+        ].map(r => ({ ...r, resolution: r.resolution.status === 'never_triggered' ? { ...r.resolution, status: 'never_triggered' } : r.resolution }))).length === 0);
+
+    ok('harness-opt: the journal\'s swept-stop outcome is a kind, and stale rows are out of the window',
+        (() => {
+            const fresh = ho.collectFailureKinds([mkTrade('t1', now - 1000), mkTrade('t2', now - 2000)], []);
+            const stale = ho.collectFailureKinds([mkTrade('t1', now - 31 * 24 * 3600_000), mkTrade('t2', now - 32 * 24 * 3600_000)], []);
+            return fresh.length === 1 && fresh[0].spec.kind === 'stop-swept' && stale.length === 0;
+        })());
+
+    ok('harness-opt: the target is a NAMED registered prompt block, and the holdout bar is real',
+        (() => {
+            const reg = loadModule('src/constants/promptRegistry.ts');
+            const entry = reg.PROMPT_REGISTRY.find(p => p.id === ho.TARGET_PROMPT_ID);
+            return Boolean(entry) && typeof entry.fallback === 'string' && entry.fallback.length > 0;
+        })() && typeof ho.HOLDOUT_MIN_FILLS === 'number' && ho.HOLDOUT_MIN_FILLS >= 4);
+
+    ok('harness-opt: the holdout bar is a regression, not an absence of improvement',
+        ho.HOLDOUT_REGRESSION_PP > 0 && ho.MIN_RECURRING_FAILURES === 2);
+
+    // The gate: nothing writes a prompt without the trader. Source pin — the
+    // approve path must be the ONLY writer, and it must call the ledgered
+    // proposePromptChange.
+    const svcSrc = fs.readFileSync(path.join(ROOT, 'src/services/selfMod/harnessOptimization.ts'), 'utf8');
+    ok('harness-opt: only the APPROVE path writes a prompt, through the ledgered service',
+        /proposePromptChange\(p\.promptId, p\.after, p\.reason, \{ actor: 'agent' \}\)/.test(svcSrc)
+        && svcSrc.split('proposePromptChange(').length - 1 === 1
+        && /revertSelfChange\(p\.ledgerId, 'owner'/.test(svcSrc));
+    ok('harness-opt: the pass itself never writes — no savePromptOverride anywhere in it',
+        !/savePromptOverride/.test(svcSrc));
+    ok('harness-opt: the heartbeat owns the clock and the card owns the gate',
+        /runHarnessOptimizationPass/.test(fs.readFileSync(path.join(ROOT, 'src/hooks/useLearningHeartbeat.ts'), 'utf8'))
+        && /HarnessOptimizationCard/.test(fs.readFileSync(path.join(ROOT, 'src/components/journal/Journal.tsx'), 'utf8')));
+})();
+
 const finishReport = () => {
     console.log(`contracts: ${passed} passed, ${failures.length} failed`);
     for (const f of failures) console.log(`  FAIL ${f}`);
