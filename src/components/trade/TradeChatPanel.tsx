@@ -49,7 +49,7 @@ import {
 } from '../../services/trade/tradeChatContext';
 import { activeStrategiesBlock } from '../../services/learning/strategyStore';
 import { WorkspaceGreeting } from './WorkspaceHome';
-import { AUGUST_ASK_EVENT } from '../settings/TellAugustBar';
+import { AUGUST_ASK_EVENT, consumePendingAsk, isAskDelivered, markAskDelivered } from '../settings/TellAugustBar';
 import { recordSeatInjections } from '../../services/learning/MemoryInjectionService';
 import { deleteSessionDrawings, type ChartDrawing } from '../../services/trade/chartDrawings';
 import type { MessageLevelLines } from '../../services/trade/keyLevels';
@@ -1150,15 +1150,38 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
             const detail = (ev as CustomEvent<{ target?: string; label?: string; next?: boolean }>).detail ?? {};
             void send(`Propose toggling ${detail.label ?? detail.target ?? 'an AI setting'} ${detail.next ? 'ON' : 'OFF'} via your setting confirmation card.`);
         };
+        const onAugustAsk = (ev: Event): void => {
+            if (busy || !ready) return;
+            const text = (ev as CustomEvent<{ text?: string }>).detail?.text?.trim();
+            if (!text) return;
+            // The Settings modal's bar: the text IS the trader's message to the
+            // desk. Consume the park (whichever path is delivering) and send.
+            consumePendingAsk();
+            if (isAskDelivered(text)) return;
+            markAskDelivered(text);
+            void send(text);
+        };
+        // The bar parks its text AND schedules the broadcast 400ms after
+        // goto-workspace. A dock that mounted LATE — the broadcast already
+        // fired at nobody — delivers the parked text HERE, in the same effect
+        // that owns the listener, so either arrival order hands the desk the
+        // ask exactly once (isAskDelivered collapses the overlap).
+        const parkedAsk = consumePendingAsk();
+        if (parkedAsk && !isAskDelivered(parkedAsk)) {
+            markAskDelivered(parkedAsk);
+            void send(parkedAsk);
+        }
         window.addEventListener('august:desk-correct', onDeskCorrect);
         window.addEventListener('august:desk-settle', onDeskSettle);
         window.addEventListener('august:desk-strategy', onDeskStrategy);
         window.addEventListener('august:desk-setting', onDeskSetting);
+        window.addEventListener(AUGUST_ASK_EVENT, onAugustAsk);
         return () => {
             window.removeEventListener('august:desk-correct', onDeskCorrect);
             window.removeEventListener('august:desk-settle', onDeskSettle);
             window.removeEventListener('august:desk-strategy', onDeskStrategy);
             window.removeEventListener('august:desk-setting', onDeskSetting);
+            window.removeEventListener(AUGUST_ASK_EVENT, onAugustAsk);
         };
     }, [send, busy, ready]);
 
@@ -1378,7 +1401,13 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
                 beside it — the session chip the content bar used to carry
                 (owner 1.3.1): "is it Asia or London right now" reads where
                 the market context already is. The chips truncate first, so
-                the disclosure trigger stays reachable at the dock's floor. */}
+                the disclosure trigger stays reachable at the dock's floor.
+                CHAT layout hides it: the desk's market read is chart
+                context, and a pure-chat pane carries no chart to be bearish
+                about (the UI audit's dock-bias-in-chat defect). The rest of
+                the pane — transcript, jump control, composer — renders in
+                both layouts. */}
+            {layoutMode !== 'chat' && (
             <div className="flex min-w-0 items-center" data-testid="bias-row">
                 <div className="min-w-0 flex-1">
                     <BiasChips symbol={symbol} interval={interval as ChartInterval} />
@@ -1387,6 +1416,7 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
                     <SessionChip />
                 </div>
             </div>
+            )}
             {/* The transcript's own box, so the jump control floats over the
                 transcript's bottom-right corner and not over the composer. */}
             <div className="relative min-h-0 flex-1">

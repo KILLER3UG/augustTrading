@@ -27,9 +27,13 @@ export const minuteBucket = (now: number = Date.now()): number => Math.floor(now
 
 /** Minutes between a stamp and now. ONE subtraction, FRACTIONAL. Negative
  *  means the stamp is in the future (clock skew); each preset decides whether
- *  that reads `now` or nothing. */
+ *  that reads `now` or nothing. A falsy or unparseable stamp (`0`, `NaN`) is
+ *  "no stamp at all" and returns NaN — the labels print nothing, so the 1970
+ *  epoch can never leak through as "2968 wk ago". */
 export const ageMinutes = (at: number, now: number = Date.now()): number =>
-    (now - at) / MINUTE_MS;
+    (!at || !Number.isFinite(at) || !Number.isFinite(now))
+        ? NaN
+        : (now - at) / MINUTE_MS;
 
 type Rounding = 'round' | 'floor';
 

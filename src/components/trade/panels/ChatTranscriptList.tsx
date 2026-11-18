@@ -20,7 +20,7 @@
 
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { Virtuoso, type FollowOutput, type VirtuosoHandle } from 'react-virtuoso';
-import { Zap } from '../../shared/Icons';
+import { Camera, Zap } from '../../shared/Icons';
 import { InterruptedRunNotice } from '../../shared/InterruptedRunNotice';
 import type { Message } from '../../../types/message';
 import type { LiveEntry } from '../../../services/trade/chatStore';
@@ -61,6 +61,7 @@ import SignalCard, { DeskScorecard, signalIdFromActions, signalRowById } from '.
 import Disclosure from '../../shared/Disclosure';
 import { JUMP_AWAY_PX } from '../../shared/JumpToLatestFab';
 import { ageMinutes, roundAgoHoursLabel } from '../../../utils/relativeTime';
+import { harnessNoticeDisplay, stripInternalContextMarks } from '../../../utils/chatDisplay';
 import { proposalStateOf as sharedProposalStateOf, rememberProposalState, forgetProposalState } from '../../../services/trade/proposalDisposition';
 import { markUndoWindow, undoWindowOf, clearUndoWindow } from '../../../services/trade/tradeDecision';
 import { CopyChip, PinChip, RetryChip, ThinkingTierChip } from '../../shared/chatChips';
@@ -74,6 +75,34 @@ import { BotFace } from '../../chat/BotFace';
  *  hidden to full height mid-conversation. */
 const INCREASE_VIEWPORT_BY = { top: 600, bottom: 600 } as const;
 const computeEntryKey = (_index: number, entry: LiveEntry): string => entry.id;
+
+/** A user message's attached image. A src that will not decode (a probe
+ *  placeholder, a stripped backup) used to render the browser's broken-image
+ *  glyph with alt="attached" — the UI audit's broken-attachment defect. One
+ *  onError state swap: the decoded image when it decodes, a quiet monochrome
+ *  chip when it does not. */
+const AttachmentImage: React.FC<{ src: string }> = ({ src }) => {
+    const [failed, setFailed] = useState(false);
+    if (failed) {
+        return (
+            <span
+                data-testid="chat-attachment-fallback"
+                className="flex items-center gap-1.5 rounded-control border border-hairline bg-zinc-900/60 px-2.5 py-1.5 text-ui-dense text-zinc-500"
+            >
+                <Camera className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                Chart snapshot
+            </span>
+        );
+    }
+    return (
+        <img
+            src={src}
+            alt="attached chart"
+            onError={() => setFailed(true)}
+            className="max-h-40 rounded-bubble border border-hairline object-contain"
+        />
+    );
+};
 
 /** Prov line: short session id · model short · thinking tier · notebook
  *  count · relative time. CODE-CALCULATED only — never "Mock" in real UI,
@@ -329,7 +358,10 @@ const ChatTranscriptList: React.FC<ChatTranscriptListProps> = ({
         // raw text — and an OPEN (still-streaming) fence is hidden
         // from the bubble too, so the protocol never flashes.
         const aiLevels = e.role === 'ai' && !e.notice ? parseKeyLevels(e.text) : null;
-        const shownText = aiLevels?.hadBlock ? aiLevels.clean : e.text;
+        // The displayed text never carries the app's internal context marks —
+        // a transport that echoes its input (the probe mock) would otherwise
+        // paint `[LIVE CHART CONTEXT …]` into the trader's bubble.
+        const shownText = aiLevels?.hadBlock ? aiLevels.clean : stripInternalContextMarks(e.text);
         // A row projected from the conversation keeps the Message's own id
         // (`liveEntryFromMessage` sets `id: m.id`, which is what lets the
         // merge treat one turn as one row), so the entry id IS the analysis
@@ -370,7 +402,7 @@ const ChatTranscriptList: React.FC<ChatTranscriptListProps> = ({
                     <div className="flex flex-col items-end gap-1.5">
                         {e.image && (
                             <div className="flex flex-col items-end gap-0.5">
-                                <img src={e.image} alt="attached" className="max-h-40 rounded-bubble border border-hairline object-contain" />
+                                <AttachmentImage src={e.image} />
                                 {!answerStreaming && <RetryChip onRetry={() => void send('', e.id)} />}
                             </div>
                         )}
@@ -394,10 +426,14 @@ const ChatTranscriptList: React.FC<ChatTranscriptListProps> = ({
                         )}
                     </div>
                 ) : e.notice ? (
-                    <p className="flex items-center gap-1.5 text-ui-xs font-semibold uppercase tracking-wider text-amber-400" data-testid="chat-notice">
-                        <span className="sr-only">⚡ </span>
-                        <Zap className="h-3 w-3 shrink-0" aria-hidden="true" />
-                        <span>{e.tools[0] ?? 'Harness event'}</span>
+                    /* A harness event is the APP speaking — a receipt or a
+                        warning, never a model answer. One quiet monochrome
+                        line: the amber uppercase block read as an alarm and
+                        leaked the machine voice (the approval receipt) into
+                        the trader's transcript. */
+                    <p className="flex items-center gap-1.5 text-ui-xs text-zinc-500" data-testid="chat-notice">
+                        <Zap className="h-3 w-3 shrink-0 text-zinc-600" aria-hidden="true" />
+                        <span>{harnessNoticeDisplay(e.tools[0] ?? 'Harness event') || 'Harness event'}</span>
                     </p>
                 ) : e.error && !e.text ? (
                     /* A turn that never produced a line is a failure, whole

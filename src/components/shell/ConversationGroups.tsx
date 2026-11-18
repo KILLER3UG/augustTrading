@@ -6,7 +6,7 @@
  * conversation column (the icon rail alone), and the ownership test is
  * pinned in render-probe (`newChats === 1 && !shellColumn && agentsColumn`).
  * Sparse: New chat + Ctrl K, Pinned (only when there are pinned rows),
- * Recent (always, and the RECENT heading is the hide control). Rows: hollow
+ * Recent (always). Rows: hollow
  * dot (filled active, amber pulsing running), truncated title, mono age
  * from `workspaceAgeLabel` (single source).
  *
@@ -15,7 +15,6 @@
  */
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { PanelLeftClose } from '../shared/Icons';
 import type { Conversation } from '../../types';
 import { conversationTitle } from '../../utils/conversationTitle';
 import { renameConversationRow } from '../../hooks/useConversations';
@@ -62,9 +61,6 @@ export interface ConversationGroupsProps {
     /** Pin/unpin from the row's actions menu (the trader's own keep-at-top). */
     onTogglePin?: (id: string) => void;
     onOpenSearch?: () => void;
-    /** Put the conversation sidebar away. Lives on the RECENT heading; the
-     *  Analyze surface does not mount this column at all. */
-    onHideConversation?: () => void;
 }
 
 const ConversationRow: React.FC<{
@@ -228,7 +224,6 @@ export const ConversationGroups: React.FC<ConversationGroupsProps> = ({
     conversations, activeConversationId, onNewChat, onOpenConversation,
     onDeleteConversation, onClearConversation, runningAgentIds, pinnedIds,
     onTogglePin,
-    onHideConversation,
 }) => {
     // A conversation with no messages is a placeholder, not a record: it is
     // hidden unless it is the one on screen (a fresh New chat stays visible).
@@ -284,27 +279,12 @@ export const ConversationGroups: React.FC<ConversationGroupsProps> = ({
                     </div>
                 )}
                 <div className="mb-2">
-                    {/* The RECENT heading IS the hide control: the label and its
-                        icon are one button, so the section and its put-away are
-                        the same thing. `aria-expanded="true"` is the honest
-                        state and keeps the inert-control sweep from pressing a
-                        one-way hide and leaving the run with no sidebar. */}
-                    {onHideConversation ? (
-                        <button
-                            type="button"
-                            data-testid="conversation-hide"
-                            aria-label="Hide conversation"
-                            aria-expanded="true"
-                            title="Hide conversation · Ctrl+B"
-                            onClick={onHideConversation}
-                            className="flex min-h-[24px] w-full items-center gap-1.5 rounded-control px-2.5 text-left text-ui-2xs font-semibold uppercase tracking-[0.14em] text-zinc-600 transition-colors hover:text-zinc-300"
-                        >
-                            <span>Recent</span>
-                            <PanelLeftClose className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-                        </button>
-                    ) : (
-                        <div className="px-2.5 pb-1 text-ui-2xs font-semibold uppercase tracking-[0.14em] text-zinc-600">Recent</div>
-                    )}
+                    {/* A plain section heading: the sidebar's ONE collapse toggle
+                        is the control beside the [Desk | Chat] pill (ShellRail).
+                        A second collapse icon here was the duplicate the UI
+                        audit flagged — two icons, one behaviour, and the trader
+                        could not tell which one owned the put-away. */}
+                    <div className="px-2.5 pb-1 text-ui-2xs font-semibold uppercase tracking-[0.14em] text-zinc-600">Recent</div>
                     {recent.length === 0 && pinned.length === 0 ? (
                         <p className="px-2.5 py-2 text-ui-xs leading-relaxed text-zinc-600">
                             No conversations yet. Everything you ask the desk lands here.

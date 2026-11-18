@@ -151,7 +151,6 @@ const ShellRail: React.FC<ShellRailProps> = ({
                         onOpenConversation={onOpenConversation}
                         onDeleteConversation={onDeleteConversation}
                         onClearConversation={onClearConversation}
-                        onHideConversation={onCollapse}
                     />
                     <AccountRow
                         expanded

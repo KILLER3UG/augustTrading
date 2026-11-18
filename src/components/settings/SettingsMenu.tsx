@@ -170,10 +170,7 @@ const NavTabButton: React.FC<{
     icon: React.ReactNode;
     label: string;
     badge?: string;
-    /** A lifecycle flag on the row. Only set on labels no gate matches exactly,
-     *  because it becomes part of the button's text content. */
-    flag?: 'Beta' | 'New';
-}> = ({ active, onClick, icon, label, badge, flag }) => (
+}> = ({ active, onClick, icon, label, badge }) => (
     <button
         type="button"
         onClick={onClick}
@@ -191,11 +188,6 @@ const NavTabButton: React.FC<{
             <span className="truncate" title={label}>{label}</span>
         </span>
         <span className="flex shrink-0 items-center gap-1.5" aria-hidden="true">
-            {flag && (
-                <span className={`rounded-full px-1.5 py-0.5 text-ui-2xs font-semibold leading-none ${
-                    flag === 'New' ? 'bg-emerald-500/15 text-emerald-300' : 'bg-cyan-500/15 text-cyan-300'
-                }`}>{flag}</span>
-            )}
             {badge && (
                 <span className="rounded-full bg-zinc-700 px-1.5 py-0.5 font-mono text-ui-2xs font-bold leading-none text-zinc-200">
                     {badge}
@@ -215,7 +207,6 @@ interface NavEntry {
      *  sidebar says "Playbooks" but a user types "strategy", and both must
      *  find it. */
     keywords: string;
-    flag?: 'Beta' | 'New';
 }
 
 interface NavGroup { title: string; entries: NavEntry[] }
@@ -238,7 +229,7 @@ const NAV_GROUPS: NavGroup[] = [
         title: 'Analysis',
         entries: [
             { id: 'general', label: 'Analysis', icon: <SettingsIcon className={NAV_ICON} />, keywords: 'hybrid desk tools reduce motion idle motion capture advanced' },
-            { id: 'prompts', label: 'Prompts', icon: <CodeIcon className={NAV_ICON} />, keywords: 'template library editing', flag: 'Beta' },
+            { id: 'prompts', label: 'Prompts', icon: <CodeIcon className={NAV_ICON} />, keywords: 'template library editing' },
             { id: 'instructions', label: 'Instructions', icon: <FileText className={NAV_ICON} />, keywords: 'custom system instruction rules' },
         ],
     },
@@ -251,7 +242,7 @@ const NAV_GROUPS: NavGroup[] = [
             // library and the notebook sit together instead of one being a
             // settings pane. The rail's Skills row and Alt+3 land there.
             { id: 'memory', label: 'Memory', icon: <Brain className={NAV_ICON} />, keywords: 'notebook amendment profile memory files global' },
-            { id: 'strategies', label: 'Playbooks', icon: <BookOpen className={NAV_ICON} />, keywords: 'strategy book pdf upload studio families import', flag: 'New' },
+            { id: 'strategies', label: 'Playbooks', icon: <BookOpen className={NAV_ICON} />, keywords: 'strategy book pdf upload studio families import' },
         ],
     },
     {
@@ -642,7 +633,6 @@ const SettingsMenu: React.FC<SettingsMenuProps> = (props) => {
                                                     icon={entry.icon}
                                                     label={entry.label}
                                                     badge={navBadge(entry.id)}
-                                                    flag={entry.flag}
                                                 />
                                             ))}
                                         </div>
@@ -872,9 +862,15 @@ const SettingsMenu: React.FC<SettingsMenuProps> = (props) => {
                         ?
                     </button>
                 </div>
+
+                {/* The Settings modal's own prompt bar — docked INSIDE the
+                    window (the modal is a flex column, so this sits at its
+                    foot, under the content pane). It unmounts with the modal
+                    (the early null return above), so the strip can never
+                    float over the app behind the backdrop. */}
+                <TellAugustBar onSent={onAskAugust} />
             </div>
             {ConfirmDialogComponent}
-            <TellAugustBar onSent={onAskAugust} />
         </>
     );
 };

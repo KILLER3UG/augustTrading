@@ -311,7 +311,11 @@ export interface ChatTurnRunner {
  * (the all-caps instruction defect stage 3 closed).
  */
 export const harnessNoticeLine = (signalText: string): string => {
-    const firstLine = signalText.split('\n')[0].replace(/^\[[^\]]*\]\s*/, '').replace(/^⚡\s*/, '').trim();
+    const firstLine = signalText.split('\n')[0]
+        .replace(/^harness note \(this app, not the trader\):\s*/i, '')
+        .replace(/^\[[^\]]*\]\s*/, '')
+        .replace(/^⚡\s*/, '')
+        .trim();
     const cut = firstLine.indexOf('. ');
     const sentence = cut === -1 ? firstLine : firstLine.slice(0, cut + 1);
     return sentence.trim();
