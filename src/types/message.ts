@@ -320,6 +320,11 @@ export interface Message {
    *  the trader confirms — the confirm writes through the same settings writer
    *  the trader's own Settings screen uses (services/trade/riskChangeProposal). */
   riskChange?: import('../services/trade/riskChangeProposal').RiskChangeProposal;
+  /** A PROPOSED toggle of Hybrid Intelligence or Desk Tools. Set by
+   *  propose_ai_setting_change; rendered as a monochrome decision card.
+   *  NOTHING is applied until the trader confirms — see
+   *  services/trade/aiSettingProposal. */
+  aiSettingChange?: import('../services/trade/aiSettingProposal').AiSettingProposal;
   /** Persisted model side-effects: proposal tools and file
    *  creations this run produced, for the status rows on
    *  the bubble ("Saved to memory · N entries", "⚠ Memory write noted").

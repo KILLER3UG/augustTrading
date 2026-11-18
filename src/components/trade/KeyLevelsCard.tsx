@@ -156,8 +156,8 @@ const KeyLevelsCard: React.FC<KeyLevelsCardProps> = ({ levels, symbol, messageId
                         aria-label="Draw all key levels on the chart"
                         data-testid="key-levels-chart-toggle"
                     />
-                    <span className={`relative inline-block h-3.5 w-6 rounded-full transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-accent/70 peer-focus-visible:ring-offset-2 peer-focus-visible:ring-offset-zinc-950 ${allOn ? 'bg-emerald-500/40' : 'bg-zinc-700'}`} aria-hidden="true">
-                        <span className={`absolute left-0.5 top-0.5 h-2.5 w-2.5 rounded-full transition-[transform,background-color] duration-[150ms] ease-[var(--ease-snappy)] ${allOn ? 'translate-x-2.5 bg-emerald-400' : 'bg-zinc-500'}`} />
+                    <span className={`relative inline-block h-3.5 w-6 rounded-full transition-colors peer-focus-visible:ring-2 peer-focus-visible:ring-accent/70 peer-focus-visible:ring-offset-2 peer-focus-visible:ring-offset-zinc-950 ${allOn ? 'bg-zinc-200' : 'bg-zinc-700'}`} aria-hidden="true">
+                        <span className={`absolute left-0.5 top-0.5 h-2.5 w-2.5 rounded-full transition-[transform,background-color] duration-[150ms] ease-[var(--ease-snappy)] ${allOn ? 'translate-x-2.5 bg-zinc-950' : 'bg-zinc-400'}`} />
                     </span>
                     chart
                 </label>
@@ -169,8 +169,8 @@ const KeyLevelsCard: React.FC<KeyLevelsCardProps> = ({ levels, symbol, messageId
                 {levels.map((l, i) => (
                     <React.Fragment key={l.id}>
                         {i === splitAt && (
-                            <div className="my-0.5 flex items-center justify-center gap-2 border-y border-dashed border-emerald-500/30 bg-emerald-500/[0.06] py-1 text-ui-dense text-emerald-400" data-testid="key-levels-last">
-                                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" aria-hidden="true" />
+                            <div className="my-0.5 flex items-center justify-center gap-2 border-y border-dashed border-hairline bg-white/[0.04] py-1 text-ui-dense text-zinc-300" data-testid="key-levels-last">
+                                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-zinc-300" aria-hidden="true" />
                                 last <span className="font-mono font-bold tabular-nums">{fmtPrice(mark!)}</span>
                             </div>
                         )}
@@ -184,7 +184,7 @@ const KeyLevelsCard: React.FC<KeyLevelsCardProps> = ({ levels, symbol, messageId
                             style={{ borderLeftColor: KEY_LEVEL_COLORS[l.kind] }}
                             className={`grid w-full grid-cols-[42px_80px_52px_1fr] items-center gap-x-2 border-l-[3px] px-3 py-1.5 text-left transition-colors hover:bg-white/[0.04] ${pinned.has(l.id) ? 'bg-white/[0.05]' : ''}`}
                         >
-                            <span className={`text-ui-dense font-bold ${KIND_TEXT[l.kind]}`}>{l.label}{pinned.has(l.id) && <span className="ml-0.5 text-cyan-400" aria-hidden="true">⌖</span>}</span>
+                            <span className={`text-ui-dense font-bold ${KIND_TEXT[l.kind]}`}>{l.label}{pinned.has(l.id) && <span className="ml-0.5 text-zinc-300" aria-hidden="true">⌖</span>}</span>
                             <span className="font-mono text-ui-dense tabular-nums text-zinc-200">{fmtPrice(l.price)}</span>
                             <span className={`font-mono text-ui-2xs tabular-nums ${KIND_TEXT[l.kind]}`}>{formatDist(l.price, mark)}</span>
                             <span className="line-clamp-2 text-ui-dense leading-4 text-zinc-400" title={l.context}>{l.context}</span>
@@ -194,7 +194,7 @@ const KeyLevelsCard: React.FC<KeyLevelsCardProps> = ({ levels, symbol, messageId
             </div>
             <div className="border-t border-hairline px-3 py-1.5 text-ui-xs text-zinc-600">
                 hover = preview on chart · click = pin / unpin
-                {drawing && <span className="ml-2 text-emerald-400">· {drawnCount} drawn</span>}
+                {drawing && <span className="ml-2 text-zinc-400">· {drawnCount} drawn</span>}
             </div>
         </div>
         </Disclosure>

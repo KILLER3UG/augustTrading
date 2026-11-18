@@ -57,6 +57,7 @@ import type { TradeProposal } from '../../services/trade/proposedTrade';
 import type { SettlementCorrectionProposal } from '../../services/trade/settlementCorrection';
 import type { TradeActionProposal } from '../../services/trade/tradeActionProposal';
 import type { RiskChangeProposal } from '../../services/trade/riskChangeProposal';
+import type { AiSettingProposal } from '../../services/trade/aiSettingProposal';
 import type { WatchPlan } from '../../services/trade/tradePlanLevels';
 import { entriesForSession, PANEL_MAX_MODELS, type PanelSeatRef } from '../../services/trade/chatSessions';
 import * as chatStore from '../../services/trade/chatStore';
@@ -190,6 +191,12 @@ interface TradeChatPanelProps {
     onDismissRiskChange?: (proposal: RiskChangeProposal) => void;
     /** Revert a confirmed change inside its window. */
     onRevertRiskChange?: (proposal: RiskChangeProposal, sessionId?: string) => void;
+    /** Commit 4.7's AI-behavior decision card: confirm writes through the
+     *  settings path the trader owns; dismiss and revert never write a new
+     *  value. */
+    onConfirmAiSettingChange?: (proposal: AiSettingProposal, sessionId?: string) => void;
+    onDismissAiSettingChange?: (proposal: AiSettingProposal) => void;
+    onRevertAiSettingChange?: (proposal: AiSettingProposal, sessionId?: string) => void;
     /** Report a presented plan to the harness level-watch (TradeView arms
      *  it; a later price touch comes back as a [HARNESS SIGNAL] turn).
      *  `turn` carries the RUNNING turn's identity (see PanelTurnContext). */
@@ -337,7 +344,7 @@ export const ChartAiDockRail: React.FC<{
 const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
     memoryEnabled, strategiesEnabled, symbol, interval, providers, selectedChatModel, onSelectChatModel,
     chartLevels, chartDrawings, modelDrawings, addModelDrawings, clearModelDrawings, clearAllDrawings,
-    onCaptureChart, getChartSnapshot, bots = [], trades = [], botSessionRequest, groupSessionRequest, onRunAnalysis, onAnalysisError, onStopRun, getAnalysisMessage, onLogProposedTrade, onRejectProposedTrade, onUndoApproval, onConfirmRiskChange, onDismissRiskChange, onRevertRiskChange, onPlanPresented,
+    onCaptureChart, getChartSnapshot, bots = [], trades = [], botSessionRequest, groupSessionRequest, onRunAnalysis, onAnalysisError, onStopRun, getAnalysisMessage, onLogProposedTrade, onRejectProposedTrade, onUndoApproval, onConfirmRiskChange, onDismissRiskChange, onRevertRiskChange, onConfirmAiSettingChange, onDismissAiSettingChange, onRevertAiSettingChange, onPlanPresented,
     onChatLevelsChange,
     renderGroupSurface, groups = [],
     registerScrollToMessage,
@@ -749,10 +756,14 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
      *  observer remounts the list the moment the pane returns. */
     const [scrollerVisible, setScrollerVisible] = useState(false);
     useEffect(() => {
+        // Height alone is not enough: at <lg the whole pane can be display:none
+        // (Chart/AI/Book flip), which zeroes offsetParent while a stale height
+        // can still be reported. Both signals must agree before Virtuoso mounts.
+        const measurable = (el: HTMLElement): boolean => el.clientHeight > 0 && el.offsetParent !== null;
         if (!scrollEl) { setScrollerVisible(false); return; }
-        setScrollerVisible(scrollEl.clientHeight > 0);
-        const ro = new ResizeObserver((obs) => {
-            setScrollerVisible((obs[0]?.contentRect.height ?? 0) > 0);
+        setScrollerVisible(measurable(scrollEl));
+        const ro = new ResizeObserver(() => {
+            setScrollerVisible(measurable(scrollEl));
         });
         ro.observe(scrollEl);
         return () => ro.disconnect();
@@ -765,6 +776,24 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
      *  this reaches a row that is not mounted — which a DOM query cannot. */
     const scrollToNewest = useCallback((behavior: 'auto' | 'smooth' = 'auto'): void => {
         virtuosoRef.current?.scrollToIndex({ index: 'LAST', align: 'end', behavior });
+    }, []);
+    /** A follow triggered by Virtuoso's own layout effect must never call back
+     *  INTO it synchronously: on the <lg pane flip that re-entry is the loop
+     *  the top boundary catches. Defer it one frame, coalesce bursts into one
+     *  jump, and cancel any pending frame on unmount. */
+    const pendingScrollRafRef = useRef<number | null>(null);
+    const scheduleScrollToNewest = useCallback((): void => {
+        if (pendingScrollRafRef.current !== null) return;
+        pendingScrollRafRef.current = requestAnimationFrame(() => {
+            pendingScrollRafRef.current = null;
+            scrollToNewest();
+        });
+    }, [scrollToNewest]);
+    useEffect(() => () => {
+        if (pendingScrollRafRef.current !== null) {
+            cancelAnimationFrame(pendingScrollRafRef.current);
+            pendingScrollRafRef.current = null;
+        }
     }, []);
     /** ONE definition of "the reader moved", asked by both follow paths, and it
      *  records the observation so the next question compares against now. The
@@ -784,24 +813,24 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
         // A 0×0 scroller (a mounted-hidden pane) has no meaningful bottom, and
         // Virtuoso's answer there flip-flops between publishes — honouring it
         // is the infinite update the top boundary catches.
-        if (!scrollRef.current || scrollRef.current.clientHeight === 0) return;
+        if (!scrollRef.current || scrollRef.current.clientHeight === 0 || scrollRef.current.offsetParent === null) return;
         const moved = readerMoved();
         if (atBottom) {
             stickToBottomRef.current = true;
-            setScrolledAway(false);
+            setScrolledAway(prev => (prev ? false : prev));
             return;
         }
         // Left the bottom while pinned, with the offset untouched: the CONTENT
         // grew, or the dock was expanded out of its rail. Follow it — this is
         // the clipped-answer case, and the reader never asked to move.
         if (stickToBottomRef.current && !moved) {
-            scrollToNewest();
+            scheduleScrollToNewest();
             return;
         }
         // The reader scrolled away. Their position wins; the FAB is the way back.
         stickToBottomRef.current = false;
-        setScrolledAway(true);
-    }, [readerMoved, scrollToNewest]);
+        setScrolledAway(prev => (!prev ? true : prev));
+    }, [readerMoved, scheduleScrollToNewest]);
     /** Virtuoso's own follow, as a VALUE rather than a callback, and that is
      *  deliberate. Internally Virtuoso arms a "scroll back to the bottom if the
      *  content just grew" trap whenever `followOutput !== false` — and a
@@ -828,11 +857,11 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
         // nothing is shown, and Virtuoso's initial-location handshake is
         // waiting for a scroll such a box cannot make; the re-pin above lands
         // on the newest row when the dock is expanded.
-        if (!el || el.clientHeight === 0) return;
+        if (!el || el.clientHeight === 0 || el.offsetParent === null) return;
         const moved = readerMoved();
         if (moved || !stickToBottomRef.current) return;
-        scrollToNewest();
-    }, [readerMoved, scrollToNewest]);
+        scheduleScrollToNewest();
+    }, [readerMoved, scheduleScrollToNewest]);
     /** The newest-message count and session the transcript last followed.
      *  A NEW trader message re-pins the follow even if they had scrolled up
      *  to read — sending is an action, and the answer must not land where
@@ -862,7 +891,7 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
         if (!repin) return;
         stickToBottomRef.current = true;
         lastScrollTopRef.current = scrollRef.current?.scrollTop ?? 0;
-        setScrolledAway(false);
+        setScrolledAway(prev => (prev ? false : prev));
         // The jump is imperative because Virtuoso evaluates `followOutput`
         // while publishing the new rows — before this effect can say the
         // reader's position no longer counts.
@@ -873,7 +902,7 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
     const jumpToLatest = useCallback((): void => {
         stickToBottomRef.current = true;
         lastScrollTopRef.current = scrollRef.current?.scrollTop ?? 0;
-        setScrolledAway(false);
+        setScrolledAway(prev => (prev ? false : prev));
         scrollToNewest();
     }, [scrollToNewest]);
 
@@ -1105,13 +1134,23 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
             const detail = (ev as CustomEvent<{ name?: string; action?: 'activate' | 'retire' }>).detail ?? {};
             void send(`Propose ${detail.action === 'retire' ? 'retiring' : 'activating'} my "${detail.name ?? 'trade plan'}" plan through your activation card.`);
         };
+        const onDeskSetting = (ev: Event): void => {
+            if (busy || !ready) return;
+            // Settings' read-only status rows use askDesk('setting', …). The
+            // desk owns the wording; this listener only delivers the request,
+            // and the gated card applies nothing until the trader confirms.
+            const detail = (ev as CustomEvent<{ target?: string; label?: string; next?: boolean }>).detail ?? {};
+            void send(`Propose toggling ${detail.label ?? detail.target ?? 'an AI setting'} ${detail.next ? 'ON' : 'OFF'} via your setting confirmation card.`);
+        };
         window.addEventListener('august:desk-correct', onDeskCorrect);
         window.addEventListener('august:desk-settle', onDeskSettle);
         window.addEventListener('august:desk-strategy', onDeskStrategy);
+        window.addEventListener('august:desk-setting', onDeskSetting);
         return () => {
             window.removeEventListener('august:desk-correct', onDeskCorrect);
             window.removeEventListener('august:desk-settle', onDeskSettle);
             window.removeEventListener('august:desk-strategy', onDeskStrategy);
+            window.removeEventListener('august:desk-setting', onDeskSetting);
         };
     }, [send, busy, ready]);
 
@@ -1405,6 +1444,9 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
                         onConfirmRiskChange={onConfirmRiskChange}
                         onDismissRiskChange={onDismissRiskChange}
                         onRevertRiskChange={onRevertRiskChange}
+                        onConfirmAiSettingChange={onConfirmAiSettingChange}
+                        onDismissAiSettingChange={onDismissAiSettingChange}
+                        onRevertAiSettingChange={onRevertAiSettingChange}
                         trades={trades}
                         sessionGuard={sessionGuard}
                         onConfirmSettlementCorrection={onConfirmSettlementCorrection}

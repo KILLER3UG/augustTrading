@@ -168,7 +168,7 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({
 
     const secondsLeft = undo ? Math.max(1, Math.ceil(undo.msLeft / 1000)) : 0;
     return (
-    <div className="mt-1 rounded-control border border-hairline bg-white/[0.015] p-2.5" data-testid="trade-proposal-card">
+    <div className="mt-1 rounded-control border border-hairline bg-zinc-900/60 p-2.5" data-testid="trade-proposal-card">
         <div className="flex items-center gap-2">
             <span className={`rounded-control px-1.5 py-0.5 text-ui-xs font-bold ${proposal.direction === 'Long' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-rose-500/15 text-rose-400'}`}>{proposal.direction}</span>
             <span className="font-mono text-ui-sm font-bold text-zinc-100">{proposal.symbol}</span>
@@ -217,7 +217,7 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({
             // liquidation sits beyond the stop. At the old 100× default a 1 %
             // wick was a total loss and nothing on the card said so.
             <p
-                className={`mt-1.5 font-mono text-ui-2xs ${liquidated.bufferPct <= 0 ? 'text-rose-400' : 'text-zinc-500'}`}
+                className={`mt-1.5 font-mono text-ui-2xs ${liquidated.bufferPct <= 0 ? 'text-zinc-300' : 'text-zinc-500'}`}
                 data-testid="proposal-liq-buffer"
             >
                 {liquidated.line}
@@ -231,7 +231,7 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({
             // downgrades, it never scales up.
             <div className="mt-2 rounded-control border border-hairline bg-white/[0.02] p-2" data-testid="proposal-size">
                 <div className="font-mono text-ui-xs uppercase text-zinc-500">Suggested size</div>
-                <div className={`font-mono text-ui-dense ${size.equityUsd > 0 ? 'text-zinc-200' : 'text-amber-400/90'}`}>
+                <div className={`font-mono text-ui-dense ${size.equityUsd > 0 ? 'text-zinc-200' : 'text-zinc-300'}`}>
                     {size.equityUsd > 0 ? size.line : 'Not sized — equity not set'}
                 </div>
                 {size.equityUsd > 0 && (
@@ -240,7 +240,7 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({
                     </div>
                 )}
                 {size.equityUsd > 0 && size.reason !== 'Uncapped' && (
-                    <div className="font-mono text-ui-2xs text-amber-400/90">{size.reason}</div>
+                    <div className="font-mono text-ui-2xs text-zinc-300">{size.reason}</div>
                 )}
                 {size.equityUsd <= 0 && (
                     <div className="font-mono text-ui-2xs text-zinc-500">
@@ -262,7 +262,7 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({
         )}
         {proposal.rationale && <p className="mt-1.5 text-ui-dense leading-relaxed text-zinc-400">{proposal.rationale}</p>}
         {proposal.gate?.refusal && (
-            <p className="mt-1.5 rounded-control border border-rose-500/20 bg-rose-500/[0.06] px-2 py-1.5 text-ui-dense text-rose-300" data-testid="proposal-refused">
+            <p className="mt-1.5 rounded-control border border-line bg-white/[0.03] px-2 py-1.5 text-ui-dense text-zinc-300" data-testid="proposal-refused">
                 Refused — {proposal.gate.refusal}
             </p>
         )}
@@ -273,7 +273,7 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({
             // already owns, so a plan that trips three bands does not stack
             // three amber paragraphs on the card.
             <div className="mt-1.5" data-testid="proposal-cautions">
-                <p className="text-ui-dense leading-relaxed text-amber-400/90">{cautions[0]}</p>
+                <p className="text-ui-dense leading-relaxed text-zinc-300">{cautions[0]}</p>
                 {cautions.length > 1 && (
                     <Disclosure
                         testId="proposal-cautions-more"
@@ -293,9 +293,9 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({
             // outlived its validity window. Approving is still the trader's
             // call — but it is a RE-CONFIRM with the drift on screen, never a
             // silent one.
-            <div className="mt-1.5 rounded-control border border-amber-500/25 bg-amber-500/[0.05] p-2" data-testid="proposal-stale">
+            <div className="mt-1.5 rounded-control border border-line bg-white/[0.03] p-2" data-testid="proposal-stale">
                 {staleness.reasons.map((r, i) => (
-                    <p key={i} className="text-ui-dense leading-relaxed text-amber-400/90">{r}</p>
+                    <p key={i} className="text-ui-dense leading-relaxed text-zinc-300">{r}</p>
                 ))}
                 {!staleAcknowledged && (
                     <p className="mt-1 font-mono text-ui-2xs text-zinc-500">
@@ -308,7 +308,7 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({
             // Fail closed: an unmeasurable plan is never quietly logged. The
             // handler asks for an explicit confirm, and the row it writes is
             // stamped `gate:unavailable` — never confidenceCap 0.
-            <p className="mt-1.5 text-ui-dense text-amber-400/90" data-testid="proposal-gate-unavailable">
+            <p className="mt-1.5 text-ui-dense text-zinc-300" data-testid="proposal-gate-unavailable">
                 Gate could not be checked ({proposal.gate.reason}) — approving asks you to confirm, and the row is recorded UNCAPPED.
             </p>
         )}
@@ -316,17 +316,17 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({
             // The session guard refuses every new log — the card prints the
             // standing reason and Approve stays down. Same treatment as a
             // gate refusal: deterministic, no same-moment override.
-            <p className="mt-1.5 rounded-control border border-rose-500/20 bg-rose-500/[0.06] px-2 py-1.5 text-ui-dense text-rose-300" data-testid="proposal-guard-block">
+            <p className="mt-1.5 rounded-control border border-line bg-white/[0.03] px-2 py-1.5 text-ui-dense text-zinc-300" data-testid="proposal-guard-block">
                 Session guard — {guardBlock}
             </p>
         )}
         {!guardBlock && guardWarnings.length > 0 && (
-            <p className="mt-1.5 text-ui-dense leading-relaxed text-amber-400/90" data-testid="proposal-guard-warning">
+            <p className="mt-1.5 text-ui-dense leading-relaxed text-zinc-300" data-testid="proposal-guard-warning">
                 {guardWarnings[0]}
             </p>
         )}
         {logNote && (
-            <p className="mt-1.5 text-ui-dense leading-relaxed text-amber-400/90" data-testid="proposal-log-note">
+            <p className="mt-1.5 text-ui-dense leading-relaxed text-zinc-300" data-testid="proposal-log-note">
                 {logNote}
             </p>
         )}
@@ -335,14 +335,14 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({
             // journal, the receipt is queued) and the trader may still reverse
             // it — one tap, no dialog. When the window lapses this swaps to
             // the settled logged row the host renders beside it.
-            <div className="mt-2.5 flex items-center gap-2 rounded-control border border-emerald-500/25 bg-emerald-500/[0.06] p-2" data-testid="proposal-undo-window">
-                <CheckCircle className="h-3.5 w-3.5 shrink-0 text-emerald-400" aria-hidden="true" />
-                <span className="text-ui-dense text-emerald-300">
+            <div className="mt-2.5 flex items-center gap-2 rounded-control border border-hairline bg-white/[0.03] p-2" data-testid="proposal-undo-window">
+                <CheckCircle className="h-3.5 w-3.5 shrink-0 text-zinc-300" aria-hidden="true" />
+                <span className="text-ui-dense text-zinc-200">
                     Approved{undo.planId ? ` — plan ${undo.planId} is logged and monitored` : ' — logged and monitored'}.
                 </span>
                 {onUndo && (
                     <button type="button" onClick={onUndo}
-                        className="ml-auto shrink-0 rounded-control border border-hairline px-2 py-1 text-ui-dense text-zinc-300 transition-colors hover:bg-white/[0.06]"
+                        className="ml-auto shrink-0 rounded-control border border-line bg-zinc-800/80 px-2 py-1 text-ui-dense text-zinc-200 transition-colors hover:bg-zinc-700"
                         data-testid="proposal-undo">
                         Undo ({secondsLeft}s)
                     </button>
@@ -373,7 +373,7 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({
                                     ? 'The session guard stands down; the reason is printed above.'
                                     : undefined}
                             data-testid="proposal-approve"
-                            className="rounded-control bg-emerald-600/90 px-2.5 py-1 text-ui-dense font-medium text-white transition-colors hover:bg-emerald-500 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-300">
+                            className="rounded-control bg-zinc-100 px-2.5 py-1 text-ui-dense font-medium text-zinc-950 transition-colors hover:bg-white disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-300">
                             {refused
                                 ? 'Refused by the gate'
                                 : guardBlock
@@ -389,14 +389,14 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({
                         onClick={() => onReject(declineReason.trim() || undefined)}
                         disabled={awaitingLog}
                         data-testid="proposal-reject"
-                        className="rounded-control border border-rose-500/30 px-2.5 py-1 text-ui-dense text-rose-300/90 transition-colors hover:bg-rose-500/10 hover:text-rose-200 disabled:cursor-not-allowed disabled:opacity-40">
+                        className="rounded-control border border-line bg-zinc-800/80 px-2.5 py-1 text-ui-dense text-zinc-200 transition-colors hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-40">
                         Reject
                     </button>
                     <button type="button"
                         onClick={onAskWhy}
                         disabled={awaitingLog}
                         data-testid="proposal-ask-why"
-                        className="rounded-control border border-hairline px-2.5 py-1 text-ui-dense text-zinc-400 transition-colors hover:bg-white/[0.04] hover:text-zinc-200 disabled:cursor-not-allowed disabled:opacity-40">
+                        className="rounded-control border border-line bg-zinc-800/80 px-2.5 py-1 text-ui-dense text-zinc-200 transition-colors hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-40">
                         Ask why
                     </button>
                     <span className="ml-auto font-mono text-ui-2xs text-zinc-600">
@@ -413,7 +413,7 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({
  *  transcript so it can never be clicked twice — shown once the undo window
  *  has lapsed. */
 export const TradeProposalLoggedRow: React.FC = () => (
-    <p className="mt-1 flex items-center gap-1.5 text-ui-xs font-semibold uppercase tracking-wider text-emerald-400"
+    <p className="mt-1 flex items-center gap-1.5 text-ui-xs font-semibold uppercase tracking-wider text-zinc-300"
         data-testid="proposal-logged-row">
         <CheckCircle className="h-3 w-3 shrink-0" aria-hidden="true" />
         <span>✓ Approved — tracking this trade; the harness will score it against the outcome.</span>

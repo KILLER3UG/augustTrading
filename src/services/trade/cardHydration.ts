@@ -25,6 +25,7 @@ import type { Message } from '../../types/message';
 import type { LoggedTrade } from '../../types';
 import { getHarnessSettings } from '../../utils/harnessSettings';
 import { seedRiskChangeForHydration } from './riskChangeProposal';
+import { seedAiSettingChangeForHydration } from './aiSettingProposal';
 import { seedStrategyActivationForHydration } from './strategyActivation';
 import { seedSettlementCorrectionForHydration } from './settlementCorrection';
 import { seedTradeActionForHydration, type TradeActionProposal } from './tradeActionProposal';
@@ -35,7 +36,11 @@ import { getArmedPlans } from './levelWatchService';
 const numbersEqual = (a: unknown, b: unknown): boolean =>
     typeof a === 'number' && typeof b === 'number' && Number.isFinite(a) && Number.isFinite(b) && a === b;
 
-export const hydrateCardsFromMessages = (messages: Message[], trades: LoggedTrade[]): void => {
+export const hydrateCardsFromMessages = (
+    messages: Message[],
+    trades: LoggedTrade[],
+    opts?: { hybridIntelligenceEnabled?: boolean },
+): void => {
     for (const m of messages) {
         // ── Risk change: settings value already equals the proposal → landed.
         if (m.riskChange) {
@@ -46,6 +51,17 @@ export const hydrateCardsFromMessages = (messages: Message[], trades: LoggedTrad
                     ? numbersEqual(current, p.proposedValue)
                     : current === p.proposedValue);
             seedRiskChangeForHydration(p, landed ? 'confirmed' : undefined);
+        }
+        // ── AI setting: deskToolsEnabled is a persisted harness setting;
+        //    hybridIntelligence lives in App state, so only an explicit caller
+        //    value can prove it landed — unknown means seed pending, never a
+        //    guessed "confirmed" that would silently drop the live card.
+        if (m.aiSettingChange) {
+            const p = m.aiSettingChange;
+            const landed = p.target === 'deskToolsEnabled'
+                ? getHarnessSettings().deskToolsEnabled === p.proposedValue
+                : opts?.hybridIntelligenceEnabled === p.proposedValue;
+            seedAiSettingChangeForHydration(p, landed ? 'confirmed' : undefined);
         }
         // ── Strategy activation: plan status already equals the proposal.
         if (m.strategyActivation) {

@@ -18,7 +18,7 @@
  * `atBottomStateChange`), driven by the shell — see TradeChatPanel.
  */
 
-import React, { useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { Virtuoso, type FollowOutput, type VirtuosoHandle } from 'react-virtuoso';
 import { Zap } from '../../shared/Icons';
 import { InterruptedRunNotice } from '../../shared/InterruptedRunNotice';
@@ -35,6 +35,10 @@ import TradeActionCard from './TradeActionCard';
 import { settlementCorrectionStateOf, type SettlementCorrectionProposal } from '../../../services/trade/settlementCorrection';
 import { tradeActionStateOf, type TradeActionProposal } from '../../../services/trade/tradeActionProposal';
 import { riskChangeStateOf, riskRevertOf, type RiskChangeProposal } from '../../../services/trade/riskChangeProposal';
+import {
+    aiSettingChangeStateOf, aiSettingRevertOf, type AiSettingProposal,
+} from '../../../services/trade/aiSettingProposal';
+import AiSettingCard from './AiSettingCard';
 import { strategyActivationStateOf, strategyRevertOf, type StrategyActivationProposal } from '../../../services/trade/strategyActivation';
 import StrategyActivationCard from './StrategyActivationCard';
 import StatsCard from './StatsCard';
@@ -55,6 +59,13 @@ import { CopyChip, PinChip, RetryChip, ThinkingTierChip } from '../../shared/cha
 import AnswerBody from '../../shared/AnswerBody';
 import ChatFailureRow from '../../shared/ChatFailureRow';
 import { BotFace } from '../../chat/BotFace';
+
+/** Virtuoso inputs held at MODULE scope: a fresh object or function on every
+ *  render makes the virtualizer re-measure and re-render its whole window — a
+ *  visible stall on the pane flip at <lg, where the transcript goes from
+ *  hidden to full height mid-conversation. */
+const INCREASE_VIEWPORT_BY = { top: 600, bottom: 600 } as const;
+const computeEntryKey = (_index: number, entry: LiveEntry): string => entry.id;
 
 /** Prov line: short session id · model short · thinking tier · notebook
  *  count · relative time. CODE-CALCULATED only — never "Mock" in real UI,
@@ -187,6 +198,13 @@ interface ChatTranscriptListProps {
     /** Revert a confirmed change inside its window → App restores the
      *  replaced value through the same settings writer and notes the thread. */
     onRevertRiskChange?: (proposal: RiskChangeProposal, sessionId?: string) => void;
+    /** Confirm a PROPOSED AI-behavior setting toggle → App writes it through
+     *  the same settings path the trader's Settings screen uses. */
+    onConfirmAiSettingChange?: (proposal: AiSettingProposal, sessionId?: string) => void;
+    /** Dismiss a PROPOSED AI setting change — nothing was toggled. */
+    onDismissAiSettingChange?: (proposal: AiSettingProposal) => void;
+    /** Restore the replaced setting inside the 60s revert window. */
+    onRevertAiSettingChange?: (proposal: AiSettingProposal, sessionId?: string) => void;
     /** The journal rows, so a settlement-correction card can show the "before"
      *  half of what it changes (the same input the Chat row gets). */
     trades?: LoggedTrade[];
@@ -224,6 +242,7 @@ const ChatTranscriptList: React.FC<ChatTranscriptListProps> = ({
     onToggleWatch, pinnedMessageIds, onLogProposedTrade, sessionId, onRejectProposedTrade, onUndoApproval, trades,
     sessionGuard,
     onConfirmRiskChange, onDismissRiskChange, onRevertRiskChange,
+    onConfirmAiSettingChange, onDismissAiSettingChange, onRevertAiSettingChange,
     onConfirmSettlementCorrection, onDismissSettlementCorrection, onVoidSettlementCorrection,
     onConfirmTradeAction, onDismissTradeAction,
     onConfirmStrategyActivation, onDismissStrategyActivation, onRevertStrategyActivation,
@@ -584,6 +603,39 @@ const ChatTranscriptList: React.FC<ChatTranscriptListProps> = ({
                             }
                             return null;
                         })()}
+                        {/* A PROPOSED AI-behavior setting toggle (Commit 4.7):
+                            Hybrid Intelligence / Desk Tools left Settings for
+                            this card. Turning a capability OFF tightens and
+                            confirms in one tap; turning it ON asks again. The
+                            confirm writes through the trader's settings path
+                            and the applied card offers a 60s revert. */}
+                        {(() => {
+                            void decisionTick;
+                            const ap = e.aiSettingChange;
+                            if (!ap) return null;
+                            const state = aiSettingChangeStateOf(ap.id);
+                            const revert = aiSettingRevertOf(ap.id);
+                            if (!state && !revert) {
+                                return (
+                                    <AiSettingCard
+                                        proposal={ap}
+                                        onConfirm={() => { onConfirmAiSettingChange?.(ap, sessionId); setDecisionTick(t => t + 1); }}
+                                        onDismiss={() => { onDismissAiSettingChange?.(ap); setDecisionTick(t => t + 1); }}
+                                    />
+                                );
+                            }
+                            if (state === 'confirmed') {
+                                return (
+                                    <AiSettingCard
+                                        proposal={ap}
+                                        applied
+                                        revert={revert}
+                                        onRevert={revert ? () => { onRevertAiSettingChange?.(ap, sessionId); setDecisionTick(t => t + 1); } : undefined}
+                                    />
+                                );
+                            }
+                            return null;
+                        })()}
                         {/* A PROPOSED strategy activation/retirement
                             (propose_strategy_activation). Same decision-card
                             shape: Confirm applies through the writer the
@@ -713,6 +765,20 @@ const ChatTranscriptList: React.FC<ChatTranscriptListProps> = ({
         );
     };
 
+    // `itemContent` must keep ONE identity for the life of this list: a fresh
+    // function each render sends Virtuoso through a full window remount, which
+    // is exactly what the <lg Chart|AI|Book flip exposed mid-conversation.
+    // The ref carries the latest closure (ticks, handlers, props) into the
+    // stable callback, and the context changes only when transcript state
+    // changes — so a resize/visibility flip repaints cleanly with no remount.
+    const renderEntryRef = useRef(renderEntry);
+    renderEntryRef.current = renderEntry;
+    const itemContent = useCallback((index: number, entry: LiveEntry) => renderEntryRef.current(index, entry), []);
+    const virtuosoContext = useMemo(() => ({
+        proposalTick, decisionTick, awaitingLogEntryId, pinnedMessageIds, sessionGuard,
+        trades, symbol, resolveVerdictByIdentity, answerStreamingFlags,
+    }), [proposalTick, decisionTick, awaitingLogEntryId, pinnedMessageIds, sessionGuard, trades, symbol, resolveVerdictByIdentity, answerStreamingFlags]);
+
     return (
         <Virtuoso
             ref={virtuosoRef}
@@ -722,7 +788,7 @@ const ChatTranscriptList: React.FC<ChatTranscriptListProps> = ({
             data={entries}
             // The entry id is the row's identity across the merge, so a
             // recycled row never inherits another turn's DOM.
-            computeItemKey={(_index, entry) => entry.id}
+            computeItemKey={computeEntryKey}
             initialTopMostItemIndex={initialTopMostItemIndex}
             followOutput={followOutput}
             atBottomStateChange={onAtBottomChange}
@@ -734,8 +800,11 @@ const ChatTranscriptList: React.FC<ChatTranscriptListProps> = ({
             // A dock row is tall (markdown, a work timeline, cards). Render a
             // little above and below the fold so a flick lands on content
             // rather than on a blank strip.
-            increaseViewportBy={{ top: 600, bottom: 600 }}
-            itemContent={renderEntry}
+            increaseViewportBy={INCREASE_VIEWPORT_BY}
+            itemContent={itemContent}
+            // Changing context repaints the mounted rows without changing the
+            // itemContent identity — no window remount on a pane flip.
+            context={virtuosoContext}
         />
     );
 };

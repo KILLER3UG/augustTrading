@@ -161,6 +161,7 @@ const BY_LABEL: Record<string, ToolKindInfo> = {
     'self-change': { kind: 'write', activity: 'Changing its own harness' },
     'self-change undo': { kind: 'write', activity: 'Reverting a self-change' },
     'skill proposal': { kind: 'write', activity: 'Proposing a skill' },
+    'propose ai setting change': { kind: 'write', activity: 'Proposing an AI setting change' },
     'skill revision': { kind: 'write', activity: 'Revising a skill' },
     'watch price': { kind: 'write', activity: 'Setting a price watch' },
 
@@ -313,6 +314,10 @@ export const DESK_TOOL_NAMES: readonly string[] = [
     // A strategy plan's activation/retirement is proposed, never applied: the
     // card is the only writer, through the store writer the trader owns.
     'propose_strategy_activation',
+    // An AI-behavior setting (Hybrid Intelligence / Desk Tools) is proposed,
+    // never applied: the monochrome card is the only writer, through the
+    // settings path the trader owns.
+    'propose_ai_setting_change',
     // The journal's AI review re-runs from the current trade log on request —
     // the same synthesis every logged trade triggers.
     'refresh_journal_review',

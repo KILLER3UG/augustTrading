@@ -129,6 +129,9 @@ interface TradeViewProps {
     onConfirmRiskChange?: (proposal: import('../../services/trade/riskChangeProposal').RiskChangeProposal, sessionId?: string) => void;
     onDismissRiskChange?: (proposal: import('../../services/trade/riskChangeProposal').RiskChangeProposal) => void;
     onRevertRiskChange?: (proposal: import('../../services/trade/riskChangeProposal').RiskChangeProposal, sessionId?: string) => void;
+    onConfirmAiSettingChange?: (proposal: import('../../services/trade/aiSettingProposal').AiSettingProposal, sessionId?: string) => void;
+    onDismissAiSettingChange?: (proposal: import('../../services/trade/aiSettingProposal').AiSettingProposal) => void;
+    onRevertAiSettingChange?: (proposal: import('../../services/trade/aiSettingProposal').AiSettingProposal, sessionId?: string) => void;
     onConfirmStrategyActivation?: (proposal: import('../../services/trade/strategyActivation').StrategyActivationProposal, sessionId?: string) => void;
     onDismissStrategyActivation?: (proposal: import('../../services/trade/strategyActivation').StrategyActivationProposal) => void;
     onRevertStrategyActivation?: (proposal: import('../../services/trade/strategyActivation').StrategyActivationProposal, sessionId?: string) => void;
@@ -253,7 +256,7 @@ const FundingCountdown: React.FC<{ nextFundingTime: number; fundingRate: number 
                 because the wrapper is a column (see chart-head-funding), not
                 because of a margin. */}
             <span className="flex items-baseline gap-2">
-                <span className={`font-mono text-ui-sm font-medium tabular-nums ${fundingRate >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                <span className="font-mono text-ui-sm font-medium tabular-nums text-zinc-300">
                     {fmtPercent(fundingRate * 100, 4)}
                 </span>
                 <span className="font-mono text-ui-dense tabular-nums text-zinc-400">{fundingCountdown(nextFundingTime, nowMs)}</span>
@@ -261,7 +264,7 @@ const FundingCountdown: React.FC<{ nextFundingTime: number; fundingRate: number 
             <span className="block h-[3px] w-full overflow-hidden rounded-full bg-zinc-800" aria-hidden="true" data-testid="funding-bar">
                 {/* duration-300 is deliberate: the bar's width is a data value
                     (funding countdown), not chrome. ui-doctrine motion exception. */}
-                <span className={`block h-full rounded-full transition-[width,background-color] duration-300 ease-[var(--ease-snappy)] ${soon ? 'animate-pulse bg-amber-400 shadow-[0_0_6px_rgba(240,136,0,0.5)]' : 'bg-cyan-400/80'}`} style={{ width: `${Math.round(frac * 100)}%` }} />
+                <span className={`block h-full rounded-full transition-[width,background-color] duration-300 ease-[var(--ease-snappy)] ${soon ? 'bg-zinc-200' : 'bg-zinc-500'}`} style={{ width: `${Math.round(frac * 100)}%` }} />
             </span>
         </>
     );
@@ -344,7 +347,7 @@ export const useTickFlash = (price: number | undefined): { cls: string; seq: num
 
 
 const TradeView: React.FC<TradeViewProps> = ({
-    memoryEnabled, strategiesEnabled, providers, selectedChatModel, onSelectChatModel, onRefreshModels, verdict, bots = [], trades = [], botSessionRequest, groupSessionRequest, onRunAnalysis, onAnalysisError, onStopRun, botThreadRows, onBotTurnCommit, onSoloTurnCommit, onSyncConversation, conversationRows, onNewGroup, getAnalysisMessage, onLogProposedTrade, onRejectProposedTrade, onUndoApproval, onConfirmRiskChange, onDismissRiskChange, onRevertRiskChange, onConfirmStrategyActivation, onDismissStrategyActivation, onRevertStrategyActivation, renderGroupSurface, groups = [], registerScrollToMessage, modeRequest, activeUsername, onTradeModeChange,    onToggleWatch, onOpenWatchList, watchOpenCount = 0, pinnedMessageIds,
+    memoryEnabled, strategiesEnabled, providers, selectedChatModel, onSelectChatModel, onRefreshModels, verdict, bots = [], trades = [], botSessionRequest, groupSessionRequest, onRunAnalysis, onAnalysisError, onStopRun, botThreadRows, onBotTurnCommit, onSoloTurnCommit, onSyncConversation, conversationRows, onNewGroup, getAnalysisMessage, onLogProposedTrade, onRejectProposedTrade, onUndoApproval, onConfirmRiskChange, onDismissRiskChange, onRevertRiskChange, onConfirmAiSettingChange, onDismissAiSettingChange, onRevertAiSettingChange, onConfirmStrategyActivation, onDismissStrategyActivation, onRevertStrategyActivation, renderGroupSurface, groups = [], registerScrollToMessage, modeRequest, activeUsername, onTradeModeChange,    onToggleWatch, onOpenWatchList, watchOpenCount = 0, pinnedMessageIds,
     onConfirmSettlementCorrection, onDismissSettlementCorrection, onVoidSettlementCorrection,
     onConfirmTradeAction, onDismissTradeAction }) => {
     // The chart opens on the coin the SHARED chat session carries. Adopting only
@@ -434,7 +437,7 @@ const TradeView: React.FC<TradeViewProps> = ({
     const modeTabRefs = useRef<Partial<Record<TradeMode, HTMLButtonElement | null>>>({});
     const [thumb, setThumb] = useState<{ left: number; width: number }>({ left: 0, width: 0 });
     useLayoutEffect(() => {
-        if (!isBelowLg) return;
+        if (!isBelowLg || chatLayout) return;
         const measure = (): void => {
             const tab = modeTabRefs.current[mode];
             const box = switcherRef.current;
@@ -449,7 +452,7 @@ const TradeView: React.FC<TradeViewProps> = ({
         measure();
         window.addEventListener('resize', measure);
         return () => window.removeEventListener('resize', measure);
-    }, [mode, isBelowLg]);
+    }, [mode, isBelowLg, chatLayout]);
     // `role="tablist"` is a promise: the switcher is ONE stop in the tab
     // sequence and the arrows move the selection inside it. It advertised the
     // pattern and handled no key at all, so a keyboard user could only walk the
@@ -906,6 +909,9 @@ const TradeView: React.FC<TradeViewProps> = ({
         onConfirmRiskChange,
         onDismissRiskChange,
         onRevertRiskChange,
+        onConfirmAiSettingChange,
+        onDismissAiSettingChange,
+        onRevertAiSettingChange,
         onConfirmStrategyActivation,
         onDismissStrategyActivation,
         onRevertStrategyActivation,
@@ -993,7 +999,7 @@ const TradeView: React.FC<TradeViewProps> = ({
                     title={feed.status === 'live' ? 'Live — websocket push (markPrice@1s · depth20@100ms · ticker · kline)' : feed.status === 'connecting' ? 'Opening websockets…' : 'Websocket down — REST polling every 5s'}
                     className="flex shrink-0 items-center pl-1"
                 >
-                    <span aria-hidden="true" className={`beacon ${feed.status === 'live' ? '' : 'is-quiet'}`.trim()} />
+                    <span aria-hidden="true" className={`beacon ${feed.status === 'live' ? 'text-zinc-300' : 'is-quiet text-zinc-600'}`} />
                 </span>
             </div>
 
@@ -1007,7 +1013,7 @@ const TradeView: React.FC<TradeViewProps> = ({
                 uppercase micro-label the readout row keeps — and the switcher
                 is a raised pill (the sliding `.seg-thumb`) rather than a
                 bordered box. */}
-            {isBelowLg && (
+            {isBelowLg && !chatLayout && (
                 <div
                     ref={switcherRef}
                     role="tablist"
@@ -1067,26 +1073,26 @@ const TradeView: React.FC<TradeViewProps> = ({
                     even when shut, which squeezed the chart to 138px at 1280.
                     Below lg the wrapper is `contents`, so the panes stay the
                     row's direct children and the mode switcher keeps working. */}
-                <div data-testid="trade-chart-column" className={isBelowLg
-                    ? 'contents'
-                    : (chatLayout
-                        /* Chat focus: the chart column disappears entirely —
-                           no empty black gutter beside the reading column.
-                           `hidden` (not a conditional mount) keeps the canvas
-                           and its live feed alive across an Alt+D switch. */
-                        ? 'hidden'
+                <div data-testid="trade-chart-column" className={chatLayout
+                    /* Chat focus: the chart column disappears entirely —
+                       no empty black gutter beside the reading column.
+                       `hidden` (not a conditional mount) keeps the canvas
+                       and its live feed alive across an Alt+D switch. */
+                    ? 'hidden'
+                    : (isBelowLg
+                        ? 'contents'
                         : 'flex min-h-0 min-w-0 flex-1 flex-col')}>
                 <div
                     data-testid="trade-chart-pane"
-                    className={isBelowLg
-                        ? (mode === 'chart' ? 'min-h-0 flex-1' : 'hidden')
-                        /* Expanded, the chart is what GIVES way, and it gives way by
-                         * flexing — never by claiming a fixed third. It used to take
-                         * `lg:w-1/3 lg:flex-none`, which pinned its width while
-                         * refusing to shrink, so the row could only widen past the
-                         * viewport and clip the dock's right edge. */
-                        : (chatLayout
-                            ? 'hidden'
+                    className={chatLayout
+                        ? 'hidden'
+                        : (isBelowLg
+                            ? (mode === 'chart' ? 'min-h-0 flex-1' : 'hidden')
+                            /* Expanded, the chart is what GIVES way, and it gives way by
+                             * flexing — never by claiming a fixed third. It used to take
+                             * `lg:w-1/3 lg:flex-none`, which pinned its width while
+                             * refusing to shrink, so the row could only widen past the
+                             * viewport and clip the dock's right edge. */
                             : 'min-h-[420px] flex-1 lg:min-h-0 lg:min-w-0')}
                 >
                     <ErrorBoundary pane label="The chart" resetKey={`${symbol}:${interval}`}>
@@ -1142,7 +1148,7 @@ const TradeView: React.FC<TradeViewProps> = ({
                 )}
                 {/* Below lg the book pane: full-height OrderBookPanel (bare
                     mode = the bare ladder, no page chrome). */}
-                {isBelowLg && (
+                {isBelowLg && !chatLayout && (
                     <div
                         data-testid="trade-sidebar"
                         className={mode === 'book' ? 'min-h-0 w-full flex-1' : 'hidden'}
@@ -1192,14 +1198,14 @@ const TradeView: React.FC<TradeViewProps> = ({
                     onResizeReset={rightPanel.resetWidth}
                     label="Chart AI"
                     testId="trade-dock"
-                    className={isBelowLg
-                        ? (mode === 'ai' ? 'min-h-0 w-full flex-1' : 'hidden')
-                        : (chatLayout
-                            /* Chat layout: the dock becomes the WORKSPACE —
-                             * full width, no resize seam, with the reading
-                             * column centered inside it at the reference's
-                             * ~760px. There is no chart to resize against. */
-                            ? 'h-96 w-full shrink-0 mx-auto lg:h-auto lg:min-h-0 lg:flex-1 lg:shrink lg:w-full lg:max-w-none lg:min-w-0'
+                    className={chatLayout
+                        /* Chat layout: the dock becomes the WORKSPACE —
+                         * full width, no resize seam, with the reading
+                         * column centered inside it at the reference's
+                         * ~760px. There is no chart to resize against. */
+                        ? 'min-h-0 w-full flex-1 shrink mx-auto max-w-none min-w-0'
+                        : (isBelowLg
+                            ? (mode === 'ai' ? 'min-h-0 w-full flex-1' : 'hidden')
                             : `h-96 w-full shrink-0 lg:h-auto lg:w-[var(--panel-w)] lg:min-w-[300px] ${dockExpanded ? 'lg:!w-1/2 xl:!w-7/12 lg:!max-w-[calc(100%_-_420px)]' : 'lg:max-w-[calc(100%_-_420px)]'}`)}
                 >
                     <TradeChatPanel
@@ -1213,7 +1219,7 @@ const TradeView: React.FC<TradeViewProps> = ({
                             infinite-update loop the top boundary catches
                             (the async ResizeObserver gate fires a frame too
                             late for the resize commit). */
-                        paneVisible={isBelowLg ? mode === 'ai' : true}
+                        paneVisible={chatLayout ? true : (isBelowLg ? mode === 'ai' : !dockCollapsed)}
                         memoryEnabled={memoryEnabled}
                         strategiesEnabled={strategiesEnabled}
                         onToggleCollapsed={isBelowLg || chatLayout ? undefined : collapseDock}

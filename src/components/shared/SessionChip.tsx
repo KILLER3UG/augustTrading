@@ -126,10 +126,8 @@ const SessionChip: React.FC = () => {
                 title={sessionContext.sessionName}
             >
                 <span aria-hidden="true" className="h-3.5 w-px shrink-0 bg-white/10" />
-                <span className={`h-1.5 w-1.5 rounded-full ${sessionContext.isKillZone ? 'bg-rose-500 animate-pulse' :
-                    sessionContext.currentSession === 'off_hours' ? 'bg-zinc-500' : 'bg-emerald-500 shadow-[0_0_0_3px_rgba(7,181,106,0.12)]'
-                    }`} />
-                <span className={sessionContext.isKillZone ? 'text-rose-400' : 'flex items-baseline gap-1'}>
+                <span aria-hidden="true" className={`h-1.5 w-1.5 rounded-full ${sessionContext.currentSession === 'off_hours' ? 'bg-zinc-600' : 'bg-zinc-300'}`} />
+                <span className="flex items-baseline gap-1">
                     <span className="font-medium">{SESSION_CHIP_LABEL[sessionContext.currentSession]}</span>
                     {sessionContext.currentSession === 'off_hours' && (
                         <span className="text-zinc-600">
@@ -147,19 +145,16 @@ const SessionChip: React.FC = () => {
                             {allSessions.map(session => (
                                 <div key={session.id} className="flex items-center justify-between text-ui-sm py-0.5">
                                     <div className="flex items-center gap-2 min-w-0">
-                                        <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${session.isOpen ? 'bg-emerald-500 shadow-[0_0_8px_rgba(7,181,106,0.6)]' : 'bg-zinc-700'}`} />
+                                        <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${session.isOpen ? 'bg-zinc-300' : 'bg-zinc-700'}`} />
                                         <span className={session.isOpen ? 'text-white font-medium truncate' : 'text-zinc-500 truncate'} title={session.name.replace(' Session', '')}>{session.name.replace(' Session', '')}</span>
                                     </div>
                                     <div className="flex items-center gap-1.5 flex-shrink-0">
-                                        <span className={`text-ui-2xs px-1.5 py-0 rounded-full border whitespace-nowrap ${session.volatility === 'High' ? 'border-rose-500/30 text-rose-400 bg-rose-500/10' :
-                                            session.volatility === 'Medium' ? 'border-amber-500/30 text-amber-400 bg-amber-500/10' :
-                                                'border-emerald-500/30 text-emerald-400 bg-emerald-500/10'
-                                            }`}>
+                                        <span className="text-ui-2xs px-1.5 py-0 rounded-full border whitespace-nowrap border-hairline text-zinc-300 bg-white/[0.04]">
                                             {session.volatility}
                                         </span>
                                         <div className="text-right w-28 whitespace-nowrap relative">
                                             {session.isOpen ? (
-                                                <span className="text-ui-xs text-emerald-400 font-mono">
+                                                <span className="text-ui-xs text-zinc-300 font-mono">
                                                     Closes in {formatDuration(session.closesInMinutes)}
                                                 </span>
                                             ) : (
@@ -174,7 +169,7 @@ const SessionChip: React.FC = () => {
                         </div>
                         {sessionContext.warnings.length > 0 && (
                             <div className="mt-3 pt-2 border-t border-hairline">
-                                <div className="flex items-center gap-1.5 text-amber-400 mb-1">
+                                <div className="flex items-center gap-1.5 text-zinc-300 mb-1">
                                     <ActivityIcon className="w-3 h-3" aria-hidden="true" />
                                     <span className="text-ui-xs font-bold">Market Condition</span>
                                 </div>

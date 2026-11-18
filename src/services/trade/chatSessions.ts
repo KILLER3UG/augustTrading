@@ -134,6 +134,9 @@ export type ProjectedChatEntry = StoredChatEntry & {
     /** A PROPOSED risk-limit / guard-preset change (propose_risk_change) —
      *  projected the same way; the confirm writes through the settings path. */
     riskChange?: import('./riskChangeProposal').RiskChangeProposal;
+    /** A PROPOSED AI-behavior setting toggle from a pipeline turn — projected
+     *  the same way; the confirm writes through the settings path. */
+    aiSettingChange?: import('./aiSettingProposal').AiSettingProposal;
     /** The plan a PIPELINE turn presented (`present_trade` on the analysis
      *  path) — projected from the canonical `Message.proposal`, same rule as
      *  the sinks above: no second home renders it anymore, and a
@@ -651,6 +654,7 @@ export const liveEntryFromMessage = (m: Message): ProjectedChatEntry => {
         settlementCorrection: m.settlementCorrection,
         tradeAction: m.tradeAction,
         riskChange: m.riskChange,
+        aiSettingChange: m.aiSettingChange,
         strategyActivation: m.strategyActivation,
         statsCard: m.statsCard,
         // A row with an unparseable timestamp keeps `at` undefined rather than

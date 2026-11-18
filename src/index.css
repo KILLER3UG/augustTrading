@@ -32,17 +32,17 @@
      measures 3.80:1 on this page and 3.54:1 on a panel — a fill, not text —
      while #858585 measures 5.29 / 4.94 and is the step the charter already
      tuned for micro-labels. */
-  --color-zinc-50: #faf8f5;
-  --color-zinc-100: #f4f1ea;
-  --color-zinc-200: #d4d0c7;
-  --color-zinc-300: #c9c5bc;
-  --color-zinc-400: #b6b2a9;
-  --color-zinc-500: #9d998f;
-  --color-zinc-600: #858585;
-  --color-zinc-700: #242220;
-  --color-zinc-800: #232120;
-  --color-zinc-900: #161514;
-  --color-zinc-950: #0d0c0b;
+  --color-zinc-50: #fafafa;
+  --color-zinc-100: #f4f4f5;
+  --color-zinc-200: #e4e4e7;
+  --color-zinc-300: #d4d4d8;
+  --color-zinc-400: #a1a1aa;
+  --color-zinc-500: #909098;
+  --color-zinc-600: #85858b;
+  --color-zinc-700: #222226;
+  --color-zinc-800: #18181b;
+  --color-zinc-900: #111113;
+  --color-zinc-950: #0a0a0b;
 
   /* Accent / primary — info blue. 500 is the TEXT step (7.28:1 on page,
      6.77:1 on panel); 600 and up are fills and hover states, never running
@@ -67,7 +67,7 @@
   --color-emerald-200: #a7f3d0;
   --color-emerald-300: #6ee7b7;
   --color-emerald-400: #34d399;
-  --color-emerald-500: #10b981;
+  --color-emerald-500: #22c55e;
   --color-emerald-600: #059669;
   --color-emerald-700: #047857;
   --color-emerald-800: #065f46;
@@ -86,7 +86,7 @@
   --color-rose-200: #fecdd3;
   --color-rose-300: #fda4af;
   --color-rose-400: #fb7185;
-  --color-rose-500: #f43f5e;
+  --color-rose-500: #ef4444;
   --color-rose-600: #e11d48;
   --color-rose-700: #be123c;
   --color-rose-800: #9f1239;
@@ -179,10 +179,10 @@
      These are the BASE step of each family. The full ramps (emerald-100…950,
      rose-100…950) stay above and remain the way to ask for a lighter or
      darker shade; these four name the meaning, not a shade list. */
-  --color-surface-page: #0d0c0b;    /* = zinc-950, the app's ground */
-  --color-surface-panel: #161514;   /* = zinc-900, panels and the rail */
-  --color-surface-raised: #232120;  /* = zinc-800, raised surfaces */
-  --color-hairline: #242220;         /* = zinc-700 — borders/dividers. The spec
+  --color-surface-page: #0a0a0b;    /* = zinc-950, the app's ground */
+  --color-surface-panel: #111113;   /* = zinc-900, panels and the rail */
+  --color-surface-raised: #18181b;  /* = zinc-800, raised surfaces */
+  --color-hairline: #222226;         /* = zinc-700 — borders/dividers. The spec
                                    names this --stroke-hairline; it lives in
                                    the --color-* namespace here so it also
                                    yields a `border-hairline` utility. Opaque
@@ -194,18 +194,18 @@
      while hovered, focused or selected. Every raw `border-white/N` in the
      components maps onto one of these two; the ladder's 18 opacities were
      18 ways to ask for one of two states. */
-  --color-line: #33312d;
-  --color-ink-primary: #f4f1ea;     /* = zinc-100 */
-  --color-ink-secondary: #b6b2a9;   /* = zinc-400 (see note below) */
-  --color-ink-tertiary: #858585;    /* = zinc-600, the AA-tuned faint step */
-  --color-trade-up: #10b981;         /* = emerald-500 — gains, up, Long, WIN */
-  --color-trade-down: #f43f5e;       /* = rose-500 — losses, down, Short, LOSS */
+  --color-line: #27272a;
+  --color-ink-primary: #f4f4f5;     /* = zinc-100 */
+  --color-ink-secondary: #a1a1aa;   /* = zinc-400 (see note below) */
+  --color-ink-tertiary: #85858b;    /* = zinc-600, the AA-tuned faint step */
+  --color-trade-up: #22c55e;         /* = emerald-500 — gains, up, Long, WIN */
+  --color-trade-down: #ef4444;       /* = rose-500 — losses, down, Short, LOSS */
   --color-warn: #f08800;             /* = amber-500 — warnings, watch */
   --color-info: #22d3ee;             /* = cyan-400 — info / in-progress */
   /* v4's accent: the primary-action fill. Same hue as the warning step
      (amber-400); the role differs — a fill wears --color-accent-ink. */
-  --color-accent: #e8a33d;
-  --color-accent-ink: #1c1508;
+  --color-accent: #f4f4f5;
+  --color-accent-ink: #0a0a0b;
 
   /* Note on --color-ink-secondary: the design spec's C1 table names #a1a19b,
      which is not a step of this ramp — writing it here would have introduced
@@ -1737,7 +1737,7 @@ body,
    amber ring in one state and a zinc ring in another. It is the ACCENT, not
    the info hue: v4 rings focused controls in amber. */
 :root {
-  --focus-ring: var(--color-accent);
+  --focus-ring: #d4d4d8;
   --focus-ring-width: 2px;
   --focus-ring-offset: 2px;
 }

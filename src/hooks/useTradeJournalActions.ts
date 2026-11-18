@@ -56,6 +56,10 @@ export interface UseTradeJournalActionsArgs {
 
 export interface UseTradeJournalActionsResult {
     handleDeleteTrades: (ids: string[]) => void;
+    /** Undo a bulk void: merge the snapshotted rows back into the journal
+     *  without duplicating ids, then move the integrity baseline and the AI
+     *  Review back to the restored set. */
+    handleRestoreTrades: (restored: LoggedTrade[]) => void;
     handleClearAllTrades: () => Promise<void>;
     handleManualInsightsUpdate: (ids: string[]) => Promise<void>;
     handleDeleteInsight: (id: string) => void;
@@ -143,6 +147,31 @@ export const useTradeJournalActions = (args: UseTradeJournalActionsArgs): UseTra
         deletedTrades.forEach(t => {
             OutcomeAutopilotService.unregister(t.id);
         });
+    };
+
+    /**
+     * Undo of the journal's bulk void. The snapshot came from TradeLog before
+     * `onDeleteTrades` ran, so the only rows that can be restored are the ones
+     * no longer present — merging by id makes a double undo (or a restore
+     * after some other path already re-logged the row) a no-op instead of a
+     * duplicate. The journal's canonical order is timestamp descending, so
+     * re-sort the merged set rather than appending rows out of place.
+     */
+    const handleRestoreTrades = (restored: LoggedTrade[]): void => {
+        const existingIds = new Set(loggedTrades.map(t => t.id));
+        const missing = (restored || []).filter(t => !existingIds.has(t.id));
+        if (missing.length === 0) return;
+        const nextTrades = [...loggedTrades, ...missing].sort(
+            (a, b) => (b.timestamp || '').localeCompare(a.timestamp || ''),
+        );
+        setLoggedTrades(nextTrades);
+        const username = activeUsernameRef.current || 'default';
+        // Restoring rows is deliberate — the lower baseline left by the
+        // delete must move back up, or a later real loss reads as a gain.
+        void recordIntentionalTradeCount(username, nextTrades.length);
+        // The AI Review was regenerated from the post-delete set; re-run it so
+        // Pattern Memory describes the trades that are back on screen.
+        handleJournalAutoRefresh();
     };
 
     const handleClearAllTrades = async () => {
@@ -482,6 +511,7 @@ export const useTradeJournalActions = (args: UseTradeJournalActionsArgs): UseTra
 
     return {
         handleDeleteTrades,
+        handleRestoreTrades,
         handleClearAllTrades,
         handleManualInsightsUpdate,
         handleDeleteInsight,

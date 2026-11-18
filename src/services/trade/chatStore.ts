@@ -64,6 +64,11 @@ export type LiveEntry = StoredChatEntry & {
      *  the setting is written only on the trader's confirm, through the
      *  settings path the trader owns. */
     riskChange?: import('./riskChangeProposal').RiskChangeProposal;
+    /** A PROPOSED toggle of an AI-behavior setting (Hybrid Intelligence /
+     *  Desk Tools) — rendered as a decision card. Runtime-only; the setting
+     *  is written only on the trader's confirm, through the settings path
+     *  the trader owns. */
+    aiSettingChange?: import('./aiSettingProposal').AiSettingProposal;
     /** A PROPOSED strategy activation/retirement (propose_strategy_activation)
      *  — rendered as a decision card. Runtime-only; the plan status is written
      *  only on the trader's confirm, through the store writer the trader owns. */
@@ -203,7 +208,7 @@ const schedulePersist = (): void => {
             ...s,
             entries: s.entries
                 .filter(e => !e.streaming)
-                .map(({ streaming: _streaming, proposal: _proposal, settlementCorrection: _correction, tradeAction: _action, riskChange: _riskChange, strategyActivation: _strategy, statsCard: _stats, liveProgress: _liveProgress, ...rest }) => rest),
+                .map(({ streaming: _streaming, proposal: _proposal, settlementCorrection: _correction, tradeAction: _action, riskChange: _riskChange, aiSettingChange: _aiSetting, strategyActivation: _strategy, statsCard: _stats, liveProgress: _liveProgress, ...rest }) => rest),
             // openTrades / loggedTradeIds are runtime-only — persisted sessions
             // never carry them (a reload means "we have no live trade state"),
             // so strip them defensively here even though chatSessions.ts also
@@ -256,7 +261,7 @@ export const persistInterrupted = (): void => {
         if (!loaded || getActiveUsername() !== loadedFor) return;
         const stored: ChatSession[] = sessions.map(s => ({
             ...s,
-            entries: s.entries.map(({ streaming, proposal: _proposal, settlementCorrection: _correction, tradeAction: _action, riskChange: _riskChange, strategyActivation: _strategy, statsCard: _stats, liveProgress: _liveProgress, ...rest }) => (streaming ? { ...rest, interrupted: true } : rest)),
+            entries: s.entries.map(({ streaming, proposal: _proposal, settlementCorrection: _correction, tradeAction: _action, riskChange: _riskChange, aiSettingChange: _aiSetting, strategyActivation: _strategy, statsCard: _stats, liveProgress: _liveProgress, ...rest }) => (streaming ? { ...rest, interrupted: true } : rest)),
             openTrades: undefined,
             loggedTradeIds: undefined,
         }));

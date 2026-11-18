@@ -407,7 +407,8 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
         if (name !== 'draw_on_chart' && name !== 'draw_detected' && name !== 'draw_tool_levels' && name !== 'mark_trade_levels' && name !== 'clear_chart_drawings'
             && name !== 'present_trade' && name !== 'watch_price' && name !== 'wake_me' && name !== 'cancel_watch'
             && name !== 'correct_trade_outcome' && name !== 'update_trade' && name !== 'close_trade' && name !== 'propose_risk_change'
-            && name !== 'propose_strategy_activation'
+            && name !== 'propose_strategy_activation' && name !== 'propose_ai_setting_change'
+            && !(name === 'propose_self_change' && call.arguments?.kind === 'setting')
             && name !== 'get_setup_history_stats' && name !== 'playbook_attribution' && name !== 'get_trade_log') return null;
         const args = call.arguments ?? {};
         const receipt = (ok: boolean, content: string): DeskToolResult => ({ toolCallId: call.id, name, ok, content });
@@ -490,7 +491,8 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
         // dock renders the confirm card. The card holds no authority: the
         // write happens only when the trader confirms, through App's journal
         // and watch handlers.
-        if (name === 'correct_trade_outcome' || name === 'update_trade' || name === 'close_trade' || name === 'propose_risk_change' || name === 'propose_strategy_activation') {
+        if (name === 'correct_trade_outcome' || name === 'update_trade' || name === 'close_trade' || name === 'propose_risk_change' || name === 'propose_strategy_activation' || name === 'propose_ai_setting_change'
+            || (name === 'propose_self_change' && call.arguments?.kind === 'setting')) {
             const { executeDeskTool } = await import('../analysis/DeskToolsService');
             const result = await executeDeskTool(call, {
                 defaultSymbol: turn.symbol ?? null,
@@ -519,6 +521,16 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
                         chatStore.mutate(turn.sid, s => ({
                             ...s,
                             entries: s.entries.map(en => (en.id === turn.entryId ? { ...en, riskChange: proposal } : en)),
+                        }));
+                    }
+                } else if (name === 'propose_ai_setting_change' || (name === 'propose_self_change' && call.arguments?.kind === 'setting')) {
+                    const { pendingAiSettingChange } = await import('./aiSettingProposal');
+                    const target = typeof call.arguments?.target === 'string' ? call.arguments.target : '';
+                    const proposal = pendingAiSettingChange(target as never);
+                    if (proposal) {
+                        chatStore.mutate(turn.sid, s => ({
+                            ...s,
+                            entries: s.entries.map(en => (en.id === turn.entryId ? { ...en, aiSettingChange: proposal } : en)),
                         }));
                     }
                 } else if (name === 'propose_strategy_activation') {
@@ -1348,6 +1360,7 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
                             ...(entry.settlementCorrection ? { settlementCorrection: entry.settlementCorrection } : {}),
                             ...(entry.tradeAction ? { tradeAction: entry.tradeAction } : {}),
                             ...(entry.riskChange ? { riskChange: entry.riskChange } : {}),
+                            ...(entry.aiSettingChange ? { aiSettingChange: entry.aiSettingChange } : {}),
                             ...(entry.strategyActivation ? { strategyActivation: entry.strategyActivation } : {}),
                             ...(entry.statsCard ? { statsCard: entry.statsCard } : {}),
                         } : undefined;

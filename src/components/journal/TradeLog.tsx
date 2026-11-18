@@ -9,8 +9,8 @@ import { EmptyState } from '../ui/EmptyState';
 import StatusPill, { VerdictReviewPill, type PillTone } from '../ui/StatusPill';
 import { defaultLeverage } from '../../utils/conversationUtils';
 import { askDesk } from '../../utils/askDesk';
+import { addChatSystemEntry } from '../../services/trade/chatStore';
 import { captureEfficiencyPct } from '../../utils/disciplineAnalytics';
-import { useConfirmDialog } from '../shared/ConfirmDialog';
 import SetupLifecycleCard from '../analysis/SetupLifecycleCard';
 import MarkdownContent from '../shared/MarkdownContent';
 import TrackedPostMortem from './TrackedPostMortem';
@@ -19,7 +19,12 @@ import { phtDayYear } from '../../utils/timezone';
 interface TradeLogContentProps {
     trades: LoggedTrade[];
     onDeleteTrades: (ids: string[]) => void;
-    onClearAllTrades: () => void;
+    /** Optional while App's wiring lands in the next slice — the raw wipe
+     *  button is gone, so no caller needs to supply this today. */
+    onClearAllTrades?: () => void;
+    /** Undo bridge for the bulk-void gate. Absent until App threads it in;
+     *  the gate still writes the audit trail and the chat note. */
+    onRestoreTrades?: (trades: LoggedTrade[]) => void;
     modelIdToName: Record<string, string>;
     onUpdateInsights: (ids: string[]) => void;
     isSummarizing?: boolean;
@@ -32,6 +37,15 @@ interface TradeLogContentProps {
     username?: string;
     onDocumentOpenChange?: (open: boolean) => void;
 }
+
+/** The 60-second undo buffer for a confirmed bulk void. `deadline` is an
+ *  epoch-ms timestamp so the countdown is derived from wall-clock time, not
+ *  from how many interval ticks happened to fire. */
+type BulkUndoBuffer = {
+    rows: LoggedTrade[];
+    reason: string;
+    deadline: number;
+};
 
 const OutcomeBadge: React.FC<{ outcome: TradeOutcome }> = ({ outcome }) => {
     const tone: { [key in TradeOutcome]?: PillTone } = {
@@ -384,7 +398,7 @@ const TradeLogRowImpl: React.FC<{
 const TradeLogRow = React.memo(TradeLogRowImpl);
 
 const TradeLogContent: React.FC<TradeLogContentProps> = ({
-    trades, onDeleteTrades, onClearAllTrades, modelIdToName, onUpdateInsights, isSummarizing, currentInsightIds, username,
+    trades, onDeleteTrades, onRestoreTrades, modelIdToName, onUpdateInsights, isSummarizing, currentInsightIds, username,
     onDocumentOpenChange,
 }) => {
     // Drill-down navigation: the trade currently on the full detail screen
@@ -394,23 +408,15 @@ const TradeLogContent: React.FC<TradeLogContentProps> = ({
     const [viewerImageUrl, setViewerImageUrl] = useState<string | null>(null);
     const [tradeTypeFilter, setTradeTypeFilter] = useState<'all' | 'scalp' | 'swing'>('all');
     const [outcomeFilter, setOutcomeFilter] = useState<'all' | TradeOutcome>('all');
-    // Typed-confirm: the "Clear all" button requires the user to type
-    // CLEAR before the modal's confirm button enables. The dialog
-    // floats above the trade list at z-100.
-    const { confirm: confirmClear, ConfirmDialogComponent: ClearDialog } = useConfirmDialog();
-    // Separate dialog instance for the bulk "Delete Selected" gate so the
-    // two confirm flows never stomp on each other's pending promise.
-    const { confirm: confirmDeleteSelected, ConfirmDialogComponent: DeleteSelectedDialog } = useConfirmDialog();
-    const askClearAll = (): void => {
-        void confirmClear({
-            title: 'Clear all logged trades?',
-            message: `This permanently deletes ${trades.length} trade${trades.length === 1 ? '' : 's'}. Pattern memory built from these trades is preserved.`,
-            confirmLabel: 'Clear all',
-            destructive: true,
-            typedConfirm: 'CLEAR',
-            typedConfirmHint: 'Type CLEAR to confirm',
-        }).then(ok => { if (ok) onClearAllTrades(); });
-    };
+
+    // Bulk-void gate. Two steps — arm, then confirm — replace the old
+    // one-click modal delete, and a confirmed delete is reversible for 60s.
+    const [gateOpen, setGateOpen] = useState(false);
+    const [gateArmed, setGateArmed] = useState(false);
+    const [deleteReason, setDeleteReason] = useState('');
+    const [undoBuffer, setUndoBuffer] = useState<BulkUndoBuffer | null>(null);
+    const [secondsLeft, setSecondsLeft] = useState(0);
+    const [undoNote, setUndoNote] = useState<string | null>(null);
 
     const detailTrade = trades.find(t => t.id === detailTradeId);
 
@@ -418,6 +424,24 @@ const TradeLogContent: React.FC<TradeLogContentProps> = ({
         onDocumentOpenChange?.(!!detailTradeId);
         return () => onDocumentOpenChange?.(false);
     }, [detailTradeId, onDocumentOpenChange]);
+
+    // Wall-clock countdown. Recomputed from the deadline on every tick so a
+    // throttled background tab cannot stretch the undo window, and cleared
+    // from state the moment it expires so the banner disappears on its own.
+    useEffect(() => {
+        if (!undoBuffer) {
+            setSecondsLeft(0);
+            return;
+        }
+        const tick = () => {
+            const remaining = Math.max(0, Math.ceil((undoBuffer.deadline - Date.now()) / 1000));
+            setSecondsLeft(remaining);
+            if (remaining <= 0) setUndoBuffer(null);
+        };
+        tick();
+        const timer = window.setInterval(tick, 1000);
+        return () => window.clearInterval(timer);
+    }, [undoBuffer]);
 
     const filteredTrades = useMemo(() => (trades || []).filter(trade => {
         if (tradeTypeFilter !== 'all') {
@@ -439,6 +463,14 @@ const TradeLogContent: React.FC<TradeLogContentProps> = ({
         (n, trade) => n + ((trade.tradeType || trade.analysis?.tradeType) ? 1 : 0),
         0,
     ), [trades]);
+
+    // The snapshot behind the gate card's summary and, on confirm, the undo
+    // buffer. Reads from the live rows at open time — the gate is a review of
+    // what is about to be removed, not a stale selection of ids.
+    const selectedTrades = useMemo(
+        () => (trades || []).filter(t => selectedIds.includes(t.id)),
+        [trades, selectedIds],
+    );
 
     const handleSelect = useCallback((id: string) => {
         setSelectedIds(prev =>
@@ -472,23 +504,80 @@ const TradeLogContent: React.FC<TradeLogContentProps> = ({
         setSelectedIds(validIds);
     };
 
-    // Bulk delete cascades to reasoning records + autopilot watchers and has
-    // no undo system — gate it behind the same in-app dialog pattern used by
-    // "Clear all" (plain confirm; the typed-CLEAR requirement stays reserved
-    // for the wipe-everything action).
-    const handleDeleteSelected = (): void => {
+    const handleOpenBulkVoidGate = (): void => {
         if (selectedIds.length === 0) return;
-        const count = selectedIds.length;
-        void confirmDeleteSelected({
-            title: `Delete ${count} selected trade${count === 1 ? '' : 's'}?`,
-            message: 'This permanently deletes the selected trades, including their autopilot watches. This cannot be undone.',
-            confirmLabel: 'Delete',
-            destructive: true,
-        }).then(ok => {
-            if (!ok) return;
-            onDeleteTrades(selectedIds);
-            setSelectedIds([]);
-        });
+        setUndoNote(null);
+        setDeleteReason('');
+        setGateArmed(false);
+        setGateOpen(true);
+    };
+
+    const handleCloseBulkVoidGate = (): void => {
+        setGateOpen(false);
+        setGateArmed(false);
+        setDeleteReason('');
+    };
+
+    // Step 2: snapshot BEFORE the delete, write the audit record, then remove
+    // the rows. The chat transcript line is the durable copy of the action —
+    // unlike the localStorage ring it survives a browser-data clear because
+    // it lives in the session the trader actually reads.
+    const handleConfirmBulkDelete = (): void => {
+        if (selectedIds.length === 0) return;
+        const rows = selectedTrades;
+        if (rows.length === 0) return;
+        const ids = rows.map(t => t.id);
+        const reason = deleteReason.trim();
+        setUndoBuffer({ rows, reason, deadline: Date.now() + 60_000 });
+
+        const auditKey = `august_bulk_delete_audit_v1_${username || 'default'}`;
+        try {
+            const raw = localStorage.getItem(auditKey);
+            const parsed: unknown = raw ? JSON.parse(raw) : [];
+            const prev = Array.isArray(parsed) ? parsed : [];
+            const next = [...prev, { at: new Date().toISOString(), count: rows.length, ids, reason }].slice(-50);
+            localStorage.setItem(auditKey, JSON.stringify(next));
+        } catch (err) {
+            console.warn('[JOURNAL BULK DELETE] audit trail write failed:', err);
+        }
+
+        onDeleteTrades(ids);
+        setSelectedIds([]);
+        handleCloseBulkVoidGate();
+        addChatSystemEntry(`[JOURNAL BULK DELETE] Removed ${rows.length} trade(s) (${rows.map(r => r.analysis?.coinName || r.id).slice(0, 4).join(', ')}): ${reason || 'no reason stated'}.`);
+    };
+
+    const handleUndoBulkDelete = (): void => {
+        if (!undoBuffer) return;
+        const restoredCount = undoBuffer.rows.length;
+        if (onRestoreTrades) {
+            onRestoreTrades(undoBuffer.rows);
+            setUndoNote(null);
+            // Only claim the rows came back when the bridge actually exists.
+            // Without it the audit/chat note above records the void, and a
+            // "Restored" line here would be a false claim in the transcript.
+            addChatSystemEntry(`[JOURNAL BULK DELETE UNDONE] Restored ${restoredCount} trade(s).`);
+        } else {
+            // The App bridge lands in the next slice. Be explicit about the
+            // degraded state rather than pretending the rows came back.
+            const note = 'Restore bridge is not connected in this surface yet — the void is recorded in the audit trail and chat transcript.';
+            setUndoNote(note);
+            console.warn(`[JOURNAL BULK DELETE UNDONE] ${note}`);
+        }
+        setUndoBuffer(null);
+    };
+
+    // Route through the desk: it owns the correction/void card and its own
+    // confirmation. Hand it the first selected row, or the whole id set when
+    // no single row can be pinned, then step out of the way.
+    const handleAskDeskVoid = (): void => {
+        const first = selectedTrades[0];
+        if (first) {
+            askDesk('correct', { tradeId: first.id, symbol: first.analysis?.coinName, at: first.timestamp });
+        } else {
+            askDesk('correct', { tradeIds: selectedIds, intent: 'void-or-correct' });
+        }
+        handleCloseBulkVoidGate();
     };
 
     const handleUpdateInsights = () => {
@@ -525,6 +614,7 @@ const TradeLogContent: React.FC<TradeLogContentProps> = ({
                         <button
                             key={o}
                             onClick={() => setOutcomeFilter(prev => prev === o ? 'all' : o)}
+                            aria-pressed={outcomeFilter === o}
                             className={`px-3 py-1.5 text-ui-sm font-medium rounded-full transition-colors ${
                                 outcomeFilter === o
                                     ? 'bg-zinc-800 text-zinc-100'
@@ -546,15 +636,41 @@ const TradeLogContent: React.FC<TradeLogContentProps> = ({
                 </div>
             </div>
 
-            {trades.length > 0 && (
-                <div className="px-8 pb-3 shrink-0 flex items-center justify-end">
+            {/* A confirmed bulk void is reversible for 60 seconds. The banner
+                sits above the list so it cannot be scrolled out of reach. */}
+            {undoBuffer && (
+                <div data-testid="bulk-delete-undo-banner" className="mx-8 mb-3 shrink-0 rounded-control border border-hairline bg-zinc-800 px-4 py-2.5 flex items-center justify-between gap-3 flex-wrap">
+                    <div className="min-w-0">
+                        <p className="text-ui-sm text-zinc-100 font-medium">
+                            Deleted {undoBuffer.rows.length} trade(s) · Undo available for {secondsLeft}s
+                        </p>
+                        {undoBuffer.reason && (
+                            <p className="mt-0.5 text-ui-2xs text-zinc-500 truncate" title={undoBuffer.reason}>
+                                Reason: {undoBuffer.reason}
+                            </p>
+                        )}
+                    </div>
                     <button
                         type="button"
-                        onClick={askClearAll}
-                        className="hit-target text-ui-sm text-zinc-500 hover:text-rose-400 transition-colors"
-                        title="Delete all logged trades (typed confirm)"
+                        data-testid="bulk-delete-undo-btn"
+                        onClick={handleUndoBulkDelete}
+                        className="rounded-control border border-hairline bg-zinc-900 px-3 py-1.5 text-ui-dense font-medium text-zinc-100 transition-colors hover:bg-zinc-700 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-zinc-500"
                     >
-                        Clear all
+                        Undo ({secondsLeft}s)
+                    </button>
+                </div>
+            )}
+
+            {undoNote && (
+                <div data-testid="bulk-delete-undo-note" className="mx-8 mb-3 shrink-0 rounded-control border border-hairline bg-zinc-900 px-4 py-2.5 flex items-start justify-between gap-3">
+                    <p className="text-ui-dense text-zinc-400">{undoNote}</p>
+                    <button
+                        type="button"
+                        onClick={() => setUndoNote(null)}
+                        aria-label="Dismiss restore note"
+                        className="shrink-0 p-0.5 text-zinc-500 hover:text-zinc-200 rounded-control hover:bg-zinc-800 transition-colors"
+                    >
+                        <X className="h-3 w-3" aria-hidden="true" />
                     </button>
                 </div>
             )}
@@ -594,8 +710,98 @@ const TradeLogContent: React.FC<TradeLogContentProps> = ({
                                 }
                             </div>
                         )}
-                        <button onClick={handleDeleteSelected} disabled={isSummarizing} className=" w-full flex items-center justify-center gap-2 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 font-semibold py-3 px-4 rounded-control transition-colors duration-[150ms] ease-[var(--ease-snappy)] uppercase text-ui-sm tracking-widest disabled:opacity-50">
+                        <button
+                            type="button"
+                            onClick={handleOpenBulkVoidGate}
+                            disabled={isSummarizing}
+                            aria-expanded={gateOpen}
+                            className="w-full flex items-center justify-center gap-2 border border-hairline bg-zinc-800 hover:bg-zinc-700 text-zinc-100 font-semibold py-3 px-4 rounded-control transition-colors duration-[150ms] ease-[var(--ease-snappy)] uppercase text-ui-sm tracking-widest disabled:opacity-50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-zinc-500"
+                        >
                             <TrashIcon /> Delete Selected ({selectedIds.length})
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            {/* Inline two-step gate. No modal, no one-click wipe: the trader
+                sees exactly which rows are about to go and why before the
+                confirm arm enables. */}
+            {selectedIds.length > 0 && gateOpen && (
+                <div data-testid="bulk-delete-gate-card" className="p-4 border-b border-hairline bg-zinc-900 shrink-0 animate-fade-in">
+                    <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                            <h3 className="text-ui-sm font-semibold uppercase tracking-wider text-zinc-300">Bulk void — review before deleting</h3>
+                            <p className="mt-1 text-ui-dense text-zinc-500">
+                                {selectedIds.length} selected trade(s) will be removed from the journal. A 60-second undo window opens after confirmation.
+                            </p>
+                        </div>
+                        <button
+                            type="button"
+                            onClick={handleCloseBulkVoidGate}
+                            aria-label="Close bulk void gate"
+                            className="shrink-0 p-1 text-zinc-500 hover:text-zinc-200 rounded-control hover:bg-zinc-800 transition-colors"
+                        >
+                            <X className="h-3.5 w-3.5" aria-hidden="true" />
+                        </button>
+                    </div>
+                    <ul className="mt-2 space-y-0.5 max-h-24 overflow-y-auto custom-scrollbar">
+                        {selectedTrades.slice(0, 8).map(t => (
+                            <li key={t.id} className="text-ui-xs text-zinc-400 tabular-nums">
+                                <span className="text-zinc-200">{t.analysis?.coinName || t.id}</span>
+                                {' · '}{t.analysis?.direction || 'Neutral'}
+                                {' · '}{t.outcome}
+                            </li>
+                        ))}
+                        {selectedTrades.length > 8 && (
+                            <li className="text-ui-2xs text-zinc-600">+ {selectedTrades.length - 8} more…</li>
+                        )}
+                    </ul>
+                    <input
+                        type="text"
+                        data-testid="bulk-delete-reason"
+                        value={deleteReason}
+                        onChange={e => setDeleteReason(e.target.value)}
+                        placeholder="Reason for bulk void (recorded in audit trail)"
+                        aria-label="Reason for bulk void"
+                        className="mt-3 w-full rounded-control border border-hairline bg-zinc-950 px-3 py-2 text-ui-sm text-zinc-100 placeholder:text-zinc-600 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-zinc-500"
+                    />
+                    <div className="mt-3 flex items-center gap-2 flex-wrap">
+                        {!gateArmed ? (
+                            <button
+                                type="button"
+                                data-testid="bulk-delete-arm"
+                                onClick={() => setGateArmed(true)}
+                                className="rounded-control border border-hairline bg-zinc-800 px-3 py-1.5 text-ui-dense font-medium text-zinc-100 transition-colors hover:bg-zinc-700 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-zinc-500"
+                            >
+                                Arm bulk delete
+                            </button>
+                        ) : (
+                            <>
+                                <button
+                                    type="button"
+                                    data-testid="bulk-delete-confirm"
+                                    onClick={handleConfirmBulkDelete}
+                                    className="rounded-control border border-hairline bg-zinc-800 px-3 py-1.5 text-ui-dense font-medium text-zinc-100 transition-colors hover:bg-zinc-700 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-zinc-500"
+                                >
+                                    Confirm delete ({selectedIds.length})
+                                </button>
+                                <button
+                                    type="button"
+                                    data-testid="bulk-delete-cancel"
+                                    onClick={handleCloseBulkVoidGate}
+                                    className="rounded-control border border-hairline px-3 py-1.5 text-ui-dense font-medium text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-zinc-500"
+                                >
+                                    Cancel
+                                </button>
+                            </>
+                        )}
+                        <button
+                            type="button"
+                            data-testid="bulk-delete-ask-desk"
+                            onClick={handleAskDeskVoid}
+                            className="rounded-control border border-hairline px-3 py-1.5 text-ui-dense font-medium text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-zinc-500"
+                        >
+                            Void in chat
                         </button>
                     </div>
                 </div>
@@ -662,8 +868,6 @@ const TradeLogContent: React.FC<TradeLogContentProps> = ({
                 imageUrl={viewerImageUrl}
                 onClose={() => setViewerImageUrl(null)}
             />
-            {ClearDialog}
-            {DeleteSelectedDialog}
         </div>
     );
 };

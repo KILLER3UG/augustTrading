@@ -78,6 +78,7 @@ export interface SoloTurnRow {
         settlementCorrection?: import('./settlementCorrection').SettlementCorrectionProposal;
         tradeAction?: import('./tradeActionProposal').TradeActionProposal;
         riskChange?: import('./riskChangeProposal').RiskChangeProposal;
+        aiSettingChange?: import('./aiSettingProposal').AiSettingProposal;
         strategyActivation?: import('./strategyActivation').StrategyActivationProposal;
         statsCard?: import('./statsCard').StatsCardSnapshot;
     };
@@ -139,13 +140,14 @@ export const startEntryMirror = (opts: {
             ...(typeof e.workedMs === 'number' ? { workedMs: e.workedMs } : {}),
             ...(e.effort ? { effort: e.effort } : {}),
             ...(opts.speakerKey ? { speakerKey: opts.speakerKey } : {}),
-            ...((e.proposal || e.settlementCorrection || e.tradeAction || e.riskChange || e.strategyActivation || e.statsCard)
+            ...((e.proposal || e.settlementCorrection || e.tradeAction || e.riskChange || e.aiSettingChange || e.strategyActivation || e.statsCard)
                 ? {
                     cards: {
                         ...(e.proposal ? { proposal: e.proposal } : {}),
                         ...(e.settlementCorrection ? { settlementCorrection: e.settlementCorrection } : {}),
                         ...(e.tradeAction ? { tradeAction: e.tradeAction } : {}),
                         ...(e.riskChange ? { riskChange: e.riskChange } : {}),
+                        ...(e.aiSettingChange ? { aiSettingChange: e.aiSettingChange } : {}),
                         ...(e.strategyActivation ? { strategyActivation: e.strategyActivation } : {}),
                         ...(e.statsCard ? { statsCard: e.statsCard } : {}),
                     },

@@ -4,7 +4,7 @@
  * then hand the desk the request once the panel is up. The dock's listeners
  * own the wording; this helper owns the DELIVERY.
  */
-export const askDesk = (kind: 'stats' | 'correct' | 'settle' | 'strategy', detail?: unknown): void => {
+export const askDesk = (kind: 'stats' | 'correct' | 'settle' | 'strategy' | 'setting', detail?: unknown): void => {
     window.dispatchEvent(new CustomEvent('august:goto-workspace'));
     window.setTimeout(() => {
         window.dispatchEvent(new CustomEvent(`august:desk-${kind}`, { detail }));

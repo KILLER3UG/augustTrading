@@ -155,7 +155,7 @@ const ConversationRow: React.FC<{
                     <span
                         aria-hidden="true"
                         title={running ? 'running' : selected ? 'active' : undefined}
-                        className={`h-1.5 w-1.5 shrink-0 rounded-full ${running ? 'animate-pulse bg-amber-400' : selected ? 'bg-zinc-100' : 'border border-zinc-600/60'}`}
+                        className={`h-1.5 w-1.5 shrink-0 rounded-full ${running ? 'animate-pulse bg-zinc-300' : selected ? 'bg-zinc-100' : 'border border-zinc-600/60'}`}
                     />
                     <span className="min-w-0 flex-1 truncate">{title}</span>
                     {side && (

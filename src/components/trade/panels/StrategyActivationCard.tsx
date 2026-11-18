@@ -41,10 +41,10 @@ export const StrategyActivationCard: React.FC<StrategyActivationCardProps> = ({
 
     if (applied) {
         return (
-            <div className="mt-1 rounded-control border border-emerald-500/25 bg-emerald-500/[0.05] p-2.5"
+            <div className="mt-1 rounded-control border border-hairline bg-zinc-900/60 p-2.5"
                 data-testid="strategy-activation-applied">
                 <div className="flex items-center gap-2">
-                    <span className="rounded-control bg-emerald-500/15 px-1.5 py-0.5 text-ui-xs font-bold text-emerald-300">
+                    <span className="rounded-control bg-white/[0.06] px-1.5 py-0.5 text-ui-xs font-bold text-zinc-200">
                         Strategy {proposal.proposedStatus}
                     </span>
                     <span className="font-mono text-ui-xs uppercase tracking-wider text-zinc-500">
@@ -52,7 +52,7 @@ export const StrategyActivationCard: React.FC<StrategyActivationCardProps> = ({
                     </span>
                 </div>
                 <p className="mt-2 font-mono text-ui-dense tabular-nums text-zinc-300">
-                    {proposal.currentStatus} → <span className="font-semibold text-emerald-300">{proposal.proposedStatus}</span>
+                    {proposal.currentStatus} → <span className="font-semibold text-zinc-200">{proposal.proposedStatus}</span>
                 </p>
                 {onRevert && revert && (
                     <div className="mt-2 flex items-center gap-2">
@@ -69,10 +69,10 @@ export const StrategyActivationCard: React.FC<StrategyActivationCardProps> = ({
     }
 
     return (
-        <div className="mt-1 rounded-control border border-sky-500/25 bg-sky-500/[0.04] p-2.5"
+        <div className="mt-1 rounded-control border border-hairline bg-zinc-900/60 p-2.5"
             data-testid="strategy-activation-card">
             <div className="flex items-center gap-2">
-                <span className="rounded-control bg-sky-500/15 px-1.5 py-0.5 text-ui-xs font-bold text-sky-300">
+                <span className="rounded-control bg-white/[0.06] px-1.5 py-0.5 text-ui-xs font-bold text-zinc-200">
                     Strategy {proposal.action}
                 </span>
                 <span className="ml-auto font-mono text-ui-xs uppercase tracking-wider text-zinc-500">
@@ -89,18 +89,18 @@ export const StrategyActivationCard: React.FC<StrategyActivationCardProps> = ({
                 </div>
                 <div>
                     <div className="font-mono text-ui-xs uppercase text-zinc-500">Proposed</div>
-                    <div className="font-semibold text-sky-300">{STATUS_LABEL[proposal.proposedStatus] ?? proposal.proposedStatus}</div>
+                    <div className="font-semibold text-zinc-200">{STATUS_LABEL[proposal.proposedStatus] ?? proposal.proposedStatus}</div>
                 </div>
             </div>
 
             <div className="mt-2 flex items-center gap-2">
                 <button type="button" onClick={onConfirm}
-                    className="rounded-control bg-sky-500/20 px-2 py-1 text-ui-xs font-semibold text-sky-300 hover:bg-sky-500/30"
+                    className="rounded-control bg-zinc-100 px-2 py-1 text-ui-xs font-semibold text-zinc-950 transition-colors hover:bg-white"
                     data-testid="strategy-activation-confirm">
                     Confirm {proposal.action}
                 </button>
                 <button type="button" onClick={onDismiss}
-                    className="rounded-control border border-hairline px-2 py-1 text-ui-xs text-zinc-400 hover:text-zinc-200"
+                    className="rounded-control border border-line bg-zinc-800/80 px-2 py-1 text-ui-xs text-zinc-200 transition-colors hover:bg-zinc-700"
                     data-testid="strategy-activation-dismiss">
                     Dismiss
                 </button>

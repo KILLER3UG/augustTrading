@@ -29,7 +29,7 @@ const LevelCell: React.FC<{ label: string; before?: number; after?: number }> = 
     return (
         <div>
             <div className="font-mono text-ui-xs uppercase text-zinc-500">{label}</div>
-            <div className={changed ? 'font-semibold text-amber-300' : 'text-zinc-400'}>
+            <div className={changed ? 'font-semibold text-zinc-200' : 'text-zinc-400'}>
                 {changed ? `${fmt(before)} → ${fmt(after)}` : fmt(after)}
             </div>
         </div>
@@ -39,10 +39,10 @@ const LevelCell: React.FC<{ label: string; before?: number; after?: number }> = 
 export const TradeActionCard: React.FC<TradeActionCardProps> = ({ proposal, current, onConfirm, onDismiss }) => {
     const isClose = proposal.kind === 'close';
     return (
-        <div className="mt-1 rounded-control border border-sky-500/30 bg-sky-500/[0.04] p-2.5"
+        <div className="mt-1 rounded-control border border-hairline bg-zinc-900/60 p-2.5"
             data-testid="trade-action-card">
             <div className="flex items-center gap-2">
-                <span className="rounded-control bg-sky-500/15 px-1.5 py-0.5 text-ui-xs font-bold text-sky-400">
+                <span className="rounded-control bg-white/[0.06] px-1.5 py-0.5 text-ui-xs font-bold text-zinc-200">
                     {isClose ? 'Close trade' : 'Level change'}
                 </span>
                 <span className="font-mono text-ui-xs uppercase tracking-wider text-zinc-500">
@@ -63,11 +63,11 @@ export const TradeActionCard: React.FC<TradeActionCardProps> = ({ proposal, curr
 
             <div className="mt-2 flex items-center gap-2">
                 <button type="button" onClick={onConfirm} data-testid="trade-action-confirm"
-                    className="rounded-control bg-sky-500/20 px-2 py-1 text-ui-xs font-semibold text-sky-300 hover:bg-sky-500/30">
+                    className="rounded-control bg-zinc-100 px-2 py-1 text-ui-xs font-semibold text-zinc-950 transition-colors hover:bg-white">
                     {isClose ? 'Confirm close' : 'Confirm new levels'}
                 </button>
                 <button type="button" onClick={onDismiss} data-testid="trade-action-dismiss"
-                    className="rounded-control border border-hairline px-2 py-1 text-ui-xs text-zinc-400 hover:text-zinc-200">
+                    className="rounded-control border border-line bg-zinc-800/80 px-2 py-1 text-ui-xs text-zinc-200 transition-colors hover:bg-zinc-700">
                     Dismiss
                 </button>
                 <span className="ml-auto font-mono text-ui-xs text-zinc-600">

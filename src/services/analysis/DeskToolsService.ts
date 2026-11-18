@@ -1056,6 +1056,7 @@ const TOOL_LABELS: Record<string, string> = {
     list_self_changes: 'change ledger',
     propose_self_change: 'self-change',
     revert_self_change: 'self-change undo',
+    propose_ai_setting_change: 'ai setting',
 };
 
 export const toolLabel = (name: string): string => TOOL_LABELS[name] ?? name.replace(/_/g, ' ');
@@ -1615,12 +1616,12 @@ export const DESK_TOOL_DEFINITIONS: DeskToolDefinition[] = [
         function: {
             name: 'propose_self_change',
             description:
-                'Change the harness you are running in, now. Only works when the trader enabled self-modification. kind:"knob" moves an open behavior knob (thinking effort, confirmed-skill library cap); it applies immediately and AUTO-REVERTS after 24h. kind:"prompt" writes a prompt OVERRIDE for one registered prompt id (target = the id, e.g. "analysis.master"); it applies now, does NOT auto-revert, and the ledger keeps the previous text for revert_self_change. Risk settings, privacy switches, the memory off-switch and self-modification itself are blocked. Say why in one sentence.',
+                'Change the harness you are running in, now. Only works when the trader enabled self-modification. kind:"knob" moves an open behavior knob (thinking effort, confirmed-skill library cap); it applies immediately and AUTO-REVERTS after 24h. kind:"prompt" writes a prompt OVERRIDE for one registered prompt id (target = the id, e.g. "analysis.master"); it applies now, does NOT auto-revert, and the ledger keeps the previous text for revert_self_change. kind:"setting" toggles Hybrid Intelligence or Desk Tools (target = "hybridIntelligence" or "deskToolsEnabled", value = a boolean); it RECORDS a proposal for the trader\'s confirmation card and NEVER toggles the setting itself. Risk settings, privacy switches, the memory off-switch and self-modification itself are blocked. Say why in one sentence.',
             parameters: {
                 type: 'object',
                 properties: {
-                    kind: { type: 'string', enum: ['knob', 'prompt'], description: 'Which surface you are changing' },
-                    target: { type: 'string', description: 'kind "knob": knob name (e.g. "responseEffort"). kind "prompt": the registered prompt id (e.g. "analysis.master").' },
+                    kind: { type: 'string', enum: ['knob', 'prompt', 'setting'], description: 'Which surface you are changing' },
+                    target: { type: 'string', description: 'kind "knob": knob name (e.g. "responseEffort"). kind "prompt": the registered prompt id (e.g. "analysis.master"). kind "setting": "hybridIntelligence" or "deskToolsEnabled".' },
                     value: { type: 'string', description: 'The value in JSON form: "fast" for an effort tier, 60 for a number, the FULL prompt text for a prompt override.' },
                     reason: { type: 'string', description: 'Why this change makes the work better — verbatim in the audit ledger' },
                 },
@@ -2774,6 +2775,28 @@ export const DESK_TOOL_DEFINITIONS: DeskToolDefinition[] = [
     {
         type: 'function',
         function: {
+            name: 'propose_ai_setting_change',
+            description:
+                'GATED. Propose toggling one AI-behavior capability: Hybrid Intelligence (live market data in the prompt) or Desk Tools (live desk calls before the brief). Nothing changes on this call — it RECORDS a proposal the trader confirms on a monochrome card. Turning a capability OFF tightens and confirms in one tap; turning it ON prints the before/after and needs an explicit second confirm. The current value is stamped onto the card automatically — state the reason, not the old value.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    target: {
+                        type: 'string',
+                        enum: ['hybridIntelligence', 'deskToolsEnabled'],
+                        description: 'Which capability to toggle.',
+                    },
+                    value: { type: 'boolean', description: 'true to turn the capability ON, false to turn it OFF.' },
+                    reason: { type: 'string', description: 'Why the capability should move — printed on the confirmation card and kept in the record.' },
+                },
+                required: ['target', 'value', 'reason'],
+                additionalProperties: false,
+            },
+        },
+    },
+    {
+        type: 'function',
+        function: {
             name: 'propose_strategy_activation',
             description:
                 'GATED. Propose ACTIVATING or RETIRING one strategy plan: activate puts the plan\'s rules in front of every seat from the next turn (it joins the active-strategies context); retire takes them out (the record stays for evidence). Nothing changes on this call — it RECORDS a proposal the trader confirms on a card. The plan\'s current status is stamped onto the card automatically — state the reason, not the old status. Slugs come from get_notebook_map (the strategies folder).',
@@ -3588,6 +3611,10 @@ export interface DeskToolContext {
      *  refuse (no read, no write) and the pre-read hint pass does not run.
      *  Undefined preserves legacy callers that never had a memory flag. */
     memoryEnabled?: boolean;
+    /** The Hybrid Intelligence flag for THIS turn (App state, not a harness
+     *  setting). A setting proposal uses it as its stamped "before" value;
+     *  absent callers fall back to OFF. Never mutated by a tool. */
+    hybridIntelligenceEnabled?: boolean;
     /** The trader's latest message, when the caller has it. `forget` is only
      *  allowed when that message asks to forget/delete/remove something. */
     lastUserMessage?: string;
@@ -4709,6 +4736,40 @@ ${body}`);
                     const target = asString(call.arguments.target).trim();
                     const reason = asString(call.arguments.reason).trim();
                     if (!target || !reason) return rejectedResult(call, 'propose_self_change rejected: target and reason are both required');
+                    // kind:"setting" (or either setting name as the target)
+                    // routes to the AI-setting card, NOT the self-mod ledger.
+                    // It records a proposal only: no setting is written and no
+                    // change is stamped into the ledger by this call.
+                    if (kind === 'setting' || target === 'hybridIntelligence' || target === 'deskToolsEnabled') {
+                        const { proposeAiSettingChange, currentHybridIntelligenceEnabled } = await import('../trade/aiSettingProposal');
+                        const settingRaw = call.arguments.value;
+                        let settingValue: boolean | undefined;
+                        if (typeof settingRaw === 'boolean') settingValue = settingRaw;
+                        else if (typeof settingRaw === 'string') {
+                            const s = settingRaw.trim().toLowerCase();
+                            if (s === 'true' || s === 'on' || s === '1') settingValue = true;
+                            else if (s === 'false' || s === 'off' || s === '0') settingValue = false;
+                            else {
+                                try {
+                                    const parsed: unknown = JSON.parse(settingRaw);
+                                    if (typeof parsed === 'boolean') settingValue = parsed;
+                                } catch { /* not a boolean literal */ }
+                            }
+                        }
+                        const checked = proposeAiSettingChange({
+                            target,
+                            value: settingValue,
+                            reason,
+                            currentValue: target === 'hybridIntelligence' ? (context.hybridIntelligenceEnabled ?? await currentHybridIntelligenceEnabled()) : undefined,
+                        });
+                        if (!checked.ok) return rejectedResult(call, `${call.name} rejected: ${checked.refused}.`);
+                        const p = checked.proposal;
+                        content = [
+                            `AI SETTING PROPOSED: ${p.target} ${p.currentValue ? 'ON' : 'OFF'} -> ${p.proposedValue ? 'ON' : 'OFF'} (${p.direction}).`,
+                            'The trader sees a confirmation card; NOTHING changes until they confirm it. No setting was written and no self-modification was recorded by this call.',
+                        ].join(' ');
+                        break;
+                    }
                     // A knob value may arrive as a JSON scalar or a string; the
                     // service decodes JSON either way, so normalize here rather
                     // than refuse a call that meant well.
@@ -5494,6 +5555,30 @@ ${body}`);
                     `RISK CHANGE PROPOSED: ${p.target} ${String(p.currentValue)} -> ${String(p.proposedValue)} (${p.direction}).`,
                     'The trader sees a confirmation card; NOTHING changes until they confirm it. Tightening confirms in one tap; loosening asks them to confirm it again.',
                     'No setting was written by this call.',
+                ].join(' ');
+                break;
+            }
+            case 'propose_ai_setting_change': {
+                // AUTHORITY OVER THE AI'S OWN CAPABILITIES is the trader's —
+                // Commit 4.7 took these switches out of Settings. The agent may
+                // still PROPOSE: this records a card and changes NOTHING. The
+                // confirm writes through the same settings path the trader's
+                // own Settings screen uses; the card's asymmetry (one tap to
+                // turn OFF, an explicit re-confirm to turn ON) lives there.
+                const { proposeAiSettingChange, currentHybridIntelligenceEnabled } = await import('../trade/aiSettingProposal');
+                const target = call.arguments?.target;
+                const checked = proposeAiSettingChange({
+                    target,
+                    value: call.arguments?.value,
+                    reason: asString(call.arguments?.reason),
+                    currentValue: target === 'hybridIntelligence' ? (context.hybridIntelligenceEnabled ?? await currentHybridIntelligenceEnabled()) : undefined,
+                });
+                if (!checked.ok) return rejectedResult(call, `${call.name} rejected: ${checked.refused}.`);
+                const ap = checked.proposal;
+                content = [
+                    `AI SETTING PROPOSED: ${ap.target} ${ap.currentValue ? 'ON' : 'OFF'} -> ${ap.proposedValue ? 'ON' : 'OFF'} (${ap.direction}).`,
+                    'The trader sees a confirmation card; NOTHING changes until they confirm it. Turning a capability OFF confirms in one tap; turning it ON asks them to confirm it again.',
+                    'No setting was written by this call — neither deskToolsEnabled nor hybridIntelligence was touched.',
                 ].join(' ');
                 break;
             }

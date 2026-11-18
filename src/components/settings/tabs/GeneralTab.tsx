@@ -14,7 +14,7 @@ import { SettingsGroup, SettingsPageHeader, SettingsRow } from './shared';
 import Disclosure from '../../shared/Disclosure';
 import DeskToolCatalogue from './DeskToolCatalogue';
 import { setIdleMotionEnabled } from '../../../services/desk/idleMotion';
-import { saveHarnessSettings } from '../../../utils/harnessSettings';
+import { askDesk } from '../../../utils/askDesk';
 import type { SettingsTabProps } from './types';
 
 export interface GeneralTabProps extends SettingsTabProps {
@@ -37,9 +37,7 @@ export interface GeneralTabProps extends SettingsTabProps {
 const GeneralTab: React.FC<{ tab: GeneralTabProps }> = ({ tab: props }) => {
     const {
         isHybridIntelligenceEnabled,
-        onToggleHybridIntelligence,
         deskToolsEnabled,
-        setDeskToolsEnabled,
         idleMotionEnabled,
         isAdvancedOpen,
         setIsAdvancedOpen,
@@ -60,12 +58,24 @@ const GeneralTab: React.FC<{ tab: GeneralTabProps }> = ({ tab: props }) => {
                 <SettingsRow
                     icon={<Activity className="h-4 w-4" aria-hidden="true" />}
                     title="Hybrid Intelligence"
-                    description="Adds real-time market data (price, RSI, MACD, EMAs) so the models reason over live context."
+                    description="Adds real-time market data (price, RSI, MACD, EMAs) so the models reason over live context. A change is proposed in chat and applied on the trader's card."
                     control={
-                        <ToggleSwitch checked={isHybridIntelligenceEnabled} onChange={() => {
-                            if (onToggleHybridIntelligence) onToggleHybridIntelligence();
-                            else if (props.setIsHybridIntelligenceEnabled) props.setIsHybridIntelligenceEnabled(!isHybridIntelligenceEnabled);
-                        }} label="Toggle Hybrid Intelligence" />
+                        <div className="flex shrink-0 items-center gap-2">
+                            <span
+                                className="rounded-control border border-hairline bg-zinc-900/60 px-2 py-1 font-mono text-ui-xs uppercase tracking-wider text-zinc-300"
+                                data-testid="setting-status-hybridIntelligence"
+                            >
+                                {isHybridIntelligenceEnabled ? 'ON' : 'OFF'}
+                            </span>
+                            <button
+                                type="button"
+                                onClick={() => askDesk('setting', { target: 'hybridIntelligence', label: 'Hybrid Intelligence', next: !isHybridIntelligenceEnabled })}
+                                className="rounded-control border border-line bg-zinc-800 px-2 py-1 text-ui-xs text-zinc-200 transition-colors hover:bg-zinc-700"
+                                data-testid="setting-ask-hybridIntelligence"
+                            >
+                                Change in chat
+                            </button>
+                        </div>
                     }
                 />
             </SettingsGroup>
@@ -74,17 +84,24 @@ const GeneralTab: React.FC<{ tab: GeneralTabProps }> = ({ tab: props }) => {
                 <SettingsRow
                     icon={<Wrench className="h-4 w-4" aria-hidden="true" />}
                     title="Desk Tools"
-                    description="Lets the desk call live tools anytime — web search, funding/OI, order book, liquidations, BTC context, session timing."
+                    description="Lets the desk call live tools anytime — web search, funding/OI, order book, liquidations, BTC context, session timing. A change is proposed in chat and applied on the trader's card."
                     control={
-                        <ToggleSwitch
-                            checked={deskToolsEnabled}
-                            onChange={() => {
-                                const next = !deskToolsEnabled;
-                                setDeskToolsEnabled(next);
-                                saveHarnessSettings({ deskToolsEnabled: next });
-                            }}
-                            label="Toggle Desk Tools"
-                        />
+                        <div className="flex shrink-0 items-center gap-2">
+                            <span
+                                className="rounded-control border border-hairline bg-zinc-900/60 px-2 py-1 font-mono text-ui-xs uppercase tracking-wider text-zinc-300"
+                                data-testid="setting-status-deskToolsEnabled"
+                            >
+                                {deskToolsEnabled ? 'ON' : 'OFF'}
+                            </span>
+                            <button
+                                type="button"
+                                onClick={() => askDesk('setting', { target: 'deskToolsEnabled', label: 'Desk Tools', next: !deskToolsEnabled })}
+                                className="rounded-control border border-line bg-zinc-800 px-2 py-1 text-ui-xs text-zinc-200 transition-colors hover:bg-zinc-700"
+                                data-testid="setting-ask-deskToolsEnabled"
+                            >
+                                Change in chat
+                            </button>
+                        </div>
                     }
                 />
                 <SettingsRow

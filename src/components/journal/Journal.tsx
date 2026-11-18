@@ -32,7 +32,12 @@ interface JournalProps {
     // Trade Log Props
     trades: LoggedTrade[];
     onDeleteTrades: (ids: string[]) => void;
-    onClearAllTrades: () => void;
+    /** Optional while App's wiring lands in the next slice — the ledger
+     *  degrades to a chat-only audit note until the restore bridge exists. */
+    onClearAllTrades?: () => void;
+    /** Undo bridge for the bulk-void gate in TradeLog. Threaded from App's
+     *  `handleRestoreTrades`; absent until that wiring lands. */
+    onRestoreTrades?: (trades: LoggedTrade[]) => void;
     modelIdToName: Record<string, string>;
     onUpdateInsights: (ids: string[]) => void;
     isSummarizing?: boolean;
@@ -105,7 +110,7 @@ const JournalInner: React.FC<JournalProps> = ({
     isVisible, onClose, initialTab,
     openNonce, username,
     // Trade Log Pass-through
-    trades, onDeleteTrades, onClearAllTrades, modelIdToName, onUpdateInsights, isSummarizing, currentInsightIds,
+    trades, onDeleteTrades, onClearAllTrades, onRestoreTrades, modelIdToName, onUpdateInsights, isSummarizing, currentInsightIds,
 }) => {
     const [activeTab, setActiveTab] = useState<TabId>(resolveTab(initialTab));
     const [documentOpen, setDocumentOpen] = useState(false);
@@ -172,6 +177,7 @@ const JournalInner: React.FC<JournalProps> = ({
                 trades={trades}
                 onDeleteTrades={onDeleteTrades}
                 onClearAllTrades={onClearAllTrades}
+                onRestoreTrades={onRestoreTrades}
                 modelIdToName={modelIdToName}
                 onUpdateInsights={onUpdateInsights}
                 isSummarizing={isSummarizing}

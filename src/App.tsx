@@ -29,6 +29,12 @@ import {
     type RiskChangeProposal,
 } from './services/trade/riskChangeProposal';
 import {
+    confirmAiSettingChange, dismissAiSettingChange, markAiSettingRevertWindow, aiSettingRevertOf,
+    clearAiSettingRevertWindow, formatAiSettingAppliedForModel, formatAiSettingRevertedForModel,
+    setHybridIntelligenceMirror,
+    type AiSettingProposal,
+} from './services/trade/aiSettingProposal';
+import {
     confirmStrategyActivation, dismissStrategyActivation, markStrategyRevertWindow, strategyRevertOf,
     clearStrategyRevertWindow, formatStrategyActivationAppliedForModel, formatStrategyActivationRevertedForModel,
     restorePendingStrategyActivation, type StrategyActivationProposal,
@@ -1293,6 +1299,7 @@ const App: React.FC = () => {
     // Journal CRUD handlers (extracted to hooks/useTradeJournalActions.ts)
     const {
         handleDeleteTrades,
+        handleRestoreTrades,
         handleClearAllTrades,
         handleManualInsightsUpdate,
         handleUpdateTradeOutcome,
@@ -1311,6 +1318,13 @@ const App: React.FC = () => {
         memoryConfig, moderatorConfig, readyProviders,
         useAlgorithmicInsights, summaryCharLimit,
     });
+
+    // Hybrid Intelligence lives in App state, not in harnessSettings. Mirror
+    // it into the tool store so a desk executor stamps the real ON/OFF onto a
+    // proposal card — React state itself is unreachable from the executor.
+    useEffect(() => {
+        setHybridIntelligenceMirror(isHybridIntelligenceEnabled);
+    }, [isHybridIntelligenceEnabled]);
 
     // Conversation housekeeping (extracted to hooks/useConversationHousekeeping.ts):
     // create/load/delete sessions, edit user messages, Ctrl+N + "/" shortcuts.
@@ -1680,6 +1694,42 @@ const App: React.FC = () => {
         chatStore.queueHarnessSignal(formatRiskChangeRevertedForModel(proposal), sessionId);
     }, []);
 
+    // ── Commit 4.7's AI-behavior decision cards ──────────────────────────
+    // The desk only PROPOSES. These handlers are the sole writers, and they
+    // go through the same setters the trader's own Settings screen uses, so
+    // a confirmed card and a human choice land in exactly one place.
+    const handleConfirmAiSettingChange = useCallback((proposal: AiSettingProposal, sessionId?: string): void => {
+        // The tapped card must still BE the pending proposal — a slot is
+        // superseded in place and a stale tap must not apply its own change.
+        const confirmed = confirmAiSettingChange(proposal.target, proposal.id);
+        if (!confirmed) return;
+        if (proposal.target === 'hybridIntelligence') {
+            setHybridIntelligenceMirror(proposal.proposedValue);
+            setIsHybridIntelligenceEnabled(proposal.proposedValue);
+        } else {
+            saveHarnessSettings({ deskToolsEnabled: proposal.proposedValue });
+        }
+        markAiSettingRevertWindow(proposal.id, proposal.currentValue, Date.now(), proposal.target);
+        chatStore.queueHarnessSignal(formatAiSettingAppliedForModel(proposal), sessionId);
+    }, [setIsHybridIntelligenceEnabled]);
+
+    const handleDismissAiSettingChange = useCallback((proposal: AiSettingProposal): void => {
+        dismissAiSettingChange(proposal.target, proposal.id);
+    }, []);
+
+    const handleRevertAiSettingChange = useCallback((proposal: AiSettingProposal, sessionId?: string): void => {
+        const revert = aiSettingRevertOf(proposal.id);
+        if (!revert) return;
+        if (proposal.target === 'hybridIntelligence') {
+            setHybridIntelligenceMirror(revert.previousValue);
+            setIsHybridIntelligenceEnabled(revert.previousValue);
+        } else {
+            saveHarnessSettings({ deskToolsEnabled: revert.previousValue });
+        }
+        clearAiSettingRevertWindow(proposal.id);
+        chatStore.queueHarnessSignal(formatAiSettingRevertedForModel(proposal), sessionId);
+    }, [setIsHybridIntelligenceEnabled]);
+
     // ── The strategy activation card (the plan's draft/active/retired status) ─
     // The agent PROPOSES (propose_strategy_activation records a card); this is
     // the only place a confirm turns into a write, and it goes through the
@@ -2026,6 +2076,7 @@ const App: React.FC = () => {
                         username={activeUsername || undefined}
                         trades={loggedTrades}
                         onDeleteTrades={handleDeleteTrades}
+                        onRestoreTrades={handleRestoreTrades}
                         onClearAllTrades={handleClearAllTrades}
                         modelIdToName={modelIdToName}
                         onUpdateInsights={handleManualInsightsUpdate}
@@ -2411,6 +2462,7 @@ const App: React.FC = () => {
                 journalTab={journalTab}
                 journalOpenNonce={journalOpenNonce}
                 onDeleteTrades={handleDeleteTrades}
+                onRestoreTrades={handleRestoreTrades}
                 onClearAllTrades={handleClearAllTrades}
                 modelIdToName={modelIdToName}
                 onUpdateInsights={handleManualInsightsUpdate}
@@ -2561,6 +2613,9 @@ const App: React.FC = () => {
                         onConfirmRiskChange={handleConfirmRiskChange}
                         onDismissRiskChange={handleDismissRiskChange}
                         onRevertRiskChange={handleRevertRiskChange}
+                        onConfirmAiSettingChange={handleConfirmAiSettingChange}
+                        onDismissAiSettingChange={handleDismissAiSettingChange}
+                        onRevertAiSettingChange={handleRevertAiSettingChange}
                         onConfirmStrategyActivation={handleConfirmStrategyActivation}
                         onDismissStrategyActivation={handleDismissStrategyActivation}
                         onRevertStrategyActivation={handleRevertStrategyActivation}

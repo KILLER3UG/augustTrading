@@ -104,8 +104,8 @@ export { chartColor };
 /** Chart-internal palette: the semantic ramp, resolved from the theme at
  *  call time (never at module-eval time — in dev the style tag is injected
  *  by JS, so an import-time read could fall back forever). */
-const CANDLE_UP = (): string => chartColor('--color-emerald-500', '#10b981');
-const CANDLE_DOWN = (): string => chartColor('--color-rose-500', '#f43f5e');
+const CANDLE_UP = (): string => chartColor('--color-emerald-500', '#22c55e');
+const CANDLE_DOWN = (): string => chartColor('--color-rose-500', '#ef4444');
 /** The MACD histogram's sign colours — the volume series' own rgba
  *  convention (chartData.VOLUME_UP/DOWN), which a hex token cannot carry an
  *  alpha into. Same two hues, one step more opaque than the volume bars. */
@@ -988,7 +988,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
         const last = data[data.length - 1];
         if (!last) { removeLine(); return; }
         const up = last.close >= last.open;
-        const color = up ? chartColor('--color-emerald-500', '#10b981') : chartColor('--color-rose-500', '#f43f5e');
+        const color = up ? chartColor('--color-emerald-500', '#22c55e') : chartColor('--color-rose-500', '#ef4444');
         const opts = { price: last.close, color, lineWidth: 1 as const, lineStyle: 1 as const };
         if (lastLineRef.current) {
             try { lastLineRef.current.applyOptions(opts); return; } catch { removeLine(); }
@@ -2058,7 +2058,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                     out.height = base.height;
                     const ctx = out.getContext('2d');
                     if (!ctx) return null;
-                    ctx.fillStyle = chartColor('--color-zinc-950', '#0d0c0b');
+                    ctx.fillStyle = chartColor('--color-zinc-950', '#0a0a0b');
                     ctx.fillRect(0, 0, out.width, out.height);
                     ctx.drawImage(base, 0, 0);
                     // The drawing overlay is a CSS-pixel canvas over the chart
@@ -2162,7 +2162,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                 {/* Drawing tools live in the TradingView-style LEFT RAIL over
                     the plot (ChartToolRail) — the top bar keeps timeframes. */}
                     <span className="ml-auto flex items-center gap-2 pr-1">
-                        <span className={`h-1.5 w-1.5 rounded-full ${status === 'live' ? 'bg-emerald-500' : status === 'loading' ? 'animate-pulse bg-cyan-400' : 'bg-rose-500'}`} aria-label={`chart ${status}`} />
+                        <span className={`h-1.5 w-1.5 rounded-full ${status === 'live' ? 'bg-zinc-300' : status === 'loading' ? 'animate-pulse bg-zinc-500' : 'bg-zinc-600'}`} aria-label={`chart ${status}`} />
                     </span>
                 </TimeframeBar>
                 {/* The 24h fields are the chart's CROSSHAIR readout (v3):
@@ -2204,7 +2204,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                             {(() => {
                                 const vol = legendRef.current?.volumes.get(legendBar.time);
                                 return vol === undefined ? null : (
-                                    <span>VOL <span className="text-amber-300">{fmtUsdForChart(vol * legendBar.close)}</span></span>
+                                    <span>VOL <span className="text-zinc-300">{fmtUsdForChart(vol * legendBar.close)}</span></span>
                                 );
                             })()}
                             <button
@@ -2230,7 +2230,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                                     {(() => {
                                         const vol = legendRef.current?.volumes.get(legendBar.time);
                                         return vol === undefined ? null : (
-                                            <span>VOL(Contracts) <span className="text-amber-300">{vol >= 1000 ? `${(vol / 1000).toFixed(3)}K` : vol.toFixed(3)}</span></span>
+                                            <span>VOL(Contracts) <span className="text-zinc-300">{vol >= 1000 ? `${(vol / 1000).toFixed(3)}K` : vol.toFixed(3)}</span></span>
                                         );
                                     })()}
                                 </div>

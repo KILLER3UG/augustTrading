@@ -112,6 +112,9 @@ export const CHAT_SURFACE_TOOLS = [
     // A risk-limit / guard-preset change is proposed, never applied: the card
     // is the only writer, through the settings path the trader owns.
     'propose_risk_change',
+    // An AI-behavior setting is proposed, never applied: the confirmation
+    // card is the only writer, through the settings path the trader owns.
+    'propose_ai_setting_change',
     // Goal environments — durable work state the agent can shape mid-task.
     'list_goals', 'open_goal', 'create_goal', 'update_goal', 'restore_goal',
     // The harness's own change ledger. Reading it is always available; the two
@@ -498,6 +501,7 @@ export const runChatSurfaceTurn = async (req: ChatSurfaceTurnRequest): Promise<T
             // trader confirms, and the confirm goes through App's journal
             // handlers, not through anything here.
             if (call.name === 'correct_trade_outcome' || call.name === 'update_trade' || call.name === 'close_trade' || call.name === 'propose_risk_change' || call.name === 'propose_strategy_activation'
+                || call.name === 'propose_ai_setting_change' || (call.name === 'propose_self_change' && call.arguments?.kind === 'setting')
                 || call.name === 'get_setup_history_stats' || call.name === 'playbook_attribution' || call.name === 'get_trade_log') {
                 const { executeDeskTool } = await import('../analysis/DeskToolsService');
                 const result = await executeDeskTool(call, {
@@ -516,6 +520,11 @@ export const runChatSurfaceTurn = async (req: ChatSurfaceTurnRequest): Promise<T
                         const target = typeof call.arguments?.target === 'string' ? call.arguments.target : '';
                         const proposal = pendingRiskChange(target as never);
                         if (proposal) req.patch(m => ({ ...m, riskChange: proposal }));
+                    } else if (call.name === 'propose_ai_setting_change' || (call.name === 'propose_self_change' && call.arguments?.kind === 'setting')) {
+                        const { pendingAiSettingChange } = await import('./aiSettingProposal');
+                        const target = typeof call.arguments?.target === 'string' ? call.arguments.target : '';
+                        const proposal = pendingAiSettingChange(target as never);
+                        if (proposal) req.patch(m => ({ ...m, aiSettingChange: proposal }));
                     } else if (call.name === 'get_setup_history_stats' || call.name === 'playbook_attribution' || call.name === 'get_trade_log') {
                         // P-5's rendering half on the pipeline path: the stats
                         // receipt becomes a card snapshot on the canonical row.

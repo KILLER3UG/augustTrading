@@ -51,10 +51,10 @@ export const RiskChangeCard: React.FC<RiskChangeCardProps> = ({
 
     if (applied) {
         return (
-            <div className="mt-1 rounded-control border border-emerald-500/25 bg-emerald-500/[0.05] p-2.5"
+            <div className="mt-1 rounded-control border border-hairline bg-zinc-900/60 p-2.5"
                 data-testid="risk-change-applied">
                 <div className="flex items-center gap-2">
-                    <span className="rounded-control bg-emerald-500/15 px-1.5 py-0.5 text-ui-xs font-bold text-emerald-300">
+                    <span className="rounded-control bg-white/[0.06] px-1.5 py-0.5 text-ui-xs font-bold text-zinc-200">
                         Risk change applied
                     </span>
                     <span className="font-mono text-ui-xs uppercase tracking-wider text-zinc-500">
@@ -62,7 +62,7 @@ export const RiskChangeCard: React.FC<RiskChangeCardProps> = ({
                     </span>
                 </div>
                 <p className="mt-2 font-mono text-ui-dense tabular-nums text-zinc-300">
-                    {fmtValue(proposal.currentValue)} → <span className="font-semibold text-emerald-300">{fmtValue(proposal.proposedValue)}</span>
+                    {fmtValue(proposal.currentValue)} → <span className="font-semibold text-zinc-200">{fmtValue(proposal.proposedValue)}</span>
                 </p>
                 {onRevert && revert && (
                     <div className="mt-2 flex items-center gap-2">
@@ -79,13 +79,13 @@ export const RiskChangeCard: React.FC<RiskChangeCardProps> = ({
     }
 
     return (
-        <div className={`mt-1 rounded-control border p-2.5 ${tighten ? 'border-emerald-500/30 bg-emerald-500/[0.04]' : 'border-amber-500/30 bg-amber-500/[0.04]'}`}
+        <div className="mt-1 rounded-control border border-hairline bg-zinc-900/60 p-2.5"
             data-testid="risk-change-card">
             <div className="flex items-center gap-2">
-                <span className={`rounded-control px-1.5 py-0.5 text-ui-xs font-bold ${tighten ? 'bg-emerald-500/15 text-emerald-400' : 'bg-amber-500/15 text-amber-400'}`}>
+                <span className="rounded-control bg-white/[0.06] px-1.5 py-0.5 text-ui-xs font-bold text-zinc-200">
                     Risk change
                 </span>
-                <span className={`rounded-control px-1.5 py-0.5 font-mono text-ui-2xs uppercase tracking-wider ${tighten ? 'text-emerald-400/80' : 'text-amber-400/80'}`}>
+                <span className="rounded-control px-1.5 py-0.5 font-mono text-ui-2xs uppercase tracking-wider text-zinc-300">
                     {tighten ? 'tightens' : 'loosens'}
                 </span>
                 <span className="ml-auto font-mono text-ui-xs uppercase tracking-wider text-zinc-500">
@@ -102,26 +102,26 @@ export const RiskChangeCard: React.FC<RiskChangeCardProps> = ({
                 </div>
                 <div>
                     <div className="font-mono text-ui-xs uppercase text-zinc-500">Proposed</div>
-                    <div className={`font-semibold ${tighten ? 'text-emerald-300' : 'text-amber-300'}`}>{fmtValue(proposal.proposedValue)}</div>
+                    <div className="font-semibold text-zinc-200">{fmtValue(proposal.proposedValue)}</div>
                 </div>
             </div>
 
             <div className="mt-2 flex items-center gap-2">
                 {tighten || loosenArmed ? (
                     <button type="button" onClick={onConfirm}
-                        className={`rounded-control px-2 py-1 text-ui-xs font-semibold ${tighten ? 'bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30' : 'bg-amber-500/20 text-amber-300 hover:bg-amber-500/30'}`}
+                        className="rounded-control bg-zinc-100 px-2 py-1 text-ui-xs font-semibold text-zinc-950 transition-colors hover:bg-white"
                         data-testid="risk-change-confirm">
                         {tighten ? 'Confirm change' : 'Confirm: apply the looser limit'}
                     </button>
                 ) : (
                     <button type="button" onClick={() => setLoosenArmed(true)}
-                        className="rounded-control border border-amber-500/40 px-2 py-1 text-ui-xs font-semibold text-amber-300 hover:bg-amber-500/10"
+                        className="rounded-control border border-line bg-zinc-800/80 px-2 py-1 text-ui-xs font-semibold text-zinc-200 transition-colors hover:bg-zinc-700"
                         data-testid="risk-change-arm">
                         Loosens risk — confirm?
                     </button>
                 )}
                 <button type="button" onClick={onDismiss}
-                    className="rounded-control border border-hairline px-2 py-1 text-ui-xs text-zinc-400 hover:text-zinc-200"
+                    className="rounded-control border border-line bg-zinc-800/80 px-2 py-1 text-ui-xs text-zinc-200 transition-colors hover:bg-zinc-700"
                     data-testid="risk-change-dismiss">
                     Dismiss
                 </button>

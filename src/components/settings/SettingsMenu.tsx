@@ -12,7 +12,7 @@ import { EmptyState } from '../ui/EmptyState';
 import {AISettingsIcon, GraduationCap, HistoryIcon, LayersIcon, SettingsIcon, CodeIcon, SearchIcon, CloseIcon, ChevronLeftIcon, User, FileText, Brain, BookOpen, Database, Search, ChevronRight, ArrowLeft, ArrowRight, PanelLeft, Info, X} from '../shared/Icons';
 import { getIdleMotionEnabled, subscribeIdleMotion } from '../../services/desk/idleMotion';
 import { loadForgedTools } from '../../services/tools/toolForge';
-import { getHarnessSettings } from '../../utils/harnessSettings';
+import { getHarnessSettings, subscribeHarnessSettings } from '../../utils/harnessSettings';
 import { isProviderReady } from '../../utils/providerUtils';
 import type { LearnTab } from '../learn/LearnView';
 import type { InstructionTab } from './CustomInstructionsEditor';
@@ -84,6 +84,10 @@ interface SettingsMenuProps {
     journalTab?: JournalUIState['tab'];
     journalOpenNonce?: number;
     onDeleteTrades?: (ids: string[]) => void;
+    /** Undo bridge for the journal's 60s bulk-void banner. The Journal section
+     *  is rendered by the shell (renderSection); App hands the same restore
+     *  handler here so the settings route stays in sync with the surface. */
+    onRestoreTrades?: (trades: LoggedTrade[]) => void;
     onClearAllTrades?: () => void;
     modelIdToName?: Record<string, string>;
     onUpdateInsights?: (ids: string[]) => void;
@@ -315,6 +319,9 @@ const SettingsMenu: React.FC<SettingsMenuProps> = (props) => {
     const activeTab = props.section ?? internalActiveTab;
     const [isAdvancedOpen, setIsAdvancedOpen] = useState(false);
     const [deskToolsEnabled, setDeskToolsEnabled] = useState(() => getHarnessSettings().deskToolsEnabled);
+    // A confirmed AiSettingCard writes through saveHarnessSettings — subscribe
+    // so the read-only Analysis status pill reflects it without a reopen.
+    useEffect(() => subscribeHarnessSettings(next => setDeskToolsEnabled(next.deskToolsEnabled)), []);
     // Whether the infinite indicators stay still. Default is motion ON.
     // The toggle is per-user, persisted via services/desk/idleMotion.
     const [idleMotionEnabled, setIdleMotionState] = useState(() => getIdleMotionEnabled());
