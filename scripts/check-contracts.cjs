@@ -6524,6 +6524,85 @@ const checkAgentHandExecutor = async () => {
         'stage 20: bots answer their persona; the bundle is a desk-path carrier');
 })();
 
+// ─── O-149: the settlement diary is retrievable by the next analysis turn ──
+// The OFFLOAD half (appendDiaryEntry on every settlement) was written for a
+// reader that did not exist: `trader-diary` sat in NOTE_SEARCH_SKIP_FOLDERS,
+// so neither `recall` nor the LOAD slice could ever surface it. The fix has
+// two halves — the folder is searchable again (one 240-char excerpt per hit,
+// as every other note) and the LOAD surface injects a bounded per-coin
+// RECENCY window (`readDiaryEntries` → `diaryDigestBlock`). This block runs
+// the real loop: append one WIN with a lesson, then read the slice.
+const checkDiaryRetrieval = async () => {
+    const store = new Map();
+    global.localStorage = {
+        getItem: k => (store.has(k) ? store.get(k) : null),
+        setItem: (k, v) => store.set(k, String(v)),
+        removeItem: k => store.delete(k),
+        clear: () => store.clear(),
+    };
+    localStorage.setItem('last_active_user', 'diary-contract-user');
+    global.Event = class Event { constructor(type) { this.type = type; } };
+    global.CustomEvent = class CustomEvent extends global.Event {
+        constructor(type, opts) { super(type); this.detail = opts && opts.detail; }
+    };
+    global.window = global;
+    global.window.localStorage = global.localStorage;
+    global.window.dispatchEvent = () => true;
+    global.window.addEventListener = () => {};
+    global.window.removeEventListener = () => {};
+    // The desktop-store block BEFORE this one leaves its electronAPI bridge
+    // installed. Delete it: this block wants the browser-storage path the
+    // notebook persist actually takes on the web, against the shim above.
+    delete global.window.electronAPI;
+
+    // ONE bundle: retrieval and the notebook must share a cache, or the pin
+    // measures two stores instead of the one the app has.
+    const bundle = loadModule('src/services/learning/MemoryRetrievalService.ts', {
+        mf: 'src/services/learning/MemoryFilesService.ts',
+    });
+    const mf = bundle.mf;
+    const USER = 'diary-contract-user';
+    await mf.initMemoryFiles(USER);
+
+    const nowIso = new Date().toISOString();
+    const trade = {
+        id: 'diary-c1', outcome: 'WIN', timestamp: nowIso, pnlPercent: 2.4,
+        // Plain prose: extractLessonFromPostMortem skips heading/label lines,
+        // so the lesson must be a plain sentence to survive the write.
+        postMortem: 'I entered before the shelf reclaim confirmed and got swept by the retest.\nWait for the reclaim close before entering a shelf break.',
+        analysis: { coinName: 'BTCUSDT', direction: 'Long' },
+    };
+    await mf.appendDiaryEntry(trade, USER);
+
+    const ctx = bundle.getMemoryFilesContext({ coin: 'BTC', direction: 'Long', family: undefined, pattern: undefined });
+    ok('diary: the OFFLOAD write is retrievable by the next LOAD on the same symbol',
+        ctx.includes('[trader-diary/BTC]') && ctx.includes('got swept by the retest'),
+        ctx.slice(-400));
+
+    const notes = mf.searchNotebookNotes('BTC reclaim');
+    ok('diary: recall can search the folder again (one bounded excerpt per hit)',
+        notes.some(n => n.path.startsWith('trader-diary/')) && notes.every(n => n.excerpt.length <= 240),
+        JSON.stringify(notes));
+
+    const other = bundle.getMemoryFilesContext({ coin: 'ETH', direction: 'Neutral', family: undefined, pattern: undefined });
+    ok('diary: a coin with no diary injects no diary block',
+        !other.includes('trader-diary/'), other.slice(-200));
+
+    // The recency window: six entries in, only the LAST four may surface.
+    for (let i = 2; i <= 6; i += 1) {
+        await mf.appendDiaryEntry({ ...trade, id: `diary-c${i}`, timestamp: nowIso }, USER);
+    }
+    const windowed = bundle.getMemoryFilesContext({ coin: 'BTC', direction: 'Long', family: undefined, pattern: undefined });
+    ok('diary: the per-coin window keeps the newest entries, not the whole file',
+        windowed.includes('[trader-diary/BTC]')
+        && windowed.includes('diary-c6')
+        && !windowed.includes('diary-c1')
+        && !windowed.includes('diary-c2'),
+        windowed.slice(-600));
+
+    localStorage.removeItem('last_active_user');
+};
+
 const finishReport = () => {
     console.log(`contracts: ${passed} passed, ${failures.length} failed`);
     for (const f of failures) console.log(`  FAIL ${f}`);
@@ -6547,6 +6626,7 @@ checkSkillWrites()
     .then(checkInsightWriteDurability)
     .then(checkUntrustedGateCoversAllWriters)
     .then(checkDesktopProfileStore)
+    .then(checkDiaryRetrieval)
     .then(checkAgentHandExecutor)
     .catch(e => { failures.push(`async runtime checks threw: ${e instanceof Error ? e.stack : String(e)}`); })
     .then(finishReport);

@@ -1128,6 +1128,41 @@ export const appendDiaryEntryUnlocked = async (trade: LoggedTrade, username: str
 export const appendDiaryEntry = (trade: LoggedTrade, username: string): Promise<void> =>
     withNotebookWriteLock(() => appendDiaryEntryUnlocked(trade, username));
 
+/** How many recent entries the retrieval digest may show for one coin. The
+ *  file itself keeps `MAX_DIARY_ENTRIES`; retrieval takes a RECENCY window
+ *  over that so a long-lived coin's diary never grows the prompt. */
+export const DIARY_DIGEST_MAX_ENTRIES = 4;
+
+/**
+ * The LAST `limit` entries of `trader-diary/<coin>.md`, oldest first, as the
+ * raw entry bodies (the `## ` heading stripped — the dated outcome line is the
+ * body's first row). Synchronous: the retrieval layer is sync and reads the
+ * same cache every writer maintains. Empty when the coin has no diary.
+ *
+ * The writer names the file after the journal's canonical pair
+ * (`appendDiaryEntryUnlocked` — "BTCUSDT.md", original case, no case change),
+ * while a retrieval query mines a BARE ticker ("BTC"). Exact stripped-name
+ * match first, then the canonical pair the query coin prefixes, so "BTC"
+ * finds "BTCUSDT.md" without "BTC.md" existing.
+ */
+export const readDiaryEntries = (coin: string, limit: number = DIARY_DIGEST_MAX_ENTRIES): string[] => {
+    const safe = (coin || '').replace(/[^A-Za-z0-9_-]/g, '');
+    if (!safe) return [];
+    const folder = memoryCache.folders.find(f => f.name === 'trader-diary');
+    if (!folder) return [];
+    const inFolder = memoryCache.files.filter(f => f.folderId === folder.id);
+    const strip = (name: string): string => name.replace(/\.md$/i, '').replace(/[^A-Za-z0-9_-]/g, '');
+    const file = inFolder.find(f => strip(f.name) === safe)
+        ?? inFolder.find(f => strip(f.name) === `${safe}USDT`)
+        ?? inFolder.find(f => strip(f.name).startsWith(safe));
+    if (!file?.content) return [];
+    return file.content.split('\n## ')
+        .slice(1)
+        .map(e => e.trim())
+        .filter(Boolean)
+        .slice(-limit);
+};
+
 /**
  * Regenerate profile/memory.md from the user's actual profile data — who the
  * trader is, what they trade, their settings. Fully harness-managed.
@@ -1659,8 +1694,13 @@ export interface NotebookNoteHit {
 }
 
 /** Folders recall must NOT dump: skills ride the skill-meta retrieval tier,
- *  diary/distilled/lens/bots are harness-owned writes, archive is retired. */
-const NOTE_SEARCH_SKIP_FOLDERS = new Set(['skills', 'trader-diary', 'distilled', 'lens', 'bots', 'archive']);
+ *  distilled/lens/bots are harness-owned writes with no seat-facing digest,
+ *  archive is retired. The diary IS searchable since O-149: an OFFLOAD entry
+ *  the seat can never see makes the journal→lesson claim a human-only path.
+ *  The exposure stays bounded — `searchNotebookNotes` excerpts ONE 240-char
+ *  line per hit — and the injection path keeps its own per-coin recency
+ *  window (`MemoryRetrievalService › diaryDigestBlock`). */
+const NOTE_SEARCH_SKIP_FOLDERS = new Set(['skills', 'distilled', 'lens', 'bots', 'archive']);
 
 /**
  * Keyword search over the model's/user's NOTE files — the folders
