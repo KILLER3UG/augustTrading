@@ -2187,16 +2187,23 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                         /* The drawing rail owns the plot's left 40px (w-10, z-20,
                            rendered unconditionally), so the legend starts right of
                            it — left-2 sat underneath the rail's icon column and
-                           the first characters of every row were unreadable. */
-                        className="pointer-events-none absolute left-12 top-1.5 z-10 max-w-[calc(100%-56px)] rounded-control bg-zinc-950/80 px-2 py-1 font-mono text-ui-dense text-zinc-500"
+                           the first characters of every row were unreadable. When
+                           the verdict-overlay chip is up, its ~190px at the right
+                           edge are reserved too: a wide OHLCV line that ran under
+                           the chip collided with it (the UI audit's bug 6), so
+                           the chip's presence narrows the legend instead. */
+                        className={`pointer-events-none absolute left-12 top-1.5 z-10 overflow-hidden rounded-control bg-zinc-950/80 px-2 py-1 font-mono text-ui-dense text-zinc-500 ${levels.length > 0 ? 'max-w-[calc(100%-248px)]' : 'max-w-[calc(100%-56px)]'}`}
                     >
                         {/* ONE compact OHLCV line (owner 1.4.1): time, the four
                             prices and the volume. Everything else this legend
                             knows — change, range, per-study readouts — sits
                             behind the expand toggle, so a clean chart reads as
                             one quiet line and a study-heavy one can still be
-                            interrogated. */}
-                        <div className="flex items-center gap-x-2">
+                            interrogated. whitespace-nowrap keeps the tokens
+                            whole: a narrowed legend CLIPS at its edge (under
+                            the verdict chip's reserved room) rather than
+                            breaking "Nov 19," across two lines. */}
+                        <div className="flex items-center gap-x-2 whitespace-nowrap">
                             <span>{phtAxisTick(legendBar.time, 'full')}</span>
                             {(['open', 'high', 'low', 'close'] as const).map(k => (
                                 <span key={k}>{k[0].toUpperCase()} <span className="text-zinc-300">{fmtPriceForChart(legendBar[k])}</span></span>
@@ -2274,7 +2281,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                 {ohlcvRow && overPlot && (
                     <div
                         data-testid="ohlcv-row"
-                        className="pointer-events-none absolute left-12 z-10 flex max-w-[calc(100%-56px)] items-center gap-3 overflow-hidden rounded-control bg-zinc-950/80 px-2 py-0.5 text-ui-dense text-zinc-500"
+                        className={`pointer-events-none absolute left-12 z-10 flex items-center gap-3 overflow-hidden rounded-control bg-zinc-950/80 px-2 py-0.5 text-ui-dense text-zinc-500 ${levels.length > 0 ? 'max-w-[calc(100%-248px)]' : 'max-w-[calc(100%-56px)]'}`}
                         style={{ top: legendBar ? '5.5rem' : '0.375rem' }}
                     >
                         <span className="font-mono tabular-nums">H <span className="text-zinc-300">{ohlcvRow.high24h ? fmtPriceForChart(ohlcvRow.high24h) : '—'}</span></span>

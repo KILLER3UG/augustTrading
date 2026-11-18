@@ -358,10 +358,13 @@ const ChatTranscriptList: React.FC<ChatTranscriptListProps> = ({
         // raw text — and an OPEN (still-streaming) fence is hidden
         // from the bubble too, so the protocol never flashes.
         const aiLevels = e.role === 'ai' && !e.notice ? parseKeyLevels(e.text) : null;
-        // The displayed text never carries the app's internal context marks —
-        // a transport that echoes its input (the probe mock) would otherwise
-        // paint `[LIVE CHART CONTEXT …]` into the trader's bubble.
-        const shownText = aiLevels?.hadBlock ? aiLevels.clean : stripInternalContextMarks(e.text);
+        // The displayed text NEVER carries the app's internal context marks —
+        // on BOTH branches: the key-levels fence's clean text used to skip the
+        // strip, so a transport that echoes its input (the probe mock) painted
+        // `[LIVE CHART CONTEXT …]` into a bubble that also carried a fence.
+        const shownText = aiLevels?.hadBlock
+            ? stripInternalContextMarks(aiLevels.clean)
+            : stripInternalContextMarks(e.text);
         // A row projected from the conversation keeps the Message's own id
         // (`liveEntryFromMessage` sets `id: m.id`, which is what lets the
         // merge treat one turn as one row), so the entry id IS the analysis

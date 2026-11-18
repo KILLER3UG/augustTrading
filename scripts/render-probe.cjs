@@ -955,6 +955,25 @@ const check = (name, ok, detail) => {
     console.log(`${ok ? '  ok  ' : ' FAIL '} ${name}${detail ? ` (${detail})` : ''}`);
 };
 
+/**
+ * Evidence-shot guard (UI audit bugs 2/12): a chat/desk screenshot with a
+ * settings window or an aria-modal dialog over the surface PROVES nothing —
+ * the modal covering the view IS the defect the shot exists to disprove.
+ * Refuse to capture while one is up, so a stale capture cannot pass as
+ * evidence.
+ */
+const ensureNoOverlay = async (page, label) => {
+    const s = await page.evaluate(() => ({
+        settings: !!document.querySelector('[data-testid="settings-window"]'),
+        modal: [...document.querySelectorAll('[role="dialog"][aria-modal="true"]')]
+            .some((el) => el.getClientRects().length > 0),
+    }));
+    if (s.settings || s.modal) {
+        throw new Error(`${label}: an overlay is open over the surface`
+            + ` (settings=${s.settings} modal=${s.modal}) — refusing to capture a blocked screenshot`);
+    }
+};
+
 async function main() {
     // An occupied port is not a busy-port nuisance here, it is a gate that
     // measures the WRONG TREE: our own vite/mock die on --strictPort (or on
@@ -2366,21 +2385,24 @@ async function main() {
             check('the content bar brings the rail back at its stored width',
                 railRevived && railBack === railBefore, `${railBack}px (want ${railBefore})`);
 
-            // The column is ON the workspace now: the list, the New chat row,
-            // the in-column hide icon and the title-row toggle all coexist.
+            // The column is ON the workspace now: the list, the New chat row
+            // and the ONE collapse control (the header toggle beside the
+            // [Desk | Chat] pill) all coexist. The second collapse icon that
+            // used to sit beside RECENT is GONE — the UI audit's bug 8 — and
+            // check:contracts pins its absence, so this check refuses it too.
             const recent = await page.evaluate(() => {
                 const rail = document.querySelector('[data-testid="shell-rail"]');
                 return {
                     chatsIcon: !!document.querySelector('[data-testid="shell-column-toggle"]'),
                     listMounted: !!document.querySelector('[data-testid="shell-conversations"]'),
                     newChat: !!document.querySelector('[data-testid="rail-new-chat"]'),
-                    inColumnHide: !!rail?.querySelector('[data-testid="conversation-hide"]'),
+                    duplicateHide: !!rail?.querySelector('[data-testid="conversation-hide"]'),
                     headerToggle: !!document.querySelector('[data-testid="shell-rail-collapse"]'),
                 };
             });
-            check('the workspace rail mounts the conversation column and keeps the title-row toggle',
+            check('the workspace rail mounts the conversation column with ONE collapse control',
                 !recent.chatsIcon && recent.listMounted && recent.newChat
-                    && recent.inColumnHide && recent.headerToggle,
+                    && !recent.duplicateHide && recent.headerToggle,
                 JSON.stringify(recent));
 
             // The record moved HERE. The same ConversationRow contract the old
@@ -2449,8 +2471,8 @@ async function main() {
                 rail: !!document.querySelector('[data-testid="shell-rail"]'),
                 expand: !!document.querySelector('[data-testid="nav-rail-toggle-header"]'),
             }));
-            const hideInSidebar = await page.evaluate(() => {
-                const b = document.querySelector('[data-testid="conversation-hide"]');
+            const hideViaHeader = await page.evaluate(() => {
+                const b = document.querySelector('[data-testid="shell-rail-collapse"]');
                 if (!b) return false;
                 b.click();
                 return true;
@@ -2458,8 +2480,8 @@ async function main() {
             await page.waitForFunction(() => !document.querySelector('[data-testid="shell-rail"]'),
                 null, { timeout: 5000 }).catch(() => null);
             const collapsed = await away();
-            check('the sidebar hide icon puts the rail away and leaves a way back',
-                hideInSidebar && !collapsed.rail && collapsed.expand,
+            check('the one collapse control puts the rail away and leaves a way back',
+                hideViaHeader && !collapsed.rail && collapsed.expand,
                 JSON.stringify(collapsed));
             await page.evaluate(() => document.querySelector('[data-testid="nav-rail-toggle-header"]')?.click());
             await page.waitForSelector('[data-testid="shell-rail"]', { timeout: 5000 }).catch(() => null);
@@ -2552,7 +2574,10 @@ async function main() {
                 check(`${surface.label} panel renders content`, text.length > 40, `${text.length} chars`);
             } else {
                 const body = await surfaceText();
-                check(`${surface.label} surface renders content`, body.length > 40, `${body.length} chars`);
+                // 20: an emptiness guard, not a content floor — chat layout hides the
+                // dock's bias strip by ruling, so an EMPTY thread's <main> reads
+                // ~39 chars. The switch proof is the byte-diff check beside this.
+                check(`${surface.label} surface renders content`, body.length > 20, `${body.length} chars`);
                 // A click that leaves <main> byte-identical did not switch
                 // surfaces however green the content check above looks — this
                 // is what caught the Approvals entry re-reporting the Agents
@@ -3152,10 +3177,14 @@ async function main() {
             // rather than a downloaded file, because the panel's file round trip is
             // a Blob + dialog the probe cannot observe; everything under test is the
             // same code the panel calls.
-            const restoreProbe = await page.evaluate(async (marker) => {
+            const restoreProbe = await page.evaluate(async () => {
                 const user = localStorage.getItem('last_active_user') || 'default';
                 const key = `trade_chat_sessions_v1_${user}`;
-                const dataUrl = 'data:image/png;base64,' + 'A'.repeat(20000) + marker;
+                // A REAL decodable 1x1 PNG: the fixture rides the live session,
+                // so a garbage payload used to render the transcript's
+                // broken-image glyph in every chat screenshot taken after this
+                // seeding (the UI audit's "attached" defect).
+                const dataUrl = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
                 const live = [{
                     id: 'probe-session', title: 'Probe chat', createdAt: 1, updatedAt: 2,
                     entries: [
@@ -3173,7 +3202,7 @@ async function main() {
                     key,
                     exportedHasImage: exported.includes('data:image/png'),
                     exportedHasStub: exported.includes('imageOmitted'),
-                    liveStillHasImage: after.includes(marker),
+                    liveStillHasImage: after.includes(dataUrl),
                     liveTextKept: after.includes('probe text before'),
                     failed: report.failedKeys.length,
                     // The key under test, not the whole run: a live app carries
@@ -4584,6 +4613,10 @@ async function main() {
             && chatMode.priceHeaderVisible === false
             && chatMode.scrollW <= chatMode.vw + 1,
             `delta=${chatCenterDelta} ${JSON.stringify(chatMode)}`);
+        await ensureNoOverlay(page, 'chat layout 1440x900');
+        const chatBiasHidden = await page.evaluate(() => !document.querySelector('[data-testid="bias-row"]'));
+        check('Chat layout hides the desk bias strip (chart context has no chart to read)',
+            chatBiasHidden, `bias-row present=${!chatBiasHidden}`);
         await page.screenshot({ path: '.probe-artifacts/layout-chat.png' });
         await page.screenshot({ path: path.join(evidenceDir, 'stop2-chat-1440x900.png') });
 
@@ -4597,6 +4630,7 @@ async function main() {
             && chat1280.reading && chat1280.reading.width > 0 && chat1280.reading.width <= 760
             && delta1280 < 24 && chat1280.scrollW <= chat1280.vw + 1,
             `delta1280=${delta1280} ${JSON.stringify(chat1280)}`);
+        await ensureNoOverlay(page, 'chat layout 1280x800');
         await page.screenshot({ path: path.join(evidenceDir, 'stop2-chat-1280x800.png') });
 
         await page.setViewportSize({ width: 960, height: 720 });
@@ -4609,6 +4643,7 @@ async function main() {
             && chat960.reading && chat960.reading.width > 0 && chat960.reading.width <= 760
             && delta960 < 24 && chat960.scrollW <= chat960.vw + 1,
             `delta960=${delta960} ${JSON.stringify(chat960)}`);
+        await ensureNoOverlay(page, 'chat layout 960x720');
         await page.screenshot({ path: path.join(evidenceDir, 'stop2-chat-960x720.png') });
 
         // At 960x720 (< lg), flip Desk <-> Chat and Chart <-> AI <-> Book mid-conversation:
@@ -4646,6 +4681,7 @@ async function main() {
             const items = [...document.querySelectorAll('[data-testid="trade-dock"] [data-index]')];
             return items.length > 0 && items.some(el => window.getComputedStyle(el).visibility === 'visible' && el.getBoundingClientRect().height > 0);
         }, { timeout: 5000 });
+        await ensureNoOverlay(page, 'desk AI pane 960x720');
         await page.screenshot({ path: path.join(evidenceDir, 'stop2-desk-ai-960x720.png') });
         const crashDump = await page.evaluate(() => localStorage.getItem('lastCrashError') || '');
         check('<lg mid-conversation Desk/Chat and Chart/AI/Book flips switch panes cleanly with zero pageerrors',
@@ -4668,6 +4704,7 @@ async function main() {
             target?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
         });
         await sleep(500);
+        await ensureNoOverlay(page, 'desk layout 1280x800');
         await page.screenshot({ path: path.join(evidenceDir, 'stop2-desk-1280x800.png') });
 
         await page.setViewportSize({ width: 1440, height: 900 });
@@ -4684,6 +4721,7 @@ async function main() {
         check('Desk layout restores the chart beside the dock',
             deskMode.pillDesk === 'true' && deskMode.chartVisible === true && deskMode.chartColumnWidth > 0,
             JSON.stringify(deskMode));
+        await ensureNoOverlay(page, 'desk layout 1440x900');
         await page.screenshot({ path: '.probe-artifacts/layout-desk.png' });
         await page.screenshot({ path: path.join(evidenceDir, 'stop2-desk-1440x900.png') });
 
@@ -4708,6 +4746,24 @@ async function main() {
         check('Settings → Analysis renders read-only status pills and Change-in-chat triggers for Hybrid Intelligence and Desk Tools',
             settingsReadOnly.hybridStatus && settingsReadOnly.deskStatus && settingsReadOnly.hybridAsk && settingsReadOnly.deskAsk,
             JSON.stringify(settingsReadOnly));
+        // UI audit bug 1: the modal's prompt bar is docked INSIDE the settings
+        // window — a bar floating over the app behind the backdrop is the
+        // defect. Measured as containment of boxes, not class-name proximity.
+        const tellAugustBox = await page.evaluate(() => {
+            const bar = document.querySelector('[data-testid="tell-august-bar"]');
+            const win = document.querySelector('[data-testid="settings-window"]');
+            if (!bar || !win) return { bar: !!bar, inside: false };
+            const b = bar.getBoundingClientRect();
+            const w = win.getBoundingClientRect();
+            return {
+                bar: true,
+                inside: b.top >= w.top - 1 && b.bottom <= w.bottom + 1 && b.left >= w.left - 1 && b.right <= w.right + 1,
+                atFoot: Math.abs(b.bottom - w.bottom) < 4,
+            };
+        });
+        check('the Tell August bar docks at the foot of the settings window',
+            tellAugustBox.bar && tellAugustBox.inside && tellAugustBox.atFoot,
+            JSON.stringify(tellAugustBox));
         await page.screenshot({ path: path.join(evidenceDir, 'stop2-settings-analysis.png') });
 
         // Journal 2-step bulk delete gate card (no raw Clear all button)

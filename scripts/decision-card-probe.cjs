@@ -877,7 +877,17 @@ async function main() {
         // The applied card drops the reason text, so the rationale-scoped
         // locator cannot see it — the newest applied card's revert is the one
         // this turn produced.
-        const revertVisible = (await page.locator('[data-testid="risk-change-revert"]').count()) > 0;
+        // The applied card sits above the virtualized window after the note
+        // turn pushed rows down — the same sweep the strategy walk does before
+        // counting ITS revert button. Without it the count reads 0 and the
+        // walk fails on a card that is mounted, just out of the window.
+        let revertVisible = 0;
+        for (let i = 0; i < 10; i++) {
+            revertVisible = await page.locator('[data-testid="risk-change-revert"]').count();
+            if (revertVisible) break;
+            await scrollTranscriptUp(page, 900);
+            await sleep(300);
+        }
         if (revertVisible) await page.locator('[data-testid="risk-change-revert"]').last().click();
         let riskReverted = false;
         for (let i = 0; i < 12 && !riskReverted; i++) {
