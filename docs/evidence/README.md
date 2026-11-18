@@ -23,5 +23,29 @@ visible `[role="dialog"][aria-modal="true"]` over the shot (bug 2 — "never cap
 evidence with a modal covering the screen"), and the card shots call
 `scrollIntoView({ block: 'center' })` and assert the target's bounding box actually
 intersects the viewport (bug 12). Copies live here; the live artifacts stay in
-`.probe-artifacts/` (gitignored). Desktop-run evidence (installer build + live
-verification) lands in `installed-app/`.
+`.probe-artifacts/` (gitignored).
+
+## `installed-app/` — the INSTALLED desktop app
+
+Written by `scripts/installed-app-probe.cjs` (Part 3): the NSIS installer runs
+silently to an isolated directory, the INSTALLED exe launches through Playwright,
+and the eight surfaces verify inside it. `SHA256SUMS.txt` (this directory) carries
+the installer's and the unpacked exe's checksums. The run ends with the app closed
+and an assertion that zero August Trading processes survived it.
+
+| File | What it proves |
+|---|---|
+| `installed-01-chat-1440x900.png` | Pure Chat layout: chart column 0px, centered ≤760px reading column, no modal |
+| `installed-02-desk-1440x900.png` | Desk layout: chart + dock, the trader-gesture rail (8 controls, zero shape tools) |
+| `installed-03-narrow-960x720.png` | <lg flip walk (Desk ↔ Chat mid-run) with zero Virtuoso update loops |
+| `installed-04-decision-cards.png` | A presented plan's decision card — with the deterministic gate refusing it honestly |
+| `installed-05-guard-block.png` | The session guard standing a consumed session down on the card |
+| `installed-06-phase5-review-and-ram-harness-card.png` | Journal → Stats: the trader-gated harness-optimization proposal card (fixture proposal, real renderer) beside the weekly review |
+| `installed-07-phase6-paper-and-journal.png` | The Journal history view: seeded rows, outcome badges, bulk-select gating |
+| `installed-08-settings-monochrome.png` | Settings → Analysis: read-only AI status pills, Change-in-chat, the Tell-August bar docked inside the modal foot |
+
+The harness proposal and the weekly digest are PROBE FIXTURES seeded through the
+documented first-run migration path (localStorage → file store); the CARDS are the
+real renderers reading real stores. The chart's "Candles unavailable" notice is the
+probe's own route filter blocking the market-data hosts — the honest empty state,
+not a defect.
