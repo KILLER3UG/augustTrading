@@ -394,6 +394,9 @@ const RAW_LOCAL_STORAGE_PREFIXES: readonly string[] = [
     'tracked_positions_v1',
     'tracked_diagnoses_v1',
     'tracked_diagnosis_queue_v1',
+    'session_plan_v1',
+    'candidate_lessons_v1',
+    'active_trading_rules_v1',
 ];
 
 /** The cap for a SMALL raw-localStorage store. The notebook's own hard ceiling is
@@ -855,6 +858,9 @@ const RESTORABLE_PREFERENCE_KEY_PREFIXES: readonly string[] = [
     'tracked_positions_v1_',
     'tracked_diagnoses_v1_',
     'tracked_diagnosis_queue_v1_',
+    'session_plan_v1_',
+    'candidate_lessons_v1_',
+    'active_trading_rules_v1_',
     // Per-user prompt and strategy docs (both live), plus the automation
     // namespaces: that feature was deleted on 2026-10-24, but a backup taken
     // before it still names those keys, and a restore must ignore them rather

@@ -209,6 +209,8 @@ export interface JournalSettlement {
     netR?: number;
     /** RAW price percent; the journal applies leverage once. */
     excursions?: { maePercent: number; mfePercent: number };
+    /** The structured knowable/post-resolution split measured by the tracker. */
+    resolutionRecord?: import('./trade').TradeResolutionRecord;
 }
 
 /** The six fields the post-mortem prompt asks for, plus the two the existing

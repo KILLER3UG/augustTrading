@@ -112,6 +112,9 @@ export const CHAT_SURFACE_TOOLS = [
     // A risk-limit / guard-preset change is proposed, never applied: the card
     // is the only writer, through the settings path the trader owns.
     'propose_risk_change',
+    // The session plan and the promoted rule are proposals too: the cards are
+    // the only writers, and both gates run in the service before a card exists.
+    'propose_session_plan', 'propose_rule_change',
     // An AI-behavior setting is proposed, never applied: the confirmation
     // card is the only writer, through the settings path the trader owns.
     'propose_ai_setting_change',
@@ -501,8 +504,9 @@ export const runChatSurfaceTurn = async (req: ChatSurfaceTurnRequest): Promise<T
             // trader confirms, and the confirm goes through App's journal
             // handlers, not through anything here.
             if (call.name === 'correct_trade_outcome' || call.name === 'update_trade' || call.name === 'close_trade' || call.name === 'propose_risk_change' || call.name === 'propose_strategy_activation'
+                || call.name === 'propose_session_plan' || call.name === 'propose_rule_change'
                 || call.name === 'propose_ai_setting_change' || (call.name === 'propose_self_change' && call.arguments?.kind === 'setting')
-                || call.name === 'get_setup_history_stats' || call.name === 'playbook_attribution' || call.name === 'get_trade_log') {
+                || call.name === 'get_setup_history_stats' || call.name === 'playbook_attribution' || call.name === 'get_trade_log' || call.name === 'risk_state') {
                 const { executeDeskTool } = await import('../analysis/DeskToolsService');
                 const result = await executeDeskTool(call, {
                     defaultSymbol: req.symbol ?? null,
@@ -525,15 +529,26 @@ export const runChatSurfaceTurn = async (req: ChatSurfaceTurnRequest): Promise<T
                         const target = typeof call.arguments?.target === 'string' ? call.arguments.target : '';
                         const proposal = pendingAiSettingChange(target as never);
                         if (proposal) req.patch(m => ({ ...m, aiSettingChange: proposal }));
-                    } else if (call.name === 'get_setup_history_stats' || call.name === 'playbook_attribution' || call.name === 'get_trade_log') {
+                    } else if (call.name === 'propose_session_plan') {
+                        const { pendingSessionPlan } = await import('./sessionPlan');
+                        const key = typeof call.arguments?.dateKey === 'string' ? call.arguments.dateKey : undefined;
+                        const proposal = pendingSessionPlan(key) ?? pendingSessionPlan();
+                        if (proposal) req.patch(m => ({ ...m, sessionPlan: proposal }));
+                    } else if (call.name === 'propose_rule_change') {
+                        const { pendingRuleProposal } = await import('../learning/candidateRuleLoop');
+                        // Key the lookup on the SAME pattern the tool just
+                        // proposed — an unkeyed read returned the oldest
+                        // pending rule and attached a stale card to the new row.
+                        const key = typeof call.arguments?.patternKey === 'string' ? call.arguments.patternKey : undefined;
+                        const proposal = pendingRuleProposal(key);
+                        if (proposal) req.patch(m => ({ ...m, ruleProposal: proposal }));
+                    } else if (call.name === 'get_setup_history_stats' || call.name === 'playbook_attribution'
+                        || call.name === 'get_trade_log' || call.name === 'risk_state') {
                         // P-5's rendering half on the pipeline path: the stats
                         // receipt becomes a card snapshot on the canonical row.
-                        const { executeDeskTool } = await import('../analysis/DeskToolsService');
-                        const result = await executeDeskTool(call, {
-                            defaultSymbol: req.symbol ?? null,
-                            allowedTools: CHAT_SURFACE_TOOLS,
-                            trades: req.trades,
-                        });
+                        // `result` was already executed at the top of THIS
+                        // branch — a second call used to mint two tool rows for
+                        // one model call and could return a different payload.
                         if (result.ok) {
                             const { statsCardFromReceipt } = await import('./statsCard');
                             const card = statsCardFromReceipt(call.name, result.content);

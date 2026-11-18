@@ -30,6 +30,39 @@ export interface BenchmarkAlpha {
  *  the ledger. Absent on legacy rows — a reader defaults it to `manual`. */
 export type TradeSource = 'manual' | 'imported' | 'signal';
 
+/**
+ * The measured resolution of a trade, captured at settlement and carried on
+ * the journal row. It separates what the trader could know at entry
+ * (`planAsLogged`, `regimeAtEntry`, `contextAtEntry`) from what only the tape
+ * revealed after the fact (MAE/MFE, time to resolve, a stop that was touched
+ * and then reversed). The post-trade review reads THIS record so a lesson can
+ * never silently promote hindsight into a forward rule — see
+ * `services/learning/candidateRuleLoop`. Every field is optional: a missing
+ * measurement is a gap, never a zero.
+ */
+export interface TradeResolutionRecord {
+  /** Whether the executed trade matched the published plan. */
+  planAsLogged?: boolean;
+  /** Worst adverse move while open, in leveraged percent. */
+  maePercent?: number;
+  /** Best favorable move while open, in leveraged percent. */
+  mfePercent?: number;
+  /** Adverse move expressed in R (maePercent / stop distance). */
+  maeR?: number;
+  /** Favorable move expressed in R (mfePercent / stop distance). */
+  mfeR?: number;
+  /** Wall-clock time from decision to resolution, ms. */
+  timeToResolutionMs?: number;
+  /** Human form of `timeToResolutionMs` (e.g. "3h 12m"). */
+  timeToResolution?: string;
+  /** Stop was touched but price reversed to the target before resolution. */
+  slHitThenReversedToTp?: boolean;
+  /** Regime the trader could see when the plan was made. */
+  regimeAtEntry?: string;
+  /** Compact, knowable-at-entry context snapshot. */
+  contextAtEntry?: string;
+}
+
 export interface LoggedTrade {
   id: string;
   /** Provenance of the row. Optional for legacy rows; every reader defaults
@@ -300,6 +333,12 @@ export interface LoggedTrade {
    *  BEFORE the verdict reveal, copied from the source message at log time.
    *  Feeds the journal's user-prior vs verdict vs outcome calibration row. */
   userPriorCall?: import('./message').UserPriorCall;
+  /**
+   * Structured measure of how this trade resolved, captured at settlement.
+   * Keeps knowable-at-entry facts apart from post-resolution excursions so
+   * the review loop cannot turn hindsight into a rule. Absent on legacy rows.
+   */
+  resolutionRecord?: TradeResolutionRecord;
 }
 
 export interface StrategySearchResult {

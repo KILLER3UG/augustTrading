@@ -420,7 +420,9 @@ export const useUserProfileLoader = (args: UseUserProfileLoaderArgs): UseUserPro
                 // fresh mark. One pass per profile load.
                 try {
                     const { hydrateCardsFromMessages } = await import('../services/trade/cardHydration');
-                    hydrateCardsFromMessages(convs.flatMap(c => c.messages), loadedTrades);
+                    hydrateCardsFromMessages(convs.flatMap(c => c.messages), loadedTrades, {
+                        hybridIntelligenceEnabled: (profile?.settings as { isHybridIntelligenceEnabled?: boolean } | undefined)?.isHybridIntelligenceEnabled,
+                    });
                 } catch { /* a failed hydration degrades to the pre-F10 behavior */ }
                 syncConfluenceFromTradeLog(loadedTrades);
 

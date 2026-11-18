@@ -408,8 +408,9 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
             && name !== 'present_trade' && name !== 'watch_price' && name !== 'wake_me' && name !== 'cancel_watch'
             && name !== 'correct_trade_outcome' && name !== 'update_trade' && name !== 'close_trade' && name !== 'propose_risk_change'
             && name !== 'propose_strategy_activation' && name !== 'propose_ai_setting_change'
+            && name !== 'propose_session_plan' && name !== 'propose_rule_change'
             && !(name === 'propose_self_change' && call.arguments?.kind === 'setting')
-            && name !== 'get_setup_history_stats' && name !== 'playbook_attribution' && name !== 'get_trade_log') return null;
+            && name !== 'get_setup_history_stats' && name !== 'playbook_attribution' && name !== 'get_trade_log' && name !== 'risk_state') return null;
         const args = call.arguments ?? {};
         const receipt = (ok: boolean, content: string): DeskToolResult => ({ toolCallId: call.id, name, ok, content });
         // The chart snapshot is shared by every drawing branch: its live mark
@@ -492,6 +493,7 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
         // write happens only when the trader confirms, through App's journal
         // and watch handlers.
         if (name === 'correct_trade_outcome' || name === 'update_trade' || name === 'close_trade' || name === 'propose_risk_change' || name === 'propose_strategy_activation' || name === 'propose_ai_setting_change'
+            || name === 'propose_session_plan' || name === 'propose_rule_change'
             || (name === 'propose_self_change' && call.arguments?.kind === 'setting')) {
             const { executeDeskTool } = await import('../analysis/DeskToolsService');
             const result = await executeDeskTool(call, {
@@ -533,6 +535,28 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
                             entries: s.entries.map(en => (en.id === turn.entryId ? { ...en, aiSettingChange: proposal } : en)),
                         }));
                     }
+                } else if (name === 'propose_session_plan') {
+                    const { pendingSessionPlan } = await import('./sessionPlan');
+                    const proposal = pendingSessionPlan();
+                    if (proposal) {
+                        chatStore.mutate(turn.sid, s => ({
+                            ...s,
+                            entries: s.entries.map(en => (en.id === turn.entryId ? { ...en, sessionPlan: proposal } : en)),
+                        }));
+                    }
+                } else if (name === 'propose_rule_change') {
+                    const { pendingRuleProposal } = await import('../learning/candidateRuleLoop');
+                    // Key on the proposed pattern, not the oldest pending map
+                    // slot — a second proposal for another pattern must attach
+                    // ITS OWN card to this turn's entry.
+                    const key = typeof args.patternKey === 'string' ? args.patternKey : undefined;
+                    const proposal = pendingRuleProposal(key);
+                    if (proposal) {
+                        chatStore.mutate(turn.sid, s => ({
+                            ...s,
+                            entries: s.entries.map(en => (en.id === turn.entryId ? { ...en, ruleProposal: proposal } : en)),
+                        }));
+                    }
                 } else if (name === 'propose_strategy_activation') {
                     const { pendingStrategyActivation } = await import('./strategyActivation');
                     const slug = typeof call.arguments?.slug === 'string' ? call.arguments.slug : '';
@@ -560,13 +584,13 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
         // present_trade: draw the plan, arm the harness level-watch, and surface a
         // "Log this trade" card on the streaming entry. The TRANSITION lives in
         // services/trade/presentTradeTool — the Agents surface presents the same plan
-        // P-5's rendering half: the three stats tools are READS whose output
-        // must reach the trader as a CARD, not as prose the model restates.
+        // P-5's rendering half: the stats tools are READS whose output must
+        // reach the trader as a CARD, not as prose the model restates.
         // Parse the receipt into a snapshot and attach it to THIS turn's
         // entry — the card holds the receipt's own fields, so it can never
         // disagree with the tool (a failed parse attaches nothing: prose from
         // a non-JSON receipt stays prose).
-        if (name === 'get_setup_history_stats' || name === 'playbook_attribution' || name === 'get_trade_log') {
+        if (name === 'get_setup_history_stats' || name === 'playbook_attribution' || name === 'get_trade_log' || name === 'risk_state') {
             const { executeDeskTool } = await import('../analysis/DeskToolsService');
             const result = await executeDeskTool(call, {
                 defaultSymbol: turn.symbol ?? null,
@@ -856,7 +880,7 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
         const postMortemBrief = await diagnosisBriefBlock(symbol);
         const cached = packetCache.get(symbol);
         if (cached && Date.now() - cached.atMs < PACKET_CACHE_MS) {
-            return buildTradeChatContext({ symbol, interval, contextWindowTokens: provider?.contextWindowTokens, packetMarkdown: cached.markdown, fetchedAtMs: cached.atMs, drawingsDescription, onScreenDescription: onScreen, plansDescription: plansBlock, postMortemBrief, liveMarkPrice, formingCandle });
+            return buildTradeChatContext({ symbol, interval, contextWindowTokens: provider?.contextWindowTokens, packetMarkdown: cached.markdown, fetchedAtMs: cached.atMs, drawingsDescription, onScreenDescription: onScreen, plansDescription: plansBlock, postMortemBrief, liveMarkPrice, formingCandle, currentTradeCount: trades.length });
         }
         try {
             const packet = await (await hybridService()).fetchHybridData(symbol);
@@ -864,9 +888,9 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
             const atMs = Date.now();
             setContextAt(atMs);
             packetCache.set(symbol, { markdown, atMs });
-            return buildTradeChatContext({ symbol, interval, contextWindowTokens: provider?.contextWindowTokens, packetMarkdown: markdown, fetchedAtMs: atMs, drawingsDescription, onScreenDescription: onScreen, plansDescription: plansBlock, postMortemBrief, liveMarkPrice, formingCandle });
+            return buildTradeChatContext({ symbol, interval, contextWindowTokens: provider?.contextWindowTokens, packetMarkdown: markdown, fetchedAtMs: atMs, drawingsDescription, onScreenDescription: onScreen, plansDescription: plansBlock, postMortemBrief, liveMarkPrice, formingCandle, currentTradeCount: trades.length });
         } catch {
-            return buildTradeChatContext({ symbol, interval, contextWindowTokens: provider?.contextWindowTokens, packetMarkdown: '', fetchedAtMs: Date.now(), drawingsDescription, onScreenDescription: onScreen, plansDescription: plansBlock, postMortemBrief, liveMarkPrice, formingCandle });
+            return buildTradeChatContext({ symbol, interval, contextWindowTokens: provider?.contextWindowTokens, packetMarkdown: '', fetchedAtMs: Date.now(), drawingsDescription, onScreenDescription: onScreen, plansDescription: plansBlock, postMortemBrief, liveMarkPrice, formingCandle, currentTradeCount: trades.length });
         }
     };
 
@@ -1362,6 +1386,8 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
                             ...(entry.riskChange ? { riskChange: entry.riskChange } : {}),
                             ...(entry.aiSettingChange ? { aiSettingChange: entry.aiSettingChange } : {}),
                             ...(entry.strategyActivation ? { strategyActivation: entry.strategyActivation } : {}),
+                            ...(entry.sessionPlan ? { sessionPlan: entry.sessionPlan } : {}),
+                            ...(entry.ruleProposal ? { ruleProposal: entry.ruleProposal } : {}),
                             ...(entry.statsCard ? { statsCard: entry.statsCard } : {}),
                         } : undefined;
                         onBotTurnCommit?.(bot, text, settledText, workedMsFor(soloStartedAt), turnEffort, Object.keys(cards ?? {}).length > 0 ? cards : undefined);

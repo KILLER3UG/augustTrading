@@ -320,6 +320,15 @@ export interface Message {
    *  the trader confirms — the confirm writes through the same settings writer
    *  the trader's own Settings screen uses (services/trade/riskChangeProposal). */
   riskChange?: import('../services/trade/riskChangeProposal').RiskChangeProposal;
+  /** A PROPOSED session plan (focus pairs, bias, trade/loss caps). Set by
+   *  propose_session_plan; rendered as a decision card. NOTHING is active
+   *  until the trader confirms — see services/trade/sessionPlan. */
+  sessionPlan?: import('../services/trade/sessionPlan').SessionPlanProposal;
+  /** A PROPOSED trading rule promoted from a candidate lesson. Set by
+   *  propose_rule_change; rendered as a gated decision card. The rule is not
+   *  active and has no TTL until the trader confirms — see
+   *  services/learning/candidateRuleLoop. */
+  ruleProposal?: import('../services/learning/candidateRuleLoop').RuleProposal;
   /** A PROPOSED toggle of Hybrid Intelligence or Desk Tools. Set by
    *  propose_ai_setting_change; rendered as a monochrome decision card.
    *  NOTHING is applied until the trader confirms — see

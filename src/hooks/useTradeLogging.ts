@@ -40,7 +40,7 @@ const syncClosedTradeToNotebook = async (
 
 import { netRiskReward, roundTripCostR, stopDistancePercent } from '../utils/netRiskReward';
 import { modelStatedSize } from '../services/trade/proposedTrade';
-import { mergePendingJournalRow, trackedPositionFromJournalTrade } from '../services/tracking/journalTracking';
+import { buildTradeResolutionRecord, mergePendingJournalRow, trackedPositionFromJournalTrade } from '../services/tracking/journalTracking';
 import { registerJournalOutcomeBridge } from '../services/tracking/journalOutcomeBridge';
 
 // Maximum number of trade summaries (Recent Insights) to keep - enforces FIFO when limit reached
@@ -311,7 +311,7 @@ export const useTradeLogging = (params: UseTradeLoggingParams) => {
     // ─── Trade Logging ────────────────────────────────────────────────────
 
     // Helper function to log trade (called by all capture handlers)
-    const logTradeWithFeedback = useCallback(async (message: Message, outcome: TradeOutcome.WIN | TradeOutcome.LOSS, feedback: { pnlAmount?: number; pnlPercent?: number; correctedStopLoss?: string; correctedTakeProfit?: string; selectedEntryIndices?: number[]; slOptimizationData?: SLOptimizationData; journalTags?: CaptureJournalTags; benchmark?: BenchmarkAlpha; outcomeResolvedAt?: string; excursions?: { maePercent: number; mfePercent: number }; realizedR?: number; resolutionSource?: 'autopilot' | 'manual' | 'tracker'; }, conversationId?: string) => {
+    const logTradeWithFeedback = useCallback(async (message: Message, outcome: TradeOutcome.WIN | TradeOutcome.LOSS, feedback: { pnlAmount?: number; pnlPercent?: number; correctedStopLoss?: string; correctedTakeProfit?: string; selectedEntryIndices?: number[]; slOptimizationData?: SLOptimizationData; journalTags?: CaptureJournalTags; benchmark?: BenchmarkAlpha; outcomeResolvedAt?: string; excursions?: { maePercent: number; mfePercent: number }; realizedR?: number; resolutionSource?: 'autopilot' | 'manual' | 'tracker'; recoveredAfterSlTouch?: boolean; slHitThenReversedToTp?: boolean; }, conversationId?: string) => {
         // The regime this trade was settled in, resolved once in the agreed
         // order: the live hybrid packet, else the regime ledger's observation
         // for this coin on this day (or the nearest earlier one), else the
@@ -487,6 +487,18 @@ export const useTradeLogging = (params: UseTradeLoggingParams) => {
                 feedback.pnlPercent,
                 leverageUsed,
             ),
+        };
+        // The structured record is built HERE, where the row is constructed,
+        // so every write path (manual, autopilot, tracker bridge) carries the
+        // same knowable/post-resolution split into the journal and the review.
+        loggedTrade = {
+            ...loggedTrade,
+            resolutionRecord: buildTradeResolutionRecord(loggedTrade, {
+                ...(rowEntryPrice > 0 ? { entry: rowEntryPrice } : {}),
+                ...(rowStopPrice > 0 ? { stop: rowStopPrice } : {}),
+                ...(feedback.recoveredAfterSlTouch !== undefined ? { recoveredAfterSlTouch: feedback.recoveredAfterSlTouch } : {}),
+                ...(feedback.slHitThenReversedToTp !== undefined ? { slHitThenReversedToTp: feedback.slHitThenReversedToTp } : {}),
+            }),
         };
 
         // Settled-row dedupe: the row list dedupes by id, but the side-effect
@@ -779,6 +791,8 @@ export const useTradeLogging = (params: UseTradeLoggingParams) => {
                         outcomeResolvedAt: settlement.resolvedAt,
                         ...(settlement.realizedR !== undefined ? { realizedR: settlement.realizedR } : {}),
                         ...(settlement.excursions ? { excursions: settlement.excursions } : {}),
+                        ...(settlement.resolutionRecord?.slHitThenReversedToTp !== undefined
+                            ? { slHitThenReversedToTp: settlement.resolutionRecord.slHitThenReversedToTp } : {}),
                         resolutionSource: 'tracker',
                     },
                 );

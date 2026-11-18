@@ -29,6 +29,9 @@ import { seedAiSettingChangeForHydration } from './aiSettingProposal';
 import { seedStrategyActivationForHydration } from './strategyActivation';
 import { seedSettlementCorrectionForHydration } from './settlementCorrection';
 import { seedTradeActionForHydration, type TradeActionProposal } from './tradeActionProposal';
+import { seedSessionPlanForHydration, readActiveSessionPlan, readSessionPlanDecision } from './sessionPlan';
+import { seedRuleProposalForHydration, readAllRules, readRuleDecision } from '../learning/candidateRuleLoop';
+import { getActiveUsername } from '../../utils/activeUser';
 import { rememberProposalState } from './proposalDisposition';
 import { getStrategy } from '../learning/strategyStore';
 import { getArmedPlans } from './levelWatchService';
@@ -90,6 +93,26 @@ export const hydrateCardsFromMessages = (
             const p = m.tradeAction as TradeActionProposal;
             const armed = getArmedPlans().some(pl => pl.planId === p.planId);
             seedTradeActionForHydration(p, armed ? undefined : 'dismissed');
+        }
+        // ── Session plan: the confirmed plan is persisted under the user's
+        //    key; a matching id means the card's confirm landed. An old plan
+        //    for the same date with a different id is a NEW decision, so the
+        //    old mirrored card stays pending rather than inheriting it.
+        if (m.sessionPlan) {
+            const p = m.sessionPlan;
+            const landed = readActiveSessionPlan(undefined, p.dateKey)?.id === p.id;
+            const decision = readSessionPlanDecision(p.id) ?? (landed ? 'confirmed' : undefined);
+            seedSessionPlanForHydration(p, decision);
+        }
+        // ── Rule proposal: a confirmed rule carries the proposal's id. Read ALL
+        //    rules, including expired ones — TTL expiry is evidence the confirm
+        //    LANDED, so the old card must not come back re-actionable.
+        //    Otherwise seed pending — the card stays actionable.
+        if (m.ruleProposal) {
+            const p = m.ruleProposal;
+            const landed = readAllRules(getActiveUsername()).some(r => r.id === p.id);
+            const decision = readRuleDecision(p.id) ?? (landed ? 'confirmed' : undefined);
+            seedRuleProposalForHydration(p, decision);
         }
         // ── Trade proposal: the journal row exists → the approve landed
         //    (the disposition renders the settled row, not a re-actionable

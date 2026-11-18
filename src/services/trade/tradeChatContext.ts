@@ -11,6 +11,9 @@ import { phtFullStamp, phtStamp } from '../../utils/timezone';
 import { clipNote, dataUnavailable } from '../../utils/harnessMarks';
 import { charsForTokens, windowBudgetTokens } from '../../utils/tokenEstimate';
 import type { SkillIndexRow } from '../../services/learning/SkillFileService';
+import { getActiveUsername } from '../../utils/activeUser';
+import { formatSessionPlanContextSummary } from './sessionPlan';
+import { formatActiveRulesContextSummary } from '../learning/candidateRuleLoop';
 
 export interface TradeChatContextInput {
     symbol: string;
@@ -46,6 +49,8 @@ export interface TradeChatContextInput {
      *  budget against the REAL window is the point — a 1M-window seat and a
      *  32k one should not be sent the same packet. */
     contextWindowTokens?: number;
+    /** Journal row count, used to expire learned rules by trade count. */
+    currentTradeCount?: number;
     /** Clock for the age stamp. Defaults to now; injectable so the sentence a
      *  model reads about a packet's staleness is testable without a timer. */
     nowMs?: number;
@@ -100,8 +105,13 @@ export const packetAgeNote = (fetchedAtMs: number, nowMs: number): string => {
     return `${mins}m ${ageSec % 60}s old — STALE: this snapshot predates the last ${mins} minute(s); call get_market_packet or get_chart_view for a newer read before you state a price`;
 };
 
-export const buildTradeChatContext = ({ symbol, interval, packetMarkdown, fetchedAtMs, drawingsDescription, onScreenDescription, plansDescription, postMortemBrief, liveMarkPrice, formingCandle, contextWindowTokens, nowMs }: TradeChatContextInput): string => {
+export const buildTradeChatContext = ({ symbol, interval, packetMarkdown, fetchedAtMs, drawingsDescription, onScreenDescription, plansDescription, postMortemBrief, liveMarkPrice, formingCandle, contextWindowTokens, currentTradeCount, nowMs }: TradeChatContextInput): string => {
     const when = phtFullStamp(fetchedAtMs);
+    // The trader's confirmed session plan and learned rules ride EVERY turn.
+    // Both formatters return '' when there is nothing in force, so the context
+    // stays quiet for a trader who has not confirmed either kind of card.
+    const sessionPlanBlock = formatSessionPlanContextSummary();
+    const activeRulesBlock = formatActiveRulesContextSummary(getActiveUsername(), currentTradeCount ?? 0, nowMs ?? Date.now());
     // A failed fetch is the app's OWN sentinel, not a parenthetical: the same
     // marker every other withheld read uses, so the seat cannot file an outage
     // as "there was nothing to find" and the cache/evidence paths can test it.
@@ -138,6 +148,8 @@ export const buildTradeChatContext = ({ symbol, interval, packetMarkdown, fetche
         (onScreenDescription || '').trim(),
         '[PRICES — the packet is a REST snapshot (ticker/klines cached up to ~30s); the PRICE STAMP and the "Live mark" in [ON SCREEN] both come from the chart\'s markPrice@1s websocket and are the FRESHEST prices in this message. A gap between packet numbers and those is snapshot age or perp basis, NOT a fresh market move — never narrate a move from that gap alone; confirm with get_chart_view or get_price_snapshot first.]',
         (plansDescription || '').trim(),
+        sessionPlanBlock,
+        activeRulesBlock,
         (postMortemBrief || '').trim(),
         (drawingsDescription || '').trim(),
         'If you need data newer than this packet, CALL THE DESK TOOLS — get_chart_view (everything on screen: candles, timeframe, live mark, verdict levels, order book and the user\'s own drawings), get_all_timeframes (every timeframe at once: candles, structure, formations per TF + book/spread/funding/OI/liquidations), get_market_packet (the full hybrid pull: every timeframe, indicators, funding, OI, book walls, liquidations, session), scan_setups (the strategy-book scanner: live breakouts, pin bars, inside-bar resolutions, gaps, divergences, band plays, pullbacks and failed breaks with evidence + matching skills), or the granular ones (get_price_snapshot, get_order_book, get_liquidations, get_session_context) — never invent a number the packet lacks.',

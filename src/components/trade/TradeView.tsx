@@ -135,6 +135,12 @@ interface TradeViewProps {
     onConfirmStrategyActivation?: (proposal: import('../../services/trade/strategyActivation').StrategyActivationProposal, sessionId?: string) => void;
     onDismissStrategyActivation?: (proposal: import('../../services/trade/strategyActivation').StrategyActivationProposal) => void;
     onRevertStrategyActivation?: (proposal: import('../../services/trade/strategyActivation').StrategyActivationProposal, sessionId?: string) => void;
+    onConfirmSessionPlan?: (proposal: import('../../services/trade/sessionPlan').SessionPlanProposal, sessionId?: string) => void;
+    onDismissSessionPlan?: (proposal: import('../../services/trade/sessionPlan').SessionPlanProposal) => void;
+    onRevertSessionPlan?: (proposal: import('../../services/trade/sessionPlan').SessionPlanProposal, sessionId?: string) => void;
+    onConfirmRuleProposal?: (proposal: import('../../services/learning/candidateRuleLoop').RuleProposal, sessionId?: string) => void;
+    onDismissRuleProposal?: (proposal: import('../../services/learning/candidateRuleLoop').RuleProposal) => void;
+    onRevertRuleProposal?: (proposal: import('../../services/learning/candidateRuleLoop').RuleProposal, sessionId?: string) => void;
     /** Group rooms the Chart AI dock embeds as a session. The Coach inbox used
      *  to be handed through here for the dock's Chat | Coach switch; it is a
      *  tab on the Learning surface now. */
@@ -347,7 +353,7 @@ export const useTickFlash = (price: number | undefined): { cls: string; seq: num
 
 
 const TradeView: React.FC<TradeViewProps> = ({
-    memoryEnabled, strategiesEnabled, providers, selectedChatModel, onSelectChatModel, onRefreshModels, verdict, bots = [], trades = [], botSessionRequest, groupSessionRequest, onRunAnalysis, onAnalysisError, onStopRun, botThreadRows, onBotTurnCommit, onSoloTurnCommit, onSyncConversation, conversationRows, onNewGroup, getAnalysisMessage, onLogProposedTrade, onRejectProposedTrade, onUndoApproval, onConfirmRiskChange, onDismissRiskChange, onRevertRiskChange, onConfirmAiSettingChange, onDismissAiSettingChange, onRevertAiSettingChange, onConfirmStrategyActivation, onDismissStrategyActivation, onRevertStrategyActivation, renderGroupSurface, groups = [], registerScrollToMessage, modeRequest, activeUsername, onTradeModeChange,    onToggleWatch, onOpenWatchList, watchOpenCount = 0, pinnedMessageIds,
+    memoryEnabled, strategiesEnabled, providers, selectedChatModel, onSelectChatModel, onRefreshModels, verdict, bots = [], trades = [], botSessionRequest, groupSessionRequest, onRunAnalysis, onAnalysisError, onStopRun, botThreadRows, onBotTurnCommit, onSoloTurnCommit, onSyncConversation, conversationRows, onNewGroup, getAnalysisMessage, onLogProposedTrade, onRejectProposedTrade, onUndoApproval, onConfirmRiskChange, onDismissRiskChange, onRevertRiskChange, onConfirmAiSettingChange, onDismissAiSettingChange, onRevertAiSettingChange, onConfirmStrategyActivation, onDismissStrategyActivation, onRevertStrategyActivation, onConfirmSessionPlan, onDismissSessionPlan, onRevertSessionPlan, onConfirmRuleProposal, onDismissRuleProposal, onRevertRuleProposal, renderGroupSurface, groups = [], registerScrollToMessage, modeRequest, activeUsername, onTradeModeChange,    onToggleWatch, onOpenWatchList, watchOpenCount = 0, pinnedMessageIds,
     onConfirmSettlementCorrection, onDismissSettlementCorrection, onVoidSettlementCorrection,
     onConfirmTradeAction, onDismissTradeAction }) => {
     // The chart opens on the coin the SHARED chat session carries. Adopting only
@@ -915,6 +921,12 @@ const TradeView: React.FC<TradeViewProps> = ({
         onConfirmStrategyActivation,
         onDismissStrategyActivation,
         onRevertStrategyActivation,
+        onConfirmSessionPlan,
+        onDismissSessionPlan,
+        onRevertSessionPlan,
+        onConfirmRuleProposal,
+        onDismissRuleProposal,
+        onRevertRuleProposal,
         onPlanPresented: handlePlanPresented,
         onChatLevelsChange: handleChatLevels,
         renderGroupSurface,

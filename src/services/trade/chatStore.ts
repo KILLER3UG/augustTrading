@@ -73,6 +73,12 @@ export type LiveEntry = StoredChatEntry & {
      *  — rendered as a decision card. Runtime-only; the plan status is written
      *  only on the trader's confirm, through the store writer the trader owns. */
     strategyActivation?: import('./strategyActivation').StrategyActivationProposal;
+    /** A PROPOSED session plan (propose_session_plan) — rendered as a decision
+     *  card. Runtime-only; the plan is activated only by the trader's confirm. */
+    sessionPlan?: import('./sessionPlan').SessionPlanProposal;
+    /** A PROPOSED trading rule (propose_rule_change) — rendered as a gated
+     *  decision card. Runtime-only; the rule and its TTL start only on confirm. */
+    ruleProposal?: import('../learning/candidateRuleLoop').RuleProposal;
     /** A stats-tool receipt rendered as a CARD (P-5): get_setup_history_stats,
      *  playbook_attribution or get_trade_log. Runtime-only — the card holds
      *  the receipt's own fields; the one-tap way to the numbers stays the
@@ -208,7 +214,7 @@ const schedulePersist = (): void => {
             ...s,
             entries: s.entries
                 .filter(e => !e.streaming)
-                .map(({ streaming: _streaming, proposal: _proposal, settlementCorrection: _correction, tradeAction: _action, riskChange: _riskChange, aiSettingChange: _aiSetting, strategyActivation: _strategy, statsCard: _stats, liveProgress: _liveProgress, ...rest }) => rest),
+                .map(({ streaming: _streaming, proposal: _proposal, settlementCorrection: _correction, tradeAction: _action, riskChange: _riskChange, aiSettingChange: _aiSetting, strategyActivation: _strategy, sessionPlan: _sessionPlan, ruleProposal: _ruleProposal, statsCard: _stats, liveProgress: _liveProgress, ...rest }) => rest),
             // openTrades / loggedTradeIds are runtime-only — persisted sessions
             // never carry them (a reload means "we have no live trade state"),
             // so strip them defensively here even though chatSessions.ts also
@@ -261,7 +267,7 @@ export const persistInterrupted = (): void => {
         if (!loaded || getActiveUsername() !== loadedFor) return;
         const stored: ChatSession[] = sessions.map(s => ({
             ...s,
-            entries: s.entries.map(({ streaming, proposal: _proposal, settlementCorrection: _correction, tradeAction: _action, riskChange: _riskChange, aiSettingChange: _aiSetting, strategyActivation: _strategy, statsCard: _stats, liveProgress: _liveProgress, ...rest }) => (streaming ? { ...rest, interrupted: true } : rest)),
+            entries: s.entries.map(({ streaming, proposal: _proposal, settlementCorrection: _correction, tradeAction: _action, riskChange: _riskChange, aiSettingChange: _aiSetting, strategyActivation: _strategy, sessionPlan: _sessionPlan, ruleProposal: _ruleProposal, statsCard: _stats, liveProgress: _liveProgress, ...rest }) => (streaming ? { ...rest, interrupted: true } : rest)),
             openTrades: undefined,
             loggedTradeIds: undefined,
         }));

@@ -146,6 +146,10 @@ export type ProjectedChatEntry = StoredChatEntry & {
     /** A PROPOSED strategy activation/retirement from a pipeline turn — same
      *  projection rule as the proposal above. */
     strategyActivation?: import('./strategyActivation').StrategyActivationProposal;
+    /** A PROPOSED session plan from a pipeline turn — same projection rule. */
+    sessionPlan?: import('./sessionPlan').SessionPlanProposal;
+    /** A PROPOSED trading rule from a pipeline turn — same projection rule. */
+    ruleProposal?: import('../learning/candidateRuleLoop').RuleProposal;
     /** A stats receipt from a pipeline turn — same projection rule. */
     statsCard?: import('./statsCard').StatsCardSnapshot;
 };
@@ -656,6 +660,8 @@ export const liveEntryFromMessage = (m: Message): ProjectedChatEntry => {
         riskChange: m.riskChange,
         aiSettingChange: m.aiSettingChange,
         strategyActivation: m.strategyActivation,
+        sessionPlan: m.sessionPlan,
+        ruleProposal: m.ruleProposal,
         statsCard: m.statsCard,
         // A row with an unparseable timestamp keeps `at` undefined rather than
         // stamping it as 0: the memory-attribution window join treats a real

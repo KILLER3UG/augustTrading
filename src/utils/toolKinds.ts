@@ -162,6 +162,10 @@ const BY_LABEL: Record<string, ToolKindInfo> = {
     'self-change undo': { kind: 'write', activity: 'Reverting a self-change' },
     'skill proposal': { kind: 'write', activity: 'Proposing a skill' },
     'propose ai setting change': { kind: 'write', activity: 'Proposing an AI setting change' },
+    'risk limit change': { kind: 'write', activity: 'Proposing a risk limit change' },
+    'strategy state change': { kind: 'write', activity: 'Proposing a strategy state change' },
+    'session plan': { kind: 'write', activity: 'Proposing the session plan' },
+    'rule proposal': { kind: 'write', activity: 'Proposing a trading rule' },
     'skill revision': { kind: 'write', activity: 'Revising a skill' },
     'watch price': { kind: 'write', activity: 'Setting a price watch' },
 
@@ -314,6 +318,11 @@ export const DESK_TOOL_NAMES: readonly string[] = [
     // A strategy plan's activation/retirement is proposed, never applied: the
     // card is the only writer, through the store writer the trader owns.
     'propose_strategy_activation',
+    // A session plan is PROPOSED for the day, never activated by the call.
+    'propose_session_plan',
+    // A trading rule is PROPOSED from a candidate lesson only after the
+    // N >= 2 and anti-hindsight gates pass; the card is the only applier.
+    'propose_rule_change',
     // An AI-behavior setting (Hybrid Intelligence / Desk Tools) is proposed,
     // never applied: the monochrome card is the only writer, through the
     // settings path the trader owns.

@@ -907,6 +907,13 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
         }));
     ok('agent hands: run_review changes nothing and says so',
         /READ-ONLY/i.test(defOf('run_review').function.description));
+    ok('agent hands: propose_session_plan offers an optional YYYY-MM-DD dateKey',
+        (() => {
+            const p = defOf('propose_session_plan').function.parameters;
+            const d = p.properties.dateKey;
+            return !!d && d.type === 'string' && /^\^\\d\{4\}/.test(String(d.pattern || ''))
+                && !p.required.includes('dateKey');
+        })());
     ok('agent hands: every catalogue routing hint names a real tool (drift guard)',
         (() => {
             const hints = desk.ROUTING_HINTS || {};
@@ -5871,6 +5878,16 @@ const checkAgentHandExecutor = async () => {
         reviewRow.ok === true && /"record"/.test(reviewRow.content) && /"outcome"/.test(reviewRow.content)
         && !/"analysis"\s*:/.test(reviewRow.content), reviewRow.content.slice(0, 160));
 
+    // A dated plan must carry the caller's date all the way to the receipt —
+    // never silently retargeted to today when the model names a session.
+    const planArgs = { focusPairs: ['BTCUSDT'], sessionBias: 'Long', invalidations: ['low breaks'], maxTrades: 2, maxLossR: 1, reason: 'dated bounds' };
+    const datedPlan = await desk.executeDeskTool(call('propose_session_plan', { ...planArgs, dateKey: '2026-11-20' }), ctx);
+    ok('agent hands executor: propose_session_plan round-trips an explicit dateKey',
+        datedPlan.ok === true && /for 2026-11-20:/.test(datedPlan.content), datedPlan.content);
+    const badDatePlan = await desk.executeDeskTool(call('propose_session_plan', { ...planArgs, dateKey: '20-11-2026' }), ctx);
+    ok('agent hands executor: a malformed dateKey is refused, not retargeted to today',
+        badDatePlan.ok === false && /YYYY-MM-DD/.test(badDatePlan.content), badDatePlan.content);
+
     // The quick stats tool carries its Wilson interval and its thin-sample
     // warning, so two stats tools can never hand back contradictory answers
     // about how much a small sample proves.
@@ -6201,6 +6218,163 @@ const checkAgentHandExecutor = async () => {
 })();
 
 
+// ── Phase 5: session plan, candidate lessons, rule TTL, risk-state card ────
+// These guards are authority boundaries: a tool must never activate a plan or
+// promote a rule, and hindsight must never enter a forward rule. Pin them with
+// the same module loader the rest of this gate uses.
+(() => {
+    const sp = loadModule('src/services/trade/sessionPlan.ts');
+    const rl = loadModule('src/services/learning/candidateRuleLoop.ts');
+    const jt = loadModule('src/services/tracking/journalTracking.ts');
+    const sc = loadModule('src/services/trade/statsCard.ts');
+    const mem = new Map();
+    const prior = global.localStorage;
+    global.localStorage = {
+        getItem: k => (mem.has(k) ? mem.get(k) : null),
+        setItem: (k, v) => { mem.set(k, String(v)); },
+        removeItem: k => { mem.delete(k); },
+        get length() { return mem.size; },
+        key: i => [...mem.keys()][i] ?? null,
+    };
+    try {
+        sp.__clearSessionPlansForTests();
+        rl.__clearRuleLoopForTests();
+
+        const badPlan = sp.checkSessionPlanProposal({ focusPairs: [], sessionBias: 'Long', invalidations: ['x'], maxTrades: 2, maxLossR: 1, reason: 'r' });
+        ok('phase5: session plan refuses an empty focus list', badPlan.ok === false);
+        const plan = sp.proposeSessionPlan({ focusPairs: ['BTCUSDT'], sessionBias: 'Selective', invalidations: ['low breaks'], maxTrades: 3, maxLossR: 1.5, reason: 'tight bounds' });
+        ok('phase5: a proposed plan is pending, never active', plan.ok === true
+            && !!sp.pendingSessionPlan(plan.proposal.dateKey)
+            && sp.readActiveSessionPlan('contract-user', plan.proposal.dateKey) === undefined);
+        const active = sp.confirmSessionPlan(plan.proposal.id, plan.proposal.dateKey, 'contract-user');
+        ok('phase5: only confirm persists the plan; the context sees it', !!active
+            && sp.readActiveSessionPlan('contract-user', plan.proposal.dateKey)?.id === plan.proposal.id
+            && sp.formatSessionPlanContextSummary('contract-user', plan.proposal.dateKey).includes('max loss 1.5R'));
+        sp.markSessionPlanRevertWindow(plan.proposal.id, undefined, 1000);
+        ok('phase5: the revert window is 60s, not a permanent second path',
+            !!sp.sessionPlanRevertOf(plan.proposal.id, 2000)
+            && sp.sessionPlanRevertOf(plan.proposal.id, 61_001) === undefined);
+
+        const n1 = rl.checkRulePromotionEligibility({ tradeIds: ['a'], when: 'regime trend', action: 'tighten', knowableAtEntry: ['regime'] });
+        ok('phase5: one trade is never a rule (exact refusal)', n1.ok === false
+            && n1.refused === 'Refused — one trade is not a lesson. Recorded as a candidate lesson; promoting a rule requires N >= 2 distinct trades.');
+        const hind = rl.checkRulePromotionEligibility({ tradeIds: ['a', 'b'], when: 'after entry it wicked out', action: 'tighten', knowableAtEntry: ['regime'] });
+        ok('phase5: hindsight is refused (exact refusal)', hind.ok === false
+            && hind.refused === 'Refused — hindsight bias detected. A rule may use only facts knowable at entry, never information visible only after resolution.');
+        const excluded = rl.checkRulePromotionEligibility({
+            tradeIds: ['a', 'b'], when: 'regime trend', action: 'tighten after a loss',
+            knowableAtEntry: ['regime'], visibleOnlyAfterResolution: ['after a loss'],
+        });
+        ok('phase5: citing an excluded post-resolution fact is also refused', excluded.ok === false);
+        ok('phase5: entry-only facts are not mistaken for hindsight',
+            rl.detectHindsightBias('HTF structure and R:R 2.1 at entry') === false
+            && rl.detectHindsightBias('stopped me out right before reversing') === true);
+
+        const trade = { id: 'p5-a', outcome: 'WIN', analysis: { strategy: 'breakout' } };
+        const c1 = rl.recordCandidateLesson({ patternKey: 'Breakout Range', lesson: 'l', when: 'regime', action: 'tighten', direction: 'tighten', quadrant: 'good_call_good_luck', knowableAtEntry: ['regime'], visibleOnlyAfterResolution: [], trade, username: 'contract-user' });
+        const c2 = rl.recordCandidateLesson({ patternKey: 'breakout-range', lesson: 'l', when: 'regime', action: 'tighten', direction: 'tighten', quadrant: 'good_call_good_luck', knowableAtEntry: ['regime'], visibleOnlyAfterResolution: [], trade: { ...trade, id: 'p5-b' }, username: 'contract-user' });
+        ok('phase5: a repeat pattern extends one candidate with distinct trades', c1.id === c2.id && c2.tradeIds.length === 2);
+
+        const rp = rl.proposeRuleChange({ patternKey: 'breakout-range', when: 'regime trending, HTF structure holds', action: 'tighten stops', direction: 'tighten', quadrant: 'good_call_bad_luck', knowableAtEntry: ['regime', 'HTF structure'], visibleOnlyAfterResolution: [], tradeIds: ['p5-a', 'p5-b'], reason: 'two trades' });
+        ok('phase5: a gated rule is proposed, not applied', rp.ok === true && !!rl.pendingRuleProposal('breakout-range'));
+        if (rp.ok) {
+            const rule = rl.confirmRuleProposal(rp.proposal.id, 10, 'contract-user', 1000);
+            ok('phase5: confirm starts the TTL from the live trade count', !!rule
+                && rule.status === 'active' && rule.confirmedTradeCount === 10
+                && rule.expiresAtMs === 1000 + rule.ttlDays * 86400000);
+            ok('phase5: TTL expires by time and by new trades',
+                rl.isRuleExpired(rule, 10, rule.expiresAtMs + 1).expired === true
+                && rl.isRuleExpired(rule, 10 + rule.ttlTrades, 1000).expired === true);
+            const pruned = rl.pruneExpiredRules('contract-user', 10, rule.expiresAtMs + 1);
+            ok('phase5: expiry is transitioned AND persisted', pruned.some(r => r.id === rule.id && r.status === 'expired')
+                && rl.readActiveRules('contract-user', 10, rule.expiresAtMs + 1).length === 0);
+        }
+
+        const measured = jt.buildTradeResolutionRecord({
+            outcome: 'WIN', followedPlan: false,
+            decidedAt: '2026-11-18T00:00:00.000Z', outcomeResolvedAt: '2026-11-18T00:30:00.000Z',
+            maxAdverseExcursion: -1, maxFavorableExcursion: 3, marketRegime: 'trending',
+            analysis: { strategy: 'breakout', confidence: 'High', rrRatio: 2, entryPoints: [{ price: '100' }], stopLoss: '99' },
+        });
+        ok('phase5: resolution records keep knowable facts beside excursions in R',
+            measured.planAsLogged === false && Math.abs((measured.maeR ?? 0) + 1) < 1e-9
+            && Math.abs((measured.mfeR ?? 0) - 3) < 1e-9 && measured.timeToResolutionMs === 1_800_000
+            && measured.regimeAtEntry === 'trending');
+
+        // The review must READ the settlement the journal stored, never
+        // re-derive a different record and let the two drift apart.
+        const settled = {
+            id: 'p5-settled', outcome: 'WIN', analysis: { strategy: 'breakout' },
+            resolutionRecord: {
+                planAsLogged: true, maePercent: -2, mfePercent: 4, maeR: -1, mfeR: 2,
+                timeToResolutionMs: 900_000, timeToResolution: '15m',
+                slHitThenReversedToTp: true, regimeAtEntry: 'trending', contextAtEntry: 'entry context',
+            },
+        };
+        const reviewed = rl.evaluatePostTradeReview(settled, [settled], { username: 'contract-user' });
+        ok('phase5: a stored SL-then-reverse settlement flows into the review, record authoritative',
+            reviewed.resolutionRecord.slHitThenReversedToTp === true
+            && reviewed.resolutionRecord.maeR === -1 && reviewed.resolutionRecord.mfeR === 2
+            && reviewed.resolutionRecord.timeToResolution === '15m'
+            && reviewed.resolutionRecord.regimeAtEntry === 'trending'
+            && reviewed.resolutionRecord.contextAtEntry === 'entry context'
+            && reviewed.resolutionRecord.planAsLogged === true
+            && reviewed.audit.visibleOnlyAfterResolution.includes('sl hit then reversed to tp'),
+            JSON.stringify(reviewed.resolutionRecord));
+
+        const unmeasured = jt.buildTradeResolutionRecord({ outcome: 'WIN' });
+        ok('phase5: an unmeasured reversal is absent, never a fabricated false',
+            unmeasured.slHitThenReversedToTp === undefined && !('slHitThenReversedToTp' in unmeasured));
+
+        const planInput = { focusPairs: ['BTCUSDT'], sessionBias: 'Long', invalidations: ['break'], maxTrades: 2, maxLossR: 1, reason: 'dated' };
+        const dated = sp.proposeSessionPlan({ ...planInput, dateKey: '2026-11-23' });
+        const defaulted = sp.checkSessionPlanProposal(planInput);
+        const badDate = sp.checkSessionPlanProposal({ ...planInput, dateKey: '23-11-2026' });
+        ok('phase5: dateKey round-trips; absent defaults to today, malformed is refused',
+            dated.ok === true && dated.proposal.dateKey === '2026-11-23'
+            && defaulted.ok === true && defaulted.proposal.dateKey === sp.currentSessionDateKey()
+            && badDate.ok === false && /YYYY-MM-DD/.test(badDate.refused));
+
+        // A dismissal has no row to prove it, so only the mirrored DECISION
+        // stands. Clear the in-memory maps to simulate a reload: storage is
+        // untouched, and the decision must survive under its own user key.
+        const dPlan = sp.proposeSessionPlan({ ...planInput, dateKey: '2026-11-24' });
+        ok('phase5: a scoped session-plan dismissal persists across a reload',
+            dPlan.ok === true
+            && sp.dismissSessionPlan(dPlan.proposal.id, 'scoped-user') === true
+            && sp.readSessionPlanDecision(dPlan.proposal.id, 'scoped-user') === 'dismissed'
+            && sp.readSessionPlanDecision(dPlan.proposal.id, 'other-user') === undefined
+            && (() => {
+                sp.__clearSessionPlansForTests();
+                return sp.readSessionPlanDecision(dPlan.proposal.id, 'scoped-user') === 'dismissed';
+            })());
+
+        const dr = rl.proposeRuleChange({
+            patternKey: 'dismiss-scope', when: 'regime trending', action: 'tighten', direction: 'tighten',
+            quadrant: 'bad_call_bad_luck', knowableAtEntry: ['regime'], visibleOnlyAfterResolution: [],
+            tradeIds: ['p5-a', 'p5-b'], reason: 'two trades',
+        });
+        ok('phase5: a scoped rule dismissal persists across a reload',
+            dr.ok === true
+            && rl.dismissRuleProposal(dr.proposal.id, 'scoped-user') === true
+            && rl.readRuleDecision(dr.proposal.id, 'scoped-user') === 'dismissed'
+            && rl.readRuleDecision(dr.proposal.id, 'other-user') === undefined
+            && (() => {
+                rl.__clearRuleLoopForTests();
+                return rl.readRuleDecision(dr.proposal.id, 'scoped-user') === 'dismissed';
+            })());
+
+        const riskReceipt = '### TOOL RESULT: risk_state (ok)\n{"tool":"risk_state","values":{"open":{"count":1,"correlated":false},"drawdown":{"todayR":0,"weekR":-1,"light":"yellow"},"kelly":{"available":true,"halfKellyPct":1.5}}}\n<<<AUGUST-UNTRUSTED END';
+        const riskCard = sc.statsCardFromReceipt('risk_state', riskReceipt);
+        ok('phase5: risk_state receipt becomes a stats card', riskCard.ok === true && riskCard.snapshot.tool === 'risk_state');
+    } finally {
+        if (prior === undefined) delete global.localStorage;
+        else global.localStorage = prior;
+        sp.__clearSessionPlansForTests();
+        rl.__clearRuleLoopForTests();
+    }
+})();
+
 const finishReport = () => {
     console.log(`contracts: ${passed} passed, ${failures.length} failed`);
     for (const f of failures) console.log(`  FAIL ${f}`);
@@ -6208,7 +6382,7 @@ const finishReport = () => {
         console.error('CONTRACT CHECK FAIL — a pinned contract broke; fix the module, not this file.');
         process.exit(1);
     }
-    console.log('CONTRACT CHECK OK — risk/reward math, retry classification, harness marks, notebook pressure, tool-pair compaction, AI-boundary coercion, the import security scan, the shared index budget, both policy tables (self-modification, goal tool narrowing), the desk tool budget, the kline row PHT unit, the desk digest units, the startup call gates, the insight store pin, the signal loop (resolver order, costs, gap fills, ledger, venue data), the signal accuracy fold, the skill document (description, hash version, ledger-stripping migration, duplicate scan), the skill pen and its refusal text, the journal-rules store, the post-mortem clause, the memory page export, the raw-storage lists (no orphan, no half-migration), the tracked position (signal adoption, ledger-wins resolution, exit order, gaps, excursions, capped path, independence, diagnosis queue), journal tracking (pending registration, settlement payload, plan-preserving merge, orphan handling), the post-mortem diagnosis (authoritative outcome, packet facts/absences, refusal audit, journal-note parse), the candle shape gate, the truncated-answer continuation and the silent empty-round repair all hold.');
+    console.log('CONTRACT CHECK OK — risk/reward math, retry classification, harness marks, notebook pressure, tool-pair compaction, AI-boundary coercion, the import security scan, the shared index budget, both policy tables (self-modification, goal tool narrowing), the desk tool budget, the kline row PHT unit, the desk digest units, the startup call gates, the insight store pin, the signal loop (resolver order, costs, gap fills, ledger, venue data), the signal accuracy fold, the skill document (description, hash version, ledger-stripping migration, duplicate scan), the skill pen and its refusal text, the journal-rules store, the post-mortem clause, the memory page export, the raw-storage lists (no orphan, no half-migration), the tracked position (signal adoption, ledger-wins resolution, exit order, gaps, excursions, capped path, independence, diagnosis queue), journal tracking (pending registration, settlement payload, plan-preserving merge, orphan handling), the post-mortem diagnosis (authoritative outcome, packet facts/absences, refusal audit, journal-note parse), the candle shape gate, the truncated-answer continuation and the silent empty-round repair, and the Phase 5 session-plan confirm/revert, exact promotion refusals, hindsight separation, candidate dedupe, rule TTL pruning, resolution record and risk-state card, authoritative stored settlement, gap-not-zero reversal, user-scoped dismissals and dateKey round-trip all hold.');
 
 };
 // The async blocks above settle in microtasks; the report waits for them so

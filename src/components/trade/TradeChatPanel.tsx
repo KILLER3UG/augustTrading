@@ -291,6 +291,12 @@ interface TradeChatPanelProps {
     onConfirmStrategyActivation?: (proposal: import('../../services/trade/strategyActivation').StrategyActivationProposal, sessionId?: string) => void;
     onDismissStrategyActivation?: (proposal: import('../../services/trade/strategyActivation').StrategyActivationProposal) => void;
     onRevertStrategyActivation?: (proposal: import('../../services/trade/strategyActivation').StrategyActivationProposal, sessionId?: string) => void;
+    onConfirmSessionPlan?: (proposal: import('../../services/trade/sessionPlan').SessionPlanProposal, sessionId?: string) => void;
+    onDismissSessionPlan?: (proposal: import('../../services/trade/sessionPlan').SessionPlanProposal) => void;
+    onRevertSessionPlan?: (proposal: import('../../services/trade/sessionPlan').SessionPlanProposal, sessionId?: string) => void;
+    onConfirmRuleProposal?: (proposal: import('../../services/learning/candidateRuleLoop').RuleProposal, sessionId?: string) => void;
+    onDismissRuleProposal?: (proposal: import('../../services/learning/candidateRuleLoop').RuleProposal) => void;
+    onRevertRuleProposal?: (proposal: import('../../services/learning/candidateRuleLoop').RuleProposal, sessionId?: string) => void;
 }
 
 /** Empty-state starters. The glyph is a category cue so the row scans by
@@ -356,6 +362,8 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
     onConfirmSettlementCorrection, onDismissSettlementCorrection, onVoidSettlementCorrection,
     onConfirmTradeAction, onDismissTradeAction,
     onConfirmStrategyActivation, onDismissStrategyActivation, onRevertStrategyActivation,
+    onConfirmSessionPlan, onDismissSessionPlan, onRevertSessionPlan,
+    onConfirmRuleProposal, onDismissRuleProposal, onRevertRuleProposal,
     layoutMode = 'desk',
     paneVisible = true,
     onRefreshModels,
@@ -1457,6 +1465,12 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
                         onConfirmStrategyActivation={onConfirmStrategyActivation}
                         onDismissStrategyActivation={onDismissStrategyActivation}
                         onRevertStrategyActivation={onRevertStrategyActivation}
+                        onConfirmSessionPlan={onConfirmSessionPlan}
+                        onDismissSessionPlan={onDismissSessionPlan}
+                        onRevertSessionPlan={onRevertSessionPlan}
+                        onConfirmRuleProposal={onConfirmRuleProposal}
+                        onDismissRuleProposal={onDismissRuleProposal}
+                        onRevertRuleProposal={onRevertRuleProposal}
                     />
                 )}
             </div>

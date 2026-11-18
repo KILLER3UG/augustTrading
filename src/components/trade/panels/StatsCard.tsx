@@ -11,7 +11,14 @@
  */
 
 import React from 'react';
+import { formatSessionPlanContextSummary } from '../../../services/trade/sessionPlan';
 import type { StatsCardSnapshot } from '../../../services/trade/statsCard';
+
+interface RiskValues {
+    open?: { count?: number; correlated?: boolean };
+    drawdown?: { todayR?: number; weekR?: number; light?: string };
+    kelly?: { available?: boolean; halfKellyPct?: number };
+}
 
 const fmt = (v: unknown): string => {
     if (v === null || v === undefined) return '—';
@@ -28,11 +35,17 @@ export const StatsCard: React.FC<{ snapshot: StatsCardSnapshot }> = ({ snapshot 
     const { tool, payload } = snapshot;
     const title = tool === 'get_setup_history_stats'
         ? 'Setup stats (journal)'
-        : tool === 'playbook_attribution' ? 'Playbook attribution (journal)' : 'Trade log (journal)';
+        : tool === 'playbook_attribution' ? 'Playbook attribution (journal)'
+            : tool === 'risk_state' ? 'Risk state (journal)' : 'Trade log (journal)';
     const sample = typeof payload.sample === 'number' ? payload.sample
         : typeof payload.returned === 'number' ? payload.returned : null;
     const wilson = payload.wilson95 as { low?: number; high?: number } | undefined;
     const thin = typeof payload.thinSampleNote === 'string' ? payload.thinSampleNote : null;
+    // The risk read is the one card with a live session-plan overlay. This is
+    // context injection, not a second authority: the plan itself was confirmed
+    // on its own card and only the trader can revert it.
+    const risk = payload.values as RiskValues | null | undefined;
+    const planSummary = tool === 'risk_state' ? formatSessionPlanContextSummary() : '';
 
     return (
         <div className="mt-1 rounded-control border border-hairline bg-white/[0.02] p-2.5"
@@ -78,6 +91,25 @@ export const StatsCard: React.FC<{ snapshot: StatsCardSnapshot }> = ({ snapshot 
                             {typeof d.sample === 'number' ? ` (n=${fmt(d.sample)})` : ''}
                         </p>
                     ))}
+                </div>
+            )}
+
+            {tool === 'risk_state' && (
+                <div data-testid="risk-state-card" className="mt-2 space-y-1 font-mono text-ui-dense tabular-nums text-zinc-300">
+                    <p>
+                        open plans {fmt(risk?.open?.count)}
+                        {risk?.open?.correlated ? ' · correlated' : ''}
+                    </p>
+                    <p>
+                        week R {fmt(risk?.drawdown?.weekR)} · day R {fmt(risk?.drawdown?.todayR)}
+                        {' · drawdown light '}{fmt(risk?.drawdown?.light)}
+                    </p>
+                    <p>
+                        {risk?.kelly?.available
+                            ? `half-Kelly ceiling ${fmt(risk.kelly.halfKellyPct)}%`
+                            : 'half-Kelly ceiling refused (thin sample)'}
+                    </p>
+                    {planSummary && <p className="text-zinc-400">{planSummary}</p>}
                 </div>
             )}
 

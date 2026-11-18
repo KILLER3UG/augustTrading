@@ -98,6 +98,16 @@ export interface SurfaceOutletProps {
     onConfirmStrategyActivation: (proposal: import('../../services/trade/strategyActivation').StrategyActivationProposal, sessionId?: string) => void;
     onDismissStrategyActivation: (proposal: import('../../services/trade/strategyActivation').StrategyActivationProposal) => void;
     onRevertStrategyActivation: (proposal: import('../../services/trade/strategyActivation').StrategyActivationProposal, sessionId?: string) => void;
+    /** Confirm / dismiss / revert a proposed session plan. App persists the
+     *  plan only when the trader confirms; the card itself writes nothing. */
+    onConfirmSessionPlan: (proposal: import('../../services/trade/sessionPlan').SessionPlanProposal, sessionId?: string) => void;
+    onDismissSessionPlan: (proposal: import('../../services/trade/sessionPlan').SessionPlanProposal) => void;
+    onRevertSessionPlan: (proposal: import('../../services/trade/sessionPlan').SessionPlanProposal, sessionId?: string) => void;
+    /** Confirm / dismiss / revert a proposed trading rule. Confirm starts its
+     *  TTL; a new log also prunes expired rules. */
+    onConfirmRuleProposal: (proposal: import('../../services/learning/candidateRuleLoop').RuleProposal, sessionId?: string) => void;
+    onDismissRuleProposal: (proposal: import('../../services/learning/candidateRuleLoop').RuleProposal) => void;
+    onRevertRuleProposal: (proposal: import('../../services/learning/candidateRuleLoop').RuleProposal, sessionId?: string) => void;
     registerScrollToMessage: (fn: ((messageId: string) => void) | null) => void;
     onToggleWatch: (messageId: string) => void;
     onOpenWatchList: () => void;
@@ -123,7 +133,7 @@ const SurfaceOutlet: React.FC<SurfaceOutletProps> = ({
     activeUsername, onTradeModeChange, botThreadRows, onBotTurnCommit, onSoloTurnCommit,
     onSyncConversation, conversationRows, onNewGroup, verdict, bots, trades, groupTabs,
     botSessionRequest, groupSessionRequest, onRunAnalysisFromChat, onAnalysisError,
-    onCancelAnalysis, getAnalysisMessage, onLogProposedTrade, onRejectProposedTrade, onUndoApproval, onConfirmRiskChange, onDismissRiskChange, onRevertRiskChange, onConfirmAiSettingChange, onDismissAiSettingChange, onRevertAiSettingChange, onConfirmStrategyActivation, onDismissStrategyActivation, onRevertStrategyActivation, registerScrollToMessage,
+    onCancelAnalysis, getAnalysisMessage, onLogProposedTrade, onRejectProposedTrade, onUndoApproval, onConfirmRiskChange, onDismissRiskChange, onRevertRiskChange, onConfirmAiSettingChange, onDismissAiSettingChange, onRevertAiSettingChange, onConfirmStrategyActivation, onDismissStrategyActivation, onRevertStrategyActivation, onConfirmSessionPlan, onDismissSessionPlan, onRevertSessionPlan, onConfirmRuleProposal, onDismissRuleProposal, onRevertRuleProposal, registerScrollToMessage,
     onToggleWatch, onOpenWatchList, watchOpenCount, watchOpenR, pinnedMessageIds,
     onConfirmSettlementCorrection, onDismissSettlementCorrection, onVoidSettlementCorrection,
     onConfirmTradeAction, onDismissTradeAction,
@@ -196,6 +206,12 @@ const SurfaceOutlet: React.FC<SurfaceOutletProps> = ({
                         onConfirmStrategyActivation={onConfirmStrategyActivation}
                         onDismissStrategyActivation={onDismissStrategyActivation}
                         onRevertStrategyActivation={onRevertStrategyActivation}
+                        onConfirmSessionPlan={onConfirmSessionPlan}
+                        onDismissSessionPlan={onDismissSessionPlan}
+                        onRevertSessionPlan={onRevertSessionPlan}
+                        onConfirmRuleProposal={onConfirmRuleProposal}
+                        onDismissRuleProposal={onDismissRuleProposal}
+                        onRevertRuleProposal={onRevertRuleProposal}
                         registerScrollToMessage={registerScrollToMessage}
                         onToggleWatch={onToggleWatch}
                         onOpenWatchList={onOpenWatchList}

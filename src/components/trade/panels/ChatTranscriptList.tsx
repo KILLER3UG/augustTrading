@@ -41,6 +41,14 @@ import {
 import AiSettingCard from './AiSettingCard';
 import { strategyActivationStateOf, strategyRevertOf, type StrategyActivationProposal } from '../../../services/trade/strategyActivation';
 import StrategyActivationCard from './StrategyActivationCard';
+import SessionPlanCard from './SessionPlanCard';
+import RuleProposalCard from './RuleProposalCard';
+import {
+    sessionPlanStateOf, sessionPlanRevertOf, type SessionPlanProposal,
+} from '../../../services/trade/sessionPlan';
+import {
+    ruleProposalStateOf, ruleProposalRevertOf, type RuleProposal,
+} from '../../../services/learning/candidateRuleLoop';
 import StatsCard from './StatsCard';
 import { getArmedPlans } from '../../../services/trade/levelWatchService';
 import type { GuardEnforcement } from '../../../services/validation/SessionGuardService';
@@ -234,6 +242,16 @@ interface ChatTranscriptListProps {
     onDismissStrategyActivation?: (proposal: StrategyActivationProposal) => void;
     /** Put the replaced status back inside the revert window. */
     onRevertStrategyActivation?: (proposal: StrategyActivationProposal, sessionId?: string) => void;
+    /** Confirm a PROPOSED session plan. The plan is persisted only by this
+     *  tap, through the sessionPlan store; the list renders and reports. */
+    onConfirmSessionPlan?: (proposal: SessionPlanProposal, sessionId?: string) => void;
+    onDismissSessionPlan?: (proposal: SessionPlanProposal) => void;
+    onRevertSessionPlan?: (proposal: SessionPlanProposal, sessionId?: string) => void;
+    /** Confirm a PROPOSED trading rule. Confirm starts its TTL in the
+     *  candidateRuleLoop store; the card itself writes nothing. */
+    onConfirmRuleProposal?: (proposal: RuleProposal, sessionId?: string) => void;
+    onDismissRuleProposal?: (proposal: RuleProposal) => void;
+    onRevertRuleProposal?: (proposal: RuleProposal, sessionId?: string) => void;
 }
 
 const ChatTranscriptList: React.FC<ChatTranscriptListProps> = ({
@@ -246,6 +264,8 @@ const ChatTranscriptList: React.FC<ChatTranscriptListProps> = ({
     onConfirmSettlementCorrection, onDismissSettlementCorrection, onVoidSettlementCorrection,
     onConfirmTradeAction, onDismissTradeAction,
     onConfirmStrategyActivation, onDismissStrategyActivation, onRevertStrategyActivation,
+    onConfirmSessionPlan, onDismissSessionPlan, onRevertSessionPlan,
+    onConfirmRuleProposal, onDismissRuleProposal, onRevertRuleProposal,
 }) => {
     /** Re-render trigger for the module-scope proposal dispositions (see
      *  proposalDisposition): the disposition itself must SURVIVE a dock
@@ -663,6 +683,68 @@ const ChatTranscriptList: React.FC<ChatTranscriptListProps> = ({
                                         applied
                                         revert={revert}
                                         onRevert={revert ? () => { onRevertStrategyActivation?.(sp, sessionId); setDecisionTick(t => t + 1); } : undefined}
+                                    />
+                                );
+                            }
+                            return null;
+                        })()}
+                        {/* A PROPOSED session plan (propose_session_plan).
+                            Confirm persists the plan; Dismiss resolves the card
+                            without touching the live session. A confirmed plan
+                            stays for the 60s revert window, then reads as a
+                            verified once-per-session record. */}
+                        {(() => {
+                            void decisionTick;
+                            const p = e.sessionPlan;
+                            if (!p) return null;
+                            const state = sessionPlanStateOf(p.id);
+                            const revert = sessionPlanRevertOf(p.id);
+                            if (!state && !revert) {
+                                return (
+                                    <SessionPlanCard
+                                        proposal={p}
+                                        onConfirm={() => { onConfirmSessionPlan?.(p, sessionId); setDecisionTick(t => t + 1); }}
+                                        onDismiss={() => { onDismissSessionPlan?.(p); setDecisionTick(t => t + 1); }}
+                                    />
+                                );
+                            }
+                            if (state === 'confirmed') {
+                                return (
+                                    <SessionPlanCard
+                                        proposal={p}
+                                        applied
+                                        revert={revert}
+                                        onRevert={revert ? () => { onRevertSessionPlan?.(p, sessionId); setDecisionTick(t => t + 1); } : undefined}
+                                    />
+                                );
+                            }
+                            return null;
+                        })()}
+                        {/* A PROPOSED trading rule (propose_rule_change). The
+                            anti-hindsight split is printed on the card; Confirm
+                            is the only writer and starts the TTL. */}
+                        {(() => {
+                            void decisionTick;
+                            const p = e.ruleProposal;
+                            if (!p) return null;
+                            const state = ruleProposalStateOf(p.id);
+                            const revert = ruleProposalRevertOf(p.id);
+                            if (!state && !revert) {
+                                return (
+                                    <RuleProposalCard
+                                        proposal={p}
+                                        onConfirm={() => { onConfirmRuleProposal?.(p, sessionId); setDecisionTick(t => t + 1); }}
+                                        onDismiss={() => { onDismissRuleProposal?.(p); setDecisionTick(t => t + 1); }}
+                                    />
+                                );
+                            }
+                            if (state === 'confirmed') {
+                                return (
+                                    <RuleProposalCard
+                                        proposal={p}
+                                        applied
+                                        revert={revert}
+                                        onRevert={revert ? () => { onRevertRuleProposal?.(p, sessionId); setDecisionTick(t => t + 1); } : undefined}
                                     />
                                 );
                             }

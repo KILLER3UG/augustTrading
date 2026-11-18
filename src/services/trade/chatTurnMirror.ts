@@ -80,6 +80,8 @@ export interface SoloTurnRow {
         riskChange?: import('./riskChangeProposal').RiskChangeProposal;
         aiSettingChange?: import('./aiSettingProposal').AiSettingProposal;
         strategyActivation?: import('./strategyActivation').StrategyActivationProposal;
+        sessionPlan?: import('./sessionPlan').SessionPlanProposal;
+        ruleProposal?: import('../learning/candidateRuleLoop').RuleProposal;
         statsCard?: import('./statsCard').StatsCardSnapshot;
     };
 }
@@ -140,7 +142,7 @@ export const startEntryMirror = (opts: {
             ...(typeof e.workedMs === 'number' ? { workedMs: e.workedMs } : {}),
             ...(e.effort ? { effort: e.effort } : {}),
             ...(opts.speakerKey ? { speakerKey: opts.speakerKey } : {}),
-            ...((e.proposal || e.settlementCorrection || e.tradeAction || e.riskChange || e.aiSettingChange || e.strategyActivation || e.statsCard)
+            ...((e.proposal || e.settlementCorrection || e.tradeAction || e.riskChange || e.aiSettingChange || e.strategyActivation || e.sessionPlan || e.ruleProposal || e.statsCard)
                 ? {
                     cards: {
                         ...(e.proposal ? { proposal: e.proposal } : {}),
@@ -149,6 +151,8 @@ export const startEntryMirror = (opts: {
                         ...(e.riskChange ? { riskChange: e.riskChange } : {}),
                         ...(e.aiSettingChange ? { aiSettingChange: e.aiSettingChange } : {}),
                         ...(e.strategyActivation ? { strategyActivation: e.strategyActivation } : {}),
+                        ...(e.sessionPlan ? { sessionPlan: e.sessionPlan } : {}),
+                        ...(e.ruleProposal ? { ruleProposal: e.ruleProposal } : {}),
                         ...(e.statsCard ? { statsCard: e.statsCard } : {}),
                     },
                 }

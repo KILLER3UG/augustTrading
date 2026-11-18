@@ -17,9 +17,9 @@
  */
 
 /** Which receipt this snapshot renders. */
-export type StatsTool = 'get_setup_history_stats' | 'playbook_attribution' | 'get_trade_log';
+export type StatsTool = 'get_setup_history_stats' | 'playbook_attribution' | 'get_trade_log' | 'risk_state';
 
-const STATS_TOOLS: readonly StatsTool[] = ['get_setup_history_stats', 'playbook_attribution', 'get_trade_log'];
+const STATS_TOOLS: readonly StatsTool[] = ['get_setup_history_stats', 'playbook_attribution', 'get_trade_log', 'risk_state'];
 
 export interface StatsCardSnapshot {
     tool: StatsTool;

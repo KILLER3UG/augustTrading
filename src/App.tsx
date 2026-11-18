@@ -39,6 +39,17 @@ import {
     clearStrategyRevertWindow, formatStrategyActivationAppliedForModel, formatStrategyActivationRevertedForModel,
     restorePendingStrategyActivation, type StrategyActivationProposal,
 } from './services/trade/strategyActivation';
+import {
+    confirmSessionPlan, dismissSessionPlan, revertSessionPlan, markSessionPlanRevertWindow, sessionPlanRevertOf,
+    formatSessionPlanAppliedForModel, formatSessionPlanRevertedForModel,
+    readActiveSessionPlan, type SessionPlanProposal,
+} from './services/trade/sessionPlan';
+import {
+    confirmRuleProposal, dismissRuleProposal, revertRuleProposal, markRuleRevertWindow, ruleProposalRevertOf,
+    formatRuleAppliedForModel, formatRuleRevertedForModel,
+    pruneExpiredRules, type RuleProposal,
+} from './services/learning/candidateRuleLoop';
+import { getActiveUsername } from './utils/activeUser';
 import { harnessTurn } from './utils/harnessMarks';
 import { setWorkspaceLayout, toggleWorkspaceLayoutPersisted } from './utils/workspaceLayout';
 import { setStrategyStatus, type StrategyStatus } from './services/learning/strategyStore';
@@ -1780,6 +1791,62 @@ const App: React.FC = () => {
         });
     }, [toast]);
 
+    // ── The session-plan card (Phase 5) ──────────────────────────────────
+    // The desk proposes bounds; ONLY this tap persists them. The replaced
+    // plan is stamped from the store BEFORE the write, so the 60s revert
+    // puts back a fact rather than an assumption.
+    const handleConfirmSessionPlan = useCallback((proposal: SessionPlanProposal, sessionId?: string): void => {
+        const username = activeUsernameRef.current || getActiveUsername();
+        const previous = readActiveSessionPlan(username);
+        const active = confirmSessionPlan(proposal.id, proposal.dateKey, username);
+        if (!active) return;
+        markSessionPlanRevertWindow(proposal.id, previous);
+        chatStore.queueHarnessSignal(formatSessionPlanAppliedForModel(active), sessionId);
+    }, []);
+
+    const handleDismissSessionPlan = useCallback((proposal: SessionPlanProposal): void => {
+        dismissSessionPlan(proposal.id, activeUsernameRef.current || getActiveUsername());
+    }, []);
+
+    const handleRevertSessionPlan = useCallback((proposal: SessionPlanProposal, sessionId?: string): void => {
+        const window = sessionPlanRevertOf(proposal.id);
+        if (!window) return;
+        const restored = revertSessionPlan(proposal.id, activeUsernameRef.current || getActiveUsername());
+        chatStore.queueHarnessSignal(formatSessionPlanRevertedForModel(restored ?? proposal), sessionId);
+    }, []);
+
+    // ── The trading-rule card (Phase 5) ──────────────────────────────────
+    // Promotion already passed N >= 2 and the anti-hindsight gate at propose
+    // time. Confirm starts the TTL from the CURRENT journal count; the desk
+    // learns the decision in thread, and Undo removes the rule inside 60s.
+    const handleConfirmRuleProposal = useCallback((proposal: RuleProposal, sessionId?: string): void => {
+        const rule = confirmRuleProposal(
+            proposal.id,
+            loggedTradesRef.current?.length ?? 0,
+            activeUsernameRef.current || getActiveUsername(),
+        );
+        if (!rule) return;
+        markRuleRevertWindow(proposal.id, undefined);
+        chatStore.queueHarnessSignal(formatRuleAppliedForModel(rule), sessionId);
+    }, []);
+
+    const handleDismissRuleProposal = useCallback((proposal: RuleProposal): void => {
+        dismissRuleProposal(proposal.id, activeUsernameRef.current || getActiveUsername());
+    }, []);
+
+    const handleRevertRuleProposal = useCallback((proposal: RuleProposal, sessionId?: string): void => {
+        const window = ruleProposalRevertOf(proposal.id);
+        if (!window) return;
+        const restored = revertRuleProposal(proposal.id, activeUsernameRef.current || getActiveUsername());
+        if (restored) chatStore.queueHarnessSignal(formatRuleRevertedForModel(restored), sessionId);
+    }, []);
+
+    // A rule's trade-TTL is checked against the live journal, so EVERY new log
+    // prunes expired rules — no waiting for the next desk turn or a reload.
+    useEffect(() => {
+        pruneExpiredRules(getActiveUsername(), loggedTrades.length);
+    }, [loggedTrades.length]);
+
     /** The dock holds a settled verdict's message id, not a copy of the
      *  analysis — a persisted chat session would otherwise store a whole
      *  `TradeAnalysis` per answer. This lets it resolve the backing on demand.
@@ -2619,6 +2686,12 @@ const App: React.FC = () => {
                         onConfirmStrategyActivation={handleConfirmStrategyActivation}
                         onDismissStrategyActivation={handleDismissStrategyActivation}
                         onRevertStrategyActivation={handleRevertStrategyActivation}
+                        onConfirmSessionPlan={handleConfirmSessionPlan}
+                        onDismissSessionPlan={handleDismissSessionPlan}
+                        onRevertSessionPlan={handleRevertSessionPlan}
+                        onConfirmRuleProposal={handleConfirmRuleProposal}
+                        onDismissRuleProposal={handleDismissRuleProposal}
+                        onRevertRuleProposal={handleRevertRuleProposal}
                         registerScrollToMessage={registerScrollToMessage}
                         onToggleWatch={handleToggleWatch}
                         onOpenWatchList={() => setIsWatchListVisible(true)}

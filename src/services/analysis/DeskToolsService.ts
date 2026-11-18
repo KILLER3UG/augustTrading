@@ -697,6 +697,11 @@ const TOOL_BUDGETS: Record<string, number> = {
     // drop the LAST detectors off the table silently.
     playbook_attribution: 3000,
     risk_state: 3000,
+    // Both proposal receipts name every field the card prints. A 2,400 cap
+    // keeps the full reason/list set without the artifact spill on a normal
+    // call, and matches the other gated proposal tools' budget.
+    propose_session_plan: 2400,
+    propose_rule_change: 2400,
     // The P2 composites: four sub-reads plus series-depth notes ride one
     // envelope; the default would cut the liquidation/positioning tails.
     derivatives_state: 3600,
@@ -1057,6 +1062,10 @@ const TOOL_LABELS: Record<string, string> = {
     propose_self_change: 'self-change',
     revert_self_change: 'self-change undo',
     propose_ai_setting_change: 'ai setting',
+    propose_risk_change: 'risk limit change',
+    propose_strategy_activation: 'strategy state change',
+    propose_session_plan: 'session plan',
+    propose_rule_change: 'rule proposal',
 };
 
 export const toolLabel = (name: string): string => TOOL_LABELS[name] ?? name.replace(/_/g, ' ');
@@ -2735,7 +2744,7 @@ export const DESK_TOOL_DEFINITIONS: DeskToolDefinition[] = [
         function: {
             name: 'run_review',
             description:
-                'Run a review and put its findings into this conversation as chat turns: weekly or monthly over the journal, or one trade\'s post-mortem. READ-ONLY — it proposes rules and lessons, and changes nothing in the notebook, the risk settings or the record. Pass tradeId for scope "trade".',
+                'Run a review and put its findings into this conversation as chat turns: weekly or monthly over the journal, or one trade\'s post-mortem. READ-ONLY on the notebook, risk settings and journal rows — it records ONE candidate lesson per trade review (a single trade is never a rule) and prunes expired learned rules, and changes no journal row. Pass tradeId for scope "trade".',
             parameters: {
                 type: 'object',
                 properties: {
@@ -2808,6 +2817,60 @@ export const DESK_TOOL_DEFINITIONS: DeskToolDefinition[] = [
                     reason: { type: 'string', description: 'Why the plan should move — printed on the confirmation card and kept in the record.' },
                 },
                 required: ['slug', 'action', 'reason'],
+                additionalProperties: false,
+            },
+        },
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'propose_session_plan',
+            description:
+                'GATED. Propose the PLAN FOR THE SESSION: the focus pairs, the bias, the invalidation conditions, and how many trades and how much R may be risked. Nothing is active on this call — it RECORDS a proposal the trader confirms on a card. State a reason the trader can read; the desk never activates a plan itself.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    focusPairs: { type: 'array', items: { type: 'string' }, description: 'One or more instruments to watch this session.' },
+                    sessionBias: { type: 'string', enum: ['Long', 'Short', 'Neutral', 'Selective'], description: 'The directional bias for the session.' },
+                    invalidations: { type: 'array', items: { type: 'string' }, description: 'What would prove the read wrong.' },
+                    maxTrades: { type: 'integer', description: 'Maximum trades allowed this session, 1-20.' },
+                    maxLossR: { type: 'number', description: 'Maximum total loss allowed this session, in R, 0.5-10.' },
+                    notes: { type: 'string', description: 'Optional short note shown on the card.' },
+                    dateKey: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$', description: 'Optional session date this plan bounds (YYYY-MM-DD); defaults to today.' },
+                    reason: { type: 'string', description: 'Why this plan — printed on the card and kept in the record.' },
+                },
+                required: ['focusPairs', 'sessionBias', 'invalidations', 'maxTrades', 'maxLossR', 'reason'],
+                additionalProperties: false,
+            },
+        },
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'propose_rule_change',
+            description:
+                'GATED. Propose promoting a candidate lesson into a TRADING RULE. Refused unless at least TWO distinct trades support it and the when/action use only facts knowable at entry — information visible only after resolution (outcome, MAE/MFE, a stop touched then reversed) is hindsight and is refused. Nothing changes on this call: it RECORDS a proposal the trader confirms on a card. The rule expires automatically after its TTL in days or new trades.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    patternKey: { type: 'string', description: 'Stable key for the recurring pattern this rule addresses.' },
+                    title: { type: 'string', description: 'Short title for the rule.' },
+                    when: { type: 'string', description: 'The entry-time condition, using only facts knowable before entry.' },
+                    action: { type: 'string', description: 'What to do when the condition recurs.' },
+                    direction: { type: 'string', enum: ['tighten', 'loosen'], description: 'Does this tighten or loosen discipline? Loosening needs a second confirm.' },
+                    quadrant: {
+                        type: 'string',
+                        enum: ['good_call_good_luck', 'good_call_bad_luck', 'bad_call_good_luck', 'bad_call_bad_luck'],
+                        description: 'The review quadrant this lesson came from.',
+                    },
+                    knowableAtEntry: { type: 'array', items: { type: 'string' }, description: 'Facts available before entry — the only evidence a rule may use.' },
+                    visibleOnlyAfterResolution: { type: 'array', items: { type: 'string' }, description: 'Facts excluded from the rule; shown on the card as excluded.' },
+                    tradeIds: { type: 'array', items: { type: 'string' }, description: 'Distinct journal trade ids supporting the rule (>= 2).' },
+                    reason: { type: 'string', description: 'Why this rule should be promoted.' },
+                    ttlDays: { type: 'integer', description: 'Optional expiry in days (default 14).' },
+                    ttlTrades: { type: 'integer', description: 'Optional expiry in new trades (default 20).' },
+                },
+                required: ['patternKey', 'when', 'action', 'direction', 'quadrant', 'knowableAtEntry', 'visibleOnlyAfterResolution', 'tradeIds', 'reason'],
                 additionalProperties: false,
             },
         },
@@ -5483,9 +5546,12 @@ ${body}`);
                 break;
             }
             case 'run_review': {
-                // READ-ONLY. It computes the review from the journal rows this
-                // turn already carries and returns the findings; it writes
-                // nothing and arms nothing.
+                // READ-ONLY on the notebook, risk settings and journal rows: the
+                // review is computed from this turn's rows and returned as
+                // findings. It DOES record ONE candidate lesson per trade review
+                // (one trade is never a rule) and prunes expired learned rules;
+                // it never writes a journal row, a risk setting or a notebook
+                // page, and it arms nothing.
                 const scope = (asString(call.arguments.scope) || 'weekly').toLowerCase();
                 const rows = context.trades ?? [];
                 // Pure JSON, no text prefix: the generic clipper is
@@ -5498,6 +5564,13 @@ ${body}`);
                     const tradeId = asString(call.arguments.tradeId);
                     const row = rows.find(t => t.id === tradeId);
                     if (!row) return rejectedResult(call, `run_review rejected: no journal row "${tradeId}" among this turn's ${rows.length} rows. Call get_trade_log for the ids.`);
+                    const { evaluatePostTradeReview } = await import('../learning/candidateRuleLoop');
+                    const { getActiveUsername } = await import('../../utils/activeUser');
+                    const review = evaluatePostTradeReview(row, rows, { username: getActiveUsername() });
+                    // A rule is never promoted by a review. N=1 stays a CANDIDATE;
+                    // this receipt says so in the model's own language.
+                    const { readActiveRules } = await import('../learning/candidateRuleLoop');
+                    const activeRules = readActiveRules(getActiveUsername(), rows.length);
                     content = JSON.stringify({
                         tool: 'run_review', scope: 'trade', tradeId,
                         record: {
@@ -5523,7 +5596,20 @@ ${body}`);
                             notes: typeof row.postMortem === 'string' && row.postMortem.length > 600
                                 ? `${row.postMortem.slice(0, 600)}… (${row.postMortem.length - 600} more chars — get_trade_log with records:true carries the same cut)`
                                 : (row.postMortem ?? null),
+                            resolutionRecord: row.resolutionRecord ?? review.resolutionRecord,
                         },
+                        quadrant: review.quadrant,
+                        knowableAtEntry: review.audit.knowableAtEntry,
+                        visibleOnlyAfterResolution: review.audit.visibleOnlyAfterResolution,
+                        candidateLesson: review.candidateLesson,
+                        eligibleForRulePromotion: review.eligibleForRulePromotion,
+                        promotionNote: review.eligibleForRulePromotion
+                            ? 'This pattern now has >= 2 distinct trades and entry-only facts; a rule may be proposed with propose_rule_change.'
+                            : 'single trade recorded as candidate lesson only; rule promotion requires >= 2 distinct trades',
+                        activeRules: activeRules.map(r => ({
+                            id: r.id, title: r.title, when: r.when, action: r.action,
+                            direction: r.direction, ttlDays: r.ttlDays, ttlTrades: r.ttlTrades,
+                        })),
                     }, null, 1);
                     break;
                 }
@@ -5601,6 +5687,75 @@ ${body}`);
                     `STRATEGY ${sp.action.toUpperCase()} PROPOSED: "${sp.name}" (${sp.slug}) ${sp.currentStatus} -> ${sp.proposedStatus}.`,
                     'The trader sees a confirmation card; NOTHING changes until they confirm it.',
                     'No plan status was written by this call.',
+                ].join(' ');
+                break;
+            }
+            case 'propose_session_plan': {
+                // The desk may SEE that a session needs bounds and SAY so; it
+                // may never activate a plan by itself. The card's confirm is
+                // the only writer, through the sessionPlan persist path.
+                const { proposeSessionPlan } = await import('../trade/sessionPlan');
+                const checked = proposeSessionPlan({
+                    focusPairs: call.arguments?.focusPairs,
+                    sessionBias: call.arguments?.sessionBias,
+                    invalidations: call.arguments?.invalidations,
+                    maxTrades: call.arguments?.maxTrades,
+                    maxLossR: call.arguments?.maxLossR,
+                    notes: call.arguments?.notes,
+                    dateKey: asString(call.arguments?.dateKey) || undefined,
+                    reason: asString(call.arguments?.reason),
+                });
+                if (!checked.ok) return rejectedResult(call, `${call.name} rejected: ${checked.refused}.`);
+                const p = checked.proposal;
+                content = [
+                    `SESSION PLAN PROPOSED (id ${p.id}) for ${p.dateKey}: focus ${p.focusPairs.join(', ')};`,
+                    ` bias ${p.sessionBias}; max ${p.maxTrades} trades; max loss ${p.maxLossR}R; invalidations ${p.invalidations.join(', ')}.`,
+                    'The trader sees a confirmation card; NOTHING is active until they confirm it. No plan was activated by this call.',
+                ].join('');
+                break;
+            }
+            case 'propose_rule_change': {
+                // Promotion is gated TWICE: N >= 2 distinct trades, and only
+                // facts knowable at entry. Both refusals come from the one
+                // pure checker so the tool, the card and the contract agree.
+                const { proposeRuleChange } = await import('../learning/candidateRuleLoop');
+                // The N >= 2 gate counts EVIDENCE, not model words: an id that
+                // is not in this turn's journal cannot support a rule. This is
+                // the same existence gate run_review already applies.
+                const suppliedIds = Array.isArray(call.arguments?.tradeIds)
+                    ? call.arguments.tradeIds.map((v: unknown) => String(v)) : [];
+                const knownIds = new Set((context.trades ?? []).map(t => t.id));
+                const unknownId = suppliedIds.find(id => !knownIds.has(id));
+                if (unknownId) {
+                    return rejectedResult(call, `${call.name} rejected: trade id "${unknownId}" is not among this turn's ${knownIds.size} journal rows. Call get_trade_log for the real ids.`);
+                }
+                const checked = proposeRuleChange({
+                    patternKey: asString(call.arguments?.patternKey),
+                    title: asString(call.arguments?.title) || undefined,
+                    when: asString(call.arguments?.when),
+                    action: asString(call.arguments?.action),
+                    direction: call.arguments?.direction === 'loosen' ? 'loosen' : 'tighten',
+                    quadrant: (['good_call_good_luck', 'good_call_bad_luck', 'bad_call_good_luck', 'bad_call_bad_luck']
+                        .includes(String(call.arguments?.quadrant))
+                        ? call.arguments.quadrant : 'bad_call_bad_luck') as import('../learning/candidateRuleLoop').ReviewQuadrant,
+                    knowableAtEntry: Array.isArray(call.arguments?.knowableAtEntry)
+                        ? call.arguments.knowableAtEntry.map((v: unknown) => String(v)) : [],
+                    visibleOnlyAfterResolution: Array.isArray(call.arguments?.visibleOnlyAfterResolution)
+                        ? call.arguments.visibleOnlyAfterResolution.map((v: unknown) => String(v)) : [],
+                    tradeIds: Array.isArray(call.arguments?.tradeIds)
+                        ? call.arguments.tradeIds.map((v: unknown) => String(v)) : [],
+                    reason: asString(call.arguments?.reason),
+                    ...(typeof call.arguments?.ttlDays === 'number' && Number.isFinite(call.arguments.ttlDays)
+                        ? { ttlDays: call.arguments.ttlDays } : {}),
+                    ...(typeof call.arguments?.ttlTrades === 'number' && Number.isFinite(call.arguments.ttlTrades)
+                        ? { ttlTrades: call.arguments.ttlTrades } : {}),
+                });
+                if (!checked.ok) return rejectedResult(call, `${call.name} rejected: ${checked.refused}`);
+                const rp = checked.proposal;
+                content = [
+                    `RULE PROPOSED (id ${rp.id}): when ${rp.when}, do ${rp.action} (${rp.direction}).`,
+                    `Evidence: n=${rp.tradeIds.length} distinct trades. TTL ${rp.ttlDays}d or ${rp.ttlTrades} trades.`,
+                    'The trader sees a gated confirmation card; NOTHING is active until they confirm it. No rule was applied by this call.',
                 ].join(' ');
                 break;
             }
@@ -5959,6 +6114,7 @@ ${body}`);
                             netR: t.netR ?? null,
                             maxAdverseExcursion: t.maxAdverseExcursion ?? null,
                             maxFavorableExcursion: t.maxFavorableExcursion ?? null,
+                            resolutionRecord: t.resolutionRecord ?? null,
                             modelsUsed: t.modelsUsed ?? null,
                             strategy: t.analysis?.strategy ?? null,
                             confidence: t.analysis?.confidence ?? null,
