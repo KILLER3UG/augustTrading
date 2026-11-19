@@ -41,6 +41,8 @@ and an assertion that zero August Trading processes survived it.
 | `installed-04-decision-cards.png` | A presented plan's decision card — with the deterministic gate refusing it honestly |
 | `installed-05-guard-block.png` | The session guard standing a consumed session down on the card |
 | `installed-06-phase5-review-and-ram-harness-card.png` | Journal → Stats: the trader-gated harness-optimization proposal card (fixture proposal, real renderer) beside the weekly review |
+| `installed-06b-parent-pool.png` | The O-150 ranked parent pool (measured holdout delta) with the one-click rollback control, seeded graded parent |
+| `installed-06c-parent-pool-rollback.png` | After the rollback: the ledgered "Rolled back to the … parent" notice, pool still ranked |
 | `installed-07-phase6-paper-and-journal.png` | The Journal history view: seeded rows, outcome badges, bulk-select gating |
 | `installed-08-settings-monochrome.png` | Settings → Analysis: read-only AI status pills, Change-in-chat, the Tell-August bar docked inside the modal foot |
 
