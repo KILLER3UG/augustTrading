@@ -36,6 +36,13 @@ const syncClosedTradeToNotebook = async (
     const { appendDiaryEntry, syncRecurringMistakes } = await import('../services/learning/MemoryFilesService');
     await appendDiaryEntry(trade, username);
     await syncRecurringMistakes(allTrades, username);
+    // Meta-RAM OFFLOAD on resolution: the coin's MARKET_SCHEMA refreshes its
+    // measurable facts and re-derives its learned traps from the real rows.
+    // Fire-and-forget — the diary and registry above are the critical record;
+    // a slow market reader must never delay the settlement chain.
+    const { offloadOnTradeResolution } = await import('../services/learning/memoryOffload');
+    void offloadOnTradeResolution(trade, allTrades, username)
+        .catch(e => console.warn('[MemoryOffload] resolution pass failed:', e instanceof Error ? e.message : e));
 };
 
 import { netRiskReward, roundTripCostR, stopDistancePercent } from '../utils/netRiskReward';

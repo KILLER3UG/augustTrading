@@ -34,6 +34,7 @@ import {
     tallyLine,
 } from '../../utils/recentTradesBrief';
 import { getMemoryFiles, searchNotebookNotes, readDiaryEntries, DIARY_DIGEST_MAX_ENTRIES } from './MemoryFilesService';
+import { readMarketSchema, MARKET_SCHEMA_MAX_CHARS } from './MarketSchemaService';
 import { findRelevantTrades } from './PatternMemorySynthesisService';
 import { contentWords, isSkillFile, jaccard, listSkillFiles, type SkillFile } from './SkillFileService';
 import { skillFormatIssues } from '../../utils/skillFrontmatter';
@@ -92,7 +93,7 @@ const RECALL_EXTRA_SKILLS = 2;
 
 export interface RetrievedMemorySource {
     path: string;
-    kind: 'identity' | 'skill' | 'playbook' | 'diary' | 'rules' | 'similar';
+    kind: 'identity' | 'skill' | 'playbook' | 'diary' | 'rules' | 'similar' | 'schema';
 }
 
 export interface SkillMatch {
@@ -238,6 +239,26 @@ ${line.trim()}`, MISTAKE_LINE_MAX);
 };
 
 /**
+ * The MARKET_SCHEMA index for this coin (Meta-RAM): units, funding clock,
+ * session overlaps, regime conventions and the learned traps — the crisp
+ * market facts a seat needs BEFORE it argues structure. Injected after the
+ * mistake line and before the diary: the index leads, the ground truth
+ * follows. Empty when the query names no coin or the coin has no schema yet.
+ */
+export const marketSchemaBlock = (query?: MemoryRetrievalQuery): string => {
+    if (!query?.coin) return '';
+    const content = (() => {
+        try {
+            return readMarketSchema(query.coin!);
+        } catch {
+            return '';
+        }
+    })();
+    if (!content.trim()) return '';
+    return cap(`[market-schema/${query.coin.toUpperCase()}]\n${content.trim()}`, MARKET_SCHEMA_MAX_CHARS);
+};
+
+/**
  * The per-coin diary digest (O-149): the settlement diary's most recent
  * entries for THIS coin, oldest first, under the recency + char window.
  * This is the OFFLOAD half finally reaching the LOAD half — an entry written
@@ -343,6 +364,7 @@ export function listRetrievedMemorySources(
     if (skillMatch.skill) out.push({ path: `skills/${skillMatch.name}`, kind: 'skill' });
     if (riskRulesBlock()) out.push({ path: 'rules/risk-rules', kind: 'rules' });
     if (uncoveredMistakeLine(query)) out.push({ path: 'rules/recurring-mistakes', kind: 'rules' });
+    if (marketSchemaBlock(query)) out.push({ path: `market-schema/${(query?.coin ?? '').toUpperCase()}`, kind: 'schema' });
     if (diaryDigestBlock(query)) out.push({ path: `trader-diary/${(query?.coin ?? '').toUpperCase()}`, kind: 'diary' });
     if (similarTradesBlock(query, trades)) out.push({ path: 'journal/similar-trades', kind: 'similar' });
     if (recentFormBlock(trades, undefined, audience)) out.push({ path: 'journal/recent-form', kind: 'similar' });
@@ -427,6 +449,10 @@ export function getMemoryFilesContext(
     if (riskChars > 0) injected.push({ path: 'rules/risk-rules', kind: 'rules', chars: riskChars });
     const mistakeChars = push(uncoveredMistakeLine(query));
     if (mistakeChars > 0) injected.push({ path: 'rules/recurring-mistakes', kind: 'rules', chars: mistakeChars });
+    // Meta-RAM: the coin's MARKET_SCHEMA index — units, funding, sessions,
+    // regime conventions, learned traps — ahead of the diary's ground truth.
+    const schemaChars = push(marketSchemaBlock(query));
+    if (schemaChars > 0) injected.push({ path: `market-schema/${(query?.coin ?? '').toUpperCase()}`, kind: 'schema', chars: schemaChars });
     // O-149: the settlement diary's recency window for THIS coin — the
     // OFFLOAD write becomes LOAD-readable on the next analysis turn.
     const diaryChars = push(diaryDigestBlock(query));
@@ -577,6 +603,11 @@ ${substituteSkillContext(m.skill.body, query)}`);
 
     const mistakes = uncoveredMistakeLine(query);
     if (mistakes) sections.push(mistakes.replace(/^\[[^\]]+\]\n/, ''));
+
+    // The coin's MARKET_SCHEMA index rides recall too — a seat told the
+    // schema exists can pull it whole instead of guessing the units.
+    const schema = marketSchemaBlock(query);
+    if (schema) sections.push(schema.replace(/^\[[^\]]+\]\n/, ''));
 
     // The model's own NOTES (write_memory_note → lessons/, rules/, …): these
     // files have no SKILL frontmatter, so the skill tier above never sees

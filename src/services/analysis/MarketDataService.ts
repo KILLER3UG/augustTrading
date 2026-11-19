@@ -904,6 +904,53 @@ export const fetchAllFuturesSymbols = async (): Promise<SymbolMeta[]> => {
     return rows;
 };
 
+/** The MARKET_SCHEMA units half (Meta-RAM): one symbol's tick and lot steps
+ *  from exchangeInfo's PRICE_FILTER / LOT_SIZE. These are the contract units
+ *  an entry/stop must respect — the schema index file carries them so a seat
+ *  reads "tick 0.1" instead of guessing precision. exchangeInfo changes on
+ *  listing events, not on price, so the cache is long (6h); a failed fetch
+ *  returns null and the schema says "unverified", never a made-up number. */
+export interface SymbolUnits {
+    symbol: string;
+    baseAsset: string;
+    quoteAsset: string;
+    tickSize: number | null;
+    stepSize: number | null;
+}
+const SYMBOL_UNITS_TTL = 6 * 3600_000;
+export const fetchSymbolUnits = async (symbol: string): Promise<SymbolUnits | null> => {
+    const normalizedSymbol = normalizeSymbol(symbol);
+    const cacheKey = `symbolunits_${normalizedSymbol}`;
+    const cached = getCached<SymbolUnits | null>(cacheKey, SYMBOL_UNITS_TTL);
+    if (cached !== null) return cached;
+    try {
+        const response = await robustFuturesFetch('/fapi/v1/exchangeInfo', POINT_IN_TIME_FETCH_MS);
+        const info = await response.json();
+        const row = Array.isArray(info?.symbols)
+            ? info.symbols.find((s: any) => s?.symbol === normalizedSymbol)
+            : null;
+        if (!row) return null;
+        const filters = Array.isArray(row.filters) ? row.filters : [];
+        const price = filters.find((f: any) => f?.filterType === 'PRICE_FILTER');
+        const lot = filters.find((f: any) => f?.filterType === 'LOT_SIZE');
+        const num = (v: unknown): number | null => {
+            const n = Number(v);
+            return Number.isFinite(n) && n > 0 ? n : null;
+        };
+        const units: SymbolUnits = {
+            symbol: normalizedSymbol,
+            baseAsset: String(row.baseAsset ?? normalizedSymbol.replace(/USDT$/, '')),
+            quoteAsset: String(row.quoteAsset ?? 'USDT'),
+            tickSize: num(price?.tickSize),
+            stepSize: num(lot?.stepSize),
+        };
+        setCache(cacheKey, units);
+        return units;
+    } catch {
+        return null;
+    }
+};
+
 /**
  * Fetch Open Interest from Binance Futures (PUBLIC - No API Key Required)
  */

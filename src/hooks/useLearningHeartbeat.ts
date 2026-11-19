@@ -35,6 +35,7 @@ import { settleDueSignals, settleRefusedSignals } from '../services/signals/sign
 import { migrateSkillLibrary } from '../services/learning/SkillFileService';
 import { expireSelfChanges } from '../services/selfMod/SelfModificationService';
 import { runHarnessOptimizationPass } from '../services/selfMod/harnessOptimization';
+import { runMemoryOffloadIfDue } from '../services/learning/memoryOffload';
 
 /** How often a foreground session wakes the loop. Frequent enough that a
  *  trader sees a stale-skill proposal inside the hour; rare enough that four
@@ -104,6 +105,16 @@ export const useLearningHeartbeat = (activeUsername: string | null, trades: Logg
         void runHarnessOptimizationPass(username, tradesRef.current)
             .catch(e => console.warn('[HarnessOpt] boot pass failed:', e instanceof Error ? e.message : e));
 
+        // Meta-RAM OFFLOAD boot pass: a session that CLOSED while the app was
+        // shut gets its digest now, and signal resolutions that landed since
+        // the last stamp fold into the per-coin schemas. The due-check inside
+        // makes a boot call free when nothing is new.
+        void runMemoryOffloadIfDue(username, tradesRef.current)
+            .then(res => {
+                if (res?.sessionKey) console.log('[MemoryOffload] session digested:', res.sessionKey, `(${res.digestCoins} coins)`);
+            })
+            .catch(e => console.warn('[MemoryOffload] boot pass failed:', e instanceof Error ? e.message : e));
+
         const sweep = (): void => {
             const log = tradesRef.current;
             expireWindows();
@@ -118,6 +129,15 @@ export const useLearningHeartbeat = (activeUsername: string | null, trades: Logg
                     }
                 })
                 .catch(e => console.warn('[HarnessOpt] pass failed:', e instanceof Error ? e.message : e));
+            // Meta-RAM OFFLOAD rides the same clock: signal-resolution fold +
+            // the session-close digest when the UTC date rolls over. Nothing
+            // here writes a prompt or a skill — only the notebook's own index
+            // files, under the notebook write lock.
+            void runMemoryOffloadIfDue(username, log)
+                .then(res => {
+                    if (res?.sessionKey) console.log('[MemoryOffload] session digested:', res.sessionKey, `(${res.digestCoins} coins)`);
+                })
+                .catch(e => console.warn('[MemoryOffload] pass failed:', e instanceof Error ? e.message : e));
             void runWeeklyReviewIfDue(username, log)
                 .then(res => { if (res) console.log('[WeeklyReview] digest generated:', res.impulse.slice(0, 80)); })
                 .catch(e => console.warn('[WeeklyReview] pass failed:', e instanceof Error ? e.message : e));
