@@ -73,7 +73,10 @@ const StateOverlay: React.FC<Pick<ChartFrameProps, 'state' | 'message' | 'onRetr
         return (
             <div className="motion-fade absolute inset-0 flex items-center justify-center bg-zinc-950/85 p-4">
                 <div className="flex flex-col items-center gap-2 text-center">
-                    <AlertCircle className="h-5 w-5 text-rose-400" aria-hidden="true" />
+                    {/* Monochrome: red is reserved for candles, price/PnL and
+                        Long/Short/Approve/Reject semantics — a data outage is
+                        an error state, not a trade signal, so it reads in ink. */}
+                    <AlertCircle className="h-5 w-5 text-zinc-400" aria-hidden="true" />
                     <p className="max-w-xs text-ui-dense leading-relaxed text-zinc-400">
                         {message ?? 'Chart data is unavailable.'}
                     </p>

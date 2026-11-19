@@ -444,6 +444,10 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
      *  price line, diffed on every push. Transient view state, never saved. */
     const chatLevelLinesRef = useRef<Map<string, IPriceLine>>(new Map());
     const [status, setStatus] = useState<'loading' | 'live' | 'unavailable'>('loading');
+    /** The load effect's manual-retry handle: the error overlay's Retry tap
+     *  re-runs the SAME guarded load (inFlight dedupes a tap mid-fetch), so
+     *  the trader never waits out the 4s auto-retry to ask again. */
+    const retryLoadRef = useRef<(() => void) | null>(null);
     const [levels, setLevels] = useState<ChartLevel[]>([]);
     /** Which studies are drawn, per user. The SERIES come from
      *  `chartIndicators.ts` — the one series module (the desk tools migrate
@@ -913,6 +917,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
             }
         };
         void load(true);
+        retryLoadRef.current = () => void load(false);
         if (live) {
             // Stall watchdog: any gap in the push stream gets healed by a
             // history re-sync instead of leaving a frozen last bar.
@@ -920,7 +925,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                 if (Date.now() - lastTickRef.current > LIVE_STALL_MS) void load(false);
             }, 5000);
         }
-        return () => { cancelled = true; window.clearTimeout(timer); window.clearInterval(watchdog); };
+        return () => { cancelled = true; retryLoadRef.current = null; window.clearTimeout(timer); window.clearInterval(watchdog); };
     }, [symbol, interval, live]);
 
     // Live kline stream: patch the last bar in place (sub-second ticks).
@@ -2173,6 +2178,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                 variant="plain"
                 state={status === 'loading' ? 'loading' : status === 'unavailable' ? 'error' : 'ready'}
                 message="Candles unavailable — Binance fetch failed; retrying in 4s."
+                onRetry={() => retryLoadRef.current?.()}
                 bodyClassName="min-h-0 flex-1 bg-zinc-950"
                 testId="trading-chart-plot"
             >

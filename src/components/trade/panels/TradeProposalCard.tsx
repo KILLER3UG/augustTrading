@@ -168,6 +168,11 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({
     const [declineReason, setDeclineReason] = useState('');
 
     const secondsLeft = undo ? Math.max(1, Math.ceil(undo.msLeft / 1000)) : 0;
+    // The planned R:R chip. Sub-1 ratios quote TWO decimals: the canonical
+    // builder rounds to 2, and re-rounding 0.05 to one digit printed "0.1:1"
+    // — a chip that overstated the plan's reward 2× against the gate's own
+    // "R:R ratio (0.05)" line. One number, one precision per magnitude.
+    const rr = computeRrRatio(proposal);
     return (
     <div className="mt-1 rounded-control border border-hairline bg-zinc-900/60 p-2.5" data-testid="trade-proposal-card">
         <div className="flex items-center gap-2">
@@ -183,9 +188,9 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({
             )}
             {/* The number that gates "Log this trade" — from the canonical
                 planned-R:R util, the same chip the Agents surface header shows. */}
-            {computeRrRatio(proposal) > 0 && (
+            {rr > 0 && (
                 <span className="rounded-control border border-hairline bg-white/[0.04] px-1.5 py-0.5 font-mono text-ui-xs font-medium text-zinc-300">
-                    {fmtRiskReward(computeRrRatio(proposal), 1)} R:R
+                    {fmtRiskReward(rr, rr >= 1 ? 1 : 2)} R:R
                 </span>
             )}
             {plan ? (
@@ -212,6 +217,48 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({
                 <div className="font-semibold text-zinc-200">{proposal.takeProfits.join(' / ')}</div>
             </div>
         </div>
+        {/* DECISION BLOCKERS FIRST (the audit's hierarchy fix): a gate
+            refusal, a standing session guard, a stale plan or an unmeasurable
+            gate is the first thing the trader must see — above the rationale
+            and the sizing, not buried under them. The buttons below already
+            read these states; now the card's top does too. */}
+        {proposal.gate?.refusal && (
+            <p className="mt-1.5 rounded-control border border-line bg-white/[0.03] px-2 py-1.5 text-ui-dense text-zinc-300" data-testid="proposal-refused">
+                Refused — {proposal.gate.refusal}
+            </p>
+        )}
+        {guardBlock && (
+            // The session guard refuses every new log — the card prints the
+            // standing reason and Approve stays down. Same treatment as a
+            // gate refusal: deterministic, no same-moment override.
+            <p className="mt-1.5 rounded-control border border-line bg-white/[0.03] px-2 py-1.5 text-ui-dense text-zinc-300" data-testid="proposal-guard-block">
+                Session guard — {guardBlock}
+            </p>
+        )}
+        {staleness.stale && (
+            // The market moved away from the proposed entry, or the plan
+            // outlived its validity window. Approving is still the trader's
+            // call — but it is a RE-CONFIRM with the drift on screen, never a
+            // silent one.
+            <div className="mt-1.5 rounded-control border border-line bg-white/[0.03] p-2" data-testid="proposal-stale">
+                {staleness.reasons.map((r, i) => (
+                    <p key={i} className="text-ui-dense leading-relaxed text-zinc-300">{r}</p>
+                ))}
+                {!staleAcknowledged && (
+                    <p className="mt-1 font-mono text-ui-2xs text-zinc-500">
+                        Approving asks for a re-confirm because of this.
+                    </p>
+                )}
+            </div>
+        )}
+        {proposal.gate?.status === 'unavailable' && !refused && (
+            // Fail closed: an unmeasurable plan is never quietly logged. The
+            // handler asks for an explicit confirm, and the row it writes is
+            // stamped `gate:unavailable` — never confidenceCap 0.
+            <p className="mt-1.5 text-ui-dense text-zinc-300" data-testid="proposal-gate-unavailable">
+                Gate could not be checked ({proposal.gate.reason}) — approving asks you to confirm, and the row is recorded UNCAPPED.
+            </p>
+        )}
         {proposal.simulated !== false && (
             <p
                 data-testid="fill-assumptions"
@@ -278,11 +325,6 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({
             </p>
         )}
         {proposal.rationale && <p className="mt-1.5 text-ui-dense leading-relaxed text-zinc-400">{proposal.rationale}</p>}
-        {proposal.gate?.refusal && (
-            <p className="mt-1.5 rounded-control border border-line bg-white/[0.03] px-2 py-1.5 text-ui-dense text-zinc-300" data-testid="proposal-refused">
-                Refused — {proposal.gate.refusal}
-            </p>
-        )}
         {cautions.length > 0 && (
             // The FIRST caution is never click-gated: it is a sentence about the
             // trader's own money, and a warning behind a toggle is a warning
@@ -304,38 +346,6 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({
                     </Disclosure>
                 )}
             </div>
-        )}
-        {staleness.stale && (
-            // The market moved away from the proposed entry, or the plan
-            // outlived its validity window. Approving is still the trader's
-            // call — but it is a RE-CONFIRM with the drift on screen, never a
-            // silent one.
-            <div className="mt-1.5 rounded-control border border-line bg-white/[0.03] p-2" data-testid="proposal-stale">
-                {staleness.reasons.map((r, i) => (
-                    <p key={i} className="text-ui-dense leading-relaxed text-zinc-300">{r}</p>
-                ))}
-                {!staleAcknowledged && (
-                    <p className="mt-1 font-mono text-ui-2xs text-zinc-500">
-                        Approving asks for a re-confirm because of this.
-                    </p>
-                )}
-            </div>
-        )}
-        {proposal.gate?.status === 'unavailable' && !refused && (
-            // Fail closed: an unmeasurable plan is never quietly logged. The
-            // handler asks for an explicit confirm, and the row it writes is
-            // stamped `gate:unavailable` — never confidenceCap 0.
-            <p className="mt-1.5 text-ui-dense text-zinc-300" data-testid="proposal-gate-unavailable">
-                Gate could not be checked ({proposal.gate.reason}) — approving asks you to confirm, and the row is recorded UNCAPPED.
-            </p>
-        )}
-        {guardBlock && (
-            // The session guard refuses every new log — the card prints the
-            // standing reason and Approve stays down. Same treatment as a
-            // gate refusal: deterministic, no same-moment override.
-            <p className="mt-1.5 rounded-control border border-line bg-white/[0.03] px-2 py-1.5 text-ui-dense text-zinc-300" data-testid="proposal-guard-block">
-                Session guard — {guardBlock}
-            </p>
         )}
         {!guardBlock && guardWarnings.length > 0 && (
             <p className="mt-1.5 text-ui-dense leading-relaxed text-zinc-300" data-testid="proposal-guard-warning">
