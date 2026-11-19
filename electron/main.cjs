@@ -1783,5 +1783,16 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') {
         app.quit();
+        // Bounded force-exit backstop. A graceful quit can linger on live
+        // network handles (the update check, a provider SSE stream, market
+        // sockets) — measured at 20s+ on Windows, which reads to the trader
+        // as an app that will not close and leaves orphan processes behind.
+        // Five seconds of grace covers the window-state save and any final
+        // main-process flush; after that the process goes down for sure.
+        // Skipped while an installer quit is pending: quitAndInstall must
+        // get the chance to spawn the NSIS installer first.
+        setTimeout(() => {
+            if (!pendingInstallerQuit) app.exit(0);
+        }, 5000).unref();
     }
 });

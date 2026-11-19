@@ -201,13 +201,24 @@ async function runInstaller(setupPath, installDir) {
 }
 
 /** Orphaned-app assertion: after the probe closes the app, NO August Trading
- *  process may remain — a probe that leaks its subject is a failed probe. */
-function assertNoOrphanProcesses() {
-    const res = spawnSync('tasklist', ['/FI', `IMAGENAME eq ${APP_PRODUCT}.exe`, '/FO', 'CSV', '/NH'], {
-        windowsHide: true, encoding: 'utf8', timeout: 20000,
-    });
-    const out = String(res.stdout || '');
-    const rows = out.split('\n').filter((l) => l.toLowerCase().includes(`${APP_PRODUCT.toLowerCase()}.exe`));
+ *  process may remain — a probe that leaks its subject is a failed probe.
+ *  POLLS for the shutdown instead of sampling one fixed moment: the app's
+ *  graceful quit can take a few seconds (live network handles), and the main
+ *  process now carries a bounded force-exit backstop — a check that reads
+ *  mid-shutdown blames the app for the probe's own timing. The assertion
+ *  stays strict: zero processes after the grace window, or the run fails. */
+async function assertNoOrphanProcesses() {
+    const deadline = Date.now() + 20000;
+    let rows = [];
+    for (;;) {
+        const res = spawnSync('tasklist', ['/FI', `IMAGENAME eq ${APP_PRODUCT}.exe`, '/FO', 'CSV', '/NH'], {
+            windowsHide: true, encoding: 'utf8', timeout: 20000,
+        });
+        const out = String(res.stdout || '');
+        rows = out.split('\n').filter((l) => l.toLowerCase().includes(`${APP_PRODUCT.toLowerCase()}.exe`));
+        if (rows.length === 0 || Date.now() >= deadline) break;
+        await sleep(1000);
+    }
     check('zero orphaned August Trading processes after close', rows.length === 0, rows.join(' | ').slice(0, 200));
 }
 
@@ -816,7 +827,7 @@ async function main() {
         await sleep(400);
         try { terminateProcessTree(appProcess); } catch { /* already gone */ }
         electronApp = null;
-        assertNoOrphanProcesses();
+        await assertNoOrphanProcesses();
     } catch (err) {
         fail(err && err.stack || String(err));
         if (electronApp) {
