@@ -457,6 +457,25 @@ async function seedInstalledApp(page) {
                 baseline: { hitRate: 0.4, samples: 5 },
             },
             history: [],
+            // A graded parent so the ranked parent-pool + one-click rollback
+            // (the O-150 upgrade) renders and is exercisable, not just the
+            // pending proposal. deltaPp non-null ⇒ rankParents ranks it ⇒ the
+            // rollback button shows; text differs from the registry fallback
+            // so rollbackToParent restores it through the ledger.
+            parentPool: [
+                {
+                    id: 'harness-opt-parent-1',
+                    promptId: 'analysis.risk_rules',
+                    text: 'Probe fixture: a prior approved harness block the trader can roll back to in one tap.',
+                    kind: 'stop-gap',
+                    approvedAt: new Date(Date.now() - 86400_000).toISOString(),
+                    ledgerId: 'config-probe-parent-1',
+                    baseline: { hitRate: 0.4, samples: 5 },
+                    holdout: { fills: 6, won: 4, lost: 2, expired: 0, hitRate: 0.667 },
+                    deltaPp: 27,
+                    status: 'graded',
+                },
+            ],
         }));
     }, MOCK_PORT);
 }
@@ -777,6 +796,35 @@ async function main() {
         }
         await page.screenshot({ path: path.join(EVIDENCE_DIR, 'installed-06-phase5-review-and-ram-harness-card.png') });
         console.log('[installed-probe] evidence: installed-06-phase5-review-and-ram-harness-card.png');
+
+        // 06b: the O-150 upgrade — the ranked parent pool + one-click rollback.
+        // The seeded graded parent must render the pool and the rollback control;
+        // clicking it restores the parent through the ledger and prints a notice.
+        const poolState = await page.evaluate(() => ({
+            pool: !!document.querySelector('[data-testid="harness-opt-parent-pool"]'),
+            rollback: !!document.querySelector('[data-testid="harness-opt-rollback"]'),
+            poolText: (document.querySelector('[data-testid="harness-opt-parent-pool"]')?.textContent || '').replace(/\s+/g, ' ').slice(0, 160),
+        }));
+        check('06b the harness card renders the ranked parent pool and the one-click rollback',
+            poolState.pool && poolState.rollback, JSON.stringify(poolState));
+        if (poolState.pool) {
+            await page.locator('[data-testid="harness-opt-parent-pool"]').evaluate((n) => n.scrollIntoView({ block: 'center' })).catch(() => {});
+            await sleep(300);
+        }
+        await page.screenshot({ path: path.join(EVIDENCE_DIR, 'installed-06b-parent-pool.png') });
+        console.log('[installed-probe] evidence: installed-06b-parent-pool.png');
+        if (poolState.rollback) {
+            await page.locator('[data-testid="harness-opt-rollback"]').click();
+            let rollbackNotice = '';
+            for (let i = 0; i < 16 && !/rolled back/i.test(rollbackNotice); i++) {
+                await sleep(400);
+                rollbackNotice = await page.evaluate(() => (document.querySelector('[data-testid="harness-opt-notice"]')?.textContent || ''));
+            }
+            check('06c rolling back to the best parent prints the ledgered notice',
+                /rolled back/i.test(rollbackNotice), rollbackNotice.slice(0, 140));
+            await page.screenshot({ path: path.join(EVIDENCE_DIR, 'installed-06c-parent-pool-rollback.png') });
+            console.log('[installed-probe] evidence: installed-06c-parent-pool-rollback.png');
+        }
 
         // 07: the Journal history view (paper + journal rows).
         await page.evaluate(() => {

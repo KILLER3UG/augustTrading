@@ -1053,7 +1053,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
             indicatorDefsRef.current.push({ series, kind: 'line', name, calc });
         };
         if (visible.ema20) addLine(cs => emaSeries(closesOf(cs), 20), chartColor('--color-zinc-500', '#71717a'), 'ema20');
-        if (visible.ema200) addLine(cs => emaSeries(closesOf(cs), 200), chartColor('--color-zinc-400', '#a78bfa'), 'ema200');
+        if (visible.ema200) addLine(cs => emaSeries(closesOf(cs), 200), chartColor('--color-zinc-400', '#a1a1aa'), 'ema200');
         if (visible.boll) {
             const bollColor = chartColor('--color-zinc-500', '#71717a');
             addLine(cs => bollingerSeries(closesOf(cs), 20, 2).mid, bollColor, 'bollMid');
@@ -1065,8 +1065,8 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
         // from the bar the trader Alt+clicked (avwapAnchorRef), which is a
         // question about THIS read, not a preference — so it lives in view
         // state and a new anchor just re-runs REFRESH, no rebuild.
-        if (visible.vwap) addLine(cs => vwapSeries(cs, null), chartColor('--color-zinc-400', '#38bdf8'), 'vwap');
-        if (visible.avwap) addLine(cs => vwapSeries(cs, avwapAnchorRef.current), chartColor('--color-zinc-400', '#c084fc'), 'avwap');
+        if (visible.vwap) addLine(cs => vwapSeries(cs, null), chartColor('--color-zinc-400', '#a1a1aa'), 'vwap');
+        if (visible.avwap) addLine(cs => vwapSeries(cs, avwapAnchorRef.current), chartColor('--color-zinc-400', '#a1a1aa'), 'avwap');
         // Sub-panes, in a FIXED order so the indices are deterministic.
         for (const s of subPaneSeriesRef.current) { try { chart.removeSeries(s); } catch { /* already gone */ } }
         subPaneSeriesRef.current = [];
@@ -1126,7 +1126,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                         cum += d;
                         return cum;
                     });
-                }, chartColor('--color-zinc-300', '#5eead4'), undefined, 'cvd');
+                }, chartColor('--color-zinc-300', '#d4d4d8'), undefined, 'cvd');
             }
             const paneApi = chart.panes()[pane];
             if (paneApi) paneApi.setHeight(110);
@@ -1533,7 +1533,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
             const ax = toScreen({ t: avwapAnchorRef.current, p: 0 });
             if (ax) {
                 ctx.save();
-                ctx.strokeStyle = chartColor('--color-zinc-400', '#c084fc');
+                ctx.strokeStyle = chartColor('--color-zinc-400', '#a1a1aa');
                 ctx.setLineDash([3, 3]);
                 ctx.lineWidth = 1;
                 ctx.beginPath();

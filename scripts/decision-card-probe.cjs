@@ -301,15 +301,19 @@ async function readDeclines(page) {
 }
 
 /** Send one dock message the way a person does (native value setter + Send). */
-async function sendInDock(page, text) {
-    await scrollTranscriptToBottom(page);
+async function waitForComposerReady(page, timeoutMs = 30000) {
     await page.waitForFunction(() => {
         const ta = document.querySelector('textarea');
         if (!ta || ta.disabled) return false;
         return [...document.querySelectorAll('button')].some((b) => !b.disabled && /send/i.test(
             `${b.getAttribute('aria-label') || ''} ${b.title || ''} ${b.textContent || ''}`,
         ));
-    }, null, { timeout: 30000 });
+    }, null, { timeout: timeoutMs });
+}
+
+async function sendInDock(page, text) {
+    await scrollTranscriptToBottom(page);
+    await waitForComposerReady(page);
     const sent = await page.evaluate((needle) => {
         const ta = document.querySelector('textarea');
         if (!ta || ta.disabled) return 'no composer';
@@ -527,6 +531,44 @@ async function shootCard(page, filePath, locator, label) {
     }
     if (!onScreen) throw new Error(`${label}: target is not inside the viewport after scrollIntoView`);
     await page.screenshot({ path: filePath });
+}
+
+/**
+ * Click a button inside a VIRTUALIZED transcript card. Two races make a bare
+ * `.click()` flake: (1) while the reply streams, follow-output keeps scrolling
+ * to the growing bottom and the virtualizer recycles the card row a couple of
+ * rows up; (2) a scrollIntoView can itself be followed by a re-scroll that
+ * unmounts the row mid-click. So: first let the turn SETTLE (best-effort — the
+ * composer re-enables when streaming ends; a receipt turn that keeps it busy
+ * must not hard-fail the click), then work from the BOTTOM of the transcript
+ * where the card lives, and dispatch the click in-page (`el.click()`) so it
+ * needs only a MOUNTED node, not Playwright's visible/stable/viewport gauntlet.
+ * A card already in its applied state (a *-revert control, confirm gone) proves
+ * an earlier tap landed — return rather than double-click. The downstream STATE
+ * assertions are untouched; only the click delivery is hardened.
+ */
+async function clickCardButton(page, cardSelector, text, testid, attempts = 6) {
+    // Let the streaming reply FINISH so the virtualizer stops recycling the
+    // card row. Bounded and non-throwing: a receipt turn that keeps the composer
+    // busy must not hard-fail the click.
+    await waitForComposerReady(page, 20000).catch(() => {});
+    for (let attempt = 0; attempt < attempts; attempt++) {
+        // Re-pin the card with the SAME scroll-to-find walk waitForCard uses
+        // (bottom, then up): the card can sit a few rows ABOVE the newest after
+        // reply rows stream in below it, so scrolling only to the bottom walks
+        // away from it. Then dispatch the click in-page on the mounted node.
+        const card = await waitForCard(page, cardSelector, text, 12000);
+        if (!card) continue;
+        const clicked = await card.evaluate((node, tid) => {
+            const btn = node.querySelector(`[data-testid="${tid}"]`);
+            if (btn && !btn.disabled) { btn.click(); return 'clicked'; }
+            if (node.querySelector('[data-testid$="-revert"]')) return 'applied';
+            return btn ? 'disabled' : 'absent';
+        }, testid, { timeout: 2500 }).catch(() => 'detached');
+        if (clicked === 'clicked' || clicked === 'applied') return;
+        await sleep(300);
+    }
+    throw new Error(`clickCardButton: ${testid} on ${cardSelector} "${text}" never became clickable`);
 }
 
 /** The same scan for a bare testid (the settled logged row, which is a
@@ -839,7 +881,7 @@ async function main() {
             tightenText.replace(/\s+/g, ' ').slice(0, 140));
         await shootCard(page, '.probe-artifacts/decision-card-risk-tighten.png', cardR1, 'risk tighten card');
 
-        await cardR1.locator('[data-testid="risk-change-confirm"]').click();
+        await clickCardButton(page, 'risk-change-card', 'The range is tight', 'risk-change-confirm');
         let riskApplied = false;
         for (let i = 0; i < 12 && !riskApplied; i++) {
             await sleep(500);
@@ -862,9 +904,9 @@ async function main() {
         }
         const armVisible = (await cardR2.locator('[data-testid="risk-change-arm"]').count()) > 0;
         check('a LOOSENING risk change asks for the explicit confirm', armVisible);
-        await cardR2.locator('[data-testid="risk-change-arm"]').click();
+        await clickCardButton(page, 'risk-change-card', 'risk per trade goes back up', 'risk-change-arm');
         await sleep(300);
-        await cardR2.locator('[data-testid="risk-change-confirm"]').click();
+        await clickCardButton(page, 'risk-change-card', 'risk per trade goes back up', 'risk-change-confirm');
         let riskLoosened = false;
         for (let i = 0; i < 12 && !riskLoosened; i++) {
             await sleep(500);
@@ -907,13 +949,13 @@ async function main() {
         // the explicit second tap, and the same approve now lands. No row is
         // written while the guard stands down.
         await sendInDock(page, 'PROBE_TOOL_ROUND present plan E');
-        const cardE = await waitForCard(page, 'trade-proposal-card', 'Probe plan E');
+        let cardE = await waitForCard(page, 'trade-proposal-card', 'Probe plan E');
         if (!cardE) { await dumpTranscriptState(page, 'plan E card never mounted'); throw new Error('plan E card never rendered'); }
 
         await sendInDock(page, 'PROBE_TOOL_ROUND tighten the trade cap');
         const cardG1 = await waitForCard(page, 'risk-change-card', 'one attempt today');
         if (!cardG1) { await dumpTranscriptState(page, 'guard tighten card never mounted'); throw new Error('guard tighten card never rendered'); }
-        await cardG1.locator('[data-testid="risk-change-confirm"]').click();
+        await clickCardButton(page, 'risk-change-card', 'one attempt today', 'risk-change-confirm');
         let capTightened = false;
         for (let i = 0; i < 12 && !capTightened; i++) {
             await sleep(500);
@@ -928,11 +970,17 @@ async function main() {
         let blockSeen = null;
         for (let i = 0; i < 10 && !blockSeen; i++) {
             await sleep(400);
+            // The guard-tighten turn pushed plan E's card out of the virtualized
+            // window; re-locate it (the guard-block repaint is settings-driven,
+            // independent of scroll) and tolerate a detach mid-read.
+            const cardENow = await waitForCard(page, 'trade-proposal-card', 'Probe plan E', 8000);
+            if (!cardENow) continue;
+            cardE = cardENow;
             blockSeen = await cardE.evaluate((el) => {
                 const block = el.querySelector('[data-testid="proposal-guard-block"]');
                 const btn = el.querySelector('[data-testid="proposal-approve"]');
                 return btn && btn.disabled && block ? block.textContent : null;
-            });
+            }).catch(() => null);
         }
         check('the guard stands the session down on the card (Approve down, reason printed)',
             !!blockSeen, blockSeen ? blockSeen.slice(0, 120) : 'no guard block on the card');
@@ -949,17 +997,37 @@ async function main() {
             `rows ${rowsBeforeGuard} -> ${rowsAfterGuardTap}`);
 
         await sendInDock(page, 'PROBE_TOOL_ROUND loosen the trade cap');
+        // Let the loosen turn settle so its card stops being recycled, then
+        // re-pin it for the arm assertion (a stale locator reads an unmounted
+        // row as "no arm button").
+        await waitForComposerReady(page, 20000).catch(() => {});
         const cardG2 = await waitForCard(page, 'risk-change-card', 'cap goes back up');
         if (!cardG2) { await dumpTranscriptState(page, 'guard loosen card never mounted'); throw new Error('guard loosen card never rendered'); }
-        const armG = (await cardG2.locator('[data-testid="risk-change-arm"]').count()) > 0;
+        const armG = await cardG2.evaluate((n) => !!n.querySelector('[data-testid="risk-change-arm"]')).catch(() => false);
         check('a LOOSENING guard change asks for the explicit confirm', armG);
-        await cardG2.locator('[data-testid="risk-change-arm"]').click();
-        await sleep(300);
-        await cardG2.locator('[data-testid="risk-change-confirm"]').click();
+        // Two-tap loosen on a virtualized card. The arm tap sets the card's
+        // LOCAL loosenArmed state, which a remount resets — so arm and confirm
+        // must land on the SAME mounted node. Pin once, tap arm, then poll that
+        // node (no scroll) for the confirm it reveals; only re-pin if the node
+        // detaches. The cap MUST reach 8, and only via the explicit confirm.
         let capLoosened = false;
-        for (let i = 0; i < 12 && !capLoosened; i++) {
-            await sleep(500);
-            capLoosened = (await readGuardCap(page)) === 8;
+        for (let round = 0; round < 6 && !capLoosened; round++) {
+            const card = await waitForCard(page, 'risk-change-card', 'cap goes back up', 10000);
+            if (!card) continue;
+            await card.evaluate((node) => {
+                const arm = node.querySelector('[data-testid="risk-change-arm"]');
+                if (arm && !arm.disabled) arm.click();
+            }, null, { timeout: 2500 }).catch(() => {});
+            for (let i = 0; i < 10 && !capLoosened; i++) {
+                const tapped = await card.evaluate((node) => {
+                    const conf = node.querySelector('[data-testid="risk-change-confirm"]');
+                    if (conf && !conf.disabled) { conf.click(); return true; }
+                    return false;
+                }, null, { timeout: 2500 }).catch(() => 'detached');
+                await sleep(400);
+                capLoosened = (await readGuardCap(page)) === 8;
+                if (tapped === 'detached') break;
+            }
         }
         check('the LOOSENING guard change applies only on the second tap (cap up to 8)', capLoosened,
             `guardMaxTradesPerDay=${await readGuardCap(page)}`);
@@ -997,7 +1065,7 @@ async function main() {
             stratText.replace(/\s+/g, ' ').slice(0, 160));
         await shootCard(page, '.probe-artifacts/decision-card-strategy-activation.png', cardS, 'strategy activation card');
 
-        await cardS.locator('[data-testid="strategy-activation-confirm"]').click();
+        await clickCardButton(page, 'strategy-activation-card', 'activate', 'strategy-activation-confirm');
         let stratApplied = false;
         for (let i = 0; i < 12 && !stratApplied; i++) {
             await sleep(500);
