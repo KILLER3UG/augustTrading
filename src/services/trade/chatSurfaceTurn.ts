@@ -33,6 +33,8 @@ import type { ProviderConfig } from '../../types/provider';
 import type { ChatMessage } from '../providers/GenericProviderService';
 import { MessageRole } from '../../types';
 import { CASUAL_CHAT_SYSTEM_PROMPT, CHAT_SURFACE_SYSTEM_PROMPT } from '../../constants/prompts/chatPrompts';
+import { RISK_MANAGEMENT_RULES } from '../../constants/prompts/analysisPrompts';
+import { getPrompt } from '../infrastructure/PromptOverrideService';
 import { TASK_BUDGETS } from '../providers/taskBudgets';
 import { resolveComposerEffort, type ReasoningEffort } from '../providers/reasoningControls';
 import { buildSkillsIndexForPrompt, usableSkillRows } from './tradeChatContext';
@@ -169,6 +171,19 @@ export interface ChatSurfacePrompt {
 export const surfacePromptWith = (mandate: string, where: string, opts: { memoryEnabled?: boolean; strategiesEnabled?: boolean; windowTokens?: number; matchText?: string; record?: { runId?: string; coin?: string } } = {}): ChatSurfacePrompt => {
     const memoryEnabled = opts.memoryEnabled !== false;
     const budget = indexBudgetFor(opts.windowTokens ?? DEFAULT_CONTEXT_WINDOW_TOKENS);
+    // The harness's risk-math block — the ONE registered prompt the
+    // harness-optimization pass may revise (O-150). Resolved through the
+    // override store so an APPROVED revision reaches the live seat instead
+    // of a wrapper nobody calls (the E-57 §3 gap, closed for this block).
+    // Harness contract, not memory: it rides even with memory off, and it
+    // is composed once per turn so the cache prefix stays byte-invariant
+    // within the turn (O-58).
+    let riskMathBlock: string;
+    try {
+        riskMathBlock = getPrompt('analysis.risk_rules', RISK_MANAGEMENT_RULES).trim();
+    } catch {
+        riskMathBlock = RISK_MANAGEMENT_RULES.trim();
+    }
     let skillsBlock: string;
     let skills: string[];
     try {
@@ -285,7 +300,7 @@ export const surfacePromptWith = (mandate: string, where: string, opts: { memory
         ? dedupeInjectionBlocks([skillsBlock, rulesBlock]).blocks
         : [skillsBlock, rulesBlock];
     return {
-        text: [mandate, goalsBlock, skillsRulesSkills, skillsRulesRules, topicsBlock, strategiesBlock, memoryBlock].filter(Boolean).join('\n\n'),
+        text: [mandate, riskMathBlock, goalsBlock, skillsRulesSkills, skillsRulesRules, topicsBlock, strategiesBlock, memoryBlock].filter(Boolean).join('\n\n'),
         skills,
     };
 };

@@ -6789,12 +6789,313 @@ const checkDiaryRetrieval = async () => {
         /proposePromptChange\(p\.promptId, p\.after, p\.reason, \{ actor: 'agent' \}\)/.test(svcSrc)
         && svcSrc.split('proposePromptChange(').length - 1 === 1
         && /revertSelfChange\(p\.ledgerId, 'owner'/.test(svcSrc));
-    ok('harness-opt: the pass itself never writes — no savePromptOverride anywhere in it',
-        !/savePromptOverride/.test(svcSrc));
+    // Meta-RAM upgrade: the trader-gated ROLLBACK restores a ranked parent's
+    // measured text through the override store — the ONE savePromptOverride
+    // call, inside rollbackToParent, ledgered with actor 'owner'. The PASS
+    // itself still never writes a prompt: neither writer appears in its body.
+    const passBody = svcSrc.slice(
+        svcSrc.indexOf('export const runHarnessOptimizationPass'),
+        svcSrc.indexOf("// ─── The trader's decisions"),
+    );
+    ok('harness-opt: the pass itself never writes — neither prompt writer in its body',
+        passBody.length > 0 && !/savePromptOverride|proposePromptChange/.test(passBody));
+    ok('harness-opt: rollback is the ONE override-store write, trader-gated and ledgered owner',
+        svcSrc.split('savePromptOverride(').length - 1 === 1
+        && /export const rollbackToParent/.test(svcSrc)
+        && /actor: 'owner'/.test(svcSrc)
+        && /writeSelfChange\(row, username\)/.test(svcSrc));
     ok('harness-opt: the heartbeat owns the clock and the card owns the gate',
         /runHarnessOptimizationPass/.test(fs.readFileSync(path.join(ROOT, 'src/hooks/useLearningHeartbeat.ts'), 'utf8'))
         && /HarnessOptimizationCard/.test(fs.readFileSync(path.join(ROOT, 'src/components/journal/Journal.tsx'), 'utf8')));
 })();
+
+// ─── Meta-RAM: MARKET_SCHEMA + OFFLOAD + the 3-step map-reduce ─────────────
+// The indexed memory topology (MARKET_SCHEMA + REGISTRY + detail pointers):
+// a compact symbol-scoped index file, bounded LOAD injection, OFFLOAD on
+// resolution and session close, and the harness pass's per-trade → per-session
+// → cross-session consolidation with a ranked parent pool. Pure pins here;
+// the runtime loop (notebook writes, retrieval, rollover) is checkMetaRamMemory.
+(() => {
+    const ms = loadModule('src/services/learning/MarketSchemaService.ts');
+    const off = loadModule('src/services/learning/memoryOffload.ts');
+    const ho = loadModule('src/services/selfMod/harnessOptimization.ts');
+    const now = Date.now();
+
+    // ── MARKET_SCHEMA: the index file's shape and honesty ──
+    const bare = ms.buildMarketSchemaContent('BTCUSDT', {});
+    ok('market-schema: an unmeasured schema says unverified/convention, never a made-up number',
+        bare.includes('units: unverified') && bare.includes('8h (convention, unmeasured)')
+        && bare.includes(ms.SESSION_OVERLAP_LINE) && bare.includes(ms.REGIME_CONVENTION_LINE));
+    const measured = ms.buildMarketSchemaContent('BTCUSDT', {
+        tickSize: 0.1, stepSize: 0.001, baseAsset: 'BTC', quoteAsset: 'USDT',
+        fundingIntervalHours: 4, fundingMeasured: true, nextFundingUtc: '16:00 UTC',
+    });
+    ok('market-schema: measured units and a measured funding schedule print as facts',
+        measured.includes('tick 0.1 USDT') && measured.includes('step 0.001 BTC')
+        && measured.includes('every 4h (measured)') && measured.includes('next 16:00 UTC'));
+    ok('market-schema: the index file stays under its ceiling even with long traps',
+        ms.buildMarketSchemaContent('BTCUSDT', {
+            traps: Array.from({ length: 5 }, (_, i) => ({ line: `trap number ${i} ${'x'.repeat(200)}`, count: 3 })),
+        }).length <= ms.MARKET_SCHEMA_FILE_MAX_CHARS);
+    ok('market-schema: at most two trap lines ride the index',
+        (ms.buildMarketSchemaContent('BTCUSDT', {
+            traps: Array.from({ length: 5 }, (_, i) => ({ line: `trap ${i}`, count: 3 })),
+        }).match(/^- trap:/gm) || []).length <= ms.SCHEMA_TRAP_MAX_LINES);
+
+    // ── Learned traps: real rows only, N ≥ 2 floor ──
+    const swept = (id, simulated) => ({
+        id, outcome: 'LOSS', timestamp: new Date(now).toISOString(), simulated,
+        analysis: { coinName: 'BTCUSDT', direction: 'Long' },
+        resolutionRecord: { slHitThenReversedToTp: true },
+    });
+    ok('market-schema: two real swept stops write a trap; one is an anecdote',
+        ms.learnedSchemaTraps('BTC', [swept('r1'), swept('r2')]).length === 1
+        && ms.learnedSchemaTraps('BTC', [swept('r1')]).length === 0);
+    ok('market-schema: a simulated paper loss never writes a real-market trap',
+        ms.learnedSchemaTraps('BTC', [swept('r1'), swept('s1', true), swept('s2', true)]).length === 0);
+    const rangeLoss = (id) => ({
+        id, outcome: 'LOSS', timestamp: new Date(now).toISOString(),
+        analysis: { coinName: 'BTCUSDT', direction: 'Long' },
+        resolutionRecord: { regimeAtEntry: 'ranging', maeR: 1.1 },
+    });
+    ok('market-schema: the regime trap is entry-knowable (regime + ≥0.9R excursion)',
+        ms.learnedSchemaTraps('BTC', [rangeLoss('g1'), rangeLoss('g2')]).some(t => /range\/compression/.test(t.line))
+        && ms.learnedSchemaTraps('BTC', [{ ...rangeLoss('g3'), resolutionRecord: { regimeAtEntry: 'trending', maeR: 1.1 } }, rangeLoss('g4')]).length === 0);
+
+    // ── OFFLOAD: the session digest is real-only and bounded ──
+    const sessionTrade = (id, outcome, simulated) => ({
+        id, outcome, simulated, timestamp: new Date(now).toISOString(),
+        analysis: { coinName: 'BTCUSDT', direction: 'Long' },
+        postMortem: 'Lesson: wait for the reclaim close before entering.',
+    });
+    const digest = off.buildSessionDigestBody('BTCUSDT', '2026-11-18', [
+        sessionTrade('a', 'WIN'), sessionTrade('b', 'LOSS'), sessionTrade('c', 'LOSS', true),
+    ]);
+    ok('offload: the session digest tallies REAL trades only and names the lesson',
+        digest.includes('2 real trades (1W/1L)') && digest.includes('wait for the reclaim close'));
+    ok('offload: a session with no lesson says so honestly',
+        off.buildSessionDigestBody('BTCUSDT', '2026-11-18', [{ ...sessionTrade('d', 'WIN'), postMortem: '' }])
+            .includes('no single lesson named'));
+
+    // ── Map-reduce step 1: summaries are real, in-window, fills only ──
+    const sig = (id, at, status, outcomeR, extra = {}) => ({
+        signal: { id, coin: 'BTC', direction: 'long', emittedAt: at },
+        resolution: { status, outcomeR, at, ...extra },
+    });
+    const summaries = ho.summarizeResolutions(
+        [swept('j1'), { ...swept('j2'), simulated: true }],
+        [sig('s1', now - 1000, 'lost', -1, { entryOpenR: -0.4 }), sig('s2', now - 2000, 'never_triggered', 0), sig('s3', now - 40 * 24 * 3600_000, 'lost', -1)],
+        now,
+    );
+    ok('map-reduce 1: simulated rows, never_triggered and stale fills are not evidence',
+        summaries.length === 2 && summaries.every(s => s.id !== 'j2' && s.id !== 's2' && s.id !== 's3'));
+    ok('map-reduce 1: every summary carries its UTC session key',
+        summaries.every(s => /^\d{4}-\d{2}-\d{2}$/.test(s.sessionKey)));
+
+    // ── Kind detection: one source, loss-only ──
+    const lossSummary = { id: 'x', source: 'signal', coin: 'BTC', direction: 'long', sessionKey: '2026-11-18', at: now, outcomeR: -1, won: false };
+    ok('map-reduce kinds: a win or a non-negative expired fill indicts nothing',
+        ho.kindsForSummary({ ...lossSummary, won: true }).length === 0
+        && ho.kindsForSummary({ ...lossSummary, outcomeR: 0.2 }).length === 0);
+    ok('map-reduce kinds: the memory-policy kinds are entry-knowable facts',
+        ho.kindsForSummary({ ...lossSummary, entryOpenR: -0.4 }).includes('entry-slippage')
+        && ho.kindsForSummary({ ...lossSummary, regimeAtEntry: 'ranging', maeR: 1.2 }).includes('regime-trap')
+        && ho.kindsForSummary({ ...lossSummary, schemaPresentAtDecision: false }).includes('schema-gap')
+        && ho.kindsForSummary({ ...lossSummary, schemaPresentAtDecision: true }).length === 0);
+
+    // ── Map-reduce steps 2+3: sessions group, the floor holds, spread cites ──
+    const twoSessions = ho.summarizeResolutions([], [
+        sig('a1', now - 1000, 'lost', -1, { gapAdjusted: true }),
+        sig('a2', now - 26 * 3600_000, 'lost', -1, { gapAdjusted: true }),
+    ], now);
+    const diagnoses = ho.diagnoseSessions(twoSessions);
+    const candidates = ho.consolidateDiagnoses(diagnoses, twoSessions);
+    ok('map-reduce 2: fills group by session with a hit rate',
+        diagnoses.length === 2 && diagnoses.every(d => d.fills === 1 && d.hitRate === 0));
+    ok('map-reduce 3: two gap losses across two sessions qualify, and the spread is cited',
+        candidates.length === 1 && candidates[0].kind === 'stop-gap' && candidates[0].sessionSpread.length === 2);
+    ok('map-reduce 3: one failure of a kind is still an anecdote',
+        ho.consolidateDiagnoses(ho.diagnoseSessions(twoSessions.slice(0, 1)), twoSessions.slice(0, 1)).length === 0);
+
+    // ── The recipe blind spot: measured against the window base rate ──
+    const recipeRows = [];
+    for (let i = 0; i < 4; i += 1) {
+        recipeRows.push({ signal: { id: `scan-${i}`, coin: 'BTC', direction: 'long', emittedAt: now - i * 1000, memoryRecipe: { id: 'scan', chars: 100, blocks: [] } }, resolution: { status: 'lost', outcomeR: -1, at: now - i * 1000 } });
+        recipeRows.push({ signal: { id: `plan-${i}`, coin: 'BTC', direction: 'long', emittedAt: now - i * 1000, memoryRecipe: { id: 'plan', chars: 100, blocks: [] } }, resolution: { status: 'won', outcomeR: 2, at: now - i * 1000 } });
+    }
+    const recipeSummaries = ho.summarizeResolutions([], recipeRows, now);
+    const recipeCandidates = ho.consolidateDiagnoses(ho.diagnoseSessions(recipeSummaries), recipeSummaries);
+    const blind = recipeCandidates.find(c => c.kind === 'recipe-blindspot');
+    ok('map-reduce 3: a recipe hitting 0% vs a 50% base over 4 fills is a blind spot',
+        Boolean(blind) && blind.recipeStats.recipeId === 'scan' && blind.recipeStats.fills === 4
+        && blind.recipeStats.hitRate === 0 && blind.recipeStats.baseRate === 0.5);
+    ok('map-reduce 3: a recipe under its fill floor is never indicted',
+        ho.consolidateDiagnoses([], ho.summarizeResolutions([], recipeRows.slice(0, 4), now))
+            .every(c => c.kind !== 'recipe-blindspot'));
+
+    // ── The ranked parent pool ──
+    const parent = (id, deltaPp, approvedAt) => ({
+        id, promptId: 'analysis.risk_rules', text: `text-${id}`, kind: 'stop-gap',
+        approvedAt, ledgerId: `ledger-${id}`, baseline: { hitRate: 0.5, samples: 10 },
+        holdout: { fills: 6, won: 3, lost: 3, expired: 0, hitRate: 0.5 }, deltaPp, status: 'graded',
+    });
+    const ranked = ho.rankParents([parent('low', -12, '2026-11-01T00:00:00Z'), parent('high', 5, '2026-11-02T00:00:00Z'), parent('measuring', null, '2026-11-03T00:00:00Z')]);
+    ok('parent pool: rank is measured delta desc, ungraded parents do not rank',
+        ranked.length === 2 && ranked[0].id === 'high' && ranked[1].id === 'low');
+    ok('parent pool: the pool cap keeps it lightweight',
+        ho.PARENT_POOL_MAX <= 10 && ho.RECIPE_MIN_FILLS >= 4 && ho.RECIPE_REGRESSION_PP > 0);
+
+    // ── The revision reaches the LIVE seat (the E-57 §3 gap for this block) ──
+    const turnSrc = fs.readFileSync(path.join(ROOT, 'src/services/trade/chatSurfaceTurn.ts'), 'utf8');
+    ok('o-150 reach: the desk seat resolves analysis.risk_rules through the override store',
+        /getPrompt\('analysis\.risk_rules', RISK_MANAGEMENT_RULES\)/.test(turnSrc)
+        && /\[mandate, riskMathBlock, goalsBlock/.test(turnSrc));
+    // ── OFFLOAD wiring: resolution + the heartbeat clock ──
+    const loggingSrc = fs.readFileSync(path.join(ROOT, 'src/hooks/useTradeLogging.ts'), 'utf8');
+    const heartbeatSrc = fs.readFileSync(path.join(ROOT, 'src/hooks/useLearningHeartbeat.ts'), 'utf8');
+    ok('offload wiring: settlement syncs the schema, the heartbeat owns the session-close clock',
+        /offloadOnTradeResolution\(trade, allTrades, username\)/.test(loggingSrc)
+        && heartbeatSrc.split('runMemoryOffloadIfDue(').length - 1 === 2);
+})();
+
+/** The Meta-RAM runtime loop: notebook writes, bounded LOAD injection, the
+ *  session-close digest and the simulated isolation — against the real
+ *  modules, one shared bundle, offline (fetch stubbed to refuse). */
+const checkMetaRamMemory = async () => {
+    const store = new Map();
+    global.localStorage = {
+        getItem: k => (store.has(k) ? store.get(k) : null),
+        setItem: (k, v) => store.set(k, String(v)),
+        removeItem: k => store.delete(k),
+        clear: () => store.clear(),
+    };
+    localStorage.setItem('last_active_user', 'metaram-contract-user');
+    global.Event = class Event { constructor(type) { this.type = type; } };
+    global.CustomEvent = class CustomEvent extends global.Event {
+        constructor(type, opts) { super(type); this.detail = opts && opts.detail; }
+    };
+    global.window = global;
+    global.window.localStorage = global.localStorage;
+    global.window.dispatchEvent = () => true;
+    global.window.addEventListener = () => {};
+    global.window.removeEventListener = () => {};
+    delete global.window.electronAPI;
+    // OFFLOAD's market readers are best-effort: offline they cost the
+    // measured half and the schema carries the labelled conventions. The
+    // stub makes that path deterministic — no contract run touches a network.
+    const realFetch = global.fetch;
+    global.fetch = async () => { throw new Error('contract: offline'); };
+
+    try {
+        const bundle = loadModule('src/services/learning/MemoryRetrievalService.ts', {
+            mf: 'src/services/learning/MemoryFilesService.ts',
+            ms: 'src/services/learning/MarketSchemaService.ts',
+            off: 'src/services/learning/memoryOffload.ts',
+            pref: 'src/services/infrastructure/PreferencesService.ts',
+        });
+        const { mf, ms, off, pref } = bundle;
+        const USER = 'metaram-contract-user';
+        const now = Date.now();
+        await mf.initMemoryFiles(USER);
+
+        ok('metaram: the notebook seeds the market-schema folder',
+            mf.getMemoryFiles().folders.some(f => f.name === 'market-schema'));
+
+        await ms.syncMarketSchema('BTCUSDT', { tickSize: 0.1, stepSize: 0.001, baseAsset: 'BTC', quoteAsset: 'USDT' }, USER);
+        ok('metaram: a bare-ticker LOAD query finds the pair-named schema file',
+            ms.readMarketSchema('BTC').includes('tick 0.1 USDT'));
+
+        const nowIso = new Date().toISOString();
+        await mf.appendDiaryEntry({
+            id: 'mr-diary-1', outcome: 'LOSS', timestamp: nowIso,
+            analysis: { coinName: 'BTCUSDT', direction: 'Long' },
+            postMortem: 'The stop sat inside the range noise.\nLesson: give the stop room beyond the swept edge.',
+        }, USER);
+        const ctx = bundle.getMemoryFilesContext({ coin: 'BTC', direction: 'Long', family: undefined, pattern: undefined });
+        ok('metaram: LOAD injects the schema index, bounded, ahead of the diary',
+            ctx.includes('[market-schema/BTC]') && ctx.includes('[trader-diary/BTC]')
+            && ctx.indexOf('[market-schema/BTC]') < ctx.indexOf('[trader-diary/BTC]'));
+        const schemaBlock = ctx.slice(ctx.indexOf('[market-schema/BTC]'), ctx.indexOf('[trader-diary/BTC]'));
+        ok('metaram: the injected schema block respects its char ceiling',
+            schemaBlock.length <= ms.MARKET_SCHEMA_MAX_CHARS + 40, `len=${schemaBlock.length}`);
+        ok('metaram: the retrieval sources name the schema kind',
+            bundle.listRetrievedMemorySources({ coin: 'BTC', direction: 'Long', family: undefined, pattern: undefined })
+                .some(s => s.kind === 'schema' && s.path === 'market-schema/BTC'));
+        const recall = JSON.parse(bundle.handleRecallTool({ topic: 'BTC' }));
+        ok('metaram: recall can pull the schema index too',
+            typeof recall.result === 'string' && recall.result.includes('tick 0.1 USDT'));
+
+        let refused = false;
+        try {
+            await mf.writeModelNote({ folder: 'market-schema', fileName: 'hack.md', content: 'not yours' }, USER);
+        } catch { refused = true; }
+        ok('metaram: the market-schema folder is harness-owned — model notes refuse', refused);
+
+        // Session digest: one entry per coin per session, deduped by id.
+        await mf.appendDiaryNote('BTCUSDT', 'session-2026-11-18-BTC', '2026-11-18 · session digest · BTCUSDT · 2 real trades (1W/1L)', USER);
+        await mf.appendDiaryNote('BTCUSDT', 'session-2026-11-18-BTC', 'DUPLICATE', USER);
+        const diary = ms.readMarketSchema('BTC'); // cache sanity
+        void diary;
+        const entries = mf.readDiaryEntries('BTC', 10);
+        ok('metaram: the session digest lands once, deduped by its stable id',
+            entries.filter(e => e.includes('session-2026-11-18-BTC')).length === 1
+            && !entries.some(e => e.includes('DUPLICATE')));
+
+        // Simulated isolation end to end: diary marked, registry clean.
+        await mf.appendDiaryEntry({
+            id: 'mr-sim-1', outcome: 'LOSS', timestamp: nowIso, simulated: true,
+            analysis: { coinName: 'ETHUSDT', direction: 'Short' },
+        }, USER);
+        await mf.appendDiaryEntry({
+            id: 'mr-sim-2', outcome: 'LOSS', timestamp: nowIso, simulated: true,
+            analysis: { coinName: 'ETHUSDT', direction: 'Short' },
+        }, USER);
+        await mf.syncRecurringMistakes([
+            { id: 'mr-sim-1', outcome: 'LOSS', timestamp: nowIso, simulated: true, analysis: { coinName: 'ETHUSDT', direction: 'Short' } },
+            { id: 'mr-sim-2', outcome: 'LOSS', timestamp: nowIso, simulated: true, analysis: { coinName: 'ETHUSDT', direction: 'Short' } },
+        ], USER);
+        const ethDiary = mf.readDiaryEntries('ETH', 10).join('\n');
+        const registry = mf.getMemoryFiles().files.find(f => f.name === 'recurring-mistakes.md');
+        ok('metaram: paper diary entries are marked SIMULATED',
+            ethDiary.includes('[SIMULATED]'));
+        ok('metaram: paper losses never write the real registry',
+            registry && !registry.content.includes('ETHUSDT Short ×2'));
+
+        // OFFLOAD on a simulated resolution writes no real-market schema.
+        await off.offloadOnTradeResolution(
+            { id: 'mr-sim-3', outcome: 'LOSS', timestamp: nowIso, simulated: true, analysis: { coinName: 'SOLUSDT', direction: 'Long' } },
+            [], USER,
+        );
+        ok('offload: a simulated resolution writes no market schema',
+            ms.readMarketSchema('SOL') === '');
+
+        // The heartbeat pass: first call adopts today, a rollover digests.
+        const first = await off.runMemoryOffloadIfDue(USER, [], now);
+        ok('offload: the first pass adopts the open session without digesting it',
+            first === null || first.sessionKey === null);
+        const yesterday = new Date(now - 24 * 3600_000).toISOString().slice(0, 10);
+        const resolvedYesterday = new Date(now - 24 * 3600_000).toISOString();
+        await pref.setPreferenceObject(`memory_offload_v1_${USER}`, {
+            lastPassAt: new Date(now - 2 * off.OFFLOAD_INTERVAL_MS).toISOString(),
+            lastSignalResolutionAt: 0,
+            lastSessionKey: yesterday,
+        });
+        const rollover = await off.runMemoryOffloadIfDue(USER, [
+            { id: 'mr-y1', outcome: 'LOSS', timestamp: resolvedYesterday, outcomeResolvedAt: resolvedYesterday, analysis: { coinName: 'BTCUSDT', direction: 'Long' }, postMortem: 'Lesson: the funding clock squeezed the entry.' },
+            { id: 'mr-y2', outcome: 'WIN', timestamp: resolvedYesterday, outcomeResolvedAt: resolvedYesterday, analysis: { coinName: 'BTCUSDT', direction: 'Long' } },
+        ], now);
+        ok('offload: a closed session digests its real coins and refreshes the schema',
+            rollover && rollover.sessionKey === yesterday && rollover.digestCoins === 1
+            && mf.readDiaryEntries('BTC', 10).some(e => e.includes(`session-${yesterday}-BTC`))
+            && ms.readMarketSchema('BTC').length > 0);
+        const again = await off.runMemoryOffloadIfDue(USER, [], now);
+        ok('offload: the due-check makes a second tick free', again === null);
+
+        localStorage.removeItem('last_active_user');
+    } finally {
+        global.fetch = realFetch;
+    }
+};
 
 const finishReport = () => {
     console.log(`contracts: ${passed} passed, ${failures.length} failed`);
@@ -6803,7 +7104,7 @@ const finishReport = () => {
         console.error('CONTRACT CHECK FAIL — a pinned contract broke; fix the module, not this file.');
         process.exit(1);
     }
-    console.log('CONTRACT CHECK OK — risk/reward math, retry classification, harness marks, notebook pressure, tool-pair compaction, AI-boundary coercion, the import security scan, the shared index budget, both policy tables (self-modification, goal tool narrowing), the desk tool budget, the kline row PHT unit, the desk digest units, the startup call gates, the insight store pin, the signal loop (resolver order, costs, gap fills, ledger, venue data), the signal accuracy fold, the skill document (description, hash version, ledger-stripping migration, duplicate scan), the skill pen and its refusal text, the journal-rules store, the post-mortem clause, the memory page export, the raw-storage lists (no orphan, no half-migration), the tracked position (signal adoption, ledger-wins resolution, exit order, gaps, excursions, capped path, independence, diagnosis queue), journal tracking (pending registration, settlement payload, plan-preserving merge, orphan handling), the post-mortem diagnosis (authoritative outcome, packet facts/absences, refusal audit, journal-note parse), the candle shape gate, the truncated-answer continuation and the silent empty-round repair, the Phase 5 session-plan confirm/revert, exact promotion refusals, hindsight separation, candidate dedupe, rule TTL pruning, resolution record and risk-state card, authoritative stored settlement, gap-not-zero reversal, user-scoped dismissals and dateKey round-trip, and the Phase 6 AI-setting cards, paper execution fill model and real-vs-simulated stats isolation all hold.');
+    console.log('CONTRACT CHECK OK — risk/reward math, retry classification, harness marks, notebook pressure, tool-pair compaction, AI-boundary coercion, the import security scan, the shared index budget, both policy tables (self-modification, goal tool narrowing), the desk tool budget, the kline row PHT unit, the desk digest units, the startup call gates, the insight store pin, the signal loop (resolver order, costs, gap fills, ledger, venue data), the signal accuracy fold, the skill document (description, hash version, ledger-stripping migration, duplicate scan), the skill pen and its refusal text, the journal-rules store, the post-mortem clause, the memory page export, the raw-storage lists (no orphan, no half-migration), the tracked position (signal adoption, ledger-wins resolution, exit order, gaps, excursions, capped path, independence, diagnosis queue), journal tracking (pending registration, settlement payload, plan-preserving merge, orphan handling), the post-mortem diagnosis (authoritative outcome, packet facts/absences, refusal audit, journal-note parse), the candle shape gate, the truncated-answer continuation and the silent empty-round repair, the Phase 5 session-plan confirm/revert, exact promotion refusals, hindsight separation, candidate dedupe, rule TTL pruning, resolution record and risk-state card, authoritative stored settlement, gap-not-zero reversal, user-scoped dismissals and dateKey round-trip, and the Phase 6 AI-setting cards, paper execution fill model and real-vs-simulated stats isolation, and the Meta-RAM indexed memory (MARKET_SCHEMA shape and caps, OFFLOAD session digest and simulated isolation, the 3-step map-reduce floors, the ranked parent pool and the trader-gated rollback) all hold.');
 
 };
 // The async blocks above settle in microtasks; the report waits for them so
@@ -6820,6 +7121,7 @@ checkSkillWrites()
     .then(checkUntrustedGateCoversAllWriters)
     .then(checkDesktopProfileStore)
     .then(checkDiaryRetrieval)
+    .then(checkMetaRamMemory)
     .then(checkAgentHandExecutor)
     .catch(e => { failures.push(`async runtime checks threw: ${e instanceof Error ? e.stack : String(e)}`); })
     .then(finishReport);

@@ -151,6 +151,72 @@ own index-change/cooldown gate and writes human-facing, retrieval-disabled
 skills. Its retired lifecycle counters are deleted, not zeroed. No scheduled pass creates or
 revises skill procedures.
 
+### 7. The indexed memory topology (Meta-RAM)
+
+LOAD reads crisp index files; the verbose detail stays behind pointers. Three
+layers, one notebook:
+
+- **MARKET_SCHEMA** — `market-schema/<coin>.md`, one compact index per coin:
+  tick/lot units (`src/services/analysis/MarketDataService.ts` › `fetchSymbolUnits`),
+  the funding schedule (measured from settlement spacing, the labelled 8h
+  convention otherwise), session overlaps, the regime conventions
+  (`src/services/market/regimeCore.ts` › `regimeRead` defaults) and the learned
+  entry-knowable traps. Built by `src/services/learning/MarketSchemaService.ts` ›
+  `buildMarketSchemaContent`, written by `syncMarketSchema`, read by
+  `readMarketSchema`. The folder is harness-owned: `writeModelNote` refuses it.
+  Unmeasurable facts print as "unverified"/"convention", never as numbers.
+- **REGISTRY** — `rules/recurring-mistakes.md`, symptom → pointer rows
+  (`src/services/learning/MemoryFilesService.ts` › `buildRecurringMistakesContent`);
+  the post-mortems stay in the journal rows behind `get_trade_log`.
+- **Detail pointers** — the per-coin diary recency window (O-149) and the
+  journal rows themselves.
+
+The LOAD seam injects the schema bounded and ahead of the diary:
+`src/services/learning/MemoryRetrievalService.ts` › `marketSchemaBlock` (kind
+`schema` in `listRetrievedMemorySources`); `recall` pulls it too.
+
+**OFFLOAD** keeps the indexes current without a model call
+(`src/services/learning/memoryOffload.ts`):
+
+- **Trade resolution** — `offloadOnTradeResolution` rides the settlement sync
+  (`src/hooks/useTradeLogging.ts` › `syncClosedTradeToNotebook`): the coin's
+  schema refreshes its facts and re-derives its traps
+  (`src/services/learning/MarketSchemaService.ts` › `learnedSchemaTraps`).
+- **Signal resolution + session close** — `runMemoryOffloadIfDue` on the
+  heartbeat folds ledger resolutions newer than its stamp into the same
+  refresh, and when the UTC session date rolls over it writes ONE bounded
+  session-digest diary entry per coin that resolved real trades
+  (`src/services/learning/MemoryFilesService.ts` › `appendDiaryNote`, deduped
+  by a stable id) and refreshes the registry. A fresh thread reads last
+  session's structure through the diary window.
+
+**Isolation.** Every real-market write filters `simulated !== true`: the
+registry, the profile win rate, Top Lessons, the schema traps and the session
+tally are real-only; a paper diary entry is marked `[SIMULATED]` by
+`buildDiaryEntry` and never writes a real trap.
+
+### 8. The harness-optimization pass (O-150, Meta-RAM upgrade)
+
+`src/services/selfMod/harnessOptimization.ts` › `runHarnessOptimizationPass`
+consolidates evidence in three deterministic map-reduce steps —
+`summarizeResolutions` (per trade), `diagnoseSessions` (per UTC session),
+`consolidateDiagnoses` (cross-session) — and stages AT MOST ONE trader-gated
+proposal at the N ≥ 2 floor. Beyond the placement kinds it can indict the
+memory policy itself: `regime-trap`, `schema-gap` (the pass backfills the
+missing schemas as notebook maintenance) and `recipe-blindspot` (a LOAD recipe
+hitting materially below the window base rate, from the E-5 attribution).
+Every revision is one appended rule to `analysis.risk_rules`, and the desk
+seat resolves that block through the override store
+(`src/services/trade/chatSurfaceTurn.ts` › `surfacePromptWith`), so an approved
+revision steers the live turn.
+
+Every approved revision enters a **ranked parent pool** with its measured
+holdout delta; `rankParents` orders by delta and `rollbackToParent` is the
+trader's one tap back to the best prior parent — ledgered with the previous
+text, actor `owner`. The card (`src/components/journal/HarnessOptimizationCard.tsx`)
+prints the diagnosis strip, the evidence and the pool. `check:contracts` pins
+the floors, the one-writer gate, the rollback rail and the runtime loop.
+
 ## What is closed, and what is not
 
 | leg | state |
@@ -164,6 +230,8 @@ revises skill procedures.
 | **the loop's evidence base** | price outcomes, not exchange fills; the app places no trades |
 | **insight consolidation** | **deleted with the frozen store** — the top-level `insightKnowledgeBase` is gone; its entries migrated into the notebook's `distilled/` folder, which has its own distill path |
 | **cheap-to-expensive retrieval** | index and explicit body reads exist; delivery and final-wire coverage must be assessed per caller |
+| **indexed memory (Meta-RAM)** | MARKET_SCHEMA + REGISTRY + detail pointers; OFFLOAD on trade resolution and session close; simulated isolation across every real-market write |
+| **harness optimization** | 3-step map-reduce, one trader-gated proposal per pass, holdout grading + ranked parent-pool rollback; the revised block reaches the desk seat |
 
 The current learning priority is signal accuracy and diagnosis, not removing a human settlement
 click or restoring skill lifecycle machinery. See [focus.md](../product/focus.md).
