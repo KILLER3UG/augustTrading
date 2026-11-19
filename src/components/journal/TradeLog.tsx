@@ -167,7 +167,7 @@ const TradeDetailView: React.FC<{
 
                                 <div className="p-4 bg-zinc-950 rounded-bubble border border-zinc-800">
                                     <span className="text-ui-dense uppercase font-semibold text-zinc-500 block mb-1.5">Entry Zone</span>
-                                    <span className="text-cyan-200 font-bold text-ui-base">{(entryPoints || [])[0]?.price || 'N/A'}</span>
+                                    <span className="text-zinc-300 font-bold text-ui-base">{(entryPoints || [])[0]?.price || 'N/A'}</span>
                                 </div>
                                 <div className="p-4 bg-zinc-950 rounded-bubble border border-zinc-800">
                                     <span className="text-ui-dense uppercase font-semibold text-zinc-500 block mb-1.5">Stop Loss</span>
@@ -206,7 +206,7 @@ const TradeDetailView: React.FC<{
                                                 <span className="text-ui-2xs uppercase tracking-wider text-zinc-600"> in favor</span>
                                             </span>
                                             {capture !== null && (
-                                                <span className={capture >= 50 ? 'text-emerald-300' : 'text-amber-300'}>
+                                                <span className={capture >= 50 ? 'text-emerald-300' : 'text-zinc-300'}>
                                                     {capture.toFixed(0)}%
                                                     <span className="text-ui-2xs uppercase tracking-wider text-zinc-600"> captured</span>
                                                 </span>
@@ -232,7 +232,7 @@ const TradeDetailView: React.FC<{
                                     </div>
                                 )}
 
-                                {correctedEntry && <div className="col-span-2 bg-amber-500/10 p-2 rounded-control border border-amber-500/20 text-amber-200 font-medium">Corrected Entry: {correctedEntry}</div>}
+                                {correctedEntry && <div className="col-span-2 bg-zinc-500/10 p-2 rounded-control border border-zinc-500/20 text-zinc-300 font-medium">Corrected Entry: {correctedEntry}</div>}
 
                                 <div className="col-span-2 text-ui-2xs text-zinc-600 pt-3 mt-1 border-t border-hairline flex justify-between uppercase tracking-wider">
                                     <span>Analyst: {(() => {
@@ -259,8 +259,8 @@ const TradeDetailView: React.FC<{
                                 {trade.patternMemoryGate && trade.patternMemoryGate.gateResult !== 'PASS' && (
                                     <div className={`col-span-2 rounded-control border px-3 py-2 ${trade.patternMemoryGate.gateResult === 'HALT'
                                         ? ' border-rose-500/40 bg-rose-500/10'
-                                        : ' border-amber-500/40 bg-amber-500/10'}`}>
-                                        <span className={`text-ui-2xs font-black uppercase tracking-widest flex items-center gap-1.5 ${trade.patternMemoryGate.gateResult === 'HALT' ? 'text-rose-400' : 'text-amber-400'}`}>
+                                        : ' border-zinc-500/40 bg-zinc-500/10'}`}>
+                                        <span className={`text-ui-2xs font-black uppercase tracking-widest flex items-center gap-1.5 ${trade.patternMemoryGate.gateResult === 'HALT' ? 'text-rose-400' : 'text-zinc-400'}`}>
                                             {trade.patternMemoryGate.gateResult === 'HALT' ? (
                                                 <>
                                                     <ShieldAlert className="h-3 w-3 shrink-0" aria-hidden="true" />
@@ -748,7 +748,7 @@ const TradeLogContent: React.FC<TradeLogContentProps> = ({
                             }
                         </button>
                         {duplicateCount > 0 && (
-                            <div className="text-ui-xs text-center text-amber-400/80 uppercase font-bold tracking-wider animate-pulse">
+                            <div className="text-ui-xs text-center text-zinc-300 uppercase font-bold tracking-wider animate-pulse">
                                 {duplicateCount === selectedIds.length
                                     ? 'All selected trades are already in Recent Insights'
                                     : `${duplicateCount} duplicate(s) will be skipped`

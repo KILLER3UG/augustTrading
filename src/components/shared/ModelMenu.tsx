@@ -375,7 +375,7 @@ const ModelMenu: React.FC<ModelMenuProps> = ({
                     onClick={() => setProvidersOpen(v => !v)}
                     title={`${activeProvider?.name ?? 'No provider'} — ${activeProvider?.apiFormat ?? ''}`}
                     className="flex shrink-0 items-center gap-2 border-b border-hairline px-3 py-2.5 text-left transition-colors hover:bg-white/[0.04]">
-                    <Box className="h-4 w-4 shrink-0 text-cyan-400" aria-hidden="true" />
+                    <Box className="h-4 w-4 shrink-0 text-zinc-400" aria-hidden="true" />
                     <span className="min-w-0 flex-1 truncate text-ui-sm font-medium text-zinc-100" title={activeProvider?.name ?? 'No ready provider'}>{activeProvider?.name ?? 'No ready provider'}</span>
                     <span className="shrink-0 rounded-control border border-hairline px-1 text-ui-2xs uppercase tracking-wider text-zinc-500">API</span>
                     <ChevronRight className="h-3.5 w-3.5 shrink-0 text-zinc-600" aria-hidden="true" />
@@ -399,7 +399,7 @@ const ModelMenu: React.FC<ModelMenuProps> = ({
                             aria-label="Refresh models"
                             onClick={() => { void onRefreshModels(); }}
                             className="flex shrink-0 items-center gap-1 rounded-full p-1 text-zinc-500 transition-colors hover:bg-white/[0.06] hover:text-zinc-200">
-                            <RotateCw className={`h-3.5 w-3.5 shrink-0 ${refreshState === 'busy' ? 'animate-spin text-cyan-400' : ''}`} aria-hidden="true" />
+                            <RotateCw className={`h-3.5 w-3.5 shrink-0 ${refreshState === 'busy' ? 'animate-spin text-zinc-400' : ''}`} aria-hidden="true" />
                             {refreshState !== 'idle' && (
                                 <span className={`text-ui-2xs font-medium ${refreshState === 'done' ? 'text-emerald-400' : ''}`}>
                                     {refreshState === 'busy' ? 'Refreshing…' : 'Updated!'}
@@ -461,7 +461,7 @@ const ModelMenu: React.FC<ModelMenuProps> = ({
                             <button type="button" onClick={() => toggleStar(row.value)}
                                 aria-label={row.starred ? `Unstar ${row.label}` : `Star ${row.label}`}
                                 aria-pressed={row.starred}
-                                className={`shrink-0 rounded-full p-1 transition-colors hover:text-amber-300 ${row.starred ? 'text-amber-300' : 'text-zinc-600'}`}>
+                                className={`shrink-0 rounded-full p-1 transition-colors hover:text-zinc-300 ${row.starred ? 'text-zinc-300' : 'text-zinc-600'}`}>
                                 <StarIcon className="h-3 w-3" fill={row.starred ? 'currentColor' : 'none'} aria-hidden="true" />
                             </button>
                         </div>
@@ -512,7 +512,7 @@ const ModelMenu: React.FC<ModelMenuProps> = ({
                             {/* emerald → cyan only: the reference's green→cyan→blue
                                 is refused by the hue lockout in themeContrast. */}
                             <div className="h-1 w-full rounded-full bg-zinc-800" aria-hidden="true">
-                                <div className="h-1 rounded-full bg-gradient-to-r from-emerald-500 to-cyan-400 transition-[width] duration-150 ease-[var(--ease-snappy)]"
+                                <div className="h-1 rounded-full bg-gradient-to-r from-emerald-500 to-zinc-400 transition-[width] duration-150 ease-[var(--ease-snappy)]"
                                     style={{ width: `${(effortIndexOf(effort) / (EFFORT_CHOICES.length - 1)) * 100}%` }} />
                             </div>
                             <div className="absolute inset-0 flex items-center justify-between px-0.5" aria-hidden="true">

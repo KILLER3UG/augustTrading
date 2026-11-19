@@ -160,8 +160,8 @@ const ToastItem: React.FC<{ toast: Toast; onDismiss: () => void }> = ({ toast, o
     const typeStyles = {
         success: { bar: 'bg-emerald-400/70', icon: 'text-emerald-400' },
         error: { bar: 'bg-rose-400/70', icon: 'text-rose-400' },
-        warning: { bar: 'bg-amber-400/70', icon: 'text-amber-400' },
-        info: { bar: 'bg-cyan-400/70', icon: 'text-cyan-400' },
+        warning: { bar: 'bg-zinc-400/70', icon: 'text-zinc-400' },
+        info: { bar: 'bg-zinc-400/70', icon: 'text-zinc-400' },
     };
 
     const renderIcon = (type: ToastType) => {

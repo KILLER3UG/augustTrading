@@ -110,8 +110,8 @@ export const VersionHistoryDashboard: React.FC = () => {
             blue: "from-zinc-800/50 to-zinc-900/50 border-zinc-700/50 text-zinc-300",
             purple: "from-zinc-800/50 to-zinc-900/50 border-zinc-700/50 text-zinc-300",
             emerald: "from-emerald-500/20 to-emerald-500/5 border-emerald-500/20 text-emerald-400",
-            amber: "from-amber-500/20 to-amber-500/5 border-amber-500/20 text-amber-400",
-            yellow: "from-amber-500/20 to-amber-500/5 border-amber-500/20 text-amber-400",
+            amber: "from-zinc-800/50 to-zinc-900/50 border-zinc-700/50 text-zinc-300",
+            yellow: "from-zinc-800/50 to-zinc-900/50 border-zinc-700/50 text-zinc-300",
             rose: "from-rose-500/20 to-rose-500/5 border-rose-500/20 text-rose-400",
             zinc: "from-zinc-800/50 to-zinc-900/50 border-zinc-700/50 text-zinc-400"
         };
@@ -231,18 +231,18 @@ export const VersionHistoryDashboard: React.FC = () => {
                                         />
                                     </div>
                                     <div className="border-t border-zinc-800/80 py-2 overflow-y-auto max-h-[100px] custom-scrollbar">
-                                        <p className="text-ui-xs text-amber-200/80 font-mono leading-relaxed">
+                                        <p className="text-ui-xs text-zinc-300 font-mono leading-relaxed">
                                             "{insights[selectedInsightIndex]?.insight}"
                                         </p>
                                     </div>
                                     <div className="flex items-center justify-between border-t border-zinc-800/80 py-1.5">
-                                        <span className="text-ui-2xs text-amber-200/50 font-mono">
+                                        <span className="text-ui-2xs text-zinc-500 font-mono">
                                             {insights[selectedInsightIndex]?.qualityScore ?? 50}/100 · {insights[selectedInsightIndex]?.timesUsed ?? 0} used · {insights[selectedInsightIndex]?.timesHelpful ?? 0} helpful
                                         </span>
                                         <div className="flex gap-1">
                                             <button
                                                 onClick={() => handleInsightFeedback(insights[selectedInsightIndex]?.id, true)}
-                                                className="p-1 rounded-control text-ui-2xs bg-amber-500/10 hover:bg-amber-500/25 text-amber-200/80 hover:text-amber-200 transition-colors"
+                                                className="p-1 rounded-control text-ui-2xs bg-white/[0.05] hover:bg-white/[0.1] text-zinc-300 hover:text-zinc-100 transition-colors"
                                                 title="Mark helpful"
                                                 aria-label="Mark helpful"
                                             >
@@ -250,7 +250,7 @@ export const VersionHistoryDashboard: React.FC = () => {
                                             </button>
                                             <button
                                                 onClick={() => handleInsightFeedback(insights[selectedInsightIndex]?.id, false)}
-                                                className="p-1 rounded-control text-ui-2xs bg-amber-500/10 hover:bg-amber-500/25 text-amber-200/80 hover:text-amber-200 transition-colors"
+                                                className="p-1 rounded-control text-ui-2xs bg-white/[0.05] hover:bg-white/[0.1] text-zinc-300 hover:text-zinc-100 transition-colors"
                                                 title="Mark not helpful"
                                                 aria-label="Mark not helpful"
                                             >
@@ -267,14 +267,14 @@ export const VersionHistoryDashboard: React.FC = () => {
                                 lessons and how their quality is tracking. */}
                             {Object.keys(providerStats).length > 0 && (
                                 <div className="mt-2 pt-2 border-t border-zinc-800/80">
-                                    <div className="text-ui-2xs text-amber-200/50 font-mono mb-1">BY PROVIDER</div>
+                                    <div className="text-ui-2xs text-zinc-500 font-mono mb-1">BY PROVIDER</div>
                                     <div className="flex flex-col gap-0.5">
                                         {Object.entries(providerStats)
                                             .sort((a, b) => b[1].count - a[1].count)
                                             .map(([provider, stat]) => (
                                                 <div key={provider} className="flex items-center justify-between text-ui-2xs font-mono">
-                                                    <span className="text-amber-200/70 truncate pr-2" title={provider}>{providerLabel(provider)}</span>
-                                                    <span className="text-amber-200/40 whitespace-nowrap">{stat.count} · {stat.avgQuality}/100</span>
+                                                    <span className="text-zinc-400 truncate pr-2" title={provider}>{providerLabel(provider)}</span>
+                                                    <span className="text-zinc-600 whitespace-nowrap">{stat.count} · {stat.avgQuality}/100</span>
                                                 </div>
                                             ))}
                                     </div>

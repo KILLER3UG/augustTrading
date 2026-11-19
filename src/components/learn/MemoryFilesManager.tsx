@@ -372,8 +372,8 @@ const MemoryFilesManager: React.FC<MemoryFilesManagerProps> = ({
             </div>
 
             {corruptSidecars.length > 0 && (
-                <div className="shrink-0 mb-6 rounded-bubble border border-amber-500/30 bg-amber-500/[0.06] p-4" data-testid="notebook-recovery">
-                    <p className="text-ui-base font-semibold text-amber-300">A notebook copy was preserved</p>
+                <div className="shrink-0 mb-6 rounded-bubble border border-zinc-500/30 bg-zinc-500/[0.06] p-4" data-testid="notebook-recovery">
+                    <p className="text-ui-base font-semibold text-zinc-300">A notebook copy was preserved</p>
                     <p className="mt-1 text-ui-sm text-zinc-400">
                         The loader could not verify the notebook and kept a sidecar copy. Your stored notebook was not overwritten.
                     </p>
@@ -388,7 +388,7 @@ const MemoryFilesManager: React.FC<MemoryFilesManagerProps> = ({
                                 <button
                                     type="button"
                                     onClick={() => { void handleRestoreSidecar(s); }}
-                                    className="shrink-0 rounded-control bg-amber-600/90 px-2.5 py-1 text-ui-dense font-medium text-white hover:bg-amber-500"
+                                    className="shrink-0 rounded-control bg-zinc-600/90 px-2.5 py-1 text-ui-dense font-medium text-white hover:bg-zinc-500"
                                 >
                                     Restore this copy
                                 </button>

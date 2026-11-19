@@ -75,7 +75,7 @@ export const DataCaptureModal: React.FC<DataCaptureModalProps> = ({
     const outcomeColors = {
         [TradeOutcome.WIN]: { bg: 'bg-emerald-500/10', border: 'border-emerald-500/30', text: 'text-emerald-400', glow: 'shadow-emerald-500/20' },
         [TradeOutcome.LOSS]: { bg: 'bg-rose-500/10', border: 'border-rose-500/30', text: 'text-rose-400', glow: 'shadow-rose-500/20' },
-        [TradeOutcome.ENTRY_NOT_HIT]: { bg: 'bg-amber-500/10', border: 'border-amber-500/30', text: 'text-amber-400', glow: 'shadow-amber-500/20' },
+        [TradeOutcome.ENTRY_NOT_HIT]: { bg: 'bg-zinc-500/10', border: 'border-zinc-500/30', text: 'text-zinc-400', glow: 'shadow-zinc-500/20' },
         [TradeOutcome.SKIPPED]: { bg: 'bg-zinc-500/10', border: 'border-zinc-500/30', text: 'text-zinc-400', glow: 'shadow-zinc-500/20' },
         [TradeOutcome.PENDING]: { bg: 'bg-zinc-500/10', border: 'border-zinc-500/30', text: 'text-zinc-400', glow: 'shadow-zinc-500/20' },
     };
@@ -153,7 +153,7 @@ export const DataCaptureModal: React.FC<DataCaptureModalProps> = ({
                             {isWin ? (
                                 <TrendingUp className="h-5 w-5 text-emerald-400" aria-hidden="true" />
                             ) : outcome === TradeOutcome.ENTRY_NOT_HIT ? (
-                                <Clock className="h-5 w-5 text-amber-400" aria-hidden="true" />
+                                <Clock className="h-5 w-5 text-zinc-400" aria-hidden="true" />
                             ) : (
                                 <TrendingDown className="h-5 w-5 text-rose-400" aria-hidden="true" />
                             )}
@@ -279,18 +279,18 @@ export const DataCaptureModal: React.FC<DataCaptureModalProps> = ({
                     <button
                         onClick={handleAutoCapture}
                         disabled={isCapturing || !isPnlValid}
-                        className="w-full p-4 rounded-bubble border border-cyan-500/20 bg-cyan-950/30 hover:bg-cyan-950/50 hover:border-cyan-500/40 transition-colors duration-[150ms] ease-[var(--ease-snappy)] text-left group disabled:opacity-50 disabled:cursor-not-allowed relative overflow-hidden"
+                        className="w-full p-4 rounded-bubble border border-zinc-500/20 bg-zinc-950/30 hover:bg-zinc-950/50 hover:border-zinc-500/40 transition-colors duration-[150ms] ease-[var(--ease-snappy)] text-left group disabled:opacity-50 disabled:cursor-not-allowed relative overflow-hidden"
                     >
                         {isCapturing && (
-                            <div className="absolute inset-0 bg-cyan-500/10 animate-pulse" />
+                            <div className="absolute inset-0 bg-zinc-500/10 animate-pulse" />
                         )}
                         <div className="flex items-start gap-4 relative z-10">
                             <div className="text-3xl">{isCapturing ? '⏳' : ''}</div>
                             <div className="flex-1">
-                                <div className="font-bold text-cyan-300 group-hover:text-cyan-200 transition-colors flex items-center gap-2">
+                                <div className="font-bold text-zinc-300 group-hover:text-zinc-300 transition-colors flex items-center gap-2">
                                     {isCapturing ? 'Capturing...' : 'Auto-Capture & Log'}
                                     {!isCapturing && (
-                                        <span className="text-ui-2xs bg-cyan-500/20 text-cyan-400 px-1.5 py-0.5 rounded-control uppercase tracking-wider font-bold">
+                                        <span className="text-ui-2xs bg-zinc-500/20 text-zinc-400 px-1.5 py-0.5 rounded-control uppercase tracking-wider font-bold">
                                             Recommended
                                         </span>
                                     )}
@@ -390,7 +390,7 @@ export const DataCaptureModal: React.FC<DataCaptureModalProps> = ({
                                             }`}
                                         >
                                             <span aria-hidden className="flex items-center">
-                                                {checklistChecked.has(item.id) ? <CheckSquare className="h-3.5 w-3.5 text-cyan-400 shrink-0" aria-hidden="true" /> : <Square className="h-3.5 w-3.5 text-zinc-500 shrink-0" aria-hidden="true" />}
+                                                {checklistChecked.has(item.id) ? <CheckSquare className="h-3.5 w-3.5 text-zinc-400 shrink-0" aria-hidden="true" /> : <Square className="h-3.5 w-3.5 text-zinc-500 shrink-0" aria-hidden="true" />}
                                             </span>
                                             {item.label}
                                         </button>

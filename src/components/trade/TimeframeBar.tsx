@@ -159,7 +159,7 @@ const TimeframeBar: React.FC<TimeframeBarProps> = ({ interval, onIntervalChange,
                                             isShown ? 'text-zinc-100' : 'text-zinc-500'
                                         }`}>
                                         {tf}
-                                        <span aria-hidden>{isShown ? <Check className="h-3 w-3 text-cyan-400" aria-hidden="true" /> : null}</span>
+                                        <span aria-hidden>{isShown ? <Check className="h-3 w-3 text-zinc-400" aria-hidden="true" /> : null}</span>
                                     </button>
                                 );
                             })}

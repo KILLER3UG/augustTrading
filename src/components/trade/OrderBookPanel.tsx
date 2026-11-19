@@ -243,9 +243,9 @@ const OrderBookPanel: React.FC<OrderBookPanelProps> = ({ symbol, live = false, l
                     data-testid="orderbook-spread"
                     className={`${GRID} my-1 items-center border-y border-hairline py-1 font-mono text-ui-xs tabular-nums text-zinc-400`}
                 >
-                    <span className={spreadPercent > 0.05 ? 'text-amber-400' : 'text-zinc-500'}>spread</span>
+                    <span className={spreadPercent > 0.05 ? 'text-zinc-400' : 'text-zinc-500'}>spread</span>
                     <span className="text-right text-zinc-300">{bestAsk && bestBid ? fmtPrice(spreadValue) : '—'}</span>
-                    <span className={`text-right ${spreadPercent > 0.05 ? 'text-amber-400' : ''}`}>{spreadPctText}</span>
+                    <span className={`text-right ${spreadPercent > 0.05 ? 'text-zinc-400' : ''}`}>{spreadPctText}</span>
                 </div>
                 {bookLoading ? (
                     <div aria-hidden>

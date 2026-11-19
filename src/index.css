@@ -1,19 +1,15 @@
 @import "tailwindcss";
 @plugin "@tailwindcss/typography";
 
-/* ===== NEUTRAL DARK — warm graphite, true semantics =====
-   2026-11-08 re-style (owner ruling, D1 of the v4 plan): the app adopts the
-   v4 mock's palette as-is. The neutrals are WARM (page #0d0c0b → ink #f4f1ea),
-   reversing the 2026-10-27 hue-free ruling, and the accent is AMBER #e8a33d,
-   reversing "amber = warning only". Colour still means data first: up #10b981,
-   down #f43f5e, warning amber, info blue #22d3ee.
-   Amber now carries BOTH the warning step and the primary-action fill; the
-   distinction is fill vs text — a solid amber control wears --color-accent-ink
-   (#1c1508, 8.39:1 on the fill), a warning is amber text on the page. That is
-   how the v4 mock uses one hue for both.
-   The neutral utility names (zinc-*) are deliberately kept so every existing
-   component re-colors through this one block. AGENTS.md documents the
-   doctrine. */
+/* ===== NEUTRAL DARK — hue-free graphite, true semantics =====
+   The monochrome doctrine (owner ruling, refreshed 2026-11-19): page #0a0a0b,
+   panels #111113, raised surfaces #18181b, ink #f4f4f5, and a WHITE primary
+   accent (--color-accent). Green (#22c55e-family) and red (#ef4444-family)
+   appear ONLY on candlesticks, price/PnL numbers and Long/Short/Approve/Reject
+   semantics — zero orange, amber, cyan or pink chrome. The 2026-11-08 warm-
+   graphite/amber experiment was reversed; the neutral utility names (zinc-*)
+   are deliberately kept so every component re-colors through this one block.
+   AGENTS.md documents the doctrine. */
 @theme {
   /* Neutrals — hue-free graphite surfaces + hue-free ink. Class-name mapping
      kept stable: 950 page, 900 panels/rail, 800 raised surfaces, 700 hairline
@@ -48,8 +44,9 @@
      6.77:1 on panel); 600 and up are fills and hover states, never running
      type. Re-pointed off Minara's cyan at the 2026-10-27 ruling so the app has
      one blue, and the name `cyan-*` stays as the historical alias for it. */
-  /* v4's info blue. Cyan is the INFO hue now, not the accent — the accent is
-     --color-accent below. */
+  /* Legacy hue tokens — kept so an old reference still resolves, but NO
+     chrome wears them: the monochrome doctrine swept amber/cyan utilities
+     to zinc (2026-11-19). The accent is --color-accent below (white). */
   --color-cyan-100: #cffafe;
   --color-cyan-200: #a5f3fc;
   --color-cyan-300: #67e8f9;
@@ -200,10 +197,10 @@
   --color-ink-tertiary: #85858b;    /* = zinc-600, the AA-tuned faint step */
   --color-trade-up: #22c55e;         /* = emerald-500 — gains, up, Long, WIN */
   --color-trade-down: #ef4444;       /* = rose-500 — losses, down, Short, LOSS */
-  --color-warn: #f08800;             /* = amber-500 — warnings, watch */
-  --color-info: #22d3ee;             /* = cyan-400 — info / in-progress */
-  /* v4's accent: the primary-action fill. Same hue as the warning step
-     (amber-400); the role differs — a fill wears --color-accent-ink. */
+  --color-warn: #d4d4d8;             /* = zinc-300 — warnings read in ink (monochrome doctrine) */
+  --color-info: #a1a1aa;             /* = zinc-400 — info / in-progress, ink not hue */
+  /* The primary-action fill: WHITE ink on the page, wearing --color-accent-ink
+     on the fill. The amber-accent experiment was reversed (2026-11-19). */
   --color-accent: #f4f4f5;
   --color-accent-ink: #0a0a0b;
 
@@ -368,8 +365,8 @@
   /* Unverified for AA on a light ground — see the warning above. */
   --color-trade-up: #067647;
   --color-trade-down: #c22c2e;
-  --color-warn: #9a5b00;
-  --color-info: #1d64a8;
+  --color-warn: #52525b;
+  --color-info: #71717a;
   color-scheme: light;
 }
 

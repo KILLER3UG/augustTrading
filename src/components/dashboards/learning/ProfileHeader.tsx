@@ -19,7 +19,7 @@ export const ProfileHeader: React.FC<{
         <>
             {/* Header */}
             <div className="text-center pb-3 sm:pb-4 border-b border-hairline">
-                <h2 className="text-ui-lg sm:text-lg font-bold text-cyan-400 mb-1">AI Learning Profile</h2>
+                <h2 className="text-ui-lg sm:text-lg font-bold text-zinc-100 mb-1">AI Learning Profile</h2>
                 <p className="text-ui-xs sm:text-ui-sm text-zinc-500">
                     Based on {profile.totalAnalyzedTrades} analyzed trades
                 </p>
@@ -27,8 +27,8 @@ export const ProfileHeader: React.FC<{
 
             {/* Overall Performance */}
             <div className="grid grid-cols-2 gap-2 sm:gap-4">
-                <div className="bg-gradient-to-br from-cyan-950/50 to-zinc-900 rounded-bubble p-3 sm:p-4 border border-cyan-500/20">
-                    <p className="text-ui-2xs sm:text-ui-sm text-cyan-400/70 uppercase tracking-wider mb-1">Win Rate</p>
+                <div className="bg-gradient-to-br from-zinc-900/60 to-zinc-900 rounded-bubble p-3 sm:p-4 border border-hairline">
+                    <p className="text-ui-2xs sm:text-ui-sm text-zinc-400 uppercase tracking-wider mb-1">Win Rate</p>
                     <p className={`text-2xl sm:text-3xl font-black ${getWinRateColor(profile.overallWinRate)}`}>
                         {profile.overallWinRate}%
                     </p>

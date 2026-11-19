@@ -461,7 +461,7 @@ export const SkillLibrary: React.FC<SkillLibraryProps> = ({
                                     rev {skill.version.slice(0, 8)} · {skill.bundled.length} support file{skill.bundled.length === 1 ? '' : 's'}
                                     {issueCountBySlug.has(skill.slug) && (
                                         <span
-                                            className="rounded-control border border-amber-400/40 bg-amber-400/10 px-1.5 py-0.5 font-sans text-amber-300"
+                                            className="rounded-control border border-zinc-400/40 bg-zinc-400/10 px-1.5 py-0.5 font-sans text-zinc-300"
                                             data-testid={`skill-format-flag-${skill.slug}`}
                                             title="This skill does not follow the SKILL.md format"
                                         >
@@ -692,7 +692,7 @@ export const SkillLibrary: React.FC<SkillLibraryProps> = ({
             {currentIssues.length > 0 && (
                 <div
                     data-testid="skill-format-issues"
-                    className="flex flex-wrap items-center gap-2 rounded-control border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-ui-dense text-amber-200"
+                    className="flex flex-wrap items-center gap-2 rounded-control border border-zinc-400/30 bg-zinc-400/10 px-3 py-2 text-ui-dense text-zinc-300"
                 >
                     <span className="min-w-0 flex-1">
                         Not in the SKILL.md format: {currentIssues.map(i => i.what).join('; ')}.
@@ -701,7 +701,7 @@ export const SkillLibrary: React.FC<SkillLibraryProps> = ({
                         type="button"
                         onClick={() => void formatWithModel()}
                         disabled={!formatConfig || formatting}
-                        className="rounded-control border border-amber-400/40 px-2 py-0.5 font-medium hover:bg-amber-400/10 disabled:opacity-40"
+                        className="rounded-control border border-zinc-400/40 px-2 py-0.5 font-medium hover:bg-zinc-400/10 disabled:opacity-40"
                     >
                         {formatting ? 'Formatting…' : 'Fix with model'}
                     </button>
@@ -783,7 +783,7 @@ export const SkillLibrary: React.FC<SkillLibraryProps> = ({
                     )}
                 </div>
                 {missingSections.length > 0 && (
-                    <p className="text-ui-dense text-amber-300/90" data-testid="skill-section-hint">
+                    <p className="text-ui-dense text-zinc-300/90" data-testid="skill-section-hint">
                         No {missingSections.map(s => `## ${s}`).join(', ')} heading yet — a skill reads
                         best with {SKILL_BODY_SECTIONS.map(s => `## ${s}`).join(', ')}. Saving without
                         them is fine.

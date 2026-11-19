@@ -46,7 +46,7 @@ const KIND_TEXT: Record<ModelKeyLevel['kind'], string> = {
     resistance: 'text-rose-400',
     support: 'text-emerald-400',
     vwap: 'text-zinc-300',
-    level: 'text-amber-300',
+    level: 'text-zinc-300',
 };
 
 const KeyLevelsCard: React.FC<KeyLevelsCardProps> = ({ levels, symbol, messageId, getMark, onChatLevels }) => {

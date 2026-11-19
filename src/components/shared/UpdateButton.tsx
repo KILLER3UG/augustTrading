@@ -48,7 +48,7 @@ export const useUpdateStatusDot = (): React.ReactNode => {
 
     switch (status) {
         case 'checking':
-            return dot('Checking for updates…', 'bg-cyan-400', true);
+            return dot('Checking for updates…', 'bg-zinc-400', true);
         case 'available':
             // This was the last chrome consumer of the brand gradient — one of
             // the three "brand moments" the design reserved it for, alongside the
@@ -69,7 +69,7 @@ export const useUpdateStatusDot = (): React.ReactNode => {
         case 'downloaded':
             return dot('Ready to restart', 'bg-emerald-500');
         case 'installing':
-            return dot('Installing…', 'bg-amber-500/30', true);
+            return dot('Installing…', 'bg-zinc-500/30', true);
         case 'error':
             return dot(error ? `Update error — ${error}` : 'Update error', 'bg-rose-500');
         default:
@@ -90,13 +90,13 @@ export const UpdateButton: React.FC<{ className?: string }> = ({ className = '' 
     }
 
     const baseClasses = 'inline-flex items-center justify-center gap-1.5 h-7 px-2.5 rounded-control text-ui-dense font-medium transition-[background-color,box-shadow,transform] duration-[150ms] ease-[var(--ease-snappy)]';
-    const iconButtonClasses = 'inline-flex items-center justify-center h-7 w-7 rounded-control text-zinc-400 hover:bg-zinc-800 hover:text-cyan-400 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent';
+    const iconButtonClasses = 'inline-flex items-center justify-center h-7 w-7 rounded-control text-zinc-400 hover:bg-zinc-800 hover:text-zinc-400 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent';
 
     // Checking state — show spinner with text
     if (status === 'checking') {
         return (
             <div className={`flex items-center gap-1.5 ${className}`}>
-                <span className="flex items-center gap-1.5 text-ui-dense text-cyan-400" role="status" aria-live="polite">
+                <span className="flex items-center gap-1.5 text-ui-dense text-zinc-400" role="status" aria-live="polite">
                     <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
                     Checking…
                 </span>

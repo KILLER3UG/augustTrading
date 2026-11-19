@@ -41,9 +41,9 @@ const STATUS_WORD: Record<SignalStatus, string> = {
 const statusClass = (status: SignalStatus): string =>
     status === 'won' ? 'text-emerald-400'
         : status === 'lost' ? 'text-rose-400'
-            : status === 'expired' ? 'text-amber-300'
+            : status === 'expired' ? 'text-zinc-400'
                 : status === 'never_triggered' ? 'text-zinc-500'
-                    : 'text-cyan-300';
+                    : 'text-zinc-300';
 
 const pct = (n: number | null): string => (n === null ? '—' : `${(n * 100).toFixed(1)}%`);
 
@@ -123,7 +123,7 @@ const SignalTableRow: React.FC<{ row: SignalRow; tracked?: TrackedPosition }> = 
                         {STATUS_WORD[row.status]}
                     </span>
                     {resolution?.ambiguous && (
-                        <span className="mt-0.5 block text-ui-2xs text-amber-300/80">ambiguous</span>
+                        <span className="mt-0.5 block text-ui-2xs text-zinc-400">ambiguous</span>
                     )}
                     {tracked && (
                         <span className="mt-0.5 block text-ui-2xs text-zinc-600">{trackedShort(tracked)}</span>
@@ -224,22 +224,22 @@ const SignalTableRow: React.FC<{ row: SignalRow; tracked?: TrackedPosition }> = 
                                             {' · '}{venueLabel(row)}
                                         </p>
                                         {resolution.primarySource === 'binance' && (
-                                            <p className="mt-1 text-amber-300/80">Binance fallback: OKX was unavailable, so no second venue saw this resolution.</p>
+                                            <p className="mt-1 text-zinc-400">Binance fallback: OKX was unavailable, so no second venue saw this resolution.</p>
                                         )}
                                         {resolution.ambiguous && (
-                                            <p className="mt-1 text-amber-300/80">Both levels sat in one bar and no 1m series could order them — settled stop-first.</p>
+                                            <p className="mt-1 text-zinc-400">Both levels sat in one bar and no 1m series could order them — settled stop-first.</p>
                                         )}
                                     </div>
                                 )}
 
                                 {grounding && (
-                                    <p className={`text-ui-2xs ${grounding.verdict === 'missing' ? 'text-amber-300/80' : 'text-zinc-500'}`}>
+                                    <p className={`text-ui-2xs ${grounding.verdict === 'missing' ? 'text-zinc-300/80' : 'text-zinc-500'}`}>
                                         Evidence shadow: {grounding.verdict}
                                         {grounding.missing.length > 0 ? ` — ${grounding.missing.join(', ')}` : ''}
                                     </p>
                                 )}
                                 {gate && (
-                                    <p className={`text-ui-2xs ${gate.status === 'refused' ? 'text-amber-300/80' : 'text-zinc-500'}`}>
+                                    <p className={`text-ui-2xs ${gate.status === 'refused' ? 'text-zinc-300/80' : 'text-zinc-500'}`}>
                                         Gate shadow: {gate.status}
                                         {typeof gate.confidenceCap === 'number' ? ` · cap ${(gate.confidenceCap * 100).toFixed(0)}%` : ''}
                                         {gate.reason ? ` · ${gate.reason}` : ''}
@@ -263,7 +263,7 @@ const SignalTableRow: React.FC<{ row: SignalRow; tracked?: TrackedPosition }> = 
                                             </p>
                                         )}
                                         {tracked.gaps.length > 0 && (
-                                            <p className="mt-1 text-amber-300/80">{tracked.gaps.length} missing closed bar{tracked.gaps.length === 1 ? '' : 's'} inside the tracked window.</p>
+                                            <p className="mt-1 text-zinc-300/80">{tracked.gaps.length} missing closed bar{tracked.gaps.length === 1 ? '' : 's'} inside the tracked window.</p>
                                         )}
                                     </div>
                                 ) : (
@@ -451,7 +451,7 @@ const SignalFeed: React.FC<SignalFeedProps> = ({ user }) => {
                 )}
                 {settling && <p className="text-ui-dense text-zinc-500">Reading closed OKX candles (Binance cross-check)…</p>}
                 {trackedError && (
-                    <p className="text-ui-dense text-amber-300/80">Tracker state could not be read: {trackedError}. Settlement is unaffected.</p>
+                    <p className="text-ui-dense text-zinc-300/80">Tracker state could not be read: {trackedError}. Settlement is unaffected.</p>
                 )}
 
                 {rows.length === 0 ? (

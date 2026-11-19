@@ -499,33 +499,33 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
         if (v.ema20 || v.ema200) {
             rows.push((
                 <div key="ema" className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                    {v.ema20 && <span>EMA(20) <span className="text-amber-300">{fmt(bar.values.ema20 ?? null)}</span></span>}
-                    {v.ema200 && <span>EMA(200) <span className="text-purple-300">{fmt(bar.values.ema200 ?? null)}</span></span>}
+                    {v.ema20 && <span>EMA(20) <span className="text-zinc-300">{fmt(bar.values.ema20 ?? null)}</span></span>}
+                    {v.ema200 && <span>EMA(200) <span className="text-zinc-300">{fmt(bar.values.ema200 ?? null)}</span></span>}
                 </div>
             ));
         }
         if (v.boll) {
             rows.push((
                 <div key="boll" className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                    <span>BOLL <span className="text-cyan-300">{fmt(bar.values.bollMid ?? null)}</span></span>
-                    <span>UB <span className="text-cyan-300">{fmt(bar.values.bollUpper ?? null)}</span></span>
-                    <span>LB <span className="text-cyan-300">{fmt(bar.values.bollLower ?? null)}</span></span>
+                    <span>BOLL <span className="text-zinc-300">{fmt(bar.values.bollMid ?? null)}</span></span>
+                    <span>UB <span className="text-zinc-300">{fmt(bar.values.bollUpper ?? null)}</span></span>
+                    <span>LB <span className="text-zinc-300">{fmt(bar.values.bollLower ?? null)}</span></span>
                 </div>
             ));
         }
         if (v.vwap || v.avwap) {
             rows.push((
                 <div key="vwap" className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                    {v.vwap && <span>VWAP <span className="text-sky-300">{fmt(bar.values.vwap ?? null)}</span></span>}
-                    {v.avwap && <span>aVWAP <span className="text-violet-300">{avwapAnchor === null ? '(Alt+click a bar)' : fmt(bar.values.avwap ?? null)}</span></span>}
+                    {v.vwap && <span>VWAP <span className="text-zinc-300">{fmt(bar.values.vwap ?? null)}</span></span>}
+                    {v.avwap && <span>aVWAP <span className="text-zinc-300">{avwapAnchor === null ? '(Alt+click a bar)' : fmt(bar.values.avwap ?? null)}</span></span>}
                 </div>
             ));
         }
         if (v.rsi) {
             rows.push((
                 <div key="rsi" className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                    <span>RSI(6) <span className="text-amber-300">{num(bar.values.rsi6 ?? null)}</span></span>
-                    <span>RSI(14) <span className="text-yellow-200">{num(bar.values.rsi14 ?? null)}</span></span>
+                    <span>RSI(6) <span className="text-zinc-300">{num(bar.values.rsi6 ?? null)}</span></span>
+                    <span>RSI(14) <span className="text-zinc-300">{num(bar.values.rsi14 ?? null)}</span></span>
                     <span>RSI(24) <span className="text-lime-300">{num(bar.values.rsi24 ?? null)}</span></span>
                 </div>
             ));
@@ -540,8 +540,8 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
             const hist = dif !== null && dea !== null ? dif - dea : null;
             rows.push((
                 <div key="macd" className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                    <span>MACD <span className="text-cyan-300">{num(hist === null ? null : 2 * hist, 1)}</span></span>
-                    <span>DIF <span className="text-amber-300">{num(dif, 1)}</span></span>
+                    <span>MACD <span className="text-zinc-300">{num(hist === null ? null : 2 * hist, 1)}</span></span>
+                    <span>DIF <span className="text-zinc-300">{num(dif, 1)}</span></span>
                     <span>DEA <span className="text-rose-300">{num(dea, 1)}</span></span>
                 </div>
             ));
@@ -549,7 +549,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
         if (v.tsi) {
             rows.push((
                 <div key="tsi" className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                    <span>TSI(25, 13, 13) <span className="text-amber-300">{num(bar.values.tsi ?? null)}</span></span>
+                    <span>TSI(25, 13, 13) <span className="text-zinc-300">{num(bar.values.tsi ?? null)}</span></span>
                     <span>Signal <span className="text-rose-300">{num(bar.values.tsiSignal ?? null)}</span></span>
                 </div>
             ));
@@ -557,7 +557,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
         if (v.cvd) {
             rows.push((
                 <div key="cvd" className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                    <span>CVD <span className="text-teal-300">{bar.values.cvd === null || bar.values.cvd === undefined ? '—' : Math.round(bar.values.cvd).toLocaleString()}</span></span>
+                    <span>CVD <span className="text-zinc-300">{bar.values.cvd === null || bar.values.cvd === undefined ? '—' : Math.round(bar.values.cvd).toLocaleString()}</span></span>
                     <span className="text-zinc-500">taker volume</span>
                 </div>
             ));
@@ -1052,10 +1052,10 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
             indicatorSeriesRef.current.push(series);
             indicatorDefsRef.current.push({ series, kind: 'line', name, calc });
         };
-        if (visible.ema20) addLine(cs => emaSeries(closesOf(cs), 20), chartColor('--color-amber-500', '#f59e0b'), 'ema20');
-        if (visible.ema200) addLine(cs => emaSeries(closesOf(cs), 200), chartColor('--color-purple-400', '#a78bfa'), 'ema200');
+        if (visible.ema20) addLine(cs => emaSeries(closesOf(cs), 20), chartColor('--color-zinc-500', '#71717a'), 'ema20');
+        if (visible.ema200) addLine(cs => emaSeries(closesOf(cs), 200), chartColor('--color-zinc-400', '#a78bfa'), 'ema200');
         if (visible.boll) {
-            const bollColor = chartColor('--color-cyan-500', '#06b6d4');
+            const bollColor = chartColor('--color-zinc-500', '#71717a');
             addLine(cs => bollingerSeries(closesOf(cs), 20, 2).mid, bollColor, 'bollMid');
             addLine(cs => bollingerSeries(closesOf(cs), 20, 2).upper, bollColor, 'bollUpper');
             addLine(cs => bollingerSeries(closesOf(cs), 20, 2).lower, bollColor, 'bollLower');
@@ -1065,8 +1065,8 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
         // from the bar the trader Alt+clicked (avwapAnchorRef), which is a
         // question about THIS read, not a preference — so it lives in view
         // state and a new anchor just re-runs REFRESH, no rebuild.
-        if (visible.vwap) addLine(cs => vwapSeries(cs, null), chartColor('--color-sky-400', '#38bdf8'), 'vwap');
-        if (visible.avwap) addLine(cs => vwapSeries(cs, avwapAnchorRef.current), chartColor('--color-violet-400', '#c084fc'), 'avwap');
+        if (visible.vwap) addLine(cs => vwapSeries(cs, null), chartColor('--color-zinc-400', '#38bdf8'), 'vwap');
+        if (visible.avwap) addLine(cs => vwapSeries(cs, avwapAnchorRef.current), chartColor('--color-zinc-400', '#c084fc'), 'avwap');
         // Sub-panes, in a FIXED order so the indices are deterministic.
         for (const s of subPaneSeriesRef.current) { try { chart.removeSeries(s); } catch { /* already gone */ } }
         subPaneSeriesRef.current = [];
@@ -1094,17 +1094,17 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
             if (!visible[id]) continue;
             const pane = paneIndex;
             if (id === 'rsi') {
-                putLine(pane, cs => rsiSeries(closesOf(cs), 6), chartColor('--color-orange-400', '#f08800'), 'rsi', 'rsi6');
-                putLine(pane, cs => rsiSeries(closesOf(cs), 14), chartColor('--color-yellow-400', '#facc15'), 'rsi', 'rsi14');
+                putLine(pane, cs => rsiSeries(closesOf(cs), 6), chartColor('--color-zinc-400', '#a1a1aa'), 'rsi', 'rsi6');
+                putLine(pane, cs => rsiSeries(closesOf(cs), 14), chartColor('--color-zinc-400', '#a1a1aa'), 'rsi', 'rsi14');
                 putLine(pane, cs => rsiSeries(closesOf(cs), 24), chartColor('--color-lime-400', '#a3e635'), 'rsi', 'rsi24');
                 chart.priceScale('rsi', pane).applyOptions({ visible: false });
             } else if (id === 'macd') {
                 putHist(pane, cs => macdSeries(closesOf(cs)).histogram, 'macdHist');
-                putLine(pane, cs => macdSeries(closesOf(cs)).macd, chartColor('--color-cyan-500', '#06b6d4'), undefined, 'macd');
-                putLine(pane, cs => macdSeries(closesOf(cs)).signal, chartColor('--color-pink-400', '#f472b6'), undefined, 'macdSignal');
+                putLine(pane, cs => macdSeries(closesOf(cs)).macd, chartColor('--color-zinc-500', '#71717a'), undefined, 'macd');
+                putLine(pane, cs => macdSeries(closesOf(cs)).signal, chartColor('--color-zinc-400', '#a1a1aa'), undefined, 'macdSignal');
             } else if (id === 'tsi') {
-                putLine(pane, cs => tsiSeries(closesOf(cs)).tsi, chartColor('--color-amber-500', '#f59e0b'), 'tsi', 'tsi');
-                putLine(pane, cs => tsiSeries(closesOf(cs)).signal, chartColor('--color-pink-400', '#f472b6'), 'tsi', 'tsiSignal');
+                putLine(pane, cs => tsiSeries(closesOf(cs)).tsi, chartColor('--color-zinc-500', '#71717a'), 'tsi', 'tsi');
+                putLine(pane, cs => tsiSeries(closesOf(cs)).signal, chartColor('--color-zinc-400', '#a1a1aa'), 'tsi', 'tsiSignal');
                 chart.priceScale('tsi', pane).applyOptions({ visible: false });
             } else if (id === 'cvd') {
                 // REAL taker delta — the delta DEFINITION is orderFlowCore's
@@ -1126,7 +1126,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                         cum += d;
                         return cum;
                     });
-                }, chartColor('--color-teal-300', '#5eead4'), undefined, 'cvd');
+                }, chartColor('--color-zinc-300', '#5eead4'), undefined, 'cvd');
             }
             const paneApi = chart.panes()[pane];
             if (paneApi) paneApi.setHeight(110);
@@ -1533,7 +1533,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
             const ax = toScreen({ t: avwapAnchorRef.current, p: 0 });
             if (ax) {
                 ctx.save();
-                ctx.strokeStyle = chartColor('--color-violet-400', '#c084fc');
+                ctx.strokeStyle = chartColor('--color-zinc-400', '#c084fc');
                 ctx.setLineDash([3, 3]);
                 ctx.lineWidth = 1;
                 ctx.beginPath();
@@ -1590,7 +1590,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                 ctx.fillStyle = color;
                 ctx.fillText(label, plotW - ctx.measureText(label).width - 4, y - 3);
             };
-            const pocColor = chartColor('--color-amber-400', '#fbbf24');
+            const pocColor = chartColor('--color-zinc-400', '#a1a1aa');
             const vaColor = chartColor('--color-zinc-500', '#71717a');
             hline(prof.valueAreaHigh, vaColor, true, 'VAH');
             hline(prof.valueAreaLow, vaColor, true, 'VAL');
@@ -1654,7 +1654,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                 const x = swTs?.logicalToCoordinate(sw.index as never);
                 const y = candlesRef.current?.priceToCoordinate?.(sw.price as never);
                 if (x === null || x === undefined || y === null || y === undefined) continue;
-                ctx.fillStyle = sw.kind === 'high' ? '#f472b6' : '#34d399';
+                ctx.fillStyle = sw.kind === 'high' ? '#fafafa' : '#a1a1aa';
                 const yy = sw.kind === 'high' ? Number(y) - 6 : Number(y) + 6;
                 ctx.beginPath();
                 if (sw.kind === 'high') {
@@ -1673,7 +1673,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                 const b = structure.lastBreak;
                 const y = candlesRef.current?.priceToCoordinate?.(b.level as never);
                 if (y !== null && y !== undefined && Number.isFinite(Number(y))) {
-                    ctx.fillStyle = b.kind === 'BOS' ? '#fbbf24' : '#f472b6';
+                    ctx.fillStyle = b.kind === 'BOS' ? '#fafafa' : '#a1a1aa';
                     ctx.fillText(`${b.kind} ${b.direction}`, 6, Number(y) - 4);
                 }
             }
@@ -1712,8 +1712,8 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                     ctx.fillStyle = 'rgba(0,0,0,0.6)';
                     ctx.fillRect(Number(x) - w - 6, top, w, 12);
                     ctx.fillStyle = kind === 'high'
-                        ? chartColor('--color-pink-400', '#f472b6')
-                        : chartColor('--color-emerald-400', '#34d399');
+                        ? chartColor('--color-zinc-400', '#a1a1aa')
+                        : chartColor('--color-zinc-300', '#d4d4d8');
                     ctx.fillText(label, Number(x) - w + 2, top + 9);
                     // A drawn triangle, not a glyph: a monospace canvas font has
                     // no guarantee of an arrow, and a missing glyph prints as a

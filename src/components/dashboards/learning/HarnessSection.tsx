@@ -153,7 +153,7 @@ export const HarnessSection: React.FC<HarnessSectionProps> = ({ closedWindowed, 
                 </div>
                 <div className="bg-zinc-800 rounded-bubble border border-hairline p-3">
                     <p className="text-ui-2xs text-zinc-500 uppercase tracking-wider mb-1">Cold-start queries</p>
-                    <p className={`text-xl font-black ${poolStats.coldStartQueries > 0 ? 'text-amber-300' : 'text-emerald-400'}`}>
+                    <p className={`text-xl font-black ${poolStats.coldStartQueries > 0 ? 'text-zinc-200' : 'text-zinc-500'}`}>
                         {poolStats.sampled > 0 ? `${Math.round((poolStats.coldStartQueries / poolStats.sampled) * 100)}%` : '—'}
                     </p>
                     <p className="text-ui-2xs text-zinc-600">below {COLD_START_MIN} matches → confidence scaled down</p>

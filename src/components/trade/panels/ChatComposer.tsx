@@ -89,7 +89,7 @@ export const ModelFallbackBanner: React.FC<{
     provider: ProviderConfig | null;
 }> = ({ modelIssue, provider }) => (
     modelIssue && provider ? (
-        <div className="mb-1.5 flex items-start gap-1.5 rounded-control border border-amber-500/30 bg-amber-500/10 px-2.5 py-1.5 text-ui-dense leading-4 text-amber-300" data-testid="model-fallback-warning" role="status">
+        <div className="mb-1.5 flex items-start gap-1.5 rounded-control border border-zinc-500/30 bg-zinc-500/10 px-2.5 py-1.5 text-ui-dense leading-4 text-zinc-300" data-testid="model-fallback-warning" role="status">
             <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
             <span className="min-w-0 flex-1">
                 {modelIssue} Answering with <strong className="font-semibold">{provider.name} · {formatModelDisplayName(provider.selectedModel)}</strong> — re-pick a model in the dropdown.

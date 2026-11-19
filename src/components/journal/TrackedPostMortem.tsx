@@ -267,7 +267,7 @@ const TrackedPostMortem: React.FC<TrackedPostMortemProps> = ({ trade, username, 
         return (
             <section className="mt-10" data-testid="tracked-post-mortem-error">
                 <h3 className="text-ui-base font-semibold tracking-tight text-zinc-100">Tracked record</h3>
-                <p className="mt-2 text-ui-dense text-amber-300/80">
+                <p className="mt-2 text-ui-dense text-zinc-300/80">
                     The tracked record could not be read: {state.message}. Nothing was changed by this view.
                 </p>
             </section>
@@ -292,7 +292,7 @@ const TrackedPostMortem: React.FC<TrackedPostMortemProps> = ({ trade, username, 
                 {diagnosis?.tentative && !diagnosis.refusal ? ' · tentative' : ''}
             </p>
             {problems.length > 0 && (
-                <p className="mt-2 text-ui-2xs text-amber-300/80">
+                <p className="mt-2 text-ui-2xs text-zinc-300/80">
                     Part of this record could not be read: {problems.join('; ')}.
                 </p>
             )}
@@ -312,7 +312,7 @@ const TrackedPostMortem: React.FC<TrackedPostMortemProps> = ({ trade, username, 
                     {position.barsRead} closed 5m bar{position.barsRead === 1 ? '' : 's'}
                 </span>
                 {!position.tapeCoversWindow && (
-                    <span className="text-ui-2xs text-amber-300/80">tape starts after the entry window</span>
+                    <span className="text-ui-2xs text-zinc-300/80">tape starts after the entry window</span>
                 )}
             </div>
 
@@ -365,7 +365,7 @@ const TrackedPostMortem: React.FC<TrackedPostMortemProps> = ({ trade, username, 
                 </p>
             )}
             {position.discrepancy && (
-                <p className="mt-2 text-ui-2xs text-amber-300/80">Recorded discrepancy: {position.discrepancy}</p>
+                <p className="mt-2 text-ui-2xs text-zinc-300/80">Recorded discrepancy: {position.discrepancy}</p>
             )}
 
             <div className="mt-8">
@@ -379,7 +379,7 @@ const TrackedPostMortem: React.FC<TrackedPostMortemProps> = ({ trade, username, 
                 </div>
                 <PricePath position={position} />
                 <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-ui-2xs text-zinc-500">
-                    <Dot className="bg-cyan-400" label={`entry ${trackedPrice(position.entry)}`} />
+                    <Dot className="bg-zinc-400" label={`entry ${trackedPrice(position.entry)}`} />
                     <Dot className="bg-rose-400" label={`stop ${trackedPrice(position.stop)}`} />
                     {position.targets.map((target, i) => (
                         <Dot key={`legend-target-${i}`} className="bg-emerald-400" label={`target ${trackedPrice(target)}`} />
@@ -387,7 +387,7 @@ const TrackedPostMortem: React.FC<TrackedPostMortemProps> = ({ trade, username, 
                     <Dot className="bg-emerald-400" label={`MFE ${excursionR(position.mfeR)}`} />
                     <Dot className="bg-rose-400" label={`MAE ${excursionR(position.maeR)}`} />
                     {position.exit && <Dot className="bg-zinc-200" label={net !== null ? `exit ${signedR(net)} net` : 'exit'} />}
-                    {position.gaps.length > 0 && <Dot className="bg-amber-300" label={`${position.gaps.length} gap${position.gaps.length === 1 ? '' : 's'}`} />}
+                    {position.gaps.length > 0 && <Dot className="bg-zinc-300" label={`${position.gaps.length} gap${position.gaps.length === 1 ? '' : 's'}`} />}
                 </div>
                 <p className="mt-2 text-ui-2xs text-zinc-600">
                     Closed 5m closes; the lines are the planned entry, stop and targets. The path is capped and decisive bars
@@ -429,13 +429,13 @@ const TrackedPostMortem: React.FC<TrackedPostMortemProps> = ({ trade, username, 
                     {diagnosis && (
                         <div className="flex flex-wrap gap-1.5">
                             {diagnosis.refusal && (
-                                <span className="rounded-full border border-amber-400/30 px-2 py-0.5 text-ui-2xs text-amber-300">
+                                <span className="rounded-full border border-zinc-400/30 px-2 py-0.5 text-ui-2xs text-zinc-300">
                                     Refused · {DIAGNOSIS_REFUSAL_WORD[diagnosis.refusal]}
                                 </span>
                             )}
                             {diagnosis.tentative && !diagnosis.refusal && (
                                 <span
-                                    className="rounded-full border border-cyan-400/30 px-2 py-0.5 text-ui-2xs text-cyan-300"
+                                    className="rounded-full border border-zinc-400/30 px-2 py-0.5 text-ui-2xs text-zinc-300"
                                     title="A tentative skill is context only until 3 independent outcomes on the same setup"
                                 >
                                     Tentative · context only
@@ -452,7 +452,7 @@ const TrackedPostMortem: React.FC<TrackedPostMortemProps> = ({ trade, username, 
                 ) : (
                     <>
                         {diagnosis.modelOutcome && diagnosis.modelOutcome !== diagnosis.outcome && (
-                            <p className="mt-3 text-ui-xs text-amber-300/80">
+                            <p className="mt-3 text-ui-xs text-zinc-300/80">
                                 The model called it a {diagnosis.modelOutcome}; the tape's {diagnosis.outcome} is the stored outcome.
                             </p>
                         )}
@@ -474,7 +474,7 @@ const TrackedPostMortem: React.FC<TrackedPostMortemProps> = ({ trade, username, 
                                         <p className="mt-1.5 text-ui-base text-zinc-200">{DIAGNOSIS_CHANGE_WORD[diagnosis.primaryChange]}</p>
                                     </div>
                                 </div>
-                                <blockquote className="mt-6 border-l-2 border-cyan-400/40 pl-5">
+                                <blockquote className="mt-6 border-l-2 border-zinc-400/40 pl-5">
                                     <p className="text-ui-base leading-relaxed text-zinc-200">{diagnosis.lesson}</p>
                                     <p className="mt-2 font-mono text-ui-xs uppercase tracking-wider text-zinc-500">
                                         IF {diagnosis.when} THEN {diagnosis.action}
@@ -508,7 +508,7 @@ const TrackedPostMortem: React.FC<TrackedPostMortemProps> = ({ trade, username, 
                                     <span className="text-ui-dense font-medium text-zinc-200">{skill.title}</span>
                                     <span className="text-ui-2xs uppercase tracking-wider text-zinc-500">{skill.status}</span>
                                     {skill.tentative && (
-                                        <span className="rounded-full border border-cyan-400/30 px-1.5 py-0.5 text-ui-2xs text-cyan-300">
+                                        <span className="rounded-full border border-zinc-400/30 px-1.5 py-0.5 text-ui-2xs text-zinc-300">
                                             tentative · context only
                                         </span>
                                     )}

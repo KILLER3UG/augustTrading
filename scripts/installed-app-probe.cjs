@@ -208,7 +208,11 @@ async function runInstaller(setupPath, installDir) {
  *  mid-shutdown blames the app for the probe's own timing. The assertion
  *  stays strict: zero processes after the grace window, or the run fails. */
 async function assertNoOrphanProcesses() {
-    const deadline = Date.now() + 20000;
+    // 45s grace: the main process exits within ~5s (the force-exit backstop),
+    // but a renderer child flushing a large journal on unload can take 30-40s
+    // to tear down on a loaded Windows box (measured). The assertion stays
+    // strict — zero processes after the grace, or the run fails.
+    const deadline = Date.now() + 45000;
     let rows = [];
     for (;;) {
         const res = spawnSync('tasklist', ['/FI', `IMAGENAME eq ${APP_PRODUCT}.exe`, '/FO', 'CSV', '/NH'], {
@@ -354,15 +358,27 @@ async function seedInstalledApp(page) {
             models: ['mock-mini'], selectedModel: 'mock-mini',
         }]));
 
+        // Defensive opener: the app's boot cleanup opens this DB WITHOUT a
+        // version (creating an empty v1) before deleting it — a fixed-v1 open
+        // landing in that gap sees a store-less DB and cannot upgrade. Open at
+        // the current version, and upgrade only when the store is missing.
         const db = await new Promise((resolve, reject) => {
-            const request = indexedDB.open('FuturesAI-DB', 1);
-            request.onupgradeneeded = () => {
-                if (!request.result.objectStoreNames.contains('userProfiles')) {
-                    request.result.createObjectStore('userProfiles', { keyPath: 'username' });
-                }
+            const probe = indexedDB.open('FuturesAI-DB');
+            probe.onsuccess = () => {
+                const d = probe.result;
+                if (d.objectStoreNames.contains('userProfiles')) { resolve(d); return; }
+                const ver = d.version + 1;
+                d.close();
+                const up = indexedDB.open('FuturesAI-DB', ver);
+                up.onupgradeneeded = () => {
+                    if (!up.result.objectStoreNames.contains('userProfiles')) {
+                        up.result.createObjectStore('userProfiles', { keyPath: 'username' });
+                    }
+                };
+                up.onsuccess = () => resolve(up.result);
+                up.onerror = () => reject(up.error);
             };
-            request.onsuccess = () => resolve(request.result);
-            request.onerror = () => reject(request.error);
+            probe.onerror = () => reject(probe.error);
         });
         const analysis = (over) => ({
             direction: 'Long', confidence: 'High', coinName: 'BTCUSDT',

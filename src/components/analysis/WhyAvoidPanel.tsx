@@ -12,14 +12,14 @@ import { explainNoTrade } from '../../utils/analysisUtils';
 
 const dotTone = (tone: ConfidenceStep['tone']): string => {
     if (tone === 'blocked') return 'bg-rose-400';
-    if (tone === 'warning') return 'bg-amber-400';
+    if (tone === 'warning') return 'bg-zinc-300';
     if (tone === 'good') return 'bg-emerald-400';
     return 'bg-zinc-600';
 };
 
 const textTone = (tone: ConfidenceStep['tone']): string => {
     if (tone === 'blocked') return 'text-rose-300';
-    if (tone === 'warning') return 'text-amber-300';
+    if (tone === 'warning') return 'text-zinc-300';
     if (tone === 'good') return 'text-emerald-400';
     return 'text-zinc-300';
 };
@@ -61,7 +61,7 @@ export const WhyAvoidPanel: React.FC<{ analysis: TradeAnalysis }> = ({ analysis 
 
             {basis.downgrades.length > 0 && (
                 <div className="mt-2">
-                    <div className="text-ui-xs uppercase tracking-widest text-amber-300/80">Confidence downgrades — watch, not dead</div>
+                    <div className="text-ui-xs uppercase tracking-widest text-zinc-400">Confidence downgrades — watch, not dead</div>
                     <ul className="mt-1 space-y-1">
                         {basis.downgrades.map(item => (
                             <li key={item.text} className="text-ui-base leading-5 text-zinc-300">{item.text}</li>
@@ -107,8 +107,8 @@ export const WaitForConfirmationBanner: React.FC<{ analysis: TradeAnalysis }> = 
     const trigger = confirmationTrigger(analysis, { skipInvalidationSource: true });
     if (!trigger) return null;
     return (
-        <div className="rounded-control border border-amber-500/15 bg-amber-500/[0.03] px-3 py-2">
-            <div className="text-ui-xs font-semibold uppercase tracking-widest text-amber-300">Wait for confirmation</div>
+        <div className="rounded-control border border-line bg-white/[0.03] px-3 py-2">
+            <div className="text-ui-xs font-semibold uppercase tracking-widest text-zinc-200">Wait for confirmation</div>
             <p className="mt-1 text-ui-base leading-6 text-zinc-300">
                 This setup is a watch, not a no-trade. Enter when {trigger.text}
                 {trigger.level ? ` (${trigger.level})` : ''}.

@@ -20,7 +20,7 @@ import { phtStamp } from '../../utils/timezone';
 
 const StatusBadge: React.FC<{ a: MemoryAmendment }> = ({ a }) => {
     const map: Record<MemoryAmendment['status'], string> = {
-        pending: 'bg-amber-950/60 text-amber-400',
+        pending: 'bg-zinc-950/60 text-zinc-400',
         approved: 'bg-emerald-950/60 text-emerald-400',
         rejected: 'bg-zinc-900 text-zinc-600 line-through',
         undone: 'bg-zinc-900 text-zinc-500',
@@ -107,7 +107,7 @@ export const AmendmentsInbox: React.FC = () => {
                 </p>
             )}
             {pending.map(a => (
-                <div key={a.id} className="rounded-bubble border border-amber-900/40 bg-zinc-900/40 p-3" data-testid={`amendment-${a.id}`}>
+                <div key={a.id} className="rounded-bubble border border-zinc-900/40 bg-zinc-900/40 p-3" data-testid={`amendment-${a.id}`}>
                     <div className="flex items-center gap-2">
                         <code className="text-ui-sm font-semibold text-zinc-200">{a.fileName}</code>
                         <span className="rounded-control bg-zinc-800 px-1.5 py-0.5 text-ui-2xs font-bold uppercase tracking-wider text-zinc-400">{a.kind}</span>

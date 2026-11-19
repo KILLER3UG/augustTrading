@@ -174,7 +174,7 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, className 
           em: ({ children }) => <em className="italic text-zinc-200">{children}</em>,
           strong: ({ children }) => <strong className="font-bold text-zinc-50">{children}</strong>,
           a: ({ children, href }) => (
-            <a href={href} target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:text-cyan-300 underline">{children}</a>
+            <a href={href} target="_blank" rel="noopener noreferrer" className="text-zinc-400 hover:text-zinc-300 underline">{children}</a>
           ),
         }}
       >

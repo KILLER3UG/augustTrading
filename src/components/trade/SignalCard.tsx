@@ -116,7 +116,7 @@ export const SignalCard: React.FC<SignalCardProps> = ({ signal, row, onShowOnCha
             <dl className="grid grid-cols-2 gap-x-3 gap-y-1 px-3 pt-2 text-ui-dense">
                 <div className="flex items-baseline gap-1.5">
                     <dt className="text-zinc-500">Entry</dt>
-                    <dd className="font-mono font-medium tabular-nums text-cyan-400" data-testid="signal-entry">{fmtPrice(signal.entry)}</dd>
+                    <dd className="font-mono font-medium tabular-nums text-zinc-400" data-testid="signal-entry">{fmtPrice(signal.entry)}</dd>
                 </div>
                 <div className="flex items-baseline gap-1.5">
                     <dt className="text-zinc-500">Stop</dt>
@@ -212,7 +212,7 @@ export const DeskScorecard: React.FC<{ className?: string }> = ({ className }) =
                     {scorecard.slugging !== null ? ` · slugging ${scorecard.slugging.toFixed(2)}×` : ''}
                 </span>
                 {scorecard.thin && (
-                    <span className="text-amber-400"> — sample too small to read; not an edge.</span>
+                    <span className="text-zinc-400"> — sample too small to read; not an edge.</span>
                 )}
             </div>
         </details>

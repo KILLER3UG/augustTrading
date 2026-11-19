@@ -204,7 +204,7 @@ export function useConfirmDialog() {
                                 data-testid="confirm-dialog-confirm"
                                 className={`px-4 py-2 text-ui-base font-semibold rounded-control transition-colors ${state.destructive
                                     ? 'bg-rose-500 enabled:hover:bg-rose-600 text-white disabled:bg-zinc-700 disabled:text-zinc-500'
-                                    : 'bg-accent enabled:hover:bg-amber-500 text-accent-ink disabled:bg-zinc-700 disabled:text-zinc-500'
+                                    : 'bg-accent enabled:hover:bg-zinc-500 text-accent-ink disabled:bg-zinc-700 disabled:text-zinc-500'
                                     }`}
                             >
                                 {state.confirmLabel}
@@ -223,7 +223,7 @@ export function useConfirmDialog() {
                         <button
                             type="button"
                             onClick={handleUndo}
-                            className="text-ui-base font-semibold text-cyan-400 hover:text-cyan-300 transition-colors"
+                            className="text-ui-base font-semibold text-zinc-400 hover:text-zinc-300 transition-colors"
                         >
                             Undo
                         </button>

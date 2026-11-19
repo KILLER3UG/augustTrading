@@ -341,7 +341,7 @@ export const NewBotDialog: React.FC<NewBotDialogProps> = ({ open, onClose, onCre
                                 <label className="flex items-start gap-2 text-ui-sm text-zinc-300">
                                     <input type="checkbox" checked={isolated} data-testid="bot-memory-isolated"
                                         onChange={e => setIsolated(e.target.checked)}
-                                        className="mt-0.5 h-3.5 w-3.5 accent-cyan-400" />
+                                        className="mt-0.5 h-3.5 w-3.5 accent-zinc-300" />
                                     <span>Isolate this bot from the shared book
                                         <span className="block text-ui-dense text-zinc-500">
                                             By default a bot reads the notebook the analysts read, and what it

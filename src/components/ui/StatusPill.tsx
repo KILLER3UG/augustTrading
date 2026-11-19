@@ -10,8 +10,8 @@ export type PillTone = 'up' | 'down' | 'warn' | 'info' | 'neutral';
 const TONE: Record<PillTone, string> = {
     up: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400',
     down: 'border-rose-500/30 bg-rose-500/10 text-rose-400',
-    warn: 'border-amber-500/30 bg-amber-500/10 text-amber-400',
-    info: 'border-cyan-500/30 bg-cyan-500/10 text-cyan-400',
+    warn: 'border-zinc-500/30 bg-zinc-500/10 text-zinc-400',
+    info: 'border-zinc-500/30 bg-zinc-500/10 text-zinc-400',
     neutral: 'border-hairline bg-white/[0.04] text-zinc-400',
 };
 

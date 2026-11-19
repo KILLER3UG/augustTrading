@@ -87,7 +87,7 @@ export const TraderProfileCards: React.FC<TraderProfileCardsProps> = ({
                     color: c.verdict === 'overconfident'
                         ? 'text-rose-400'
                         : c.verdict === 'underconfident'
-                            ? 'text-amber-500'
+                            ? 'text-zinc-300'
                             : c.verdict === 'calibrated'
                                 ? 'text-emerald-400'
                                 : 'text-zinc-500',

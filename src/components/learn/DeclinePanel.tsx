@@ -52,7 +52,7 @@ const formatTime = (iso: string): string => {
 
 const DeclineRow: React.FC<{ record: DeclineRecord }> = ({ record }) => (
     <li className="flex items-start gap-2">
-        <span className="w-14 shrink-0 font-mono text-ui-sm font-semibold text-amber-300/90">
+        <span className="w-14 shrink-0 font-mono text-ui-sm font-semibold text-zinc-300/90">
             {record.symbol}
         </span>
         <span className="min-w-0 flex-1">
@@ -114,7 +114,7 @@ const DeclinePanel: React.FC = () => {
             data-testid="decline-panel"
         >
             <div className="flex items-start gap-2">
-                <Ban className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" aria-hidden="true" />
+                <Ban className="mt-0.5 h-4 w-4 shrink-0 text-zinc-400" aria-hidden="true" />
                 <div className="min-w-0 flex-1">
                     <p className="text-ui-sm font-semibold text-zinc-100">
                         Declined setups

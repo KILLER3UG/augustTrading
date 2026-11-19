@@ -193,7 +193,7 @@ const ReasoningRow: React.FC<ReasoningRowProps> = ({
                     // Settled (or expanded-before-running) traces read as
                     // proper formatted text — paragraphs, lists, rules — the
                     // same pipeline the answer uses, at the trace's muted tone.
-                    <MarkdownContent content={visibleTrace} className="text-ui-caption leading-[1.75] text-zinc-500 [&_hr]:border-zinc-800 [&_strong]:text-zinc-400 [&_a]:text-cyan-300" />
+                    <MarkdownContent content={visibleTrace} className="text-ui-caption leading-[1.75] text-zinc-500 [&_hr]:border-zinc-800 [&_strong]:text-zinc-400 [&_a]:text-zinc-300" />
                 )}
                 <button
                     type="button"

@@ -61,10 +61,10 @@ const renderNoteLine = (line: string, i: number): React.ReactNode => {
     }
 
     let Icon = Zap;
-    let iconTone = 'text-cyan-400';
+    let iconTone = 'text-zinc-400';
     if (lower.startsWith('fix') || lower.includes('bug') || lower.includes('patch')) {
         Icon = Wrench;
-        iconTone = 'text-amber-400';
+        iconTone = 'text-zinc-400';
     } else if (lower.startsWith('perf') || lower.includes('speed') || lower.includes('optim')) {
         Icon = Zap;
         iconTone = 'text-emerald-400';
