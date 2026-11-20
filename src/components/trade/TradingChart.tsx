@@ -38,7 +38,7 @@ import {
     type UTCTimestamp,
 } from 'lightweight-charts';
 import { fetchKlines } from '../../services/analysis/KlineService';
-import { ChevronDown } from '../shared/Icons';
+import { ChevronDown, Lock, Pencil, Target, Trash2, X } from '../shared/Icons';
 import type { Kline } from '../../services/analysis/MarketDataService';
 import { sessionLevelRows, type LevelRow } from '../../services/market/levelsCore';
 import { readStructure, type StructureRead } from '../../services/market/swingStructureCore';
@@ -48,6 +48,7 @@ import { toCandles, toVolumes, verdictLevels, VOLUME_UP, VOLUME_DOWN, type Chart
 import {
     loadSessionDrawingsWithLegacy, createDrawingId, pointsForKind, FIB_RATIOS,
     drawWidthOf, nextDrawWidth, DRAW_WIDTH_DEFAULT,
+    CLICK_CLICK_KINDS, CLICK_COMMIT_THRESHOLD_PX,
     type ChartDrawing, type DrawKind, type DrawPoint, type DrawTool, DRAW_COLORS,
 } from '../../services/trade/chartDrawings';
 import {
@@ -669,6 +670,15 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
     const magnetSnapRef = useRef<MagnetSnapResult | null>(null);
     /** In-progress shape in SCREEN space while the user is clicking/dragging. */
     const [draft, setDraft] = useState<{ points: { x: number; y: number }[] } | null>(null);
+    // Where the ACTIVE placement press began — the click-vs-drag discriminator:
+    // a release within CLICK_COMMIT_THRESHOLD_PX of the press is a CLICK (arms
+    // click-click placement, the draft stays live under the pointer), anything
+    // further is a drag (commits on release, the old one-shot gesture).
+    const draftStartRef = useRef<{ x: number; y: number } | null>(null);
+    // Clear the press anchor whenever the draft dies (commit, Escape, tool switch).
+    useEffect(() => {
+        if (!draft) draftStartRef.current = null;
+    }, [draft]);
     /** Hide-all (the rail's eye): every drawing layer off the canvas, nothing
      *  deleted — TradingView's "hide all objects" toggle. */
     const [drawingsHidden, setDrawingsHidden] = useState(false);
@@ -918,6 +928,9 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
         const inUser = drawingsRef.current.some(d => d.id === id);
         const inModel = modelDrawingsRef.current.some(d => d.id === id);
         if (!inUser && !inModel) return;
+        // Locked is locked: the selection toolbar's unlock is the only door.
+        const target = [...drawingsRef.current, ...modelDrawingsRef.current].find(d => d.id === id);
+        if (target?.locked === true) return;
         const nextUser = inUser ? drawingsRef.current.filter(d => d.id !== id) : drawingsRef.current;
         const nextModel = inModel ? modelDrawingsRef.current.filter(d => d.id !== id) : modelDrawingsRef.current;
         if (inModel && !onReplaceModelDrawingsRef.current) {
@@ -939,6 +952,12 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                 || target.tagName === 'TEXTAREA'
                 || target.isContentEditable
             );
+            // The editable guard runs FIRST: keystrokes aimed at a field (the
+            // composer, the inspector inputs, the note editor) never reset
+            // chart state. The old order ran the Escape branch before this
+            // guard, so an Escape typed into any field also dropped the
+            // in-progress anchors, the selection, the inspector and the tool.
+            if (inEditable) return;
             if (ev.key === 'Escape') {
                 if (draft) setDraft(null);
                 if (inspector) setInspector(null);
@@ -946,7 +965,6 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                 if (toolRef.current !== 'cursor') setTool('cursor');
                 return;
             }
-            if (inEditable) return;
             if ((ev.key === 'Delete' || ev.key === 'Backspace') && selectedDrawingIdRef.current) {
                 ev.preventDefault();
                 deleteDrawingById(selectedDrawingIdRef.current);
@@ -2488,6 +2506,12 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
             setInspector(null);
             setSelectedDrawingId(hit.drawing.id);
             selectedDrawingIdRef.current = hit.drawing.id;
+            // A locked shape still selects (that is how the toolbar unlocks
+            // it), but a drag is refused — the cursor already said not-allowed.
+            if (hit.drawing.locked === true) {
+                syncPrimitive({ selectedId: hit.drawing.id });
+                return;
+            }
             const origScreenPts = hit.drawing.points
                 .map(p => toScreen(p))
                 .filter((s): s is ScreenXY => s !== null);
@@ -2639,6 +2663,18 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
             else unlockChart();
         };
 
+        // Pointer LEFT the chart: the hover state must die with it, or the
+        // hovered shape's axis price tags and hover handles linger forever
+        // after the cursor is gone — and ride into every capturePng snapshot.
+        const onPointerLeave = (): void => {
+            if (activeDrag) return;
+            if (hoveredDrawingIdRef.current !== null) {
+                hoveredDrawingIdRef.current = null;
+                syncPrimitive({ hoveredId: null });
+            }
+            host.style.cursor = '';
+        };
+
         const onCaptureDblClick = (ev: MouseEvent): void => {
             if (toolRef.current !== 'cursor') return;
             const pt = hostLocal(ev);
@@ -2663,6 +2699,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
         host.addEventListener('pointermove', onCapturePointerMove, true);
         host.addEventListener('pointerup', onCapturePointerUp, true);
         host.addEventListener('pointercancel', onCapturePointerCancel, true);
+        host.addEventListener('pointerleave', onPointerLeave);
         host.addEventListener('dblclick', onCaptureDblClick, true);
         window.addEventListener('blur', onWindowBlur);
         return () => {
@@ -2670,6 +2707,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
             host.removeEventListener('pointermove', onCapturePointerMove, true);
             host.removeEventListener('pointerup', onCapturePointerUp, true);
             host.removeEventListener('pointercancel', onCapturePointerCancel, true);
+            host.removeEventListener('pointerleave', onPointerLeave);
             host.removeEventListener('dblclick', onCaptureDblClick, true);
             window.removeEventListener('blur', onWindowBlur);
             unlockChart();
@@ -2711,7 +2749,9 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                 plotW,
                 plotH,
             );
-            if (hit) deleteDrawingById(hit.drawing.id);
+            // The eraser refuses locked shapes — unlock in the selection
+            // toolbar first, so a stray click cannot delete a kept level.
+            if (hit && hit.drawing.locked !== true) deleteDrawingById(hit.drawing.id);
             return;
         }
         if (tool === 'hline') {
@@ -2761,6 +2801,25 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
             magnetSnapRef.current = null;
             return;
         }
+        if (CLICK_CLICK_KINDS.has(tool as DrawKind)) {
+            if (draft && draft.points.length >= 1) {
+                // Second click of click-click placement: commit at THIS point
+                // (the pressed anchor, not the hovering preview point).
+                const pts = [draft.points[0], pt];
+                setDraft(null);
+                magnetSnapRef.current = null;
+                draftStartRef.current = null;
+                commitPlacement(tool as DrawKind, pts);
+                return;
+            }
+            draftStartRef.current = { x: pt.x, y: pt.y };
+            setDraft({ points: [pt] });
+            (ev.currentTarget as HTMLElement).setPointerCapture?.(ev.pointerId);
+            return;
+        }
+        // Brush is a pure drag gesture; everything else two-anchor already
+        // routed above.
+        draftStartRef.current = { x: pt.x, y: pt.y };
         setDraft({ points: [pt] });
         (ev.currentTarget as HTMLElement).setPointerCapture?.(ev.pointerId);
     };
@@ -2782,14 +2841,12 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
         }
     };
 
-    const onPointerUp = (ev: React.PointerEvent): void => {
-        if (!draft) return;
-        const kind = tool as DrawKind;
-        const pts = draft.points;
-        setDraft(null);
-        magnetSnapRef.current = null;
-        (ev.currentTarget as HTMLElement).releasePointerCapture?.(ev.pointerId);
-
+    /** The one commit tail both placement gestures share: a drag that releases
+     *  past the click threshold, and the second click of click-click placement.
+     *  Position boxes seed ATR defaults from a single anchor or size from the
+     *  second anchor; two-anchor kinds run `pointsForKind` (channel seeds its
+     *  parallel 3rd anchor). */
+    const commitPlacement = (kind: DrawKind, pts: { x: number; y: number }[]): void => {
         // Long / Short Position box: click-to-seed OR drag-to-size, always producing 3 valid anchors.
         if (isPositionBoxKind(kind)) {
             const entryDp = toData(pts[0].x, pts[0].y);
@@ -2860,6 +2917,29 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
         };
         commitDrawingChange([...drawingsRef.current, created]);
         setSelectedDrawingId(created.id);
+    };
+
+    const onPointerUp = (ev: React.PointerEvent): void => {
+        if (!draft) return;
+        const kind = tool as DrawKind;
+        const pts = draft.points;
+        const start = draftStartRef.current;
+        (ev.currentTarget as HTMLElement).releasePointerCapture?.(ev.pointerId);
+
+        // Click-click placement: a release in place (a CLICK, not a drag) arms
+        // the pending second anchor — the draft stays live under the pointer
+        // until the second click commits or Escape cancels. A release that
+        // travelled commits immediately, the classic drag-to-place gesture.
+        const last = pts[pts.length - 1];
+        const isClick = !start
+            || (pts.length === 1 && Math.hypot(last.x - start.x, last.y - start.y) < CLICK_COMMIT_THRESHOLD_PX);
+        if (isClick && CLICK_CLICK_KINDS.has(kind)) {
+            return;
+        }
+        setDraft(null);
+        magnetSnapRef.current = null;
+        draftStartRef.current = null;
+        commitPlacement(kind, pts);
     };
 
     const renameTextDrawing = (id: string, label: string): void => {
@@ -3267,6 +3347,135 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                     onPointerMove={onPointerMove}
                     onPointerUp={onPointerUp}
                 />
+                {/* Click-click placement readout — the live measurement the
+                    TV/OKX crosshair carries: Δprice% and bar span for two-anchor
+                    kinds (position boxes preview their own commit math), or the
+                    "where do I click" hint while only anchor 1 is down. HTML, so
+                    the snapshot never paints it. */}
+                {draft && toolActive && (() => {
+                    const a = draft.points[0];
+                    const b = draft.points[draft.points.length - 1];
+                    const da = toData(a.x, a.y);
+                    const db = draft.points.length >= 2 ? toData(b.x, b.y) : null;
+                    const isPosBox = tool === 'long_position' || tool === 'short_position';
+                    let text = 'Click to place · Esc cancels';
+                    if (da && db && Math.abs(da.p) > 0) {
+                        const pct = ((db.p - da.p) / da.p) * 100;
+                        const bars = Math.round(Math.abs(db.t - da.t) / Math.max(1, intervalSeconds(interval)));
+                        text = isPosBox
+                            ? `${pct >= 0 ? '+' : ''}${pct.toFixed(2)}% · ${bars} bars · R:R 2.0 · click commits`
+                            : `${pct >= 0 ? '+' : ''}${pct.toFixed(2)}% · ${bars} bars`;
+                    } else if (da && db) {
+                        text = `${b.x >= a.x ? '+' : ''}${Math.round(b.x - a.x)}px · click commits`;
+                    }
+                    const hostW = (hostRef.current?.clientWidth ?? 600) + CHART_RAIL_WIDTH;
+                    return (
+                        <div
+                            data-testid="draft-readout"
+                            className="pointer-events-none absolute z-20 whitespace-nowrap rounded-control bg-zinc-950/85 px-2 py-0.5 font-mono text-ui-dense text-zinc-300"
+                            style={{
+                                left: Math.min(Math.max(CHART_RAIL_WIDTH + 8, b.x + CHART_RAIL_WIDTH + 14), hostW - 170),
+                                top: Math.max(4, b.y - 26),
+                            }}
+                        >
+                            {text}
+                        </div>
+                    );
+                })()}
+                {/* Floating selection toolbar — the compact color / width /
+                    style / lock / inspector / delete cluster that rides the
+                    selected shape (TV's shape toolbar). Double-click still
+                    opens the numeric inspector. */}
+                {selectedDrawingId && !draft && !textEdit && (() => {
+                    const sel = [...drawings, ...(modelDrawings ?? [])].find(d => d.id === selectedDrawingId);
+                    if (!sel || !sel.points[0]) return null;
+                    const anchor = toScreen(sel.points[0]);
+                    if (!anchor) return null;
+                    const locked = sel.locked === true;
+                    const isModelShape = (modelDrawings ?? []).some(d => d.id === sel.id);
+                    const patch = (fields: Partial<ChartDrawing>): void => {
+                        const bumped = bumpDrawingVersion({ ...sel, ...fields });
+                        if (isModelShape) {
+                            commitDrawingChange(drawingsRef.current, modelDrawingsRef.current.map(d => (d.id === bumped.id ? bumped : d)));
+                        } else {
+                            commitDrawingChange(drawingsRef.current.map(d => (d.id === bumped.id ? bumped : d)));
+                        }
+                    };
+                    const hostW = (hostRef.current?.clientWidth ?? 600) + CHART_RAIL_WIDTH;
+                    const left = Math.min(Math.max(CHART_RAIL_WIDTH + 8, anchor.x + CHART_RAIL_WIDTH + 10), hostW - 296);
+                    const top = Math.max(6, anchor.y - 40);
+                    return (
+                        <div
+                            data-testid="drawing-toolbar"
+                            className="absolute z-20 flex items-center gap-0.5 rounded-bubble border border-hairline bg-zinc-900/95 px-1 py-1 shadow-elevated"
+                            style={{ left, top }}
+                        >
+                            {DRAW_COLORS.map(c => (
+                                <button
+                                    key={c}
+                                    type="button"
+                                    disabled={locked}
+                                    title={locked ? 'Unlock to restyle' : `Set color ${c}`}
+                                    aria-label={`Set drawing color ${c}`}
+                                    onClick={() => patch({ color: c })}
+                                    className={`h-3.5 w-3.5 rounded-full border transition-transform disabled:opacity-40 ${sel.color === c ? 'scale-110 border-zinc-100' : 'border-transparent hover:scale-105'}`}
+                                    style={{ backgroundColor: c }}
+                                />
+                            ))}
+                            <span className="mx-1 h-3.5 w-px bg-white/[0.10]" aria-hidden />
+                            <button
+                                type="button"
+                                disabled={locked}
+                                title={locked ? 'Unlock to restyle' : `Line width ${drawWidthOf(sel)}px — next weight`}
+                                aria-label={`Line width ${drawWidthOf(sel)} pixels`}
+                                onClick={() => patch({ width: nextDrawWidth(drawWidthOf(sel)) })}
+                                className="flex h-6 min-w-8 items-center justify-center rounded-control px-1 font-mono text-ui-dense text-zinc-300 hover:bg-white/[0.06] disabled:opacity-40"
+                            >{`${drawWidthOf(sel)}px`}</button>
+                            <button
+                                type="button"
+                                disabled={locked}
+                                title={locked ? 'Unlock to restyle' : sel.dash ? 'Solid line' : 'Dashed line'}
+                                aria-label={sel.dash ? 'Line style dashed' : 'Line style solid'}
+                                aria-pressed={sel.dash === true}
+                                onClick={() => patch({ dash: !sel.dash })}
+                                className="flex h-6 w-6 items-center justify-center rounded-control text-zinc-400 hover:bg-white/[0.06] hover:text-zinc-200 disabled:opacity-40"
+                            >
+                                <span aria-hidden className={`block w-4 ${sel.dash ? 'border-t-2 border-dashed border-current' : 'border-t-2 border-current'}`} />
+                            </button>
+                            <span className="mx-1 h-3.5 w-px bg-white/[0.10]" aria-hidden />
+                            <button
+                                type="button"
+                                title={locked ? 'Unlock drawing' : 'Lock drawing'}
+                                aria-label={locked ? 'Unlock drawing' : 'Lock drawing'}
+                                aria-pressed={locked}
+                                onClick={() => patch({ locked: !locked })}
+                                className={`flex h-6 w-6 items-center justify-center rounded-control transition-colors hover:bg-white/[0.06] ${locked ? 'text-zinc-100' : 'text-zinc-400 hover:text-zinc-200'}`}
+                            >
+                                {locked ? <Lock className="h-3.5 w-3.5" aria-hidden /> : <Pencil className="h-3.5 w-3.5" aria-hidden />}
+                            </button>
+                            <button
+                                type="button"
+                                title={inspector?.drawingId === sel.id ? 'Close exact-price inspector' : 'Exact-price inspector'}
+                                aria-label="Exact price inspector"
+                                aria-pressed={inspector?.drawingId === sel.id}
+                                onClick={() => setInspector(inspector?.drawingId === sel.id ? null : { drawingId: sel.id, x: anchor.x, y: anchor.y })}
+                                className={`flex h-6 w-6 items-center justify-center rounded-control transition-colors hover:bg-white/[0.06] ${inspector?.drawingId === sel.id ? 'bg-white/[0.10] text-zinc-100' : 'text-zinc-400 hover:text-zinc-200'}`}
+                            >
+                                <Target className="h-3.5 w-3.5" aria-hidden />
+                            </button>
+                            <button
+                                type="button"
+                                disabled={locked}
+                                title={locked ? 'Unlock to delete' : 'Delete drawing'}
+                                aria-label="Delete drawing"
+                                onClick={() => deleteDrawingById(sel.id)}
+                                className="flex h-6 w-6 items-center justify-center rounded-control text-zinc-400 transition-colors hover:bg-rose-500/10 hover:text-rose-400 disabled:opacity-40"
+                            >
+                                <Trash2 className="h-3.5 w-3.5" aria-hidden />
+                            </button>
+                        </div>
+                    );
+                })()}
                 {/* Double-click inline inspector popover for exact numeric edits, label, & R:R preview. */}
                 {inspector && (() => {
                     const targetDrawing = [...drawings, ...(modelDrawings ?? [])].find(d => d.id === inspector.drawingId);

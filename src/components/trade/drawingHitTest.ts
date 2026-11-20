@@ -264,13 +264,24 @@ export const hitTestDrawings = (
         const d = drawings[i];
         const pts = d.points.map(projectPoint).filter((p): p is ScreenXY => p !== null);
         if (pts.length === 0) continue;
-        if (hitTestBody(x, y, d, pts, plotW, plotH, bodyTol)) {
-            return {
-                drawing: d,
-                target: 'body',
-                cursor: 'move',
-            };
+        if (!hitTestBody(x, y, d, pts, plotW, plotH, bodyTol)) continue;
+        // A position box's RIGHT EDGE is the duration handle: grabbing it
+        // slides SL+TP together in time (prices preserved). It wins over the
+        // body drag whenever the pointer is on the edge band.
+        if ((d.kind === 'long_position' || d.kind === 'short_position') && pts.length >= 3) {
+            const [entry, sl, tp] = pts;
+            const right = Math.max(entry.x, sl.x, tp.x);
+            const lo = Math.min(sl.y, tp.y);
+            const hi = Math.max(sl.y, tp.y);
+            if (Math.abs(x - right) <= bodyTol + 2 && y >= lo - bodyTol && y <= hi + bodyTol) {
+                return { drawing: d, target: 'handle', handleIndex: 3, cursor: 'ew-resize' };
+            }
         }
+        return {
+            drawing: d,
+            target: 'body',
+            cursor: d.locked === true ? 'not-allowed' : 'move',
+        };
     }
 
     return null;

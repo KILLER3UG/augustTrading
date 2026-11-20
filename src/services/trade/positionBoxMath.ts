@@ -122,6 +122,8 @@ export const seedPositionBoxPoints = (
  *  - handle 0 (Entry): moves entry price + left edge time.
  *  - handle 1 (SL): moves SL price AND synchronizes right edge time for both SL and TP.
  *  - handle 2 (TP): moves TP price AND synchronizes right edge time for both SL and TP.
+ *  - handle 3 (right edge): pure duration — SL and TP slide together in time,
+ *    both prices preserved, so the box stretches without retuning R:R.
  */
 export const updatePositionBoxHandle = (
     points: ReadonlyArray<DrawPoint>,
@@ -142,6 +144,9 @@ export const updatePositionBoxHandle = (
     } else if (handleIndex === 2) {
         next[2] = { t: nextPoint.t, p: nextPoint.p };
         next[1] = { t: nextPoint.t, p: next[1].p };
+    } else if (handleIndex === 3) {
+        next[1] = { t: nextPoint.t, p: next[1].p };
+        next[2] = { t: nextPoint.t, p: next[2].p };
     }
     return next;
 };

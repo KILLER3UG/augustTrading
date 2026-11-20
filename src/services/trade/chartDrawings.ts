@@ -76,7 +76,26 @@ export interface ChartDrawing {
     /** Stroke weight in CSS px. Optional so every shape saved before the rail
      *  grew a width control still parses; `drawWidthOf` supplies the default. */
     width?: number;
+    /** Dashed stroke (the selection toolbar's style toggle; agent shapes are
+     *  dashed regardless — their dash is the origin marker, not a style). */
+    dash?: boolean;
+    /** Locked against edits and deletes (selection toolbar padlock). A locked
+     *  shape still hovers and selects — that is how it gets unlocked — but
+     *  drags, eraser clicks and deletes refuse until the trader unlocks it. */
+    locked?: boolean;
 }
+
+/** Two-anchor kinds the rail places with TV/OKX click-click (click anchor 1 →
+ *  live preview under the pointer → click anchor 2) AND drag-to-place: a
+ *  press-move-release past the click threshold commits immediately, a
+ *  press-release in place arms the pending second anchor. */
+export const CLICK_CLICK_KINDS: ReadonlySet<DrawKind> = new Set([
+    'trend', 'ray', 'rect', 'channel', 'fib', 'long_position', 'short_position',
+]);
+
+/** A pointer press-release inside this distance of its press point is a CLICK
+ *  (arms click-click placement), not a drag (commits immediately). */
+export const CLICK_COMMIT_THRESHOLD_PX = 6;
 
 export const MAX_DRAWINGS_PER_SYMBOL = 40;
 export const MAX_POINTS_PER_DRAWING = 200;

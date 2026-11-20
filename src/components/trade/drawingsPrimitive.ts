@@ -18,6 +18,7 @@ import type {
     IPrimitivePaneRenderer,
     IPrimitivePaneView,
     ISeriesPrimitive,
+    ISeriesPrimitiveAxisView,
     PrimitivePaneViewZOrder,
     SeriesAttachedParameter,
     SeriesType,
@@ -164,7 +165,11 @@ class CommittedDrawingsRenderer implements IPrimitivePaneRenderer {
                 const isAgent = origin === 'agent';
                 const stroke = drawing.color || '#f4f4f5';
                 const baseWidth = drawWidthOf(drawing) + (isHovered ? 0.5 : 0);
-                const agentDash = isAgent ? [6, 4] : [];
+                // The dash is a STYLE (selection toolbar) plus the agent's
+                // origin marker: an agent shape is dashed regardless, a user
+                // shape only when the trader toggled the style.
+                const dashed = isAgent || drawing.dash === true;
+                const agentDash = dashed ? [6, 4] : [];
 
                 switch (drawing.kind) {
                     case 'hline': {
@@ -172,7 +177,7 @@ class CommittedDrawingsRenderer implements IPrimitivePaneRenderer {
                             [{ x: 0, y: pts[0].y }, { x: plotW, y: pts[0].y }],
                             stroke,
                             baseWidth,
-                            isAgent ? [6, 4] : [5, 3],
+                            dashed ? [6, 4] : [],
                         );
                         break;
                     }
@@ -204,7 +209,7 @@ class CommittedDrawingsRenderer implements IPrimitivePaneRenderer {
                         ctx.fillRect(left, top, rw, rh);
                         ctx.strokeStyle = stroke;
                         ctx.lineWidth = Math.max(1, baseWidth * fontScale);
-                        if (isAgent) ctx.setLineDash([6 * fontScale, 4 * fontScale]);
+                        if (dashed) ctx.setLineDash([6 * fontScale, 4 * fontScale]);
                         ctx.strokeRect(left, top, rw, rh);
                         ctx.setLineDash([]);
                         break;
@@ -229,7 +234,7 @@ class CommittedDrawingsRenderer implements IPrimitivePaneRenderer {
                                 [{ x: left, y }, { x: right, y }],
                                 stroke,
                                 Math.max(1, Math.min(baseWidth, 2)),
-                                isAgent ? [5, 4] : (isEdge ? [] : [4, 3]),
+                                dashed ? [5, 4] : (isEdge ? [] : [4, 3]),
                             );
                             const displayPrice = lvlPrice ?? this.priceAtCoord(y);
                             const pxText = displayPrice !== null && Number.isFinite(displayPrice)
@@ -270,25 +275,27 @@ class CommittedDrawingsRenderer implements IPrimitivePaneRenderer {
                         ctx.fillRect(sx(left), sy(slTop), sx(boxW), sy(slH));
 
                         // Borders: TP, SL, and Entry divider
-                        strokePolyline([{ x: left, y: tpPt.y }, { x: left + boxW, y: tpPt.y }], profitStroke, 1.4, isAgent ? [5, 3] : []);
-                        strokePolyline([{ x: left, y: slPt.y }, { x: left + boxW, y: slPt.y }], riskStroke, 1.4, isAgent ? [5, 3] : []);
-                        strokePolyline([{ x: left, y: entryPt.y }, { x: left + boxW, y: entryPt.y }], '#e4e4e7', 1.4, isAgent ? [5, 3] : []);
+                        strokePolyline([{ x: left, y: tpPt.y }, { x: left + boxW, y: tpPt.y }], profitStroke, 1.4, dashed ? [5, 3] : []);
+                        strokePolyline([{ x: left, y: slPt.y }, { x: left + boxW, y: slPt.y }], riskStroke, 1.4, dashed ? [5, 3] : []);
+                        strokePolyline([{ x: left, y: entryPt.y }, { x: left + boxW, y: entryPt.y }], '#e4e4e7', 1.4, dashed ? [5, 3] : []);
 
-                        // Live R:R pill anchored near Entry midline, offset past the left drag handle
+                        // Live R:R stats bar anchored near Entry midline, offset
+                        // past the left drag handle — OKX's position-box layout:
+                        // a direction pill, then `Target +x% · R:R x · Stop -x%`
+                        // on one line, each step separated so nothing overlaps.
                         if (metrics) {
-                            const dirLabel = isPositionBoxKind(drawing.kind) && drawing.kind === 'long_position' ? 'LONG' : 'SHORT';
-                            const headLabel = drawing.label ? `${drawing.label} · ${dirLabel}` : dirLabel;
+                            const dirLabel = drawing.kind === 'long_position' ? 'LONG' : 'SHORT';
+                            const headLabel = drawing.label ? `${drawing.label} · ` : '';
                             const prefix = isAgent ? `AI · ${headLabel}` : headLabel;
-                            const rrText = boxW >= 150
-                                ? `${prefix} ${metrics.formattedRR} · TP +${metrics.rewardPct.toFixed(2)}% / SL -${metrics.riskPct.toFixed(2)}%`
-                                : `${prefix} ${metrics.formattedRR}`;
+                            const stats = `Target +${metrics.rewardPct.toFixed(2)}% · R:R ${metrics.formattedRR} · Stop -${metrics.riskPct.toFixed(2)}%`;
+                            const full = `${prefix}${dirLabel}  ${stats}`;
                             drawTagChip(
                                 left + 10,
                                 entryPt.y - 7,
-                                rrText,
+                                full,
                                 metrics.inverted ? '#fda4af' : '#f4f4f5',
                                 metrics.inverted ? 'rgba(136, 19, 55, 0.90)' : 'rgba(9, 9, 11, 0.90)',
-                                isAgent,
+                                dashed,
                             );
                         }
                         break;
@@ -374,31 +381,45 @@ class CommittedDrawingsRenderer implements IPrimitivePaneRenderer {
 
 class SelectionHandlesRenderer implements IPrimitivePaneRenderer {
     private selected: ProjectedShape | null = null;
+    private hovered: ProjectedShape | null = null;
 
-    setSelected(selected: ProjectedShape | null): void {
+    setSelected(selected: ProjectedShape | null, hovered: ProjectedShape | null): void {
         this.selected = selected;
+        this.hovered = hovered;
     }
 
     draw(target: Parameters<IPrimitivePaneRenderer['draw']>[0]): void {
-        const item = this.selected;
-        if (!item || item.pts.length === 0) return;
         target.useBitmapCoordinateSpace(({ context: ctx, horizontalPixelRatio: hpr, verticalPixelRatio: vpr }) => {
             const fontScale = Math.max(1, (hpr + vpr) / 2);
-            const handles = handlePointsForDrawing(item.drawing, item.pts);
-            const r = 4.5 * fontScale;
-
+            const paintHandles = (item: ProjectedShape | null, mode: 'hover' | 'selected'): void => {
+                if (!item || item.pts.length === 0) return;
+                const handles = handlePointsForDrawing(item.drawing, item.pts);
+                // Selected anchors are crisp hollow circles; a hovered (not
+                // selected) shape shows the same anchors dimmer, under a soft
+                // halo — the OKX affordance that says "this is grabbable"
+                // without painting handles onto every idle shape.
+                const r = (mode === 'selected' ? 4.5 : 3.5) * fontScale;
+                for (const h of handles) {
+                    const hx = h.x * hpr;
+                    const hy = h.y * vpr;
+                    if (mode === 'hover') {
+                        ctx.beginPath();
+                        ctx.arc(hx, hy, r + 2.5 * fontScale, 0, Math.PI * 2);
+                        ctx.fillStyle = 'rgba(250, 250, 250, 0.10)';
+                        ctx.fill();
+                    }
+                    ctx.beginPath();
+                    ctx.arc(hx, hy, r, 0, Math.PI * 2);
+                    ctx.fillStyle = '#09090b';
+                    ctx.fill();
+                    ctx.lineWidth = Math.max(1.5, (mode === 'selected' ? 1.6 : 1.2) * fontScale);
+                    ctx.strokeStyle = mode === 'selected' ? '#fafafa' : '#a1a1aa';
+                    ctx.stroke();
+                }
+            };
             ctx.save();
-            for (const h of handles) {
-                const hx = h.x * hpr;
-                const hy = h.y * vpr;
-                ctx.beginPath();
-                ctx.arc(hx, hy, r, 0, Math.PI * 2);
-                ctx.fillStyle = '#09090b';
-                ctx.fill();
-                ctx.lineWidth = Math.max(1.5, 1.6 * fontScale);
-                ctx.strokeStyle = '#fafafa';
-                ctx.stroke();
-            }
+            if (this.hovered && this.hovered !== this.selected) paintHandles(this.hovered, 'hover');
+            paintHandles(this.selected, 'selected');
             ctx.restore();
         });
     }
@@ -430,8 +451,8 @@ class SelectionHandlesPaneView implements IPrimitivePaneView {
     renderer(): IPrimitivePaneRenderer {
         return this._renderer;
     }
-    update(selected: ProjectedShape | null): void {
-        this._renderer.setSelected(selected);
+    update(selected: ProjectedShape | null, hovered: ProjectedShape | null): void {
+        this._renderer.setSelected(selected, hovered);
     }
 }
 
@@ -440,6 +461,9 @@ export class ChartDrawingsPrimitive implements ISeriesPrimitive<Time> {
     private readonly committedView = new CommittedDrawingsPaneView();
     private readonly selectionView = new SelectionHandlesPaneView();
     private readonly views: readonly IPrimitivePaneView[];
+    /** Rebuilt only when the tagged set changes — the library caches axis
+     *  views by array reference, so a fresh array every frame would thrash. */
+    private axisViewsCache: ISeriesPrimitiveAxisView[] = [];
 
     private state: DrawingsPrimitiveState = {
         userDrawings: [],
@@ -470,9 +494,70 @@ export class ChartDrawingsPrimitive implements ISeriesPrimitive<Time> {
         return this.views;
     }
 
+    /** Right-axis price tags for the drawing under the pointer or selected —
+     *  the OKX/Binance affordance that puts the EXACT price on the scale.
+     *  Position boxes tag all three levels (Entry / SL / TP) when touched;
+     *  every other kind tags its first anchor. */
+    priceAxisViews(): readonly ISeriesPrimitiveAxisView[] {
+        return this.axisViewsCache;
+    }
+
+    private rebuildAxisViews(): void {
+        const param = this.attachedParam;
+        if (!param || this.state.hidden) {
+            this.axisViewsCache = [];
+            return;
+        }
+        const focus = this.state.selectedId ?? this.state.hoveredId;
+        if (!focus) {
+            this.axisViewsCache = [];
+            return;
+        }
+        const drawing = [...this.state.userDrawings, ...this.state.modelDrawings]
+            .find(d => d.id === focus);
+        if (!drawing || !isDrawingVisibleOnTf(drawing, this.state.activeTf)) {
+            this.axisViewsCache = [];
+            return;
+        }
+        const isAgent = drawing.origin === 'agent';
+        const anchorIndexes = isPositionBoxKind(drawing.kind)
+            ? [0, 1, 2]
+            : [0];
+        const views: ISeriesPrimitiveAxisView[] = [];
+        for (const idx of anchorIndexes) {
+            const pt = drawing.points[idx];
+            if (!pt || !Number.isFinite(pt.p)) continue;
+            views.push({
+                coordinate: () => {
+                    const y = param.series.priceToCoordinate(pt.p as never);
+                    return y === null || y === undefined || !Number.isFinite(Number(y)) ? -1 : Number(y);
+                },
+                text: () => {
+                    const label = isPositionBoxKind(drawing.kind)
+                        ? `${idx === 0 ? 'Entry' : idx === 1 ? 'SL' : 'TP'} ${fmtPriceCompact(pt.p)}`
+                        : fmtPriceCompact(pt.p);
+                    return drawing.label && !isPositionBoxKind(drawing.kind)
+                        ? `${drawing.label} · ${label}`
+                        : label;
+                },
+                textColor: () => {
+                    if (!isPositionBoxKind(drawing.kind)) return isAgent ? '#d4d4d8' : '#fafafa';
+                    return idx === 2 ? '#6ee7b7' : idx === 1 ? '#fda4af' : '#e4e4e7';
+                },
+                backColor: () => {
+                    if (!isPositionBoxKind(drawing.kind)) return 'rgba(24, 24, 27, 0.92)';
+                    return idx === 2 ? 'rgba(6, 78, 59, 0.85)' : idx === 1 ? 'rgba(136, 19, 55, 0.85)' : 'rgba(39, 39, 42, 0.92)';
+                },
+                tickVisible: () => false,
+            });
+        }
+        this.axisViewsCache = views;
+    }
+
     setState(next: DrawingsPrimitiveState): void {
         this.state = next;
         this.updateAllViews();
+        this.rebuildAxisViews();
         this.attachedParam?.requestUpdate();
     }
 
@@ -501,12 +586,14 @@ export class ChartDrawingsPrimitive implements ISeriesPrimitive<Time> {
         const param = this.attachedParam;
         if (!param || this.state.hidden) {
             this.committedView.update([], this.state.priceScaleMode, () => null, () => null);
-            this.selectionView.update(null);
+            this.selectionView.update(null, null);
+            this.rebuildAxisViews();
             return;
         }
 
         const projected: ProjectedShape[] = [];
         let selectedShape: ProjectedShape | null = null;
+        let hoveredShape: ProjectedShape | null = null;
 
         const appendList = (list: ReadonlyArray<ChartDrawing>, defaultOrigin: 'user' | 'agent'): void => {
             for (const drawing of list) {
@@ -529,6 +616,7 @@ export class ChartDrawingsPrimitive implements ISeriesPrimitive<Time> {
                 };
                 projected.push(item);
                 if (item.isSelected) selectedShape = item;
+                if (item.isHovered) hoveredShape = item;
             }
         };
 
@@ -545,6 +633,7 @@ export class ChartDrawingsPrimitive implements ISeriesPrimitive<Time> {
         };
 
         this.committedView.update(projected, this.state.priceScaleMode, priceAtCoord, priceToCoord);
-        this.selectionView.update(selectedShape);
+        this.selectionView.update(selectedShape, hoveredShape);
+        this.rebuildAxisViews();
     }
 }
