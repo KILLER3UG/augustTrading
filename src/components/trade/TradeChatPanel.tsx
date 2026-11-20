@@ -86,6 +86,7 @@ import { useChatAttachments } from '../../hooks/useChatAttachments';
 import { useSessionGuardVerdict } from '../../hooks/useSessionGuard';
 import { useEscapeClose } from '../../hooks/useEscapeClose';
 import * as watchService from '../../services/trade/watchService';
+import { AutonomyControl } from './panels/AutonomyDrawer';
 import ChatHistoryPalette from './panels/ChatHistoryPalette';
 import ChatTranscriptList from './panels/ChatTranscriptList';
 import ChatComposer from './panels/ChatComposer';
@@ -1282,6 +1283,7 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
                     <ChevronDown className="h-3.5 w-3.5 shrink-0 text-zinc-500 transition-colors group-hover:text-zinc-300" aria-hidden="true" />
                 </button>
                 <div className="ml-auto flex shrink-0 items-center gap-0.5">
+                    <AutonomyControl providers={providers} />
                     <button type="button" onClick={() => addSession('solo')} aria-label="New chat" title="New chat"
                         className="hit-target flex items-center justify-center rounded-control p-1.5 text-zinc-500 transition-colors hover:bg-white/[0.06] hover:text-zinc-100">
                         <Plus className="h-3.5 w-3.5" aria-hidden="true" />
