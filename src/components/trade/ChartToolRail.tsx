@@ -31,6 +31,7 @@ import {
     Undo2,
 } from '../shared/Icons';
 import { DRAW_COLORS, type DrawTool } from '../../services/trade/chartDrawings';
+import { useEscapeClose } from '../../hooks/useEscapeClose';
 
 /** Rail width in px — the chart host and overlay inset by this so shapes
  *  never paint under the rail. */
@@ -111,6 +112,9 @@ export const ChartToolRail: React.FC<ChartToolRailProps> = ({
     onCycleWidth,
 }) => {
     const [paletteOpen, setPaletteOpen] = useState(false);
+    // Escape lifts the palette wherever focus sits — the chart's own window
+    // Escape handler stays standing down (useEscapeClose captures first).
+    useEscapeClose(paletteOpen, () => setPaletteOpen(false));
     const pick = (t: DrawTool): void => {
         onSelectTool(tool === t ? 'cursor' : t);
     };
@@ -286,8 +290,12 @@ export const ChartToolRail: React.FC<ChartToolRailProps> = ({
                 </RailButton>
                 {paletteOpen && (
                     <>
-                        <div className="fixed inset-0 z-30" aria-hidden onClick={() => setPaletteOpen(false)} />
-                        <div className="absolute bottom-0 left-9 z-40 flex flex-col gap-1 rounded-bubble border border-hairline bg-zinc-900 p-2 shadow-elevated" data-testid="rail-palette">
+                        {/* z-shield: clears the dock's permanent z-drawer layer
+                            (see index.css --z-shield) so a click in the Chart AI
+                            dock dismisses the palette; the panel rides z-flyout
+                            above its own backdrop. */}
+                        <div className="fixed inset-0 z-shield" aria-hidden onClick={() => setPaletteOpen(false)} />
+                        <div className="absolute bottom-0 left-9 z-flyout flex flex-col gap-1 rounded-bubble border border-hairline bg-zinc-900 p-2 shadow-elevated" data-testid="rail-palette">
                             {DRAW_COLORS.map(c => (
                                 <button
                                     key={c}

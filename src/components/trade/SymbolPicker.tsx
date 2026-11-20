@@ -12,6 +12,7 @@ import { ChevronDown, Search } from '../shared/Icons';
 import type { SymbolMeta } from '../../services/analysis/MarketDataService';
 import { display as symbolDisplay } from '../../utils/symbol';
 import { shouldOpenUpward } from '../../utils/popoverPlacement';
+import { useEscapeClose } from '../../hooks/useEscapeClose';
 
 export interface SymbolPickerProps {
     symbols: SymbolMeta[];
@@ -37,6 +38,12 @@ export const SymbolPicker: React.FC<SymbolPickerProps> = ({
     const triggerRef = useRef<HTMLButtonElement>(null);
     const inputRef = useRef<HTMLInputElement>(null);
     const listRef = useRef<HTMLDivElement>(null);
+
+    // Escape closes the picker wherever focus sits. The search field's own
+    // onKeyDown handles Escape while it is focused; without this document-level
+    // close, a trader who clicked away first (composer, transcript) had a
+    // full-viewport backdrop that no keyboard could lift.
+    useEscapeClose(open, () => setOpen(false));
 
     // startsWith ranks above includes; each group keeps the volume order the
     // feed already arrives in, so liquid names lead both.
@@ -128,10 +135,17 @@ export const SymbolPicker: React.FC<SymbolPickerProps> = ({
             </button>
             {open && createPortal(
                 <>
-                    <div className="fixed inset-0 z-40" aria-hidden="true" onClick={() => setOpen(false)} />
+                    {/* z-shield, not the old ad-hoc z-40: the Chart AI dock is a
+                        permanent z-drawer (50) layer, so a backdrop below it
+                        could never see a click in the dock — the picker stayed
+                        open behind its own backdrop and the dock looked fine
+                        while every other surface was blocked. The panel rides
+                        z-flyout: a portaled dropdown list, the rung's own
+                        definition. */}
+                    <div className="fixed inset-0 z-shield" aria-hidden="true" onClick={() => setOpen(false)} />
                     <div
                         data-testid="symbol-picker"
-                        className="fixed z-drawer w-80 overflow-hidden rounded-bubble border border-hairline bg-zinc-900 shadow-elevated"
+                        className="fixed z-flyout w-80 overflow-hidden rounded-bubble border border-hairline bg-zinc-900 shadow-elevated"
                         style={anchor}
                     >
                         <div className="flex items-center gap-2 border-b border-hairline px-3 py-2">

@@ -414,6 +414,15 @@
                             UNDER the modal and buried every trigger inside
                             Settings. One rung above modal, below UpdateOverlay. */
   --z-confirm: 100;      /* ConfirmDialog, Toast */
+  --z-shield: 60;        /* click-outside backdrops — must clear the Chart AI
+                            dock: RightPanel carries z-drawer (50) as its
+                            permanent layer, so a shield below it can never see
+                            a click in the dock and the popover it guards stays
+                            open behind a full-viewport backdrop (the stuck
+                            symbol-picker wedging every click outside the
+                            dock). The panel a shield guards renders above it
+                            at z-flyout, or after it at the same rung when both
+                            live in one stacking context. */
   --z-drawer: 50;        /* portaled drawers */
   --z-pipeline: 40;      /* the running pipeline card */
   --z-header: 20;        /* sticky header */
@@ -429,6 +438,7 @@
 @utility z-modal { z-index: var(--z-modal); }
 @utility z-flyout { z-index: var(--z-flyout); }
 @utility z-confirm { z-index: var(--z-confirm); }
+@utility z-shield { z-index: var(--z-shield); }
 @utility z-drawer { z-index: var(--z-drawer); }
 @utility z-pipeline { z-index: var(--z-pipeline); }
 @utility z-header { z-index: var(--z-header); }

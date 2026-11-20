@@ -474,7 +474,11 @@ export const readWireBody = (
  * dev server to talk to at all and must not be attempted.
  */
 export function usesDevProviderProxy(): boolean {
-    return Boolean(import.meta.env.DEV)
+    // `import.meta.env` only exists under a bundler (Vite injects it). A
+    // plain-node context — the runtime-wiring E2E harness, a future CLI
+    // runner — has none, and reading `.DEV` off undefined crashed the whole
+    // request instead of just skipping the proxy branch.
+    return Boolean(import.meta.env?.DEV)
         && typeof window !== 'undefined'
         && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
 }

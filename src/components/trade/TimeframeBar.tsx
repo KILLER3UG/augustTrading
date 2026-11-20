@@ -88,9 +88,14 @@ const TimeframeBar: React.FC<TimeframeBarProps> = ({ interval, onIntervalChange,
                     </button>
                     {menuOpen && (
                         <>
-                            <div className="fixed inset-0 z-20" aria-hidden onClick={() => setMenuOpen(false)} />
+                            {/* z-shield: must clear the Chart AI dock's
+                                permanent z-drawer layer, or a click in the dock
+                                never reaches this backdrop and the menu stays
+                                open over the chart. The panel rides z-flyout
+                                for the same reason. */}
+                            <div className="fixed inset-0 z-shield" aria-hidden onClick={() => setMenuOpen(false)} />
                             <div role="menu" data-testid="tf-compact-menu"
-                                className={`absolute left-0 ${menuUp ? 'bottom-8' : 'top-8'} z-40 w-28 rounded-bubble border border-hairline bg-zinc-900 p-1 shadow-elevated`}>
+                                className={`absolute left-0 ${menuUp ? 'bottom-8' : 'top-8'} z-flyout w-28 rounded-bubble border border-hairline bg-zinc-900 p-1 shadow-elevated`}>
                                 {shownIntervals.map(tf => (
                                     <button key={tf} type="button" role="menuitem"
                                         onClick={() => { onIntervalChange(tf); setMenuOpen(false); }}
@@ -138,12 +143,11 @@ const TimeframeBar: React.FC<TimeframeBarProps> = ({ interval, onIntervalChange,
             </button>
             {open && (
                 <>
-                    <div className="fixed inset-0 z-20" aria-hidden onClick={() => setOpen(false)} />
-                    {/* z-40, not the chart's z-30: this bar is also rendered
-                        on the Agents surface, and the Chat composer sits at
-                        z-[90]. The overlay that closes it is z-20 either
-                        way; only the panel needed lifting. */}
-                    <div className={`absolute left-2 ${pickerUp ? 'bottom-9' : 'top-9'} z-40 w-40 rounded-bubble border border-hairline bg-zinc-900 p-1 shadow-elevated`} data-testid="tf-picker">
+                    {/* z-shield + z-flyout: same rule as the compact menu — the
+                        backdrop must clear the dock (z-drawer) and the panel
+                        must clear its own backdrop. */}
+                    <div className="fixed inset-0 z-shield" aria-hidden onClick={() => setOpen(false)} />
+                    <div className={`absolute left-2 ${pickerUp ? 'bottom-9' : 'top-9'} z-flyout w-40 rounded-bubble border border-hairline bg-zinc-900 p-1 shadow-elevated`} data-testid="tf-picker">
                         {/* A SECTION HEADING, so it takes the reference's rule:
                             small, muted, sentence case — not the uppercase
                             letter-spaced eyebrow the data readouts keep. */}

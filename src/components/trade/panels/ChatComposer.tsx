@@ -17,6 +17,7 @@ import type { ProviderConfig } from '../../../types/provider';
 import type { Attachment } from '../../../hooks/useChatAttachments';
 import type { ReasoningEffort } from '../../../services/providers/reasoningControls';
 import { formatModelDisplayName } from '../../../utils/providerUtils';
+import { useEscapeClose } from '../../../hooks/useEscapeClose';
 
 import ModelChip from '../../shared/ModelChip';
 import ChatAttachmentStrip from './ChatAttachmentStrip';
@@ -147,6 +148,10 @@ const ChatComposer: React.FC<ChatComposerProps> = ({
     const isChatFocus = layoutMode === 'chat';
     const hasContent = draft.trim().length > 0 || attachments.length > 0;
 
+    // The attach menu is a click-outside popover, so it owns Escape too — the
+    // same contract the symbol picker and the timeframe menus keep.
+    useEscapeClose(showAttachMenu, () => setShowAttachMenu(false));
+
     return (
     <div className={isChatFocus ? 'mx-auto w-full max-w-[740px] shrink-0 px-6 pb-5 pt-2' : 'shrink-0 px-4 pb-3.5 pt-2'}>
         <ModelFallbackBanner modelIssue={modelIssue} provider={provider} />
@@ -191,8 +196,14 @@ const ChatComposer: React.FC<ChatComposerProps> = ({
                     </button>
                     {showAttachMenu && (
                         <>
-                            <div className="fixed inset-0 z-20" aria-hidden onClick={() => setShowAttachMenu(false)} />
-                            <div className="absolute bottom-10 left-0 z-30 w-52 rounded-card border border-white/[0.1] bg-zinc-900/95 p-1 shadow-elevated backdrop-blur-md" data-testid="attach-menu">
+                            {/* z-shield for backdrop and panel alike (panel
+                                renders after, so it paints above): inside the
+                                dock's stacking context the rung only has to sit
+                                above the composer content while still being ONE
+                                rung for every click-outside backdrop — see
+                                index.css --z-shield. */}
+                            <div className="fixed inset-0 z-shield" aria-hidden onClick={() => setShowAttachMenu(false)} />
+                            <div className="absolute bottom-10 left-0 z-shield w-52 rounded-card border border-white/[0.1] bg-zinc-900/95 p-1 shadow-elevated backdrop-blur-md" data-testid="attach-menu">
                                 <button type="button" onClick={() => { setShowAttachMenu(false); fileInputRef.current?.click(); }}
                                     className="flex w-full items-center gap-2.5 rounded-control px-2.5 py-2 text-left text-ui-dense text-zinc-300 transition-colors hover:bg-white/[0.06] hover:text-zinc-100">
                                     <FileText className="h-3.5 w-3.5 text-zinc-500" aria-hidden="true" /> Upload files &amp; images
