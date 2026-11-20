@@ -29,13 +29,13 @@ export const ProfileHeader: React.FC<{
             <div className="grid grid-cols-2 gap-2 sm:gap-4">
                 <div className="bg-gradient-to-br from-zinc-900/60 to-zinc-900 rounded-bubble p-3 sm:p-4 border border-hairline">
                     <p className="text-ui-2xs sm:text-ui-sm text-zinc-400 uppercase tracking-wider mb-1">Win Rate</p>
-                    <p className={`text-2xl sm:text-3xl font-black ${getWinRateColor(profile.overallWinRate)}`}>
+                    <p className={`text-2xl sm:text-3xl font-bold ${getWinRateColor(profile.overallWinRate)}`}>
                         {profile.overallWinRate}%
                     </p>
                 </div>
                 <div className="bg-zinc-900 rounded-bubble p-3 sm:p-4 border border-zinc-800/80">
                     <p className="text-ui-2xs sm:text-ui-sm text-zinc-500 uppercase tracking-wider mb-1">Trades</p>
-                    <p className="text-2xl sm:text-3xl font-black text-white">
+                    <p className="text-2xl sm:text-3xl font-bold text-white">
                         {profile.totalAnalyzedTrades}
                     </p>
                 </div>

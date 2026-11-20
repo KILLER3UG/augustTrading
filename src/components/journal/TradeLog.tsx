@@ -260,7 +260,7 @@ const TradeDetailView: React.FC<{
                                     <div className={`col-span-2 rounded-control border px-3 py-2 ${trade.patternMemoryGate.gateResult === 'HALT'
                                         ? ' border-rose-500/40 bg-rose-500/10'
                                         : ' border-zinc-500/40 bg-zinc-500/10'}`}>
-                                        <span className={`text-ui-2xs font-black uppercase tracking-widest flex items-center gap-1.5 ${trade.patternMemoryGate.gateResult === 'HALT' ? 'text-rose-400' : 'text-zinc-400'}`}>
+                                        <span className={`text-ui-2xs font-bold uppercase tracking-widest flex items-center gap-1.5 ${trade.patternMemoryGate.gateResult === 'HALT' ? 'text-rose-400' : 'text-zinc-400'}`}>
                                             {trade.patternMemoryGate.gateResult === 'HALT' ? (
                                                 <>
                                                     <ShieldAlert className="h-3 w-3 shrink-0" aria-hidden="true" />

@@ -143,24 +143,24 @@ export const HarnessSection: React.FC<HarnessSectionProps> = ({ closedWindowed, 
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                 <div className="bg-zinc-800 rounded-bubble border border-hairline p-3">
                     <p className="text-ui-2xs text-zinc-500 uppercase tracking-wider mb-1">Setups indexed</p>
-                    <p className="text-xl font-black text-white">{poolStats.indexed}</p>
+                    <p className="text-xl font-bold text-white">{poolStats.indexed}</p>
                     <p className="text-ui-2xs text-zinc-600">closed trades in pool</p>
                 </div>
                 <div className="bg-zinc-800 rounded-bubble border border-hairline p-3">
                     <p className="text-ui-2xs text-zinc-500 uppercase tracking-wider mb-1">Avg matches / query</p>
-                    <p className="text-xl font-black text-white">{poolStats.avgMatches.toFixed(1)}</p>
+                    <p className="text-xl font-bold text-white">{poolStats.avgMatches.toFixed(1)}</p>
                     <p className="text-ui-2xs text-zinc-600">sampled {poolStats.sampled} queries</p>
                 </div>
                 <div className="bg-zinc-800 rounded-bubble border border-hairline p-3">
                     <p className="text-ui-2xs text-zinc-500 uppercase tracking-wider mb-1">Cold-start queries</p>
-                    <p className={`text-xl font-black ${poolStats.coldStartQueries > 0 ? 'text-zinc-200' : 'text-zinc-500'}`}>
+                    <p className={`text-xl font-bold ${poolStats.coldStartQueries > 0 ? 'text-zinc-200' : 'text-zinc-500'}`}>
                         {poolStats.sampled > 0 ? `${Math.round((poolStats.coldStartQueries / poolStats.sampled) * 100)}%` : '—'}
                     </p>
                     <p className="text-ui-2xs text-zinc-600">below {COLD_START_MIN} matches → confidence scaled down</p>
                 </div>
                 <div className="bg-zinc-800 rounded-bubble border border-hairline p-3">
                     <p className="text-ui-2xs text-zinc-500 uppercase tracking-wider mb-1">Drawdown</p>
-                    <p className="text-xl font-black text-rose-400">{drawdown.open.toFixed(1)}%</p>
+                    <p className="text-xl font-bold text-rose-400">{drawdown.open.toFixed(1)}%</p>
                     <p className="text-ui-2xs text-zinc-600">open · historical max {drawdown.max.toFixed(1)}%</p>
                 </div>
             </div>
