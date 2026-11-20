@@ -1,2 +1,2 @@
-d5fdb01e56a945489e991ea1971f030095e858ce2612d0582c5384ebffda4f83 *August-Trading-Setup-1.4.0.exe
-25f7c09b4a141a87346287b91451ffbdb9c3dd61b51cc40594c204001d90c8e7 *win-unpacked/August Trading.exe
+17474d5e07255b1f2b0ec1baaf46682676b789a870c36a707f5e71056900aaad *August-Trading-Setup-1.4.0.exe
+bf1bbe2846c3b722bbf39d6a0796cc980ff1c833e4171cd4190ddaa15cbc2d25 *win-unpacked/August Trading.exe
