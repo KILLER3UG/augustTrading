@@ -7,7 +7,7 @@
 // the tab. The service setter `setIdleMotionEnabled` is imported here because
 // only this body writes through it.
 import React from 'react';
-import { Activity, ChevronDown, Wrench } from '../../shared/Icons';
+import { Activity, ChevronDown, ClipboardCheck, Target, Wrench } from '../../shared/Icons';
 import { ToggleSwitch } from '../../shared/ToggleSwitch';
 import { HarnessControls } from '../SessionUsagePanel';
 import { SettingsGroup, SettingsPageHeader, SettingsRow } from './shared';
@@ -156,6 +156,7 @@ const GeneralTab: React.FC<{ tab: GeneralTabProps }> = ({ tab: props }) => {
                         {onToggleAutoCapturing && (
                             <SettingsGroup title="Automated capture prompts" description="When to ask for trade results automatically. All default: off.">
                                 <SettingsRow
+                                    icon={<ClipboardCheck className="h-4 w-4" aria-hidden="true" />}
                                     title="Post-trade result capture"
                                     description={isAutoCapturing
                                         ? 'On — when the autopilot confirms a WIN/LOSS, the full capture modal opens so dollars and discipline tags reach the journal.'
@@ -164,6 +165,7 @@ const GeneralTab: React.FC<{ tab: GeneralTabProps }> = ({ tab: props }) => {
                                 />
                                 {onToggleEntryNotHitCapturing && (
                                     <SettingsRow
+                                        icon={<Target className="h-4 w-4" aria-hidden="true" />}
                                         title="Entry not hit"
                                         description="Ask what happened when price never reached the entry."
                                         control={<ToggleSwitch checked={!!isEntryNotHitCapturing} onChange={onToggleEntryNotHitCapturing} label="Toggle entry not hit capture" />}
