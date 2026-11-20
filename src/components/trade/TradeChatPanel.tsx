@@ -84,6 +84,8 @@ import { buildGoalsIndex } from '../../services/goals/GoalService';
 import type { ReasoningEffort } from '../../services/providers/reasoningControls';
 import { useChatAttachments } from '../../hooks/useChatAttachments';
 import { useSessionGuardVerdict } from '../../hooks/useSessionGuard';
+import { useEscapeClose } from '../../hooks/useEscapeClose';
+import * as watchService from '../../services/trade/watchService';
 import ChatHistoryPalette from './panels/ChatHistoryPalette';
 import ChatTranscriptList from './panels/ChatTranscriptList';
 import ChatComposer from './panels/ChatComposer';
@@ -387,6 +389,9 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
         remove: removeAttachment, clear: clearAttachments, images: attachedImages,
     } = useChatAttachments();
     const [showNewMenu, setShowNewMenu] = useState(false);
+    // The customization menu is a click-outside popover: Escape closes it
+    // wherever focus sits (the ONE dismiss contract, hooks/useEscapeClose).
+    useEscapeClose(showNewMenu, () => setShowNewMenu(false));
     /** The reference's Agent-panel header cluster: + / history / ⋯ / ×. The
      *  history button opens a "Past Conversations" palette (search + recent
      *  sessions with relative times); ⋯ opens the Customization popover. */
@@ -1045,6 +1050,11 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
     // every store emit, so an ungated log would spam the console per tick.
     const heldNoticeRef = useRef<string | null>(null);
     useEffect(() => {
+        // Sentinel notices (drawing-cross / candle-close watchdog evaluations)
+        // queue in the isolated sentinel loop while a stream may be running;
+        // an idle dock drains them into the SAME harness-signal queue the
+        // level hits use, so the wake path below is the ONE path into a turn.
+        if (!busy) watchService.drainIdleSentinelNotices(true, activeId);
         if (busy || snap.signals.length === 0) { heldNoticeRef.current = null; return; }
         const session = sessions.find(s => s.id === activeId) ?? sessions[0];
         if (session && session.kind !== 'solo' && session.kind !== 'panel') {
@@ -1288,8 +1298,12 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
                         </button>
                         {showNewMenu && (
                             <>
-                                <div className="fixed inset-0 z-20" aria-hidden onClick={() => setShowNewMenu(false)} />
-                                <div className="absolute right-0 top-9 z-30 max-h-96 w-56 overflow-y-auto rounded-bubble border border-hairline bg-zinc-900 p-1 shadow-elevated" data-testid="chat-new-menu">
+                                {/* z-shield for backdrop and panel alike (the
+                                    panel renders after, so it paints above) —
+                                    the ONE click-outside rung, index.css
+                                    --z-shield. */}
+                                <div className="fixed inset-0 z-shield" aria-hidden onClick={() => setShowNewMenu(false)} />
+                                <div className="absolute right-0 top-9 z-shield max-h-96 w-56 overflow-y-auto rounded-bubble border border-hairline bg-zinc-900 p-1 shadow-elevated" data-testid="chat-new-menu">
                                     {isPanel && (
                                         <button type="button" onClick={() => { setShowNewMenu(false); setPanelPickerFor(activeId); }}
                                             className="block w-full rounded-control px-2 py-1.5 text-left text-ui-dense text-zinc-300 hover:bg-white/[0.06]">
