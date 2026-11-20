@@ -117,3 +117,122 @@ export const fillRealismSummary = (rows: readonly SignalRow[]): FillRealism => {
         meanAbsExitR: meanAbs(exits),
     };
 };
+
+const meanOf = (xs: readonly number[]): number | null =>
+    xs.length === 0 ? null : xs.reduce((a, b) => a + b, 0) / xs.length;
+
+const medianOf = (xs: readonly number[]): number | null => {
+    if (xs.length === 0) return null;
+    const sorted = [...xs].sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    return sorted.length % 2 === 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+};
+
+export interface ExcursionSummary {
+    /** Fills carrying finite MFE/MAE measurements. */
+    n: number;
+    meanMfeR: number | null;
+    medianMfeR: number | null;
+    meanMaeR: number | null;
+    medianMaeR: number | null;
+}
+
+export const excursionSummary = (rows: readonly SignalRow[]): ExcursionSummary => {
+    const fills = rows.filter(r => r.status === 'won' || r.status === 'lost' || r.status === 'expired');
+    const mfes = fills
+        .map(r => r.resolution?.mfeR)
+        .filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
+    const maes = fills
+        .map(r => r.resolution?.maeR)
+        .filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
+    return {
+        n: Math.min(mfes.length, maes.length),
+        meanMfeR: meanOf(mfes),
+        medianMfeR: medianOf(mfes),
+        meanMaeR: meanOf(maes),
+        medianMaeR: medianOf(maes),
+    };
+};
+
+export type TriStateTag = 'yes' | 'no' | 'unknown';
+
+export interface SignalCalibrationBucket {
+    key: string;
+    skillSlug: string;
+    marketRegime: string;
+    htfAligned: TriStateTag;
+    hadUserDrawings: TriStateTag;
+    fills: number;
+    wins: number;
+    losses: number;
+    expired: number;
+    hitRate: number | null;
+    expectancyR: number | null;
+    meanMfeR: number | null;
+    medianMfeR: number | null;
+    meanMaeR: number | null;
+    medianMaeR: number | null;
+}
+
+const triState = (value: boolean | undefined): TriStateTag =>
+    value === true ? 'yes' : value === false ? 'no' : 'unknown';
+
+/**
+ * Group filled signals by `skillSlug × marketRegime × htfAligned × hadUserDrawings`
+ * and compute hit rate, expectancyR, and mean/median MFE/MAE per bucket.
+ */
+export const calibrateByDimensions = (rows: readonly SignalRow[]): SignalCalibrationBucket[] => {
+    const fills = rows.filter(r => r.status === 'won' || r.status === 'lost' || r.status === 'expired');
+    const groups = new Map<string, {
+        skillSlug: string;
+        marketRegime: string;
+        htfAligned: TriStateTag;
+        hadUserDrawings: TriStateTag;
+        rows: SignalRow[];
+    }>();
+
+    for (const row of fills) {
+        const skillSlug = (row.signal.skillSlug ?? '').trim() || 'untagged';
+        const marketRegime = (row.signal.marketRegime ?? '').trim() || 'unknown';
+        const htfAligned = triState(row.signal.htfAligned);
+        const hadUserDrawings = triState(row.signal.hadUserDrawings);
+        const key = `${skillSlug}|${marketRegime}|${htfAligned}|${hadUserDrawings}`;
+        let group = groups.get(key);
+        if (!group) {
+            group = { skillSlug, marketRegime, htfAligned, hadUserDrawings, rows: [] };
+            groups.set(key, group);
+        }
+        group.rows.push(row);
+    }
+
+    const buckets: SignalCalibrationBucket[] = [];
+    for (const [key, g] of groups.entries()) {
+        const wins = g.rows.filter(r => r.status === 'won').length;
+        const losses = g.rows.filter(r => r.status === 'lost').length;
+        const expired = g.rows.filter(r => r.status === 'expired').length;
+        const rs = g.rows
+            .map(r => r.resolution?.outcomeR)
+            .filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
+        const exc = excursionSummary(g.rows);
+        buckets.push({
+            key,
+            skillSlug: g.skillSlug,
+            marketRegime: g.marketRegime,
+            htfAligned: g.htfAligned,
+            hadUserDrawings: g.hadUserDrawings,
+            fills: g.rows.length,
+            wins,
+            losses,
+            expired,
+            hitRate: g.rows.length > 0 ? wins / g.rows.length : null,
+            expectancyR: meanOf(rs),
+            meanMfeR: exc.meanMfeR,
+            medianMfeR: exc.medianMfeR,
+            meanMaeR: exc.meanMaeR,
+            medianMaeR: exc.medianMaeR,
+        });
+    }
+
+    return buckets.sort((a, b) => (b.fills - a.fills) || a.key.localeCompare(b.key));
+};
+

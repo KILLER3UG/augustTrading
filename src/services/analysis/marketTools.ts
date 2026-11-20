@@ -50,6 +50,8 @@ export type EvidenceLevel = 'structural' | 'documented' | 'folklore';
 export interface MarketToolEnvelope<T> {
     tool: string;
     asof: number;
+    /** ISO-8601 UTC timestamp standardized across all market tools. */
+    checkedAt: string;
     symbol: string;
     tf: string;
     params: Record<string, unknown>;
@@ -151,6 +153,7 @@ const envelope = <T,>(
 ): MarketToolEnvelope<T> => ({
     tool: args.tool,
     asof: args.asof,
+    checkedAt: new Date(args.asof).toISOString(),
     symbol: args.symbol,
     tf: args.tf,
     params: args.params,
@@ -709,7 +712,7 @@ export const runTradeMathTool = async (
     entry: number,
     stopLoss: number,
     takeProfits: Array<number>,
-    options: { equityUsd?: number; riskPercent?: number; leverage?: number; tf?: string; asofMs?: number } = {},
+    options: { equityUsd?: number; riskPercent?: number; leverage?: number; tf?: string; asofMs?: number; tpWeights?: number[] } = {},
 ): Promise<string> => {
     const symbol = normalizeSymbol(symbolInput);
     const tf = options.tf ?? '15m';
@@ -723,6 +726,7 @@ export const runTradeMathTool = async (
                 equityUsd: options.equityUsd,
                 riskPercent: options.riskPercent,
                 leverage: options.leverage,
+                tpWeights: options.tpWeights,
             },
             candles,
         );
@@ -736,9 +740,12 @@ export const runTradeMathTool = async (
         }
         if (read.gross.inverted) notes.push('plan is INVERTED for its stated direction — stop/target on the wrong sides; levels refused, not repaired');
         const values: TradeMathRead = read;
+        const blendedNote = read.blendedMultiTp
+            ? ` (blended ${read.blendedMultiTp.targetsCount}-TP ${read.blendedMultiTp.grossRatio}R gross${read.blendedMultiTp.netRewardR !== null ? ` / ${read.blendedMultiTp.netRewardR}R net` : ''})`
+            : '';
         return JSON.stringify(envelope({
             tool: 'trade_math', asof: asofMs, symbol, tf,
-            params: { direction, entry, stopLoss, takeProfits, equityUsd: options.equityUsd, riskPercent: options.riskPercent, leverage: options.leverage },
+            params: { direction, entry, stopLoss, takeProfits, equityUsd: options.equityUsd, riskPercent: options.riskPercent, leverage: options.leverage, tpWeights: options.tpWeights },
             barsUsed: candles.length, notes,
             values,
             distancesAtr: {
@@ -746,7 +753,7 @@ export const runTradeMathTool = async (
                 target_atr: read.atr && read.atr > 0 ? r2(read.gross.reward / read.atr) : null,
             },
             evidence: 'structural',
-            summary: `R:R ${read.gross.ratio}${read.costs.costR !== null ? ` gross, ${read.costs.netRewardR} net of costs` : ''}${read.gross.inverted ? ' — INVERTED PLAN' : ''}${read.sizing.available ? `, size ${read.sizing.qty} @ ${read.sizing.leverageNeeded}× needed` : ', size unavailable (no equity)'}`,
+            summary: `R:R ${read.gross.ratio}${read.costs.costR !== null ? ` gross, ${read.costs.netRewardR} net of costs` : ''}${blendedNote}${read.gross.inverted ? ' — INVERTED PLAN' : ''}${read.sizing.available ? `, size ${read.sizing.qty} @ ${read.sizing.leverageNeeded}× needed` : ', size unavailable (no equity)'}`,
         }));
     } catch (error) {
         return JSON.stringify(envelope({

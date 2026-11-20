@@ -170,6 +170,42 @@ const assessPlanShape = (proposal: PlanForGate, atr: number): PlanShapeVerdict =
     return warnings.length > 0 ? { warnings } : {};
 };
 
+export interface SyncPlanLocalEvaluation {
+    inverted: boolean;
+    refusal?: string;
+    warnings: string[];
+    netEdgeR?: number;
+    minEdgeThresholdR?: number;
+}
+
+/**
+ * Synchronous plan-local shape + min-edge check (zero network).
+ * Runs inside `present_trade` BEFORE drawing or arming so an inverted plan is
+ * immediately refused and R:R/expectancy warnings surface on the first receipt
+ * while the full market-data gate (`beginGateScan`) stays non-blocking.
+ */
+export const evaluatePlanLocalSync = (proposal: PlanForGate, atr = 0): SyncPlanLocalEvaluation => {
+    const planned = plannedRiskRewardSigned({
+        entry: proposal.entry,
+        stopLoss: proposal.stopLoss,
+        takeProfits: proposal.takeProfits,
+        direction: proposal.direction,
+    });
+    const shape = assessPlanShape(proposal, atr);
+    const minEdge = assessMinEdge(proposal, 1);
+    const warnings = [...(shape.warnings ?? [])];
+    if (!shape.refusal && minEdge.refusal) {
+        warnings.push(minEdge.refusal);
+    }
+    return {
+        inverted: planned.inverted,
+        ...(shape.refusal ? { refusal: shape.refusal } : (minEdge.refusal ? { refusal: minEdge.refusal } : {})),
+        warnings,
+        ...(minEdge.netEdgeR !== undefined ? { netEdgeR: minEdge.netEdgeR } : {}),
+        ...(minEdge.thresholdR !== undefined ? { minEdgeThresholdR: minEdge.thresholdR } : {}),
+    };
+};
+
 /** Run ONE scan. Never throws: every failure path returns an `unavailable` stamp,
  *  because a plan must be loggable (behind a confirm) with the reason attached.
  *

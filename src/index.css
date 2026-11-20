@@ -980,79 +980,92 @@ body {
 }
 .analyzed-row .reasoning-row-body {
   padding: 0;
-  border: 1px solid var(--color-hairline);
-  border-radius: var(--radius-bubble);
-  background: rgba(255, 255, 255, 0.02);
+  margin-top: 2px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-card);
+  background: rgba(255, 255, 255, 0.018);
+  overflow: hidden;
 }
-/* The card's own line: a bare row of text, with room for the card beneath.
-   Sentence-case at the reference's size — the work line is a sentence a trader
-   reads, not a micro-label, and 12px next to a 14px answer read as a caption
-   for something else. */
+/* The card's own line: a bare quiet row of text, with subtle hover lift. */
 .analyzed-row > summary {
-  padding: 6px 2px 10px;
+  padding: 4px 0 6px;
   font-size: var(--text-ui-caption);
+  color: var(--color-zinc-400);
 }
-.analyzed-row > summary .reasoning-row-label { color: var(--color-zinc-300); }
-/* A step inside the card is a ROW: a hairline between the steps, its own
-   padding, and none of the box treatment a step carries on its own. */
+.analyzed-row > summary:hover {
+  color: var(--color-zinc-100);
+}
+.analyzed-row > summary .reasoning-row-label {
+  color: inherit;
+  letter-spacing: 0;
+}
+.analyzed-row > summary .reasoning-row-chevron {
+  color: var(--color-zinc-500);
+}
+/* A step inside the card is a ROW: a crisp hairline between every consecutive
+   step (whether expandable `<details>`, plain static tool row, or thinking row),
+   its own generous padding, and subtle hover affordance. */
 .analyzed-row .reasoning-row,
 .analyzed-row .tool-row {
   border: 0;
+  border-radius: 0;
   background: transparent;
 }
-.analyzed-row .reasoning-row + .reasoning-row,
-.analyzed-row .tool-row + .tool-row,
-.analyzed-row .reasoning-row + .tool-row,
-.analyzed-row .tool-row + .reasoning-row {
-  border-top: 1px solid var(--color-hairline);
+.analyzed-row .analyzed-row-body > * + *,
+.analyzed-row .tool-activity-list > * + * {
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
 }
-/* The thinking row's own summary sits flush inside the card, and the trace
-   body under it keeps its scroll. Sized like the reference's step rows
-   ("Ran a command") rather than a caption line. */
 .analyzed-row .reasoning-row > summary {
-  padding: 9px 12px;
+  padding: 9px 14px;
   font-size: var(--text-ui-caption);
+  transition: background-color 140ms var(--ease-snappy), color 140ms var(--ease-snappy);
+}
+.analyzed-row .reasoning-row > summary:hover {
+  background: rgba(255, 255, 255, 0.025);
 }
 .analyzed-row .reasoning-row > summary .reasoning-row-label { color: var(--color-zinc-300); }
 .analyzed-row .reasoning-row .reasoning-row-body {
-  padding: 4px 12px 10px;
+  margin: 0;
+  padding: 4px 14px 12px 34px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 
-/* ── A tool row that expands onto its real output ──────────────────────────
-   The hairline line is the summary; opening it shows the bytes the tool
-   actually returned, in the reference's bordered monospace box. Scoped to
-   `.tool-row` rather than reusing `.reasoning-row-body` so the two cannot
-   fight over max-height: that rule sets 22rem inside `.analyzed-row`, and a
-   tool payload wants the tighter 10rem the reference draws. */
-.tool-row > summary { cursor: pointer; list-style: none; }
+/* ── A tool row that expands onto its real output ────────────────────────── */
+.tool-row > summary {
+  cursor: pointer;
+  list-style: none;
+  transition: background-color 140ms var(--ease-snappy);
+}
 .tool-row > summary::-webkit-details-marker { display: none; }
-/* Inside the work card a tool step is a ROW like the reference's
-   "Ran a command": the same padding as the thinking row beside it, so a
-   card of mixed steps reads as one list rather than one indented line.
-   A step with no kept payload renders as a plain line (no `<details>`), so
-   both shapes take the row padding. */
-.analyzed-row .tool-row > summary { padding: 9px 12px; }
-.analyzed-row [data-testid="tool-activity"] > div { padding: 9px 12px; }
+.analyzed-row .tool-row > summary {
+  padding: 9px 14px;
+}
+.analyzed-row .tool-row > summary:hover {
+  background: rgba(255, 255, 255, 0.025);
+}
+.analyzed-row .tool-row-static {
+  padding: 9px 14px;
+}
 .tool-row-body {
-  max-height: 10rem;
+  max-height: 15rem;
   overflow-y: auto;
-  margin: 2px 0 6px;
-  padding: 6px 8px;
-  border: 1px solid var(--color-zinc-700);
+  margin: 2px 12px 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
   border-radius: var(--radius-control);
-  background: rgba(0, 0, 0, 0.35);
+  background: rgba(10, 10, 11, 0.92);
 }
 .tool-row-output {
   margin: 0;
   font-family: var(--font-mono, ui-monospace, monospace);
   font-size: var(--text-ui-dense);
-  line-height: 1.5;
+  line-height: 1.55;
   color: var(--color-zinc-300);
   white-space: pre-wrap;
   word-break: break-word;
 }
-/* The block's header: it names what the bytes ARE, so a row that opens onto
-   a JSON blob says so before the trader reads a line of it. */
 .tool-row-output-head {
   display: flex;
   align-items: center;
@@ -1061,18 +1074,18 @@ body {
 }
 .tool-row-output-title {
   font-size: var(--text-ui-2xs);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-weight: 500;
+  letter-spacing: 0.03em;
   color: var(--color-zinc-500);
 }
 .tool-row-output-lang {
   font-size: var(--text-ui-2xs);
   font-family: var(--font-mono, ui-monospace, monospace);
-  color: var(--color-zinc-600);
-  border: 1px solid var(--color-zinc-700);
-  border-radius: 999px;
+  color: var(--color-zinc-500);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 5px;
   padding: 0 5px;
-  line-height: 1.4;
+  line-height: 1.45;
 }
 /* The failure status the reference puts on a call's response — rose is the
    theme's failure colour, and the chip sits beside the language chip so a
@@ -2090,10 +2103,13 @@ select {
   border-radius: var(--radius-control);
   box-shadow: var(--shadow-elevated);
 }
-.tool-row-body,
 .analyzed-row .reasoning-row-body {
   border-color: var(--color-hairline);
-  background: var(--color-zinc-950);
+  background: var(--color-surface-panel);
+}
+.tool-row-body {
+  border-color: var(--color-hairline);
+  background: var(--color-surface-page);
 }
 
 /* The empty conversation's 48px grid was a decoration behind no data. A

@@ -713,37 +713,37 @@ function requestReasoningSideChannel(config, params) {
     }
 }
 
-const PROVIDER_REQUEST_POLICY = {
-    isExtendedThinkingModel,
-    claudeThinkingBudgetTokens,
-    anthropicShouldSendThinking,
-    anthropicThinkingFields,
-    anthropicCachedSystem,
-    effectiveTemperature,
-    geminiThinkingParams,
-    geminiThinkingBudget,
-    isPrivateOrLoopbackHost,
-    isLinkLocalHost,
-    hostAddresses,
-    httpAllowedForHost,
-    isSafeProviderTargetUrl,
-    isLocalBaseUrl,
-    normalizeProviderUrl,
-    PROVIDER_URL_PATH_SUFFIXES,
-    fetchFollowingSafeRedirects,
-    MAX_REDIRECT_HOPS,
-    EXTENDED_THINKING_MODEL_RE,
-    MIN_EFFECTIVE_THINKING_TOKENS,
-    ANTHROPIC_DEFAULT_TEMPERATURE,
-    THINKING_BUDGET_FRACTIONS,
-    GEMINI_THINKING_BUDGETS,
-    requestReasoningSideChannel,
-};
-
 // CommonJS export guarded so the SAME file also loads in the browser once
 // vite.config.ts's interop plugin appends the ESM re-export (the guard keeps
 // `module.exports = …` from throwing in an ES-module context where `module`
-// is undeclared). electron/main.cjs and vitest consume it as plain CJS.
+// is undeclared). Exporting an inline object literal lets Node's
+// cjs-module-lexer detect named exports for ESM/tsx test runners as well as
+// Electron main.cjs require.
 if (typeof module !== 'undefined' && module.exports) {
-    module.exports = PROVIDER_REQUEST_POLICY;
+    module.exports = {
+        isExtendedThinkingModel,
+        claudeThinkingBudgetTokens,
+        anthropicShouldSendThinking,
+        anthropicThinkingFields,
+        anthropicCachedSystem,
+        effectiveTemperature,
+        geminiThinkingParams,
+        geminiThinkingBudget,
+        isPrivateOrLoopbackHost,
+        isLinkLocalHost,
+        hostAddresses,
+        httpAllowedForHost,
+        isSafeProviderTargetUrl,
+        isLocalBaseUrl,
+        normalizeProviderUrl,
+        PROVIDER_URL_PATH_SUFFIXES,
+        fetchFollowingSafeRedirects,
+        MAX_REDIRECT_HOPS,
+        EXTENDED_THINKING_MODEL_RE,
+        MIN_EFFECTIVE_THINKING_TOKENS,
+        ANTHROPIC_DEFAULT_TEMPERATURE,
+        THINKING_BUDGET_FRACTIONS,
+        GEMINI_THINKING_BUDGETS,
+        requestReasoningSideChannel,
+    };
 }

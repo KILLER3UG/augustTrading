@@ -3,10 +3,12 @@ import { stripTraceMarkers } from '../../utils/traceText';
 import { pairToolRows, type ToolRowState } from '../../utils/turnStatus';
 import { toolKindLabel, toolKindOf } from '../../utils/toolKinds';
 import { KIND_GLYPH } from './toolKindIcons';
-import { ChevronRight } from './Icons';
+import { Check, ChevronRight, Copy } from './Icons';
 import Disclosure from './Disclosure';
 import { readToolPayload } from '../../services/trade/toolPayloadStore';
 import { readToolArtifact } from '../../services/analysis/toolArtifactStore';
+import { copyText } from '../../utils/clipboard';
+import { formatToolPayload } from '../../utils/toolPayloadFormat';
 
 export interface ToolActivityRowProps {
     /** Human-readable tool-event lines ("calling order book…", "order book · buy wall …"). */
@@ -124,27 +126,33 @@ const ToolRowGroupView: React.FC<{ group: ToolRowGroup; running: boolean }> = ({
     const kindName = toolKindLabel(kind);
 
     const line = (
-        <div className="flex items-center gap-1.5 text-ui-caption leading-5 text-zinc-500" data-kind={kind}>
-            <Glyph className={`h-3 w-3 shrink-0 ${anyFailed ? 'text-zinc-400' : 'text-zinc-600'}`} aria-hidden="true" />
-            <span className={`shrink-0 ${anyCalling ? 'text-zinc-500' : anyFailed ? 'text-zinc-400' : 'text-zinc-300'}`}>
+        <div className="flex items-center gap-2 text-ui-caption leading-5 text-zinc-500" data-kind={kind}>
+            <Glyph className={`h-3.5 w-3.5 shrink-0 ${anyFailed ? 'text-zinc-400' : 'text-zinc-600'}`} aria-hidden="true" />
+            <span className={`shrink-0 ${anyCalling ? 'text-zinc-500' : anyFailed ? 'text-zinc-300' : 'text-zinc-300'}`}>
                 {group.label}
             </span>
             {group.count > 1 && (
                 <span className="shrink-0 tabular-nums text-zinc-500">×{group.count}</span>
             )}
             {anyCalling ? (
-                <span className="min-w-0 truncate" title="calling…">· calling…</span>
+                <span className="min-w-0 truncate text-zinc-500" title="calling…">calling…</span>
             ) : detail ? (
-                <span className="min-w-0 truncate" title={detail}>· {detail}</span>
+                <span className="min-w-0 truncate text-zinc-500" title={detail}>{detail}</span>
             ) : anyFailed ? (
-                <span className="min-w-0 truncate text-zinc-500" title="failed">· failed</span>
+                <span className="min-w-0 truncate text-rose-400/90" title="failed">failed</span>
             ) : null}
-            {/* The chevron the reference puts on every step that opens. */}
-            {expandable && <ChevronRight className="h-3 w-3 shrink-0 text-zinc-600" aria-hidden="true" />}
+            {expandable && (
+                <ChevronRight
+                    className={`ml-auto h-3 w-3 shrink-0 transition-transform duration-150 ease-[var(--ease-snappy)] ${
+                        open ? 'rotate-90 text-zinc-300' : 'text-zinc-600'
+                    }`}
+                    aria-hidden="true"
+                />
+            )}
         </div>
     );
 
-    if (!expandable) return line;
+    if (!expandable) return <div className="tool-row-static">{line}</div>;
 
     return (
         <Disclosure
@@ -172,35 +180,6 @@ const ToolRowGroupView: React.FC<{ group: ToolRowGroup; running: boolean }> = ({
     );
 };
 
-/** What the bytes are, in the word a reader would use.
- *
- *  Most desk tools answer with JSON, and a trader who opens a row expecting
- *  a sentence and finds a JSON blob has been told nothing about what they are
- *  looking at. The chip says which, and it is DERIVED from the bytes — never
- *  asserted by the tool, which does not say what format it answered in. */
-const languageOf = (text: string): string => {
-    const trimmed = text.trim();
-    if (!trimmed) return 'text';
-    const first = trimmed[0];
-    if (first !== '{' && first !== '[') return 'text';
-    try {
-        JSON.parse(trimmed);
-        return 'JSON';
-    } catch {
-        return 'text';
-    }
-};
-
-/** One member of a folded group, resolved only while open. A member with no id
- *  contributes nothing rather than an empty box.
- *
- *  The body answers the reference's two questions per call — WHAT WAS ASKED
- *  (Request) and WHAT CAME BACK (Response). The request line is the human
- *  label (the one vocabulary the transcript carries; the machine name never
- *  travels), with a failure's digest beside it — that digest is the error
- *  summary the seat wrote. The response keeps the payload bytes, and a member
- *  whose call FAILED wears the chip on the response, where the reference puts
- *  it, so a red Failed never names a call that succeeded. */
 const ToolCallBody: React.FC<{
     toolCallId: string;
     label: string;
@@ -208,25 +187,64 @@ const ToolCallBody: React.FC<{
     detail: string;
 }> = ({ toolCallId, label, state, detail }) => {
     const body = useMemo(() => (toolCallId ? resolvePayload(toolCallId) : null), [toolCallId]);
+    const formatted = useMemo(() => (body?.text ? formatToolPayload(body.text) : null), [body]);
+    const [showAll, setShowAll] = useState(false);
+    const [copied, setCopied] = useState(false);
     const failed = state === 'failed';
+
+    const onCopy = (): void => {
+        if (!formatted?.text) return;
+        void copyText(formatted.text).then(ok => {
+            if (!ok) return;
+            setCopied(true);
+            window.setTimeout(() => setCopied(false), 1400);
+        });
+    };
+
     return (
-        <div className="space-y-1">
-            <div className="tool-row-output-head">
-                <span className="tool-row-output-title">Request</span>
+        <div className="space-y-2.5">
+            <div className="space-y-1">
+                <div className="tool-row-output-head">
+                    <span className="tool-row-output-title">Request</span>
+                </div>
+                <pre className="tool-row-output">{label}{detail ? ` · ${detail}` : ''}</pre>
             </div>
-            <pre className="tool-row-output">{label}{failed && detail ? ` · ${detail}` : ''}</pre>
-            <div className="tool-row-output-head">
-                <span className="tool-row-output-title">Response</span>
-                {body?.text
-                    ? <span className="tool-row-output-lang">{languageOf(body.text)}</span>
-                    : null}
-                {failed && <span className="tool-row-output-lang tool-row-failed-chip">Failed</span>}
+            <div className="border-t border-white/[0.06] pt-2.5 space-y-1">
+                <div className="tool-row-output-head">
+                    <span className="tool-row-output-title">Response</span>
+                    {formatted ? <span className="tool-row-output-lang">{formatted.language}</span> : null}
+                    {failed && <span className="tool-row-output-lang tool-row-failed-chip">Failed</span>}
+                    {formatted?.text && (
+                        <button
+                            type="button"
+                            onClick={onCopy}
+                            aria-label={copied ? 'Response copied' : 'Copy response payload'}
+                            title={copied ? 'Copied' : 'Copy response'}
+                            className="ml-auto flex items-center gap-1 rounded-control px-1.5 py-0.5 text-ui-2xs text-zinc-500 transition-colors hover:bg-white/[0.06] hover:text-zinc-200"
+                        >
+                            {copied
+                                ? <><Check className="h-3 w-3 text-emerald-400" aria-hidden="true" /><span>Copied</span></>
+                                : <><Copy className="h-3 w-3" aria-hidden="true" /><span>Copy</span></>}
+                        </button>
+                    )}
+                </div>
+                {formatted?.text ? (
+                    <>
+                        <pre className="tool-row-output">{showAll ? formatted.text : formatted.preview}</pre>
+                        {formatted.truncated && (
+                            <button
+                                type="button"
+                                onClick={() => setShowAll(v => !v)}
+                                className="mt-1 text-ui-2xs text-zinc-500 transition-colors hover:text-zinc-200"
+                            >
+                                {showAll ? 'Show less' : `Show all ${formatted.lineCount} lines`}
+                            </button>
+                        )}
+                    </>
+                ) : (
+                    <p className="tool-row-refused">{body?.refused ?? 'full result not kept'}</p>
+                )}
             </div>
-            {body?.text ? (
-                <pre className="tool-row-output">{body.text}</pre>
-            ) : (
-                <p className="tool-row-refused">{body?.refused ?? 'full result not kept'}</p>
-            )}
         </div>
     );
 };
@@ -305,7 +323,7 @@ const ToolActivityRow: React.FC<ToolActivityRowProps> = ({ lines, running = fals
     if (groups.length === 0) return null;
     return (
         <div
-            className={`space-y-0.5 ${className}`.trim()}
+            className={`tool-activity-list ${className}`.trim()}
             data-testid="tool-activity"
             data-state={running ? 'running' : 'ok'}
         >

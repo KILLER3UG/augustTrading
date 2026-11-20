@@ -56,14 +56,17 @@ import { extractAndParseJson } from '../../utils/jsonUtils';
 import { sanitizeAIResponse } from '../../utils/sanitizers';
 import { getActiveUsername } from '../../utils/activeUser';
 import {
+    auditPostMortemForHindsightLeak,
     authoritativeOutcome,
     CONTEXT_TIMEFRAMES,
     diagnosisIsTentative,
     diagnosisPacket,
     finite,
     fnv1a,
+    KNOWN_AT_DECISION_HEADER,
     refusalDiagnosis,
     renderDiagnosisPostMortem,
+    SUBSEQUENT_PRICE_PATH_HEADER,
 } from './diagnosisPacket';
 
 export const DIAGNOSIS_PROMPT_ID = 'learning.post_mortem_diagnosis';
@@ -87,6 +90,9 @@ Answer ONLY JSON:
 }
 
 Rules:
+- The packet is split into two sections: ${KNOWN_AT_DECISION_HEADER} and ${SUBSEQUENT_PRICE_PATH_HEADER}.
+- "whatHappened" and "rootCause" may describe facts from ${SUBSEQUENT_PRICE_PATH_HEADER}.
+- "when", "action", and "lesson" MUST ONLY use conditions observable in ${KNOWN_AT_DECISION_HEADER}. Never cite MFE, MAE, post-entry reversals, wick-outs, or ${SUBSEQUENT_PRICE_PATH_HEADER} facts in a forward rule or lesson.
 - Quote only numbers that are in the record. If a fact is missing, name the absence instead of filling it.
 - The tape outcome is stated. Do not contradict it; if the record looks inconsistent, say so in rootCause.
 - "when"/"action" must be checkable and mechanical — a level, a condition, a regime, a size. Not "be more careful", not "trust the feeling".
@@ -434,6 +440,30 @@ export const runDiagnosisPass = async (
                     await saveQueue();
                     result.failed += 1;
                 }
+                continue;
+            }
+
+            const hindsightLeak = auditPostMortemForHindsightLeak(answer);
+            if (hindsightLeak.leaked) {
+                const refusal = refusalDiagnosis(
+                    item,
+                    position,
+                    outcome,
+                    'no-lesson',
+                    hindsightLeak.reason ?? 'forward lesson cited post-entry price path (hindsight leak)',
+                );
+                await saveDiagnosis(username, refusal);
+                await saveTrackedPosition(username, {
+                    ...position,
+                    diagnosisId: refusal.id,
+                    context: context.points,
+                    contextDownsampled: context.downsampled,
+                });
+                if (position.source === 'journal') await recordJournalSettlement(position.sourceId);
+                item.status = 'done';
+                item.finishedAt = now;
+                await saveQueue();
+                result.refused += 1;
                 continue;
             }
 

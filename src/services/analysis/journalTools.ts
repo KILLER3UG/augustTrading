@@ -95,6 +95,7 @@ export const runSetupBaseRateTool = (
         JSON.stringify({
             tool,
             asof: asofMs,
+            checkedAt: new Date(asofMs).toISOString(),
             symbol: params.coin ?? '(all)',
             tf: 'journal',
             params: { ...params } as Record<string, unknown>,
@@ -217,7 +218,7 @@ export const runRiskStateTool = (
     const rows = filterTradesBySimulationMode(trades, simMode);
     if (rows.length === 0) {
         return JSON.stringify({
-            tool, asof: asofMs, symbol: '(journal)', tf: 'journal', params: {},
+            tool, asof: asofMs, checkedAt: new Date(asofMs).toISOString(), symbol: '(journal)', tf: 'journal', params: {},
             data_quality: { available: false, bars_used: 0, notes, reason: simulatedExcluded > 0 ? `the journal has no real rows yet (${simulatedExcluded} simulated row(s) excluded)` : 'the journal has no rows yet' },
             values: null, distances_atr: {}, evidence_level: 'documented',
             one_line_summary: simulatedExcluded > 0 ? `the journal has no real rows yet (${simulatedExcluded} simulated row(s) excluded)` : 'the journal has no rows yet',
@@ -257,7 +258,7 @@ export const runRiskStateTool = (
         }
         : undefined;
     return JSON.stringify({
-        tool, asof: asofMs, symbol: '(journal)', tf: 'journal', params: {},
+        tool, asof: asofMs, checkedAt: new Date(asofMs).toISOString(), symbol: '(journal)', tf: 'journal', params: {},
         data_quality: { available: true, bars_used: rows.length, notes },
         values, distances_atr: {}, evidence_level: 'documented', one_line_summary: summary,
         ...(simValues ? { simulatedView: { values: simValues, sample: simRows.length } } : {}),
@@ -316,7 +317,7 @@ export const runMetaLabelTool = async (
     ];
     const make = (values: unknown, summary: string, reason?: string): string =>
         JSON.stringify({
-            tool, asof: asofMs, symbol: '(plan)', tf: 'journal',
+            tool, asof: asofMs, checkedAt: new Date(asofMs).toISOString(), symbol: '(plan)', tf: 'journal',
             params: { ...plan } as Record<string, unknown>,
             data_quality: {
                 available: reason === undefined,

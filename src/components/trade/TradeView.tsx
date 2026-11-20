@@ -1121,7 +1121,8 @@ const TradeView: React.FC<TradeViewProps> = ({
                         ohlcvRow={ohlcvRow}
                         onDrawingsChange={setChartDrawings}
                         modelDrawings={modelDrawings}
-                        onRemoveModelShape={removeModelShape} />
+                        onRemoveModelShape={removeModelShape}
+                        onReplaceModelDrawings={setModelDrawings} />
                     </ErrorBoundary>
                     <LevelAccuracyBadge
                         drawings={modelDrawings}

@@ -68,6 +68,11 @@ export interface SignalRecord extends SignalLevels {
      *  this against outcomeR; absent on rows emitted before the field shipped.
      *  It is a self-report, never a gate. */
     conviction?: number;
+    /** Optional attribution dimensions for grouped calibration rollups. */
+    skillSlug?: string;
+    marketRegime?: string;
+    htfAligned?: boolean;
+    hadUserDrawings?: boolean;
 }
 
 /** The programmatic gate, run in SHADOW: it never refuses an emission, it
@@ -147,6 +152,12 @@ export interface SignalResolution {
      *  fallback is named rather than silently substituting, and it always
      *  carries `crossCheck: 'unavailable'` because no second source saw it. */
     primarySource: 'okx' | 'binance';
+    /** Peak favorable excursion over the held window (>= 0R). Absent on
+     *  never_triggered or pre-Phase-4 rows. */
+    mfeR?: number;
+    /** Peak adverse excursion over the held window (<= 0R). Absent on
+     *  never_triggered or pre-Phase-4 rows. */
+    maeR?: number;
     /** What the SAME levels would have done entering at every bar of the same
      *  tape. Absent on resolutions written before the accuracy fold shipped and
      *  when the tape was too short to sample. */

@@ -1,9 +1,12 @@
-import React, { memo } from 'react';
+import React, { memo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import 'katex/dist/katex.min.css';
+import { Check, Copy } from './Icons';
+import { copyText } from '../../utils/clipboard';
+import { parseCodeFenceLanguage } from '../../utils/toolPayloadFormat';
 
 // ─── Math preparation ───────────────────────────────────────────────────────
 // Two things must be true at once here, and remark-math only knows about one
@@ -95,39 +98,73 @@ interface MarkdownRendererProps {
  * pills and blockquote borders (cyan is reserved for interactive links —
  * the monochrome doctrine), denser lists.
  */
+const extractNodeText = (node: React.ReactNode): string => {
+  if (typeof node === 'string' || typeof node === 'number') return String(node);
+  if (Array.isArray(node)) return node.map(extractNodeText).join('');
+  if (React.isValidElement<{ children?: React.ReactNode }>(node)) {
+    return extractNodeText(node.props.children);
+  }
+  return '';
+};
+
+const CodeFenceBlock: React.FC<{ children?: React.ReactNode }> = ({ children }) => {
+  const [copied, setCopied] = useState(false);
+  const child = React.isValidElement<{ className?: string; children?: React.ReactNode }>(children)
+    ? children
+    : null;
+  const lang = parseCodeFenceLanguage(child?.props?.className);
+  const rawCode = extractNodeText(child?.props?.children ?? children).replace(/\n$/, '');
+
+  const handleCopy = (): void => {
+    if (!rawCode) return;
+    void copyText(rawCode).then(ok => {
+      if (!ok) return;
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1400);
+    });
+  };
+
+  return (
+    <div className="not-prose my-3.5 overflow-hidden rounded-card border border-hairline bg-zinc-900">
+      <div className="flex items-center justify-between border-b border-hairline bg-zinc-900 px-3.5 py-1.5">
+        <span className="font-mono text-ui-2xs text-zinc-500">{lang ?? 'code'}</span>
+        <button
+          type="button"
+          onClick={handleCopy}
+          aria-label={copied ? 'Code copied' : 'Copy code block'}
+          className="flex items-center gap-1 rounded-control px-1.5 py-0.5 text-ui-2xs text-zinc-500 transition-colors hover:bg-white/[0.06] hover:text-zinc-200"
+        >
+          {copied
+            ? <><Check className="h-3 w-3 text-emerald-400" aria-hidden="true" /><span>Copied</span></>
+            : <><Copy className="h-3 w-3" aria-hidden="true" /><span>Copy</span></>}
+        </button>
+      </div>
+      <pre className="m-0 overflow-x-auto custom-scrollbar bg-zinc-950 px-4 py-3 text-ui-sm font-mono leading-[1.6] text-zinc-200 [&_code]:rounded-none [&_code]:border-0 [&_code]:bg-transparent [&_code]:p-0 [&_code]:whitespace-pre">
+        {children}
+      </pre>
+    </div>
+  );
+};
+
 const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, className }) => {
   return (
-    <div className={`text-ui-base leading-relaxed text-zinc-300 prose prose-invert prose-sm max-w-none ${className ?? ''}`}>
+    <div className={`text-ui-base leading-[1.7] text-zinc-200 prose prose-invert prose-sm prose-code:before:content-none prose-code:after:content-none max-w-none ${className ?? ''}`}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkMath]}
         rehypePlugins={[[rehypeKatex, KATEX_OPTIONS]]}
         components={{
-          pre: ({ children }) => (
-            <pre className="my-3 rounded-bubble bg-black/50 border border-hairline p-3 overflow-x-auto text-ui-sm font-mono leading-relaxed text-zinc-300 whitespace-pre-wrap [&_code]:rounded-none [&_code]:border-0 [&_code]:bg-transparent [&_code]:px-0 [&_code]:py-0">
-              {children}
-            </pre>
-          ),
+          pre: ({ children }) => <CodeFenceBlock>{children}</CodeFenceBlock>,
           code: ({ className: codeClassName, children, ...props }) => {
-            // Fenced blocks carry a language-* class and live inside the
-            // boxed <pre>; bare backticks are neutral zinc pills.
-            //
-            // The language test is NOT enough on its own: a fence written
-            // without a language (which is what the models usually emit)
-            // carries no `language-*` class, fell through to the inline pill,
-            // and an INLINE element paints its background once per line box --
-            // so a nine-line block arrived as nine stacked grey bands inside
-            // the pre's own box. The pre neutralises any code inside it from
-            // here, so the pill styling can only ever reach real inline code.
             const isBlock = /language-/.test(String(codeClassName || ''));
             if (isBlock) {
               return (
-                <code className="font-mono text-zinc-300" {...props}>{children}</code>
+                <code className="font-mono text-zinc-200" {...props}>{children}</code>
               );
             }
             return (
               <code
                 {...props}
-                className="rounded-control break-inside-avoid border border-hairline bg-white/[0.06] px-1 py-0.5 font-mono text-[12.5px] text-zinc-200 whitespace-nowrap"
+                className="rounded-[6px] break-inside-avoid border border-hairline bg-zinc-900 px-1.5 py-0.5 font-mono text-[12.5px] text-zinc-200 whitespace-nowrap before:content-none after:content-none"
               >
                 {children}
               </code>

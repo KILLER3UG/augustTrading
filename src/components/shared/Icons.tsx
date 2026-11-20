@@ -188,6 +188,7 @@ export {
   Play,
   Plus,
   PowerOff,
+  Redo2,
   RefreshCw,
   RotateCcw,
   RotateCw,

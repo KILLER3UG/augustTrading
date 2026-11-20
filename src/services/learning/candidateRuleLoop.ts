@@ -379,6 +379,92 @@ export const checkRulePromotionEligibility = (args: {
     return { ok: true };
 };
 
+/** Minimum independent evidence items and distinct sessions required before a
+ *  recurring bias can be promoted into persistent trader-profile memory.
+ *  Applies strictly to trader-profile bias promotion — SKILL.md stays a plain
+ *  document with zero status/approval/ledger fields (AGENTS.md Rule 10). */
+export const MIN_PROFILE_BIAS_EVIDENCE = 3;
+export const MIN_PROFILE_BIAS_SESSIONS = 3;
+
+export type ProfileBiasEligibility =
+    | { ok: true }
+    | { ok: false; refused: string; requiresTraderConfirmation?: boolean };
+
+export interface ProfileBiasPromotionInput {
+    /** Distinct evidence items supporting this recurring bias (trade or signal ids). */
+    evidenceIds?: readonly string[];
+    /** Explicit evidence count fallback when ids are already counted. */
+    evidenceCount?: number;
+    /** Distinct session keys (e.g. PHT trading days or session ids). */
+    sessionIds?: readonly string[];
+    /** Explicit distinct session count fallback. */
+    distinctSessions?: number;
+    /** The forward bias / condition statement being promoted. */
+    biasStatement: string;
+    when?: string;
+    action?: string;
+    knowableAtEntry: readonly string[];
+    visibleOnlyAfterResolution?: readonly string[];
+    /** True when the promotion alters risk sizing, stops, leverage, or guardrails. */
+    affectsRiskRules?: boolean;
+    /** Explicit trader approval flag — required whenever `affectsRiskRules` is true. */
+    traderConfirmed?: boolean;
+}
+
+export const checkProfileBiasPromotionEligibility = (
+    args: ProfileBiasPromotionInput,
+): ProfileBiasEligibility => {
+    const uniqueEvidence = Array.isArray(args?.evidenceIds)
+        ? new Set(args.evidenceIds.map(s => String(s ?? '').trim()).filter(Boolean)).size
+        : 0;
+    const evidenceCount = Math.max(
+        uniqueEvidence,
+        typeof args?.evidenceCount === 'number' && Number.isFinite(args.evidenceCount) ? Math.floor(args.evidenceCount) : 0,
+    );
+    if (evidenceCount < MIN_PROFILE_BIAS_EVIDENCE) {
+        return {
+            ok: false,
+            refused: `Refused — persistent trader-profile bias promotion requires evidenceCount >= ${MIN_PROFILE_BIAS_EVIDENCE} (got ${evidenceCount}).`,
+        };
+    }
+
+    const uniqueSessions = Array.isArray(args?.sessionIds)
+        ? new Set(args.sessionIds.map(s => String(s ?? '').trim()).filter(Boolean)).size
+        : 0;
+    const distinctSessions = Math.max(
+        uniqueSessions,
+        typeof args?.distinctSessions === 'number' && Number.isFinite(args.distinctSessions) ? Math.floor(args.distinctSessions) : 0,
+    );
+    if (distinctSessions < MIN_PROFILE_BIAS_SESSIONS) {
+        return {
+            ok: false,
+            refused: `Refused — persistent trader-profile bias promotion requires >= ${MIN_PROFILE_BIAS_SESSIONS} distinct sessions (got ${distinctSessions}).`,
+        };
+    }
+
+    const knowableAtEntry = Array.isArray(args?.knowableAtEntry) ? args.knowableAtEntry.filter(s => typeof s === 'string' && s.trim().length > 0) : [];
+    const excluded = Array.isArray(args?.visibleOnlyAfterResolution) ? args.visibleOnlyAfterResolution : [];
+    const texts = [args?.biasStatement ?? '', args?.when ?? '', args?.action ?? ''].filter(Boolean);
+    const citesExcluded = excluded.some(item => typeof item === 'string' && item.trim().length > 0
+        && texts.some(t => t.includes(item.trim())));
+    if (knowableAtEntry.length === 0 || citesExcluded || texts.some(t => detectHindsightBias(t))) {
+        return {
+            ok: false,
+            refused: 'Refused — hindsight bias detected. A persistent profile bias may only use facts knowable before entry.',
+        };
+    }
+
+    if (args?.affectsRiskRules && args?.traderConfirmed !== true) {
+        return {
+            ok: false,
+            requiresTraderConfirmation: true,
+            refused: 'Refused — modifying risk rules in persistent trader profile requires explicit trader confirmation.',
+        };
+    }
+
+    return { ok: true };
+};
+
 // ── Pending proposals, decisions and the active store ───────────────────────
 
 const MAX_PROPOSALS = 200;

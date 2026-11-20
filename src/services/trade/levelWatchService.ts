@@ -53,6 +53,7 @@ import {
     buildPlanLevels, detectLevelHits, formatLevelHitForModel, staleLevelsAtArm,
     type LevelHit, type PlanLevel, type WatchPlan,
 } from './tradePlanLevels';
+import { shouldRearmEntryWithHysteresis } from './watchdogCore';
 
 interface ArmedPlan {
     plan: WatchPlan;
@@ -254,30 +255,43 @@ const touchingEntry = (level: PlanLevel, price: number, direction: 'Long' | 'Sho
     return direction === 'Long' ? price <= level.price : price >= level.price;
 };
 
+export interface LevelTickOptions {
+    atr14?: number | null;
+    tickSize?: number;
+}
+
 /** One live price observation for a symbol — either the visible chart's
  *  ~1s mark feed (TradeView) or the internal REST poll feeding an off-view
  *  symbol. Records the print (freshness gates the poller) and runs the
- *  crossing logic for that symbol's armed plans. */
-export const tick = (symbol: string, price: number): void => {
+ *  crossing logic for that symbol's armed plans. When `atr14` is supplied,
+ *  ENTRY re-arm requires `>= 0.5 * ATR(14)` hysteresis to prevent chop storms. */
+export const tick = (symbol: string, price: number, opts?: LevelTickOptions): void => {
     loadFired(); // adopt a user switch BEFORE the empty check — the reload
     // may populate `armed` itself
     if (!Number.isFinite(price) || price <= 0) return; // never poison `prev`/freshness
     priceBySymbol.set(symbol, { price, at: Date.now() });
     if (armed.size === 0) return;
     const isFired = (id: string): boolean => fired.has(id);
+    const atr14 = opts?.atr14 ?? null;
+    const tickSize = opts?.tickSize ?? 0;
     for (const a of armed.values()) {
         if (a.plan.symbol !== symbol) continue;
         const hits = detectLevelHits(a.levels, a.plan.direction, a.prev, price, isFired);
         a.prev = price;
         for (const h of hits) fired.add(h.levelId);
-        // ENTRY re-touch: a print on the far side of the entry ends the
-        // current "visit" and un-latches ENTRY, so the next touch re-fires.
-        // Runs even when this tick fired nothing.
+        // ENTRY re-touch: require ATR-scaled hysteresis (`>= 0.5 * ATR(14)`)
+        // when ATR is available so chop near entry never storms alerts; fall
+        // back to plain far-side check when ATR is unknown.
         let rearmed = false;
         const entry = a.levels.find(l => l.kind === 'entry');
-        if (entry && fired.has(entry.id) && !touchingEntry(entry, price, a.plan.direction)) {
-            fired.delete(entry.id);
-            rearmed = true;
+        if (entry && fired.has(entry.id)) {
+            const canRearm = atr14 !== null && Number.isFinite(atr14) && atr14 > 0
+                ? shouldRearmEntryWithHysteresis(entry.price, price, a.plan.direction, atr14, tickSize)
+                : !touchingEntry(entry, price, a.plan.direction);
+            if (canRearm) {
+                fired.delete(entry.id);
+                rearmed = true;
+            }
         }
         if (hits.length === 0 && !rearmed) continue;
         persistFired(); // latch mutations (fires AND re-arms) persist at once

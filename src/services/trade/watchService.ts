@@ -45,6 +45,20 @@ import {
     watchConditionHolds, watchExpired,
     type WatchFired, type WatchItem,
 } from './chartTriggers';
+import type { ChartDrawing } from './chartDrawings';
+import type { EvalCandle, PriceScaleMode } from './chartGeometry';
+import {
+    createWatchdogLatch,
+    evaluateDrawingWatch,
+    type DrawingWatchTriggerEvent,
+    type WatchdogLatchState,
+} from './watchdogCore';
+import {
+    drainSentinelNoticesWhenIdle,
+    evaluateSentinelEvent,
+    type SentinelMinimalContext,
+    type SentinelNotice,
+} from './sentinelLoop';
 
 const WATCHES_KEY_PREFIX = 'trade_watches_v1';
 const MAX_WATCHES = 10;
@@ -349,6 +363,82 @@ export const subscribe = (cb: (fired: WatchFired, remaining: WatchItem[]) => voi
     return () => { subscribers.delete(cb); };
 };
 
+// ── Drawing-anchored watches + isolated sentinel dispatch ────────────────────
+const drawingLatchStates = new Map<string, WatchdogLatchState>();
+
+export interface TickDrawingWatchesInput {
+    symbol: string;
+    drawings: ReadonlyArray<ChartDrawing>;
+    activeTf: string;
+    barSeconds: number;
+    priceScaleMode: PriceScaleMode;
+    candles: ReadonlyArray<EvalCandle>;
+    livePrice: number;
+    atr14: number | null;
+    tickSize?: number;
+    isCandleClose?: boolean;
+    cooldownBars?: number;
+    sid?: string;
+    sentinelContext?: SentinelMinimalContext;
+}
+
+/**
+ * Evaluate watched user/AI drawings against the live tick or candle close with
+ * ATR-scaled tolerance, `0.5 * ATR(14)` hysteresis, and bar cooldowns.
+ * Triggered events run through the isolated headless sentinel loop and enqueue
+ * non-dismissed notices into the idle-safe queue (never interrupting a stream).
+ */
+export const tickDrawingWatches = async (
+    input: TickDrawingWatchesInput,
+): Promise<{ events: DrawingWatchTriggerEvent[]; notices: SentinelNotice[] }> => {
+    const events: DrawingWatchTriggerEvent[] = [];
+    const notices: SentinelNotice[] = [];
+    const ctx: SentinelMinimalContext = input.sentinelContext ?? {
+        traderProfileSlice: 'Risk guard active.',
+        chartManifestSummary: `${input.symbol} ${input.activeTf} mark ${input.livePrice}`,
+        atr14: input.atr14,
+    };
+    for (const drawing of input.drawings) {
+        const key = `${input.symbol}:${drawing.id}`;
+        const prev = drawingLatchStates.get(key) ?? createWatchdogLatch();
+        const { event, nextState } = evaluateDrawingWatch({
+            symbol: input.symbol,
+            drawing,
+            activeTf: input.activeTf,
+            barSeconds: input.barSeconds,
+            priceScaleMode: input.priceScaleMode,
+            candles: input.candles,
+            livePrice: input.livePrice,
+            isCandleClose: input.isCandleClose,
+            atr14: input.atr14,
+            tickSize: input.tickSize,
+            cooldownBars: input.cooldownBars,
+            state: prev,
+        });
+        drawingLatchStates.set(key, nextState);
+        if (!event) continue;
+        events.push(event);
+        const res = await evaluateSentinelEvent(
+            { source: 'drawing_watch', symbol: input.symbol, sid: input.sid, event },
+            ctx,
+            { enqueue: true },
+        );
+        if (res.notice) notices.push(res.notice);
+    }
+    return { events, notices };
+};
+
+/**
+ * Flush queued sentinel notices into `chatStore.queueHarnessSignal` ONLY when
+ * the target session is idle (never mid-stream).
+ */
+export const drainIdleSentinelNotices = (isIdle: boolean, sid?: string): SentinelNotice[] =>
+    drainSentinelNoticesWhenIdle(
+        isIdle,
+        (signalText, targetSid) => { chatStore.queueHarnessSignal(signalText, targetSid); },
+        sid,
+    );
+
 /** Test hook: reset the singleton (localStorage persists — that's how a
  *  reload is simulated). */
 export const __resetForTests = (): void => {
@@ -359,5 +449,6 @@ export const __resetForTests = (): void => {
     lastPollAttempt.clear();
     pollInFlight.clear();
     subscribers.clear();
+    drawingLatchStates.clear();
     if (clock) { clearInterval(clock); clock = null; }
 };

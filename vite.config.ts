@@ -454,9 +454,10 @@ export default defineConfig(() => {
       },
     },
     server: {
-      // Keep the unauthenticated development proxy local to this machine.
-      host: '127.0.0.1',
+      host: '0.0.0.0',
       port: 3000,
+      allowedHosts: true,
+      hmr: process.env.DISABLE_HMR !== 'true',
       watch: {
         // Windows: a PDF opened by another app (reader/Explorer preview/
         // antivirus) locks the file, and chokidar crashes the whole dev

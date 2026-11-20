@@ -72,8 +72,8 @@ const ChatHistoryPalette: React.FC<ChatHistoryPaletteProps> = ({
     };
 
     return (
-        <div className="absolute inset-0 z-40 flex items-start justify-center bg-black/50 px-6 pt-20" data-testid="chat-history-backdrop" onClick={onClose}>
-        <div className="w-full max-w-sm overflow-hidden rounded-bubble border border-hairline bg-zinc-900 shadow-elevated" data-testid="chat-history" onClick={e => e.stopPropagation()}>
+        <div className="absolute inset-0 z-40 flex items-start justify-center bg-black/55 px-6 pt-20 backdrop-blur-[2px]" data-testid="chat-history-backdrop" onClick={onClose}>
+        <div className="w-full max-w-md overflow-hidden rounded-[16px] border border-white/[0.1] bg-zinc-900/95 shadow-elevated backdrop-blur-md" data-testid="chat-history" onClick={e => e.stopPropagation()}>
             <input
                 autoFocus
                 value={query}
@@ -84,9 +84,9 @@ const ChatHistoryPalette: React.FC<ChatHistoryPaletteProps> = ({
                     else if (e.key === 'ArrowUp') { e.preventDefault(); onSelChange(i => Math.max(i - 1, 0)); }
                     else if (e.key === 'Enter') { const s = rows[sel]; if (s) onSelect(s.id); }
                 }}
-                placeholder="Search all conversations…"
+                placeholder="Search conversations…"
                 aria-label="Search all conversations"
-                className="w-full border-b border-hairline bg-transparent px-4 py-3 text-ui-sm text-zinc-100 placeholder:text-zinc-600 focus:outline-none"
+                className="w-full border-b border-white/[0.07] bg-transparent px-4 py-3 text-ui-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none"
             />
             <div className="max-h-72 overflow-y-auto custom-scrollbar px-1 pb-1">
                 <p className="px-3 py-1 text-ui-xs text-zinc-600">Recent</p>

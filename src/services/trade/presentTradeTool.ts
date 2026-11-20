@@ -23,7 +23,7 @@ import type { DeskToolCall, DeskToolResult } from '../analysis/DeskToolsService'
 import type { ProposalGate } from './proposedTrade';
 import { parseTradeProposal, mintPlanId, buildTradePlan, type TradeProposal } from './proposedTrade';
 import { formatPaperFillAssumptions, PAPER_EXECUTION_RECEIPT } from '../tracking/paperExecution';
-import { beginGateScan, cancelGateScan, gateReceiptLine } from './proposalGate';
+import { beginGateScan, cancelGateScan, evaluatePlanLocalSync, gateReceiptLine } from './proposalGate';
 import { drawingsFromLevelTool, type ChartDrawing } from './chartDrawings';
 import { staleLevelsAtArm, type WatchPlan } from './tradePlanLevels';
 
@@ -107,6 +107,19 @@ export const runPresentTrade = (ctx: PresentTradeContext, sink: PresentTradeSink
     const args = call.arguments ?? {};
     const { proposal, error } = parseTradeProposal({ ...args, symbol: args.symbol || ctx.symbol });
     if (error || !proposal) return receipt(call, name, false, `present_trade rejected: ${error ?? 'invalid proposal'}`);
+
+    // Synchronous plan-local shape + min-edge check BEFORE drawing or arming:
+    // an inverted plan is refused immediately (never hits the chart or card),
+    // while R:R and expectancy warnings ride onto the initial receipt.
+    const localCheck = evaluatePlanLocalSync(proposal);
+    if (localCheck.inverted) {
+        return receipt(
+            call,
+            name,
+            false,
+            `present_trade rejected: ${localCheck.refusal ?? 'levels are inverted for the stated direction.'}`,
+        );
+    }
 
     // The DOCK generates the stable plan id first: it keys the level-watch,
     // the receipt's level ids, "Log this trade" onto the journal row, AND the
@@ -196,9 +209,12 @@ export const runPresentTrade = (ctx: PresentTradeContext, sink: PresentTradeSink
     // The receipt never states a probability the scan has not yet bounded.
     // Saying "Recorded as 72%" here and capping it at log time would put two
     // numbers for the same plan in the model's own context.
+    const syncWarnLine = localCheck.warnings.length > 0
+        ? ` Sync plan check warning(s): ${localCheck.warnings.join('; ')}.`
+        : '';
     const gateLine = proposal.gate
         ? gateReceiptLine(proposal.gate)
-        : 'Gate: scanning now — no probability is shown on the card or recorded on the row until the scan answers, and the logged plan is capped by it.';
+        : `Gate: scanning now — no probability is shown on the card or recorded on the row until the scan answers, and the logged plan is capped by it.${syncWarnLine}`;
     const playbookLine = playbookAttributionLine(args.playbook, proposal.playbookId);
     const paperLine = proposal.simulated !== false
         ? ` Paper lane: ${formatPaperFillAssumptions(proposal.fillAssumptions)} (${PAPER_EXECUTION_RECEIPT})`

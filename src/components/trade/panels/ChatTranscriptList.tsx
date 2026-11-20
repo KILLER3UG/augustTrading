@@ -157,6 +157,8 @@ const askWhyPrompt = (p: TradeProposal): string => (
 );
 
 interface ChatTranscriptListProps {
+    /** Desk dock vs centered Chat focus view. */
+    layoutMode?: 'desk' | 'chat';
     /** The merged conversation rows (a bot session is a VIEW of the
      *  canonical conversation — the merge happened in the shell). */
     entries: LiveEntry[];
@@ -284,7 +286,7 @@ interface ChatTranscriptListProps {
 }
 
 const ChatTranscriptList: React.FC<ChatTranscriptListProps> = ({
-    entries, scrollParent, virtuosoRef, followOutput, onAtBottomChange, onTotalHeightChanged,
+    layoutMode = 'desk', entries, scrollParent, virtuosoRef, followOutput, onAtBottomChange, onTotalHeightChanged,
     send, setDraftText, getAnalysisMessage, resolveVerdictByIdentity, symbol, getMark, onChatLevels,
     onToggleWatch, pinnedMessageIds, onLogProposedTrade, sessionId, onRejectProposedTrade, onUndoApproval, trades,
     sessionGuard,
@@ -395,24 +397,25 @@ const ChatTranscriptList: React.FC<ChatTranscriptListProps> = ({
             // mounted, it is what lets a reader (and render-probe) tell "the
             // newest row is on screen" from "some rows are on screen".
             <div
-                className={`chat-fade-in${i < entries.length - 1 ? ' pb-6' : ''}`}
+                className={`chat-fade-in${i < entries.length - 1 ? (layoutMode === 'chat' ? ' pb-8' : ' pb-6') : ''}`}
                 data-entry-id={e.id}
                 data-message-id={analysisId ?? e.id}
                 data-entry-index={i}
                 data-testid={`chat-entry-${e.role}`}
             >
                 {e.role === 'user' ? (
-                    <div className="flex flex-col items-end gap-1.5">
+                    <div className="group/user flex flex-col items-end gap-1.5">
                         {e.image && (
-                            <div className="flex flex-col items-end gap-0.5">
+                            <div className="flex flex-col items-end gap-1">
                                 <AttachmentImage src={e.image} />
-                                {!answerStreaming && <RetryChip onRetry={() => void send('', e.id)} />}
+                                {!answerStreaming && (
+                                    <div className="flex items-center justify-end gap-0.5 opacity-60 transition-opacity group-hover/user:opacity-100 focus-within:opacity-100">
+                                        <RetryChip onRetry={() => void send('', e.id)} />
+                                    </div>
+                                )}
                             </div>
                         )}
                         {!e.image && e.imageOmitted && (
-                            // A restored backup carries no image bytes: the row must
-                            // still say an image was attached — and never via an <img>
-                            // with a missing src, which renders as a broken icon.
                             <div
                                 data-testid="chat-image-omitted"
                                 className="rounded-control border border-hairline bg-zinc-900/60 px-2.5 py-1.5 text-ui-dense text-zinc-500"
@@ -421,54 +424,51 @@ const ChatTranscriptList: React.FC<ChatTranscriptListProps> = ({
                             </div>
                         )}
                         {e.text && e.text !== '(chart screenshot)' && (
-                            <div className="flex max-w-[80%] items-start gap-1.5">
-                                {!answerStreaming && <CopyChip text={e.text} className="mt-2.5" />}
-                                {!answerStreaming && <RetryChip onRetry={() => void send('', e.id)} className="mt-2.5" />}
-                                <p className="min-w-0 rounded-bubble bg-zinc-800 px-4 py-2.5 text-ui-base leading-relaxed text-zinc-100">{e.text}</p>
+                            <div className="flex max-w-[78%] flex-col items-end">
+                                <p className="min-w-0 rounded-[20px] border border-white/[0.05] bg-zinc-800/90 px-4 py-2.5 text-ui-base leading-[1.55] text-zinc-100">
+                                    {e.text}
+                                </p>
+                                {!answerStreaming && (
+                                    <div className="mt-1 flex items-center justify-end gap-0.5 opacity-55 transition-opacity group-hover/user:opacity-100 focus-within:opacity-100">
+                                        <CopyChip text={e.text} />
+                                        <RetryChip onRetry={() => void send('', e.id)} />
+                                    </div>
+                                )}
                             </div>
                         )}
                     </div>
                 ) : e.notice ? (
-                    /* A harness event is the APP speaking — a receipt or a
-                        warning, never a model answer. One quiet monochrome
-                        line: the amber uppercase block read as an alarm and
-                        leaked the machine voice (the approval receipt) into
-                        the trader's transcript. */
                     <p className="flex items-center gap-1.5 text-ui-xs text-zinc-500" data-testid="chat-notice">
                         <Zap className="h-3 w-3 shrink-0 text-zinc-600" aria-hidden="true" />
                         <span>{harnessNoticeDisplay(e.tools[0] ?? 'Harness event') || 'Harness event'}</span>
                     </p>
                 ) : e.error && !e.text ? (
-                    /* A turn that never produced a line is a failure, whole
-                       and alone: both homes render the same row, so the dock
-                       cannot show a blank bubble where Chat shows the failure.
-                       A turn that produced prose AND then failed is NOT this
-                       row — it falls through to the answer below, keeps what
-                       arrived, and carries the reason inside the "Run stopped"
-                       card. Collapsing it here would throw away the half of
-                       the analysis the trader still has to read. */
                     <ChatFailureRow error={e.error} />
                 ) : (
-                    <div className="flex items-start gap-3">
-                        <span
-                            className="mt-0.5 shrink-0"
-                            title={seatLabel}
-                            aria-label={seatLabel}
-                            data-testid="row-avatar"
-                        >
-                            <BotFace
-                                /* Neutral face (owner 1.4.2): the desk's avatar
-                                    was a bright blue circle beside every answer
-                                    — a third accent in chrome that must stay
-                                    monochrome. Green/red belong to price and
-                                    direction; the desk is zinc. */
-                                face={deskSpeaker ? { shape: 'circle', hue: '#71717a' } : 'auto'}
-                                name={e.speaker ?? 'desk'}
-                                size={28}
-                                working={!!e.streaming}
-                            />
-                        </span>
-                        <div className="min-w-0 flex-1 space-y-2">
+                    <div className="group/ai min-w-0 space-y-2.5">
+                        {(!deskSpeaker || e.streaming) && (
+                            <div className="flex items-center gap-2">
+                                <span
+                                    className="shrink-0"
+                                    title={seatLabel}
+                                    aria-label={seatLabel}
+                                    data-testid="row-avatar"
+                                >
+                                    <BotFace
+                                        face={deskSpeaker ? { shape: 'circle', hue: '#71717a' } : 'auto'}
+                                        name={e.speaker ?? 'desk'}
+                                        size={18}
+                                        working={!!e.streaming}
+                                    />
+                                </span>
+                                {!deskSpeaker && (
+                                    <span className="truncate text-ui-xs font-medium text-zinc-400">
+                                        {seatLabel}
+                                    </span>
+                                )}
+                            </div>
+                        )}
+                        <div className="min-w-0 space-y-2.5">
                         {/* Signal row: the ledger call, when this turn
                             emitted one (signalIdFromActions reads the id
                             from the emit_signal action). Never fabricated. */}
@@ -520,28 +520,51 @@ const ChatTranscriptList: React.FC<ChatTranscriptListProps> = ({
                         {/* Desk scorecard: the ledger's hit-rate vs base-rate. */}
                         {!e.streaming && <DeskScorecard />}
                         {shownText && !e.streaming && (
-                            /* Always visible, matching ChatTranscriptRow's
-                                action row — the dock's chips used to be
-                                hover-gated on a `group/msg` no ancestor
-                                carried, so a mouse user could never see
-                                them. */
-                            <div className="flex items-center gap-2">
-                                {/* The tier this answer was produced under —
-                                    the same muted chip the Agents surface
-                                    shows, so the two homes say the same
-                                    thing about the same turn. */}
-                                {e.effort && <ThinkingTierChip effort={e.effort} />}
+                            <div className="mt-2 flex flex-wrap items-center gap-1.5 pt-0.5">
+                                {deskSpeaker && (
+                                    <span
+                                        className="mr-0.5 inline-flex shrink-0 items-center opacity-70"
+                                        title={seatLabel}
+                                        aria-label={seatLabel}
+                                        data-testid="row-avatar"
+                                    >
+                                        <BotFace
+                                            face={{ shape: 'circle', hue: '#71717a' }}
+                                            name={e.speaker ?? 'desk'}
+                                            size={16}
+                                            working={false}
+                                        />
+                                    </span>
+                                )}
                                 <CopyChip text={shownText} />
                                 {onToggleWatch && analysisId && pinnedMessageIds && (
                                     <PinChip pinned={pinnedMessageIds.has(analysisId)}
                                         onToggle={() => onToggleWatch(analysisId)} />
                                 )}
+                                {e.effort && <ThinkingTierChip effort={e.effort} />}
+                                {(() => {
+                                    const prov = provLine(e);
+                                    return prov ? (
+                                        <span className="ml-1 font-mono text-ui-2xs tabular-nums text-zinc-600" data-testid="prov-line">{prov}</span>
+                                    ) : null;
+                                })()}
                             </div>
                         )}
-                        {/* The one "what the AI remembered" row. Once the
-                            answer has settled — an open stream is still
-                            pulling injections in, so its window has no
-                            upper bound yet. */}
+                        {!shownText && !e.streaming && deskSpeaker && (
+                            <span
+                                className="inline-flex shrink-0 items-center opacity-70"
+                                title={seatLabel}
+                                aria-label={seatLabel}
+                                data-testid="row-avatar"
+                            >
+                                <BotFace
+                                    face={{ shape: 'circle', hue: '#71717a' }}
+                                    name={e.speaker ?? 'desk'}
+                                    size={16}
+                                    working={false}
+                                />
+                            </span>
+                        )}
                         {shownText && !e.streaming && !e.notice && (
                             <MemoryProvenanceStrip
                                 startedAt={e.at}
@@ -550,9 +573,6 @@ const ChatTranscriptList: React.FC<ChatTranscriptListProps> = ({
                             />
                         )}
                         {verdict?.analysis && (projected ? (
-                            // The card already folds VerdictAudit into its
-                            // own disclosure, so a projected row must not
-                            // draw the explanation a second time below it.
                             <InlineVerdict analysis={verdict.analysis} />
                         ) : verdictNeedsAudit(verdict.analysis) ? (
                             <Disclosure
@@ -569,15 +589,6 @@ const ChatTranscriptList: React.FC<ChatTranscriptListProps> = ({
                                 />
                             </Disclosure>
                         ) : null)}
-                        {/* Prov line: code-calculated only — short session
-                            id · model short · thinking tier · notebook
-                            count · relative time. Never "Mock". */}
-                        {shownText && !e.streaming && (() => {
-                            const prov = provLine(e);
-                            return prov ? (
-                                <p className="font-mono text-ui-2xs tabular-nums text-zinc-600" data-testid="prov-line">{prov}</p>
-                            ) : null;
-                        })()}
                         {aiLevels && aiLevels.levels.length > 0 && !e.streaming && (
                             <KeyLevelsCard
                                 messageId={e.id}

@@ -39,7 +39,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type { FollowOutput, VirtuosoHandle } from 'react-virtuoso';
-import { Activity, Compass, Crosshair, Eye, History, MoreHorizontal, PanelRightOpen, Plus, X } from '../shared/Icons';
+import { Activity, ChevronDown, Compass, Crosshair, Eye, History, MoreHorizontal, PanelRightOpen, Plus, X } from '../shared/Icons';
 import JumpToLatestFab from '../shared/JumpToLatestFab';
 import { ProviderConfig } from '../../types/provider';
 import type { LoggedTrade } from '../../types';
@@ -542,69 +542,6 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
         }
     };
 
-    /** The system prompt every seat of this session answers under. The
-     *  collaboration-memory index is read FRESH per prompt (like the skills
-     *  index): a `remember` call lands in the NEXT turn's prompt immediately,
-     *  and the model always sees what it already knows before writing — the
-     *  update-don't-duplicate discipline of this environment's memory.
-     *
-     *  `bot` is resolved through `resolveAgentContext`, the same loader the
-     *  desk answers with, so persona and notes cannot be assembled one way at
-     *  the chart and another way at the desk — which is how one named agent
-     *  ends up knowing less in one place than the other. `roleNote` is about
-     *  the ROOM (you are one of N seats), so it stays the caller's. */
-    const systemPromptFor = useCallback((bot?: AgentBot, roleNote?: string): string => {
-        const skillsBlock = skillsIndexForPrompt(provider);
-        const strategiesBlock = strategiesForPrompt();
-        // ONE setting, one answer: the Agents surface gates this block on the same
-        // flag AND passes the same scaled budget (chatSurfaceTurn.ts:155-162).
-        // The dock used to inject the profile index with memory switched OFF and
-        // with the default row count on an 8k model, so the two homes disagreed
-        // about both the toggle and the size (the 2026-10-27 audit M-3).
-        const memoryBlock = memoryEnabled !== false
-            ? buildProfileMemoryIndex(undefined, indexBudgetFor(provider ? resolveContextWindow(provider).tokens : DEFAULT_CONTEXT_WINDOW_TOKENS).memory)
-            : '';
-        let agent: ResolvedAgentContext | null = null;
-        if (bot) {
-            try {
-                // One agent answering, so it gets the whole allowance — the
-                // debate divides the same total across its roster.
-                const knownCoins = [...new Set(
-                    (trades ?? [])
-                        .map(t => t?.analysis?.coinName)
-                        .filter((a): a is string => typeof a === 'string' && a.length >= 2),
-                )];
-                agent = resolveAgentContext(bot, { coin: symbol, knownCoins }, SINGLE_AGENT_MEMORY_BUDGET);
-            } catch {
-                agent = null;
-            }
-        }
-        const persona = [agent?.persona, roleNote].filter(Boolean).join('\n\n');
-        // Same heading the desk uses (`buildBotSystemPrompt`) — one agent
-        // should meet its own notes under one name wherever it is asked.
-        const base = `${TRADE_CHAT_SYSTEM_PROMPT}${skillsBlock ? `\n\n${skillsBlock}` : ''}${strategiesBlock ? `\n\n${strategiesBlock}` : ''}${memoryBlock ? `\n\n${memoryBlock}` : ''}${agent?.notes ? `\n\n## Your private notes\n${agent.notes}` : ''}`;
-        // This prompt IS what the seat answers under, so record what it
-        // carried: the provenance strip's "what did the AI remember" row used
-        // to render nothing on ordinary dock sends (the log only heard the
-        // bot learner). Fire-and-forget; a failed record never breaks the send.
-        recordSeatInjections({
-            coin: symbol,
-            skills: skillsBlock ? usableSkillRows(skillIndexRows()).slice(0, 8).map(r => r.slug) : [],
-            hasRules: false,
-            hasMemoryIndex: !!memoryBlock,
-            hasStrategies: !!strategiesBlock,
-        });
-        return persona ? `${base}\n\n## Your role\n${persona}` : base;
-    }, [symbol, trades, memoryEnabled, strategiesEnabled]);
-
-    /** What the model reads as "the drawings on the chart": the user's own
-     *  shapes PLUS the model's marks from earlier turns — so it sees its own
-     *  Entry/SL/TP lines and builds on them instead of redrawing. */
-    const allDrawings = useMemo(
-        () => [...(chartDrawings ?? []), ...(modelDrawings ?? [])],
-        [chartDrawings, modelDrawings],
-    );
-
     // The solo chat model: a `providerId::modelId` selection (the composer's
     // picker is provider-qualified so duplicate model names across providers
     // can't silently route to the wrong one). Legacy bare model ids resolve
@@ -618,6 +555,118 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
     // pick is not their problem — but for the solo path the fallback must be
     // VISIBLE, never silent.
     const modelIssue = isPanel || activeSession?.botId ? null : fallback.issue;
+
+    /** Frozen session system-prompt cache — keeps the system prompt, Trader
+     *  Profile, and Skill Index byte-identical across turns in a session so
+     *  provider prefix prompt caching stays intact. Any mid-session skill or
+     *  memory additions ride inside the latest user turn wrapper via
+     *  `getIndexDeltaNote`. */
+    const sessionSystemPromptCacheRef = useRef<Map<string, {
+        prompt: string;
+        skillSlugs: string[];
+        memorySig: string;
+        strategiesSig: string;
+    }>>(new Map());
+
+    const activePromptCacheKeyRef = useRef<string>('');
+
+    /** The system prompt every seat of this session answers under. Frozen per
+     *  (session, seat, provider/model, memory/strategy toggle) so the system
+     *  prefix never invalidates KV cache mid-session; mid-session skill/memory
+     *  edits are surfaced via `getIndexDeltaNote` in the latest user turn. */
+    const systemPromptFor = useCallback((bot?: AgentBot, roleNote?: string): string => {
+        const cacheKey = [
+            activeId,
+            bot?.id ?? 'solo',
+            bot ? symbol : '',
+            provider?.id ?? '',
+            provider?.selectedModel ?? '',
+            memoryEnabled !== false ? 'mem1' : 'mem0',
+            strategiesEnabled !== false ? 'strat1' : 'strat0',
+            roleNote ?? '',
+        ].join('|');
+        activePromptCacheKeyRef.current = cacheKey;
+        const cached = sessionSystemPromptCacheRef.current.get(cacheKey);
+        if (cached) return cached.prompt;
+
+        const skillsBlock = skillsIndexForPrompt(provider);
+        const strategiesBlock = strategiesForPrompt();
+        const memoryBlock = memoryEnabled !== false
+            ? buildProfileMemoryIndex(undefined, indexBudgetFor(provider ? resolveContextWindow(provider).tokens : DEFAULT_CONTEXT_WINDOW_TOKENS).memory)
+            : '';
+        let agent: ResolvedAgentContext | null = null;
+        if (bot) {
+            try {
+                const knownCoins = [...new Set(
+                    (trades ?? [])
+                        .map(t => t?.analysis?.coinName)
+                        .filter((a): a is string => typeof a === 'string' && a.length >= 2),
+                )];
+                agent = resolveAgentContext(bot, { coin: symbol, knownCoins }, SINGLE_AGENT_MEMORY_BUDGET);
+            } catch {
+                agent = null;
+            }
+        }
+        const persona = [agent?.persona, roleNote].filter(Boolean).join('\n\n');
+        const base = `${TRADE_CHAT_SYSTEM_PROMPT}${skillsBlock ? `\n\n${skillsBlock}` : ''}${strategiesBlock ? `\n\n${strategiesBlock}` : ''}${memoryBlock ? `\n\n${memoryBlock}` : ''}${agent?.notes ? `\n\n## Your private notes\n${agent.notes}` : ''}`;
+        const skillSlugs = skillsBlock ? usableSkillRows(skillIndexRows()).map(r => r.slug) : [];
+        recordSeatInjections({
+            coin: symbol,
+            skills: skillSlugs.slice(0, 8),
+            hasRules: false,
+            hasMemoryIndex: !!memoryBlock,
+            hasStrategies: !!strategiesBlock,
+        });
+        const prompt = persona ? `${base}\n\n## Your role\n${persona}` : base;
+        if (sessionSystemPromptCacheRef.current.size > 32) {
+            const oldest = sessionSystemPromptCacheRef.current.keys().next();
+            if (!oldest.done) sessionSystemPromptCacheRef.current.delete(oldest.value);
+        }
+        sessionSystemPromptCacheRef.current.set(cacheKey, {
+            prompt,
+            skillSlugs,
+            memorySig: memoryBlock,
+            strategiesSig: strategiesBlock,
+        });
+        return prompt;
+    }, [activeId, symbol, provider, trades, memoryEnabled, strategiesEnabled]);
+
+    /** Compact delta note for skills/memory added or updated AFTER the session
+     *  system prompt was frozen — injected into the latest user turn wrapper. */
+    const getIndexDeltaNote = useCallback((): string => {
+        const key = activePromptCacheKeyRef.current;
+        const cached = key ? sessionSystemPromptCacheRef.current.get(key) : undefined;
+        if (!cached) return '';
+        const notes: string[] = [];
+        try {
+            const currentSlugs = usableSkillRows(skillIndexRows()).map(r => r.slug);
+            const addedSkills = currentSlugs.filter(s => !cached.skillSlugs.includes(s));
+            if (addedSkills.length > 0) {
+                notes.push(`New skills since session start: ${addedSkills.slice(0, 8).join(', ')} (call skill_view to read).`);
+            }
+            if (memoryEnabled !== false) {
+                const currentMem = buildProfileMemoryIndex(undefined, indexBudgetFor(provider ? resolveContextWindow(provider).tokens : DEFAULT_CONTEXT_WINDOW_TOKENS).memory);
+                if (currentMem !== cached.memorySig) {
+                    notes.push('User memory index changed since session start — call memory_read if relevant.');
+                }
+            }
+            const currentStrat = strategiesForPrompt();
+            if (currentStrat !== cached.strategiesSig) {
+                notes.push('Active strategies changed since session start.');
+            }
+        } catch {
+            // Best effort; never break turn assembly
+        }
+        return notes.join(' ');
+    }, [memoryEnabled, provider, strategiesEnabled]);
+
+    /** What the model reads as "the drawings on the chart": the user's own
+     *  shapes PLUS the model's marks from earlier turns — so it sees its own
+     *  Entry/SL/TP lines and builds on them instead of redrawing. */
+    const allDrawings = useMemo(
+        () => [...(chartDrawings ?? []), ...(modelDrawings ?? [])],
+        [chartDrawings, modelDrawings],
+    );
 
     /** Resolve a `${providerId}:${modelId}` seat to a runnable config. */
     const configForSeat = useCallback((providerId: string, modelId: string): ProviderConfig | null => {
@@ -646,6 +695,7 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
         provider,
         configForSeat,
         systemPromptFor,
+        getIndexDeltaNote,
         bots,
         activeId,
         draft,
@@ -666,7 +716,7 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
         onSyncConversation,
         onRunAnalysis,
         onAnalysisError,
-    }), [symbol, interval, memoryEnabled, effort, selectedChatModel, chartLevels, allDrawings, trades, getChartSnapshot, provider, configForSeat, systemPromptFor, bots, activeId, draft, sessions, botThreadRows, conversationRows, attachments, attachedImages, clearAttachments, setDraft, setContextAt, addModelDrawings, clearModelDrawings, clearAllDrawings, onPlanPresented, onBotTurnCommit, onSoloTurnCommit, onSyncConversation, onRunAnalysis, onAnalysisError]);
+    }), [symbol, interval, memoryEnabled, effort, selectedChatModel, chartLevels, allDrawings, trades, getChartSnapshot, provider, configForSeat, systemPromptFor, getIndexDeltaNote, bots, activeId, draft, sessions, botThreadRows, conversationRows, attachments, attachedImages, clearAttachments, setDraft, setContextAt, addModelDrawings, clearModelDrawings, clearAllDrawings, onPlanPresented, onBotTurnCommit, onSoloTurnCommit, onSyncConversation, onRunAnalysis, onAnalysisError]);
     const { send, runFullAnalysis, runHarnessTurn } = runner;
 
     // ── Per-session composer memory ─────────────────────────────────────────
@@ -1194,43 +1244,46 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
     const historyHidden = historyFiltered.length - historyRows.length;
 
 
+    const isChatFocus = layoutMode === 'chat';
+
     return (
-        <div className="relative flex h-full min-h-0 flex-col border-l border-hairline bg-transparent" data-testid="trade-chat-panel">
-            {/* Header — the thread name left, + / history / ⋯ / × right, and
-                NOTHING else (owner 1.3.1): the "● Chart AI" prefix answered
-                "which app is this", a question the whole window already
-                answers, and the answered-age meta duplicated the recency the
-                sidebar rows carry. The market read lives in the bias row
-                under this header; conversations stay in the palette. */}
-            <div className="@container flex shrink-0 items-center gap-2.5 border-b border-hairline bg-zinc-900/30 px-5 py-3">
-                {/* The dock is narrow and user-dragged, so the title is the
-                    flexible element — it truncates. */}
-                <span className="min-w-0 flex-1 truncate text-ui-base font-medium tracking-[-0.01em] text-zinc-100" title={activeSession.title}>{activeSession.title}</span>
-                <div className="ml-auto flex shrink-0 items-center gap-1">
-                    {/* There is no "Open in Agents" row here (the render probe
-                        pins its absence): the Agents route IS this workspace —
-                        the [Desk | Chat] pill in the sidebar is the hop, and a
-                        second door to the same page was the lie the merge
-                        removed. The ⋯ menu carries re-run / panel models /
-                        customization, not navigation. */}
-                    {/* The return hop used to be this panel's own ChatModePill.
-                        The title-bar switch carries it now — the Chat entry is
-                        the same route, from the same place, for every surface. */}
-                    {/* Segmented chat actions: new + history */}
-                    <div className="flex items-center rounded-control border border-hairline bg-white/[0.02] p-0.5">
-                        <button type="button" onClick={() => addSession('solo')} aria-label="New chat" title="New chat"
-                            className="hit-target rounded-control p-1 text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-zinc-100">
-                            <Plus className="h-3.5 w-3.5" aria-hidden="true" />
-                        </button>
-                        <button type="button" onClick={() => { setHistoryOpen(v => !v); setHistoryQuery(''); setHistorySel(0); setHistoryShowAll(false); }}
-                            aria-label="Past conversations" aria-expanded={historyOpen} title="Past conversations"
-                            className={`hit-target rounded-control p-1 transition-colors hover:bg-white/[0.06] hover:text-zinc-100 ${historyOpen ? 'bg-white/[0.08] text-zinc-100' : 'text-zinc-400'}`}>
-                            <History className="h-3.5 w-3.5" aria-hidden="true" />
-                        </button>
-                    </div>
+        <div
+            className={`relative flex h-full min-h-0 flex-col bg-transparent ${isChatFocus ? '' : 'border-l border-hairline lg:border-l-0'}`}
+            data-testid="trade-chat-panel"
+        >
+            {/* Header — quiet single-row bar. In Chat focus mode it runs flush
+                across the workspace with an interactive thread title switcher;
+                in Desk mode it stays compact above the market context row. */}
+            <div className={`@container flex shrink-0 items-center gap-2.5 ${
+                isChatFocus
+                    ? 'border-b border-white/[0.05] bg-transparent px-6 py-3'
+                    : 'border-b border-hairline bg-zinc-900/20 px-4 py-2.5'
+            }`}>
+                <button
+                    type="button"
+                    onClick={() => { setHistoryOpen(v => !v); setHistoryQuery(''); setHistorySel(0); setHistoryShowAll(false); }}
+                    aria-expanded={historyOpen}
+                    title={`${activeSession.title} — switch conversation`}
+                    className="group flex min-w-0 max-w-full items-center gap-1.5 rounded-control px-1.5 py-1 -ml-1.5 text-left transition-colors hover:bg-white/[0.05]"
+                >
+                    <span className="min-w-0 truncate text-ui-sm font-medium tracking-[-0.01em] text-zinc-100">
+                        {activeSession.title}
+                    </span>
+                    <ChevronDown className="h-3.5 w-3.5 shrink-0 text-zinc-500 transition-colors group-hover:text-zinc-300" aria-hidden="true" />
+                </button>
+                <div className="ml-auto flex shrink-0 items-center gap-0.5">
+                    <button type="button" onClick={() => addSession('solo')} aria-label="New chat" title="New chat"
+                        className="hit-target flex items-center justify-center rounded-control p-1.5 text-zinc-500 transition-colors hover:bg-white/[0.06] hover:text-zinc-100">
+                        <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+                    </button>
+                    <button type="button" onClick={() => { setHistoryOpen(v => !v); setHistoryQuery(''); setHistorySel(0); setHistoryShowAll(false); }}
+                        aria-label="Past conversations" aria-expanded={historyOpen} title="Past conversations"
+                        className={`hit-target flex items-center justify-center rounded-control p-1.5 transition-colors hover:bg-white/[0.06] hover:text-zinc-100 ${historyOpen ? 'bg-white/[0.07] text-zinc-100' : 'text-zinc-500'}`}>
+                        <History className="h-3.5 w-3.5" aria-hidden="true" />
+                    </button>
                     <div className="relative">
                         <button type="button" onClick={() => setShowNewMenu(v => !v)} aria-label="Customization" aria-expanded={showNewMenu} title="Customization"
-                            className={`rounded-control p-1.5 transition-colors hover:bg-white/[0.06] hover:text-zinc-100 ${showNewMenu ? 'bg-white/[0.06] text-zinc-100' : 'text-zinc-400'}`}>
+                            className={`hit-target flex items-center justify-center rounded-control p-1.5 transition-colors hover:bg-white/[0.06] hover:text-zinc-100 ${showNewMenu ? 'bg-white/[0.07] text-zinc-100' : 'text-zinc-500'}`}>
                             <MoreHorizontal className="h-3.5 w-3.5" aria-hidden="true" />
                         </button>
                         {showNewMenu && (
@@ -1392,7 +1445,12 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
                 surface's own tab now. */}
             {activeSession.kind === 'group' && (
                 <div className="min-h-0 flex-1 overflow-y-auto custom-scrollbar" data-testid="chat-group-surface">
-                    {renderGroupSurface?.(activeSession.groupId ?? '')}
+                    <div
+                        data-testid={isChatFocus ? 'chat-reading-column' : undefined}
+                        className={isChatFocus ? 'mx-auto flex min-h-full w-full max-w-[740px] flex-col' : 'flex min-h-full flex-col'}
+                    >
+                        {renderGroupSurface?.(activeSession.groupId ?? '')}
+                    </div>
                 </div>
             )}
             {activeSession.kind !== 'group' && (
@@ -1420,46 +1478,41 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
             {/* The transcript's own box, so the jump control floats over the
                 transcript's bottom-right corner and not over the composer. */}
             <div className="relative min-h-0 flex-1">
-            <div ref={setScrollerRef} className="h-full overflow-y-auto overscroll-contain custom-scrollbar px-5 py-6"
-                // The dock's transcript root is the one element a screen reader
-                // needs to name for an answer to be heard at all: rows append and
-                // old ones scroll away, which is exactly `role="log"`. Held busy
-                // while any row streams so the token-by-token rewrite is not
-                // announced dozens of times; it flips off when the answer settles
-                // and the finished reply is read once. (O-65)
-                //
-                // This stays the scroller under virtualization — Virtuoso renders
-                // INTO it (`customScrollParent`), so the log semantics, the custom
-                // scrollbar and the FAB's anchor are unchanged. The row gap that
-                // `space-y-6` used to give these children now rides each row's own
-                // padding, because the rows are no longer siblings of this box.
+            <div ref={setScrollerRef} className="h-full overflow-y-auto overscroll-contain custom-scrollbar"
                 role="log" aria-live="polite" aria-busy={entries.some(e => e.streaming)}
                 aria-label="Chart AI conversation">
+                <div
+                    data-testid={isChatFocus ? 'chat-reading-column' : undefined}
+                    className={isChatFocus
+                        ? 'mx-auto flex min-h-full w-full max-w-[740px] flex-col px-6 py-7'
+                        : 'flex min-h-full w-full flex-col px-4 py-5'}
+                >
                 {entries.length === 0 && !panelPickerFor && (
-                    <div className={`flex ${layoutMode === 'chat' ? 'flex-1' : 'h-full'} flex-col items-center justify-center gap-5 px-4 text-center`}>
-                        <WorkspaceGreeting compact={layoutMode !== 'chat'} />
-                        <p className="max-w-[16rem] text-ui-caption leading-6 text-zinc-500">
-                            It can see this chart, the book and your drawings.
-                        </p>
-                        <div className="flex w-full max-w-[17rem] flex-col gap-1.5" data-testid="dock-quick-prompts">
+                    <div className={`flex flex-1 flex-col items-center justify-center text-center ${isChatFocus ? 'gap-7 py-10' : 'gap-5 py-6'}`}>
+                        <WorkspaceGreeting compact={!isChatFocus} />
+                        <div
+                            className={isChatFocus
+                                ? 'grid w-full max-w-[32rem] grid-cols-1 gap-2 sm:grid-cols-2'
+                                : 'flex w-full max-w-[17rem] flex-col gap-1.5'}
+                            data-testid="dock-quick-prompts"
+                        >
                             {QUICK_PROMPTS.map(({ text, Icon }) => (
                                 <button key={text} type="button" disabled={!ready} onClick={() => void send(text)}
-                                    className="group inline-flex w-full items-center gap-2.5 rounded-control px-3 py-2 text-left text-ui-dense text-zinc-400 transition-colors hover:bg-white/[0.04] hover:text-zinc-100 disabled:opacity-40">
-                                    <Icon className="h-3.5 w-3.5 shrink-0 text-zinc-600 transition-colors group-hover:text-zinc-200" aria-hidden="true" />
-                                    {text}
+                                    className={isChatFocus
+                                        ? 'group flex items-center gap-2.5 rounded-card border border-hairline bg-zinc-900 px-3.5 py-2.5 text-left text-ui-caption text-zinc-300 transition-colors hover:border-line hover:bg-zinc-800 hover:text-zinc-100 disabled:border-hairline disabled:bg-zinc-900 disabled:text-zinc-500'
+                                        : 'group inline-flex w-full items-center gap-2.5 rounded-control px-3 py-2 text-left text-ui-dense text-zinc-400 transition-colors hover:bg-white/[0.04] hover:text-zinc-100 disabled:text-zinc-600 disabled:hover:bg-transparent'}
+                                >
+                                    <Icon className="h-3.5 w-3.5 shrink-0 text-zinc-500 transition-colors group-hover:text-zinc-200 group-disabled:text-zinc-600" aria-hidden="true" />
+                                    <span className="min-w-0 truncate">{text}</span>
                                 </button>
                             ))}
                         </div>
                     </div>
                 )}
-                {/* Mounted only once the callback ref has handed over the real
-                    node: `customScrollParent` is a prop, and a null one would
-                    leave Virtuoso scrolling a box it made up. Keyed by session
-                    so a switch opens a fresh window on the newest row rather
-                    than reusing the last thread's measured heights. */}
                 {scrollEl && scrollerVisible && paneVisible && entries.length > 0 && (
                     <ChatTranscriptList
                         key={activeId}
+                        layoutMode={layoutMode}
                         entries={entries}
                         scrollParent={scrollEl}
                         virtuosoRef={virtuosoRef}
@@ -1503,6 +1556,7 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
                         onRevertRuleProposal={onRevertRuleProposal}
                     />
                 )}
+                </div>
             </div>
             {/* The jump control: it appears when the trader has scrolled away
                 from the newest row, and while a turn is running it shows the
@@ -1519,6 +1573,7 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
                 rounded-bubble card holding the input and its toolbar, then a plain
                 sentence-case disclaimer. Generous padding, no hard divider. */}
             <ChatComposer
+                layoutMode={layoutMode}
                 symbol={symbol}
                 interval={interval}
                 isPanel={isPanel}

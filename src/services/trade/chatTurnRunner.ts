@@ -37,11 +37,13 @@ import { DESK_TOOL_NAMES } from '../../utils/toolKinds';
 import { settleDockEntry } from '../../utils/rowSettlement';
 import { CHART_ACTION_TOOL_DEFS } from '../analysis/deskToolShared';
 import { focusedGoal } from '../goals/GoalService';
-import { buildTradeChatContext, describeChartSnapshotForModel } from './tradeChatContext';
+import { buildTier0UserTurnContext, buildTradeChatContext, describeChartSnapshotForModel } from './tradeChatContext';
 import {
     describeDrawingsForModel, drawingFromChartTool, drawingsFromDetectedPattern, drawingsFromLevelTool, type ChartDrawing,
     MODEL_COLOR_NAMES, createDrawingId,
 } from './chartDrawings';
+import { allocateDrawingShortId, computeAtr14, computeChartRevision, evaluateChartDrawings } from './chartGeometry';
+import { DEFAULT_MAX_HISTORY_IMAGES, pruneHistoryImages } from '../providers/contextCompact';
 // Type-only: erased at build, so the market-tool module stays lazy even
 // though the drawer names its anchor unions in two casts.
 import type { ProfileAnchor, VwapAnchor } from '../analysis/marketTools';
@@ -219,6 +221,8 @@ export interface ChatTurnRunnerDeps {
     configForSeat: (providerId: string, modelId: string) => ProviderConfig | null;
     /** The system prompt every seat of this session answers under. */
     systemPromptFor: (bot?: AgentBot, roleNote?: string) => string;
+    /** Optional mid-session delta note for skills/memory added after the system prompt was frozen. */
+    getIndexDeltaNote?: () => string;
     /** Roster bots (solo persona + panel agent seats). */
     bots: AgentBot[];
     /** The ACTIVE session id (runFullAnalysis reads it from the render —
@@ -708,10 +712,15 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
             return ` ${describeLevelAccuracyForModel(scores)}`;
         };
         if (name === 'mark_trade_levels') {
-            const { drawings, error } = drawingsFromLevelTool(args, { drawnPrice });
+            const { drawings, error } = drawingsFromLevelTool(args, {
+                drawnPrice,
+                symbol: turn.symbol,
+                interval: turn.interval,
+                existing: allDrawings,
+            });
             if (error) return receipt(false, `mark_trade_levels rejected: ${error}`);
             addModelDrawings(drawings, turn);
-            const listed = drawings.map(d => `${d.label} ${d.points[0].p}`).join(', ');
+            const listed = drawings.map(d => `${d.shortId ? `${d.shortId} ` : ''}${d.label} ${d.points[0].p}`).join(', ');
             return receipt(true, `Marked on the chart: ${listed}.${visibility(drawings)}${canvasNote}`);
         }
         // draw_detected — the model NAMES the structure, the detector's own
@@ -742,7 +751,12 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
                 const names = [...new Set(available.map(({ p }) => p.name))].join(', ');
                 return receipt(false, `draw_detected: no structure named "${args.pattern}". The detector currently sees: ${names}.`);
             }
-            const { drawings, error } = drawingsFromDetectedPattern(hit.p, { drawnPrice });
+            const { drawings, error } = drawingsFromDetectedPattern(hit.p, {
+                drawnPrice,
+                symbol: turn.symbol,
+                interval: hit.tf || turn.interval,
+                existing: allDrawings,
+            });
             if (error) return receipt(false, `draw_detected rejected: ${error}`);
             addModelDrawings(drawings, turn);
             const confirmed = hit.p.touches >= 3;
@@ -818,25 +832,44 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
                 ?? (snap && snap.candles.length > 0 ? snap.candles[0].time : nowSec - 3600);
             const t1 = snap?.visibleRange?.timeHigh
                 ?? (snap && snap.candles.length > 0 ? snap.candles[snap.candles.length - 1].time : nowSec);
-            const mk = (price: number, label: string, color: string): ChartDrawing => ({
-                id: createDrawingId(), kind: 'hline', points: [{ t: nowSec, p: price }], color, createdAt: Date.now(), label, drawnPrice: drawnPrice2,
-            });
-            const mkZone = (label: string, top: number, bottom: number, color: string): ChartDrawing => ({
-                id: createDrawingId(), kind: 'rect', points: [{ t: t0, p: top }, { t: t1, p: bottom }], color, createdAt: Date.now(), label, drawnPrice: drawnPrice2,
-            });
+            const seenToolShapes: Array<Pick<ChartDrawing, 'shortId'>> = [...allDrawings];
+            const mk = (price: number, label: string, color: string): ChartDrawing => {
+                const shortId = allocateDrawingShortId(turn.symbol, seenToolShapes);
+                seenToolShapes.push({ shortId });
+                return {
+                    id: createDrawingId(), shortId, origin: 'agent', createdOnTf: turn.interval, version: 1,
+                    kind: 'hline', points: [{ t: nowSec, p: price }], color, createdAt: Date.now(), label, drawnPrice: drawnPrice2,
+                };
+            };
+            const mkZone = (label: string, top: number, bottom: number, color: string): ChartDrawing => {
+                const shortId = allocateDrawingShortId(turn.symbol, seenToolShapes);
+                seenToolShapes.push({ shortId });
+                return {
+                    id: createDrawingId(), shortId, origin: 'agent', createdOnTf: turn.interval, version: 1,
+                    kind: 'rect', points: [{ t: t0, p: top }, { t: t1, p: bottom }], color, createdAt: Date.now(), label, drawnPrice: drawnPrice2,
+                };
+            };
             const drawings2: ChartDrawing[] = [
                 ...set.hlines.map(h => mk(h.price, h.label, MODEL_COLOR_NAMES[h.color])),
                 ...set.zones.map(z => mkZone(z.label, z.top, z.bottom, MODEL_COLOR_NAMES[z.color])),
             ].slice(0, 20); // the model-drawing cap is 40 per symbol; one call stays half of it
             addModelDrawings(drawings2, turn);
-            const listed = drawings2.map(d => `${d.label}${d.kind === 'rect' ? ' (zone)' : ''} @ ${d.points[0].p}`).join(', ');
+            const listed = drawings2.map(d => `${d.shortId ? `${d.shortId} ` : ''}${d.label}${d.kind === 'rect' ? ' (zone)' : ''} @ ${d.points[0].p}`).join(', ');
             return receipt(true, `Drew ${wanted}'s computed levels at the tool's own prices: ${listed}.${visibility(drawings2)}${canvasNote}`);
         }
         // draw_on_chart — resolve bars-ago anchors against the newest candle.
         const lastBarTime = snap && snap.candles.length > 0
             ? snap.candles[snap.candles.length - 1].time
             : Math.floor(Date.now() / 1000);
-        const { drawings, error, note } = drawingFromChartTool(args, { lastBarTime, barSeconds: intervalSeconds(turn.interval as never), drawnPrice, klines: snap?.candles });
+        const { drawings, error, note } = drawingFromChartTool(args, {
+            lastBarTime,
+            barSeconds: intervalSeconds(turn.interval as never),
+            drawnPrice,
+            klines: snap?.candles,
+            symbol: turn.symbol,
+            interval: turn.interval,
+            existing: allDrawings,
+        });
         if (error) return receipt(false, `draw_on_chart rejected: ${error}`);
         addModelDrawings(drawings, turn);
         const d = drawings[0];
@@ -844,46 +877,82 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
         return receipt(true, `Drew on the chart: ${described || d.kind}.${note || ''}${visibility([d])}${drawnLevelStanding(snap)}${canvasNote}`);
     };
 
-    /** The fresh code-calculated packet every message rides (fetched ONCE per
-     *  send — shared across all panel seats so they argue about the same tape).
-     *  The hybrid pull is the slow network leg before the first token, so a
-     *  short-TTL cache (per symbol) lets rapid follow-up questions skip it —
-     *  only the PACKET is cached; drawings/plans/on-screen are rebuilt fresh
-     *  every send, and the block carries the real fetch time so the model
-     *  knows its age. */
+    /** Prompt-cache-safe Tier 0 chart manifest injected inside the latest user
+     *  turn wrapper. When the live canvas snapshot is available, emits a compact
+     *  high-signal manifest (chartRevision, liveMark, forming & last closed OHLC,
+     *  ATR14, active studies, evaluated User vs AI #D1..#Dn drawings, armed plans)
+     *  without dumping a 6k-token REST hybrid packet on every turn. Falls back to
+     *  the REST packet only when no canvas snapshot exists. */
     const buildContextBlock = async (): Promise<string> => {
-        // What the canvas is PAINTING right now (the snapshot), independent
-        // of the network fetch below — if they disagree, the model sees both.
+        const nowMs = Date.now();
         const snap = getChartSnapshot?.() ?? null;
-        const onScreen = snap ? describeChartSnapshotForModel(snap) : '';
-        // The harness level-watch's armed plans for THIS symbol PLUS the
-        // model's own armed watches (price triggers / time wake-ups): the
-        // model always knows what it is waiting on, even without a signal.
         const plansBlock = [
             ...levelWatch.getArmedPlans()
                 .filter(p => p.symbol === symbol)
                 .map(p => describePlanForModel(p, levelWatch.firedLevelsFor(p.planId))),
-            describeWatchesForModel(watchService.list(), Date.now()),
+            describeWatchesForModel(watchService.list(), nowMs),
         ].filter(Boolean).join('\n\n');
-        // Send-time stamps from the websocket feed: the live mark plus the
-        // FORMING candle (last painted bar — already ws-updated), so a
-        // cached/snapshot packet can never read as a fresh move or a stale
-        // candle.
         const liveMarkPrice = snap?.markPrice ?? null;
         const snapCandles = snap?.candles ?? [];
         const formingCandle = snapCandles.length > 0 ? snapCandles[snapCandles.length - 1] : null;
-        // Drawings carry their draw-time price, so describe them against the
-        // live mark HERE — the model sees how far price has moved since each
-        // shape and knows which levels are still fresh vs gone stale.
-        const drawingsDescription = describeDrawingsForModel(allDrawings, { priceNow: liveMarkPrice, nowMs: Date.now() });
-        // E7 extended: the coin's last stored post-mortem rides the context
-        // block, not only the emit_signal receipt — a lesson the loop already
-        // earned is invisible to an ordinary answer otherwise. A failed store
-        // read costs the section, never the turn.
         const { diagnosisBriefBlock } = await import('../tracking/diagnosisBrief');
         const postMortemBrief = await diagnosisBriefBlock(symbol);
+        const indexDeltaNote = deps.getIndexDeltaNote?.() ?? '';
+
+        if (snap && snapCandles.length > 0) {
+            const evalCandles = snap.evalCandles && snap.evalCandles.length > 0 ? snap.evalCandles : snapCandles;
+            const lastClosedBar = evalCandles.length >= 2 ? evalCandles[evalCandles.length - 2] : null;
+            const priceScaleMode = snap.priceScaleMode ?? 'normal';
+            const atr14 = snap.atr14 ?? computeAtr14(evalCandles);
+            const activeStudies = snap.activeStudies ?? {};
+            const mergedDrawings = snap.drawings.length > 0 || snap.modelDrawings.length > 0
+                ? [...snap.drawings, ...snap.modelDrawings]
+                : allDrawings;
+            const evaluatedDrawings = evaluateChartDrawings(mergedDrawings, {
+                symbol,
+                activeTf: interval,
+                candles: evalCandles,
+                markPrice: liveMarkPrice,
+                priceScaleMode,
+                atr14,
+                nowMs,
+            });
+            const revision = snap.revision ?? computeChartRevision({
+                symbol,
+                interval,
+                priceScaleMode,
+                lastClosedBarTime: lastClosedBar?.time ?? null,
+                visibleRange: snap.visibleRange ?? null,
+                activeStudies,
+                drawings: mergedDrawings,
+            });
+            setContextAt(snap.capturedAt || nowMs);
+            return buildTier0UserTurnContext({
+                symbol,
+                interval,
+                priceScaleMode,
+                revision,
+                capturedAtMs: snap.capturedAt || nowMs,
+                liveMark: liveMarkPrice,
+                formingCandle,
+                lastClosedBar,
+                atr14,
+                activeStudies,
+                visibleRange: snap.visibleRange ?? null,
+                levels: snap.levels,
+                evaluatedDrawings,
+                plansDescription: plansBlock,
+                postMortemBrief,
+                indexDeltaNote,
+                currentTradeCount: trades.length,
+                nowMs,
+            });
+        }
+
+        const onScreen = snap ? describeChartSnapshotForModel(snap) : '';
+        const drawingsDescription = describeDrawingsForModel(allDrawings, { priceNow: liveMarkPrice, nowMs });
         const cached = packetCache.get(symbol);
-        if (cached && Date.now() - cached.atMs < PACKET_CACHE_MS) {
+        if (cached && nowMs - cached.atMs < PACKET_CACHE_MS) {
             return buildTradeChatContext({ symbol, interval, contextWindowTokens: provider?.contextWindowTokens, packetMarkdown: cached.markdown, fetchedAtMs: cached.atMs, drawingsDescription, onScreenDescription: onScreen, plansDescription: plansBlock, postMortemBrief, liveMarkPrice, formingCandle, currentTradeCount: trades.length });
         }
         try {
@@ -962,6 +1031,7 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
                 const cs = getChartSnapshot?.()?.candles ?? [];
                 return cs.length > 0 ? cs[cs.length - 1] : null;
             },
+            getChartSnapshot,
             executePanelTool: call => executePanelTool(call, turnCtx, planCapture),
             trades,
             mailbox,
@@ -1306,7 +1376,7 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
             // just been shown the chart. Rebuilt through the same helper as the
             // live turn, so a prior image is re-sent as a real part and a
             // text-only seat is told it is there rather than not knowing.
-            const messages: ChatMessage[] = [
+            const rawMessages: ChatMessage[] = [
                 { role: 'system', content: systemPrompt },
                 ...history.slice(-10).flatMap(e => {
                     if (!e.text.trim() && !e.image) return [];
@@ -1318,6 +1388,7 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
                 }),
                 { role: 'user', content: userContent },
             ];
+            const messages = pruneHistoryImages(rawMessages, DEFAULT_MAX_HISTORY_IMAGES).messages;
             try {
                 await runSeatTurn({ sid, entryId: aiEntry.id, config: soloProvider, messages, mailboxSeat: '' });
             } catch (e) {

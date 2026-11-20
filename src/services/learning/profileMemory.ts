@@ -1057,7 +1057,7 @@ export const buildProfileMemoryIndex = (username?: string, maxLines = UNBOUNDED_
         `## Your memory about this user — ${visible.length} entr${visible.length === 1 ? 'y' : 'ies'}. These are collaboration facts (who they are, how they want you to work, their trading habits and ongoing context); market lessons belong in the notebook. When one matters, pull its full body with memory_read. When you do not know a slug or a category, call memory_read with a query or a section — it searches slug, title, description, aliases and body. If this session teaches you something durable about the USER, save it with memory_add (it refuses a near-duplicate and names the row to edit instead), and EDIT an existing row with memory_update, which needs the version memory_read shows you.`,
         sectionLine,
         ...lines,
-        dropped > 0 ? `…${dropped} older entr${dropped === 1 ? 'y' : 'ies'} not listed — read_memory with slug "all" shows every entry.` : '',
+        dropped > 0 ? `…${dropped} older entr${dropped === 1 ? 'y' : 'ies'} not listed — memory_read with slug "all" shows every entry.` : '',
     ].filter(Boolean).join('\n');
 };
 

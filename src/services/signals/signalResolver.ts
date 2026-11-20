@@ -146,6 +146,110 @@ const stopExit = (
     return { gap, exitPrice, grossR };
 };
 
+const round6 = (v: number): number => Math.round(v * 1e6) / 1e6;
+
+/**
+ * Compute deterministic peak favorable (mfeR >= 0) and adverse (maeR <= 0)
+ * excursions over the held window [triggerIndex..exitIndex].
+ *
+ * Conservative rules matching positionTracker:
+ * - Bars strictly before the exit bar contribute their full high/low extremes.
+ * - On a gap stop-out, exit occurred at bar.open — do not credit post-open
+ *   favorable rebound on that bar.
+ * - On an ambiguous same-bar SL+TP stop-first exit, stop-out is clamped at -1R
+ *   and unverified favorable target overshoot on that ambiguous bar is NOT
+ *   credited.
+ * - On a clean target win, MFE caps at targetR (the filled exit) rather than
+ *   overshoot beyond the target fill.
+ * - On a 1m drill-down exit inside the exit bar, walk the 1m minutes up to and
+ *   including the deciding minute.
+ */
+const computeExcursionR = (args: {
+    bars: readonly SignalCandle[];
+    triggerIndex: number;
+    exitIndex: number;
+    direction: SignalDirection;
+    levels: SignalLevels;
+    risk: number;
+    status: Exclude<SignalStatus, 'open' | 'never_triggered'>;
+    exitGrossR: number;
+    ambiguous?: boolean;
+    gapAdjusted?: boolean;
+    drillMinutesUpToExit?: readonly SignalCandle[];
+}): { mfeR: number; maeR: number } => {
+    const {
+        bars,
+        triggerIndex,
+        exitIndex,
+        direction,
+        levels,
+        risk,
+        status,
+        exitGrossR,
+        ambiguous = false,
+        gapAdjusted = false,
+        drillMinutesUpToExit,
+    } = args;
+    const isLong = direction === 'long';
+    const rOf = (price: number): number => (isLong ? price - levels.entry : levels.entry - price) / risk;
+    const targetR = Math.abs(levels.target - levels.entry) / risk;
+
+    let mfe = 0;
+    let mae = 0;
+
+    const recordBar = (bar: SignalCandle, capWin: boolean, capLoss: boolean): void => {
+        const favPrice = isLong ? bar.high : bar.low;
+        const advPrice = isLong ? bar.low : bar.high;
+        let favR = rOf(favPrice);
+        let advR = rOf(advPrice);
+        if (capWin) favR = Math.min(favR, targetR);
+        if (capLoss) advR = Math.max(advR, -1);
+        if (favR > mfe) mfe = favR;
+        if (advR < mae) mae = advR;
+    };
+
+    for (let i = triggerIndex; i < exitIndex; i += 1) {
+        recordBar(bars[i], false, false);
+    }
+
+    const exitBar = bars[exitIndex];
+    if (exitBar) {
+        if (gapAdjusted) {
+            // Stopped immediately at exit bar open; no post-open favorable bounce.
+            if (exitGrossR < mae) mae = exitGrossR;
+        } else if (ambiguous) {
+            // Conservative stop-first: position closed at stop (-1R); do not credit
+            // unverified favorable excursion from the ambiguous bar.
+            mae = Math.min(mae, -1);
+        } else if (drillMinutesUpToExit && drillMinutesUpToExit.length > 0) {
+            for (let k = 0; k < drillMinutesUpToExit.length; k += 1) {
+                const isLast = k === drillMinutesUpToExit.length - 1;
+                recordBar(
+                    drillMinutesUpToExit[k],
+                    isLast && status === 'won',
+                    isLast && status === 'lost',
+                );
+            }
+            if (status === 'won') mfe = Math.max(mfe, targetR);
+            if (status === 'lost') mae = Math.min(mae, exitGrossR);
+        } else if (status === 'won') {
+            recordBar(exitBar, true, false);
+            mfe = Math.max(mfe, targetR);
+        } else if (status === 'lost') {
+            recordBar(exitBar, false, true);
+            mae = Math.min(mae, exitGrossR);
+        } else {
+            // Expired at last closed bar
+            recordBar(exitBar, false, false);
+        }
+    }
+
+    return {
+        mfeR: round6(Math.max(0, mfe)),
+        maeR: round6(Math.min(0, mae)),
+    };
+};
+
 export interface ResolutionDraft {
     status: Exclude<SignalStatus, 'open'>;
     grossR: number;
@@ -165,6 +269,10 @@ export interface ResolutionDraft {
     entryOpenR?: number;
     /** The same measure on the exit bar. Absent on `never_triggered`. */
     exitOpenR?: number;
+    /** Peak favorable excursion over the held window (>= 0R). Absent on `never_triggered`. */
+    mfeR?: number;
+    /** Peak adverse excursion over the held window (<= 0R). Absent on `never_triggered`. */
+    maeR?: number;
 }
 
 export type SignalBracket = Pick<SignalRecord, 'direction' | 'entry' | 'stop' | 'target' | 'emittedAt' | 'expiresAt'>;
@@ -232,8 +340,20 @@ export const resolveSignal = (
             const se = win
                 ? { gap: false, exitPrice: signal.target, grossR: Math.abs(signal.target - signal.entry) / risk }
                 : stopExit(bar, signal.direction, levels, risk, i > triggerIndex);
+            const status = win ? 'won' : 'lost';
+            const excursion = computeExcursionR({
+                bars,
+                triggerIndex,
+                exitIndex: i,
+                direction: signal.direction,
+                levels,
+                risk,
+                status,
+                exitGrossR: se.grossR,
+                gapAdjusted: se.gap,
+            });
             return {
-                status: win ? 'won' : 'lost',
+                status,
                 grossR: se.grossR,
                 feeR,
                 outcomeR: se.grossR - feeR,
@@ -247,6 +367,7 @@ export const resolveSignal = (
                 exitOpenR: (signal.direction === 'long'
                     ? bar.open - signal.entry
                     : signal.entry - bar.open) / risk,
+                ...excursion,
                 ...(se.gap ? { gapAdjusted: true } : {}),
             };
         }
@@ -258,6 +379,17 @@ export const resolveSignal = (
         if (i > triggerIndex) {
             const se = stopExit(bar, signal.direction, levels, risk, true);
             if (se.gap) {
+                const excursion = computeExcursionR({
+                    bars,
+                    triggerIndex,
+                    exitIndex: i,
+                    direction: signal.direction,
+                    levels,
+                    risk,
+                    status: 'lost',
+                    exitGrossR: se.grossR,
+                    gapAdjusted: true,
+                });
                 return {
                     status: 'lost',
                     grossR: se.grossR,
@@ -273,6 +405,7 @@ export const resolveSignal = (
                     exitOpenR: (signal.direction === 'long'
                         ? bar.open - signal.entry
                         : signal.entry - bar.open) / risk,
+                    ...excursion,
                     gapAdjusted: true,
                 };
             }
@@ -284,12 +417,25 @@ export const resolveSignal = (
         let path: 'bar' | '1m' = 'bar';
         if (minutes) {
             path = '1m';
-            for (const m of minutes) {
+            for (let mIdx = 0; mIdx < minutes.length; mIdx += 1) {
+                const m = minutes[mIdx];
                 // The gap rule at minute granularity (post-trigger bars): a
                 // minute that opened beyond the stop fired there first.
                 if (i > triggerIndex) {
                     const mse = stopExit(m, signal.direction, levels, risk, true);
                     if (mse.gap) {
+                        const excursion = computeExcursionR({
+                            bars,
+                            triggerIndex,
+                            exitIndex: i,
+                            direction: signal.direction,
+                            levels,
+                            risk,
+                            status: 'lost',
+                            exitGrossR: mse.grossR,
+                            gapAdjusted: true,
+                            drillMinutesUpToExit: minutes.slice(0, mIdx),
+                        });
                         return {
                             status: 'lost',
                             grossR: mse.grossR,
@@ -301,6 +447,7 @@ export const resolveSignal = (
                             triggeredAt: trigger.time,
                             exitAt: bar.time,
                             exitPrice: mse.exitPrice,
+                            ...excursion,
                             gapAdjusted: true,
                         };
                     }
@@ -313,8 +460,20 @@ export const resolveSignal = (
                 const win = mSide === 'target';
                 const exitPrice = win ? signal.target : signal.stop;
                 const grossR = win ? Math.abs(signal.target - signal.entry) / risk : -1;
+                const status = win ? 'won' : 'lost';
+                const excursion = computeExcursionR({
+                    bars,
+                    triggerIndex,
+                    exitIndex: i,
+                    direction: signal.direction,
+                    levels,
+                    risk,
+                    status,
+                    exitGrossR: grossR,
+                    drillMinutesUpToExit: minutes.slice(0, mIdx + 1),
+                });
                 return {
-                    status: win ? 'won' : 'lost',
+                    status,
                     grossR,
                     feeR,
                     outcomeR: grossR - feeR,
@@ -328,9 +487,21 @@ export const resolveSignal = (
                     exitOpenR: (signal.direction === 'long'
                         ? m.open - signal.entry
                         : signal.entry - m.open) / risk,
+                    ...excursion,
                 };
             }
         }
+        const ambiguousExcursion = computeExcursionR({
+            bars,
+            triggerIndex,
+            exitIndex: i,
+            direction: signal.direction,
+            levels,
+            risk,
+            status: 'lost',
+            exitGrossR: -1,
+            ambiguous: true,
+        });
         return {
             status: 'lost',
             grossR: -1,
@@ -346,6 +517,7 @@ export const resolveSignal = (
             exitOpenR: (signal.direction === 'long'
                 ? bar.open - signal.entry
                 : signal.entry - bar.open) / risk,
+            ...ambiguousExcursion,
         };
     }
 
@@ -356,6 +528,16 @@ export const resolveSignal = (
     const markR = (signal.direction === 'long'
         ? last.close - signal.entry
         : signal.entry - last.close) / risk;
+    const expiryExcursion = computeExcursionR({
+        bars,
+        triggerIndex,
+        exitIndex: bars.length - 1,
+        direction: signal.direction,
+        levels,
+        risk,
+        status: 'expired',
+        exitGrossR: markR,
+    });
     return {
         status: 'expired',
         grossR: markR,
@@ -371,6 +553,7 @@ export const resolveSignal = (
         exitOpenR: (signal.direction === 'long'
             ? last.open - signal.entry
             : signal.entry - last.open) / risk,
+        ...expiryExcursion,
     };
 };
 

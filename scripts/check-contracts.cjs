@@ -3040,18 +3040,21 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
     // The rest of the mock's details: four resting tools, four level lines, a
     // Long/Short tag read from the ledger, and a Chat surface whose column
     // starts closed (centred thread).
-    // Phase 4 (P-2, owner 2026-11-17): the SHAPE tools left the rail — the
-    // desk draws them (draw_on_chart / mark_trade_levels / clear_chart_drawings,
-    // parity probe P-2). What stays is the trader's hand: cursor, freehand,
-    // eraser, magnet, hide/show, undo, palette, width.
-    ok('chart: the rail carries the trader gestures only — the shape tools went to the desk',
-        !/Trendline|Ray —|Horizontal line|Fib retracement|Text note|more-tools-flyout|Clear all drawings/.test(read('src/components/trade/ChartToolRail.tsx'))
+    // Phase 2 (interactive Binance/OKX drawing UX parity): the rail carries the
+    // full interactive drawing tools (trendline, ray, hline, channel, rect, fib,
+    // long/short position boxes, callout, freehand, eraser), magnet, undo/redo,
+    // and one-click Clear AI Drawings in monochrome chrome.
+    ok('chart: the rail carries interactive drawing tools, position boxes, magnet, undo/redo, and Clear AI Drawings',
+        /Trendline/.test(read('src/components/trade/ChartToolRail.tsx'))
+            && /Long Position/.test(read('src/components/trade/ChartToolRail.tsx'))
+            && /Short Position/.test(read('src/components/trade/ChartToolRail.tsx'))
             && /Freehand — drag to draw/.test(read('src/components/trade/ChartToolRail.tsx'))
             && /Eraser — click a shape/.test(read('src/components/trade/ChartToolRail.tsx'))
             && /Magnet/.test(read('src/components/trade/ChartToolRail.tsx'))
             && /Undo last drawing/.test(read('src/components/trade/ChartToolRail.tsx'))
-            && (read('src/components/trade/ChartToolRail.tsx').match(/<RailButton\b/g) || []).length >= 7,
-        'shape buttons beside a desk that draws them is the duplication P-2 removes');
+            && /Clear AI Drawings/.test(read('src/components/trade/ChartToolRail.tsx'))
+            && (read('src/components/trade/ChartToolRail.tsx').match(/<RailButton\b/g) || []).length >= 15,
+        'Phase 2 tool rail must expose interactive shape tools, Long/Short position boxes, magnet, undo/redo, and Clear AI Drawings');
     ok('chart: a verdict draws at most four level lines',
         /\.slice\(0, 2\)/.test(read('src/services/trade/chartData.ts')),
         'five labelled lines turned the tape into a ladder');

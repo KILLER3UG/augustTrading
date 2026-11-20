@@ -24,6 +24,8 @@ import ComposerWorkspaceRow from './ComposerWorkspaceRow';
 import * as chatStore from '../../../services/trade/chatStore';
 
 interface ChatComposerProps {
+    /** Desk dock vs centered Chat focus view. */
+    layoutMode?: 'desk' | 'chat';
     /** The chart the chat talks about (workspace row + model picker). */
     symbol: string;
     interval: string;
@@ -99,7 +101,7 @@ export const ModelFallbackBanner: React.FC<{
 );
 
 const ChatComposer: React.FC<ChatComposerProps> = ({
-    symbol, interval, isPanel, ready, busy, draft, setDraft, send, runFullAnalysis, onRunAnalysis, onStopRun,
+    layoutMode = 'desk', symbol, interval, isPanel, ready, busy, draft, setDraft, send, runFullAnalysis, onRunAnalysis, onStopRun,
     effort, changeEffort, modelIssue, provider, selectedChatModel,
     changeSoloModel, providers, onRefreshModels, attachments, removeAttachment, fileInputRef,
     attachFiles, showAttachMenu, setShowAttachMenu, captureChart, onCaptureChart, composerRef,
@@ -142,8 +144,11 @@ const ChatComposer: React.FC<ChatComposerProps> = ({
     // (`border-t`). Both are gone: the coin row, the card and the note under it
     // now sit on the dock's own panel, and the card's frame is the only boundary
     // in the area — which is the point of the card existing at all.
+    const isChatFocus = layoutMode === 'chat';
+    const hasContent = draft.trim().length > 0 || attachments.length > 0;
+
     return (
-    <div className="shrink-0 px-5 pb-3 pt-2">
+    <div className={isChatFocus ? 'mx-auto w-full max-w-[740px] shrink-0 px-6 pb-5 pt-2' : 'shrink-0 px-4 pb-3.5 pt-2'}>
         <ModelFallbackBanner modelIssue={modelIssue} provider={provider} />
         <ComposerWorkspaceRow
             symbol={symbol}
@@ -161,11 +166,7 @@ const ChatComposer: React.FC<ChatComposerProps> = ({
                 onRemove={removeAttachment}
             />
         )}
-        {/* The card IS the field: what you type, what rides the message
-            (attachments), and the controls that send it. Market context — the
-            coin and the timeframe — does not live in here; on the Agents surface
-            they sit on their own row outside the card (see AgentsView). */}
-        <div className="rounded-composer bg-surface-raised px-4 py-3 ring-1 ring-transparent transition-[background-color,box-shadow] duration-150 ease-[var(--ease-snappy)] focus-within:bg-zinc-800/80 focus-within:ring-zinc-700">
+        <div className="rounded-[20px] border border-white/[0.09] bg-zinc-900/90 px-3.5 pb-2.5 pt-3 shadow-[0_8px_28px_rgba(0,0,0,0.35)] transition-[border-color,background-color,box-shadow] duration-150 ease-[var(--ease-snappy)] focus-within:border-white/[0.18] focus-within:bg-zinc-900">
             <textarea
                 ref={composerRef}
                 data-testid="composer-input"
@@ -176,44 +177,31 @@ const ChatComposer: React.FC<ChatComposerProps> = ({
                 onKeyDown={ev => {
                     if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); void send(draft); }
                 }}
-                placeholder={ready ? 'Ask about the chart or a plan…' : isPanel ? 'Add at least 2 panel models above' : 'Configure a provider in Settings first'}
-                className="max-h-40 min-h-[40px] w-full resize-none overflow-y-auto bg-transparent py-0.5 text-ui-base leading-7 text-zinc-100 placeholder:text-zinc-600 disabled:opacity-50"
+                placeholder={ready ? (isChatFocus ? 'Write a message…' : 'Ask about the chart or a plan…') : isPanel ? 'Add at least 2 panel models above' : 'Configure a provider in Settings first'}
+                className="max-h-40 min-h-[38px] w-full resize-none overflow-y-auto bg-transparent px-1 py-0.5 text-ui-base leading-7 text-zinc-100 placeholder:text-zinc-500 focus:outline-none disabled:opacity-50"
             />
             <div className="mt-2 flex flex-wrap items-center gap-2">
-                {/* The control set is STABLE: Full analysis is present from the
-                    first paint (disabled until there is a draft) and the model
-                    chip takes the remaining width with `flex-1`, so typing the
-                    first character cannot reveal a control, wrap the row, and
-                    grow the card under the cursor. The chip truncates instead. */}
                 <input type="file" multiple accept="image/*,.md,.txt,.csv,.json" ref={fileInputRef} className="hidden"
                     onChange={ev => { attachFiles(ev.target.files); ev.target.value = ''; }} />
-                {/* Reference layout: ONE + button opens everything that
-                    can ride the message — uploads AND the chart shot. */}
                 <div className="relative">
                     <button type="button" onClick={() => setShowAttachMenu(v => !v)} disabled={!ready}
                         title="Attach to this message" aria-label="Attach to this message" aria-expanded={showAttachMenu}
-                        className="rounded-full p-2 text-zinc-500 transition-colors hover:bg-white/[0.06] hover:text-zinc-200 disabled:opacity-40">
+                        className="flex h-8 w-8 items-center justify-center rounded-full text-zinc-500 transition-colors hover:bg-white/[0.06] hover:text-zinc-200 disabled:opacity-40">
                         <Plus className="h-[18px] w-[18px]" aria-hidden="true" />
                     </button>
                     {showAttachMenu && (
                         <>
                             <div className="fixed inset-0 z-20" aria-hidden onClick={() => setShowAttachMenu(false)} />
-                            <div className="absolute bottom-9 left-0 z-30 w-48 rounded-card border border-zinc-700/60 bg-zinc-800 p-1" data-testid="attach-menu">
+                            <div className="absolute bottom-10 left-0 z-30 w-52 rounded-card border border-white/[0.1] bg-zinc-900/95 p-1 shadow-elevated backdrop-blur-md" data-testid="attach-menu">
                                 <button type="button" onClick={() => { setShowAttachMenu(false); fileInputRef.current?.click(); }}
-                                    className="flex w-full items-center gap-2 rounded-control px-2 py-1.5 text-left text-ui-dense text-zinc-300 hover:bg-white/[0.06]">
+                                    className="flex w-full items-center gap-2.5 rounded-control px-2.5 py-2 text-left text-ui-dense text-zinc-300 transition-colors hover:bg-white/[0.06] hover:text-zinc-100">
                                     <FileText className="h-3.5 w-3.5 text-zinc-500" aria-hidden="true" /> Upload files &amp; images
                                 </button>
                                 <button type="button" onClick={() => { setShowAttachMenu(false); captureChart(); }}
                                     disabled={!onCaptureChart} title={onCaptureChart ? undefined : 'Chart not ready'}
-                                    className="flex w-full items-center gap-2 rounded-control px-2 py-1.5 text-left text-ui-dense text-zinc-300 transition-colors hover:bg-white/[0.06] disabled:opacity-40">
+                                    className="flex w-full items-center gap-2.5 rounded-control px-2.5 py-2 text-left text-ui-dense text-zinc-300 transition-colors hover:bg-white/[0.06] hover:text-zinc-100 disabled:opacity-40">
                                     <Camera className="h-3.5 w-3.5 text-zinc-500" aria-hidden="true" /> Screenshot chart
                                 </button>
-                                {/* The two prompt ACTIONS live here now, not as
-                                    chips on the row: v3's composer is the box
-                                    alone (＋ · model · send), and an action
-                                    still needs a door. They are message
-                                    actions, so they ride the message's own
-                                    menu rather than decorating the box. */}
                                 <div aria-hidden="true" className="my-1 h-px bg-white/[0.07]" />
                                 <button type="button" data-testid="composer-full-analysis"
                                         onClick={() => { setShowAttachMenu(false); void runFullAnalysis(); }}
@@ -221,47 +209,41 @@ const ChatComposer: React.FC<ChatComposerProps> = ({
                                         title={draft.trim()
                                             ? 'Run the full analysis (live market data + tools + trade plan) on this request'
                                             : 'Type a request to run the full analysis'}
-                                        className="flex w-full items-center gap-2 rounded-control px-2 py-1.5 text-left text-ui-dense text-zinc-300 transition-colors hover:bg-white/[0.06] disabled:opacity-40">
+                                        className="flex w-full items-center gap-2.5 rounded-control px-2.5 py-2 text-left text-ui-dense text-zinc-300 transition-colors hover:bg-white/[0.06] hover:text-zinc-100 disabled:opacity-40">
                                         <ChartBarIcon className="h-3.5 w-3.5 text-zinc-500" aria-hidden="true" /> Full analysis
                                     </button>
                             </div>
                         </>
                     )}
                 </div>
-                <div className="ml-auto flex min-w-0 flex-1 items-center justify-end gap-1.5" data-testid="composer-model-and-send">
+                <div className="ml-auto flex min-w-0 flex-1 items-center justify-end gap-2" data-testid="composer-model-and-send">
                     {!isPanel && (
                         <ModelChip providers={providers} value={selectedChatModel} onChange={changeSoloModel}
                             onRefreshModels={onRefreshModels} issue={modelIssue} fallbackLabel={provider?.name}
-                            effort={effort} onEffortChange={changeEffort} compact />
+                            effort={effort} onEffortChange={changeEffort} compact={!isChatFocus} />
                     )}
                     <button
                         type="button"
                         onClick={() => {
                             if (!busy) { void send(draft); return; }
-                            // Both, and in this order: the chat controller settles
-                            // the bubble as a deliberate stop, the pipeline cancel
-                            // actually ends the run. Either alone leaves half the
-                            // job done — that is the defect this order fixes.
                             onStopRun?.();
                             chatStore.abortActive();
                         }}
                         disabled={!ready && !busy}
                         aria-label={busy ? 'Stop' : 'Send'}
-                        /* The pair above is what right-aligns this button now,
-                           so its own `ml-auto` is gone: the reference keeps the
-                           send at the composer's bottom-right, never bottom-left. */
-                        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-zinc-700 text-zinc-100 transition-colors hover:bg-zinc-600 disabled:opacity-40"
+                        className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-colors disabled:opacity-35 ${
+                            busy
+                                ? 'bg-zinc-200 text-zinc-950 hover:bg-white'
+                                : ready && hasContent
+                                    ? 'bg-zinc-100 text-zinc-950 hover:bg-white'
+                                    : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-100'
+                        }`}
                     >
-                        {busy ? <StopIcon className="h-3 w-3" fill="currentColor" /> : <SendIcon className="h-[18px] w-[18px]" aria-hidden="true" />}
+                        {busy ? <StopIcon className="h-3 w-3" fill="currentColor" /> : <SendIcon className="h-4 w-4" aria-hidden="true" />}
                     </button>
                 </div>
             </div>
         </div>
-        {/* The footer row that used to hold the two chips is deleted with them,
-            and the disclaimer line died with ruling 1.3.1: a permanent caption
-            under the composer said what the decision cards and goal.md already
-            say — August places no trades. Honesty lives on the receipts, not
-            as furniture under every keystroke. */}
     </div>
     );
 };

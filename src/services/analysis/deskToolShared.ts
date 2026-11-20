@@ -86,10 +86,11 @@ export const CHART_ACTION_TOOL_DEFS: DeskToolDefinition[] = [
         function: {
             name: 'mark_trade_levels',
             description:
-                'Mark a full trade plan on the chart: Entry (sky), Stop Loss (rose) and 1-5 Take Profits (amber) as labeled horizontal lines the user can see. At least one of stopLoss / takeProfits is REQUIRED beside the entry — the call is refused without one. Use this instead of three draw_on_chart calls when presenting a setup; if the plan is going to the trader for a decision, use present_trade instead (it draws these AND shows the card).',
+                'Mark a full trade plan on the chart: Entry (sky), Stop Loss (rose) and 1-5 Take Profits (amber) as labeled horizontal lines the user can see. At least one of stopLoss / takeProfits is REQUIRED beside the entry — and SL/TP geometry is validated (SL and TPs cannot sit on the same side of Entry or contradict direction). Use this instead of three draw_on_chart calls when presenting a setup; if the plan is going to the trader for a decision, use present_trade instead (it draws these AND shows the card).',
             parameters: {
                 type: 'object',
                 properties: {
+                    direction: { type: 'string', enum: ['Long', 'Short'], description: 'Optional trade side ("Long" requires SL < entry < TP; "Short" requires TP < entry < SL).' },
                     entry: { type: 'number', description: 'Entry price. Refused alone: name a stopLoss and/or takeProfits too.' },
                     stopLoss: { type: 'number', description: 'Stop-loss price.' },
                     takeProfits: { type: 'array', items: { type: 'number' }, description: '1-5 TP prices, in order.' },
@@ -224,7 +225,7 @@ export const CHART_ACTION_TOOL_DEFS: DeskToolDefinition[] = [
         function: {
             name: 'set_chart_timeframe',
             description:
-                'Move the live chart to another timeframe. The chart redraws at that interval and the trader sees it, and your own reads follow the chart. This is the ONLY way to change the timeframe — the manual control is retired with the rest of the chart chrome.',
+                'Move the live chart to another timeframe. The chart redraws at that interval and the trader sees it, and your own reads follow the chart.',
             parameters: {
                 type: 'object',
                 properties: {

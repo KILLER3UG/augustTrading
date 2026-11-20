@@ -30,6 +30,7 @@ import {
     CandlestickSeries,
     HistogramSeries,
     LineSeries,
+    PriceScaleMode as LwcPriceScaleMode,
     type IChartApi,
     type IPriceLine,
     type ISeriesApi,
@@ -49,6 +50,34 @@ import {
     drawWidthOf, nextDrawWidth, DRAW_WIDTH_DEFAULT,
     type ChartDrawing, type DrawKind, type DrawPoint, type DrawTool, DRAW_COLORS,
 } from '../../services/trade/chartDrawings';
+import {
+    allocateDrawingShortId,
+    computeAtr14,
+    computeChartRevision,
+    ensureStableShortIds,
+    type EvalCandle,
+    type PriceScaleMode,
+} from '../../services/trade/chartGeometry';
+import {
+    bumpDrawingVersion,
+    canRedoDrawing,
+    canUndoDrawing,
+    clearAgentDrawingsFromHistory,
+    countAgentDrawings,
+    createDrawingHistory,
+    pushDrawingSnapshot,
+    redoDrawingState,
+    syncDrawingHistoryPresent,
+    undoDrawingState,
+    type DrawingCommandHistory,
+} from '../../services/trade/drawingCommandStack';
+import {
+    computePositionBoxMetrics,
+    isPositionBoxKind,
+    seedPositionBoxPoints,
+    updatePositionBoxHandle,
+} from '../../services/trade/positionBoxMath';
+import { renderAnnotatedChartSnapshot, type SnapshotBadge } from '../../services/trade/chartSnapshotAnnotator';
 import { drawingsControl } from '../../services/trade/drawingsControl';
 import type { LiveKline } from '../../services/trade/futuresStreams';
 import type { MessageLevelLines } from '../../services/trade/keyLevels';
@@ -66,6 +95,21 @@ import { TradeAnalysis } from '../../types';
 import { ChartToolRail, CHART_RAIL_WIDTH } from './ChartToolRail';
 import ChartFrame from '../shared/ChartFrame';
 import { shapeGeometry } from './drawingGeometry';
+import { ChartDrawingsPrimitive } from './drawingsPrimitive';
+import { DrawingInspectorPopover } from './DrawingInspectorPopover';
+import {
+    hitTestDrawings,
+    projectTimestampToX,
+    screenXToTimestamp,
+    snapToOhlcMagnet,
+    type MagnetSnapResult,
+    type ScreenXY,
+} from './drawingHitTest';
+import {
+    computeHoveredCandleStyle,
+    findCandleIndexByTime,
+    stepCandleHoverMap,
+} from './candleHoverAnimation';
 import {
     atrSeries,
     bollingerSeries,
@@ -193,6 +237,16 @@ export interface ChartSnapshot {
         barsLoaded: number;
         barsVisible: number;
     } | null;
+    /** Active right-axis price scale mode (`normal` or `logarithmic`). */
+    priceScaleMode?: PriceScaleMode;
+    /** Latest finite readings of active indicator overlays/panes on screen. */
+    activeStudies?: Record<string, number>;
+    /** Deterministic revision hash of visible chart state + drawings. */
+    revision?: string;
+    /** Current ATR(14) on the active chart timeframe. */
+    atr14?: number | null;
+    /** Up to 200 loaded candles (unix seconds) for scale-aware geometry evaluation. */
+    evalCandles?: EvalCandle[];
     capturedAt: number;
 }
 
@@ -237,6 +291,9 @@ interface TradingChartProps {
     /** Erasing a MODEL-drawn shape routes removal to the parent's model store
      *  (the eraser deletes whichever kind it lands on). */
     onRemoveModelShape?: (id: string) => void;
+    /** Replaces the parent's model-drawn shapes list (used by Clear AI Drawings,
+     *  dragging/editing AI shapes, and undo/redo restoration). */
+    onReplaceModelDrawings?: (next: ChartDrawing[]) => void;
     /** Key levels the Chart AI dock is currently SHOWING on the chart (from a
      *  message's levels card + its chart toggle). A transient render layer,
      *  NOT a persisted drawing: the dock owns the show/pin/hover state and
@@ -311,17 +368,7 @@ interface LegendBar {
     values: Record<string, number | null>;
 }
 
-/** Distance from a point to a segment — the eraser's hit test (screen px). */
-const distToSegment = (px: number, py: number, ax: number, ay: number, bx: number, by: number): number => {
-    const dx = bx - ax;
-    const dy = by - ay;
-    const len2 = dx * dx + dy * dy;
-    if (len2 === 0) return Math.hypot(px - ax, py - ay);
-    const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / len2));
-    return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
-};
-
-const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onIntervalChange, sessionId, verdict, showSma = false, live = false, liveKline, lastPrice, markPrice, chartHandle, onDrawingsChange, modelDrawings, onRemoveModelShape, chatLevels, ohlcvRow }) => {
+const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onIntervalChange, sessionId, verdict, showSma = false, live = false, liveKline, lastPrice, markPrice, chartHandle, onDrawingsChange, modelDrawings, onRemoveModelShape, onReplaceModelDrawings, chatLevels, ohlcvRow }) => {
     const hostRef = useRef<HTMLDivElement | null>(null);
     const chartRef = useRef<IChartApi | null>(null);
     // The 24h fields are a CROSSHAIR readout (v3): they appear while the
@@ -589,20 +636,46 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
         return rows;
     };
 
-    // ─── Drawings state ─────────────────────────────────────────────────────
+    // ─── Drawings state & zero-lag primitive ────────────────────────────────
     const overlayRef = useRef<HTMLCanvasElement | null>(null);
+    const primitiveRef = useRef<ChartDrawingsPrimitive | null>(null);
     const [drawings, setDrawings] = useState<ChartDrawing[]>([]);
     const [tool, setTool] = useState<DrawTool>('cursor');
+    const toolRef = useRef<DrawTool>(tool);
+    toolRef.current = tool;
     const [color, setColor] = useState<string>(DRAW_COLORS[0]);
+    /** Right-axis price scale mode ('normal' | 'logarithmic'). */
+    const [priceScaleMode, setPriceScaleMode] = useState<PriceScaleMode>('normal');
+    const priceScaleModeRef = useRef<PriceScaleMode>(priceScaleMode);
+    priceScaleModeRef.current = priceScaleMode;
+    /** Currently selected & hovered drawing ids (selection handles render on `zOrder: 'top'`). */
+    const [selectedDrawingId, setSelectedDrawingId] = useState<string | null>(null);
+    const selectedDrawingIdRef = useRef<string | null>(null);
+    selectedDrawingIdRef.current = selectedDrawingId;
+    const hoveredDrawingIdRef = useRef<string | null>(null);
+    /** Double-click inspector popover state. */
+    const [inspector, setInspector] = useState<{ drawingId: string; x: number; y: number } | null>(null);
+    /** Immutable undo/redo history stack (covers both user + AI drawings, e.g., undoable Clear AI). */
+    const historyRef = useRef<DrawingCommandHistory>(createDrawingHistory({ userDrawings: [], modelDrawings: [] }));
+    const [historyMeta, setHistoryMeta] = useState<{ canUndo: boolean; canRedo: boolean }>({
+        canUndo: false,
+        canRedo: false,
+    });
+    const syncHistoryMeta = useCallback((h: DrawingCommandHistory): void => {
+        historyRef.current = h;
+        setHistoryMeta({ canUndo: canUndoDrawing(h), canRedo: canRedoDrawing(h) });
+    }, []);
+    /** Active 12px OHLC magnet reticle during drawing or dragging. */
+    const magnetSnapRef = useRef<MagnetSnapResult | null>(null);
     /** In-progress shape in SCREEN space while the user is clicking/dragging. */
     const [draft, setDraft] = useState<{ points: { x: number; y: number }[] } | null>(null);
     /** Hide-all (the rail's eye): every drawing layer off the canvas, nothing
      *  deleted — TradingView's "hide all objects" toggle. */
     const [drawingsHidden, setDrawingsHidden] = useState(false);
-    /** Magnet snap: each anchor is pulled onto the nearest candle's OHLC. A
-     *  drawing aid, not an edit — the trader still chooses WHERE, the magnet
-     *  only removes the few ticks of hand error. */
+    /** Magnet snap: each anchor is pulled onto the nearest candle's OHLC (12px). */
     const [magnet, setMagnet] = useState(false);
+    const magnetRef = useRef(magnet);
+    magnetRef.current = magnet;
     /** Stroke weight for NEW shapes; the rail cycles the ladder. Committed
      *  shapes keep the width they were drawn at, so changing the control does
      *  not restyle the trader's existing work. */
@@ -616,6 +689,10 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
     drawingsRef.current = drawings;
     const modelDrawingsRef = useRef<ChartDrawing[]>([]);
     modelDrawingsRef.current = modelDrawings ?? [];
+    const onReplaceModelDrawingsRef = useRef(onReplaceModelDrawings);
+    onReplaceModelDrawingsRef.current = onReplaceModelDrawings;
+    const intervalRef = useRef<ChartInterval>(interval);
+    intervalRef.current = interval;
     // Stable handle to the latest repaint() so the data-lifecycle effect (which
     // runs before repaint is defined) can force a repaint the instant a coin's
     // candles (re)load — otherwise a switch BACK reloads the shapes into state
@@ -637,6 +714,70 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
         });
     }, []);
 
+    // ─── Candle hover focus animation (scale + brightness) ──────────────────
+    // Animated entirely on the overlay canvas via rAF so hovering never causes
+    // per-frame React renders or 1000-bar series rewrites; the loop stops
+    // completely as soon as active enter/leave transitions settle.
+    const hoveredCandleTimeRef = useRef<number | null>(null);
+    const hoverAnimsRef = useRef<Map<number, number>>(new Map());
+    const hoverRafRef = useRef<number | null>(null);
+    const hoverLastTsRef = useRef<number | null>(null);
+
+    const stopHoverAnimation = useCallback((): void => {
+        if (hoverRafRef.current !== null) {
+            window.cancelAnimationFrame(hoverRafRef.current);
+            hoverRafRef.current = null;
+        }
+        hoverLastTsRef.current = null;
+    }, []);
+
+    const setHoveredCandle = useCallback((time: number | null): void => {
+        if (hoveredCandleTimeRef.current === time) return;
+        hoveredCandleTimeRef.current = time;
+        const reducedMotion = typeof window !== 'undefined'
+            && typeof window.matchMedia === 'function'
+            && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        if (reducedMotion) {
+            stopHoverAnimation();
+            stepCandleHoverMap(hoverAnimsRef.current, time, 0, true);
+            scheduleRepaint();
+            return;
+        }
+        if (hoverRafRef.current !== null) return;
+        hoverLastTsRef.current = null;
+        const tick = (now: number): void => {
+            const dt = hoverLastTsRef.current === null ? 16 : now - hoverLastTsRef.current;
+            hoverLastTsRef.current = now;
+            const stillAnimating = stepCandleHoverMap(
+                hoverAnimsRef.current,
+                hoveredCandleTimeRef.current,
+                dt,
+                false,
+            );
+            repaintRef.current();
+            if (stillAnimating) {
+                hoverRafRef.current = window.requestAnimationFrame(tick);
+            } else {
+                hoverRafRef.current = null;
+                hoverLastTsRef.current = null;
+            }
+        };
+        hoverRafRef.current = window.requestAnimationFrame(tick);
+    }, [scheduleRepaint, stopHoverAnimation]);
+
+    // Clear candle hover highlight whenever the instrument, interval, or active
+    // drawing tool changes so a stale bar from another series never lingers.
+    useEffect(() => {
+        hoveredCandleTimeRef.current = null;
+        hoverAnimsRef.current.clear();
+        stopHoverAnimation();
+        scheduleRepaint();
+    }, [symbol, interval, stopHoverAnimation, scheduleRepaint]);
+
+    useEffect(() => {
+        if (tool !== 'cursor') setHoveredCandle(null);
+    }, [tool, setHoveredCandle]);
+
     // Load the persisted shapes whenever the chart (scope + symbol) changes.
     // ONE store: the session bucket for this scope — there is no legacy
     // fallback chart-side any more, because a fallback IS the two-bucket bug
@@ -649,33 +790,186 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
         setDraft(null);
         setTool('cursor');
         setTextEdit(null);
+        setSelectedDrawingId(null);
+        setInspector(null);
         const load = async (): Promise<void> => {
             const list = await loadSessionDrawingsWithLegacy(sessionId, symbol);
-            if (!cancelled) setDrawings(list);
+            if (!cancelled) {
+                const normalized = ensureStableShortIds(
+                    list.map(d => (d.origin ? d : { ...d, origin: 'user' as const })),
+                    symbol,
+                );
+                setDrawings(normalized);
+                syncHistoryMeta(createDrawingHistory({ userDrawings: normalized, modelDrawings: modelDrawingsRef.current }));
+            }
         };
         void load();
         return () => { cancelled = true; };
-    }, [symbol, sessionId]);
+    }, [symbol, sessionId, syncHistoryMeta]);
 
-    // Esc cancels an in-progress shape (TradingView behaviour) — the draft
-    // lives across pointer moves, so the listener rides its lifetime.
+    // Keep history present synced when modelDrawings updates externally (e.g. AI desk tool).
     useEffect(() => {
-        if (!draft) return;
-        const onKey = (ev: KeyboardEvent): void => {
-            if (ev.key === 'Escape') setDraft(null);
-        };
-        window.addEventListener('keydown', onKey);
-        return () => window.removeEventListener('keydown', onKey);
-    }, [draft]);
+        const currentModel = modelDrawings ?? [];
+        const present = historyRef.current.present;
+        if (present.modelDrawings !== currentModel) {
+            historyRef.current = syncDrawingHistoryPresent(
+                historyRef.current,
+                { userDrawings: drawingsRef.current, modelDrawings: currentModel },
+            );
+        }
+    }, [modelDrawings]);
+
+    // Sync the native lightweight-charts ISeriesPrimitive with current drawings/selection/scale.
+    const syncPrimitive = useCallback((overrides?: {
+        userDrawings?: ReadonlyArray<ChartDrawing>;
+        modelDrawings?: ReadonlyArray<ChartDrawing>;
+        selectedId?: string | null;
+        hoveredId?: string | null;
+    }): void => {
+        const prim = primitiveRef.current;
+        if (!prim) return;
+        const bars: ReadonlyArray<EvalCandle> = chartRowsRef.current.length > 0
+            ? chartRowsRef.current
+            : ((candlesRef.current?.data?.() ?? []) as readonly EvalCandle[]);
+        prim.setState({
+            userDrawings: overrides?.userDrawings ?? drawingsRef.current,
+            modelDrawings: overrides?.modelDrawings ?? modelDrawingsRef.current,
+            selectedId: overrides?.selectedId !== undefined ? overrides.selectedId : selectedDrawingIdRef.current,
+            hoveredId: overrides?.hoveredId !== undefined ? overrides.hoveredId : hoveredDrawingIdRef.current,
+            hidden: drawingsHiddenRef.current,
+            activeTf: intervalRef.current,
+            barSeconds: intervalSeconds(intervalRef.current),
+            priceScaleMode: priceScaleModeRef.current,
+            candles: bars,
+        });
+    }, []);
+
+    useEffect(() => {
+        syncPrimitive();
+    }, [drawings, modelDrawings, selectedDrawingId, drawingsHidden, interval, priceScaleMode, syncPrimitive]);
+
+    // Apply Normal / Logarithmic mode directly to lightweight-charts' right price scale.
+    useEffect(() => {
+        try {
+            chartRef.current?.priceScale('right')?.applyOptions({
+                mode: priceScaleMode === 'logarithmic'
+                    ? LwcPriceScaleMode.Logarithmic
+                    : LwcPriceScaleMode.Normal,
+            });
+            syncPrimitive();
+            scheduleRepaint();
+        } catch { /* chart tearing down */ }
+    }, [priceScaleMode, syncPrimitive, scheduleRepaint]);
 
     const publishDrawings = useCallback((next: ChartDrawing[]): void => {
         setDrawings(next);
-        // Through the control, so the USER's bucket gets the same cap the store
-        // enforces as the model's — this path used to save directly and relied
-        // on every save remembering to trim. The one store, no fallback.
+        drawingsRef.current = next;
         drawingsControl('user', sessionId, symbol).replace(next);
         onDrawingsChange?.(next);
-    }, [symbol, sessionId, onDrawingsChange]);
+        syncPrimitive({ userDrawings: next });
+    }, [symbol, sessionId, onDrawingsChange, syncPrimitive]);
+
+    const publishModelDrawings = useCallback((next: ChartDrawing[]): void => {
+        modelDrawingsRef.current = next;
+        onReplaceModelDrawingsRef.current?.(next);
+        syncPrimitive({ modelDrawings: next });
+    }, [syncPrimitive]);
+
+    /** Commit a drawing mutation onto the immutable undo/redo command stack. */
+    const commitDrawingChange = useCallback((nextUser: ChartDrawing[], nextModel?: ChartDrawing[]): void => {
+        const resolvedModel = nextModel ?? modelDrawingsRef.current;
+        const nextHistory = pushDrawingSnapshot(historyRef.current, { userDrawings: nextUser, modelDrawings: resolvedModel });
+        syncHistoryMeta(nextHistory);
+        publishDrawings(nextUser);
+        if (nextModel !== undefined) publishModelDrawings(nextModel);
+    }, [publishDrawings, publishModelDrawings, syncHistoryMeta]);
+
+    const handleUndoDrawing = useCallback((): void => {
+        const nextHistory = undoDrawingState(historyRef.current);
+        if (nextHistory === historyRef.current) return;
+        syncHistoryMeta(nextHistory);
+        publishDrawings(nextHistory.present.userDrawings);
+        publishModelDrawings(nextHistory.present.modelDrawings);
+        setSelectedDrawingId(null);
+        setInspector(null);
+    }, [publishDrawings, publishModelDrawings, syncHistoryMeta]);
+
+    const handleRedoDrawing = useCallback((): void => {
+        const nextHistory = redoDrawingState(historyRef.current);
+        if (nextHistory === historyRef.current) return;
+        syncHistoryMeta(nextHistory);
+        publishDrawings(nextHistory.present.userDrawings);
+        publishModelDrawings(nextHistory.present.modelDrawings);
+        setSelectedDrawingId(null);
+        setInspector(null);
+    }, [publishDrawings, publishModelDrawings, syncHistoryMeta]);
+
+    const handleClearAgentDrawings = useCallback((): void => {
+        const { history: nextHistory, removedCount } = clearAgentDrawingsFromHistory(historyRef.current);
+        if (removedCount === 0) return;
+        syncHistoryMeta(nextHistory);
+        publishDrawings(nextHistory.present.userDrawings);
+        publishModelDrawings(nextHistory.present.modelDrawings);
+        setSelectedDrawingId(null);
+        setInspector(null);
+    }, [publishDrawings, publishModelDrawings, syncHistoryMeta]);
+
+    const deleteDrawingById = useCallback((id: string): void => {
+        const inUser = drawingsRef.current.some(d => d.id === id);
+        const inModel = modelDrawingsRef.current.some(d => d.id === id);
+        if (!inUser && !inModel) return;
+        const nextUser = inUser ? drawingsRef.current.filter(d => d.id !== id) : drawingsRef.current;
+        const nextModel = inModel ? modelDrawingsRef.current.filter(d => d.id !== id) : modelDrawingsRef.current;
+        if (inModel && !onReplaceModelDrawingsRef.current) {
+            onRemoveModelShape?.(id);
+            if (inUser) commitDrawingChange(nextUser);
+        } else {
+            commitDrawingChange(nextUser, nextModel);
+        }
+        if (selectedDrawingIdRef.current === id) setSelectedDrawingId(null);
+        setInspector(prev => (prev?.drawingId === id ? null : prev));
+    }, [commitDrawingChange, onRemoveModelShape]);
+
+    // Global keyboard shortcuts: Escape, Delete/Backspace, Ctrl+Z, Ctrl+Y / Ctrl+Shift+Z.
+    useEffect(() => {
+        const onKeyDown = (ev: KeyboardEvent): void => {
+            const target = ev.target as HTMLElement | null;
+            const inEditable = !!target && (
+                target.tagName === 'INPUT'
+                || target.tagName === 'TEXTAREA'
+                || target.isContentEditable
+            );
+            if (ev.key === 'Escape') {
+                if (draft) setDraft(null);
+                if (inspector) setInspector(null);
+                if (selectedDrawingIdRef.current) setSelectedDrawingId(null);
+                if (toolRef.current !== 'cursor') setTool('cursor');
+                return;
+            }
+            if (inEditable) return;
+            if ((ev.key === 'Delete' || ev.key === 'Backspace') && selectedDrawingIdRef.current) {
+                ev.preventDefault();
+                deleteDrawingById(selectedDrawingIdRef.current);
+                return;
+            }
+            const mod = ev.ctrlKey || ev.metaKey;
+            if (mod && ev.key.toLowerCase() === 'z' && !ev.shiftKey) {
+                if (canUndoDrawing(historyRef.current)) {
+                    ev.preventDefault();
+                    handleUndoDrawing();
+                }
+                return;
+            }
+            if (mod && (ev.key.toLowerCase() === 'y' || (ev.key.toLowerCase() === 'z' && ev.shiftKey))) {
+                if (canRedoDrawing(historyRef.current)) {
+                    ev.preventDefault();
+                    handleRedoDrawing();
+                }
+            }
+        };
+        window.addEventListener('keydown', onKeyDown);
+        return () => window.removeEventListener('keydown', onKeyDown);
+    }, [draft, inspector, deleteDrawingById, handleUndoDrawing, handleRedoDrawing]);
 
     // ─── Chart lifecycle ────────────────────────────────────────────────────
     // Create the chart once per mount; theme tokens match the app's dark surface.
@@ -731,6 +1025,14 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
             lastValueVisible: false,
         });
         chart.priceScale('volume').applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
+        // Attach the native ISeriesPrimitive for zero-lag committed drawings + selection handles.
+        const drawingsPrimitive = new ChartDrawingsPrimitive();
+        try {
+            candles.attachPrimitive(drawingsPrimitive);
+            primitiveRef.current = drawingsPrimitive;
+        } catch {
+            primitiveRef.current = null;
+        }
         chartRef.current = chart;
         candlesRef.current = candles;
         volumeRef.current = volume;
@@ -738,6 +1040,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
             setOverPlot(!!param?.time);
             measureAxis();
             const t = param?.time;
+            setHoveredCandle(typeof t === 'number' && param?.point ? t : null);
             const data = legendRef.current;
             // The legend follows the crosshair's BAR, so it only re-renders when
             // the bar changes — not on every pixel of pointer movement.
@@ -772,7 +1075,14 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
         };
         chart.subscribeCrosshairMove(onCrosshair);
         return () => {
+            stopHoverAnimation();
+            hoverAnimsRef.current.clear();
+            hoveredCandleTimeRef.current = null;
             chart.unsubscribeCrosshairMove(onCrosshair);
+            if (primitiveRef.current) {
+                try { candles.detachPrimitive(primitiveRef.current); } catch { /* chart removed */ }
+                primitiveRef.current = null;
+            }
             chart.remove();
             chartRef.current = null;
             candlesRef.current = null;
@@ -786,7 +1096,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
             // next mount's diff recreates instead of applyOptions-ing ghosts.
             chatLevelLinesRef.current = new Map();
         };
-    }, [measureAxis]);
+    }, [measureAxis, setHoveredCandle, stopHoverAnimation]);
 
     // Data lifecycle: the history load always runs (the stream only pushes
     // the CURRENT bar). Refresh cadence after that: while live the websocket
@@ -1356,61 +1666,32 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
     // and silently killed every tool: clicks drew a preview that never
     // committed, existing shapes vanished on pan).
 
-    /** Continuous bar-space position of a stored unix time: 0 = the first
-     *  loaded bar, fractional between bars, NEGATIVE left of the window and
-     *  > length-1 right of it. This is the drawings' data-space ruler, and the
-     *  reason a timeframe switch keeps shapes in place: the stored time maps
-     *  through the LOADED candles' own spacing (a perp's grid is uniform), so
-     *  a bar-grid change re-scales positions instead of dropping the anchors.
-     *  The previous conversion binary-searched the nearest bar and CLAMPED
-     *  times outside the loaded window onto its first/last bar — a drawing
-     *  anchored a week back collapsed onto the left edge the moment a shorter
-     *  timeframe shrank the loaded window. Extrapolation keeps the anchor at
-     *  its true time: logicalToCoordinate maps out-of-data logicals linearly,
-     *  so a trendline to an off-window anchor still paints the segment that
-     *  crosses the viewport, and panning to it finds it where the time says. */
-    const logicalForTime = useCallback((t: number): number | null => {
-        const cs = candlesRef.current;
-        const data = (cs?.data?.() ?? []) as readonly { time: number }[];
-        if (data.length === 0) return null;
-        const step = data.length > 1
-            ? (data[data.length - 1].time - data[0].time) / (data.length - 1)
-            : intervalSeconds(interval);
-        return (t - data[0].time) / step;
-    }, [interval]);
-
     const toScreen = useCallback((p: DrawPoint): { x: number; y: number } | null => {
         const chart = chartRef.current;
         const cs = candlesRef.current;
         if (!chart || !cs) return null;
         const ts = chart.timeScale();
         // Test mocks (and mid-teardown windows) may lack the logical API —
-        // conversion is impossible there; callers skip those shapes.
         if (typeof ts.logicalToCoordinate !== 'function' || typeof cs.priceToCoordinate !== 'function') return null;
-        const idx = logicalForTime(p.t);
-        if (idx === null) return null;
-        // x converts through an in-window REFERENCE PAIR rather than asking
-        // logicalToCoordinate for the anchor's own logical. The pair is
-        // mathematically identical to the direct call — the scale is linear
-        // for ANY logical (negative, fractional, beyond the data) — but it
-        // pins the conversion to THIS library's contract instead of assuming
-        // it, and it measures px-per-bar from live bars rather than trusting
-        // a configured default. The vanishing the audit measured came from
-        // the old CLAMP (an out-of-window anchor collapsed onto bar 0: a
-        // zero-width shape or a warped slope), not from a null here.
-        const data = (cs.data?.() ?? []) as readonly { time: number }[];
-        if (data.length < 2) return null;
-        const l1 = Math.floor((data.length - 1) / 2);
-        const x1 = ts.logicalToCoordinate(l1 as never);
-        const x2 = ts.logicalToCoordinate((l1 + 1) as never);
-        if (x1 === null || x1 === undefined || x2 === null || x2 === undefined) return null;
-        const pxPerBar = Number(x2) - Number(x1);
-        if (!Number.isFinite(pxPerBar) || pxPerBar === 0) return null;
-        const x = Number(x1) + (idx - l1) * pxPerBar;
+        const bars = chartRowsRef.current.length > 0
+            ? chartRowsRef.current
+            : ((cs.data?.() ?? []) as readonly { time: number }[]);
+        if (bars.length === 0) return null;
+        const x = projectTimestampToX(p.t, bars, intervalSeconds(interval), {
+            logicalToCoordinate: l => {
+                const c = ts.logicalToCoordinate(l as never);
+                return c === null || c === undefined ? null : Number(c);
+            },
+            coordinateToLogical: cx => {
+                const l = ts.coordinateToLogical(cx);
+                return l === null || l === undefined ? null : Number(l);
+            },
+        });
+        if (x === null) return null;
         const y = cs.priceToCoordinate(p.p as never);
-        if (y === null || y === undefined) return null;
-        return { x, y };
-    }, [logicalForTime]);
+        if (y === null || y === undefined || !Number.isFinite(Number(y))) return null;
+        return { x, y: Number(y) };
+    }, [interval]);
 
     const toData = useCallback((x: number, y: number): DrawPoint | null => {
         const chart = chartRef.current;
@@ -1418,54 +1699,62 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
         if (!chart || !cs) return null;
         const ts = chart.timeScale();
         if (typeof ts.coordinateToLogical !== 'function' || typeof cs.coordinateToPrice !== 'function') return null;
-        const logical = ts.coordinateToLogical(x);
         const p = cs.coordinateToPrice(y);
-        if (logical === null || logical === undefined || p === null || p === undefined) return null;
-        const data = (cs.data?.() ?? []) as readonly { time: number }[];
-        if (data.length === 0) return null;
-        // Continuous inverse of logicalForTime: a click BETWEEN bars lands
-        // between their times, and a click in the padding BEYOND the loaded
-        // window anchors at the extrapolated time instead of clamping onto
-        // the edge bar (the same warp the read side had).
-        const step = data.length > 1
-            ? (data[data.length - 1].time - data[0].time) / (data.length - 1)
-            : intervalSeconds(interval);
-        const t = Math.round(data[0].time + logical * step);
+        if (p === null || p === undefined || !Number.isFinite(Number(p))) return null;
+        const bars = chartRowsRef.current.length > 0
+            ? chartRowsRef.current
+            : ((cs.data?.() ?? []) as readonly { time: number }[]);
+        if (bars.length === 0) return null;
+        const t = screenXToTimestamp(x, bars, intervalSeconds(interval), {
+            logicalToCoordinate: l => {
+                const c = ts.logicalToCoordinate(l as never);
+                return c === null || c === undefined ? null : Number(c);
+            },
+            coordinateToLogical: cx => {
+                const l = ts.coordinateToLogical(cx);
+                return l === null || l === undefined ? null : Number(l);
+            },
+        });
+        if (t === null) return null;
         return { t, p: Number(p) };
     }, [interval]);
 
-    /** Pull a screen point onto the nearest candle's OHLC — the rail's magnet.
-     *  The bar is chosen by TIME (the closest one to the click), and the price
-     *  is whichever of its four prints is nearest IN PIXELS, so a snap follows
-     *  the distance the trader actually sees rather than a price difference the
-     *  axis scale can distort. Returns the point unchanged when the chart
-     *  cannot answer (no candles, a hidden bar, a test mock): a magnet that
-     *  silently moved anchors would be worse than one that does nothing. */
-    const magnetPoint = useCallback((pt: { x: number; y: number }): { x: number; y: number } => {
+    /** Pull a screen point onto the nearest candle's OHLC within 12px (toggle or Ctrl-hold). */
+    const magnetPoint = useCallback((pt: ScreenXY): MagnetSnapResult => {
         const chart = chartRef.current;
         const cs = candlesRef.current;
-        if (!chart || !cs || typeof cs.priceToCoordinate !== 'function') return pt;
-        const ts = chart.timeScale();
-        if (typeof ts.coordinateToLogical !== 'function') return pt;
-        const logical = ts.coordinateToLogical(pt.x);
-        if (logical === null || logical === undefined) return pt;
-        const data = (cs.data?.() ?? []) as readonly {
-            time: number; open: number; high: number; low: number; close: number;
-        }[];
-        if (data.length === 0) return pt;
-        const i = Math.min(Math.max(Math.round(logical), 0), data.length - 1);
-        const c = data[i];
-        let bestY = pt.y;
-        let best = Infinity;
-        for (const price of [c.open, c.high, c.low, c.close]) {
-            const y = cs.priceToCoordinate(price as never);
-            if (y === null || y === undefined) continue;
-            const d = Math.abs(Number(y) - pt.y);
-            if (d < best) { best = d; bestY = Number(y); }
+        if (!chart || !cs || typeof cs.priceToCoordinate !== 'function') {
+            return { snapped: false, x: pt.x, y: pt.y };
         }
-        const anchor = toScreen({ t: c.time, p: c.close });
-        return { x: anchor ? anchor.x : pt.x, y: bestY };
-    }, [toScreen]);
+        const ts = chart.timeScale();
+        if (typeof ts.logicalToCoordinate !== 'function' || typeof ts.coordinateToLogical !== 'function') {
+            return { snapped: false, x: pt.x, y: pt.y };
+        }
+        const bars: ReadonlyArray<EvalCandle> = chartRowsRef.current.length > 0
+            ? chartRowsRef.current
+            : ((cs.data?.() ?? []) as readonly EvalCandle[]);
+        if (bars.length === 0) return { snapped: false, x: pt.x, y: pt.y };
+        const scaleAdapter = {
+            logicalToCoordinate: (l: number) => {
+                const c = ts.logicalToCoordinate(l as never);
+                return c === null || c === undefined ? null : Number(c);
+            },
+            coordinateToLogical: (cx: number) => {
+                const l = ts.coordinateToLogical(cx);
+                return l === null || l === undefined ? null : Number(l);
+            },
+        };
+        const step = intervalSeconds(interval);
+        return snapToOhlcMagnet(
+            pt,
+            bars,
+            time => projectTimestampToX(time, bars, step, scaleAdapter),
+            price => {
+                const y = cs.priceToCoordinate(price as never);
+                return y === null || y === undefined ? null : Number(y);
+            },
+        );
+    }, [interval]);
 
     // Paint committed drawings + the in-progress draft onto the overlay.
     const repaint = useCallback((): void => {
@@ -1680,8 +1969,128 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
             ctx.restore();
         }
 
-        const project = (list: ChartDrawing['points']): { x: number; y: number }[] =>
-            list.map(pt => toScreen(pt)).filter((s): s is { x: number; y: number } => s !== null);
+        // HOVERED CANDLE FOCUS: smoothly scales and brightens the hovered
+        // candle (and gracefully fades out neighbors during sweeps) right on
+        // the main pane so the trader gets immediate tactile focus feedback
+        // without mutating the 1000-bar series or obscuring drawings/tags.
+        if (hoverAnimsRef.current.size > 0) {
+            const hoverChart = chartRef.current;
+            const hoverSeries = candlesRef.current;
+            const hoverTs = hoverChart?.timeScale();
+            if (hoverChart && hoverSeries && hoverTs
+                && typeof hoverTs.logicalToCoordinate === 'function'
+                && typeof hoverSeries.priceToCoordinate === 'function') {
+                const bars = chartRowsRef.current.length > 0
+                    ? chartRowsRef.current
+                    : ((hoverSeries.data?.() ?? []) as readonly ChartRow[]);
+                if (bars.length > 0) {
+                    const mainPaneH = (() => {
+                        try {
+                            const h0 = hoverChart.panes?.()?.[0]?.getHeight?.();
+                            return typeof h0 === 'number' && Number.isFinite(h0) && h0 > 0
+                                ? Math.min(plotH, h0)
+                                : plotH;
+                        } catch {
+                            return plotH;
+                        }
+                    })();
+                    let barSpacing = 6;
+                    if (bars.length >= 2) {
+                        const refIdx = Math.floor((bars.length - 1) / 2);
+                        const rx1 = hoverTs.logicalToCoordinate(refIdx as never);
+                        const rx2 = hoverTs.logicalToCoordinate((refIdx + 1) as never);
+                        if (rx1 !== null && rx1 !== undefined && rx2 !== null && rx2 !== undefined) {
+                            const measured = Math.abs(Number(rx2) - Number(rx1));
+                            if (Number.isFinite(measured) && measured > 0) barSpacing = measured;
+                        }
+                    } else {
+                        const configured = hoverTs.options?.()?.barSpacing;
+                        if (typeof configured === 'number' && Number.isFinite(configured) && configured > 0) {
+                            barSpacing = configured;
+                        }
+                    }
+                    const upColor = CANDLE_UP();
+                    const downColor = CANDLE_DOWN();
+                    const activeEntries = [...hoverAnimsRef.current.entries()]
+                        .filter(([, p]) => p > 0.001)
+                        .sort((a, b) => a[1] - b[1]);
+                    if (activeEntries.length > 0) {
+                        ctx.save();
+                        ctx.beginPath();
+                        ctx.rect(0, 0, plotW, mainPaneH);
+                        ctx.clip();
+                        for (const [barTime, progress] of activeEntries) {
+                            const idx = findCandleIndexByTime(bars, barTime);
+                            if (idx < 0) continue;
+                            const bar = bars[idx];
+                            const cx = hoverTs.logicalToCoordinate(idx as never);
+                            const openY = hoverSeries.priceToCoordinate(bar.open as never);
+                            const closeY = hoverSeries.priceToCoordinate(bar.close as never);
+                            const highY = hoverSeries.priceToCoordinate(bar.high as never);
+                            const lowY = hoverSeries.priceToCoordinate(bar.low as never);
+                            if (cx === null || cx === undefined
+                                || openY === null || openY === undefined
+                                || closeY === null || closeY === undefined
+                                || highY === null || highY === undefined
+                                || lowY === null || lowY === undefined) continue;
+                            const xNum = Number(cx);
+                            if (!Number.isFinite(xNum) || xNum < -20 || xNum > plotW + 20) continue;
+                            const baseColor = bar.close >= bar.open ? upColor : downColor;
+                            const geo = computeHoveredCandleStyle({
+                                centerX: xNum,
+                                openY: Number(openY),
+                                closeY: Number(closeY),
+                                highY: Number(highY),
+                                lowY: Number(lowY),
+                                barSpacing,
+                                baseColor,
+                                progress,
+                            });
+                            ctx.save();
+                            ctx.globalAlpha = geo.alpha;
+                            ctx.shadowColor = geo.glowColor;
+                            ctx.shadowBlur = geo.glowBlur;
+
+                            // Brightened, slightly crisper wick.
+                            ctx.strokeStyle = geo.fillColor;
+                            ctx.lineWidth = geo.wickWidth;
+                            ctx.lineCap = 'round';
+                            ctx.beginPath();
+                            ctx.moveTo(geo.wickX, geo.wickTopY);
+                            ctx.lineTo(geo.wickX, geo.wickBottomY);
+                            ctx.stroke();
+
+                            // Scaled, brightened candle body.
+                            ctx.fillStyle = geo.fillColor;
+                            if (typeof ctx.roundRect === 'function' && geo.bodyRadius > 0.1) {
+                                ctx.beginPath();
+                                ctx.roundRect(geo.bodyX, geo.bodyY, geo.bodyWidth, geo.bodyHeight, geo.bodyRadius);
+                                ctx.fill();
+                            } else {
+                                ctx.fillRect(geo.bodyX, geo.bodyY, geo.bodyWidth, geo.bodyHeight);
+                            }
+
+                            // Crisp subtle rim highlight so the focused bar reads cleanly.
+                            ctx.shadowBlur = 0;
+                            ctx.strokeStyle = geo.rimColor;
+                            ctx.lineWidth = 0.85;
+                            if (typeof ctx.roundRect === 'function' && geo.bodyRadius > 0.1) {
+                                ctx.beginPath();
+                                ctx.roundRect(geo.bodyX + 0.4, geo.bodyY + 0.4, Math.max(0.5, geo.bodyWidth - 0.8), Math.max(0.5, geo.bodyHeight - 0.8), geo.bodyRadius);
+                                ctx.stroke();
+                            } else {
+                                ctx.strokeRect(geo.bodyX + 0.4, geo.bodyY + 0.4, Math.max(0.5, geo.bodyWidth - 0.8), Math.max(0.5, geo.bodyHeight - 0.8));
+                            }
+                            ctx.restore();
+                        }
+                        ctx.restore();
+                    }
+                }
+            }
+        }
+
+        // Sync native primitive candle window whenever repaint runs (after history loads/live bars).
+        syncPrimitive();
 
         // Visible-range high/low markers, OKX's "← 76,216.8" tags. They track the
         // visible bars only, so a marker is a statement about what is on screen
@@ -1841,15 +2250,49 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                     priceLabel(pts[0], stroke);
                     return;
                 }
-                case 'text': {
-                    // The annotation string IS the label (user tool + the
-                    // model's draw_on_chart kind "text" both set it).
-                    ctx.fillStyle = stroke;
-                    ctx.font = '11px ui-monospace, monospace';
-                    ctx.fillText(label || 'Note', pts[0].x + 4, pts[0].y - 4);
-                    return;
+                    case 'long_position':
+                    case 'short_position': {
+                        if (pts.length < 2) return;
+                        const [a, b] = pts;
+                        const isLong = kind === 'long_position';
+                        const left = Math.min(a.x, b.x);
+                        const right = Math.max(a.x, b.x, left + 48);
+                        const tpY = b.y;
+                        const slY = a.y + (a.y - b.y) * 0.5;
+                        ctx.fillStyle = 'rgba(16, 185, 129, 0.16)';
+                        ctx.fillRect(left, Math.min(a.y, tpY), right - left, Math.abs(tpY - a.y));
+                        ctx.fillStyle = 'rgba(244, 63, 94, 0.16)';
+                        ctx.fillRect(left, Math.min(a.y, slY), right - left, Math.abs(slY - a.y));
+                        strokeLine([{ x: left, y: a.y }, { x: right, y: a.y }], '#d4d4d8', false, 1.25);
+                        strokeLine([{ x: left, y: tpY }, { x: right, y: tpY }], '#10b981', false, 1.25);
+                        strokeLine([{ x: left, y: slY }, { x: right, y: slY }], '#f43f5e', false, 1.25);
+                        const cs = candlesRef.current;
+                        const ep = cs ? Number(cs.coordinateToPrice(a.y as never)) : NaN;
+                        const tp = cs ? Number(cs.coordinateToPrice(tpY as never)) : NaN;
+                        const sl = cs ? Number(cs.coordinateToPrice(slY as never)) : NaN;
+                        if (Number.isFinite(ep) && Number.isFinite(tp) && Number.isFinite(sl)) {
+                            const m = computePositionBoxMetrics(isLong ? 'long_position' : 'short_position', [
+                                { t: 0, p: ep },
+                                { t: 1, p: sl },
+                                { t: 1, p: tp },
+                            ]);
+                            if (m) {
+                                ctx.fillStyle = 'rgba(24, 24, 27, 0.9)';
+                                ctx.fillRect(left + 4, a.y - 16, 94, 14);
+                                ctx.fillStyle = '#e4e4e7';
+                                ctx.font = '10px ui-monospace, monospace';
+                                ctx.fillText(`${isLong ? 'LONG' : 'SHORT'} ${m.formattedRR}`, left + 8, a.y - 5);
+                            }
+                        }
+                        return;
+                    }
+                    case 'text': {
+                        ctx.fillStyle = stroke;
+                        ctx.font = '11px ui-monospace, monospace';
+                        ctx.fillText(label || 'Note', pts[0].x + 4, pts[0].y - 4);
+                        return;
+                    }
                 }
-            }
             if (label) {
                 ctx.fillStyle = stroke;
                 ctx.font = '10px ui-monospace, monospace';
@@ -1858,50 +2301,56 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
             priceLabel(pts[0], stroke);
         };
 
-        // The eye toggle blanks every layer (draft included) without deleting.
-        if (!drawingsHiddenRef.current) {
-            for (const d of drawingsRef.current) {
-                const pts = project(d.points);
-                if (pts.length > 0) drawShape(d.kind, pts, d.color, undefined, d.label, drawWidthOf(d));
-            }
-            // The model's own shapes (draw_on_chart / mark_trade_levels) render
-            // after the user's, same style — their labels ("Entry", "SL"…)
-            // announce them. Not persisted into the user's drawing file.
-            for (const d of modelDrawingsRef.current) {
-                const pts = project(d.points);
-                if (pts.length > 0) drawShape(d.kind, pts, d.color, undefined, d.label, drawWidthOf(d));
-            }
-            if (draft && draft.points.length > 0) {
-                const draftKind: DrawKind = tool === 'hline' ? 'hline' : tool === 'rect' ? 'rect' : tool === 'ray' ? 'ray' : tool === 'brush' ? 'brush' : tool === 'fib' ? 'fib' : 'trend';
-                drawShape(draftKind, draft.points, color, `${color}22`, undefined, lineWidth);
-            }
+        // Committed user + AI drawings now render inside the zero-lag native
+        // `ChartDrawingsPrimitive` (`ISeriesPrimitive`). The overlay canvas
+        // renders ONLY the transient creation draft and active magnet reticle
+        // so `takeScreenshot(false, false)` never double-renders shapes.
+        if (!drawingsHiddenRef.current && draft && draft.points.length > 0) {
+            const draftKind: DrawKind =
+                tool === 'hline' ? 'hline'
+                    : tool === 'rect' ? 'rect'
+                        : tool === 'ray' ? 'ray'
+                            : tool === 'channel' ? 'channel'
+                                : tool === 'brush' ? 'brush'
+                                    : tool === 'fib' ? 'fib'
+                                        : tool === 'long_position' ? 'long_position'
+                                            : tool === 'short_position' ? 'short_position'
+                                                : 'trend';
+            const previewPts = draftKind === 'channel' && draft.points.length === 2
+                ? [draft.points[0], draft.points[1], { x: draft.points[0].x, y: draft.points[0].y - 36 }]
+                : draft.points;
+            drawShape(draftKind, previewPts, color, `${color}22`, undefined, lineWidth);
+        }
+
+        // 12px OHLC magnet snap reticle (visible when snapping during create/drag).
+        const snap = magnetSnapRef.current;
+        if (snap && snap.snapped) {
+            ctx.save();
+            ctx.strokeStyle = '#fafafa';
+            ctx.lineWidth = 1.25;
+            ctx.beginPath();
+            ctx.arc(snap.x, snap.y, 4.5, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.fillStyle = 'rgba(24, 24, 27, 0.85)';
+            ctx.fillRect(snap.x + 7, snap.y - 11, 24, 13);
+            ctx.fillStyle = '#e4e4e7';
+            ctx.font = '9px ui-monospace, monospace';
+            ctx.fillText((snap.field ?? 'o')[0].toUpperCase(), snap.x + 15, snap.y - 1);
+            ctx.restore();
         }
         ctx.restore();
-    }, [toScreen, draft, tool, color]);
+    }, [toScreen, draft, tool, color, lineWidth, syncPrimitive]);
     repaintRef.current = repaint;
 
-    // Repaint on state changes and on every pan/zoom the chart performs.
-    // repaint() is read through repaintRef (synced during render, before
-    // effects run) so this effect does NOT depend on the callback's identity:
-    // repaint changes on every pointermove draft update (draft → repaint →
-    // deps), and re-subscribing the range/resize listeners per pointermove
-    // was pure churn during a drag. draft/tool/color repaints are still
-    // driven by the repaintRef being fresh on the next trigger; committed
-    // shapes only use their OWN colors, so a tool/color flip without a draft
-    // paints nothing new.
     useEffect(() => {
         repaintRef.current();
         const chart = chartRef.current;
         if (!chart) return;
         const handler = (): void => { scheduleRepaint(); updateLastTag(); };
         const ts = chart.timeScale();
-        // Test mocks may omit the subscription API — painting still works,
-        // only pan/zoom repaint is skipped there.
         const sub = ts.subscribeVisibleLogicalRangeChange?.bind(ts);
         const unsub = ts.unsubscribeVisibleLogicalRangeChange?.bind(ts);
         if (sub) sub(handler);
-        // jsdom (and older webviews) have no ResizeObserver — painting on
-        // pan/zoom still works via the range subscription alone.
         const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => scheduleRepaint()) : null;
         if (ro && hostRef.current) ro.observe(hostRef.current);
         return () => {
@@ -1914,55 +2363,100 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
         };
     }, [drawings, modelDrawings, status, interval, updateLastTag, scheduleRepaint]);
 
-    // The in-progress DRAFT preview repaints on every pointermove — but it
-    // must not re-run the subscription effect above (that was the churn:
-    // draft → new repaint identity → listener teardown/re-add per move).
-    // repaint's own closure only changes with draft/tool/color (toScreen is
-    // stable), so this effect fires exactly on preview-relevant changes and
-    // never overlaps the committed-shape triggers above.
     useEffect(() => {
         repaint();
     }, [repaint]);
 
-    // ─── Pointer capture on the overlay (only while a tool is active) ───────
-    const localPoint = (ev: React.PointerEvent): { x: number; y: number } => {
-        const rect = (ev.currentTarget as HTMLElement).getBoundingClientRect();
-        return { x: ev.clientX - rect.left, y: ev.clientY - rect.top };
-    };
+    // ─── Cursor-mode pointer arbitration: select, drag handles, log-safe body drag, dblclick inspector ───
+    useEffect(() => {
+        const host = hostRef.current;
+        if (!host) return;
 
-    const hitTestDrawing = (x: number, y: number): ChartDrawing | null => {
-        // Model shapes paint above the user's, so test them first (top-down):
-        // the eraser deletes whichever kind it actually lands on.
-        const pool = [...drawingsRef.current, ...modelDrawingsRef.current];
-        for (let i = pool.length - 1; i >= 0; i -= 1) {
-            const d = pool[i];
-            const pts = d.points.map(p => toScreen(p)).filter((s): s is { x: number; y: number } => s !== null);
-            if (pts.length === 0) continue;
-            if (d.kind === 'rect') {
-                const [a, b] = pts;
-                if (Math.min(a.x, b.x) - 4 <= x && x <= Math.max(a.x, b.x) + 4
-                    && Math.min(a.y, b.y) - 4 <= y && y <= Math.max(a.y, b.y) + 4) return d;
-                continue;
-            }
-            if (d.kind === 'hline' && Math.abs(y - pts[0].y) < 6) return d;
-            if (d.kind === 'text' && Math.hypot(x - pts[0].x, y - pts[0].y) < 12) return d;
-            for (let j = 1; j < pts.length; j += 1) {
-                if (distToSegment(x, y, pts[j - 1].x, pts[j - 1].y, pts[j].x, pts[j].y) < 6) return d;
-            }
+        let chartLocked = false;
+        const lockChart = (): void => {
+            if (chartLocked) return;
+            chartLocked = true;
+            try {
+                chartRef.current?.applyOptions({ handleScroll: false, handleScale: false });
+            } catch { /* chart tearing down */ }
+        };
+        const unlockChart = (): void => {
+            if (!chartLocked) return;
+            chartLocked = false;
+            try {
+                chartRef.current?.applyOptions({ handleScroll: true, handleScale: true });
+            } catch { /* chart tearing down */ }
+        };
+
+        interface ActiveDrag {
+            pointerId: number;
+            drawingId: string;
+            isModel: boolean;
+            target: 'handle' | 'body';
+            handleIndex: number;
+            startX: number;
+            startY: number;
+            origDrawing: ChartDrawing;
+            origScreenPts: ScreenXY[];
+            moved: boolean;
+            latestDrawing: ChartDrawing;
         }
-        return null;
-    };
+        let activeDrag: ActiveDrag | null = null;
 
-    const onPointerDown = (ev: React.PointerEvent): void => {
-        if (tool === 'cursor') {
-            // Alt+click anchors the VWAP to the bar under the pointer — OKX's
-            // anchored-VWAP gesture. Alt+clicking the CURRENT anchor clears it.
-            // Only while the study is on: otherwise Alt+click (a browser
-            // modifier users press for other reasons) would leave invisible
-            // state behind.
+        const hostLocal = (ev: MouseEvent | PointerEvent): ScreenXY => {
+            const rect = host.getBoundingClientRect();
+            return { x: ev.clientX - rect.left, y: ev.clientY - rect.top };
+        };
+
+        const plotBounds = (): { plotW: number; plotH: number } => ({
+            plotW: Math.max(0, host.clientWidth - axisWRef.current),
+            plotH: Math.max(0, host.clientHeight - 28),
+        });
+
+        const getAllDrawings = (): ChartDrawing[] =>
+            drawingsHiddenRef.current ? [] : [...drawingsRef.current, ...modelDrawingsRef.current];
+
+        const applyLiveDrawing = (isModel: boolean, updated: ChartDrawing): void => {
+            if (isModel) {
+                const next = modelDrawingsRef.current.map(d => (d.id === updated.id ? updated : d));
+                modelDrawingsRef.current = next;
+                syncPrimitive({ modelDrawings: next });
+            } else {
+                const next = drawingsRef.current.map(d => (d.id === updated.id ? updated : d));
+                drawingsRef.current = next;
+                syncPrimitive({ userDrawings: next });
+            }
+        };
+
+        const finishDrag = (commit: boolean): void => {
+            const drag = activeDrag;
+            activeDrag = null;
+            magnetSnapRef.current = null;
+            unlockChart();
+            host.style.cursor = '';
+            scheduleRepaint();
+            if (!drag) return;
+            if (commit && drag.moved) {
+                const bumped = bumpDrawingVersion(drag.latestDrawing);
+                if (drag.isModel) {
+                    const nextModel = modelDrawingsRef.current.map(d => (d.id === bumped.id ? bumped : d));
+                    commitDrawingChange(drawingsRef.current, nextModel);
+                } else {
+                    const nextUser = drawingsRef.current.map(d => (d.id === bumped.id ? bumped : d));
+                    commitDrawingChange(nextUser);
+                }
+            } else if (!commit && drag.moved) {
+                // Restore original geometry on cancelled drag.
+                applyLiveDrawing(drag.isModel, drag.origDrawing);
+            }
+        };
+
+        const onCapturePointerDown = (ev: PointerEvent): void => {
+            if (toolRef.current !== 'cursor' || ev.button !== 0) return;
+            const pt = hostLocal(ev);
             if (ev.altKey && indicatorSettings.visible.avwap) {
                 const ts = chartRef.current?.timeScale();
-                const logical = typeof ts?.coordinateToLogical === 'function' ? ts.coordinateToLogical(localPoint(ev).x) : null;
+                const logical = typeof ts?.coordinateToLogical === 'function' ? ts.coordinateToLogical(pt.x) : null;
                 const idx = logical === null || logical === undefined ? -1 : Math.round(Number(logical));
                 const row = chartRowsRef.current[idx];
                 if (row) {
@@ -1971,38 +2465,300 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                     setAvwapAnchor(next);
                     refreshIndicatorsRef.current(true);
                 }
+                return;
             }
-            return;
-        }
-        ev.preventDefault();
-        const pt = magnet ? magnetPoint(localPoint(ev)) : localPoint(ev);
-        if (tool === 'erase') {
-            const hit = hitTestDrawing(pt.x, pt.y);
-            if (hit) {
-                if (drawingsRef.current.some(d => d.id === hit.id)) {
-                    publishDrawings(drawingsRef.current.filter(d => d.id !== hit.id));
+            const { plotW, plotH } = plotBounds();
+            if (pt.x > plotW || pt.y > plotH) return;
+            const hit = hitTestDrawings(
+                pt.x,
+                pt.y,
+                getAllDrawings(),
+                selectedDrawingIdRef.current,
+                toScreen,
+                plotW,
+                plotH,
+            );
+            if (!hit) {
+                if (selectedDrawingIdRef.current !== null) setSelectedDrawingId(null);
+                setInspector(null);
+                return;
+            }
+            ev.stopPropagation();
+            ev.preventDefault();
+            setInspector(null);
+            setSelectedDrawingId(hit.drawing.id);
+            selectedDrawingIdRef.current = hit.drawing.id;
+            const origScreenPts = hit.drawing.points
+                .map(p => toScreen(p))
+                .filter((s): s is ScreenXY => s !== null);
+            if (origScreenPts.length !== hit.drawing.points.length) {
+                syncPrimitive({ selectedId: hit.drawing.id });
+                return;
+            }
+            const isModel = modelDrawingsRef.current.some(d => d.id === hit.drawing.id);
+            activeDrag = {
+                pointerId: ev.pointerId,
+                drawingId: hit.drawing.id,
+                isModel,
+                target: hit.target,
+                handleIndex: hit.handleIndex ?? 0,
+                startX: pt.x,
+                startY: pt.y,
+                origDrawing: hit.drawing,
+                origScreenPts,
+                moved: false,
+                latestDrawing: hit.drawing,
+            };
+            lockChart();
+            host.style.cursor = hit.target === 'handle' ? 'grabbing' : 'move';
+            try { host.setPointerCapture?.(ev.pointerId); } catch { /* synthetic events */ }
+            syncPrimitive({ selectedId: hit.drawing.id });
+        };
+
+        const onCapturePointerMove = (ev: PointerEvent): void => {
+            if (toolRef.current !== 'cursor') return;
+            const rawPt = hostLocal(ev);
+            if (activeDrag) {
+                ev.stopPropagation();
+                ev.preventDefault();
+                const useMagnet = magnetRef.current || ev.ctrlKey;
+                const snapRes = useMagnet ? magnetPoint(rawPt) : { snapped: false, x: rawPt.x, y: rawPt.y };
+                magnetSnapRef.current = snapRes.snapped ? snapRes : null;
+                const curPt = { x: snapRes.x, y: snapRes.y };
+                const dx = curPt.x - activeDrag.startX;
+                const dy = curPt.y - activeDrag.startY;
+                if (!activeDrag.moved && Math.hypot(dx, dy) < 2) return;
+                activeDrag.moved = true;
+
+                const orig = activeDrag.origDrawing;
+                let nextPoints: DrawPoint[] = orig.points;
+
+                if (activeDrag.target === 'handle') {
+                    const dp = toData(curPt.x, curPt.y);
+                    if (dp) {
+                        if (isPositionBoxKind(orig.kind)) {
+                            nextPoints = updatePositionBoxHandle(
+                                orig.points,
+                                activeDrag.handleIndex,
+                                dp,
+                            );
+                        } else if (orig.kind === 'hline') {
+                            nextPoints = [{ t: orig.points[0].t, p: dp.p }];
+                        } else {
+                            nextPoints = orig.points.map((p, idx) => (idx === activeDrag!.handleIndex ? dp : p));
+                        }
+                    }
                 } else {
-                    // A model-drawn shape → remove it from the parent's model
-                    // store (which re-persists the coin's model bucket).
-                    onRemoveModelShape?.(hit.id);
+                    // Whole-body drag: convert EVERY anchor via screen Y -> coordinateToPrice(origY + dy)
+                    // so vertical translation preserves visual height/slope 1:1 in BOTH Normal & Log scales.
+                    const cs = candlesRef.current;
+                    const chart = chartRef.current;
+                    const ts = chart?.timeScale();
+                    const bars = chartRowsRef.current.length > 0
+                        ? chartRowsRef.current
+                        : ((cs?.data?.() ?? []) as readonly { time: number }[]);
+                    if (cs && ts && bars.length > 0 && typeof cs.coordinateToPrice === 'function') {
+                        const scaleAdapter = {
+                            logicalToCoordinate: (l: number) => {
+                                const c = ts.logicalToCoordinate(l as never);
+                                return c === null || c === undefined ? null : Number(c);
+                            },
+                            coordinateToLogical: (cx: number) => {
+                                const l = ts.coordinateToLogical(cx);
+                                return l === null || l === undefined ? null : Number(l);
+                            },
+                        };
+                        const step = intervalSeconds(intervalRef.current);
+                        const translated: DrawPoint[] = [];
+                        let valid = true;
+                        for (let i = 0; i < orig.points.length; i += 1) {
+                            const sp = activeDrag.origScreenPts[i];
+                            const newT = orig.kind === 'hline'
+                                ? orig.points[i].t
+                                : screenXToTimestamp(sp.x + dx, bars, step, scaleAdapter);
+                            const newPRaw = cs.coordinateToPrice((sp.y + dy) as never);
+                            const newP = newPRaw === null || newPRaw === undefined ? NaN : Number(newPRaw);
+                            if (newT === null || !Number.isFinite(newP)) { valid = false; break; }
+                            translated.push({ t: newT, p: newP });
+                        }
+                        if (valid && translated.length === orig.points.length) {
+                            nextPoints = translated;
+                        }
+                    }
                 }
+
+                const updated: ChartDrawing = { ...orig, points: nextPoints };
+                activeDrag.latestDrawing = updated;
+                applyLiveDrawing(activeDrag.isModel, updated);
+                if (magnetSnapRef.current) scheduleRepaint();
+                return;
             }
+
+            // Passive hover hit-test in cursor mode for cursor feedback & highlight.
+            const { plotW, plotH } = plotBounds();
+            if (rawPt.x > plotW || rawPt.y > plotH) {
+                if (hoveredDrawingIdRef.current !== null) {
+                    hoveredDrawingIdRef.current = null;
+                    host.style.cursor = '';
+                    syncPrimitive({ hoveredId: null });
+                }
+                return;
+            }
+            const hit = hitTestDrawings(
+                rawPt.x,
+                rawPt.y,
+                getAllDrawings(),
+                selectedDrawingIdRef.current,
+                toScreen,
+                plotW,
+                plotH,
+            );
+            const nextHover = hit ? hit.drawing.id : null;
+            host.style.cursor = hit ? hit.cursor : '';
+            if (nextHover !== hoveredDrawingIdRef.current) {
+                hoveredDrawingIdRef.current = nextHover;
+                syncPrimitive({ hoveredId: nextHover });
+            }
+        };
+
+        const onCapturePointerUp = (ev: PointerEvent): void => {
+            if (!activeDrag) return;
+            ev.stopPropagation();
+            try { host.releasePointerCapture?.(ev.pointerId); } catch { /* ignore */ }
+            finishDrag(true);
+        };
+
+        const onCapturePointerCancel = (ev: PointerEvent): void => {
+            if (!activeDrag) return;
+            try { host.releasePointerCapture?.(ev.pointerId); } catch { /* ignore */ }
+            finishDrag(false);
+        };
+
+        const onWindowBlur = (): void => {
+            if (activeDrag) finishDrag(false);
+            else unlockChart();
+        };
+
+        const onCaptureDblClick = (ev: MouseEvent): void => {
+            if (toolRef.current !== 'cursor') return;
+            const pt = hostLocal(ev);
+            const { plotW, plotH } = plotBounds();
+            const hit = hitTestDrawings(
+                pt.x,
+                pt.y,
+                getAllDrawings(),
+                selectedDrawingIdRef.current,
+                toScreen,
+                plotW,
+                plotH,
+            );
+            if (!hit) return;
+            ev.stopPropagation();
+            ev.preventDefault();
+            setSelectedDrawingId(hit.drawing.id);
+            setInspector({ drawingId: hit.drawing.id, x: pt.x + CHART_RAIL_WIDTH, y: pt.y });
+        };
+
+        host.addEventListener('pointerdown', onCapturePointerDown, true);
+        host.addEventListener('pointermove', onCapturePointerMove, true);
+        host.addEventListener('pointerup', onCapturePointerUp, true);
+        host.addEventListener('pointercancel', onCapturePointerCancel, true);
+        host.addEventListener('dblclick', onCaptureDblClick, true);
+        window.addEventListener('blur', onWindowBlur);
+        return () => {
+            host.removeEventListener('pointerdown', onCapturePointerDown, true);
+            host.removeEventListener('pointermove', onCapturePointerMove, true);
+            host.removeEventListener('pointerup', onCapturePointerUp, true);
+            host.removeEventListener('pointercancel', onCapturePointerCancel, true);
+            host.removeEventListener('dblclick', onCaptureDblClick, true);
+            window.removeEventListener('blur', onWindowBlur);
+            unlockChart();
+            host.style.cursor = '';
+        };
+    }, [toScreen, toData, magnetPoint, syncPrimitive, commitDrawingChange, scheduleRepaint, indicatorSettings.visible.avwap]);
+
+    // ─── Pointer capture on the overlay (only while a drawing tool is active) ───
+    const localPoint = (ev: React.PointerEvent): { x: number; y: number } => {
+        const rect = (ev.currentTarget as HTMLElement).getBoundingClientRect();
+        return { x: ev.clientX - rect.left, y: ev.clientY - rect.top };
+    };
+
+    const resolveToolPoint = (ev: React.PointerEvent): ScreenXY => {
+        const raw = localPoint(ev);
+        if (magnet || ev.ctrlKey) {
+            const snap = magnetPoint(raw);
+            magnetSnapRef.current = snap.snapped ? snap : null;
+            return { x: snap.x, y: snap.y };
+        }
+        magnetSnapRef.current = null;
+        return raw;
+    };
+
+    const onPointerDown = (ev: React.PointerEvent): void => {
+        if (tool === 'cursor') return;
+        ev.preventDefault();
+        const pt = resolveToolPoint(ev);
+        if (tool === 'erase') {
+            const host = hostRef.current;
+            const plotW = Math.max(0, (host?.clientWidth ?? 600) - axisWRef.current);
+            const plotH = Math.max(0, (host?.clientHeight ?? 400) - 28);
+            const hit = hitTestDrawings(
+                pt.x,
+                pt.y,
+                [...drawingsRef.current, ...modelDrawingsRef.current],
+                null,
+                toScreen,
+                plotW,
+                plotH,
+            );
+            if (hit) deleteDrawingById(hit.drawing.id);
             return;
         }
         if (tool === 'hline') {
             const dp = toData(pt.x, pt.y);
-            if (dp) publishDrawings([...drawingsRef.current, { id: createDrawingId(), kind: 'hline', points: [dp], color, createdAt: Date.now(), width: lineWidth }]);
+            if (dp) {
+                const shortId = allocateDrawingShortId(symbol, [...drawingsRef.current, ...modelDrawingsRef.current]);
+                const created: ChartDrawing = {
+                    id: createDrawingId(),
+                    shortId,
+                    origin: 'user',
+                    createdOnTf: interval,
+                    version: 1,
+                    kind: 'hline',
+                    points: [dp],
+                    color,
+                    createdAt: Date.now(),
+                    drawnPrice: markPrice ?? lastPrice ?? undefined,
+                    width: lineWidth,
+                };
+                commitDrawingChange([...drawingsRef.current, created]);
+                setSelectedDrawingId(created.id);
+            }
+            magnetSnapRef.current = null;
             return;
         }
         if (tool === 'text') {
-            // A text note is placed in one click, then typed in place — the
-            // editor input mounts over the anchor; Enter commits, Esc deletes.
             const dp = toData(pt.x, pt.y);
             if (dp) {
                 const id = createDrawingId();
-                publishDrawings([...drawingsRef.current, { id, kind: 'text', points: [dp], color, createdAt: Date.now(), label: 'Note', width: lineWidth }]);
+                const shortId = allocateDrawingShortId(symbol, [...drawingsRef.current, ...modelDrawingsRef.current]);
+                commitDrawingChange([...drawingsRef.current, {
+                    id,
+                    shortId,
+                    origin: 'user',
+                    createdOnTf: interval,
+                    version: 1,
+                    kind: 'text',
+                    points: [dp],
+                    color,
+                    createdAt: Date.now(),
+                    label: 'Note',
+                    drawnPrice: markPrice ?? lastPrice ?? undefined,
+                    width: lineWidth,
+                }]);
                 setTextEdit({ id, x: pt.x, y: pt.y });
             }
+            magnetSnapRef.current = null;
             return;
         }
         setDraft({ points: [pt] });
@@ -2010,8 +2766,12 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
     };
 
     const onPointerMove = (ev: React.PointerEvent): void => {
-        if (!draft || tool === 'cursor' || tool === 'erase') return;
-        const pt = magnet ? magnetPoint(localPoint(ev)) : localPoint(ev);
+        if (tool === 'cursor' || tool === 'erase') return;
+        const pt = resolveToolPoint(ev);
+        if (!draft) {
+            if (magnet || ev.ctrlKey) scheduleRepaint();
+            return;
+        }
         if (tool === 'brush') {
             const last = draft.points[draft.points.length - 1];
             if (Math.hypot(pt.x - last.x, pt.y - last.y) < 3) return;
@@ -2027,26 +2787,101 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
         const kind = tool as DrawKind;
         const pts = draft.points;
         setDraft(null);
+        magnetSnapRef.current = null;
         (ev.currentTarget as HTMLElement).releasePointerCapture?.(ev.pointerId);
+
+        // Long / Short Position box: click-to-seed OR drag-to-size, always producing 3 valid anchors.
+        if (isPositionBoxKind(kind)) {
+            const entryDp = toData(pts[0].x, pts[0].y);
+            if (!entryDp) return;
+            const evalBars = chartRowsRef.current.slice(-200);
+            const atr = computeAtr14(evalBars);
+            const barSec = intervalSeconds(interval);
+            const riskDist = atr && atr > 0 ? atr : Math.max(Math.abs(entryDp.p) * 0.008, 1e-6);
+            let finalPts = seedPositionBoxPoints(kind, entryDp, entryDp.t + barSec * 16, riskDist);
+            if (pts.length >= 2 && Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y) > 8) {
+                const dragDp = toData(pts[1].x, pts[1].y);
+                if (dragDp) {
+                    const rightT = Math.max(dragDp.t, entryDp.t + barSec * 4);
+                    const rawDelta = Math.abs(dragDp.p - entryDp.p);
+                    const tpDist = rawDelta > 0 ? rawDelta : (atr && atr > 0 ? atr * 2 : entryDp.p * 0.012);
+                    const slDist = tpDist * 0.5;
+                    const isLong = kind === 'long_position';
+                    finalPts = [
+                        entryDp,
+                        { t: rightT, p: isLong ? Math.max(1e-8, entryDp.p - slDist) : entryDp.p + slDist },
+                        { t: rightT, p: isLong ? entryDp.p + tpDist : Math.max(1e-8, entryDp.p - tpDist) },
+                    ];
+                }
+            }
+            const shortId = allocateDrawingShortId(symbol, [...drawingsRef.current, ...modelDrawingsRef.current]);
+            const created: ChartDrawing = {
+                id: createDrawingId(),
+                shortId,
+                origin: 'user',
+                createdOnTf: interval,
+                version: 1,
+                kind,
+                points: finalPts,
+                color: kind === 'long_position' ? '#10b981' : '#f43f5e',
+                createdAt: Date.now(),
+                drawnPrice: markPrice ?? lastPrice ?? undefined,
+                width: lineWidth,
+            };
+            commitDrawingChange([...drawingsRef.current, created]);
+            setSelectedDrawingId(created.id);
+            setTool('cursor');
+            return;
+        }
+
         if (pts.length < 2) return;
         const dataPts = pts.map(p => toData(p.x, p.y)).filter((p): p is DrawPoint => p !== null);
+        // Channel: seed parallel 3rd anchor offset by 1.5*ATR (or 1% of price) so user can drag handle 2 cleanly.
+        if (kind === 'channel' && dataPts.length === 2) {
+            const atr = computeAtr14(chartRowsRef.current.slice(-200));
+            const offset = atr && atr > 0 ? atr * 1.5 : Math.max(Math.abs(dataPts[0].p) * 0.01, 1e-6);
+            dataPts.push({ t: dataPts[0].t, p: dataPts[0].p + offset });
+        }
         const finalPts = pointsForKind(kind, dataPts);
         if (!finalPts || finalPts.length < 2) return;
-        publishDrawings([...drawingsRef.current, { id: createDrawingId(), kind, points: finalPts, color, createdAt: Date.now(), width: lineWidth }]);
+        const shortId = allocateDrawingShortId(symbol, [...drawingsRef.current, ...modelDrawingsRef.current]);
+        const created: ChartDrawing = {
+            id: createDrawingId(),
+            shortId,
+            origin: 'user',
+            createdOnTf: interval,
+            version: 1,
+            kind,
+            points: finalPts,
+            color,
+            createdAt: Date.now(),
+            drawnPrice: markPrice ?? lastPrice ?? undefined,
+            width: lineWidth,
+        };
+        commitDrawingChange([...drawingsRef.current, created]);
+        setSelectedDrawingId(created.id);
     };
 
-    const undoDrawing = (): void => publishDrawings(drawings.slice(0, -1));
-    /* The rail's Clear-all left with P-2 (the desk's clear_chart_drawings is
-       the one clearer now); the local helper died with the button. */
-    /** Live-rename the text note being edited (already published). */
     const renameTextDrawing = (id: string, label: string): void => {
-        publishDrawings(drawingsRef.current.map(d => (d.id === id ? { ...d, label: label.slice(0, 80) } : d)));
+        publishDrawings(drawingsRef.current.map(d => (d.id === id ? bumpDrawingVersion({ ...d, label: label.slice(0, 80) }) : d)));
     };
-    /** Commit (blur/Enter) or cancel (Esc — removes the note) the editor. */
     const finishTextEdit = (cancel = false): void => {
         if (!textEdit) return;
-        if (cancel) publishDrawings(drawingsRef.current.filter(d => d.id !== textEdit.id));
+        if (cancel) deleteDrawingById(textEdit.id);
         setTextEdit(null);
+    };
+
+    const applyInspectorUpdate = (updated: ChartDrawing): void => {
+        const bumped = bumpDrawingVersion(updated);
+        const isModel = modelDrawingsRef.current.some(d => d.id === bumped.id);
+        if (isModel) {
+            const nextModel = modelDrawingsRef.current.map(d => (d.id === bumped.id ? bumped : d));
+            commitDrawingChange(drawingsRef.current, nextModel);
+        } else {
+            const nextUser = drawingsRef.current.map(d => (d.id === bumped.id ? bumped : d));
+            commitDrawingChange(nextUser);
+        }
+        setInspector(null);
     };
 
     // ─── Imperative handle (screenshot + snapshot) ──────────────────────────
@@ -2056,22 +2891,51 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
             capturePng: (): string | null => {
                 try {
                     const chart = chartRef.current;
-                    if (!chart) return null;
+                    const host = hostRef.current;
+                    if (!chart || !host) return null;
+                    // `takeScreenshot(false, false)` captures `zOrder: 'normal'` committed
+                    // drawings inside the primitive and excludes `zOrder: 'top'` selection
+                    // handles + crosshair. Committed shapes are no longer on `overlayRef`,
+                    // so there is zero double-rendering.
                     const base = chart.takeScreenshot(false, false);
-                    const out = document.createElement('canvas');
-                    out.width = base.width;
-                    out.height = base.height;
-                    const ctx = out.getContext('2d');
-                    if (!ctx) return null;
-                    ctx.fillStyle = chartColor('--color-zinc-950', '#0a0a0b');
-                    ctx.fillRect(0, 0, out.width, out.height);
-                    ctx.drawImage(base, 0, 0);
-                    // The drawing overlay is a CSS-pixel canvas over the chart
-                    // host — scale it onto the screenshot's pixel grid.
-                    if (overlayRef.current) {
-                        ctx.drawImage(overlayRef.current, 0, 0, out.width, out.height);
+                    const plotW = Math.max(0, host.clientWidth - axisWRef.current);
+                    const plotH = Math.max(0, host.clientHeight - 28);
+                    const userShapes = ensureStableShortIds(
+                        drawingsRef.current.map(d => (d.origin ? d : { ...d, origin: 'user' as const })),
+                        symbol,
+                    );
+                    const aiShapes = ensureStableShortIds(
+                        modelDrawingsRef.current.map(d => (d.origin ? d : { ...d, origin: 'agent' as const })),
+                        symbol,
+                    );
+                    const badges: SnapshotBadge[] = [];
+                    if (!drawingsHiddenRef.current && plotW > 30 && plotH > 24) {
+                        for (const d of [...userShapes, ...aiShapes]) {
+                            const anchor = d.points[0];
+                            if (!anchor || !d.shortId) continue;
+                            const pt = toScreen(anchor);
+                            if (!pt) continue;
+                            // Skip anchors outside visible plot bounds, and clamp strictly
+                            // inside the plot pane so badges never drift onto price/time axes
+                            // across 1x/1.25x/1.5x/2x DPR scales.
+                            if (pt.x < -8 || pt.x > plotW + 8 || pt.y < -8 || pt.y > plotH + 8) continue;
+                            badges.push({
+                                shortId: d.shortId,
+                                origin: d.origin === 'agent' ? 'agent' : 'user',
+                                x: Math.max(10, Math.min(plotW - 36, pt.x)),
+                                y: Math.max(10, Math.min(plotH - 18, pt.y)),
+                                color: d.color,
+                            });
+                        }
                     }
-                    return out.toDataURL('image/png');
+                    return renderAnnotatedChartSnapshot({
+                        baseCanvas: base,
+                        overlayCanvas: overlayRef.current,
+                        overlayCssWidth: host.clientWidth,
+                        overlayCssHeight: host.clientHeight,
+                        backgroundColor: chartColor('--color-zinc-950', '#0a0a0b'),
+                        badges,
+                    });
                 } catch {
                     return null;
                 }
@@ -2081,35 +2945,82 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                 if (!cs) return null;
                 const data = (cs.data() ?? []) as readonly { time: number; open: number; high: number; low: number; close: number }[];
                 const tail = data.slice(-30).map(c => ({ time: c.time, open: c.open, high: c.high, low: c.low, close: c.close }));
+                const fullRows = chartRowsRef.current.length > 0 ? chartRowsRef.current : data;
+                const evalCandles: EvalCandle[] = fullRows.slice(-200).map(c => ({
+                    time: c.time, open: c.open, high: c.high, low: c.low, close: c.close,
+                }));
+                const scaleModeOpt = (chartRef.current?.priceScale('right')?.options?.() as { mode?: number } | undefined)?.mode;
+                const activeScaleMode: PriceScaleMode = scaleModeOpt === 1 || priceScaleModeRef.current === 'logarithmic'
+                    ? 'logarithmic'
+                    : 'normal';
+                const activeStudies: Record<string, number> = {};
+                const legendSeries = legendRef.current?.series ?? {};
+                for (const [key, series] of Object.entries(legendSeries)) {
+                    for (let i = series.length - 1; i >= 0; i -= 1) {
+                        const v = series[i];
+                        if (typeof v === 'number' && Number.isFinite(v)) {
+                            activeStudies[key] = v;
+                            break;
+                        }
+                    }
+                }
+                const atr14 = typeof activeStudies.atr === 'number' && Number.isFinite(activeStudies.atr)
+                    ? activeStudies.atr
+                    : computeAtr14(evalCandles);
+                const userDrawings = ensureStableShortIds(
+                    drawingsRef.current.map(d => (d.origin ? d : { ...d, origin: 'user' as const })),
+                    symbol,
+                );
+                const aiDrawings = ensureStableShortIds(
+                    modelDrawingsRef.current.map(d => (d.origin ? d : { ...d, origin: 'agent' as const })),
+                    symbol,
+                );
+                const visibleRange = readVisibleRange();
+                const revision = computeChartRevision({
+                    symbol,
+                    interval,
+                    priceScaleMode: activeScaleMode,
+                    lastClosedBarTime: tail.length >= 2 ? tail[tail.length - 2].time : (tail[0]?.time ?? null),
+                    visibleRange,
+                    activeStudies,
+                    drawings: [...userDrawings, ...aiDrawings],
+                });
                 return {
                     symbol,
                     interval,
                     candles: tail,
                     markPrice: markPrice ?? lastPrice ?? null,
-                    // What's ON SCREEN includes the verdict levels AND the
-                    // lines the chat card is currently drawing — the model
-                    // reads back exactly what the user is looking at.
                     levels: [
                         ...levels.map(l => ({ label: l.label, price: l.price })),
                         ...(chatLevels && chatLevels.symbol === symbol
                             ? chatLevels.lines.filter(l => l.state !== 'hidden').map(l => ({ label: l.label, price: l.price }))
                             : []),
                     ],
-                    drawings: drawingsRef.current,
-                    modelDrawings: modelDrawingsRef.current,
-                    visibleRange: readVisibleRange(),
+                    drawings: userDrawings,
+                    modelDrawings: aiDrawings,
+                    visibleRange,
+                    priceScaleMode: activeScaleMode,
+                    activeStudies,
+                    revision,
+                    atr14,
+                    evalCandles,
                     capturedAt: Date.now(),
                 };
             },
-            clearUserDrawings: (): void => publishDrawings([]),
+            clearUserDrawings: (): void => commitDrawingChange([]),
         };
         return () => { chartHandle.current = null; };
-    }, [chartHandle, symbol, interval, lastPrice, markPrice, levels, chatLevels, publishDrawings]);
+    }, [chartHandle, symbol, interval, lastPrice, markPrice, levels, chatLevels, commitDrawingChange, toScreen]);
 
     const toolActive = tool !== 'cursor';
 
     return (
-        <div className="flex h-full min-h-0 flex-col bg-zinc-950" data-testid="trading-chart" data-symbol={symbol}>
+        <div
+            className="flex h-full min-h-0 flex-col bg-zinc-950"
+            data-testid="trading-chart"
+            data-symbol={symbol}
+            data-hovered-candle={overPlot && legendBar ? String(legendBar.time) : ''}
+        >
             {/* The timeframe bar is shared with the Agents surface, so the customizable
                 set and its persisted selection are one thing rather than two. The chart
                 keeps its own extras as children. */}
@@ -2164,6 +3075,21 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                         </>
                     )}
                 </div>
+                {/* Normal / Logarithmic price-scale toggle */}
+                <button
+                    type="button"
+                    data-testid="price-scale-toggle"
+                    aria-pressed={priceScaleMode === 'logarithmic'}
+                    title={priceScaleMode === 'logarithmic' ? 'Switch to linear price scale' : 'Switch to logarithmic price scale'}
+                    onClick={() => setPriceScaleMode(m => (m === 'logarithmic' ? 'normal' : 'logarithmic'))}
+                    className={`ml-1 rounded-control px-2 py-1 font-mono text-ui-dense font-medium transition-colors ${
+                        priceScaleMode === 'logarithmic'
+                            ? 'bg-white/[0.08] text-zinc-100'
+                            : 'text-zinc-500 hover:bg-white/[0.05] hover:text-zinc-200'
+                    }`}
+                >
+                    {priceScaleMode === 'logarithmic' ? 'Log' : 'Lin'}
+                </button>
                 {/* Drawing tools live in the TradingView-style LEFT RAIL over
                     the plot (ChartToolRail) — the top bar keeps timeframes. */}
                     <span className="ml-auto flex items-center gap-2 pr-1">
@@ -2313,11 +3239,15 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                 )}
                 <ChartToolRail
                     tool={tool}
-                    onSelectTool={t => { setTool(t); setDraft(null); setTextEdit(null); }}
+                    onSelectTool={t => { setTool(t); setDraft(null); setTextEdit(null); setInspector(null); }}
                     color={color}
                     onColorChange={setColor}
-                    canUndo={drawings.length > 0}
-                    onUndo={undoDrawing}
+                    canUndo={historyMeta.canUndo}
+                    onUndo={handleUndoDrawing}
+                    canRedo={historyMeta.canRedo}
+                    onRedo={handleRedoDrawing}
+                    agentDrawingCount={countAgentDrawings({ userDrawings: drawings, modelDrawings: modelDrawings ?? [] })}
+                    onClearAgentDrawings={handleClearAgentDrawings}
                     hidden={drawingsHidden}
                     onToggleHidden={() => setDrawingsHidden(v => !v)}
                     magnet={magnet}
@@ -2326,12 +3256,8 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                     onCycleWidth={() => setLineWidth(w => nextDrawWidth(w))}
                 />
                 <div ref={hostRef} className="absolute inset-y-0 right-0" style={{ left: CHART_RAIL_WIDTH }} />
-                {/* Drawing overlay: captures the pointer ONLY while a tool is
-                    active; otherwise the chart underneath gets every event.
-                    z-10 clears lightweight-charts' internal z-1/z-2 canvases —
-                    without it the overlay is hit-test BELOW the chart and no
-                    tool ever receives a pointer. Inset left by the rail width
-                    so shapes never paint under the rail. */}
+                {/* Transient overlay: captures pointer ONLY while a drawing tool is
+                    active; committed drawings render inside the native ISeriesPrimitive. */}
                 <canvas
                     ref={overlayRef}
                     data-testid="draw-overlay"
@@ -2341,6 +3267,24 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                     onPointerMove={onPointerMove}
                     onPointerUp={onPointerUp}
                 />
+                {/* Double-click inline inspector popover for exact numeric edits, label, & R:R preview. */}
+                {inspector && (() => {
+                    const targetDrawing = [...drawings, ...(modelDrawings ?? [])].find(d => d.id === inspector.drawingId);
+                    if (!targetDrawing) return null;
+                    return (
+                        <DrawingInspectorPopover
+                            key={`${targetDrawing.id}:${targetDrawing.version ?? 1}`}
+                            drawing={targetDrawing}
+                            anchorX={inspector.x}
+                            anchorY={inspector.y}
+                            containerWidth={(hostRef.current?.clientWidth ?? 640) + CHART_RAIL_WIDTH}
+                            containerHeight={hostRef.current?.clientHeight ?? 420}
+                            onApply={applyInspectorUpdate}
+                            onDelete={deleteDrawingById}
+                            onClose={() => setInspector(null)}
+                        />
+                    );
+                })()}
                 {/* In-place editor for a just-placed text note. */}
                 {textEdit && (
                     <input

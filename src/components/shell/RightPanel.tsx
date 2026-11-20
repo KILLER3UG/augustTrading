@@ -143,38 +143,32 @@ const RightPanel: React.FC<RightPanelProps> = ({
                 </div>
             )}
 
-            {/* The handle is hidden when the panel is closed — there is nothing
-                to resize — and in fullscreen, where there is no edge to drag. */}
-            {!focusMode && !isHidden && presentation === 'push' && (
-                <div
-                    role="separator"
-                    aria-orientation="vertical"
-                    aria-label={`Resize ${label}`}
-                    onPointerDown={onResizeStart}
-                    onDoubleClick={onResizeReset}
-                    title="Drag to resize · double-click to reset"
-                    /* The seam is a HAIRLINE, like every other separator in
-                       the app. It was a filled strip with a border on BOTH
-                       sides, which drew a little gutter between the chart and
-                       the dock — and the chart side went flat in E-56, so the
-                       two halves of one window no longer matched. The grab
-                       target keeps its width; only the paint changes. */
-                    className="hidden w-1.5 shrink-0 cursor-col-resize touch-none items-center justify-center border-l border-hairline text-zinc-600 transition-colors hover:text-zinc-300 lg:flex"
-                >
-                    <span aria-hidden className="block h-6 w-px bg-current opacity-60" />
-                </div>
-            )}
-
-            <div className="flex min-h-0 flex-1 flex-col">
-                {focusMode ? (
-                    /* The reading column: full-height, ~760px, centered. The
-                       outer panel still spans the workspace so the empty
-                       space is symmetric whitespace, not a dead black gutter
-                       on one side. */
-                    <div data-testid="chat-reading-column" className="mx-auto flex h-full w-full max-w-[760px] flex-col">
-                        {children}
+            <div className="flex min-h-0 flex-1 flex-row">
+                {/* The handle is hidden when the panel is closed — there is nothing
+                    to resize — and in fullscreen, where there is no edge to drag. */}
+                {!focusMode && !isHidden && presentation === 'push' && (
+                    <div
+                        role="separator"
+                        aria-orientation="vertical"
+                        aria-label={`Resize ${label}`}
+                        onPointerDown={onResizeStart}
+                        onDoubleClick={onResizeReset}
+                        title="Drag to resize · double-click to reset"
+                        /* The seam is a HAIRLINE, like every other separator in
+                           the app. It was a filled strip with a border on BOTH
+                           sides, which drew a little gutter between the chart and
+                           the dock — and the chart side went flat in E-56, so the
+                           two halves of one window no longer matched. The grab
+                           target keeps its width; only the paint changes. */
+                        className="hidden w-1.5 shrink-0 cursor-col-resize touch-none items-center justify-center border-l border-hairline text-zinc-600 transition-colors hover:text-zinc-300 lg:flex"
+                    >
+                        <span aria-hidden className="block h-6 w-px bg-current opacity-60" />
                     </div>
-                ) : children}
+                )}
+
+                <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+                    {children}
+                </div>
             </div>
         </aside>
     );

@@ -22,8 +22,16 @@
  */
 
 import type { SignalBaseRate, SignalRecord, SignalRow } from '../../types/signal';
-import { fillRealismSummary, type FillRealism } from './signalCalibration';
+import {
+    calibrateByDimensions,
+    excursionSummary,
+    fillRealismSummary,
+    type FillRealism,
+    type SignalCalibrationBucket,
+} from './signalCalibration';
 import { resolveSignal, SIGNAL_BAR_MS, type SignalCandle } from './signalResolver';
+
+export { calibrateByDimensions, type SignalCalibrationBucket };
 
 /** Below this many filled signals the scorecard says THIN and the desk must
  *  not claim an edge. 20 is the smallest count where a 10-point lift is not
@@ -65,6 +73,10 @@ export interface SignalScorecard {
      *  fill count it was computed from — `0` means nothing has filled yet, and
      *  the means are null rather than zero. */
     fillRealism: FillRealism;
+    /** Mean peak favorable / adverse excursion in R across fills carrying
+     *  excursion readings. Null when no fill has recorded them. */
+    meanMfeR?: number | null;
+    meanMaeR?: number | null;
 }
 
 /**
@@ -161,5 +173,7 @@ export const scoreSignals = (rows: readonly SignalRow[]): SignalScorecard => {
         // two different denominators — and the floor it applies is its own,
         // because a mean over three gaps is a rumour.
         fillRealism: fillRealismSummary(fills),
+        meanMfeR: excursionSummary(fills).meanMfeR,
+        meanMaeR: excursionSummary(fills).meanMaeR,
     };
 };

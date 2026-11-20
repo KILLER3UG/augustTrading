@@ -30,6 +30,8 @@ export interface TradeMathInput {
     riskPercent?: number;
     /** Leverage for the liquidation estimate (default 10). */
     leverage?: number;
+    /** Optional per-TP scaling weights (normalized to sum to 1; defaults to equal weights). */
+    tpWeights?: number[];
 }
 
 export interface TradeMathRead {
@@ -62,6 +64,13 @@ export interface TradeMathRead {
         distanceAtr: number | null;
         estimate: true;
     } | null;
+    /** Optional blended multi-TP metrics when ≥2 valid take-profit targets are supplied. */
+    blendedMultiTp?: {
+        targetsCount: number;
+        weights: number[];
+        grossRatio: number;
+        netRewardR: number | null;
+    };
     atr: number | null;
 }
 
@@ -119,6 +128,36 @@ export const computeTradeMath = (input: TradeMathInput, candles: Kline[]): Trade
         };
     }
 
+    // Optional blended multi-TP R:R alongside the canonical nearest-TP ratio.
+    const validTps = input.takeProfits.filter(
+        (tp): tp is number => typeof tp === 'number' && Number.isFinite(tp) && tp > 0,
+    );
+    let blendedMultiTp: TradeMathRead['blendedMultiTp'];
+    if (!signed.inverted && signed.risk > 0 && validTps.length > 1) {
+        const isLong = input.direction === 'Long';
+        const orderedTps = [...validTps].sort((a, b) => (isLong ? a - b : b - a));
+        const rawWeights = Array.isArray(input.tpWeights) && input.tpWeights.length === orderedTps.length
+            && input.tpWeights.every(w => typeof w === 'number' && Number.isFinite(w) && w > 0)
+            ? input.tpWeights
+            : orderedTps.map(() => 1);
+        const weightSum = rawWeights.reduce((s, w) => s + w, 0);
+        const weights = rawWeights.map(w => Math.round((w / weightSum) * 10000) / 10000);
+        const blendedReward = orderedTps.reduce((sum, tp, idx) => {
+            const dist = isLong ? tp - entry : entry - tp;
+            return sum + Math.max(0, dist) * (rawWeights[idx] / weightSum);
+        }, 0);
+        const grossRatio = Math.round((blendedReward / signed.risk) * 100) / 100;
+        const blendedNetR = cost.known
+            ? Math.round((grossRatio - (cost.costR as number)) * 10000) / 10000
+            : null;
+        blendedMultiTp = {
+            targetsCount: orderedTps.length,
+            weights,
+            grossRatio,
+            netRewardR: blendedNetR,
+        };
+    }
+
     return {
         gross: {
             ratio: signed.ratio,
@@ -134,6 +173,7 @@ export const computeTradeMath = (input: TradeMathInput, candles: Kline[]): Trade
         },
         sizing,
         liquidation,
+        ...(blendedMultiTp ? { blendedMultiTp } : {}),
         atr,
     };
 };

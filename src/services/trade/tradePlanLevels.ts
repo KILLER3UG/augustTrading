@@ -18,6 +18,14 @@ import { phtClock } from '../../utils/timezone';
 // The canonical price reader. The drawing tools were the one place that used a
 // bare Number(), which is why "69,000" parsed everywhere else and not here.
 import { parsePrice } from '../../utils/analysisUtils';
+import type { ChartDrawing } from './chartDrawings';
+import {
+    interpolateScalePrice,
+    projectDiagonalPrice,
+    timeToLogicalIndex,
+    type EvalCandle,
+    type PriceScaleMode,
+} from './chartGeometry';
 
 export interface PlanLevel {
     /** Stable id the model quotes back: `${planId}:ENTRY|:SL|:TP1..N`. */
@@ -183,7 +191,7 @@ export interface DrawnLevelScore {
  */
 export const scoreDrawnLevel = (
     levelPrice: number,
-    candles: { time: number; high: number; low: number }[],
+    candles: ReadonlyArray<{ time: number; high: number; low: number }>,
     drawnAtSeconds: number,
     minBars = 3,
 ): DrawnLevelScore => {
@@ -210,6 +218,129 @@ export const scoreDrawnLevel = (
     }
     const missPct = Math.max(0, Math.abs(miss));
     return { verdict: missPct === 0 ? 'touched' : 'untouched', missPct, barsSince: after.length };
+};
+
+export interface ScoreDrawnShapeOptions {
+    /** Bar interval in seconds (used for logical-index diagonal projection). */
+    barSeconds: number;
+    /** Price scale mode (`normal` | `logarithmic`) for diagonal/fib projection. */
+    priceScaleMode?: PriceScaleMode;
+    /** Minimum post-creation bars required before leaving `'pending'`. Default 3. */
+    minBars?: number;
+    /** Optional creation timestamp in unix seconds override (defaults to drawing.createdAt / 1000). */
+    drawnAtSeconds?: number;
+}
+
+const barMissPctToPrice = (bar: Pick<EvalCandle, 'high' | 'low'>, target: number): number => {
+    if (!Number.isFinite(target) || target <= 0) return Infinity;
+    if (bar.high >= target && bar.low <= target) return 0;
+    return (Math.max(target - bar.high, bar.low - target) / target) * 100;
+};
+
+const barMissPctToZone = (bar: Pick<EvalCandle, 'high' | 'low'>, lower: number, upper: number): number => {
+    const lo = Math.min(lower, upper);
+    const hi = Math.max(lower, upper);
+    if (!Number.isFinite(lo) || !Number.isFinite(hi) || lo <= 0) return Infinity;
+    // Any overlap between [bar.low, bar.high] and [lo, hi] is a touch.
+    if (bar.high >= lo && bar.low <= hi) return 0;
+    if (bar.high < lo) return ((lo - bar.high) / lo) * 100;
+    return ((bar.low - hi) / hi) * 100;
+};
+
+/**
+ * Generalized drawing-respect scorer for ALL chart drawing shapes:
+ * horizontal lines (`hline`), diagonals (`trend`, `ray`), parallel `channel`s,
+ * `rect` zones, `fib` retracements (0.382 / 0.5 / 0.618 key levels), and
+ * `long_position` / `short_position` entry levels.
+ *
+ * Uses the exact same logical-bar-index + linear/log scale projection as
+ * `chartGeometry.ts`, restricted strictly to bars at or after creation.
+ */
+export const scoreDrawnShape = (
+    drawing: ChartDrawing,
+    candles: ReadonlyArray<EvalCandle>,
+    opts: ScoreDrawnShapeOptions,
+): DrawnLevelScore => {
+    const minBars = opts.minBars ?? 3;
+    const scaleMode: PriceScaleMode = opts.priceScaleMode ?? 'normal';
+    const drawnAtSeconds = opts.drawnAtSeconds ?? Math.floor((drawing.createdAt ?? 0) / 1000);
+
+    if (drawing.kind === 'hline') {
+        const level = drawing.points[0]?.p ?? NaN;
+        return scoreDrawnLevel(level, candles, drawnAtSeconds, minBars);
+    }
+
+    const postIndices: number[] = [];
+    for (let i = 0; i < candles.length; i += 1) {
+        if (candles[i].time >= drawnAtSeconds) postIndices.push(i);
+    }
+    if (postIndices.length < minBars) {
+        return { verdict: 'pending', missPct: Infinity, barsSince: postIndices.length };
+    }
+
+    let miss = Infinity;
+    const pts = drawing.points;
+
+    if (drawing.kind === 'trend' || drawing.kind === 'ray') {
+        if (pts.length < 2) return { verdict: 'untouched', missPct: Infinity, barsSince: postIndices.length };
+        const [a, b] = pts;
+        for (const idx of postIndices) {
+            const projected = projectDiagonalPrice(a, b, idx, candles, opts.barSeconds, scaleMode);
+            if (projected === null || projected <= 0) continue;
+            const d = barMissPctToPrice(candles[idx], projected);
+            if (d < miss) miss = d;
+            if (miss === 0) break;
+        }
+    } else if (drawing.kind === 'channel') {
+        if (pts.length < 3) return { verdict: 'untouched', missPct: Infinity, barsSince: postIndices.length };
+        const [a, b, c] = pts;
+        const idxC = timeToLogicalIndex(c.t, candles, opts.barSeconds);
+        const baseAtC = idxC !== null
+            ? projectDiagonalPrice(a, b, idxC, candles, opts.barSeconds, scaleMode)
+            : null;
+        const rawDelta = baseAtC !== null ? c.p - baseAtC : c.p - a.p;
+        const logRatio = scaleMode === 'logarithmic' && baseAtC !== null && baseAtC > 0 && c.p > 0
+            ? c.p / baseAtC
+            : (scaleMode === 'logarithmic' && a.p > 0 && c.p > 0 ? c.p / a.p : null);
+        for (const idx of postIndices) {
+            const p1 = projectDiagonalPrice(a, b, idx, candles, opts.barSeconds, scaleMode);
+            if (p1 === null || p1 <= 0) continue;
+            const p2 = logRatio !== null ? p1 * logRatio : p1 + rawDelta;
+            if (!Number.isFinite(p2) || p2 <= 0) continue;
+            // Respecting either rail or trading inside the channel zone counts as a touch.
+            const d = barMissPctToZone(candles[idx], p1, p2);
+            if (d < miss) miss = d;
+            if (miss === 0) break;
+        }
+    } else if (drawing.kind === 'rect') {
+        if (pts.length < 2) return { verdict: 'untouched', missPct: Infinity, barsSince: postIndices.length };
+        const lower = Math.min(pts[0].p, pts[1].p);
+        const upper = Math.max(pts[0].p, pts[1].p);
+        for (const idx of postIndices) {
+            const d = barMissPctToZone(candles[idx], lower, upper);
+            if (d < miss) miss = d;
+            if (miss === 0) break;
+        }
+    } else if (drawing.kind === 'fib') {
+        if (pts.length < 2) return { verdict: 'untouched', missPct: Infinity, barsSince: postIndices.length };
+        const keyRatios = [0.382, 0.5, 0.618];
+        const keyLevels = keyRatios
+            .map(r => interpolateScalePrice(pts[0].p, pts[1].p, r, scaleMode))
+            .filter((v): v is number => v !== null && v > 0);
+        for (const idx of postIndices) {
+            for (const lvl of keyLevels) {
+                const d = barMissPctToPrice(candles[idx], lvl);
+                if (d < miss) miss = d;
+            }
+            if (miss === 0) break;
+        }
+    } else if (drawing.kind === 'long_position' || drawing.kind === 'short_position') {
+        const entry = pts[0]?.p ?? NaN;
+        return scoreDrawnLevel(entry, candles, drawnAtSeconds, minBars);
+    }
+
+    const missPct = Number.isFinite(miss) ? Math.max(0, Math.abs(miss)) : Infinity;
+    return { verdict: missPct === 0 ? 'touched' : 'untouched', missPct, barsSince: postIndices.length };
 };
 
 /** The headline number: what share of the model's drawn levels got reached. */

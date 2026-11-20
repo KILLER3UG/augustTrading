@@ -112,44 +112,79 @@ export const diagnosisIsTentative = (position: TrackedPosition): boolean =>
     || position.exit?.ambiguous === true
     || position.barsRead < 5;
 
+export const KNOWN_AT_DECISION_HEADER = '=== KNOWN_AT_DECISION_TIME ===';
+export const SUBSEQUENT_PRICE_PATH_HEADER = '=== SUBSEQUENT_PRICE_PATH ===';
+
+const POST_ENTRY_LEAK_PATTERNS: ReadonlyArray<{ label: string; re: RegExp }> = [
+    { label: 'SUBSEQUENT_PRICE_PATH', re: /\bSUBSEQUENT_PRICE_PATH\b/i },
+    { label: 'MFE/MAE excursion', re: /\b(mfe|mae)\b/i },
+    { label: 'post-entry outcome phrasing', re: /\b(after entry|once entered|stopped (me )?out|right before reversing|reversed after|would have won|should have (waited|held|moved stop)|turned around|wicked out|after resolution|with hindsight|knew it would|final outcome|sl[\s-]*(?:hit|touched)?[\s-]*then[\s-]*revers)\b/i },
+    { label: 'subsequent path citation', re: /\b(context at close|subsequent price path|after exit|exit bar)\b/i },
+];
+
+export interface PostMortemHindsightAudit {
+    leaked: boolean;
+    matches: string[];
+    reason?: string;
+}
+
+/**
+ * Deterministic post-mortem hindsight-separation guard.
+ * Forward-looking fields (`when`, `action`, `lesson`) must ONLY reference facts
+ * from `KNOWN_AT_DECISION_TIME`; citing post-entry price path facts (`MFE`,
+ * `MAE`, `reversed after`, `wicked out`, `SUBSEQUENT_PRICE_PATH`, etc.) is a
+ * hindsight leak and must be refused before entering the journal/notebook.
+ */
+export const auditPostMortemForHindsightLeak = (answer: {
+    lesson?: string;
+    when?: string;
+    action?: string;
+}): PostMortemHindsightAudit => {
+    const fields: Array<[string, string]> = [
+        ['when', typeof answer.when === 'string' ? answer.when : ''],
+        ['action', typeof answer.action === 'string' ? answer.action : ''],
+        ['lesson', typeof answer.lesson === 'string' ? answer.lesson : ''],
+    ];
+    const matches: string[] = [];
+    for (const [field, text] of fields) {
+        if (!text.trim()) continue;
+        for (const { label, re } of POST_ENTRY_LEAK_PATTERNS) {
+            if (re.test(text)) {
+                matches.push(`${field}: ${label}`);
+            }
+        }
+    }
+    if (matches.length === 0) return { leaked: false, matches: [] };
+    return {
+        leaked: true,
+        matches,
+        reason: `Post-mortem hindsight leak detected (${matches.join('; ')}). Forward rules and lessons may only cite facts from ${KNOWN_AT_DECISION_HEADER}.`,
+    };
+};
+
 /** The packet the model reads. Pure and exported so a test can assert the
- *  facts — and the ABSENCES — the model was given. */
+ *  facts — and the ABSENCES — the model was given. Explicitly separated into
+ *  `KNOWN_AT_DECISION_TIME` (pre-entry facts) and `SUBSEQUENT_PRICE_PATH`
+ *  (post-entry outcome/excursion/tape) so post-mortems never leak hindsight
+ *  into forward rules. */
 export const diagnosisPacket = (facts: DiagnosisFacts): string => {
     const { position, outcome, signalRow, journalRow, context } = facts;
     const exit = position.exit;
     const entryAt = position.entryBarTime ?? position.openedAt;
     const closedAt = position.closedAt ?? exit?.at ?? Date.now();
     const riskPct = stopDistancePercent(position.entry, position.stop);
+
+    // ── Section 1: Strictly pre-entry / decision-time facts ──────────────────
     const lines: string[] = [
+        KNOWN_AT_DECISION_HEADER,
         `SOURCE: ${position.source}`,
         `SYMBOL: ${position.symbol} · ${position.direction.toUpperCase()}`,
-        `OUTCOME (authoritative): ${outcome.toUpperCase()} · exit ${exit?.reason ?? 'not recorded'} at ${px(exit?.price)} · ${iso(exit?.at)}`,
         `LEVELS: entry ${px(position.entry)} · stop ${px(position.stop)} · targets ${position.targets.map(px).join(' / ')}`,
         `RISK: ${px(Math.abs(position.entry - position.stop))} (${riskPct.toFixed(2)}% of entry)${position.leverage ? ` · leverage ${position.leverage}x` : ''}`,
-        `FILL: ${position.entryConfirmed ? 'confirmed at the plan price' : 'limit touch at the plan price'}${position.entryBarAmbiguous ? ' · entry candle ambiguous (extremes may predate the fill)' : ''}`,
-    ];
-
-    if (exit) {
-        lines.push(
-            `EXIT: ${exit.reason} · same-candle ${exit.sameCandle}`
-            + `${exit.ambiguous ? ' · AMBIGUOUS (stop-first policy)' : ''}`
-            + `${exit.gapAtOpen ? ' · GAP at open' : ''}`,
-            `R: ${rText(exit.realizedR)} gross · ${rText(exit.costR)} cost · ${rText(exit.netR)} net`
-            + `${exit.slippageModeled ? ' (signal cost includes assumed slippage)' : ' (journal cost is fee-only; slippage not modeled)'}`,
-        );
-    } else {
-        lines.push('R: not measured (no exit)');
-    }
-
-    lines.push(
-        `EXCURSION: MFE ${rText(position.mfeR)} at ${px(position.mfePrice)} ${iso(position.mfeAt)} · MAE ${rText(position.maeR)} at ${px(position.maePrice)} ${iso(position.maeAt)}`,
-        `HOLD: ${durationText(Math.max(0, closedAt - entryAt))} · bars read ${position.barsRead} · gaps ${position.gaps.length}`
-        + `${position.gaps.length ? ` (${position.gaps.slice(0, 5).map(iso).join(', ')}${position.gaps.length > 5 ? '…' : ''})` : ''}`
-        + ` · tape covers window ${position.tapeCoversWindow ? 'yes' : 'NO'}`,
         `ENTRY CONTEXT: ${clip(position.entryContext.thesis, 700)}`,
         `MODEL AT ENTRY: ${[position.entryContext.provider, position.entryContext.model].filter(Boolean).join(' / ') || 'not recorded'}`
         + `${position.entryContext.promptVersion ? ` · prompt ${position.entryContext.promptVersion}` : ''}`,
-    );
+    ];
     if (position.entryContext.injectedSkills?.length) {
         lines.push(`SKILLS INJECTED ON THAT TURN: ${position.entryContext.injectedSkills.join(', ')}`);
     }
@@ -169,17 +204,59 @@ export const diagnosisPacket = (facts: DiagnosisFacts): string => {
                 : 'never ran — this row was logged UNCAPPED'}`,
             `CONFIDENCE: ${analysis?.confidence ?? 'not recorded'} · probability ${finite(analysis?.probability) ? analysis?.probability : 'not recorded'}`,
             `REGIME: ${journalRow.marketRegime ? `${journalRow.marketRegime} (${journalRow.marketRegimeSource ?? 'source unstated'})` : 'never observed — do not assume ranging'}`,
+            `SIZE: suggested risk ${journalRow.suggestedRiskUsd !== undefined ? `$${journalRow.suggestedRiskUsd}` : 'not set'}`
+            + ` · notional ${journalRow.suggestedNotionalUsd !== undefined ? `$${journalRow.suggestedNotionalUsd}` : 'not set'}`
+            + `${journalRow.suggestedSizeReason ? ` (${journalRow.suggestedSizeReason})` : ''}`
+            + ` · model stated risk ${journalRow.modelStatedRiskUsd !== undefined ? `$${journalRow.modelStatedRiskUsd}` : 'not stated'}`
+            + ` · notional ${journalRow.modelStatedNotionalUsd !== undefined ? `$${journalRow.modelStatedNotionalUsd}` : 'not stated'}`,
+        );
+    }
+
+    if (signalRow) {
+        lines.push(
+            '',
+            `SIGNAL THESIS: ${clip(signalRow.signal.thesis, 700)}`,
+            `SIGNAL EVIDENCE: ${signalRow.signal.evidenceRefs.join(' · ') || 'none recorded'}`,
+            `SHADOW GATE: ${signalRow.gate ? `${signalRow.gate.status}${signalRow.gate.reason ? ` — ${signalRow.gate.reason}` : ''}` : 'not recorded'}`
+            + ` · EVIDENCE SHADOW: ${signalRow.grounding ? `${signalRow.grounding.verdict}${signalRow.grounding.missing.length ? ` — missing ${signalRow.grounding.missing.join(', ')}` : ''}` : 'not recorded'}`,
+        );
+    }
+
+    // ── Section 2: Strictly post-entry outcome & price path ──────────────────
+    lines.push(
+        '',
+        SUBSEQUENT_PRICE_PATH_HEADER,
+        `OUTCOME (authoritative): ${outcome.toUpperCase()} · exit ${exit?.reason ?? 'not recorded'} at ${px(exit?.price)} · ${iso(exit?.at)}`,
+        `FILL: ${position.entryConfirmed ? 'confirmed at the plan price' : 'limit touch at the plan price'}${position.entryBarAmbiguous ? ' · entry candle ambiguous (extremes may predate the fill)' : ''}`,
+    );
+
+    if (exit) {
+        lines.push(
+            `EXIT: ${exit.reason} · same-candle ${exit.sameCandle}`
+            + `${exit.ambiguous ? ' · AMBIGUOUS (stop-first policy)' : ''}`
+            + `${exit.gapAtOpen ? ' · GAP at open' : ''}`,
+            `R: ${rText(exit.realizedR)} gross · ${rText(exit.costR)} cost · ${rText(exit.netR)} net`
+            + `${exit.slippageModeled ? ' (signal cost includes assumed slippage)' : ' (journal cost is fee-only; slippage not modeled)'}`,
+        );
+    } else {
+        lines.push('R: not measured (no exit)');
+    }
+
+    lines.push(
+        `EXCURSION: MFE ${rText(position.mfeR)} at ${px(position.mfePrice)} ${iso(position.mfeAt)} · MAE ${rText(position.maeR)} at ${px(position.maePrice)} ${iso(position.maeAt)}`,
+        `HOLD: ${durationText(Math.max(0, closedAt - entryAt))} · bars read ${position.barsRead} · gaps ${position.gaps.length}`
+        + `${position.gaps.length ? ` (${position.gaps.slice(0, 5).map(iso).join(', ')}${position.gaps.length > 5 ? '…' : ''})` : ''}`
+        + ` · tape covers window ${position.tapeCoversWindow ? 'yes' : 'NO'}`,
+    );
+
+    if (journalRow) {
+        lines.push(
             `PLAN FOLLOWED: ${journalRow.followedPlan === undefined ? 'not recorded' : journalRow.followedPlan ? 'yes' : `no — ${journalRow.planDeviationNote ?? 'no note given'}`}`,
             `BENCHMARK: ${journalRow.benchmark
                 ? (finite(journalRow.benchmark.alphaPct)
                     ? `vs ${journalRow.benchmark.benchmarkSymbol} ${journalRow.benchmark.benchmarkPct.toFixed(2)}% · trade ${journalRow.benchmark.tradePct.toFixed(2)}% · alpha ${journalRow.benchmark.alphaPct.toFixed(2)}%`
                     : `unavailable (${journalRow.benchmark.unavailableReason ?? 'no comparison'})`)
                 : 'never measured'}`,
-            `SIZE: suggested risk ${journalRow.suggestedRiskUsd !== undefined ? `$${journalRow.suggestedRiskUsd}` : 'not set'}`
-            + ` · notional ${journalRow.suggestedNotionalUsd !== undefined ? `$${journalRow.suggestedNotionalUsd}` : 'not set'}`
-            + `${journalRow.suggestedSizeReason ? ` (${journalRow.suggestedSizeReason})` : ''}`
-            + ` · model stated risk ${journalRow.modelStatedRiskUsd !== undefined ? `$${journalRow.modelStatedRiskUsd}` : 'not stated'}`
-            + ` · notional ${journalRow.modelStatedNotionalUsd !== undefined ? `$${journalRow.modelStatedNotionalUsd}` : 'not stated'}`,
             `JOURNAL OUTCOME: ${journalRow.outcome} · resolved by ${journalRow.resolutionSource ?? 'unknown writer'}`,
         );
     }
@@ -187,17 +264,12 @@ export const diagnosisPacket = (facts: DiagnosisFacts): string => {
     if (signalRow) {
         const base = signalRow.resolution?.base;
         lines.push(
-            '',
-            `SIGNAL THESIS: ${clip(signalRow.signal.thesis, 700)}`,
-            `SIGNAL EVIDENCE: ${signalRow.signal.evidenceRefs.join(' · ') || 'none recorded'}`,
             `LEDGER: ${signalRow.status}${signalRow.resolution?.ambiguous ? ' · AMBIGUOUS' : ''}`
             + ` · cross-check ${signalRow.resolution?.crossCheck ?? 'unavailable'}`
             + ` · primary ${signalRow.resolution?.primarySource ?? 'unknown'}`,
             `BASE RATE (same levels): ${base
                 ? `${(base.hitRate * 100).toFixed(1)}% over ${base.samples} entries (horizon ${base.horizonBars} bars, risk ${base.riskPct.toFixed(2)}%, reward ${base.rewardPct.toFixed(2)}%)`
                 : 'not measured'}`,
-            `SHADOW GATE: ${signalRow.gate ? `${signalRow.gate.status}${signalRow.gate.reason ? ` — ${signalRow.gate.reason}` : ''}` : 'not recorded'}`
-            + ` · EVIDENCE SHADOW: ${signalRow.grounding ? `${signalRow.grounding.verdict}${signalRow.grounding.missing.length ? ` — missing ${signalRow.grounding.missing.join(', ')}` : ''}` : 'not recorded'}`,
         );
     }
 

@@ -36,16 +36,16 @@ export const WorkspaceGreeting: React.FC<{ compact?: boolean; now?: Date }> = ({
     <div
         data-testid="workspace-greeting"
         className={compact
-            ? 'flex flex-col items-center gap-1 px-4 pt-10 pb-2 text-center'
-            : 'flex flex-1 flex-col items-center justify-center gap-2 px-4 pb-6 text-center'}
+            ? 'flex flex-col items-center gap-1.5 px-2 text-center'
+            : 'flex flex-col items-center gap-2 px-4 text-center'}
     >
-        <p className={`font-semibold tracking-[-0.01em] text-zinc-100 ${compact ? 'text-ui-sm' : 'text-ui-lg'}`}>
+        <h2 className={`font-medium tracking-[-0.025em] text-zinc-100 ${compact ? 'text-ui-base' : 'text-[26px] leading-tight'}`}>
             {greetingFor(now)}
-        </p>
-        <p className="max-w-[26rem] text-ui-caption leading-5 text-zinc-500">
+        </h2>
+        <p className={`text-zinc-500 ${compact ? 'max-w-[17rem] text-ui-caption leading-5' : 'max-w-[29rem] text-ui-sm leading-6'}`}>
             {compact
-                ? 'Ask about this chart, or switch to Chat for the full focus view.'
-                : 'What are we looking at? Ask about a chart, log a plan, or just think out loud — nothing executes without you.'}
+                ? 'It can see this chart, the order book, and your drawings.'
+                : 'Ask about a chart, map a trade plan, or think through a setup — nothing executes without you.'}
         </p>
     </div>
 );

@@ -83,6 +83,8 @@ import {
 import type { LoggedTrade } from '../../types';
 import type { ToolAction } from '../../types/message';
 import type { ChartDrawing } from '../trade/chartDrawings';
+import { computeAtr14, evaluateChartDrawings } from '../trade/chartGeometry';
+import type { ChartSnapshot } from '../../components/trade/TradingChart';
 import type { DiagnosisBrief } from '../tracking/diagnosisBrief';
 import { PANEL_MAIL_TOOLS, type PanelMailbox } from './PanelMailbox';
 import { intersectGoalPolicy, type SeatToolGrant } from '../../utils/toolKinds';
@@ -1862,11 +1864,12 @@ export const DESK_TOOL_DEFINITIONS: DeskToolDefinition[] = [
         function: {
             name: 'get_all_timeframes',
             description:
-                'The COMPLETE market compendium in one call — every timeframe at once plus the live microstructure: for 5m/15m/1h/4h/1d the last candles (OHLCV), trend vs EMA20/50, RSI, swing structure (HH/HL vs LH/LL) and named candle formations (engulfings, hammers, stars, dojis, inside bars, impulses); plus the order book (best bid/ask, spread, imbalance, walls), funding, open interest and recent liquidations. Call it when you want the full picture the user sees and more — every timeframe, every layer.',
+                'The COMPLETE market compendium in one call — fetches 5m/15m/1h/4h/1d in parallel plus live microstructure (order book, funding, OI, liquidations). Returns compact per-timeframe digests (structure, EMA20/50, RSI14, MACD, ATR14, formations) with checkedAt & data_quality metadata; pass include_candles:true only if you need the raw last-8 OHLCV rows.',
             parameters: {
                 type: 'object',
                 properties: {
                     symbol: { type: 'string', description: 'Symbol to pull (default: the current chart symbol).' },
+                    include_candles: { type: 'boolean', description: 'Include raw last-8 OHLCV rows per timeframe (default false for compact digest).' },
                 },
                 additionalProperties: false,
             },
@@ -1877,12 +1880,14 @@ export const DESK_TOOL_DEFINITIONS: DeskToolDefinition[] = [
         function: {
             name: 'get_chart_view',
             description:
-                'See everything displayed on the Trade chart RIGHT NOW: the chart timeframe, the last 60 candles (OHLCV, oldest→newest), the live mark price, the verdict levels drawn (Entry/Stop/TPs), the order book the user watches (best bid/ask, spread, depth walls) and any trendlines/zones the USER drew on the chart. Call it before answering "this chart", "this candle", "here", "my line" or "what do I see" questions.',
+                'See everything displayed on the Trade chart RIGHT NOW: revision hash, price scale mode (linear/log), timeframe, live mark, forming & last closed candle, ATR14, active study readings, visible range, verdict levels, condensed order book walls, and evaluated User vs AI #D1..#Dn drawings (with exact projected prices, ATR distance, touches, and concrete fib prices). Pass if_revision from the Tier 0 manifest to short-circuit cleanly when unchanged (still returns fresh liveMark + formingCandle). Pass include_candles:true to fetch 60 raw OHLCV bars.',
             parameters: {
                 type: 'object',
                 properties: {
                     symbol: { type: 'string', description: 'Override symbol (default: the chart\'s current symbol).' },
                     interval: { type: 'string', description: 'Override timeframe, e.g. 15m or 1d (default: the chart\'s current interval).' },
+                    if_revision: { type: 'string', description: 'Optional chartRevision from Tier 0 manifest; if unchanged on the active chart, returns { unchanged: true, revision, liveMark, formingCandle, checkedAt }.' },
+                    include_candles: { type: 'boolean', description: 'Set true to fetch 60 raw OHLCV bars from the exchange instead of the compact live canvas view.' },
                 },
                 additionalProperties: false,
             },
@@ -2053,15 +2058,17 @@ export const DESK_TOOL_DEFINITIONS: DeskToolDefinition[] = [
         function: {
             name: 'trade_math',
             description:
-                'The plan\'s arithmetic, computed: planned R:R (nearest target ÷ stop, canonical), the round-trip cost in R and the NET R:R after fees, the break-even win rate, the ATR-based position size for a risk % of equity, and the isolated-margin liquidation price (estimate). Refuses (marks inverted) a plan whose stop/target sit on the wrong sides. Call BEFORE presenting a trade — quote its numbers, not your own.',
+                'The plan\'s arithmetic, computed: planned R:R (nearest target ÷ stop, canonical), optional blended multi-TP gross/net R:R, round-trip cost in R and NET R:R after fees, break-even win rate, ATR-based position size for a risk % of equity (on the active chart interval or specified interval), and isolated-margin liquidation price (estimate). Refuses (marks inverted) a plan whose stop/target sit on the wrong sides. Call BEFORE presenting a trade — quote its numbers, not your own.',
             parameters: {
                 type: 'object',
                 properties: {
                     symbol: { type: 'string', description: 'Any perp symbol (default: the chart\'s current symbol).' },
+                    interval: { type: 'string', description: 'ATR timeframe override (default: active chart interval, fallback 15m).' },
                     direction: { type: 'string', enum: ['Long', 'Short'] },
                     entry: { type: 'number' },
                     stop_loss: { type: 'number' },
                     take_profits: { type: 'array', items: { type: 'number' }, description: 'One or more target prices.' },
+                    tp_weights: { type: 'array', items: { type: 'number' }, description: 'Optional scaling weights across take_profits (defaults to equal weights when ≥2 TPs).' },
                     equity_usd: { type: 'number', description: 'Account equity for sizing. Without it sizing returns unavailable — never a default.' },
                     risk_percent: { type: 'number', description: 'Risk as % of equity (default 1).' },
                     leverage: { type: 'number', description: 'Leverage for the liquidation estimate (default 10).' },
@@ -2282,15 +2289,15 @@ export const DESK_TOOL_DEFINITIONS: DeskToolDefinition[] = [
         function: {
             name: 'get_price_snapshot',
             description:
-                'Spot price + recent OHLCV summary for one timeframe. Use when hybrid data is missing a TF or you need a fresh print. Works for ANY symbol — scan another coin without the user switching charts.',
+                'Perp price + recent OHLCV summary for one timeframe. Use when hybrid data is missing a TF or you need a fresh print. Works for ANY symbol — scan another coin without the user switching charts.',
             parameters: {
                 type: 'object',
                 properties: {
                     symbol: { type: 'string', description: 'Any perp symbol, e.g. ETHUSDT (default: the current chart symbol).' },
                     interval: {
                         type: 'string',
-                        enum: ['15m', '1h', '4h', '1d'],
-                        description: 'Candle interval. Default 1h.',
+                        enum: ['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '6h', '12h', '1d'],
+                        description: 'Candle interval. Default 1h. Unsupported intervals are rejected explicitly.',
                     },
                 },
                 additionalProperties: false,
@@ -3192,48 +3199,94 @@ async function runDerivatives(symbol: string, signal?: AbortSignal): Promise<str
 
 async function runOrderBook(symbol: string): Promise<string> {
     const book = await fetchOrderBookDepth(symbol);
-    // Stamped because this tool is cached for TOOL_CACHE_TTL_MS and
-    // fetchOrderBookDepth caches for 5 s beneath that -- the book a model reads
-    // can be ~35 s old, and an unstamped wall reads as current liquidity the
-    // trader could still act on. Deliberately NOT in STAMPED_TOOLS: when a
-    // cached body replays, the honest fact is WHEN it was taken, so the stamp
-    // keeps its original value instead of pretending to be now.
-    //
-    // The stamp goes FIRST in the object, deliberately: get_order_book has no
-    // TOOL_BUDGETS entry, so budgetToolContent caps it at
-    // MAX_TOOL_CONTENT_CHARS (2400) by cutting the END, and a limit-100 book is
-    // far over that. A trailing stamp is then the first byte lost -- the live
-    // run proved it, with the model answering that it could not read the
-    // snapshot time out of its own tool result. Leading survives the cut.
-    return JSON.stringify({ checkedAt: new Date().toISOString(), ...book }, null, 2);
+    // Emit a compact, bounded JSON object that stays cleanly inside the 2,400-char
+    // budget without mid-JSON truncation: leading `checkedAt`, summary metrics,
+    // top 5 walls by USD value, top 8 best bids/asks, and total depth counts.
+    const topWalls = (arr: typeof book.buyWalls, n = 5) =>
+        [...(arr ?? [])]
+            .sort((a, b) => (b.usdValue || 0) - (a.usdValue || 0))
+            .slice(0, n);
+    const totalBidLevels = Array.isArray(book.bids) ? book.bids.length : 0;
+    const totalAskLevels = Array.isArray(book.asks) ? book.asks.length : 0;
+    return JSON.stringify({
+        checkedAt: new Date().toISOString(),
+        symbol,
+        bestBid: book.bestBid,
+        bestAsk: book.bestAsk,
+        spread: book.spread,
+        spreadPercent: book.spreadPercent,
+        bidDepth: book.bidDepth,
+        askDepth: book.askDepth,
+        depthImbalance: book.depthImbalance,
+        dominantSide: book.dominantSide,
+        buyWalls: topWalls(book.buyWalls, 5),
+        sellWalls: topWalls(book.sellWalls, 5),
+        bids: (book.bids ?? []).slice(0, 8),
+        asks: (book.asks ?? []).slice(0, 8),
+        totalBidLevels,
+        totalAskLevels,
+    }, null, 2);
 }
 
 async function runLiquidations(symbol: string): Promise<string> {
     const liq = await fetchRecentLiquidations(symbol);
-    return JSON.stringify(liq, null, 2);
+    return JSON.stringify({ checkedAt: new Date().toISOString(), ...liq }, null, 2);
 }
 
 async function runBtcContext(symbol: string): Promise<string> {
     const risk = await calculateCorrelationRisk(symbol);
-    return JSON.stringify(risk, null, 2);
+    return JSON.stringify({ checkedAt: new Date().toISOString(), ...risk }, null, 2);
 }
 
 function runSession(): string {
     return JSON.stringify(getSessionContext(), null, 2);
 }
 
+export const PRICE_SNAPSHOT_INTERVALS = ['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '6h', '12h', '1d'] as const;
+export type PriceSnapshotInterval = (typeof PRICE_SNAPSHOT_INTERVALS)[number];
+
+export const normalizePriceSnapshotInterval = (raw: string): PriceSnapshotInterval | null => {
+    const trimmed = raw.trim();
+    const mapped = trimmed === '1D' ? '1d' : trimmed;
+    return (PRICE_SNAPSHOT_INTERVALS as readonly string[]).includes(mapped)
+        ? (mapped as PriceSnapshotInterval)
+        : null;
+};
+
 async function runPriceSnapshot(symbol: string, interval: string): Promise<string> {
-    const tf = (['15m', '1h', '4h', '1d'].includes(interval) ? interval : '1h') as '15m' | '1h' | '4h' | '1d';
+    const tf = normalizePriceSnapshotInterval(interval);
+    if (!tf) {
+        return JSON.stringify({
+            error: `unsupported interval "${interval}"`,
+            supportedIntervals: [...PRICE_SNAPSHOT_INTERVALS],
+            checkedAt: new Date().toISOString(),
+        }, null, 2);
+    }
     // Perp-side price + candles: a "price snapshot" the model compares against
     // the chart's live mark must come from the same market as the mark.
     const [market, klines] = await Promise.all([
         fetchFuturesTicker24h(symbol),
         fetchFuturesOHLCV(symbol, tf, 24),
     ]);
+    if (!Array.isArray(klines) || klines.length === 0) {
+        return JSON.stringify({
+            symbol,
+            interval: tf,
+            price: market.currentPrice,
+            change24hPct: market.priceChangePercent24h,
+            window: null,
+            data_quality: { available: false, reason: 'no candles returned' },
+            checkedAt: new Date().toISOString(),
+        }, null, 2);
+    }
     const last = klines[klines.length - 1];
     const first = klines[0];
-    const highs = klines.map(k => k.high);
-    const lows = klines.map(k => k.low);
+    let high = -Infinity;
+    let low = Infinity;
+    for (const k of klines) {
+        if (Number.isFinite(k.high) && k.high > high) high = k.high;
+        if (Number.isFinite(k.low) && k.low < low) low = k.low;
+    }
     return JSON.stringify({
         symbol,
         interval: tf,
@@ -3243,8 +3296,8 @@ async function runPriceSnapshot(symbol: string, interval: string): Promise<strin
             bars: klines.length,
             open: first?.open,
             close: last?.close,
-            high: Math.max(...highs),
-            low: Math.min(...lows),
+            high: Number.isFinite(high) ? high : null,
+            low: Number.isFinite(low) ? low : null,
             lastVolume: last?.volume,
         },
         checkedAt: new Date().toISOString(),
@@ -3369,6 +3422,8 @@ async function runKeyLevels(symbol: string, interval: string): Promise<string> {
     const out = {
         symbol,
         interval: tf,
+        checkedAt: new Date().toISOString(),
+        data_quality: { available: true, bars_used: klines.length, venue: 'binance-usdtm-futures' },
         bars: klines.length,
         mark: rp(mark),
         // The day/week/month + session + round-number frame, each level with
@@ -3437,7 +3492,13 @@ async function runIndicators(symbol: string, interval: string, groups: string[])
         return JSON.stringify({ symbol, interval: tf, error: `not enough candles (${klines?.length ?? 0}) to compute these studies` });
     }
     const T = await import('./TechnicalAnalysisService');
-    const out: Record<string, unknown> = { symbol, interval: tf, bars: klines.length };
+    const out: Record<string, unknown> = {
+        symbol,
+        interval: tf,
+        checkedAt: new Date().toISOString(),
+        data_quality: { available: true, bars_used: klines.length, venue: 'binance-usdtm-futures' },
+        bars: klines.length,
+    };
     if (notRun.length > 0) {
         out.notRun = { studies: notRun, reason: `at most ${MAX_STUDIES_PER_CALL} studies per call — call again for the rest` };
     }
@@ -3535,34 +3596,95 @@ const formatSpreadPct = (pct: number): string =>
     !Number.isFinite(pct) ? '—' : pct > 0 && pct < 0.001 ? '<0.001%' : `${pct.toFixed(3)}%`;
 
 /**
- * get_all_timeframes — the full compendium: per-timeframe candles, trend,
- * momentum, swing structure and named candle formations for 5m→1d, plus the
- * global microstructure layer (order book + spread, funding, OI,
- * liquidations). This is "everything the user can see and more" in one read.
+ * get_all_timeframes — parallelized market compendium across 5m→1d plus global
+ * microstructure (order book, funding, OI, liquidations), returning compact
+ * per-TF digests with standardized `checkedAt` & `data_quality` metadata.
  */
-async function runAllTimeframes(symbol: string, liveMark?: number | null): Promise<string> {
+export async function runAllTimeframes(
+    symbol: string,
+    liveMark?: number | null,
+    options?: {
+        includeCandles?: boolean;
+        /** Optional injected fetcher for deterministic unit testing. */
+        fetchTf?: (sym: string, tf: (typeof ALL_TIMEFRAMES)[number], limit: number) => Promise<{ candles: Kline[]; source?: string }>;
+        /** Skip microstructure REST calls in deterministic unit tests. */
+        skipMicrostructure?: boolean;
+    },
+): Promise<string> {
     const { fetchKlinesTagged, spotMirrorSourceNote } = await import('./KlineService');
     const { calculateIndicators } = await import('./TechnicalAnalysisService');
     const { detectCandleFormations, describeMarketStructure } = await import('../trade/candleFormations');
 
-    // Microstructure + derivatives once (they are timeframe-independent).
-    const [book, mi, deriv, liq] = await Promise.all([
-        fetchOrderBookDepth(symbol).catch(() => null),
-        fetchMarkIndex(symbol).catch(() => null),
-        fetchDerivativesData(symbol).catch(() => null),
-        fetchRecentLiquidations(symbol).catch(() => null),
+    const nowMs = Date.now();
+    const checkedAt = new Date(nowMs).toISOString();
+    const includeCandles = options?.includeCandles === true;
+    const tfFetcher = options?.fetchTf
+        ?? ((sym: string, tf: (typeof ALL_TIMEFRAMES)[number], limit: number) => fetchKlinesTagged(sym, tf, limit));
+
+    // Fetch microstructure + ALL 5 timeframes concurrently in one parallel fan-out.
+    const [book, mi, deriv, liq, ...tfResults] = await Promise.all([
+        options?.skipMicrostructure ? Promise.resolve(null) : fetchOrderBookDepth(symbol).catch(() => null),
+        options?.skipMicrostructure ? Promise.resolve(null) : fetchMarkIndex(symbol).catch(() => null),
+        options?.skipMicrostructure ? Promise.resolve(null) : fetchDerivativesData(symbol).catch(() => null),
+        options?.skipMicrostructure ? Promise.resolve(null) : fetchRecentLiquidations(symbol).catch(() => null),
+        ...ALL_TIMEFRAMES.map(async tf => {
+            try {
+                const tagged = await tfFetcher(symbol, tf, 60);
+                return { tf, ok: true as const, candles: tagged.candles, source: tagged.source };
+            } catch {
+                return { tf, ok: false as const, candles: [] as Kline[], source: undefined };
+            }
+        }),
     ]);
 
-    // Same precedence get_chart_view uses: the chart's websocket mark beats a
-    // REST premiumIndex read, because the mark is what the user is watching and
-    // the REST value carries the whole snapshot lag.
     const restMark = mi && mi.available && Number.isFinite(mi.markPrice) && mi.markPrice > 0
         ? mi.markPrice : null;
     const canvasMark = typeof liveMark === 'number' && Number.isFinite(liveMark) && liveMark > 0
         ? liveMark : null;
     const markNow = canvasMark ?? restMark;
+
+    const tfBlocks: string[] = [];
+    const availableTfs: string[] = [];
+    const degradedTfs: string[] = [];
+    const failedTfs: string[] = [];
+
+    for (const res of tfResults) {
+        const { tf } = res;
+        if (!res.ok) {
+            failedTfs.push(tf);
+            tfBlocks.push(`## ${tf}\n(source FAILED — treat this timeframe as UNKNOWN, not empty)`);
+            continue;
+        }
+        const klines = res.candles;
+        if (res.source === 'spot-mirror') degradedTfs.push(tf);
+        if (klines.length === 0) {
+            failedTfs.push(tf);
+            tfBlocks.push(`## ${tf}\n(no candles returned — source failed, treat as UNKNOWN)`);
+            continue;
+        }
+        availableTfs.push(tf);
+        const candles = klines.map(k => ({ time: k.time, open: k.open, high: k.high, low: k.low, close: k.close, volume: k.volume }));
+        const ind = calculateIndicators(klines);
+        const last = candles[candles.length - 1];
+        const first = candles[0];
+        const spanPct = first.open ? ((last.close - first.open) / first.open * 100).toFixed(2) : '0';
+        const formations = detectCandleFormations(candles);
+        const dp = last.close >= 1000 ? 0 : 2;
+        const atrLine = Number.isFinite(ind.atr) && ind.atr > 0 ? ` · ATR14 ${Number(ind.atr.toFixed(dp + 1))}` : '';
+        const lines = [
+            `## ${tf} — ${describeMarketStructure(candles)}`,
+            `close ${last.close} (${spanPct}% over ${candles.length} bars) · EMA20 ${Number(ind.ema.ema20.toFixed(dp))} / EMA50 ${Number(ind.ema.ema50.toFixed(dp))} · RSI14 ${ind.rsi.rsi14.toFixed(1)} (${ind.rsiTrend}) · MACD ${ind.macd.trend}${atrLine}`,
+            formations.length > 0 ? `formations: ${formations.join('; ')}` : 'formations: none named in the last 12 bars',
+        ];
+        if (includeCandles) {
+            lines.push('candles (last 8, oldest→newest):', ...candles.slice(-8).map(compactKlineRow));
+        }
+        tfBlocks.push(lines.join('\n'));
+    }
+
     const head: string[] = [
-        `ALL-TIMEFRAME COMPENDIUM — ${symbol} · fetched ${phtStamp(Date.now())} PHT (UTC+8)`,
+        `ALL-TIMEFRAME COMPENDIUM — ${symbol} · fetched ${phtStamp(nowMs)} PHT (UTC+8) · checkedAt ${checkedAt}`,
+        `data_quality: available=${availableTfs.length}/${ALL_TIMEFRAMES.length} [${availableTfs.join(',') || 'none'}]${degradedTfs.length ? ` · spot_mirror=[${degradedTfs.join(',')}]` : ''}${failedTfs.length ? ` · failed=[${failedTfs.join(',')}]` : ''} · mode=${includeCandles ? 'full_candles' : 'compact_digest'}`,
         markNow !== null
             ? `Mark ${markNow}${canvasMark !== null ? ' (live from the chart feed)' : ' (REST)'} · Index ${mi?.indexPrice ?? '—'} · Funding ${mi ? `${(mi.lastFundingRate * 100).toFixed(4)}%` : '—'}`
             : 'Mark/Index unavailable',
@@ -3584,38 +3706,6 @@ async function runAllTimeframes(symbol: string, liveMark?: number | null): Promi
         head.push('Order book unavailable (the depth fetch failed).');
     }
 
-    const tfBlocks: string[] = [];
-    const degradedTfs: string[] = [];
-    for (const tf of ALL_TIMEFRAMES) {
-        try {
-            const tagged = await fetchKlinesTagged(symbol, tf, 60);
-            const klines = tagged.candles;
-            if (tagged.source === 'spot-mirror') degradedTfs.push(tf);
-            if (klines.length === 0) {
-                tfBlocks.push(`## ${tf}\n(no candles returned — source failed, treat as UNKNOWN)`);
-                continue;
-            }
-            const candles = klines.map(k => ({ time: k.time, open: k.open, high: k.high, low: k.low, close: k.close, volume: k.volume }));
-            const ind = calculateIndicators(klines);
-            const last = candles[candles.length - 1];
-            const first = candles[0];
-            const spanPct = first.open ? ((last.close - first.open) / first.open * 100).toFixed(2) : '0';
-            const formations = detectCandleFormations(candles);
-            tfBlocks.push([
-                `## ${tf} — ${describeMarketStructure(candles)}`,
-                `close ${last.close} (${spanPct}% over window) · EMA20 ${Number(ind.ema.ema20.toFixed(last.close >= 1000 ? 0 : 2))} / EMA50 ${Number(ind.ema.ema50.toFixed(last.close >= 1000 ? 0 : 2))} · RSI14 ${ind.rsi.rsi14.toFixed(1)} (${ind.rsiTrend}) · MACD ${ind.macd.trend}`,
-                formations.length > 0 ? `formations: ${formations.join('; ')}` : 'formations: none named in the last 12 bars',
-                'candles (last 8, oldest→newest):',
-                ...candles.slice(-8).map(compactKlineRow),
-            ].join('\n'));
-        } catch {
-            tfBlocks.push(`## ${tf}\n(source FAILED — treat this timeframe as UNKNOWN, not empty)`);
-        }
-    }
-
-    // One degraded-source line for the whole compendium: a spot-mirror read
-    // feeding ANY timeframe must be named where the model reads the header,
-    // not buried per-block (open-items O-63).
     if (degradedTfs.length > 0) {
         head.push(spotMirrorSourceNote('spot-mirror')!.replace('CANDLE SOURCE: SPOT MIRROR', `CANDLE SOURCE: SPOT MIRROR for ${degradedTfs.join(', ')}`));
     }
@@ -3659,6 +3749,9 @@ export interface DeskToolContext {
      *  the feed on demand passes these; the rest keep the frozen value. */
     getLiveMarkPrice?: () => number | null;
     getFormingCandle?: () => FormingCandle | null;
+    /** Live canvas snapshot reader for `get_chart_view` revision short-circuit
+     *  and scale-aware evaluated drawing projection. */
+    getChartSnapshot?: () => ChartSnapshot | null;
     /** The seat's tool allow-list (chat-panel TRADE_TOOLS, bot presets…).
      *  When non-empty it is enforced
      *  HERE, in the executor — not just in what gets OFFERED: on
@@ -4286,12 +4379,10 @@ ${hitContent}`, ...resolvedSymbolField(call, fallback) };
                         }
                     }
                     const slug = asString(call.arguments.slug) || slugify(asString(call.arguments.title) || asString(call.arguments.name) || description);
-                    // SIMILARITY, on create only, and only on the new name.
-                    // `remember` stays a permissive alias while the memory_*
-                    // names bed in; memory_add is the path that promises to
-                    // refuse a twin. Containment in either direction, the same
-                    // question the skill redundancy scan asks.
-                    if (call.name === 'memory_add') {
+                    // SIMILARITY, on create only — applies to BOTH `memory_add`
+                    // and its legacy alias `remember` so neither path can
+                    // bypass near-duplicate refusal under a fresh slug.
+                    {
                         const { getProfileMemory, findSimilarMemory } = await import('../learning/profileMemory');
                         if (!getProfileMemory(slug, getActiveUsername())) {
                             const dup = findSimilarMemory(
@@ -4300,7 +4391,7 @@ ${hitContent}`, ...resolvedSymbolField(call, fallback) };
                             );
                             if (dup) {
                                 return rejectedResult(call,
-                                    `memory_add rejected: "${dup.slug}" already covers this (${dup.reason}, score ${dup.score}). `
+                                    `${call.name} rejected: "${dup.slug}" already covers this (${dup.reason}, score ${dup.score}). `
                                     + `Call memory_update on "${dup.slug}" with the changed text — ${dup.description}`,
                                 );
                             }
@@ -5026,11 +5117,86 @@ ${body}`);
             }
             case 'get_chart_view': {
                 const sym = asSymbol(call.arguments.symbol, fallback);
-                // Pass the app token through untouched — fetchKlines maps it.
-                // `.toLowerCase()` here turned the monthly '1M' into a
-                // 1-minute '1m', and disagreed with scan_setups (which never
-                // lowercased) about what the same session's interval meant.
                 const ivl = String(call.arguments.interval || context.chartInterval || '15m');
+                const ifRevision = asString(call.arguments.if_revision).trim();
+                const includeCandles = call.arguments.include_candles === true;
+                const snap = context.getChartSnapshot?.() ?? null;
+                const snapMatches = !!snap
+                    && snap.symbol.toUpperCase() === sym.toUpperCase()
+                    && snap.interval === ivl;
+
+                // Revision short-circuit: when `if_revision` matches the live
+                // canvas revision on the same symbol+interval, skip exchange
+                // fetches and return fresh liveMark + formingCandle so the
+                // model still has current price context without re-sending the
+                // full payload.
+                if (ifRevision && snapMatches && snap?.revision && ifRevision === snap.revision) {
+                    const snapForming = snap.candles.length > 0 ? snap.candles[snap.candles.length - 1] : null;
+                    const forming = liveFormingCandleOf(context) ?? snapForming;
+                    content = JSON.stringify({
+                        unchanged: true,
+                        revision: snap.revision,
+                        symbol: sym,
+                        interval: ivl,
+                        liveMark: liveMarkOf(context) ?? snap.markPrice,
+                        formingCandle: forming,
+                        checkedAt: new Date().toISOString(),
+                    }, null, 2);
+                    break;
+                }
+
+                // Compact structured live canvas view when the requested symbol
+                // & interval match the mounted chart and the caller did not
+                // explicitly ask for 60 raw exchange OHLCV bars.
+                if (snapMatches && snap && snap.candles.length > 0 && !includeCandles) {
+                    const nowMs = Date.now();
+                    const evalCandles = snap.evalCandles && snap.evalCandles.length > 0 ? snap.evalCandles : snap.candles;
+                    const priceScaleMode = snap.priceScaleMode ?? 'normal';
+                    const markNow = liveMarkOf(context) ?? snap.markPrice;
+                    const atr14 = snap.atr14 ?? computeAtr14(evalCandles);
+                    const mergedDrawings = snap.drawings.length > 0 || snap.modelDrawings.length > 0
+                        ? [...snap.drawings, ...snap.modelDrawings]
+                        : (context.chartDrawings ?? []);
+                    const evaluated = evaluateChartDrawings(mergedDrawings, {
+                        symbol: sym,
+                        activeTf: ivl,
+                        candles: evalCandles,
+                        markPrice: markNow,
+                        priceScaleMode,
+                        atr14,
+                        nowMs,
+                    });
+                    const book = await fetchOrderBookDepth(sym).catch(() => null);
+                    const formingCandle = snap.candles[snap.candles.length - 1] ?? null;
+                    const lastClosedBar = evalCandles.length >= 2 ? evalCandles[evalCandles.length - 2] : null;
+                    content = JSON.stringify({
+                        revision: snap.revision ?? null,
+                        symbol: sym,
+                        interval: ivl,
+                        priceScaleMode,
+                        liveMark: markNow,
+                        formingCandle,
+                        lastClosedBar,
+                        atr14,
+                        activeStudies: snap.activeStudies ?? {},
+                        visibleRange: snap.visibleRange ?? null,
+                        levels: snap.levels,
+                        orderBook: book ? {
+                            bestBid: book.bestBid,
+                            bestAsk: book.bestAsk,
+                            spreadPercent: book.spreadPercent,
+                            dominantSide: book.dominantSide,
+                            nearestBuyWall: book.buyWalls?.[0] ?? null,
+                            nearestSellWall: book.sellWalls?.[0] ?? null,
+                        } : null,
+                        userDrawings: evaluated.filter(d => d.origin === 'user'),
+                        agentDrawings: evaluated.filter(d => d.origin === 'agent'),
+                        recentCandles: snap.candles.slice(-15),
+                        checkedAt: new Date(nowMs).toISOString(),
+                    }, null, 2);
+                    break;
+                }
+
                 const { fetchKlinesTagged, spotMirrorSourceNote } = await import('./KlineService');
                 const [tagged, mi, book] = await Promise.all([
                     fetchKlinesTagged(sym, ivl, 60, { noCache: true }),
@@ -5042,18 +5208,8 @@ ${body}`);
                     content = dataUnavailable('get_chart_view', `no candles returned for ${sym} ${ivl}`, 'The source failed; do not infer an empty chart');
                     break;
                 }
-                // O-63: a degraded read is named on the receipt, never served
-                // silently — the spot market's candles can deviate from the
-                // perp mark the trader watches.
                 const sourceNote = spotMirrorSourceNote(tagged.source);
-                const rows = klines.map(k =>
-                    // PHT, like every other candle the model is shown — see
-                // klineRows. This row used to be UTC, which put the same
-                // bar at two clocks in one message.
-                fullKlineRow(k),
-                ).join('\n');
-                // The book column the user watches — condensed to the levels
-                // they can actually see, not the raw 100-row ladder.
+                const rows = klines.map(k => fullKlineRow(k)).join('\n');
                 const bookLines: string[] = [];
                 if (book) {
                     bookLines.push(`Order book: best bid ${book.bestBid} · best ask ${book.bestAsk} · spread ${formatSpreadPct(book.spreadPercent)} · dominant side ${book.dominantSide}`);
@@ -5067,10 +5223,6 @@ ${body}`);
                     bookLines.push('Order book unavailable (the depth fetch failed).');
                 }
                 const { describeDrawingsForModel } = await import('../trade/chartDrawings');
-                // Give the model each shape's draw-time and drift vs the mark
-                // it sees right here, so it can tell a fresh level from one
-                // price has moved away from. Prefer the same mark the price
-                // line above reports.
                 const freshMark = liveMarkOf(context);
                 const canvasMark = typeof freshMark === 'number'
                     && Number.isFinite(freshMark)
@@ -5083,15 +5235,28 @@ ${body}`);
                     ? mi.markPrice
                     : null;
                 const markNow = canvasMark ?? restMark;
+                const evalCandles = snapMatches && snap?.evalCandles?.length
+                    ? snap.evalCandles
+                    : klines.map(k => ({ time: Math.floor(k.time / 1000), open: k.open, high: k.high, low: k.low, close: k.close }));
+                const drawingsPool = snapMatches && snap
+                    ? [...snap.drawings, ...snap.modelDrawings]
+                    : (context.chartDrawings ?? []);
                 content = [
-                    `CHART VIEW — ${sym} · ${ivl} · last ${klines.length} candles (oldest→newest)`,
+                    `CHART VIEW — ${sym} · ${ivl}${snapMatches && snap?.revision ? ` · rev=${snap.revision}` : ''} · scale=${snapMatches && snap?.priceScaleMode ? snap.priceScaleMode : 'normal'} · last ${klines.length} candles (oldest→newest)`,
                     `Live mark price: ${markNow ?? 'unavailable'}`,
                     ...(sourceNote ? [sourceNote] : []),
                     context.chartLevels && context.chartLevels.length > 0
                         ? `Levels drawn on the chart: ${context.chartLevels.map(l => `${l.label} ${l.price}`).join(' · ')}`
                         : 'No verdict levels are drawn on the chart right now.',
                     ...bookLines,
-                    describeDrawingsForModel(context.chartDrawings ?? [], { priceNow: markNow, nowMs: Date.now() }) || 'The user has not drawn any shapes on the chart.',
+                    describeDrawingsForModel(drawingsPool, { priceNow: markNow, nowMs: Date.now() }, {
+                        symbol: sym,
+                        activeTf: ivl,
+                        candles: evalCandles,
+                        markPrice: markNow,
+                        priceScaleMode: snapMatches && snap?.priceScaleMode ? snap.priceScaleMode : 'normal',
+                        atr14: snapMatches ? snap?.atr14 : undefined,
+                    }) || 'The user has not drawn any shapes on the chart.',
                     rows,
                 ].join('\n');
                 break;
@@ -5175,6 +5340,11 @@ ${body}`);
                 const tps = Array.isArray(call.arguments.take_profits)
                     ? call.arguments.take_profits.map((t: unknown) => Number(t)).filter((t: number) => Number.isFinite(t))
                     : [];
+                const tpWeights = Array.isArray(call.arguments.tp_weights)
+                    ? call.arguments.tp_weights.map((w: unknown) => Number(w)).filter((w: number) => Number.isFinite(w) && w > 0)
+                    : undefined;
+                const explicitTf = asString(call.arguments.interval);
+                const resolvedTf = explicitTf || context.chartInterval || '15m';
                 content = await (await importMarketTools()).runTradeMathTool(
                     asSymbol(call.arguments.symbol, fallback),
                     String(call.arguments.direction) === 'Short' ? 'Short' : 'Long',
@@ -5182,6 +5352,8 @@ ${body}`);
                     Number(call.arguments.stop_loss),
                     tps,
                     {
+                        tf: resolvedTf,
+                        tpWeights: tpWeights && tpWeights.length > 0 ? tpWeights : undefined,
                         equityUsd: Number.isFinite(Number(call.arguments.equity_usd)) ? Number(call.arguments.equity_usd) : undefined,
                         riskPercent: Number.isFinite(Number(call.arguments.risk_percent)) ? Number(call.arguments.risk_percent) : undefined,
                         leverage: Number.isFinite(Number(call.arguments.leverage)) ? Number(call.arguments.leverage) : undefined,
@@ -5254,7 +5426,11 @@ ${body}`);
                 break;
             }
             case 'get_all_timeframes': {
-                content = await runAllTimeframes(asSymbol(call.arguments.symbol, fallback), liveMarkOf(context));
+                content = await runAllTimeframes(
+                    asSymbol(call.arguments.symbol, fallback),
+                    liveMarkOf(context),
+                    { includeCandles: call.arguments.include_candles === true },
+                );
                 break;
             }
             case 'read_tool_output': {
@@ -5302,12 +5478,21 @@ ${body}`);
             case 'get_session_context':
                 content = runSession();
                 break;
-            case 'get_price_snapshot':
+            case 'get_price_snapshot': {
+                const rawIvl = asString(call.arguments.interval, '1h');
+                const normalizedIvl = normalizePriceSnapshotInterval(rawIvl);
+                if (!normalizedIvl) {
+                    return rejectedResult(
+                        call,
+                        `get_price_snapshot rejected: unsupported interval "${rawIvl}". Supported intervals: ${PRICE_SNAPSHOT_INTERVALS.join(', ')}.`,
+                    );
+                }
                 content = await runPriceSnapshot(
                     asSymbol(call.arguments.symbol, fallback),
-                    asString(call.arguments.interval, '1h'),
+                    normalizedIvl,
                 );
                 break;
+            }
             case 'get_indicators': {
                 const raw = (call.arguments as { studies?: unknown })?.studies;
                 const studies = Array.isArray(raw) ? raw.filter((s): s is string => typeof s === 'string') : [];
@@ -6583,6 +6768,7 @@ export async function runDeskToolLoop(params: {
     /** Call-time readers so a multi-round turn stops stamping one frozen "now". */
     getLiveMarkPrice?: () => number | null;
     getFormingCandle?: () => FormingCandle | null;
+    getChartSnapshot?: () => ChartSnapshot | null;
     onToolEvent?: (line: string) => void;
     /** A transient progress line for a slow call; never part of the trail. */
     onToolProgress?: (line: string) => void;
@@ -6647,6 +6833,7 @@ export async function runDeskToolLoop(params: {
         formingCandle,
         getLiveMarkPrice,
         getFormingCandle,
+        getChartSnapshot,
         onToolEvent,
         onToolProgress,
         onToolCall,
@@ -7210,6 +7397,7 @@ export async function runDeskToolLoop(params: {
                 formingCandle,
                 getLiveMarkPrice,
                 getFormingCandle,
+                getChartSnapshot,
                 artifactOwner,
                 // Enforce the seat's allow-list in the EXECUTOR, not just in
                 // what's offered: text-protocol seats can emit a tag for any
@@ -7385,6 +7573,7 @@ export interface StreamWithDeskToolsOptions extends ChatRequestOptions {
     /** Call-time readers so a multi-round turn stops stamping one frozen "now". */
     getLiveMarkPrice?: () => number | null;
     getFormingCandle?: () => FormingCandle | null;
+    getChartSnapshot?: () => ChartSnapshot | null;
     /** Override harness setting. Default: follow Settings → Desk Tools. */
     enabled?: boolean;
     /** The Settings memory switch for this turn. False disables the pre-read
@@ -7572,6 +7761,7 @@ export async function* streamChatWithDeskTools(
         formingCandle,
         getLiveMarkPrice,
         getFormingCandle,
+        getChartSnapshot,
         onToolEvent,
         onToolProgress,
         onToolCall,
@@ -7726,6 +7916,7 @@ export async function* streamChatWithDeskTools(
         formingCandle,
         getLiveMarkPrice,
         getFormingCandle,
+        getChartSnapshot,
         nativeTools,
         allowedTools: effectiveAllowed,
         memoryEnabled,

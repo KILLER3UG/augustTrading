@@ -13,11 +13,18 @@
 
 import { getActiveUsername } from '../../utils/activeUser';
 import { phtStamp } from '../../utils/timezone';
-import { fmtRiskReward, plannedRiskReward } from '../../utils/riskReward';
+import { fmtRiskReward, plannedRiskReward, plannedRiskRewardSigned, type PlannedRiskDirection } from '../../utils/riskReward';
 import { priceArgError, usablePrice } from './tradePlanLevels';
 import { readStore, writeStore, removeStore } from '../infrastructure/storeBackend';
 import type { PatternAnchor } from '../../utils/patternDetection';
 import { snapPriceToStructure } from '../../utils/patternDetection';
+import {
+    allocateDrawingShortId,
+    ensureStableShortIds,
+    evaluateChartDrawings,
+    type ChartEvaluationContext,
+    type DrawingEvaluatedAtNow,
+} from './chartGeometry';
 
 /**
  * DrawKind — what a shape can be.
@@ -30,13 +37,26 @@ import { snapPriceToStructure } from '../../utils/patternDetection';
  */
 export type DrawKind =
     | 'trend' | 'hline' | 'ray' | 'rect' | 'brush' | 'fib' | 'text'
-    | 'channel' | 'arrow' | 'measured_move';
+    | 'channel' | 'arrow' | 'measured_move'
+    | 'long_position' | 'short_position';
 
 /** One anchor point in data space: t = unix seconds, p = price. */
 export interface DrawPoint { t: number; p: number }
 
 export interface ChartDrawing {
     id: string;
+    /** Stable monotonic per-symbol handle (`#D1`, `#D2`, …) shared between
+     *  rendered visual badges and the structured Tier 0 / get_chart_view JSON.
+     *  Never renumbered when other drawings are deleted. */
+    shortId?: string;
+    /** Who created the shape: `'user'` (manual canvas) or `'agent'` (tool). */
+    origin?: 'user' | 'agent';
+    /** Timeframe the shape was originally anchored on (e.g. `'4h'`, `'15m'`). */
+    createdOnTf?: string;
+    /** Optional explicit list of timeframes on which the shape is visible. */
+    visibleOnTfs?: string[];
+    /** Monotonic edit version for optimistic updates / revision hashing. */
+    version?: number;
     kind: DrawKind;
     points: DrawPoint[];
     /** CSS color the shape was drawn with. */
@@ -61,7 +81,10 @@ export interface ChartDrawing {
 export const MAX_DRAWINGS_PER_SYMBOL = 40;
 export const MAX_POINTS_PER_DRAWING = 200;
 
-const KINDS: readonly string[] = ['trend', 'hline', 'ray', 'rect', 'brush', 'fib', 'text', 'channel', 'arrow', 'measured_move'];
+const KINDS: readonly string[] = [
+    'trend', 'hline', 'ray', 'rect', 'brush', 'fib', 'text',
+    'channel', 'arrow', 'measured_move', 'long_position', 'short_position',
+];
 
 /** Fibonacci retracement ratios drawn between a fib's two anchors. */
 export const FIB_RATIOS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1] as const;
@@ -128,6 +151,19 @@ const validDrawing = (d: unknown): d is ChartDrawing => {
     return true;
 };
 
+const normalizeDrawingMetadata = (d: ChartDrawing): ChartDrawing => ({
+    ...d,
+    shortId: typeof d.shortId === 'string' && /^#D\d+$/.test(d.shortId.trim()) ? d.shortId.trim() : undefined,
+    origin: d.origin === 'user' || d.origin === 'agent' ? d.origin : undefined,
+    createdOnTf: typeof d.createdOnTf === 'string' && d.createdOnTf.trim() ? d.createdOnTf.trim() : undefined,
+    visibleOnTfs: Array.isArray(d.visibleOnTfs)
+        ? d.visibleOnTfs.filter((tf): tf is string => typeof tf === 'string' && tf.trim().length > 0)
+        : undefined,
+    version: typeof d.version === 'number' && Number.isInteger(d.version) && d.version > 0 ? d.version : undefined,
+    drawnPrice: finiteNum(d.drawnPrice) ?? undefined,
+    points: d.points.filter(validPoint).slice(0, MAX_POINTS_PER_DRAWING),
+});
+
 /** Read + validate + bound the stored shapes for one symbol; garbage → []. */
 export const loadDrawings = (symbol: string, username = getActiveUsername()): ChartDrawing[] => {
     try {
@@ -135,11 +171,11 @@ export const loadDrawings = (symbol: string, username = getActiveUsername()): Ch
         if (!raw) return [];
         const parsed: unknown = JSON.parse(raw);
         if (!Array.isArray(parsed)) return [];
-        return parsed.filter(validDrawing).map(d => ({
-            ...d,
-            drawnPrice: finiteNum(d.drawnPrice) ?? undefined,
-            points: d.points.filter(validPoint).slice(0, MAX_POINTS_PER_DRAWING),
-        })).filter(d => d.points.length > 0).slice(-MAX_DRAWINGS_PER_SYMBOL);
+        const cleaned = parsed.filter(validDrawing)
+            .map(normalizeDrawingMetadata)
+            .filter(d => d.points.length > 0)
+            .slice(-MAX_DRAWINGS_PER_SYMBOL);
+        return ensureStableShortIds(cleaned, symbol);
     } catch {
         return [];
     }
@@ -148,11 +184,10 @@ export const loadDrawings = (symbol: string, username = getActiveUsername()): Ch
 /** Shared validation/bounding for a parsed drawing array (garbage → []). */
 const sanitizeDrawings = (parsed: unknown): ChartDrawing[] => {
     if (!Array.isArray(parsed)) return [];
-    return (parsed as unknown[]).filter(validDrawing).map(d => ({
-        ...d,
-        drawnPrice: finiteNum(d.drawnPrice) ?? undefined,
-        points: d.points.filter(validPoint).slice(0, MAX_POINTS_PER_DRAWING),
-    })).filter(d => d.points.length > 0).slice(-MAX_DRAWINGS_PER_SYMBOL);
+    return (parsed as unknown[]).filter(validDrawing)
+        .map(normalizeDrawingMetadata)
+        .filter(d => d.points.length > 0)
+        .slice(-MAX_DRAWINGS_PER_SYMBOL);
 };
 
 /**
@@ -287,13 +322,25 @@ export const readSessionDrawingsSync = (bucket: 'user' | 'model', sessionId: str
         ? sessionStorageKey(username, sessionId)
         : sessionModelStorageKey(username, sessionId))?.[symbol.toUpperCase()] ?? [];
 
+const hydrateBucketDrawings = (
+    list: ChartDrawing[],
+    symbol: string,
+    defaultOrigin: 'user' | 'agent',
+): ChartDrawing[] => {
+    if (list.length === 0) return list;
+    const withOrigin = list.map(d => (d.origin ? d : { ...d, origin: defaultOrigin }));
+    return ensureStableShortIds(withOrigin, symbol);
+};
+
 /**
  * SESSION+COIN-scoped USER drawings — each Chart AI session owns a map of
  * symbol → shapes. Switching coins blanks the canvas; coming BACK restores
  * that coin's shapes; a fresh session starts EMPTY.
  */
-export const loadSessionDrawings = async (sessionId: string, symbol: string, username = getActiveUsername()): Promise<ChartDrawing[]> =>
-    (await loadCoinMap(sessionStorageKey(username, sessionId)))[symbol.toUpperCase()] ?? [];
+export const loadSessionDrawings = async (sessionId: string, symbol: string, username = getActiveUsername()): Promise<ChartDrawing[]> => {
+    const raw = (await loadCoinMap(sessionStorageKey(username, sessionId)))[symbol.toUpperCase()] ?? [];
+    return hydrateBucketDrawings(raw, symbol, 'user');
+};
 
 /**
  * The ONE load a chart uses: the scope's session bucket, plus a ONE-TIME
@@ -315,8 +362,8 @@ export const loadSessionDrawingsWithLegacy = async (sessionId: string, symbol: s
     const wanted = symbol.toUpperCase();
     const sessionKey = sessionStorageKey(username, sessionId);
     const existing = (await loadCoinMap(sessionKey))[wanted];
-    if (existing && existing.length > 0) return existing;
-    const legacy = loadDrawings(symbol, username);
+    if (existing && existing.length > 0) return hydrateBucketDrawings(existing, symbol, 'user');
+    const legacy = hydrateBucketDrawings(loadDrawings(symbol, username), symbol, 'user');
     if (legacy.length === 0) return existing ?? [];
     saveCoinMap(sessionKey, wanted, legacy);
     void flushCoinMap(sessionKey).then(ok => {
@@ -327,7 +374,7 @@ export const loadSessionDrawingsWithLegacy = async (sessionId: string, symbol: s
 };
 
 export const saveSessionDrawings = (sessionId: string, symbol: string, drawings: ChartDrawing[], username = getActiveUsername()): void =>
-    saveCoinMap(sessionStorageKey(username, sessionId), symbol, drawings);
+    saveCoinMap(sessionStorageKey(username, sessionId), symbol, hydrateBucketDrawings(drawings, symbol, 'user'));
 
 /**
  * The MODEL's drawn shapes — the SAME per-session-per-coin machinery, its OWN
@@ -335,11 +382,13 @@ export const saveSessionDrawings = (sessionId: string, symbol: string, drawings:
  * `clear_chart_drawings(scope:"model")` never clobber each other — and BOTH
  * survive a coin switch instead of the model's lines vanishing.
  */
-export const loadSessionModelDrawings = async (sessionId: string, symbol: string, username = getActiveUsername()): Promise<ChartDrawing[]> =>
-    (await loadCoinMap(sessionModelStorageKey(username, sessionId)))[symbol.toUpperCase()] ?? [];
+export const loadSessionModelDrawings = async (sessionId: string, symbol: string, username = getActiveUsername()): Promise<ChartDrawing[]> => {
+    const raw = (await loadCoinMap(sessionModelStorageKey(username, sessionId)))[symbol.toUpperCase()] ?? [];
+    return hydrateBucketDrawings(raw, symbol, 'agent');
+};
 
 export const saveSessionModelDrawings = (sessionId: string, symbol: string, drawings: ChartDrawing[], username = getActiveUsername()): void =>
-    saveCoinMap(sessionModelStorageKey(username, sessionId), symbol, drawings);
+    saveCoinMap(sessionModelStorageKey(username, sessionId), symbol, hydrateBucketDrawings(drawings, symbol, 'agent'));
 
 /** Deleting a session deletes its drawings — BOTH buckets, the pending
  *  debounce, and the mirror, or a deleted session's shapes come back on a
@@ -399,7 +448,15 @@ export const drawingFromChartTool = (
         color?: unknown;
         label?: unknown;
     },
-    ctx: { lastBarTime: number; barSeconds: number; drawnPrice?: number | null; klines?: readonly { high: number; low: number }[] },
+    ctx: {
+        lastBarTime: number;
+        barSeconds: number;
+        drawnPrice?: number | null;
+        klines?: readonly { high: number; low: number }[];
+        symbol?: string;
+        interval?: string;
+        existing?: ReadonlyArray<Pick<ChartDrawing, 'shortId'>>;
+    },
 ): { drawings: ChartDrawing[]; error?: string; note?: string } => {
     const kindRaw = typeof args.kind === 'string' ? args.kind : '';
     const kindMap: Record<string, DrawKind> = {
@@ -511,20 +568,54 @@ export const drawingFromChartTool = (
         }
     }
 
+    const shortId = allocateDrawingShortId(ctx.symbol, ctx.existing);
     return {
-        drawings: [{ id: createDrawingId(), kind, points, color, createdAt: Date.now(), label, drawnPrice: finiteNum(ctx.drawnPrice ?? undefined) ?? undefined }],
+        drawings: [{
+            id: createDrawingId(),
+            shortId,
+            origin: 'agent',
+            createdOnTf: ctx.interval,
+            version: 1,
+            kind,
+            points,
+            color,
+            createdAt: Date.now(),
+            label,
+            drawnPrice: finiteNum(ctx.drawnPrice ?? undefined) ?? undefined,
+        }],
         note: `${snapNote}${throughNote}`,
     };
+};
+
+const parseOptionalDirection = (raw: unknown): { direction?: PlannedRiskDirection; error?: string } => {
+    if (raw === undefined || raw === null || raw === '') return {};
+    if (typeof raw !== 'string') return { error: 'direction must be "Long" or "Short"' };
+    const norm = raw.trim().toLowerCase();
+    if (norm === 'long') return { direction: 'Long' };
+    if (norm === 'short') return { direction: 'Short' };
+    return { error: `invalid direction "${raw}" — use "Long" or "Short"` };
 };
 
 /**
  * Convert a mark_trade_levels call into labeled horizontal lines: Entry
  * (sky), SL (rose), TPs (amber). One drawing per level, in that order.
+ *
+ * Enforces deterministic directional bracket geometry: SL and TP(s) may never
+ * sit on the same side of Entry, sit equal to Entry, or contradict an explicit
+ * `direction` (`Long` requires SL < Entry < TP; `Short` requires TP < Entry < SL).
  */
 export const drawingsFromLevelTool = (
-    args: { entry?: unknown; stopLoss?: unknown; takeProfits?: unknown },
-    ctx?: { drawnPrice?: number | null },
+    args: { entry?: unknown; stopLoss?: unknown; takeProfits?: unknown; direction?: unknown },
+    ctx?: {
+        drawnPrice?: number | null;
+        symbol?: string;
+        interval?: string;
+        existing?: ReadonlyArray<Pick<ChartDrawing, 'shortId'>>;
+    },
 ): { drawings: ChartDrawing[]; error?: string } => {
+    const dirParsed = parseOptionalDirection(args.direction);
+    if (dirParsed.error) return { drawings: [], error: dirParsed.error };
+
     const num = (v: unknown): number | null => usablePrice(v);
     const entry = num(args.entry);
     const stop = num(args.stopLoss);
@@ -555,10 +646,72 @@ export const drawingsFromLevelTool = (
     }
     if (stop === null && tps.length === 0) return { drawings: [], error: 'provide stopLoss and/or takeProfits' };
 
+    if (stop !== null && stop === entry) {
+        return { drawings: [], error: `stopLoss (${stop}) cannot equal entry (${entry})` };
+    }
+    const equalTp = tps.find(tp => tp === entry);
+    if (equalTp !== undefined) {
+        return { drawings: [], error: `takeProfit (${equalTp}) cannot equal entry (${entry})` };
+    }
+
+    const effectiveDir: PlannedRiskDirection | null = dirParsed.direction
+        ?? (stop !== null ? (stop < entry ? 'Long' : 'Short') : null);
+
+    if (effectiveDir === 'Long') {
+        if (stop !== null && stop >= entry) {
+            return { drawings: [], error: `inverted Long bracket: stopLoss (${stop}) must be below entry (${entry})` };
+        }
+        const badTp = tps.find(tp => tp <= entry);
+        if (badTp !== undefined) {
+            return { drawings: [], error: `inverted Long bracket: takeProfit (${badTp}) must be above entry (${entry})` };
+        }
+        if (stop !== null && tps.length > 0) {
+            const signed = plannedRiskRewardSigned({ entry, stopLoss: stop, takeProfits: tps, direction: 'Long' });
+            if (signed.inverted) {
+                return { drawings: [], error: `inverted Long bracket: ${signed.fixes.join('; ') || 'stopLoss and takeProfits contradict direction'}` };
+            }
+        }
+    } else if (effectiveDir === 'Short') {
+        if (stop !== null && stop <= entry) {
+            return { drawings: [], error: `inverted Short bracket: stopLoss (${stop}) must be above entry (${entry})` };
+        }
+        const badTp = tps.find(tp => tp >= entry);
+        if (badTp !== undefined) {
+            return { drawings: [], error: `inverted Short bracket: takeProfit (${badTp}) must be below entry (${entry})` };
+        }
+        if (stop !== null && tps.length > 0) {
+            const signed = plannedRiskRewardSigned({ entry, stopLoss: stop, takeProfits: tps, direction: 'Short' });
+            if (signed.inverted) {
+                return { drawings: [], error: `inverted Short bracket: ${signed.fixes.join('; ') || 'stopLoss and takeProfits contradict direction'}` };
+            }
+        }
+    } else if (tps.length > 1) {
+        // No direction and no stopLoss: all takeProfits must at least agree on side of entry.
+        const firstAbove = tps[0] > entry;
+        if (tps.some(tp => (tp > entry) !== firstAbove)) {
+            return { drawings: [], error: `takeProfits sit on both sides of entry (${entry}); specify direction or keep all targets on one side` };
+        }
+    }
+
     const drawnPrice = finiteNum(ctx?.drawnPrice ?? undefined) ?? undefined;
-    const mk = (price: number, label: string, color: string): ChartDrawing => ({
-        id: createDrawingId(), kind: 'hline', points: [{ t: Date.now() / 1000, p: price }], color, createdAt: Date.now(), label, drawnPrice,
-    });
+    const seen: Array<Pick<ChartDrawing, 'shortId'>> = [...(ctx?.existing ?? [])];
+    const mk = (price: number, label: string, color: string): ChartDrawing => {
+        const shortId = allocateDrawingShortId(ctx?.symbol, seen);
+        seen.push({ shortId });
+        return {
+            id: createDrawingId(),
+            shortId,
+            origin: 'agent',
+            createdOnTf: ctx?.interval,
+            version: 1,
+            kind: 'hline',
+            points: [{ t: Date.now() / 1000, p: price }],
+            color,
+            createdAt: Date.now(),
+            label,
+            drawnPrice,
+        };
+    };
     const drawings: ChartDrawing[] = [mk(entry, 'Entry', MODEL_COLOR_NAMES.sky)];
     if (stop !== null) drawings.push(mk(stop, 'SL', MODEL_COLOR_NAMES.rose));
     tps.forEach((tp, i) => drawings.push(mk(tp, `TP${i + 1}`, MODEL_COLOR_NAMES.amber)));
@@ -594,7 +747,12 @@ export const drawingsFromDetectedPattern = (
         anchors?: PatternAnchor[];
         line?: { a: PatternAnchor; b: PatternAnchor };
     },
-    ctx?: { drawnPrice?: number | null },
+    ctx?: {
+        drawnPrice?: number | null;
+        symbol?: string;
+        interval?: string;
+        existing?: ReadonlyArray<Pick<ChartDrawing, 'shortId'>>;
+    },
 ): { drawings: ChartDrawing[]; error?: string } => {
     const pair = pattern.line
         ? [pattern.line.a, pattern.line.b]
@@ -621,9 +779,14 @@ export const drawingsFromDetectedPattern = (
     // near-zero-slope "trend" is a 1px smudge nobody can aim at.
     const flat = Math.abs(pair[1].price - pair[0].price) / Math.max(1e-9, pair[0].price) < 0.0005;
     const kind: DrawKind = flat ? 'hline' : 'trend';
+    const shortId = allocateDrawingShortId(ctx?.symbol, ctx?.existing);
     return {
         drawings: [{
             id: createDrawingId(),
+            shortId,
+            origin: 'agent',
+            createdOnTf: ctx?.interval,
+            version: 1,
             kind,
             points: flat ? [mkPoint(pair[0])] : [mkPoint(pair[0]), mkPoint(pair[1])],
             color,
@@ -646,8 +809,10 @@ export const pointsForKind = (kind: DrawKind, points: DrawPoint[]): DrawPoint[] 
     if (kind === 'rect' || kind === 'fib' || kind === 'channel' || kind === 'arrow') {
         return points.length >= 2 ? points.slice(0, 2) : null;
     }
-    // Three anchors on one bar: entry, stop, first target.
-    if (kind === 'measured_move') return points.length >= 3 ? points.slice(0, 3) : null;
+    // Three anchors: entry, stop, target.
+    if (kind === 'measured_move' || kind === 'long_position' || kind === 'short_position') {
+        return points.length >= 3 ? points.slice(0, 3) : null;
+    }
     if (kind === 'brush') return points.length >= 2 ? points.slice(0, MAX_POINTS_PER_DRAWING) : null;
     return null;
 };
@@ -703,32 +868,68 @@ const spanName = (seconds: number): string => {
     return `${(mins / (60 * 24)).toFixed(1)}d`;
 };
 
+const formatEvalTail = (ev: DrawingEvaluatedAtNow | undefined): string => {
+    if (!ev) return '';
+    const bits: string[] = [];
+    if (ev.projectedPrice !== null) bits.push(`now=${fmt(ev.projectedPrice)}`);
+    if (ev.bounds) bits.push(`band=${fmt(ev.bounds.lower)}–${fmt(ev.bounds.upper)}`);
+    if (ev.sideRelativeToMark !== 'unknown') {
+        const dist = ev.distanceAtr !== null
+            ? `${ev.distanceAtr.toFixed(2)} ATR`
+            : ev.distanceBps !== null
+                ? `${Math.abs(ev.distanceBps).toFixed(0)} bps`
+                : '';
+        bits.push(dist ? `${ev.sideRelativeToMark} (${dist})` : ev.sideRelativeToMark);
+    }
+    if (ev.touchesCount > 0) bits.push(`${ev.touchesCount} touch${ev.touchesCount === 1 ? '' : 'es'}`);
+    if (ev.fibLevels && ev.fibLevels.length > 0) {
+        const keyFibs = ev.fibLevels
+            .filter(f => f.ratio === 0 || f.ratio === 0.382 || f.ratio === 0.5 || f.ratio === 0.618 || f.ratio === 1)
+            .map(f => `${(f.ratio * 100).toFixed(1).replace(/\.0$/, '')}%=${fmt(f.price)}`)
+            .join(', ');
+        if (keyFibs) bits.push(`fibs[${keyFibs}]`);
+    }
+    return bits.length > 0 ? ` [${bits.join(' | ')}]` : '';
+};
+
 /**
- * The chart in words for the model: one line per shape with kind, anchors
- * and (for lines) the slope direction. Used by get_chart_view and the
- * per-message context packet so the model sees what's on the chart. Pass
- * `fresh` (current mark + wall clock) to attach draw-time/drift staleness.
+ * The chart in words for the model: one line per shape with stable `#D` handle,
+ * origin (User vs AI), kind, anchors, concrete fib prices, and — when an
+ * `evalCtx` is supplied — exact scale-aware `evaluatedAtNow` projection, ATR
+ * distance and touch count. Used by get_chart_view and the per-message context
+ * packet so the model sees what's on the chart.
  */
 export const describeDrawingsForModel = (
     drawings: ChartDrawing[],
     fresh?: { priceNow: number | null; nowMs: number },
+    evalCtx?: ChartEvaluationContext,
 ): string => {
     if (drawings.length === 0) return '';
+    const evalById = new Map<string, DrawingEvaluatedAtNow>();
+    if (evalCtx) {
+        for (const ev of evaluateChartDrawings(drawings, evalCtx)) {
+            evalById.set(ev.id, ev);
+        }
+    }
     // Times are Philippine (Manila) throughout — the model reads and repeats
     // the SAME clock the user sees on the chart.
-    const lines = drawings.map(d => {
+    const describeOne = (d: ChartDrawing): string | null => {
+        const ev = evalById.get(d.id);
+        const handle = d.shortId ? `${d.shortId} ` : ev?.shortId ? `${ev.shortId} ` : '';
+        const tfTag = d.createdOnTf ? ` [${d.createdOnTf}]` : '';
         const tag = d.label ? ` "${d.label}"` : '';
+        const evalTail = formatEvalTail(ev);
         const suffix = freshnessNote(d, fresh);
         const stamp = (unixSeconds: number): string => phtStamp(unixSeconds * 1000);
         switch (d.kind) {
             case 'hline':
-                return `- horizontal line${tag} at price ${fmt(d.points[0].p)}${suffix}`;
+                return `- ${handle}horizontal line${tfTag}${tag} at price ${fmt(d.points[0].p)}${evalTail}${suffix}`;
             case 'trend':
             case 'ray': {
                 const [a, b] = d.points;
                 const slope = b.p > a.p ? 'rising' : b.p < a.p ? 'falling' : 'flat';
                 const kindName = d.kind === 'trend' ? 'trendline' : 'ray';
-                return `- ${slope} ${kindName}${tag} from ${fmt(a.p)} (${stamp(a.t)}) through ${fmt(b.p)} (${stamp(b.t)}), spans ${spanName(Math.abs(b.t - a.t))}${d.kind === 'ray' ? ', extends right' : ''}${suffix}`;
+                return `- ${handle}${slope} ${kindName}${tfTag}${tag} from ${fmt(a.p)} (${stamp(a.t)}) through ${fmt(b.p)} (${stamp(b.t)}), spans ${spanName(Math.abs(b.t - a.t))}${d.kind === 'ray' ? ', extends right' : ''}${evalTail}${suffix}`;
             }
             case 'rect': {
                 const [a, b] = d.points;
@@ -736,51 +937,88 @@ export const describeDrawingsForModel = (
                 const bottom = Math.min(a.p, b.p);
                 const left = Math.min(a.t, b.t);
                 const right = Math.max(a.t, b.t);
-                return `- supply/demand zone${tag} between prices ${fmt(bottom)} and ${fmt(top)}, from ${stamp(left)} to ${stamp(right)}${suffix}`;
+                return `- ${handle}supply/demand zone${tfTag}${tag} between prices ${fmt(bottom)} and ${fmt(top)}, from ${stamp(left)} to ${stamp(right)}${evalTail}${suffix}`;
             }
             case 'brush': {
                 const first = d.points[0];
                 const last = d.points[d.points.length - 1];
-                return `- freehand sketch${tag} (${d.points.length} points) starting at price ${fmt(first.p)} (${stamp(first.t)}), ending at ${fmt(last.p)}${suffix}`;
+                return `- ${handle}freehand sketch${tfTag}${tag} (${d.points.length} points) starting at price ${fmt(first.p)} (${stamp(first.t)}), ending at ${fmt(last.p)}${evalTail}${suffix}`;
             }
             case 'fib': {
                 const [a, b] = d.points;
                 const high = Math.max(a.p, b.p);
                 const low = Math.min(a.p, b.p);
-                return `- fibonacci retracement${tag} from ${fmt(low)} to ${fmt(high)}, levels at ${FIB_RATIOS.map(r => `${(r * 100).toFixed(1)}%`).join('/')}, spans ${spanName(Math.abs(b.t - a.t))}${suffix}`;
+                const concreteFibs = ev?.fibLevels
+                    ? ev.fibLevels.map(f => `${(f.ratio * 100).toFixed(1).replace(/\.0$/, '')}%=${fmt(f.price)}`).join(', ')
+                    : FIB_RATIOS.map(r => `${(r * 100).toFixed(1).replace(/\.0$/, '')}%=${fmt(a.p + (b.p - a.p) * r)}`).join(', ');
+                return `- ${handle}fibonacci retracement${tfTag}${tag} from ${fmt(low)} to ${fmt(high)}, levels [${concreteFibs}], spans ${spanName(Math.abs(b.t - a.t))}${evalTail}${suffix}`;
             }
             case 'channel': {
                 const [a, b] = d.points;
                 const rising = b.p > a.p;
-                return `- ${rising ? 'rising' : 'falling'} channel${tag} running from ${fmt(a.p)} (${stamp(a.t)}) to ${fmt(b.p)} (${stamp(b.t)}), spans ${spanName(Math.abs(b.t - a.t))}${suffix}`;
+                return `- ${handle}${rising ? 'rising' : 'falling'} channel${tfTag}${tag} running from ${fmt(a.p)} (${stamp(a.t)}) to ${fmt(b.p)} (${stamp(b.t)}), spans ${spanName(Math.abs(b.t - a.t))}${evalTail}${suffix}`;
             }
             case 'arrow': {
                 const [a, b] = d.points;
                 const up = b.p > a.p;
-                return `- arrow${tag} pointing ${up ? 'up' : 'down'} from ${fmt(a.p)} (${stamp(a.t)}) to ${fmt(b.p)} (${stamp(b.t)})${suffix}`;
+                return `- ${handle}arrow${tfTag}${tag} pointing ${up ? 'up' : 'down'} from ${fmt(a.p)} (${stamp(a.t)}) to ${fmt(b.p)} (${stamp(b.t)})${evalTail}${suffix}`;
             }
             case 'measured_move': {
                 const [entry, stop, target] = d.points;
                 const risk = Math.abs(entry.p - stop.p);
                 const reward = Math.abs(target.p - entry.p);
-                // The ratio is the canonical one, not a fifth local formula:
-                // `plannedRiskReward` measures the target CLOSEST the entry over
-                // the stop distance, which for a three-point drawing is this
-                // point — and stops being this point the moment the model draws
-                // a ladder out of order. A canvas label that disagreed with the
-                // card was O-03.
                 const ratio = plannedRiskReward({
                     entry: entry.p, stopLoss: stop.p, takeProfits: [target.p],
                 });
                 const fmtPct = (from: number, to: number): string =>
                     (entry.p > 0 ? ` ${(((to - from) / from) * 100).toFixed(2)}%` : '');
-                return `- measured move${tag}: entry ${fmt(entry.p)}, stop ${fmt(stop.p)} (risk ${fmt(risk)}${fmtPct(entry.p, stop.p)}), first target ${fmt(target.p)} (reward ${fmt(reward)}${fmtPct(entry.p, target.p)}), ${fmtRiskReward(ratio, 2)}${suffix}`;
+                return `- ${handle}measured move${tfTag}${tag}: entry ${fmt(entry.p)}, stop ${fmt(stop.p)} (risk ${fmt(risk)}${fmtPct(entry.p, stop.p)}), first target ${fmt(target.p)} (reward ${fmt(reward)}${fmtPct(entry.p, target.p)}), ${fmtRiskReward(ratio, 2)}${evalTail}${suffix}`;
+            }
+            case 'long_position':
+            case 'short_position': {
+                if (d.points.length < 3) return null;
+                const [entry, stop, target] = d.points;
+                const dir: PlannedRiskDirection = d.kind === 'long_position' ? 'Long' : 'Short';
+                const signed = plannedRiskRewardSigned({
+                    entry: entry.p,
+                    stopLoss: stop.p,
+                    takeProfits: [target.p],
+                    direction: dir,
+                });
+                const rrStr = signed.inverted ? 'INVERTED' : fmtRiskReward(signed.ratio, 2);
+                return `- ${handle}${dir.toLowerCase()} position box${tfTag}${tag}: entry ${fmt(entry.p)}, SL ${fmt(stop.p)}, TP ${fmt(target.p)} (${rrStr})${evalTail}${suffix}`;
             }
             case 'text':
-                return `- text note${tag} at price ${fmt(d.points[0].p)} (${stamp(d.points[0].t)})${d.label ? `: ${d.label}` : ''}${suffix}`;
+                return `- ${handle}text note${tfTag}${tag} at price ${fmt(d.points[0].p)} (${stamp(d.points[0].t)})${d.label ? `: ${d.label}` : ''}${evalTail}${suffix}`;
             default:
                 return null;
         }
-    }).filter((l): l is string => Boolean(l));
+    };
+
+    const hasExplicitOrigins = drawings.some(d => d.origin === 'agent');
+    if (hasExplicitOrigins) {
+        const userList = drawings.filter(d => d.origin !== 'agent');
+        const aiList = drawings.filter(d => d.origin === 'agent');
+        const blocks: string[] = [
+            `DRAWINGS ON THE CHART (${drawings.length} shape${drawings.length === 1 ? '' : 's'} — ${userList.length} user, ${aiList.length} AI), times in Philippine time (UTC+8):`,
+        ];
+        if (userList.length > 0) {
+            blocks.push('USER DRAWINGS:');
+            for (const d of userList) {
+                const line = describeOne(d);
+                if (line) blocks.push(line);
+            }
+        }
+        if (aiList.length > 0) {
+            blocks.push('AI DRAWINGS:');
+            for (const d of aiList) {
+                const line = describeOne(d);
+                if (line) blocks.push(line);
+            }
+        }
+        return blocks.join('\n');
+    }
+
+    const lines = drawings.map(describeOne).filter((l): l is string => Boolean(l));
     return [`DRAWINGS ON THE CHART (user + model — ${drawings.length} shape${drawings.length === 1 ? '' : 's'}), times in Philippine time (UTC+8):`, ...lines].join('\n');
 };

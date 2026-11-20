@@ -83,6 +83,56 @@ const ASSISTANT_HEAD_KEEP_CHARS = 600;
  *  count only decides whether the COMPACTOR runs, not what it drops. */
 const IMAGE_TOKEN_ESTIMATE = 1_500;
 
+/** Maximum number of `image_url` parts retained across an outbound conversation
+ *  history. Older chart snapshots are replaced with a compact text stub so
+ *  multi-turn chart chats never accumulate 10+ base64 images. */
+export const DEFAULT_MAX_HISTORY_IMAGES = 2;
+
+export const IMAGE_PRUNE_STUB = '[Prior chart snapshot omitted to preserve context budget — call get_chart_view if needed]';
+
+/**
+ * Keep at most `maxImages` newest `image_url` content parts across `messages`
+ * (walking newest-to-oldest) and replace older image parts with a compact text
+ * stub. Text parts, tool calls, and message ordering stay intact.
+ */
+export const pruneHistoryImages = (
+    messages: readonly ChatMessage[],
+    maxImages = DEFAULT_MAX_HISTORY_IMAGES,
+): { messages: ChatMessage[]; prunedCount: number; prunedMessageIndices: number[] } => {
+    const cap = Math.max(0, Math.floor(maxImages));
+    let seenImages = 0;
+    let prunedCount = 0;
+    const prunedIndices: number[] = [];
+    const out: ChatMessage[] = new Array(messages.length);
+
+    for (let i = messages.length - 1; i >= 0; i--) {
+        const msg = messages[i];
+        if (!Array.isArray(msg.content)) {
+            out[i] = { ...msg };
+            continue;
+        }
+        let changedMsg = false;
+        const nextParts: ContentPart[] = new Array(msg.content.length);
+        for (let p = msg.content.length - 1; p >= 0; p--) {
+            const part = msg.content[p];
+            if (part?.type === 'image_url') {
+                seenImages += 1;
+                if (seenImages > cap) {
+                    nextParts[p] = { type: 'text', text: IMAGE_PRUNE_STUB };
+                    prunedCount += 1;
+                    changedMsg = true;
+                    continue;
+                }
+            }
+            nextParts[p] = part;
+        }
+        if (changedMsg) prunedIndices.push(i);
+        out[i] = changedMsg ? { ...msg, content: nextParts } : { ...msg };
+    }
+    prunedIndices.reverse();
+    return { messages: out, prunedCount, prunedMessageIndices: prunedIndices };
+};
+
 /** The text of a message, flattening vision parts. */
 const textOf = (content: ChatMessage['content']): string => {
     if (typeof content === 'string') return content;
@@ -144,7 +194,7 @@ export const turnGroups = (messages: readonly ChatMessage[]): number[][] => {
     return groups;
 };
 
-export type CompactKind = 'tool-payload' | 'assistant-text' | 'turn-drop';
+export type CompactKind = 'image-prune' | 'tool-payload' | 'assistant-text' | 'turn-drop';
 
 export interface CompactAction {
     kind: CompactKind;
@@ -164,6 +214,8 @@ export interface CompactInput {
     ceilingTokens: number;
     /** Tail protected from any change. Defaults to `MIN_KEEP_MESSAGES`. */
     keepAtLeast?: number;
+    /** Max history images to retain during Pass 0 image pruning. Defaults to 2. */
+    maxHistoryImages?: number;
 }
 
 export interface CompactResult {
@@ -216,9 +268,24 @@ const inTail = (index: number, length: number, keepAtLeast: number): boolean =>
  */
 export const compactMessages = (input: CompactInput): CompactResult => {
     const keepAtLeast = Math.max(MIN_KEEP_MESSAGES, input.keepAtLeast ?? 0);
-    const out: ChatMessage[] = input.messages.map(m => ({ ...m }));
-    const beforeTokens = estimateMessagesTokens(out);
+    const beforeTokens = estimateMessagesTokens(input.messages);
     const actions: CompactAction[] = [];
+
+    // Pass 0: prune excess historical images (oldest first, keeping the newest
+    // `maxHistoryImages` snapshots intact) so multi-turn vision histories never
+    // bloat the wire with stale chart screenshots.
+    const imagePrune = pruneHistoryImages(input.messages, input.maxHistoryImages ?? DEFAULT_MAX_HISTORY_IMAGES);
+    const out: ChatMessage[] = imagePrune.messages;
+    if (imagePrune.prunedCount > 0) {
+        for (const idx of imagePrune.prunedMessageIndices) {
+            actions.push({
+                kind: 'image-prune',
+                index: idx,
+                kept: 0,
+                total: IMAGE_TOKEN_ESTIMATE,
+            });
+        }
+    }
 
     const total = (): number => estimateMessagesTokens(out);
 
@@ -312,10 +379,12 @@ export const compactMessages = (input: CompactInput): CompactResult => {
  *  that keeps every other harness notice a measurement. */
 const compactNotice = (actions: CompactAction[], before: number, after: number): string => {
     if (actions.length === 0) return '';
+    const images = actions.filter(a => a.kind === 'image-prune').length;
     const payloads = actions.filter(a => a.kind === 'tool-payload').length;
     const prose = actions.filter(a => a.kind === 'assistant-text').length;
     const drops = actions.filter(a => a.kind === 'turn-drop').length;
     const parts: string[] = [];
+    if (images) parts.push(`${images} older chart snapshot${images === 1 ? '' : 's'} omitted`);
     if (payloads) parts.push(`${payloads} old tool result${payloads === 1 ? '' : 's'} shortened`);
     if (prose) parts.push(`${prose} earlier repl${prose === 1 ? 'y' : 'ies'} shortened`);
     if (drops) parts.push(`${drops} earlier turn${drops === 1 ? '' : 's'} dropped`);
