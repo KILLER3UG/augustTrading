@@ -2488,6 +2488,22 @@ export const DESK_TOOL_DEFINITIONS: DeskToolDefinition[] = [
     {
         type: 'function',
         function: {
+            name: 'scan_confluence',
+            description: 'Composite watchlist scan (ONE call, ONE turn): for up to 8 symbols x 3 timeframes, fetch live candles and return a RANKED multi-timeframe confluence summary (trend-bias agreement + code-detected setups). Use it when the trader asks to scan a watchlist, compare coins, or find what agrees across timeframes — instead of N separate get_market_packet calls. Results are ranked best-first; raw per-pair detail spills to the tool artifact store.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    symbols: { type: 'array', items: { type: 'string' }, description: 'Perp symbols to scan, e.g. ["BTCUSDT","ETHUSDT","SOLUSDT"] (1-8; extra entries are dropped).' },
+                    timeframes: { type: 'array', items: { type: 'string' }, description: 'Timeframes to agree on, e.g. ["15m","1h","4h"] (1-3; default: the chart interval).' },
+                },
+                required: ['symbols'],
+                additionalProperties: false,
+            },
+        },
+    },
+    {
+        type: 'function',
+        function: {
             name: 'project_future_price',
             description:
                 'Show POSSIBLE future price paths for a coin: a deterministic ATR cone (base / bull / bear) projected from the recent candles over the next N bars, with the trend read and per-bar drift. Use when the user asks where price could go, what the upside/downside room looks like, or whether a target is within a normal excursion. This is a statistical cone, NOT a prediction — quote it as possibilities with the uncertainty, never as a forecast. One call per coin per turn is enough.',
@@ -5631,6 +5647,43 @@ ${body}`);
                 ].join('\n');
                 break;
             }
+            case 'scan_confluence': {
+                // The composite watchlist scanner (Hermes-style batch RPC):
+                // up to 8 symbols x 3 timeframes in ONE call, at most 4
+                // fetches in flight (exchange 429s are the enemy of a scan),
+                // ranked by multi-TF agreement then setups. Raw per-pair
+                // detail rides in the content; the budget spill pages it to
+                // the artifact store when the model needs it again.
+                const { normalizeScanInput, scanPairs, mapPool, rankConfluenceRows, buildConfluenceSummary } = await import('./confluenceScanCore');
+                const norm = normalizeScanInput(call.arguments.symbols, call.arguments.timeframes, context.chartInterval ?? null);
+                if (norm.error) {
+                    content = `scan_confluence rejected: ${norm.error}`;
+                    break;
+                }
+                const { fetchKlinesTagged } = await import('./KlineService');
+                const { scanSetups } = await import('../trade/setupScan');
+                const { trendBias } = await import('../trade/regime');
+                const pairs = scanPairs(norm.symbols, norm.timeframes);
+                const pairRows = await mapPool(pairs, 4, async ({ symbol, tf }) => {
+                    try {
+                        const tagged = await fetchKlinesTagged(symbol, tf, 60);
+                        const klines = tagged.candles;
+                        if (klines.length < 25) {
+                            return { symbol, tf, ok: false, bias: null, setups: [], error: `not enough candles for ${symbol} ${tf}` };
+                        }
+                        const bias = trendBias(klines.map(k => k.close));
+                        const setups = scanSetups(klines.map(k => ({ time: k.time, open: k.open, high: k.high, low: k.low, close: k.close, volume: k.volume })))
+                            .slice(0, 3)
+                            .map(s => ({ title: s.title, side: s.side as 'long' | 'short' }));
+                        return { symbol, tf, ok: true, bias, setups };
+                    } catch (e) {
+                        return { symbol, tf, ok: false, bias: null, setups: [], error: `${symbol} ${tf}: ${e instanceof Error ? e.message : String(e)}` };
+                    }
+                });
+                const rows = rankConfluenceRows(pairRows);
+                content = buildConfluenceSummary(rows);
+                break;
+            }
             case 'project_future_price': {
                 // Deterministic ATR cone over the next N bars — pure math on
                 // the same futures klines the chart paints, no model call.
@@ -6667,6 +6720,9 @@ export interface DeskToolLoopResult {
     finalText: string;
     reasoning: string;
     usedTools: string[];
+    /** True when the trader steered mid-turn: the loop injected their message
+     *  and skipped the remaining batch calls with synthetic results. */
+    steered?: boolean;
     /** True when the final text REPLACES already-streamed markup: the last
      *  round painted a malformed tool-call attempt live, the budget ran out
      *  before it could self-heal, and the loop wiped the bubble via
@@ -6849,6 +6905,10 @@ export async function runDeskToolLoop(params: {
     memoryEnabled?: boolean;
     /** See `DeskToolContext.lastUserMessage` (the forget guard). */
     lastUserMessage?: string;
+    /** Mid-turn steering: polled by the loop at each round boundary (the
+     *  caller owns the session queue). */
+    takeSteering?: () => string | null;
+    onSteered?: (text: string) => void;
     trades?: LoggedTrade[];
     /** Attribution stamp (Enhancement 5): the task-context slice recipe the
      *  caller composed for this turn — executeDeskTools stamps it onto
@@ -6906,8 +6966,11 @@ export async function runDeskToolLoop(params: {
         extraToolDefs = [],
         executeExtraTool,
         appendSystemNotice,
+        takeSteering,
+        onSteered,
         requireFirstToolRound = false,
     } = params;
+    let steeredThisTurn = false;
     const messages = [...params.messages];
     // The inbox notice lands AFTER the desk-tools block inside the system
     // message — the last thing the seat reads before its turn.
@@ -7264,6 +7327,7 @@ export async function runDeskToolLoop(params: {
                 usedTools,
                 endedWithToolCalls: false,
                 ...(recovered ? { recoveredFromTruncation: true } : {}),
+                ...(steeredThisTurn ? { steered: true } : {}),
                 loadedSkills: skillBodiesThisTurn,
                 ...(paintedMarkup ? { repaintFinal: true } : {}),
             };
@@ -7271,6 +7335,26 @@ export async function runDeskToolLoop(params: {
 
         // Cap parallel tools per round.
         calls = calls.slice(0, 3);
+
+        // ── Mid-turn steering (pi-style two-speed input) ───────────────────
+        // A message typed while tools ran is polled HERE — the moment this
+        // round's calls are known, BEFORE the next round executes them. The
+        // remaining calls are skipped with SYNTHETIC pair-valid results (one
+        // 'tool' reply per assistant tool_call id, or a harness note on the
+        // text protocol) so a strict provider never sees a tool_call without
+        // its reply, and the steering rides into the next round as a user
+        // message. The runner paints the trader's row via onSteered.
+        const steeringText = takeSteering?.() ?? null;
+        if (steeringText) {
+            onSteered?.(steeringText);
+            onToolEvent?.('trader steered mid-turn — remaining lookups skipped');
+            steeredThisTurn = true;
+            const { buildSteerSyntheticMessages } = await import('../trade/steeringProtocol');
+            for (const msg of buildSteerSyntheticMessages({ assistantMessage: turn.assistantMessage ?? null, text: turn.text }, steeringText)) {
+                messages.push(msg);
+            }
+            continue;
+        }
 
         // ── Repeat-call guard ──────────────────────────────────────────────
         // Re-asking for a payload the seat already has is the most common way
@@ -7611,6 +7695,7 @@ export async function runDeskToolLoop(params: {
         reasoning,
         usedTools,
         endedWithToolCalls: true,
+        ...(steeredThisTurn ? { steered: true } : {}),
         loadedSkills: skillBodiesThisTurn,
     };
 }
@@ -7655,10 +7740,18 @@ export interface StreamWithDeskToolsOptions extends ChatRequestOptions {
      *  streaming generator cannot return (its yield type is text). The caller
      *  reads `recoveredFromTruncation` to know a ceiling-hit was REPAIRED —
      *  the "PROVIDER STOPPED EARLY" notice must not fire over a whole answer. */
-    onLoopMeta?: (meta: { recoveredFromTruncation: boolean }) => void;
+    onLoopMeta?: (meta: { recoveredFromTruncation: boolean; steered?: boolean }) => void;
     /** See the main options interface — same contract, so a payload can be
      *  persisted from the streaming loop too. */
     onToolPayload?: (payload: ToolPayload) => void;
+    /** Mid-turn steering (pi-style): polled at each round boundary. The CALLER
+     *  owns the queue handle (it knows the session); returning a non-empty
+     *  string interrupts the remaining calls in the batch with synthetic
+     *  pair-valid results and injects the text as the next user message. */
+    takeSteering?: () => string | null;
+    /** Fired the moment a steering message is consumed, so the caller can
+     *  paint the trader's row while the reply keeps streaming. */
+    onSteered?: (text: string) => void;
     /** Attribution stamp (Enhancement 5): the task-context slice recipe the
      *  caller composed for this turn, stamped onto emitted signals. */
     memoryRecipe?: SignalMemoryRecipe;
@@ -7980,6 +8073,8 @@ export async function* streamChatWithDeskTools(
         memoryRecipe,
         lastUserMessage: optsLastUserMessage,
         trades,
+        takeSteering: options?.takeSteering,
+        onSteered: options?.onSteered,
         requireFirstToolRound,
         extraToolDefs: extraDefs,
         executeExtraTool: async call => {
@@ -8041,7 +8136,7 @@ export async function* streamChatWithDeskTools(
     // `artifactOwner` so a concurrent turn's artifacts survive.
     void loopPromise.finally(() => clearToolArtifacts(artifactOwner)).catch(() => { /* `loop` below rethrows the real error */ });
     const loop = await loopPromise; // propagates the loop's error, if any
-    options?.onLoopMeta?.({ recoveredFromTruncation: !!loop.recoveredFromTruncation });
+    options?.onLoopMeta?.({ recoveredFromTruncation: !!loop.recoveredFromTruncation, steered: !!loop.steered });
 
     if (loop.usedTools.length === 0 && loop.finalText.trim() && !streamedLive) {
         yield loop.finalText;

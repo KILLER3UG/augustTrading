@@ -73,6 +73,10 @@ export interface ToolTurnOutcome {
     leaked: boolean;
     /** The user pulled the plug — not a failure, and checked before anything else. */
     interrupted: boolean;
+    /** The trader steered mid-turn (pi-style): their message was injected and
+     *  the remaining batch calls skipped with synthetic results. The runner
+     *  paints the row via onSteered; this flag tells it the loop SAW it. */
+    steered?: boolean;
     workedMs: number;
     /** A line the caller should append to its own notice list: this turn had no
      *  separate answer, only its reasoning. */
@@ -241,6 +245,7 @@ const runToolTurnInner = async (req: ToolTurnRequest): Promise<InnerOutcome> => 
     // The loop reports turn-level facts a text stream cannot carry (the
     // generator yields deltas); the recovered flag rides this callback.
     let recoveredFromTruncation = false;
+    let steered = false;
     const visible = (text: string): string => (req.keepTextHidden && req.keepTextHidden(raw) ? '' : text);
 
     const { streamChatWithDeskTools } = await deskService();
@@ -266,7 +271,7 @@ const runToolTurnInner = async (req: ToolTurnRequest): Promise<InnerOutcome> => 
         onToolCall: name => events.addToolCall?.(name),
         onToolPayload: payload => events.attachPayload(payload),
         onToolAction: action => events.addAction(action),
-        onLoopMeta: meta => { recoveredFromTruncation = meta.recoveredFromTruncation; },
+        onLoopMeta: meta => { recoveredFromTruncation = meta.recoveredFromTruncation; steered = meta.steered === true; },
     });
 
     for await (const delta of stream) {
@@ -291,7 +296,7 @@ const runToolTurnInner = async (req: ToolTurnRequest): Promise<InnerOutcome> => 
     // it, every other path reads like a failure, and a stopped turn is a
     // half-written answer the trader chose to cut.
     if (signal.aborted) {
-        return { text: full, carry: full, reasoning, leaked: false, interrupted: true, workedMs };
+        return { text: full, carry: full, reasoning, leaked: false, interrupted: true, ...(steered ? { steered: true } : {}), workedMs };
     }
 
     const settled = splitThinkingFromOutput(reasoning, full);
@@ -326,6 +331,7 @@ const runToolTurnInner = async (req: ToolTurnRequest): Promise<InnerOutcome> => 
         reasoning: leaked ? (settled.thinking || reasoning) : reasoning,
         leaked,
         interrupted: false,
+        ...(steered ? { steered: true } : {}),
         workedMs,
         ...(recoveredFromTruncation ? { recoveredFromTruncation: true } : {}),
         ...(toolsOff && attemptedProtocol ? { notice: offNotice } : {}),

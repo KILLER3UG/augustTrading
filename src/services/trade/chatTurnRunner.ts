@@ -50,6 +50,8 @@ import type { ProfileAnchor, VwapAnchor } from '../analysis/marketTools';
 import { runPresentTrade } from './presentTradeTool';
 import { runToolTurn, type CaptureSnapshot, type ToolTurnEvents, type ToolTurnRequest } from './toolTurn';
 import { scoreDrawnShape, levelAccuracy, describeLevelAccuracyForModel } from './tradePlanLevels';
+import { contentVersion } from '../learning/SkillFileService';
+import { parseComposerRefs, focusLineForRefs } from '../../utils/composerRefs';
 import * as levelWatch from './levelWatchService';
 import { describePlanForModel, type WatchPlan } from './tradePlanLevels';
 
@@ -622,11 +624,13 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
         // surface owns.
         if (name === 'present_trade') {
             let mintedPlanId = '';
-            return runPresentTrade(
+            const mintedRef: { proposal: import('./proposedTrade').TradeProposal | null } = { proposal: null };
+            const result = runPresentTrade(
                 { call, symbol: turn.symbol, trades, drawnPrice, crossCanvas, canvasNote, watchable: true },
                 {
                     setProposal: p => {
                         mintedPlanId = p.planId ?? '';
+                        mintedRef.proposal = p;
                         // THE turn's entry — not "whatever is streaming in the viewed
                         // session": the card must land in this run's transcript even if
                         // the user switched sessions mid-stream.
@@ -661,6 +665,54 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
                     } : {}),
                 },
             );
+            // The adversary reviewer fires AFTER the mint, detached exactly
+            // like the gate scan: it patches the card late and — on VETO —
+            // withdraws the just-armed watch until the trader overrides on
+            // the card. UNAVAILABLE patches nothing: the plan proceeds as it
+            // would have without the reviewer.
+            if (mintedRef.proposal?.planId) {
+                const reviewedProposal = mintedRef.proposal;
+                const snap = getChartSnapshot?.() ?? null;
+                void import('./adversaryReview').then(ar => ar.runAdversaryReview({
+                    plan: {
+                        planId: reviewedProposal.planId!,
+                        symbol: reviewedProposal.symbol,
+                        direction: reviewedProposal.direction,
+                        entry: reviewedProposal.entry,
+                        stopLoss: reviewedProposal.stopLoss,
+                        takeProfits: reviewedProposal.takeProfits,
+                    },
+                    markPrice: snap?.markPrice ?? null,
+                    atr: snap?.atr14 ?? null,
+                    candles: snap?.evalCandles ?? [],
+                    calibration: null,
+                })).then(review => {
+                    if (review.verdict === 'UNAVAILABLE') return;
+                    const adversary = {
+                        ...review,
+                        plan: {
+                            planId: reviewedProposal.planId!,
+                            symbol: reviewedProposal.symbol,
+                            direction: reviewedProposal.direction,
+                            entry: reviewedProposal.entry,
+                            stopLoss: reviewedProposal.stopLoss,
+                            takeProfits: reviewedProposal.takeProfits,
+                        },
+                    };
+                    chatStore.mutate(turn.sid, st => ({
+                        ...st,
+                        entries: st.entries.map(en => (en.id === turn.entryId && en.proposal?.planId === mintedPlanId
+                            ? { ...en, proposal: { ...en.proposal!, adversary } } : en)),
+                    }));
+                    if (review.verdict === 'VETO') {
+                        // NO auto-arm stands under a VETO: the watch the arm
+                        // path just set is withdrawn until the trader
+                        // explicitly overrides on the card.
+                        void import('./levelWatchService').then(lw => lw.disarm(mintedPlanId));
+                    }
+                }).catch(() => { /* an absent review is the honest state */ });
+            }
+            return result;
         }
 
         if (name === 'clear_chart_drawings') {
@@ -1111,7 +1163,24 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
             startedAt: turnStartedAt,
             effort: turnEffort,
             keepTextHidden: hidePass ? panelCouldStillBePass : undefined,
-            transport: { ...transport, onFinishReason: recordFinishReason },
+            transport: {
+                ...transport,
+                onFinishReason: recordFinishReason,
+                // Mid-turn steering: the loop polls the session queue at each
+                // round boundary; the moment it consumes one, the trader's
+                // row is painted so the transcript reads in true order.
+                takeSteering: () => chatStore.takeSteering(sid),
+                onSteered: text => {
+                    events.addToolLine?.('trader steered mid-turn — remaining lookups skipped');
+                    chatStore.mutate(sid, st => ({
+                        ...st,
+                        updatedAt: Date.now(),
+                        entries: [...st.entries, {
+                            id: newId('u'), role: 'user' as const, text, tools: [], at: Date.now(),
+                        }],
+                    }));
+                },
+            },
             events,
             memoryEnabled: deps.memoryEnabled !== false,
             lastUserMessage,
@@ -1137,8 +1206,27 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
         // an answer that simply finished. A RECOVERED run is exempt — the
         // loop repaired the ceiling-hit and returned a whole answer.
         const cutOff = outcome.recoveredFromTruncation ? '' : truncationNotice(summary);
+        // The Execution Trace row: measured facts only. The SYSTEM prefix hash
+        // is the frozen prompt's own FNV (contentVersion), the delta is against
+        // THIS session's previous settled turn in THIS runtime — CACHE WARM is
+        // a claim the process can actually make.
+        const systemMsg = messages.find(m => m.role === 'system');
+        const prefixHash = contentVersion(typeof systemMsg?.content === 'string' ? systemMsg.content : '');
+        const prevHash = chatStore.getTraceHash(sid);
+        const cacheWarm = prevHash === null ? null : prevHash === prefixHash;
+        chatStore.setTraceHash(sid, prefixHash);
+        const trace: import('./chatStore').TurnTrace = {
+            prefixHash,
+            cacheWarm,
+            tier0Revision: getChartSnapshot?.()?.revision ?? null,
+            totalMs: outcome.workedMs,
+            tokensIn: outcome.usage.promptTokens,
+            tokensOut: outcome.usage.completionTokens,
+            gateRefusals: 0,
+        };
         patch(e => settleDockEntry({
             ...e,
+            trace: { ...trace, gateRefusals: e.tools.filter(t => t.includes('rejected')).length },
             workedMs: outcome.workedMs,
             // The tier the turn was sent under, so the answer row can show it.
             // It comes out of the executor rather than being resolved again
@@ -1163,6 +1251,16 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
             ...(outcome.notice ? { tools: [...e.tools, outcome.notice] } : {}),
             ...(cutOff ? { tools: [...e.tools, cutOff] } : {}),
         }, outcome.interrupted ? 'stopped' : 'completed'));
+        // Two-speed input tail: a follow-up (Alt+Enter) queued while the turn
+        // ran delivers NOW as its own turn. A steering typed during a turn
+        // that never polled (no tool rounds) delivers as the next turn rather
+        // than sitting in the queue forever.
+        if (!outcome.interrupted) {
+            const followUp = chatStore.takeFollowUp(sid);
+            const unpollutedSteer = outcome.steered ? null : chatStore.takeSteering(sid);
+            const next = followUp ?? unpollutedSteer;
+            if (next) void send(next);
+        }
         return outcome.carry;
     };
 
@@ -1209,9 +1307,14 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
             ? session0.entries.find(e => e.id === retryOf && e.role === 'user')
             : undefined;
         if (retryOf && !retryEntry) return;
+        // `@` refs (@#D1, @4h, @skill:slug, @plan:id) are parsed OUT of the
+        // trader's words and ride the turn context as a FOCUS line — the row
+        // shows the cleaned question, the model gets the priorities.
+        const parsedInput = retryEntry ? null : parseComposerRefs(raw);
+        const focusLine = parsedInput ? focusLineForRefs(parsedInput.refs) : '';
         const text = retryEntry
             ? (retryEntry.text === '(chart screenshot)' ? '' : retryEntry.text.trim())
-            : raw.trim();
+            : (parsedInput?.cleaned.trim() || raw.trim());
         const sentAttachments: Attachment[] = retryEntry
             ? (retryEntry.image ? [{ id: newId('at'), kind: 'image', name: 'chart.png', payload: retryEntry.image }] : [])
             : attachments;
@@ -1321,7 +1424,10 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
             ...(isSolo && !session.botId && selectedChatModel ? { soloModel: selectedChatModel } : {}),
             entries: [...s.entries, ...(retryEntry ? [] : [userEntry]), ...(isSolo ? [soloAiEntry] : [])],
         }));
-        const contextBlock = await buildContextBlock();
+        const contextBlockRaw = await buildContextBlock();
+        const contextBlock = focusLine ? `${contextBlockRaw}
+
+${focusLine}` : contextBlockRaw;
         if (controller.signal.aborted) {
             // Stopped during the fetch — undo the optimistic bubbles (a
             // retried user bubble stays; only the fresh answer is removed).

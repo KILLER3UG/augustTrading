@@ -23,6 +23,7 @@ import ModelChip from '../../shared/ModelChip';
 import ChatAttachmentStrip from './ChatAttachmentStrip';
 import ComposerWorkspaceRow from './ComposerWorkspaceRow';
 import * as chatStore from '../../../services/trade/chatStore';
+import { parseComposerRefs } from '../../../utils/composerRefs';
 
 interface ChatComposerProps {
     /** Desk dock vs centered Chat focus view. */
@@ -147,6 +148,10 @@ const ChatComposer: React.FC<ChatComposerProps> = ({
     // in the area — which is the point of the card existing at all.
     const isChatFocus = layoutMode === 'chat';
     const hasContent = draft.trim().length > 0 || attachments.length > 0;
+    // Live `@` reference chips: the trader sees exactly what the turn will
+    // focus on (@#D1, @4h, @skill:slug, @plan:id) before sending.
+    const parsedRefs = parseComposerRefs(draft);
+    const refChips = [...parsedRefs.refs.shapes, ...parsedRefs.refs.timeframes, ...parsedRefs.refs.skills.map(sk => `skill:${sk}`), ...parsedRefs.refs.plans.map(pl => `plan:${pl}`)];
 
     // The attach menu is a click-outside popover, so it owns Escape too — the
     // same contract the symbol picker and the timeframe menus keep.
@@ -180,11 +185,46 @@ const ChatComposer: React.FC<ChatComposerProps> = ({
                 disabled={!ready}
                 onChange={ev => setDraft(ev.target.value)}
                 onKeyDown={ev => {
-                    if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); void send(draft); }
+                    // Esc while a run is live aborts it (the keyboard twin of
+                    // the Stop control) — and never wipes the draft.
+                    if (ev.key === 'Escape' && busy) {
+                        ev.preventDefault();
+                        onStopRun?.();
+                        chatStore.abortActive();
+                        return;
+                    }
+                    if (ev.key === 'Enter' && !ev.shiftKey) {
+                        ev.preventDefault();
+                        // Two-speed input (pi-style): while a turn is live,
+                        // Enter STEERS it (the loop injects the message at the
+                        // next round boundary) and Alt+Enter QUEUES it for
+                        // after the turn. Esc stays with the Stop control.
+                        if (busy && draft.trim()) {
+                            if (ev.altKey) chatStore.queueFollowUp(draft);
+                            else chatStore.queueSteering(draft);
+                            setDraft('');
+                            return;
+                        }
+                        void send(draft);
+                    }
                 }}
                 placeholder={ready ? (isChatFocus ? 'Write a message…' : 'Ask about the chart or a plan…') : isPanel ? 'Add at least 2 panel models above' : 'Configure a provider in Settings first'}
                 className="max-h-40 min-h-[38px] w-full resize-none overflow-y-auto bg-transparent px-1 py-0.5 text-ui-base leading-7 text-zinc-100 placeholder:text-zinc-500 focus:outline-none disabled:opacity-50"
             />
+            {refChips.length > 0 && (
+                <div data-testid="composer-ref-chips" className="mt-1 flex flex-wrap items-center gap-1 px-1">
+                    {refChips.map(chip => (
+                        <span key={chip} className="rounded-control border border-hairline bg-white/[0.04] px-1.5 py-0.5 font-mono text-ui-2xs text-zinc-300">
+                            @{chip}
+                        </span>
+                    ))}
+                </div>
+            )}
+            {busy && (
+                <p data-testid="steering-hint" className="mt-0.5 px-1 text-ui-2xs text-zinc-600">
+                    Enter: steer · Alt+Enter: queue
+                </p>
+            )}
             <div className="mt-2 flex flex-wrap items-center gap-2">
                 <input type="file" multiple accept="image/*,.md,.txt,.csv,.json" ref={fileInputRef} className="hidden"
                     onChange={ev => { attachFiles(ev.target.files); ev.target.value = ''; }} />

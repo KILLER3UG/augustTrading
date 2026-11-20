@@ -68,6 +68,9 @@ export interface ChatWorkView {
     /** What the wire was actually asked, one entry per call. It is what lets
      *  the card say WHY a turn has no trace. */
     wireAudit?: WireAuditEntry[];
+    /** The Execution Trace row (chatTurnRunner records it at settle):
+     *  measured prompt-hash stability, tokens, refusals. */
+    trace?: import('../../../services/trade/chatStore').TurnTrace;
 }
 
 export interface ChatWorkTimelineProps {
@@ -223,6 +226,37 @@ const ChatWorkTimeline: React.FC<ChatWorkTimelineProps> = ({ entry }) => {
                     )}
                     {hasWire && (
                         <WireAuditRow entries={wireAudit} noTrace={noTrace} />
+                    )}
+                    {settled && entry.trace && (
+                        <details data-testid="turn-trace" className="mt-1 rounded-control border border-hairline bg-zinc-950/50 px-2 py-1">
+                            <summary className="cursor-pointer select-none font-mono text-ui-2xs uppercase tracking-wider text-zinc-500">
+                                Trace · {entry.trace.cacheWarm === null
+                                    ? 'first turn'
+                                    : entry.trace.cacheWarm
+                                        ? 'cache warm'
+                                        : 'prefix changed'}
+                                {' · '}{entry.trace.tokensIn}/{entry.trace.tokensOut} tok
+                                {entry.trace.gateRefusals > 0 ? ` · ${entry.trace.gateRefusals} refused` : ''}
+                            </summary>
+                            <div className="mt-1 space-y-0.5 font-mono text-ui-2xs text-zinc-500">
+                                <p>SYSTEM prefix hash: <span className="text-zinc-300">{entry.trace.prefixHash}</span>
+                                    {' · '}
+                                    <span className={entry.trace.cacheWarm === false ? 'text-zinc-200' : ''}>
+                                        {entry.trace.cacheWarm === null
+                                            ? 'FIRST TURN'
+                                            : entry.trace.cacheWarm
+                                                ? 'CACHE WARM'
+                                                : 'PREFIX CHANGED'}
+                                    </span>
+                                </p>
+                                {entry.trace.tier0Revision && (
+                                    <p>Tier 0 CONTEXT revision: <span className="text-zinc-300">{entry.trace.tier0Revision}</span></p>
+                                )}
+                                <p>turn {entry.trace.totalMs}ms · in {entry.trace.tokensIn} tok / out {entry.trace.tokensOut} tok
+                                    {entry.trace.gateRefusals > 0 ? ` · ${entry.trace.gateRefusals} gate refusal${entry.trace.gateRefusals === 1 ? '' : 's'}` : ''}
+                                </p>
+                            </div>
+                        </details>
                     )}
                 </AnalyzedRow>
             )}

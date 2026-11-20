@@ -45,8 +45,25 @@ export interface OpenTradeRow {
 }
 
 /** Stored entry + the non-persisted streaming flag for the in-flight answer. */
+/** One settled turn's measured facts — the Execution Trace Inspector's row.
+ *  Every number here is MEASURED (the provider's usage frame, the frozen
+ *  prompt's own hash, the executor's refusals) — never inferred. */
+export interface TurnTrace {
+    prefixHash: string;
+    /** true = the previous turn in THIS process used the identical prefix
+     *  (provider KV cache warm); false = PREFIX CHANGED; null = first turn. */
+    cacheWarm: boolean | null;
+    tier0Revision: string | null;
+    totalMs: number;
+    tokensIn: number;
+    tokensOut: number;
+    gateRefusals: number;
+}
+
 export type LiveEntry = StoredChatEntry & {
     streaming?: boolean;
+    /** The Execution Trace row (chatTurnRunner records it at settle). */
+    trace?: TurnTrace;
     /** A trade the model PRESENTED via the present_trade tool — the dock
      *  renders it as a card with Log-this-trade / Cancel. Not persisted. */
     proposal?: TradeProposal;
@@ -585,6 +602,79 @@ export const findSessionByEntryId = (entryId: string): string | undefined => {
 
 /** Queue a `[HARNESS SIGNAL …]` text for the panel to run as a model turn.
  *  Capped so a runaway watch can't flood the transcript. */
+// ── Mid-turn steering + queued follow-ups (two-speed input, pi-style) ────────
+// IN-MEMORY on purpose: a steering message only makes sense while its turn is
+// live, and a follow-up rides the very same session this session — neither
+// survives a reload, and persisting them would make a dead turn wake up
+// talking. `queueSteering(text)` targets the ACTIVE session, which is exactly
+// what the composer holds while the trader types.
+const traceHashBySid = new Map<string, string>();
+
+/** The last settled turn's frozen-prompt hash for one session — the CACHE
+ *  WARM vs PREFIX CHANGED delta the trace inspector shows. In-memory on
+ *  purpose: the provider's KV cache is consulted per runtime. */
+export const getTraceHash = (sid: string): string | null => traceHashBySid.get(sid) ?? null;
+export const setTraceHash = (sid: string, hash: string): void => { traceHashBySid.set(sid, hash); };
+
+const steeringBySid = new Map<string, string[]>();
+const followUpBySid = new Map<string, string[]>();
+
+/** The card's override: find the entry carrying this plan and mark the
+ *  adversary verdict overridden — the 1-click "Arm anyway" writes here. */
+export const overrideAdversary = (planId: string): boolean => {
+    ensureLoaded();
+    let hit = false;
+    sessions = sessions.map(st => {
+        if (!st.entries.some(e => e.proposal?.planId === planId)) return st;
+        hit = true;
+        return {
+            ...st,
+            entries: st.entries.map(e => (e.proposal?.planId === planId
+                ? { ...e, proposal: { ...e.proposal!, adversary: { ...e.proposal!.adversary!, overridden: true } } }
+                : e)),
+        };
+    });
+    if (hit) emit();
+    return hit;
+};
+
+export const queueSteering = (text: string, sid?: string): void => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    const target = sid ?? activeId;
+    if (!target) return;
+    steeringBySid.set(target, [...(steeringBySid.get(target) ?? []), trimmed]);
+};
+
+/** One steering message per call — the loop polls it at each round boundary. */
+export const takeSteering = (sid?: string): string | null => {
+    const target = sid ?? activeId;
+    const queue = target ? steeringBySid.get(target) : undefined;
+    if (!queue || queue.length === 0) return null;
+    const [first, ...rest] = queue;
+    if (rest.length > 0) steeringBySid.set(target, rest);
+    else steeringBySid.delete(target);
+    return first;
+};
+
+export const queueFollowUp = (text: string, sid?: string): void => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    const target = sid ?? activeId;
+    if (!target) return;
+    followUpBySid.set(target, [...(followUpBySid.get(target) ?? []), trimmed]);
+};
+
+export const takeFollowUp = (sid?: string): string | null => {
+    const target = sid ?? activeId;
+    const queue = target ? followUpBySid.get(target) : undefined;
+    if (!queue || queue.length === 0) return null;
+    const [first, ...rest] = queue;
+    if (rest.length > 0) followUpBySid.set(target, rest);
+    else followUpBySid.delete(target);
+    return first;
+};
+
 export const queueHarnessSignal = (text: string, sid?: string): void => {
     pendingSignals = [...pendingSignals, { text, ...(sid ? { sid } : {}) }].slice(-8);
     emit();

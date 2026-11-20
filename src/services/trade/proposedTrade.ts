@@ -56,6 +56,18 @@ export interface TradeProposal {
      *  ids (`${planId}:ENTRY|:SL|:TP1..N`), and it rides onto the logged
      *  message so plan, warning and journal row stay the same object. */
     planId?: string;
+    /** The isolated adversary reviewer's verdict (services/trade/adversaryReview).
+     *  Advisory to the card: APPROVE/CAUTION arm as usual; a VETO withdraws the
+     *  auto-armed watch until the trader overrides. `plan` carries the bracket
+     *  the override re-arms. */
+    adversary?: {
+        verdict: 'APPROVE' | 'CAUTION' | 'VETO' | 'UNAVAILABLE';
+        objections: string[];
+        invalidationCheck: string;
+        at: number;
+        overridden?: boolean;
+        plan?: { planId: string; symbol: string; direction: 'Long' | 'Short'; entry: number; stopLoss: number; takeProfits: number[] };
+    };
     /**
      * The O-46 decision snapshot: what the market computed at PRESENT time —
      * regime, ATR, previous-day range, session VWAP — fetched fire-and-forget

@@ -86,6 +86,9 @@ import { useChatAttachments } from '../../hooks/useChatAttachments';
 import { useSessionGuardVerdict } from '../../hooks/useSessionGuard';
 import { useEscapeClose } from '../../hooks/useEscapeClose';
 import * as watchService from '../../services/trade/watchService';
+import * as levelWatch from '../../services/trade/levelWatchService';
+import { slashTemplateOf, expandSlashTemplate } from '../../utils/composerRefs';
+import { buildHandoffCheckpoint } from '../../utils/handoffCheckpoint';
 import { AutonomyControl } from './panels/AutonomyDrawer';
 import ChatHistoryPalette from './panels/ChatHistoryPalette';
 import ChatTranscriptList from './panels/ChatTranscriptList';
@@ -349,6 +352,8 @@ export const ChartAiDockRail: React.FC<{
         <span className={`h-2 w-2 rounded-full ${live ? 'bg-zinc-300' : 'bg-zinc-600'}`} />
     </div>
 );
+
+const newId = (prefix: string): string => `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 
 const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
     memoryEnabled, strategiesEnabled, symbol, interval, providers, selectedChatModel, onSelectChatModel,
@@ -723,7 +728,36 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
         onRunAnalysis,
         onAnalysisError,
     }), [symbol, interval, memoryEnabled, effort, selectedChatModel, chartLevels, allDrawings, trades, getChartSnapshot, provider, configForSeat, systemPromptFor, getIndexDeltaNote, bots, activeId, draft, sessions, botThreadRows, conversationRows, attachments, attachedImages, clearAttachments, setDraft, setContextAt, addModelDrawings, clearModelDrawings, clearAllDrawings, onPlanPresented, onBotTurnCommit, onSoloTurnCommit, onSyncConversation, onRunAnalysis, onAnalysisError]);
-    const { send, runFullAnalysis, runHarnessTurn } = runner;
+    const { send: runnerSend, runFullAnalysis, runHarnessTurn } = runner;
+    // Slash templates ride HERE, in front of the runner: `/brief /audit /scan`
+    // expand to their desk instructions; `/handoff` does NOT send — it mints a
+    // fresh session whose first entry is the deterministic checkpoint.
+    const send = React.useCallback(async (raw: string, retryOf?: string): Promise<void> => {
+        const template = slashTemplateOf(raw);
+        if (!template) return runnerSend(raw, retryOf);
+        const rest = raw.trim().slice(('/' + template).length);
+        if (template === 'handoff') {
+            const snap = getChartSnapshot?.();
+            const plans = levelWatch.getArmedPlans().filter(pl => pl.symbol === symbol);
+            const lastUser = [...(activeSession.entries ?? [])].reverse().find(e => e.role === 'user' && e.text.trim());
+            const checkpoint = buildHandoffCheckpoint({
+                symbol,
+                interval,
+                markPrice: snap?.markPrice ?? null,
+                drawings: (snap?.drawings ?? []).map(d => ({ shortId: d.shortId, label: d.label, kind: d.kind, points: d.points })),
+                plans: plans.map(p => ({ planId: p.planId, symbol: p.symbol, direction: p.direction, entry: p.entry })),
+                lastUserText: lastUser?.text ?? null,
+            });
+            const handoffSid = chatStore.addSession({ kind: 'solo', symbol, title: 'Handoff · ' + symbol });
+            chatStore.mutate(handoffSid, st => ({
+                ...st,
+                entries: [...st.entries, { id: newId('u'), role: 'user' as const, text: checkpoint, tools: [], at: Date.now() }],
+            }));
+            return;
+        }
+        return runnerSend(expandSlashTemplate(template, { symbol, interval }, rest), retryOf);
+    }, [runnerSend, getChartSnapshot, symbol, interval, activeSession]);
+
 
     // ── Per-session composer memory ─────────────────────────────────────────
     // The thinking tier is a session FIELD and is read straight off it above, so

@@ -193,6 +193,23 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({
                     {fmtRiskReward(rr, rr >= 1 ? 1 : 2)} R:R
                 </span>
             )}
+            {/* The adversary reviewer's verdict — an isolated read-only seat
+                read of the plan against the tape. Monochrome badge; the
+                objections live in the detail line below. */}
+            {proposal.adversary && proposal.adversary.verdict !== 'UNAVAILABLE' && (
+                <span
+                    data-testid="adversary-verdict"
+                    className={`rounded-control border px-1.5 py-0.5 font-mono text-ui-2xs uppercase tracking-wider ${
+                        proposal.adversary.verdict === 'VETO'
+                            ? 'border-rose-500/40 bg-rose-500/10 text-rose-400'
+                            : proposal.adversary.verdict === 'CAUTION'
+                                ? 'border-hairline bg-white/[0.06] text-zinc-200'
+                                : 'border-hairline bg-white/[0.04] text-zinc-400'
+                    }`}
+                >
+                    {proposal.adversary.verdict === 'VETO' && !proposal.adversary.overridden ? 'Adversary VETO' : `Adversary: ${proposal.adversary.verdict}`}
+                </span>
+            )}
             {plan ? (
                 <span className="ml-auto font-mono text-ui-xs uppercase tracking-wider text-zinc-500" data-testid="proposal-confidence">
                     {plan.probability}% · {plan.confidence} confidence
@@ -367,7 +384,43 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({
                 <span className="text-ui-dense text-zinc-200">
                     Approved{undo.planId ? ` — plan ${undo.planId} is logged and monitored` : ' — logged and monitored'}.
                 </span>
-                {onUndo && (
+        
+        {/* The adversary's objections + the override. A VETO withdrew the
+            auto-armed watch; only an explicit trader click re-arms it — the
+            model's own proposal never overrides its own reviewer. */}
+        {proposal.adversary && proposal.adversary.verdict === 'VETO' && !proposal.adversary.overridden && (
+            <div data-testid="adversary-detail" className="mt-2 rounded-control border border-rose-500/30 bg-rose-500/[0.06] p-2">
+                <p className="text-ui-2xs font-medium text-rose-400">Adversary review — watch withdrawn pending your override</p>
+                <ul className="mt-1 space-y-0.5">
+                    {proposal.adversary.objections.map((o, i) => (
+                        <li key={i} className="text-ui-dense leading-4 text-zinc-300">· {o}</li>
+                    ))}
+                </ul>
+                <p className="mt-1 text-ui-2xs text-zinc-500">{proposal.adversary.invalidationCheck}</p>
+                <button
+                    type="button"
+                    data-testid="adversary-override"
+                    onClick={() => {
+                        const plan = proposal.adversary?.plan;
+                        if (!plan) return;
+                        void import('../../../services/trade/levelWatchService').then(lw => lw.arm({
+                            planId: plan.planId, symbol: plan.symbol, direction: plan.direction,
+                            entry: plan.entry, stopLoss: plan.stopLoss, takeProfits: plan.takeProfits,
+                        }, null));
+                        void import('../../../services/trade/chatStore').then(cs => cs.overrideAdversary(plan.planId));
+                    }}
+                    className="mt-1.5 rounded-control border border-hairline px-2 py-0.5 text-ui-2xs text-zinc-300 transition-colors hover:bg-white/[0.06] hover:text-zinc-100"
+                >
+                    Arm the watch anyway
+                </button>
+            </div>
+        )}
+        {proposal.adversary && proposal.adversary.verdict === 'CAUTION' && proposal.adversary.objections.length > 0 && (
+            <p data-testid="adversary-caution" className="mt-1.5 text-ui-2xs text-zinc-500">
+                Adversary: {proposal.adversary.objections[0]}
+            </p>
+        )}
+        {onUndo && (
                     <button type="button" onClick={onUndo}
                         className="ml-auto shrink-0 rounded-control border border-line bg-zinc-800/80 px-2 py-1 text-ui-dense text-zinc-200 transition-colors hover:bg-zinc-700"
                         data-testid="proposal-undo">
