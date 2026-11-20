@@ -18,6 +18,8 @@ import type { TrackedPosition } from '../../types/tracking';
 import { foldRefusals, readSignalEvents, readSignals, type SignalRefusalRow } from '../../services/signals/signalLedger';
 import { readTrackedPositions } from '../../services/tracking/positionStore';
 import { settleDueSignals, settleRefusedSignals } from '../../services/signals/signalService';
+import { exportTrajectoryJsonl } from '../../services/learning/trajectoryExport';
+import { exportTextAsFile } from '../../services/infrastructure/ExportService';
 import { summariseSignals } from '../../services/signals/signalResolver';
 import { FEE_TAKER_BPS } from '../../utils/netRiskReward';
 import { MIN_ACCURACY_FILLS, scoreSignals } from '../../services/signals/signalAccuracy';
@@ -377,16 +379,35 @@ const SignalFeed: React.FC<SignalFeedProps> = ({ user }) => {
                             against the tape. These are not your trades and nothing here places an order.
                         </p>
                     </div>
-                    <button
-                        type="button"
-                        onClick={refresh}
-                        disabled={settling}
-                        className="inline-flex items-center gap-1.5 rounded-control px-2.5 py-1.5 text-ui-xs font-semibold text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-zinc-100 disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-                        title="Re-check open signals against the tape"
-                    >
-                        <RefreshIcon className={`h-3.5 w-3.5 ${settling ? 'animate-spin' : ''}`} aria-hidden="true" />
-                        {settling ? 'Settling…' : 'Settle now'}
-                    </button>
+                    <div className="flex shrink-0 items-center gap-2">
+                        <button
+                            type="button"
+                            data-testid="trajectory-export"
+                            onClick={() => {
+                                void exportTrajectoryJsonl({ user: activeUser }).then(({ jsonl, count }) => {
+                                    void exportTextAsFile(jsonl, `august-trajectory-${new Date().toISOString().slice(0, 10)}.jsonl`);
+                                    setNote(count > 0
+                                        ? `Exported ${count} trajectory record${count === 1 ? '' : 's'} (JSONL).`
+                                        : 'No resolved signals to export yet.');
+                                }).catch(e => setNote(`Trajectory export failed: ${e instanceof Error ? e.message : String(e)}`));
+                            }}
+                            disabled={summary.emitted === 0}
+                            className="inline-flex items-center rounded-control px-2.5 py-1.5 text-ui-xs font-semibold text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-zinc-100 disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                            title="Export the decision+outcome corpus as JSONL (known-at-decision-time strictly isolated from outcomes)"
+                        >
+                            Export trajectory
+                        </button>
+                        <button
+                            type="button"
+                            onClick={refresh}
+                            disabled={settling}
+                            className="inline-flex items-center gap-1.5 rounded-control px-2.5 py-1.5 text-ui-xs font-semibold text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-zinc-100 disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                            title="Re-check open signals against the tape"
+                        >
+                            <RefreshIcon className={`h-3.5 w-3.5 ${settling ? 'animate-spin' : ''}`} aria-hidden="true" />
+                            {settling ? 'Settling…' : 'Settle now'}
+                        </button>
+                    </div>
                 </div>
 
                 {summary.emitted > 0 && (
