@@ -59,6 +59,7 @@ import {
     type SentinelMinimalContext,
     type SentinelNotice,
 } from './sentinelLoop';
+import { skillIndexRows, usableSkillRows, type SkillIndexRow } from '../learning/SkillFileService';
 
 const WATCHES_KEY_PREFIX = 'trade_watches_v1';
 const MAX_WATCHES = 10;
@@ -383,6 +384,31 @@ export interface TickDrawingWatchesInput {
 }
 
 /**
+ * The sentinel packet's skill pointer: the ONE usable skill whose name or
+ * description names what just fired (the symbol or the drawing kind). The same
+ * deterministic string match `buildMemoryHints` runs for trader turns, and the
+ * excerpt only NAMES the slug — the body travels on demand via `skill_view`,
+ * exactly as it does in the prompt index, so the packet stays compact.
+ */
+const sentinelSkillHint = (input: TickDrawingWatchesInput): string | undefined => {
+    try {
+        const tokens = [...new Set([input.symbol, ...input.drawings.map(d => d.kind)])]
+            .filter((t): t is string => !!t);
+        if (tokens.length === 0) return undefined;
+        let best: { row: SkillIndexRow; score: number } | null = null;
+        for (const row of usableSkillRows(skillIndexRows())) {
+            const hay = `${row.name} ${row.description}`.toLowerCase();
+            const score = tokens.reduce((n, tk) => n + (hay.includes(tk.toLowerCase()) ? 1 : 0), 0);
+            if (score > 0 && (!best || score > best.score)) best = { row, score };
+        }
+        if (!best) return undefined;
+        return `skill "${best.row.slug}" — ${best.row.description} (call skill_view {"skill":"${best.row.slug}"} before acting)`;
+    } catch {
+        return undefined;
+    }
+};
+
+/**
  * Evaluate watched user/AI drawings against the live tick or candle close with
  * ATR-scaled tolerance, `0.5 * ATR(14)` hysteresis, and bar cooldowns.
  * Triggered events run through the isolated headless sentinel loop and enqueue
@@ -397,6 +423,7 @@ export const tickDrawingWatches = async (
         traderProfileSlice: 'Risk guard active.',
         chartManifestSummary: `${input.symbol} ${input.activeTf} mark ${input.livePrice}`,
         atr14: input.atr14,
+        matchedSkillExcerpt: sentinelSkillHint(input),
     };
     for (const drawing of input.drawings) {
         const key = `${input.symbol}:${drawing.id}`;

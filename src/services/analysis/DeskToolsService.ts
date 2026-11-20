@@ -3792,6 +3792,10 @@ export interface DeskToolContext {
      *  caller composed for this turn. `emit_signal` stamps it onto the
      *  ledger row so hit-rate-vs-base-rate can be measured PER RECIPE. */
     memoryRecipe?: SignalMemoryRecipe;
+    /** The skills the turn actually READ (skill_view), in read order.
+     *  `emit_signal` stamps the first onto the ledger row so calibration can
+     *  ask "does the anchored procedure improve hit rate?". */
+    skillSlugsRead?: string[];
 }
 
 /** Tools whose RESULT is text this app did not write and the trader did not
@@ -3915,12 +3919,18 @@ export async function executeDeskTool(
     }
     // The Settings switch is a PROMISE at the tool layer too, not just in the
     // prompt: with memory off, a seat that still has these tools offered must
-    // not be able to read or write the trader's notebook.
-    if (context.memoryEnabled === false
-        && (call.name === 'remember' || call.name === 'read_memory' || call.name === 'forget'
-            || call.name === 'recall' || call.name === 'write_memory_note'
-            || call.name === 'amend_memory' || call.name === 'get_notebook_map'
-            || call.name === 'skill_index' || call.name === 'skill_write' || call.name === 'skill_view')) {
+    // not be able to read or write the trader's notebook. BOTH tool families
+    // are gated — the legacy verbs (`remember`/`read_memory`/`forget`) AND the
+    // `memory_*` family (memory_add / memory_update / memory_delete /
+    // memory_search_sessions): gating only the legacy names was how the new
+    // family kept writing with the switch off.
+    const MEMORY_OFF_TOOLS: ReadonlySet<string> = new Set([
+        'remember', 'read_memory', 'forget', 'recall', 'write_memory_note',
+        'amend_memory', 'get_notebook_map',
+        'memory_read', 'memory_add', 'memory_update', 'memory_delete', 'memory_search_sessions',
+        'skill_index', 'skill_write', 'skill_view',
+    ]);
+    if (context.memoryEnabled === false && MEMORY_OFF_TOOLS.has(call.name)) {
         return rejectedResult(call, `${call.name} rejected: memory is OFF for this turn — nothing is read or saved.`);
     }
     if (call.name === 'forget' && typeof context.lastUserMessage === 'string') {
@@ -4247,7 +4257,43 @@ ${hitContent}`, ...resolvedSymbolField(call, fallback) };
                 // The harness's own call, recorded on the trader's ledger. The
                 // shadow gate and the evidence check never block this write.
                 try {
-                    const { emitSignal, signalScorecard, signalCalibrationFor } = await import('../signals/signalService');
+                    const { emitSignal, signalScorecard, signalCalibrationFor, signalDimensionsFor } = await import('../signals/signalService');
+                    // Dimension attribution — the fields only the HARNESS can
+                    // know at emit time, so `calibrateByDimensions` can group
+                    // by more than one degenerate bucket. Computed BEFORE the
+                    // emit: the ledger is append-only ("history is not
+                    // rewritten"), so the row is born with its stamps rather
+                    // than patched after.
+                    //   · hadUserDrawings — the chart's user shapes this turn;
+                    //   · skillSlug — the procedure the turn actually read
+                    //     (skill_view), in read order;
+                    //   · marketRegime — the SAME trendBias the BiasChips UI
+                    //     reads (services/trade/regime), over the snapshot's
+                    //     evaluated candles;
+                    //   · htfAligned — a real 1D trend read at emit time vs
+                    //     the signal's direction (unset when the fetch fails —
+                    //     never guessed).
+                    const argDirection = call.arguments?.direction === 'Short' ? 'Short' : 'Long';
+                    const argCoin = typeof call.arguments?.coin === 'string' && call.arguments.coin
+                        ? call.arguments.coin
+                        : (context.defaultSymbol ?? fallback);
+                    let marketRegime: string | undefined;
+                    let htfAligned: boolean | undefined;
+                    try {
+                        const snapAtEmit = context.getChartSnapshot?.() ?? null;
+                        const { trendBias } = await import('../trade/regime');
+                        const closes = (snapAtEmit?.evalCandles ?? []).map(c => c.close);
+                        if (closes.length >= 30) marketRegime = trendBias(closes);
+                        const daily = snapAtEmit ? await (await import('../analysis/KlineService')).fetchKlines(argCoin, '1d', 60) : [];
+                        if (daily.length >= 30) {
+                            htfAligned = argDirection === 'Long'
+                                ? trendBias(daily.map(k => k.close)) === 'bull'
+                                : trendBias(daily.map(k => k.close)) === 'bear';
+                        }
+                    } catch {
+                        // Regime/HTF stay unset — an unread market is `unknown`,
+                        // never a fabricated tag.
+                    }
                     const outcome = emitSignal(call.arguments, {
                         defaultSymbol: context.defaultSymbol ?? fallback,
                         markAtEmit: (context.getLiveMarkPrice?.() ?? context.liveMarkPrice) ?? null,
@@ -4257,6 +4303,11 @@ ${hitContent}`, ...resolvedSymbolField(call, fallback) };
                         // Enhancement 5: WHICH memory slice recipe the emitting
                         // turn read — the attribution join key on the ledger.
                         ...(context.memoryRecipe ? { memoryRecipe: context.memoryRecipe } : {}),
+                        // Dimension stamps (above) — the row is born with them.
+                        ...(Array.isArray(context.chartDrawings) ? { hadUserDrawings: context.chartDrawings.length > 0 } : {}),
+                        ...(marketRegime ? { marketRegime } : {}),
+                        ...(typeof htfAligned === 'boolean' ? { htfAligned } : {}),
+                        ...(context.skillSlugsRead?.[0] ? { skillSlug: context.skillSlugsRead[0] } : {}),
                     });
                     if (!outcome.ok) {
                         return rejectedResult(call, `emit_signal rejected: ${outcome.error}`);
@@ -4308,6 +4359,11 @@ ${hitContent}`, ...resolvedSymbolField(call, fallback) };
                             // tracked outcomes — `insufficient` until it can
                             // honestly say otherwise.
                             calibration: signalCalibrationFor(s.coin),
+                            // The per-dimension rollup (skill × regime × htf ×
+                            // drawings) over every filled call on the ledger —
+                            // in which of its own contexts the calls have
+                            // actually worked, and how thin each bucket is.
+                            dimensions: signalDimensionsFor(),
                             ...(previousDiagnosis ? { previousDiagnosis } : {}),
                             note: 'Recorded in Journal → Signals. It settles itself against the tape after expiry; do not call it a trade and do not promise an outcome. If scorecard.thin is true, the sample is too small to read — say that instead of claiming an edge. previousDiagnosis, when present, is this coin\'s last tracked post-mortem — reference only: adopt it, improve it, or reject it in your own read.',
                         }),
@@ -7406,6 +7462,7 @@ export async function runDeskToolLoop(params: {
                 memoryEnabled,
                 lastUserMessage,
                 memoryRecipe,
+                skillSlugsRead: [...skillBodiesThisTurn.keys()],
                 skillReview: { indexVersion: skillIndexVersion, opened: openedSkillVersions },
                 untrustedSeen,
                 modelName: config.selectedModel,

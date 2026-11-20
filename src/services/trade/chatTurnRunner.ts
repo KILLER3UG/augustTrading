@@ -49,7 +49,7 @@ import { DEFAULT_MAX_HISTORY_IMAGES, pruneHistoryImages } from '../providers/con
 import type { ProfileAnchor, VwapAnchor } from '../analysis/marketTools';
 import { runPresentTrade } from './presentTradeTool';
 import { runToolTurn, type CaptureSnapshot, type ToolTurnEvents, type ToolTurnRequest } from './toolTurn';
-import { scoreDrawnLevel, levelAccuracy, describeLevelAccuracyForModel } from './tradePlanLevels';
+import { scoreDrawnShape, levelAccuracy, describeLevelAccuracyForModel } from './tradePlanLevels';
 import * as levelWatch from './levelWatchService';
 import { describePlanForModel, type WatchPlan } from './tradePlanLevels';
 
@@ -698,16 +698,27 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
         // closes that loop on the receipt it already receives.
         const drawnLevelStanding = (s: ChartSnapshot | null): string => {
             if (!s) return '';
-            const hlines = (s.modelDrawings ?? []).filter(
-                (x) => x.kind === 'hline' && x.points.length > 0,
+            // The GENERALIZED scorer (scoreDrawnShape), not the hline-only
+            // one: every judgeable shape the model drew — lines, diagonals,
+            // channels, zones, fibs, position levels — reports how the tape
+            // has treated it since it was drawn. Silence while nothing is
+            // judgeable: a standing score over two fresh bars is noise, and a
+            // model that learns to trust it would be learning a habit, not a
+            // fact.
+            const shapes = (s.modelDrawings ?? []).filter(
+                (x) => x.points.length > 0
+                    && (x.kind === 'hline' || x.kind === 'trend' || x.kind === 'ray'
+                        || x.kind === 'channel' || x.kind === 'rect' || x.kind === 'fib'
+                        || x.kind === 'long_position' || x.kind === 'short_position'),
             );
-            if (hlines.length === 0) return '';
-            const scores = hlines.map((x) =>
-                scoreDrawnLevel(x.points[0].p, s.candles, x.createdAt / 1000),
+            if (shapes.length === 0) return '';
+            const bars = (s.evalCandles && s.evalCandles.length >= 30 ? s.evalCandles : s.candles) as never;
+            const scores = shapes.map((x) =>
+                scoreDrawnShape(x, bars, {
+                    barSeconds: intervalSeconds(s.interval),
+                    priceScaleMode: s.priceScaleMode,
+                }),
             );
-            // Silence while nothing is judgeable: a standing score over two
-            // fresh bars is noise, and a model that learns to trust it would
-            // be learning a habit, not a fact.
             if (levelAccuracy(scores).judged === 0) return '';
             return ` ${describeLevelAccuracyForModel(scores)}`;
         };

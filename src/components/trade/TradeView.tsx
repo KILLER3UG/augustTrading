@@ -40,7 +40,7 @@ import { useSharedTicker } from '../../hooks/useSharedTicker';
 import { useSymbolUniverse } from '../../hooks/useSymbolUniverse';
 import TradingChart, { type ChartHandle } from './TradingChart';
 import ErrorBoundary from '../shared/ErrorBoundary';
-import { toKlineInterval, type ChartInterval } from '../../utils/chartIntervals';
+import { toKlineInterval, intervalSeconds, type ChartInterval } from '../../utils/chartIntervals';
 import type { MessageLevelLines } from '../../services/trade/keyLevels';
 import { fetchKlines } from '../../services/analysis/KlineService';
 import { LevelAccuracyBadge } from './LevelAccuracyBadge';
@@ -779,12 +779,36 @@ const TradeView: React.FC<TradeViewProps> = ({
     // Tick the level-watch AND the model's price watches on every live mark
     // print (~1s while the socket is up; the polled strip value drives it
     // otherwise). Time wake-ups fire off the watch service's own clock.
+    // The SAME tick drives the drawing-anchored watchdog: every committed
+    // user/AI shape is evaluated against the live price (ATR tolerance,
+    // hysteresis, cooldowns), and a kline frame whose `closed` flag just
+    // flipped fires the candle-close trigger exactly once per bar. Triggered
+    // events run the sentinel loop; its notices drain when the dock is idle.
+    const lastClosedBarRef = useRef<number | null>(null);
     useEffect(() => {
-        if (Number.isFinite(markPrice)) {
-            levelWatch.tick(symbol, markPrice!);
-            watchService.tick(symbol, markPrice!);
-        }
-    }, [symbol, markPrice]);
+        if (!Number.isFinite(markPrice)) return;
+        levelWatch.tick(symbol, markPrice!);
+        watchService.tick(symbol, markPrice!);
+        const snap = chartHandleRef.current?.getSnapshot();
+        if (!snap || snap.symbol !== symbol) return;
+        const closedBar = feed.kline?.closed && feed.kline.openTime
+            ? Math.floor(feed.kline.openTime / 1000)
+            : null;
+        const candleClosed = closedBar !== null && closedBar !== lastClosedBarRef.current;
+        if (candleClosed) lastClosedBarRef.current = closedBar;
+        void watchService.tickDrawingWatches({
+            symbol,
+            drawings: [...snap.drawings, ...snap.modelDrawings],
+            activeTf: interval,
+            barSeconds: intervalSeconds(interval),
+            priceScaleMode: snap.priceScaleMode ?? 'normal',
+            candles: snap.evalCandles ?? [],
+            livePrice: markPrice!,
+            atr14: snap.atr14 ?? null,
+            isCandleClose: candleClosed,
+            sid: chatSnap.activeId ?? undefined,
+        });
+    }, [symbol, markPrice, interval, feed.kline, chatSnap.activeId]);
     // Level hits and model watches no longer subscribe HERE: a subscription
     // on a mountable surface dropped every hit that happened while the
     // trader was on another surface — and for a level hit that was WORSE

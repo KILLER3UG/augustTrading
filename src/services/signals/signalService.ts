@@ -45,6 +45,7 @@ import { parseConviction } from '../../utils/convictionScale';
 import { baseRateFor, scoreSignals, type SignalScorecard } from './signalAccuracy';
 import { momentumBaselineFor } from './baselineLane';
 import { calibrationVerdict, type CalibrationVerdict } from './signalCalibration';
+import { calibrateByDimensions, type SignalCalibrationBucket } from './signalCalibration';
 
 /** Bump when the emit_signal description or parameter semantics change. The
  *  value is stored on every emission, so a later accuracy comparison can tell
@@ -288,6 +289,16 @@ export const signalScorecard = (coin?: string, user: string = getActiveUsername(
  *  tracked the outcome. `insufficient` is the honest default. */
 export const signalCalibrationFor = (coin?: string, user: string = getActiveUsername()): CalibrationVerdict =>
     calibrationVerdict(readSignals(user).filter(r => !coin || r.signal.coin === coin));
+
+/**
+ * The per-dimension rollup (skill × regime × htf × drawings) over every
+ * filled signal on the ledger — the PRODUCTION consumer of
+ * `calibrateByDimensions`. The emit receipt carries the top buckets, so the
+ * next call is made knowing in which of its own contexts the calls have
+ * actually worked, and how thin each bucket still is.
+ */
+export const signalDimensionsFor = (user: string = getActiveUsername(), maxBuckets = 6): SignalCalibrationBucket[] =>
+    calibrateByDimensions(readSignals(user)).slice(0, maxBuckets);
 
 let lastSettleAttempt = 0;
 

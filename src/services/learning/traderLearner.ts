@@ -32,6 +32,7 @@ import {
 import { rememberWithConsolidation } from './profileMemoryConsolidation';
 import { memoryEntryLabel } from './memoryTopics';
 import { getUserProfile } from '../infrastructure/dbService';
+import { checkProfileBiasPromotionEligibility } from './candidateRuleLoop';
 
 const COUNTER_KEY = 'trader_learner_counter_v1';
 const TOGGLE_KEY = 'trader_learning_v1';
@@ -70,6 +71,10 @@ const LearnedFactSchema = z.object({
     /** The display category. Free-form so the learner can create trading
      *  categories the fixed subject set does not name. */
     section: z.string().min(2).max(40).optional(),
+    /** For a BEHAVIORAL RULE ("when X, avoid Y") only: the facts that were
+     *  knowable BEFORE the entry, so the promotion gate can refuse a rule
+     *  whose support is a post-entry price path. */
+    knowableAtEntry: z.array(z.string()).max(6).optional(),
 });
 
 export type LearnedFact = z.infer<typeof LearnedFactSchema>;
@@ -79,6 +84,7 @@ const LEARNER_PROMPT = (transcript: string, existingIndex: string): string => [
     'Look for: preferred symbols/timeframes/session times; risk habits (sizing, stop discipline, leverage comfort); recurring mistakes THEY make; strategy preferences; how they like answers delivered (concise vs deep, numbers-first, warnings wanted…).',
     'Rules:',
     '- Only durable facts: explicitly stated, or clearly repeated. One-off price talk is NOT a fact.',
+    '- For a BEHAVIORAL RULE about the trader ("when X, do/skip/avoid Y"), also return `knowableAtEntry`: the observations that were knowable BEFORE the entry (regime, session, plan state) — never anything read off the post-entry price path. A rule whose support is hindsight will be refused.',
     '- Facts about the TRADER, never market lessons (those live in the skill system) and never any keys/codes.',
     '- Update-not-duplicate: skip a fact whose slug+description already exists below unless it genuinely changed.',
     '- Every fact carries a `section`: reuse one from the SECTIONS line in ALREADY KNOWN when it fits, or create a concise trading category (e.g. Trading, Risk, Instruments, Psychology, Process, Session). Reuse the same spelling for the same kind of fact.',
@@ -145,6 +151,29 @@ export const runTraderLearner = async (
 ${fact.data.body}`);
             if (verdict.refused) continue;
             if (verdict.sensitive && getHarnessSettings().sensitiveMemoryEnabled !== true) continue;
+            // A behavioral rule distilled from OBSERVED sessions is a
+            // persistent trader-profile BIAS promotion, and it goes through
+            // the same gate a rule proposal does: >=3 evidence items across
+            // >=3 distinct sessions, hindsight-free (knowable at entry), and
+            // trader confirmation when it touches risk rules. The transcripts
+            // this pass ran on ARE the evidence — each one a distinct
+            // session's review. A refused promotion is a dropped fact, not an
+            // error: the trader states a risk rule themselves (tag 'stated')
+            // or confirms it on a rule card.
+            const biasText = `${fact.data.description}
+${fact.data.body}`;
+            const biasShaped = /\b(?:when|whenever|always|never|avoid|until|instead of|cap|risk|stop|size|leverage)\b/i.test(biasText);
+            if (biasShaped) {
+                const affectsRiskRules = /\b(?:risk|stop|size|sizing|leverage|guardrail)\b/i.test(biasText);
+                const promotion = checkProfileBiasPromotionEligibility({
+                    evidenceIds: transcripts.map((_, i) => `session-${i}`),
+                    sessionIds: transcripts.map((_, i) => `session-${i}`),
+                    biasStatement: biasText,
+                    knowableAtEntry: fact.data.knowableAtEntry ?? [],
+                    ...(affectsRiskRules ? { affectsRiskRules: true, traderConfirmed: false } : {}),
+                });
+                if (!promotion.ok) continue;
+            }
             const saved = await rememberWithConsolidation({
                 slug, name: fact.data.name,
                 // The learner's name is a kebab id; the row label is what a
