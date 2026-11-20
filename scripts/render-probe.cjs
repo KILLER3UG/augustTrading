@@ -1339,7 +1339,7 @@ async function main() {
         // space), so it skips with a reason on CI.
         {
             const overlay = page.locator('[data-testid="draw-overlay"]');
-            const undo = page.locator('button[title="Undo last drawing"]');
+            const undo = page.locator('button[title^="Undo last drawing"]');
             const brush = page.locator('button[title="Freehand — drag to draw"]');
             const box = await overlay.boundingBox();
             if (!chartHead.heroIsPrice) {
@@ -4378,7 +4378,7 @@ async function main() {
         // and the return.
         const composerSizes = () => page.evaluate(() => {
             const ta = document.querySelector('[data-testid="composer-input"]');
-            const card = ta ? ta.closest('.rounded-composer') : null;
+            const card = ta ? ta.parentElement : null;
             const toolbar = document.querySelector('[data-testid="composer-model-and-send"]')?.parentElement;
             return {
                 ta: ta ? Math.round(ta.getBoundingClientRect().height) : -1,
@@ -4419,6 +4419,114 @@ async function main() {
         const clearedComposer = await composerSizes();
         check('clearing the draft returns the composer to one line',
             clearedComposer.ta <= 44, `${clearedComposer.ta}px`);
+
+        // ── Composer click-through: pointer coordinates, not a bypass ─────────
+        // The P0 this encodes: a full-viewport click-outside backdrop under the
+        // dock's permanent z-drawer (50) layer could never see a click in the
+        // dock, so the symbol picker stayed open behind its own backdrop and
+        // the desk looked fine while the chart and the nav stayed blocked.
+        // .fill() bypasses hit-testing, which is precisely the defect class
+        // here — every assertion below lands through page.mouse at coordinates.
+        {
+            const composerBox = async () => page.locator('[data-testid="composer-input"]').boundingBox();
+            const stuckShields = () => page.evaluate(() => [...document.querySelectorAll('div')]
+                .filter((el) => {
+                    const cs = window.getComputedStyle(el);
+                    if (cs.position !== 'fixed' || el.getAttribute('aria-hidden') !== 'true') return false;
+                    const r = el.getBoundingClientRect();
+                    return r.width >= window.innerWidth - 2 && r.height >= window.innerHeight - 2;
+                }).length);
+            const clickComposer = async () => {
+                const box = await composerBox();
+                if (!box) return { why: 'no composer box' };
+                await page.mouse.click(box.x + box.width / 2, box.y + Math.min(15, box.height / 2));
+                await sleep(150);
+                return page.evaluate(() => ({
+                    focused: document.activeElement === document.querySelector('[data-testid="composer-input"]'),
+                    disabled: document.querySelector('[data-testid="composer-input"]').disabled,
+                }));
+            };
+            const typeAndSubmit = async (needle) => {
+                const typed = await page.evaluate((n) => {
+                    const ta = document.querySelector('[data-testid="composer-input"]');
+                    if (!ta || ta.disabled) return 'no composer';
+                    // keyboard.type lands on activeElement — proof the click
+                    // above really focused the field (a stranded backdrop
+                    // swallows the click and the typing lands nowhere).
+                    return 'armed';
+                }, needle);
+                if (typed !== 'armed') return { typed };
+                await page.keyboard.type(needle);
+                const value = await page.evaluate(() => document.querySelector('[data-testid="composer-input"]')?.value ?? '');
+                await page.keyboard.press('Enter');
+                await sleep(400);
+                const rowInFold = await page.evaluate(promptRowInFold, needle);
+                await waitSendable(page);
+                return { typed, value, rowInFold };
+            };
+
+            // 1) Baseline: click → focus → type → Enter → the row renders.
+            const needle1 = `PROBE CLICK-THROUGH BASELINE ${Date.now()}`;
+            const focus1 = await clickComposer();
+            const flow1 = focus1.why ? focus1 : { ...focus1, ...(await typeAndSubmit(needle1)) };
+            check('composer click-through: coordinate click focuses, typing lands, Enter submits',
+                !focus1.why && focus1.focused === true && flow1.value === needle1 && flow1.rowInFold === true,
+                JSON.stringify({ focus: focus1, value: flow1.value === needle1, row: flow1.rowInFold }));
+
+            // 2) Symbol picker open → the backdrop must take the composer
+            //    click (dismiss), and the NEXT click must land on the field.
+            await page.locator('[data-testid="symbol-picker-trigger"]').click();
+            await sleep(300);
+            const pickerOpen = await page.locator('[data-testid="symbol-picker"]').count();
+            const clickOnPicker = await clickComposer();
+            const pickerAfterClick = await page.locator('[data-testid="symbol-picker"]').count();
+            const focusAfterDismiss = await clickComposer();
+            check('symbol-picker backdrop takes the dock click (dismiss) and the next click focuses the composer',
+                pickerOpen === 1 && pickerAfterClick === 0 && clickOnPicker.focused === false && focusAfterDismiss.focused === true,
+                JSON.stringify({ pickerOpen, pickerAfterClick, clickOnPicker, focusAfterDismiss }));
+
+            // 3) Escape closes the picker wherever focus sits (the field was
+            //    never focused here — the composer is, and that is the point).
+            await page.locator('[data-testid="symbol-picker-trigger"]').click();
+            await sleep(300);
+            await page.keyboard.press('Escape');
+            await sleep(250);
+            const pickerAfterEsc = await page.locator('[data-testid="symbol-picker"]').count();
+            check('symbol-picker closes on Escape with focus elsewhere', pickerOpen === 1 && pickerAfterEsc === 0,
+                `open=${pickerOpen} afterEsc=${pickerAfterEsc}`);
+
+            // 4) After a drawing drag the composer still takes a real message.
+            //    Needs the tape (drawings anchor in data space) — skip honestly
+            //    on CI, where the freehand block above already skipped.
+            const needle2 = `PROBE CLICK-THROUGH AFTER DRAW ${Date.now()}`;
+            const overlay2 = await page.locator('[data-testid="draw-overlay"]').boundingBox();
+            const brush2 = page.locator('button[title^="Freehand — drag to draw"]');
+            if (!overlay2 || (await brush2.count()) === 0) {
+                console.log('  skip  composer click-through after drawing — no tape in this environment');
+            } else {
+                await brush2.first().click();
+                await page.mouse.move(overlay2.x + overlay2.width * 0.2, overlay2.y + overlay2.height * 0.3);
+                await page.mouse.down();
+                await page.mouse.move(overlay2.x + overlay2.width * 0.6, overlay2.y + overlay2.height * 0.55, { steps: 8 });
+                await page.mouse.up();
+                await sleep(250);
+                const focus2 = await clickComposer();
+                const flow2 = focus2.why ? focus2 : { ...focus2, ...(await typeAndSubmit(needle2)) };
+                check('composer click-through after a chart drawing drag: focus, typing and submit all land',
+                    !focus2.why && focus2.focused === true && flow2.value === needle2 && flow2.rowInFold === true,
+                    JSON.stringify({ focus: focus2, value: flow2.value === needle2, row: flow2.rowInFold }));
+                // Leave the chart as the freehand block expects to find it on
+                // later runs of the same phase.
+                const undoAfter = page.locator('button[title^="Undo last drawing"]');
+                if ((await undoAfter.count()) > 0 && !(await undoAfter.isDisabled())) await undoAfter.click();
+            }
+
+            // 5) Nothing wedged: no full-viewport backdrop survives the flows.
+            const shieldsAtRest = await stuckShields();
+            check('no stuck full-viewport backdrop after the popover flows', shieldsAtRest === 0,
+                `stuckShields=${shieldsAtRest}`);
+        }
+
 
         // ── Hit targets: a control you have to click cannot be a 16px strip ──
         // Measured at desktop width on purpose: below `lg` the 44px touch bump in
