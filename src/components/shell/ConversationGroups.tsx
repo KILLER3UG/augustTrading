@@ -7,7 +7,7 @@
  * pinned in render-probe (`newChats === 1 && !shellColumn && agentsColumn`).
  * Sparse: New chat + Ctrl K, Pinned (only when there are pinned rows),
  * Recent (always). Rows: hollow
- * dot (filled active, amber pulsing running), truncated title, mono age
+ * dot (filled active, ink pulsing running), truncated title, mono age
  * from `workspaceAgeLabel` (single source).
  *
  * This file did NOT exist on clean HEAD — created for mock-redesign-v3.
@@ -54,7 +54,7 @@ export interface ConversationGroupsProps {
     onOpenConversation: (id: string) => void;
     onDeleteConversation: (id: string) => void;
     onClearConversation: (id: string) => void;
-    /** Agents whose turns are still streaming — their rows pulse amber. */
+    /** Agents whose turns are still streaming — their rows pulse in ink. */
     runningAgentIds?: ReadonlySet<string>;
     /** Pinned conversation ids — the Pinned group renders only when > 0. */
     pinnedIds?: ReadonlySet<string>;

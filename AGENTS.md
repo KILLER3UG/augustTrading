@@ -49,6 +49,7 @@ npm run lint                # eslint with a warning ratchet (cap in package.json
 npm run lint:loose          # eslint without the cap, for a cleanup pass
 npm run check:contracts     # the pure-logic contracts (node only, no suite)
 npm run check:boundaries    # the import edges the layer table promises
+npm run check:palette       # the monochrome chrome — zero forbidden hue utilities
 npm run check:docs          # doc links + symbol citations + gate names
 npm run boot-probe          # the production bundle boots, zero pageerrors
 npm run render-probe        # rendered rows, inert controls, all six surfaces
@@ -69,6 +70,7 @@ npm run electron:release    # REFUSES locally by design; releases run in CI
 | `build` | a production bundle is produced | a prod-only boot failure |
 | `check:contracts` | the pure-logic contracts hold | anything needing a DOM, a store or a network |
 | `check:boundaries` | no runtime import crosses the layer table; type-only imports stay legal where named | a string-built require, a bundler alias, or an edge the table does not name |
+| `check:palette` | the chrome carries zero forbidden hue utilities (amber/cyan/pink/violet/teal/yellow/sky/orange); semantic emerald/rose excepted | a hue painted on the chart canvas, or a theme CSS variable the component scan does not read |
 | `check:docs` | links resolve, symbol citations exist, AGENTS' gate names exist | whether the prose is true |
 | `boot-probe` | the bundle starts and the first surface mounts | any interaction |
 | `render-probe` | rendered rows, send order, reload persistence, six surfaces, no inert controls, focus rings | a layout that breaks at 800px; a wrong number inside a counted row |
