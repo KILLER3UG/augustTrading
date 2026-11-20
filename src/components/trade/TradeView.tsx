@@ -683,6 +683,23 @@ const TradeView: React.FC<TradeViewProps> = ({
         return () => { cancelled = true; };
     }, [symbol, chatSnap.activeId]);
 
+    // The autonomy engine maintains AI drawings in the background (stale
+    // expiry, the per-symbol cap) — it mutates the PERSISTED model bucket and
+    // dispatches this event; this listener re-reads so the visible chart
+    // keeps up without a reload.
+    useEffect(() => {
+        const reload = (): void => {
+            const sid = chatSnap.activeId;
+            if (!sid) return;
+            void loadSessionModelDrawings(sid, symbol).then(list => {
+                setModelDrawings(list);
+                drawingsClaimedRef.current = `${sid}:${symbol}`;
+            });
+        };
+        window.addEventListener('august:agent-drawings-changed', reload);
+        return () => window.removeEventListener('august:agent-drawings-changed', reload);
+    }, [symbol, chatSnap.activeId]);
+
     // Level-accuracy scoring needs THIS coin's bars at THIS timeframe. The
     // fetch used to ride the symbol-switch effect above with two holes: no
     // `interval` dep (a timeframe change never re-fetched) and no cancel (a
@@ -787,9 +804,11 @@ const TradeView: React.FC<TradeViewProps> = ({
     const lastClosedBarRef = useRef<number | null>(null);
     useEffect(() => {
         if (!Number.isFinite(markPrice)) return;
-        levelWatch.tick(symbol, markPrice!);
-        watchService.tick(symbol, markPrice!);
         const snap = chartHandleRef.current?.getSnapshot();
+        // atr14 rides the SAME snapshot the drawing watchdog reads, so the
+        // entry re-arm hysteresis (0.5 * ATR) is live instead of a dead guard.
+        levelWatch.tick(symbol, markPrice!, { atr14: snap?.atr14 ?? null });
+        watchService.tick(symbol, markPrice!);
         if (!snap || snap.symbol !== symbol) return;
         const closedBar = feed.kline?.closed && feed.kline.openTime
             ? Math.floor(feed.kline.openTime / 1000)

@@ -411,8 +411,10 @@ const sentinelSkillHint = (input: TickDrawingWatchesInput): string | undefined =
 /**
  * Evaluate watched user/AI drawings against the live tick or candle close with
  * ATR-scaled tolerance, `0.5 * ATR(14)` hysteresis, and bar cooldowns.
- * Triggered events run through the isolated headless sentinel loop and enqueue
- * non-dismissed notices into the idle-safe queue (never interrupting a stream).
+ * Triggered events run through the autonomy engine — the configured model
+ * classifies each event over the isolated minimal packet (budget, per-symbol
+ * cooldown and provider-backoff gated; deterministic fallback), and a
+ * `SILENT_MAINTAIN` decision executes on the AI-drawing bucket without chat.
  */
 export const tickDrawingWatches = async (
     input: TickDrawingWatchesInput,
@@ -425,6 +427,7 @@ export const tickDrawingWatches = async (
         atr14: input.atr14,
         matchedSkillExcerpt: sentinelSkillHint(input),
     };
+    const engine = await import('./autonomyEngine');
     for (const drawing of input.drawings) {
         const key = `${input.symbol}:${drawing.id}`;
         const prev = drawingLatchStates.get(key) ?? createWatchdogLatch();
@@ -445,12 +448,20 @@ export const tickDrawingWatches = async (
         drawingLatchStates.set(key, nextState);
         if (!event) continue;
         events.push(event);
-        const res = await evaluateSentinelEvent(
+        const res = await engine.evaluateSentinelTrigger(
             { source: 'drawing_watch', symbol: input.symbol, sid: input.sid, event },
             ctx,
-            { enqueue: true },
+            { sessionId: input.sid, drawings: input.drawings },
         );
         if (res.notice) notices.push(res.notice);
+    }
+    // Autonomous AI-drawing hygiene rides the same tick: stale/over-cap agent
+    // shapes expire quietly (throttled per symbol inside the engine; the user
+    // bucket is structurally unreachable there).
+    if (input.sid && events.length >= 0) {
+        try {
+            await engine.maintainAgentDrawings(input.sid, input.symbol, input.livePrice, input.activeTf);
+        } catch { /* hygiene never breaks the tick */ }
     }
     return { events, notices };
 };

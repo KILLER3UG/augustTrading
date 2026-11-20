@@ -21,7 +21,7 @@
 import type { DrawingWatchTriggerEvent } from './watchdogCore';
 import type { LevelHit, WatchPlan } from './tradePlanLevels';
 
-export type SentinelActionType = 'SILENT_DISMISS' | 'ALERT_TRADER' | 'UPDATE_PLAN_STATUS';
+export type SentinelActionType = 'SILENT_DISMISS' | 'SILENT_MAINTAIN' | 'ALERT_TRADER' | 'UPDATE_PLAN_STATUS';
 
 export interface SentinelDecision {
     action: SentinelActionType;
@@ -84,9 +84,10 @@ let pendingNotices: SentinelNotice[] = [];
 const SENTINEL_SYSTEM_PROMPT = [
     'You are an isolated market sentinel evaluating ONE deterministic chart trigger.',
     'Respond ONLY with a single JSON object matching:',
-    '{"action":"SILENT_DISMISS"|"ALERT_TRADER"|"UPDATE_PLAN_STATUS","summary":"<one concise sentence>","severity":"info"|"warning"|"critical","planId":"<optional>","nextPlanStatus":"pending"|"active"|"invalidated"|"target_hit"|"stale","reason":"<brief rationale>"}',
+    '{"action":"SILENT_DISMISS"|"SILENT_MAINTAIN"|"ALERT_TRADER"|"UPDATE_PLAN_STATUS","summary":"<one concise sentence>","severity":"info"|"warning"|"critical","planId":"<optional>","nextPlanStatus":"pending"|"active"|"invalidated"|"target_hit"|"stale","drawingShortId":"<optional AI-drawing shortId>","reason":"<brief rationale>"}',
     'Rules:',
     '- Return SILENT_DISMISS if price noise is low-signal or redundant.',
+    '- Return SILENT_MAINTAIN (with drawingShortId) ONLY when an AI-drawn shape is invalidated or stale and should be quietly removed from the chart without telling the trader. NEVER name a user-drawn shape.',
     '- Return ALERT_TRADER when a trader-drawn structure or key level was crossed/tested cleanly.',
     '- Return UPDATE_PLAN_STATUS when an armed plan Entry/SL/TP was reached.',
     '- Never invent prices; cite only numbers present in the event payload.',
@@ -167,7 +168,7 @@ export const parseSentinelDecision = (raw: string): SentinelDecision => {
     try {
         const parsed = JSON.parse(jsonMatch[0]) as Record<string, unknown>;
         const action = parsed.action;
-        if (action !== 'SILENT_DISMISS' && action !== 'ALERT_TRADER' && action !== 'UPDATE_PLAN_STATUS') {
+        if (action !== 'SILENT_DISMISS' && action !== 'SILENT_MAINTAIN' && action !== 'ALERT_TRADER' && action !== 'UPDATE_PLAN_STATUS') {
             return {
                 action: 'SILENT_DISMISS',
                 summary: 'Sentinel returned unknown action; dismissed silently.',
@@ -294,7 +295,9 @@ export const evaluateSentinelEvent = async (
         decision = deterministicSentinelEvaluate(trigger);
     }
 
-    if (decision.action === 'SILENT_DISMISS') {
+    if (decision.action === 'SILENT_DISMISS' || decision.action === 'SILENT_MAINTAIN') {
+        // Both silent actions never reach chat — SILENT_MAINTAIN acts on the
+        // chart/watch state through the autonomy engine instead.
         return { decision, packet, notice: null };
     }
 
@@ -314,7 +317,7 @@ export const evaluateSentinelEvent = async (
 
 /** Add a non-dismissed notice to the bounded idle-safe sentinel queue. */
 export const enqueueSentinelNotice = (notice: SentinelNotice): void => {
-    if (notice.decision.action === 'SILENT_DISMISS') return;
+    if (notice.decision.action === 'SILENT_DISMISS' || notice.decision.action === 'SILENT_MAINTAIN') return;
     pendingNotices = [...pendingNotices, notice].slice(-MAX_PENDING_NOTICES);
 };
 

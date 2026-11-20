@@ -354,7 +354,7 @@ const countLevelTouches = (
     return touches;
 };
 
-const isDrawingStale = (
+export const isDrawingStale = (
     d: ChartDrawing,
     markPrice: number | null,
     atr14: number | null,

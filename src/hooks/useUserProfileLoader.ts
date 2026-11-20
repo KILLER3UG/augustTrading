@@ -31,6 +31,7 @@ import GlobalLearningService from '../services/learning/GlobalLearningService';
 import { PriceAlertService } from '../services/ui/PriceAlertService';
 import { OutcomeAutopilotService } from '../services/ui/OutcomeAutopilotService';
 import { initTracker, resetTracker } from '../services/tracking/trackerService';
+import { ensureBackgroundLoops, initAutonomy } from '../services/trade/autonomyEngine';
 import { storageService } from '../services/infrastructure/StorageService';
 import { offlineQueue } from '../services/infrastructure/OfflineQueueService';
 import { runMigrations, checkDataIntegrity, createStartupBackup, logIntegrityEvent } from '../services/validation/DataIntegrityService';
@@ -356,6 +357,13 @@ export const useUserProfileLoader = (args: UseUserProfileLoaderArgs): UseUserPro
             await OutcomeAutopilotService.init(username);
             if (isStale()) return;
             await initTracker(username);
+            if (isStale()) return;
+            // The autonomy engine: hydrate this profile's mode/seat cache and
+            // start the background heartbeat (self-throttling; every loop
+            // re-checks mode, budget, backoff and the memory switch at fire
+            // time, so a paused or memory-OFF desk stays inert).
+            await initAutonomy(username);
+            ensureBackgroundLoops();
             if (isStale()) return;
             await initConfluenceService();
             if (isStale()) return;

@@ -493,6 +493,22 @@ export const runDiagnosisPass = async (
                 result.failed += 1;
                 continue;
             }
+            // Closed loop: a diagnosis that PASSED the hindsight audit feeds
+            // the autonomy engine's candidate pipeline (evidence accumulation
+            // → gated promotion into profileMemory). Fire-and-forget: the
+            // bridge records its own audit trail and never fails this pass.
+            void import('../trade/autonomyEngine')
+                .then(e => e.notePostMortemLesson({
+                    id: diagnosis.id,
+                    tradeId: diagnosis.tradeId,
+                    lesson: diagnosis.lesson,
+                    when: diagnosis.when,
+                    action: diagnosis.action,
+                    source: diagnosis.source,
+                    outcome: diagnosis.outcome,
+                    createdAt: diagnosis.createdAt,
+                }))
+                .catch(() => { /* best effort */ });
             const linked = {
                 ...position,
                 diagnosisId: diagnosis.id,
