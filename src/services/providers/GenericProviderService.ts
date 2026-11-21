@@ -334,7 +334,7 @@ export function splitChatContent(content: unknown): { text: string; reasoning: s
         if (!part || typeof part !== 'object') continue;
         const block = part as { type?: string; thought?: boolean; thinking?: string; text?: string };
         const type = String(block.type || '');
-        if (type === 'thinking' || type === 'reason' || block.thought === true) {
+        if (type === 'thinking' || type === 'reason' || type === 'reasoning' || block.thought === true) {
             const inner = block.thinking || block.text || '';
             if (inner.trim()) thoughts.push(inner);
             continue;
@@ -369,7 +369,7 @@ function deltaReasoning(delta: {
         if (!part || typeof part !== 'object') continue;
         const block = part as { type?: string; thought?: boolean; thinking?: string; text?: string };
         const type = String(block.type || '');
-        if (type === 'thinking' || type === 'reason' || block.thought === true) {
+        if (type === 'thinking' || type === 'reason' || type === 'reasoning' || block.thought === true) {
             const inner = block.thinking ?? block.text ?? '';
             if (typeof inner === 'string') fromParts += inner;
         }
@@ -391,7 +391,7 @@ function deltaVisibleText(delta: { content?: unknown }): string {
         if (!part || typeof part !== 'object') continue;
         const block = part as { type?: string; thought?: boolean; text?: string };
         const type = String(block.type || '');
-        if (type === 'thinking' || type === 'reason' || block.thought === true) continue;
+        if (type === 'thinking' || type === 'reason' || type === 'reasoning' || block.thought === true) continue;
         if (typeof block.text === 'string') out += block.text;
     }
     return out;

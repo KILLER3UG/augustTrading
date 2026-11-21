@@ -559,7 +559,7 @@ async function sendDiscoverRequest(config) {
 // (stream:true). jsonMode/jsonSchema calls stay buffered (they need the whole
 // body to validate), and the google format's stream wire (JSON-array SSE) is
 // not parsed here — those requests keep today's one-shot path.
-const STREAMABLE_FORMATS = new Set(['chat_completions', 'messages', 'responses']);
+const STREAMABLE_FORMATS = new Set(['chat_completions', 'messages', 'responses', 'google']);
 function streamRequested(request) {
     return request?.stream === true
         && !request.jsonMode && !request.jsonSchema
@@ -665,7 +665,10 @@ function providerRequestDetails(request) {
         };
     } else if (format === 'google') {
         const geminiModel = model.replace(/^models\//, '');
-        url = `${baseUrl}/models/${encodeURIComponent(geminiModel)}:generateContent?key=${encodeURIComponent(apiKey)}`;
+        const geminiStream = streamRequested(request);
+        url = geminiStream
+            ? `${baseUrl}/models/${encodeURIComponent(geminiModel)}:streamGenerateContent?alt=sse&key=${encodeURIComponent(apiKey)}`
+            : `${baseUrl}/models/${encodeURIComponent(geminiModel)}:generateContent?key=${encodeURIComponent(apiKey)}`;
         if (apiKey) headers['x-goog-api-key'] = apiKey;
         const systemBits = [];
         const contents = [];
@@ -740,7 +743,7 @@ function providerRequestDetails(request) {
     // the final usage chunk; servers that reject the knob are retried
     // buffered in sendProviderRequest (400/422 degrade).
     if (streamRequested(request)) {
-        body.stream = true;
+        if (format !== 'google') body.stream = true;
         if (format === 'chat_completions') body.stream_options = { include_usage: true };
     }
 

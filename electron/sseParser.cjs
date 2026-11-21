@@ -191,7 +191,7 @@ function createSseParser(apiFormat) {
     const handleData = (data) => {
         if (apiFormat === 'messages') return handleMessages(data);
         if (apiFormat === 'responses') return handleResponses(data);
-        if (apiFormat === 'gemini') return handleGemini(data);
+        if (apiFormat === 'google' || apiFormat === 'gemini') return handleGemini(data);
         return handleChatCompletions(data);
     };
 

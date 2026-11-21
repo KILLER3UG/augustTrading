@@ -3,7 +3,7 @@ import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import dns from 'dns';
 import * as process from 'process';
-import { readFileSync } from 'fs';
+import { existsSync, readdirSync, readFileSync } from 'fs';
 import {
   chatMessagesToGemini,
   googleGenerateUrl,
@@ -18,6 +18,7 @@ import {
   isLocalBaseUrl,
   normalizeProviderUrl,
   fetchFollowingSafeRedirects,
+  requestReasoningSideChannel,
 } from './shared/providerRequestPolicy.cjs';
 
 // shared/providerRequestPolicy.cjs is the single wire-policy source for the
@@ -171,6 +172,7 @@ function devProviderProxy() {
               body.tools = request.tools;
               body.tool_choice = request.toolChoice || 'auto';
             }
+            requestReasoningSideChannel(config, body);
           } else if (config.apiFormat === 'messages') {
             url = `${baseUrl}/messages`;
             if (apiKey) headers['x-api-key'] = apiKey;
@@ -276,18 +278,26 @@ function devProviderProxy() {
             const onClientClose = (): void => {
               if (!res.writableEnded) clientAbort.abort();
             };
-            req.on('close', onClientClose);
             res.on('close', onClientClose);
             const upstreamSignal = AbortSignal.any([clientAbort.signal, AbortSignal.timeout(300000)]);
-            let sse = await fetchFollowingSafeRedirects(fetch, url, { method: 'POST', headers: streamHeaders, body: JSON.stringify(streamBody), signal: upstreamSignal });
-            if (!sse.ok && (request.jsonMode || request.jsonSchema) && (sse.status === 400 || sse.status === 422) && streamBody.response_format) {
-              const fallbackBody = { ...streamBody };
+            let activeStreamBody: Record<string, unknown> = streamBody;
+            let sse = await fetchFollowingSafeRedirects(fetch, url, { method: 'POST', headers: streamHeaders, body: JSON.stringify(activeStreamBody), signal: upstreamSignal });
+            if (!sse.ok && (request.jsonMode || request.jsonSchema) && (sse.status === 400 || sse.status === 422) && activeStreamBody.response_format) {
+              const fallbackBody = { ...activeStreamBody };
               stepDownResponseFormat(fallbackBody, request.jsonMode);
-              sse = await fetchFollowingSafeRedirects(fetch, url, { method: 'POST', headers: streamHeaders, body: JSON.stringify(fallbackBody), signal: upstreamSignal });
-              if (!sse.ok && (sse.status === 400 || sse.status === 422) && fallbackBody.response_format) {
-                delete fallbackBody.response_format;
-                sse = await fetchFollowingSafeRedirects(fetch, url, { method: 'POST', headers: streamHeaders, body: JSON.stringify(fallbackBody), signal: upstreamSignal });
+              activeStreamBody = fallbackBody;
+              sse = await fetchFollowingSafeRedirects(fetch, url, { method: 'POST', headers: streamHeaders, body: JSON.stringify(activeStreamBody), signal: upstreamSignal });
+              if (!sse.ok && (sse.status === 400 || sse.status === 422) && activeStreamBody.response_format) {
+                const noRfBody = { ...activeStreamBody };
+                delete noRfBody.response_format;
+                activeStreamBody = noRfBody;
+                sse = await fetchFollowingSafeRedirects(fetch, url, { method: 'POST', headers: streamHeaders, body: JSON.stringify(activeStreamBody), signal: upstreamSignal });
               }
+            }
+            if (!sse.ok && (sse.status === 400 || sse.status === 422) && activeStreamBody.stream_options) {
+              const noStreamOpts = { ...activeStreamBody };
+              delete noStreamOpts.stream_options;
+              sse = await fetchFollowingSafeRedirects(fetch, url, { method: 'POST', headers: streamHeaders, body: JSON.stringify(noStreamOpts), signal: upstreamSignal });
             }
             if (!sse.ok || !sse.body) {
               const text = await sse.text();
@@ -306,6 +316,7 @@ function devProviderProxy() {
             }
             res.statusCode = 200;
             res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+            res.setHeader('Content-Encoding', 'identity');
             res.setHeader('Cache-Control', 'no-cache, no-transform');
             res.setHeader('Connection', 'keep-alive');
             res.setHeader('X-Accel-Buffering', 'no');
@@ -344,7 +355,6 @@ function devProviderProxy() {
                 res.write(`data: ${JSON.stringify({ error: { message, code: 'stream_interrupted' } })}\n\n`);
               }
             } finally {
-              req.off?.('close', onClientClose);
               res.off?.('close', onClientClose);
               reader.releaseLock();
             }
@@ -486,10 +496,24 @@ export default defineConfig(() => {
   try {
     pkgVersion = (JSON.parse(readFileSync(`${process.cwd()}/package.json`, 'utf8')) as { version?: string }).version || pkgVersion;
   } catch { /* build-time only; leave the placeholder */ }
+  const bundledSkills: Array<{ slug: string; content: string }> = [];
+  try {
+    const skillsDir = `${process.cwd()}/skills`;
+    if (existsSync(skillsDir)) {
+      for (const entry of readdirSync(skillsDir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+        if (!entry.isDirectory()) continue;
+        const headPath = `${skillsDir}/${entry.name}/SKILL.md`;
+        if (existsSync(headPath)) {
+          bundledSkills.push({ slug: entry.name, content: readFileSync(headPath, 'utf8') });
+        }
+      }
+    }
+  } catch { /* bundled skills optional */ }
   return {
     base: './', // Crucial: relative paths for Electron
     define: {
       'import.meta.env.PACKAGE_VERSION': JSON.stringify(pkgVersion),
+      '__AUGUST_BUNDLED_SKILLS__': JSON.stringify(bundledSkills),
     },
     plugins: [sharedProviderPolicyEsmInterop(), react(), tailwindcss(), devProviderProxy()],
     resolve: {

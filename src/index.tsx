@@ -46,6 +46,12 @@ window.addEventListener('unhandledrejection', (event) => {
 
 // Catch global JavaScript errors
 window.addEventListener('error', (event) => {
+  // Chromium fires a benign ResizeObserver loop notification with event.error === null
+  // when streamed transcript rows grow across frames inside Virtuoso.
+  if (!event.error && /ResizeObserver loop/i.test(event.message || '')) {
+    return;
+  }
+
   console.error('[Global] Uncaught error:', event.error);
 
   try {

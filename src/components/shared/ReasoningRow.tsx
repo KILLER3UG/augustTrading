@@ -77,6 +77,7 @@ const ReasoningRow: React.FC<ReasoningRowProps> = ({
     // the bottom — scrolling up to re-read must win over the auto-follow.
     const bodyPinnedRef = useRef(true);
     const trimmed = thinking.trim();
+    const revealSource = running ? thinking.trimStart() : trimmed;
 
     useEffect(() => {
         if (running && !wasRunningRef.current) {
@@ -119,7 +120,7 @@ const ReasoningRow: React.FC<ReasoningRowProps> = ({
     // turn" and retype the trace from its first letter. The peel runs on the
     // revealed slice instead, so markers vanish as they complete and the
     // reveal index only ever moves forward.
-    const rawReveal = useLetterReveal(trimmed, running && open);
+    const rawReveal = useLetterReveal(revealSource, running && open);
     const visibleTrace = useMemo(() => stripTraceMarkers(rawReveal), [rawReveal]);
 
     useLayoutEffect(() => {

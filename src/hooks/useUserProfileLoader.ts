@@ -341,6 +341,10 @@ export const useUserProfileLoader = (args: UseUserProfileLoaderArgs): UseUserPro
             await migrateProfileMemoryToFacts(username);
             if (isStale()) return;
 
+            const { seedBundledSkills } = await import('../services/learning/bundledSkills');
+            await seedBundledSkills(username);
+            if (isStale()) return;
+
             // Captured, not fired: the regime ledger's cache is read by the
             // settlement path's regime resolution, so it must be hydrated
             // before anything asks it a question.

@@ -243,7 +243,8 @@ export const ThinkingTierChip: React.FC<{ effort: ReasoningEffort; className?: s
  *  settled paragraphs never re-fade or re-parse, while only newly arrived segments
  *  in the growing block fade in via `.stream-token-fade` / `.stream-block-fade`.
  */
-const PARSE_STEP = 16;
+const PARSE_STEP = 8;
+const PARSE_MAX_STALE_MS = 40;
 const MAX_ACTIVE_FADE_SPANS = 8;
 
 const prefersOsReducedMotion = (): boolean => typeof window !== 'undefined'
@@ -259,7 +260,7 @@ export const FadingText: React.FC<{ text: string; streaming: boolean; className?
     const scrollerRef = useRef<HTMLElement | null>(null);
     // Bucketed markdown node for formatted growing active block; written during
     // render per the repo's derived-cache idiom (conventions.md).
-    const parsedRef = useRef<{ blockIdx: number; len: number; node: React.ReactNode }>({ blockIdx: -1, len: -1, node: null });
+    const parsedRef = useRef<{ blockIdx: number; len: number; at: number; node: React.ReactNode }>({ blockIdx: -1, len: -1, at: 0, node: null });
     // Incremental token slices for plain growing prose so only newly arrived
     // characters wear `.stream-token-fade` without re-fading settled prefix.
     const proseTrackRef = useRef<{
@@ -332,10 +333,17 @@ export const FadingText: React.FC<{ text: string; streaming: boolean; className?
                 );
             } else {
                 const last = parsedRef.current;
-                if (last.blockIdx !== activeIdx || last.len < 0 || active.length < last.len || active.length - last.len >= PARSE_STEP) {
+                const now = Date.now();
+                if (
+                    last.blockIdx !== activeIdx
+                    || last.len < 0
+                    || active.length < last.len
+                    || (active.length !== last.len && (active.length - last.len >= PARSE_STEP || now - last.at >= PARSE_MAX_STALE_MS))
+                ) {
                     parsedRef.current = {
                         blockIdx: activeIdx,
                         len: active.length,
+                        at: now,
                         node: <MarkdownContent content={active} className={mdClass} />,
                     };
                 }

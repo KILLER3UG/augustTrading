@@ -691,11 +691,11 @@ const TOOL_BUDGETS: Record<string, number> = {
     order_flow: 3000,
     effort_vs_result: 3000,
     vwap: 2400,
-    get_regime: 2400,
+    get_regime: 3400,
     trade_math: 2600,
     // P1 family — same reasoning as the P0 envelopes: a structure read with
     // its level list must not lose its tail to the default clip.
-    swing_structure: 3000,
+    swing_structure: 3800,
     liquidity: 3200,
     imbalances: 3000,
     sr_zones: 3000,
@@ -8263,15 +8263,20 @@ export async function* streamChatWithDeskTools(
     // drops anything queued-but-unpainted from the discarded attempt — else a
     // stale delta lands in the bubble AFTER the wipe (and after the repaint).
     let streamGen = 0;
+    let roundStreamed = false;
     const onTextDelta = (delta: string): void => {
         streamedLive = true;
+        roundStreamed = true;
         pending.push({ gen: streamGen, text: delta });
         wake?.();
         wake = null;
     };
     const onLoopReset = (): void => {
         streamGen += 1;
-        wipedLive = true;
+        if (roundStreamed) {
+            wipedLive = true;
+            roundStreamed = false;
+        }
         onStreamReset?.();
     };
     const settle = (): void => {

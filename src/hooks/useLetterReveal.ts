@@ -43,6 +43,8 @@ export const useLetterReveal = (text: string, active: boolean): string => {
             : text.length,
     );
     const previous = useRef(text);
+    const targetLenRef = useRef(text.length);
+    targetLenRef.current = text.length;
 
     useEffect(() => {
         const prior = previous.current;
@@ -65,21 +67,23 @@ export const useLetterReveal = (text: string, active: boolean): string => {
 
     useEffect(() => {
         if (!active) {
-            setRevealed(text.length);
+            setRevealed(targetLenRef.current);
             return;
         }
         if (reduced) {
-            setRevealed(text.length);
+            setRevealed(targetLenRef.current);
             return;
         }
         // A hidden tab must never leave the tail unrendered.
         if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
-            setRevealed(text.length);
+            setRevealed(targetLenRef.current);
             return;
         }
+        // Keep the interval stable while active: depending on text.length tore down
+        // the timer before it could fire whenever SSE chunks arrived faster than 16ms.
         const timer = window.setInterval(() => {
             setRevealed(current => {
-                const target = text.length;
+                const target = targetLenRef.current;
                 if (current >= target) return current;
                 const pending = target - current;
                 const step = Math.max(CHARS_PER_TICK, Math.ceil(pending * 0.35));
@@ -87,16 +91,16 @@ export const useLetterReveal = (text: string, active: boolean): string => {
             });
         }, TICK_MS);
         return () => window.clearInterval(timer);
-    }, [text.length, active, reduced]);
+    }, [active, reduced]);
 
     useEffect(() => {
         if (!active) return;
         const snapWhenHidden = (): void => {
-            if (document.visibilityState === 'hidden') setRevealed(text.length);
+            if (document.visibilityState === 'hidden') setRevealed(targetLenRef.current);
         };
         document.addEventListener('visibilitychange', snapWhenHidden);
         return () => document.removeEventListener('visibilitychange', snapWhenHidden);
-    }, [active, text.length]);
+    }, [active]);
 
     if (reduced || !active) return text;
     // A replaced text must not flash its new body before the reset effect runs.
