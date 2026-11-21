@@ -3340,7 +3340,10 @@ async function main() {
                 if (v) localStorage.setItem('casual_chat_model', v);
                 else localStorage.removeItem('casual_chat_model');
             }, stale ? 'probe-provider::probe-stale-model' : null);
-            await page.reload();
+            // domcontentloaded like every other reload here — the 'load'
+            // event waits on every subresource and timed out under load even
+            // though the app was fine; the banner reads below do the waiting.
+            await page.reload({ waitUntil: 'domcontentloaded' });
             await sleep(1800);
             const how = await navTo('Agents');
             await sleep(1200);
@@ -4447,6 +4450,14 @@ async function main() {
                 }));
             };
             const typeAndSubmit = async (needle) => {
+                // A live run turns Enter into steering (the two-speed input),
+                // and a virtualized log can take longer than a fixed sleep to
+                // scroll the new row into the fold — both measure the runner's
+                // speed, not the composer. Wait for a Send button before
+                // arming (Enter must be a SUBMIT here, not a steer) and wait
+                // for the row the way sendInDock does. The assertion is
+                // unchanged: no row in the fold within 8s is still a failure.
+                if (!(await waitSendable(page))) return { typed: 'composer never sendable' };
                 const typed = await page.evaluate((n) => {
                     const ta = document.querySelector('[data-testid="composer-input"]');
                     if (!ta || ta.disabled) return 'no composer';
@@ -4459,8 +4470,11 @@ async function main() {
                 await page.keyboard.type(needle);
                 const value = await page.evaluate(() => document.querySelector('[data-testid="composer-input"]')?.value ?? '');
                 await page.keyboard.press('Enter');
-                await sleep(400);
-                const rowInFold = await page.evaluate(promptRowInFold, needle);
+                let rowInFold = false;
+                try {
+                    await page.waitForFunction(promptRowInFold, needle, { timeout: 8000 });
+                    rowInFold = true;
+                } catch { rowInFold = false; }
                 await waitSendable(page);
                 return { typed, value, rowInFold };
             };
@@ -4678,7 +4692,9 @@ async function main() {
         mkdirSync(evidenceDir, { recursive: true });
         await page.setViewportSize({ width: 1440, height: 900 });
         await page.evaluate(() => localStorage.setItem('workspace_layout_v1', 'chat'));
-        await page.reload({ waitUntil: 'domcontentloaded' });
+        // 60s: this reload re-runs the whole dev-module graph and on a cold or
+        // loaded machine the default 30s measured the machine, not the app.
+        await page.reload({ waitUntil: 'domcontentloaded', timeout: 60000 });
         await sleep(2500);
         const measureChatGeometry = () => page.evaluate(() => {
             const box = (sel) => {
