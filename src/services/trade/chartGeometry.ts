@@ -107,7 +107,13 @@ export interface Tier0ManifestInput {
     nowMs?: number;
 }
 
-const FIB_RATIOS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1] as const;
+// Standard retracement ratios (incl. the 0.705 OTE) — the ratio measures how
+// far price has given back from the swing END toward the START, shared with
+// activeSwingFib/calculateFibonacciLevels so every surface labels the same
+// price the same way.
+const FIB_RATIOS = [0, 0.236, 0.382, 0.5, 0.618, 0.705, 0.786, 1] as const;
+// Extensions project the leg PAST its end: start + r × range.
+const FIB_EXTENSION_RATIOS = [1.272, 1.618, 2] as const;
 const STALE_AGE_MS = 4 * 60 * 60 * 1000;
 const STALE_FALLBACK_PCT = 1;
 const STALE_ATR_MULTIPLIER = 2.0;
@@ -471,14 +477,32 @@ export const evaluateDrawingAtNow = (
                     const upper = Math.max(a.p, b.p);
                     const lower = Math.min(a.p, b.p);
                     bounds = { upper: round4(upper), lower: round4(lower) };
-                    fibLevels = FIB_RATIOS.map(ratio => {
-                        const px = interpolateScalePrice(a.p, b.p, ratio, ctx.priceScaleMode);
-                        const price = px !== null ? round4(px) : round4(a.p + (b.p - a.p) * ratio);
-                        const distanceAtr = mark !== null && atr !== null && atr > 0
-                            ? Math.round((Math.abs(price - mark) / atr) * 100) / 100
-                            : null;
-                        return { ratio, price, distanceAtr };
-                    });
+                    // STANDARD retracement geometry, shared with
+                    // activeSwingFib/calculateFibonacciLevels: the ratio
+                    // measures how far price has given back from the swing END
+                    // (b, the newer anchor) toward the START (a) — on a
+                    // 100→200 up-swing, 0.382 = 161.8 and 0.618 = 138.2.
+                    // Extensions project the leg PAST its end.
+                    const fibLevelAt = (ratio: number, px: number | null): { ratio: number; price: number; distanceAtr: number | null } => {
+                        const price = px !== null ? round4(px) : null;
+                        return {
+                            ratio,
+                            price: price ?? round4(b.p - (b.p - a.p) * ratio),
+                            distanceAtr: mark !== null && atr !== null && atr > 0 && price !== null
+                                ? Math.round((Math.abs(price - mark) / atr) * 100) / 100
+                                : null,
+                        };
+                    };
+                    fibLevels = [
+                        ...FIB_RATIOS.map(ratio => fibLevelAt(
+                            ratio,
+                            interpolateScalePrice(b.p, a.p, ratio, ctx.priceScaleMode),
+                        )),
+                        ...FIB_EXTENSION_RATIOS.map(ratio => fibLevelAt(
+                            ratio,
+                            interpolateScalePrice(a.p, b.p, ratio, ctx.priceScaleMode),
+                        )),
+                    ];
                     // Nearest fib level to current mark becomes projectedPrice.
                     if (mark !== null && fibLevels.length > 0) {
                         const nearest = fibLevels.reduce((best, cur) =>
@@ -667,7 +691,7 @@ const formatEvalLine = (ev: DrawingEvaluatedAtNow): string => {
     }
     if (ev.fibLevels && ev.fibLevels.length > 0) {
         const keyFibs = ev.fibLevels
-            .filter(f => f.ratio === 0.382 || f.ratio === 0.5 || f.ratio === 0.618 || f.ratio === 0.786)
+            .filter(f => f.ratio === 0.382 || f.ratio === 0.5 || f.ratio === 0.618 || f.ratio === 0.705 || f.ratio === 0.786)
             .map(f => `${(f.ratio * 100).toFixed(1)}%=${fmtPx(f.price)}`)
             .join(', ');
         if (keyFibs) parts.push(`fibs(${keyFibs})`);

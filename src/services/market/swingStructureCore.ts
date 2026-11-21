@@ -131,7 +131,11 @@ export interface ActiveFibRead {
 }
 
 const FIB_RATIOS: Array<[string, number]> = [
-    ['0.236', 0.236], ['0.382', 0.382], ['0.5', 0.5], ['0.618', 0.618], ['0.786', 0.786],
+    ['0.236', 0.236], ['0.382', 0.382], ['0.5', 0.5], ['0.618', 0.618], ['0.705', 0.705], ['0.786', 0.786],
+];
+// Extensions project the completed leg PAST its end: start + r × range.
+const FIB_EXTENSION_RATIOS: Array<[string, number]> = [
+    ['1.272', 1.272], ['1.618', 1.618], ['2.0', 2],
 ];
 
 /**
@@ -152,10 +156,22 @@ export const activeSwingFib = (candles: Kline[], atr: number, toleranceAtr = 0.2
     const from = bullish ? lastLow : lastHigh;
     const to = bullish ? lastHigh : lastLow;
     const tolerance = toleranceAtr * atr;
-    const levels: FibLevel[] = FIB_RATIOS.map(([ratio, r]) => {
-        const price = to.price - (to.price - from.price) * r;
-        const confluence = swings.filter(s => Math.abs(s.price - price) <= tolerance && s.time < to.time).length;
-        return { ratio, price, confluence };
-    });
+    const confluenceAt = (price: number): number =>
+        swings.filter(s => Math.abs(s.price - price) <= tolerance && s.time < to.time).length;
+    const levels: FibLevel[] = [
+        // Retracements: level = end − r × (end − start) — the standard
+        // give-back-from-the-extreme convention, shared with the chart's
+        // fib drawings and calculateFibonacciLevels.
+        ...FIB_RATIOS.map(([ratio, r]) => {
+            const price = to.price - (to.price - from.price) * r;
+            return { ratio, price, confluence: confluenceAt(price) };
+        }),
+        // Extensions: level = start + r × (end − start) — the leg projected
+        // past its end.
+        ...FIB_EXTENSION_RATIOS.map(([ratio, r]) => {
+            const price = from.price + (to.price - from.price) * r;
+            return { ratio, price, confluence: confluenceAt(price) };
+        }),
+    ];
     return { from, to, direction: bullish ? 'bullish' : 'bearish', levels, toleranceAtr };
 };

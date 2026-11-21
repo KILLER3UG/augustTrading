@@ -226,9 +226,12 @@ class CommittedDrawingsRenderer implements IPrimitivePaneRenderer {
                         const right = Math.max(a.x, b.x);
                         ctx.font = `${Math.round(9 * fontScale)}px ui-monospace, SFMono-Regular, Menlo, monospace`;
                         for (const ratio of FIB_RATIOS) {
-                            const lvlPrice = interpolateScalePrice(da.p, db.p, ratio, this.priceScaleMode);
+                            // STANDARD convention (shared with the evaluated
+                            // fibLevels): the ratio measures the give-back from
+                            // the swing END (db) toward the START (da).
+                            const lvlPrice = interpolateScalePrice(db.p, da.p, ratio, this.priceScaleMode);
                             const yFromPrice = lvlPrice !== null ? this.priceToCoord(lvlPrice) : null;
-                            const y = yFromPrice !== null ? yFromPrice : (a.y + (b.y - a.y) * ratio);
+                            const y = yFromPrice !== null ? yFromPrice : (b.y + (a.y - b.y) * ratio);
                             const isEdge = ratio === 0 || ratio === 1;
                             strokePolyline(
                                 [{ x: left, y }, { x: right, y }],
