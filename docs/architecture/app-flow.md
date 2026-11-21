@@ -53,7 +53,7 @@ and [learning-loop.md](learning-loop.md) (the memory loop in depth).
 | Writer | chat transcript | user drawings | AI drawings | profileMemory | notebook | harness settings | Risk Constitution | watches |
 |---|---|---|---|---|---|---|---|---|
 | Trader (composer/cards) | ✓ | ✓ | — | via tools ✓ | via tools ✓ | Settings only ✓ | Settings only ✓ | via tools ✓ |
-| Interactive model turn | streams ✓ | via `draw_on_chart` ✓ | ✓ | via `memory_add` ✓ | ✓ | propose-only (card) | **never** | via `watch_price` ✓ |
+| Interactive model turn | streams ✓ | **never writes user shapes** — `draw_on_chart`/`mark_trade_levels` add to the `origin:'agent'` (model) bucket only; user shapes leave the canvas solely via an explicit trader ask (`clear_chart_drawings` scope:"all") | ✓ | via `memory_add` ✓ | ✓ | propose-only (card) | **never** | via `watch_price` ✓ |
 | sentinel / maintenance loops | notice queue only (idle drain) | **never** | expire/cap only | via gated promotion ✓ | via `writeSkillFile` ✓ | **never** | **never** | re-arm via notes only |
 | adversaryReview | card patch only | **never** | **never** | **never** | **never** | **never** | **never** | arm-on-clearance only |
 | post-mortem bridge | — | — | — | candidate pool → gated promotion | refusal rows | **never** | **never** | — |

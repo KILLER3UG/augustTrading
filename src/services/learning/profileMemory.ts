@@ -207,6 +207,12 @@ const serializeFactEntry = (e: ProfileMemoryEntry): string => {
     if (e.sourceTurnId) fm.push(`turn: ${escLine(e.sourceTurnId)}`);
     if (e.deletedAt) fm.push(`deleted: ${e.deletedAt}`);
     if (e.deletedBy) fm.push(`deletedBy: ${e.deletedBy}`);
+    // BI-TEMPORAL: the validity window survives the markdown round-trip, so
+    // an invalidated row stays auditable after a reload.
+    if (e.validFrom) fm.push(`validFrom: ${e.validFrom}`);
+    if (e.invalidatedAt) fm.push(`invalidatedAt: ${e.invalidatedAt}`);
+    if (e.supersededBy) fm.push(`supersededBy: ${escLine(e.supersededBy)}`);
+    if (e.invalidatedBy) fm.push(`invalidatedBy: ${e.invalidatedBy}`);
     if (e.derivedFrom?.length) fm.push(`derived: ${e.derivedFrom.map(escLine).join(', ')}`);
     if (e.previous) {
         // "now X, previously Y" — JSON-encoded single lines so the old body
@@ -273,6 +279,11 @@ const parseFactEntry = (content: string): ProfileMemoryEntry | null => {
         ...(meta.turn ? { sourceTurnId: meta.turn } : {}),
         ...(meta.deleted ? { deletedAt: meta.deleted } : {}),
         ...(meta.deletedBy === 'trader' || meta.deletedBy === 'model' ? { deletedBy: meta.deletedBy } : {}),
+        ...(meta.validFrom ? { validFrom: meta.validFrom } : {}),
+        ...(meta.invalidatedAt ? { invalidatedAt: meta.invalidatedAt } : {}),
+        ...(meta.supersededBy ? { supersededBy: meta.supersededBy } : {}),
+        ...(meta.invalidatedBy === 'trader' || meta.invalidatedBy === 'model' || meta.invalidatedBy === 'consolidation'
+            ? { invalidatedBy: meta.invalidatedBy } : {}),
         ...(meta.derived ? { derivedFrom: meta.derived.split(',').map(s => s.trim()).filter(Boolean) } : {}),
         ...(previous ? { previous } : {}),
     };

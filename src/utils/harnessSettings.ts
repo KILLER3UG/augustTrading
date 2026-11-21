@@ -128,6 +128,12 @@ export const getHarnessSettings = (): HarnessSettings => {
         selfModificationMode: stored.selfModificationMode === 'config'
             ? stored.selfModificationMode
             : 'off',
+        // The trader's Risk Constitution rides the frozen session prefix;
+        // length-capped here at the STORE so one oversized paste cannot bloat
+        // every future prefix regardless of what the editor sends.
+        riskConstitution: typeof stored.riskConstitution === 'string'
+            ? stored.riskConstitution.slice(0, 1200)
+            : undefined,
     };
 };
 

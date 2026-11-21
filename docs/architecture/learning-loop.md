@@ -148,8 +148,14 @@ evaluation consumers are removed; the retained telemetry does not certify a skil
 `src/services/learning/MemoryReviewService.ts` › `runNotebookReview`. That model review has its
 own index-change/cooldown gate and writes human-facing, retrieval-disabled
 `profile/suggestions.md`. Hygiene also logs size pressure; it does not prune, merge or demote
-skills. Its retired lifecycle counters are deleted, not zeroed. No scheduled pass creates or
-revises skill procedures.
+skills. Its retired lifecycle counters are deleted, not zeroed. Skill PROCEDURE bodies
+are still written by exactly one pen — `src/services/learning/SkillFileService.ts`
+› `writeSkillFile` — and the Wave-2 autonomy loops add gated writers beside the
+heartbeat: the idle maintenance pass refines ONE skill per run through that same
+pen (duplicate scan + index/version gates still apply), the Skills bench flags
+losing calibration buckets as tighten/retire evidence (never an autonomous
+delete), and the post-mortem bridge writes memory candidates, never skill
+bodies. See [app-flow.md](../architecture/app-flow.md) § Memory & Skills lifecycle.
 
 ### 7. The indexed memory topology (Meta-RAM)
 
