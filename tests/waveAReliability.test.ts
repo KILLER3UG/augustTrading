@@ -175,19 +175,36 @@ describe('Wave A — F1 futures rate limiting', () => {
         });
     });
 
-    it('x-mbx-used-weight-1m is recorded and self-throttles issuance at ≥ 2,160 until the window rolls', async () => {
-        await withMockedFetch(() => ({ json: {}, headers: { 'x-mbx-used-weight-1m': '2300' } }), async () => {
-            __futuresRateLimitTestHooks.seedWeight(2300, 58_000); // window rolls in ~2s
+    it('x-mbx-used-weight-1m is recorded from responses', async () => {
+        await withMockedFetch(() => ({ json: {}, headers: { 'x-mbx-used-weight-1m': '500' } }), async () => {
+            await __futuresRateLimitTestHooks.fetch('/fapi/v1/ping');
+            assert.equal(__futuresRateLimitTestHooks.state().usedWeight, 500);
+        });
+    });
+
+    it('a hot gauge (≥ 2,160 in the CURRENT minute) fails fast while > 5s remain in the minute', async () => {
+        await withMockedFetch(() => ({ json: {} }), async () => {
+            __futuresRateLimitTestHooks.seedWeight(2300, 0); // reported THIS minute → hot
+            const msLeft = 60_000 - (Date.now() % 60_000);
+            if (msLeft > 5000) {
+                await assert.rejects(
+                    __futuresRateLimitTestHooks.fetch('/fapi/v1/ping'),
+                    /weight gauge 2300\/2400/,
+                );
+            } else {
+                // Within the 5s grace the gate waits out the minute and proceeds.
+                await __futuresRateLimitTestHooks.fetch('/fapi/v1/ping');
+            }
+            assert.equal(__futuresRateLimitTestHooks.state().usedWeight, 2300);
+        });
+    });
+
+    it('stale weight never throttles the next minute (rollover reset)', async () => {
+        await withMockedFetch(() => ({ json: {} }), async () => {
+            __futuresRateLimitTestHooks.seedWeight(2300, 1); // reported in the PREVIOUS minute
             const t0 = Date.now();
             await __futuresRateLimitTestHooks.fetch('/fapi/v1/ping');
-            const elapsed = Date.now() - t0;
-            assert.ok(elapsed >= 1500, `the gauge must hold issuance until the window rolls (elapsed ${elapsed}ms)`);
-            assert.equal(__futuresRateLimitTestHooks.state().usedWeight, 2300);
-            // Cool gauge → no throttle.
-            __futuresRateLimitTestHooks.seedWeight(100, 0);
-            const t1 = Date.now();
-            await __futuresRateLimitTestHooks.fetch('/fapi/v1/ping');
-            assert.ok(Date.now() - t1 < 1000, 'a cool gauge must not throttle');
+            assert.ok(Date.now() - t0 < 1000, 'a previous-minute gauge must not throttle');
         });
     });
 
@@ -308,18 +325,39 @@ describe('Wave A — 8b trade_math funding carry', () => {
 
     it('quotes fundingDragR over the expected hold + minutes to the next 8h settlement', async () => {
         await withMockedFetch(marketHandler(), async () => {
-            const raw = await runTradeMathTool('BTCUSDT', 'Long', 100, 99, [103], {
+            const raw = await runTradeMathTool('BTCUSDT', 'Long', 100, 95, [110], {
                 expectedHoldHours: 24, asofMs: NOW,
             });
             const parsed = JSON.parse(raw);
             assert.equal(parsed.values.funding.rate, 0.0001);
-            // long PAYS the positive rate: −0.0001 × 3 periods × (100/1 notional-per-risk) = −0.03R
-            assert.equal(parsed.values.funding.dragR, -0.03);
+            assert.equal(parsed.values.funding.settlements, 3);
+            assert.equal(parsed.values.funding.intervalSource, 'assumed 8h funding interval');
+            // 3 settlements × 0.0001 × (100/5 notional-per-risk) = +0.006R COST for a Long
+            assert.equal(parsed.values.funding.dragR, 0.006);
             assert.equal(parsed.values.funding.minutesToNextSettlement, 60);
-            assert.equal(parsed.values.funding.assumption, 'current 8h rate persists over the expected hold');
             const notes = parsed.data_quality.notes.join(' ');
-            assert.ok(notes.includes('funding drag -0.03R'), notes);
-            assert.ok(notes.includes('ASSUMPTION'), notes);
+            assert.ok(notes.includes('ASSUMED 8h interval'), notes);
+        });
+    });
+
+    it('a Short EARNS the positive rate (negative drag)', async () => {
+        await withMockedFetch(marketHandler(), async () => {
+            const raw = await runTradeMathTool('BTCUSDT', 'Short', 100, 105, [90], {
+                expectedHoldHours: 24, asofMs: NOW,
+            });
+            const parsed = JSON.parse(raw);
+            assert.equal(parsed.values.funding.dragR, -0.006);
+        });
+    });
+
+    it('an inverted plan quotes no funding block at all', async () => {
+        await withMockedFetch(marketHandler(), async () => {
+            const raw = await runTradeMathTool('BTCUSDT', 'Long', 100, 101, [99], {
+                expectedHoldHours: 24, asofMs: NOW,
+            });
+            const parsed = JSON.parse(raw);
+            assert.equal(parsed.values.gross.inverted, true);
+            assert.equal(parsed.values.funding, undefined);
         });
     });
 
@@ -395,6 +433,26 @@ describe('Wave A — F5 verifySymbolAgainstUniverse', () => {
             assert.ok(calls.every(u => !u.includes('/fapi/v1/klines')), 'no venue kline round-trip was spent');
         });
     });
+
+    it('normalizes "eth" and "eth/usdt" to ETHUSDT before validation', async () => {
+        await withMockedFetch(marketHandler(), async () => {
+            assert.equal(await verifySymbolAgainstUniverse('eth'), 'verified');
+            assert.equal(await verifySymbolAgainstUniverse('eth/usdt'), 'verified');
+            assert.equal(await verifySymbolAgainstUniverse('ETH/USDT'), 'verified');
+        });
+    });
+
+    it('get_order_book refuses an unknown symbol with zero depth calls', async () => {
+        await withMockedFetch(marketHandler(), async (calls) => {
+            const res = await executeDeskTool(
+                { id: 'ob1', name: 'get_order_book', arguments: { symbol: 'FAKECOINUSDT' } },
+                { allowedTools: 'all' },
+            );
+            assert.equal(res.ok, false);
+            assert.ok(res.content.includes('unknown symbol "FAKECOINUSDT"'), res.content);
+            assert.equal(calls.filter(u => u.includes('/fapi/v1/depth')).length, 0, 'zero venue depth HTTP calls');
+        });
+    });
 });
 
 // ─── Fibonacci conventions ──────────────────────────────────────────────────
@@ -420,6 +478,9 @@ describe('Wave A — Fibonacci conventions', () => {
         assert.equal(L[1.272], 227.2, '1.272 extension');
         assert.equal(L[1.618], 261.8, '1.618 extension');
         assert.equal(L[2], 300, '2.0 extension');
+        (ev.fibLevels ?? []).forEach(f => {
+            assert.equal(f.kind, f.ratio > 1 ? 'extension' : 'retracement', `ratio ${f.ratio} must be labeled`);
+        });
     });
 
     it('drawing fib on a down-swing 200→100 mirrors correctly (no inverted 38.2/61.8)', () => {
@@ -432,7 +493,20 @@ describe('Wave A — Fibonacci conventions', () => {
         assert.equal(L[0.618], 161.8);
         assert.equal(L[0.705], 170.5);
         assert.equal(L[1.272], 72.8);
-        assert.equal(L[2], 0);
+        assert.equal(L[2], undefined, '2.0 on a 200→100 leg lands exactly at 0 — omitted');
+        (ev.fibLevels ?? []).forEach(f => assert.ok(f.price > 0, 'no non-positive fib price is ever emitted'));
+    });
+
+    it('drawing fib on a deep down-swing 200→80 omits every non-positive extension', () => {
+        const ev = evaluateDrawingAtNow(fibDrawing({ t: 0, p: 200 }, { t: 11 * 3600, p: 80 }), {
+            symbol: 'BTCUSDT', activeTf: '1h', candles: mkCandles(12), markPrice: 140,
+            priceScaleMode: 'normal', atr14: 2, tickSize: 0, nowMs: 13 * 3600 * 1000,
+        });
+        const L = Object.fromEntries((ev.fibLevels ?? []).map(f => [f.ratio, f.price]));
+        assert.equal(L[0.382], 125.84, 'retracements stay inside the leg (80 + 0.382×120)');
+        assert.equal(L[2], undefined, '2.0 extension at −160 is omitted');
+        assert.equal(L[1.618], 5.84, '1.618 extension at +5.84 is kept (still positive)');
+        (ev.fibLevels ?? []).forEach(f => assert.ok(f.price > 0, `ratio ${f.ratio} emitted ${f.price}`));
     });
 
     it('drawing fib 0.382 parity with calculateFibonacciLevels on the same swing', () => {
@@ -485,15 +559,18 @@ describe('Wave A — 8a order-book slippage & microprice', () => {
     const asks = [{ price: 100, qty: 1 }, { price: 101, qty: 2 }, { price: 102, qty: 4 }];
     const bids = [{ price: 99, qty: 2 }, { price: 98, qty: 3 }];
 
-    it('estimateBookSlippage walks the asks for a buy (vwap, bps, worst level, levels)', () => {
+    it('estimateBookSlippage walks the asks for a buy (vwap, mid reference, impact, levels)', () => {
         const r = estimateBookSlippage(bids, asks, 'buy', 500);
         assert.equal(r.available, true);
         assert.equal(r.levelsConsumed, 3);
         assert.equal(r.worstFillPrice, 102);
         assert.equal(r.remainingUsd, 0);
+        assert.equal(r.referenceSource, 'mid');
+        assert.ok(near(r.referencePrice ?? 0, 99.5, 1e-9), `ref=${r.referencePrice}`);
         // 500 / (1 + 2 + 198/102) = 101.190476…
         assert.ok(near(r.vwapFillPrice ?? 0, 500 / (1 + 2 + 198 / 102), 1e-6), `vwap=${r.vwapFillPrice}`);
-        assert.ok(near(r.slippageBps ?? 0, ((500 / (1 + 2 + 198 / 102)) - 100) / 100 * 10_000, 0.01), `bps=${r.slippageBps}`);
+        assert.ok(near(r.impactVsTopBps ?? 0, 119.05, 0.01), `impact=${r.impactVsTopBps}`);
+        assert.ok(near(r.slippageVsMidBps ?? 0, 169.9, 0.01), `vsMid=${r.slippageVsMidBps}`);
     });
 
     it('a thin book refuses with the named shortfall', () => {
@@ -503,10 +580,12 @@ describe('Wave A — 8a order-book slippage & microprice', () => {
         assert.ok(r.remainingUsd > 0);
     });
 
-    it('a sell walks the bids and quotes negative bps (worse = lower)', () => {
+    it('a sell walks the bids and its impact is a POSITIVE cost', () => {
         const r = estimateBookSlippage(bids, asks, 'sell', 300);
         assert.equal(r.available, true);
-        assert.ok((r.slippageBps ?? 0) < 0, `bps=${r.slippageBps}`);
+        assert.ok((r.impactVsTopBps ?? 0) > 0, `impact=${r.impactVsTopBps}`);
+        assert.ok(near(r.impactVsTopBps ?? 0, 34.57, 0.01), `impact=${r.impactVsTopBps}`);
+        assert.ok((r.slippageVsMidBps ?? 0) < 0, `vsMid=${r.slippageVsMidBps} (signed: below mid)`);
         assert.equal(r.worstFillPrice, 98);
     });
 
@@ -525,7 +604,8 @@ describe('Wave A — 8a order-book slippage & microprice', () => {
             const impact = estimateBookSlippage(book.bids, book.asks, 'buy', 150);
             assert.equal(impact.available, true);
             assert.equal(impact.levelsConsumed, 1);
-            assert.equal(impact.slippageBps, 0);
+            assert.equal(impact.impactVsTopBps, 0);
+            assert.ok((impact.slippageVsMidBps ?? 0) > 0);
             const thin = estimateBookSlippage(book.bids, book.asks, 'buy', 10_000);
             assert.equal(thin.available, false, 'thin-book refusal');
         });

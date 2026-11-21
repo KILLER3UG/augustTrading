@@ -4371,6 +4371,86 @@ const checkSkillWrites = async () => {
         && Math.abs(fib618.price - 10.854) < 1e-9 && fib618.confluence === 1,
         fib && JSON.stringify(fib618));
 
+    // ─── Wave A hardening: 4-way fib parity, microprice, L2 slippage, funding ──
+    const geo = loadModule('src/services/trade/chartGeometry');
+    const ta = loadModule('src/services/analysis/TechnicalAnalysisService');
+    const md = loadModule('src/services/analysis/MarketDataService');
+    const tmCore = loadModule('src/services/market/tradeMathCore');
+    const fibCandles = [];
+    for (let i = 0; i < 12; i++) fibCandles.push(mk(i * 3_600_000, 100 + i, 101 + i, 99 + i, 100.5 + i, 10));
+    const fibEval = (p1, p2) => geo.evaluateDrawingAtNow({
+        id: 'fib-pin', shortId: '#D1', kind: 'fib', origin: 'agent', createdAt: 0, version: 1,
+        color: '#4d9fff', createdOnTf: '1h', points: [{ t: 0, p: p1 }, { t: 11 * 3_600_000, p: p2 }],
+    }, {
+        symbol: 'BTCUSDT', activeTf: '1h', candles: fibCandles, markPrice: (p1 + p2) / 2,
+        priceScaleMode: 'normal', atr14: 2, tickSize: 0, nowMs: 13 * 3_600_000,
+    });
+    const fibPrices = (p1, p2) => Object.fromEntries((fibEval(p1, p2).fibLevels ?? []).map(f => [f.ratio, f.price]));
+    const upFib = fibPrices(100, 200);
+    ok('fib: the drawing tool prices an up-swing 100→200 at the STANDARD ratios (0.382=161.8, 0.618=138.2, 0.705=129.5)',
+        Math.abs(upFib[0.382] - 161.8) < 1e-9 && Math.abs(upFib[0.618] - 138.2) < 1e-9 && Math.abs(upFib[0.705] - 129.5) < 1e-9,
+        JSON.stringify(upFib));
+    ok('fib: drawing extensions are SIGNED and labeled (1.272=227.2, 1.618=261.8, 2=300 on the up-leg; kind=extension)',
+        Math.abs(upFib[1.272] - 227.2) < 1e-9 && Math.abs(upFib[1.618] - 261.8) < 1e-9 && Math.abs(upFib[2] - 300) < 1e-9
+        && (fibEval(100, 200).fibLevels ?? []).every(f => f.kind === (f.ratio > 1 ? 'extension' : 'retracement')));
+    const downFib = fibPrices(200, 100);
+    ok('fib: a down-leg 200→100 extends DOWNWARD (1.272=72.8, 1.618=38.2) with mirrored retracements (0.382=138.2, 0.618=161.8)',
+        Math.abs(downFib[0.382] - 138.2) < 1e-9 && Math.abs(downFib[0.618] - 161.8) < 1e-9
+        && Math.abs(downFib[1.272] - 72.8) < 1e-9 && Math.abs(downFib[1.618] - 38.2) < 1e-9,
+        JSON.stringify(downFib));
+    const deepFib = fibPrices(200, 80);
+    ok('fib: a deep leg 200→80 omits the non-positive 2.0 extension (−160) and emits only positive prices',
+        deepFib[2] === undefined && Math.abs(deepFib[1.272] - 47.36) < 1e-9 && Math.abs(deepFib[1.618] - 5.84) < 1e-9
+        && Object.values(deepFib).every(v => v > 0) && Math.abs(deepFib[0.382] - 125.84) < 1e-9,
+        JSON.stringify(deepFib));
+    const parityTape = [];
+    for (let i = 0; i < 50; i++) {
+        const close = 101 + 2 * i;
+        parityTape.push(mk(i * 3_600_000, close - 1, i === 49 ? 200 : close + 1, i === 0 ? 100 : close - 2, close, 10));
+    }
+    const cfl = ta.calculateFibonacciLevels(parityTape);
+    const cfl382 = cfl.levels.find(l => l.ratio === '0.382');
+    const cflExt = cfl.levels.find(l => l.ratio === '1.272');
+    ok('fib: calculateFibonacciLevels agrees with the drawing tool on the same 100→200 swing (0.382=161.8 both ways)',
+        cfl.trend === 'up' && cfl382 !== undefined && Math.abs(cfl382.price - upFib[0.382]) < 1e-9,
+        cfl382 && JSON.stringify(cfl382));
+    ok('fib: calculateFibonacciLevels carries the OTE + labeled extensions (1.272 ext = 227.2)',
+        cfl.levels.some(l => l.ratio === '0.705' && l.kind === 'retracement')
+        && cflExt !== undefined && cflExt.kind === 'extension' && Math.abs(cflExt.price - 227.2) < 1e-9);
+    ok('fib: activeSwingFib levels carry kind labels and its extensions project from the leg start',
+        fib !== null && fib.levels.every(l => l.kind === 'retracement' || l.kind === 'extension')
+        && fib.levels.filter(l => l.kind === 'extension').every(l => Math.abs(l.price - (fib.from.price + Number(l.ratio) * (fib.to.price - fib.from.price))) < 1e-9));
+
+    // Microprice + L2 slippage — the formulas, pinned.
+    ok('order book: microprice = (P_b·Q_a + P_a·Q_b)/(Q_b+Q_a) — a heavy bid pulls the mid UP (bid 100×90 vs ask 101×10 → 100.9)',
+        Math.abs(md.computeMicroprice(100, 101, 90, 10) - 100.9) < 1e-9
+        && md.computeMicroprice(100, 101, 0, 0) === null);
+    const slipBids = [{ price: 99, qty: 2 }, { price: 98, qty: 3 }];
+    const slipAsks = [{ price: 100, qty: 1 }, { price: 101, qty: 2 }, { price: 102, qty: 4 }];
+    const slipBuy = md.estimateBookSlippage(slipBids, slipAsks, 'buy', 500);
+    const slipSell = md.estimateBookSlippage(slipBids, slipAsks, 'sell', 300);
+    const slipThin = md.estimateBookSlippage(slipBids, slipAsks, 'buy', 10_000);
+    ok('order book: a $500 buy walks 3 ask levels to a 101.190476 VWAP — impact 119.05 bps vs the top, 169.9 bps vs the MID reference',
+        slipBuy.available === true && Math.abs(slipBuy.vwapFillPrice - 500 / (1 + 2 + 198 / 102)) < 1e-6
+        && Math.abs(slipBuy.impactVsTopBps - 119.05) < 0.01 && Math.abs(slipBuy.slippageVsMidBps - 169.9) < 0.01
+        && slipBuy.referenceSource === 'mid' && Math.abs(slipBuy.referencePrice - 99.5) < 1e-9,
+        JSON.stringify(slipBuy));
+    ok('order book: a sell\'s impact is a POSITIVE cost too (34.57 bps vs its top bid), signed vs-mid below the mid',
+        slipSell.available === true && slipSell.impactVsTopBps > 0
+        && Math.abs(slipSell.impactVsTopBps - 34.57) < 0.01 && slipSell.slippageVsMidBps < 0,
+        JSON.stringify(slipSell));
+    ok('order book: a notional the book cannot absorb is REFUSED with the shortfall named',
+        slipThin.available === false && slipThin.reason.includes('depth insufficient') && slipThin.remainingUsd > 0);
+
+    // Funding carry — dragR = sign × rate × settlements × (entry / |entry − stop|).
+    ok('funding: a Long PAYS the positive rate — 3 settlements × 0.0001 × (100/5) = +0.006R of cost',
+        tmCore.computeFundingDrag({ direction: 'Long', entry: 100, stopLoss: 95, fundingRate: 0.0001, settlements: 3 }) === 0.006);
+    ok('funding: a Short EARNS it — −0.006R',
+        tmCore.computeFundingDrag({ direction: 'Short', entry: 100, stopLoss: 105, fundingRate: 0.0001, settlements: 3 }) === -0.006);
+    ok('funding: zero settlements or a degenerate stop quotes 0, never NaN',
+        tmCore.computeFundingDrag({ direction: 'Long', entry: 100, stopLoss: 100, fundingRate: 0.0001, settlements: 3 }) === 0
+        && tmCore.computeFundingDrag({ direction: 'Long', entry: 100, stopLoss: 95, fundingRate: 0.0001, settlements: 0 }) === 0);
+
     // imbalanceCore — a bullish FVG by construction: a.high=100 < c.low=102,
     // displacement candle body 3×ATR. Fill depth is measured from later bars.
     // Five overlapping fillers lead so the tape clears the ≥10-candle floor
