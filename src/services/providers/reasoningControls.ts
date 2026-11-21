@@ -369,8 +369,8 @@ export const buildReasoningPatch = (
         const value = effort === 'off' ? 'minimal' : effort === 'max' ? 'high' : (effort as 'low' | 'medium' | 'high');
         if (effort !== 'auto') {
             return {
-                patch: { reasoning: { effort: value } },
-                audit: { route: 'responses-effort', effort, applied: true, reason: `reasoning.effort=${value}` },
+                patch: { reasoning: effort === 'off' ? { effort: value } : { effort: value, summary: 'auto' } },
+                audit: { route: 'responses-effort', effort, applied: true, reason: effort === 'off' ? `reasoning.effort=${value}` : `reasoning.effort=${value}, summary=auto` },
             };
         }
         return { patch: {}, audit: { route: 'none', effort, applied: false, reason: 'responses route: effort=auto sends no knob' } };

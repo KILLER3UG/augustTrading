@@ -86,6 +86,21 @@ function createSseParser(apiFormat) {
         const delta = choice.delta || {};
         if (typeof delta.content === 'string' && delta.content.length > 0) {
             events.push({ type: 'text', delta: delta.content });
+        } else if (Array.isArray(delta.content)) {
+            for (const part of delta.content) {
+                if (typeof part === 'string' && part.length > 0) {
+                    events.push({ type: 'text', delta: part });
+                    continue;
+                }
+                if (!part || typeof part !== 'object') continue;
+                const type = String(part.type || '');
+                if (type === 'thinking' || type === 'reason' || type === 'reasoning' || part.thought === true) {
+                    const inner = typeof part.thinking === 'string' ? part.thinking : (typeof part.text === 'string' ? part.text : '');
+                    if (inner.length > 0) events.push({ type: 'reasoning', delta: inner });
+                } else if (typeof part.text === 'string' && part.text.length > 0) {
+                    events.push({ type: 'text', delta: part.text });
+                }
+            }
         }
         // Reasoning tokens ride several field spellings across OpenAI-compatible
         // servers (B.AI/vLLM/DeepSeek/OpenRouter/KiloCode); take whichever carries them.
@@ -218,6 +233,48 @@ function createSseParser(apiFormat) {
         if (res.done) out.done = true;
     };
 
+    const processLine = (rawLine, out) => {
+        const line = rawLine.replace(/\r$/, '');
+        if (line === '') { dispatch(out); return; } // blank line ⇒ event boundary
+        if (line.startsWith('data:')) {
+            // Per spec only ONE leading space is stripped from the value.
+            dataLines.push(line.slice(5).replace(/^ /, ''));
+            const joined = dataLines.join('\n').trim();
+            if (joined === '[DONE]') {
+                dataLines = [];
+                sawData = true;
+                const res = handleData('[DONE]');
+                out.events.push(...res.events);
+                if (res.done) out.done = true;
+                return;
+            }
+            if (joined.startsWith('{') || joined.startsWith('[')) {
+                try {
+                    JSON.parse(joined);
+                    dataLines = [];
+                    sawData = true;
+                    const res = handleData(joined);
+                    out.events.push(...res.events);
+                    if (res.done) out.done = true;
+                } catch {
+                    // Multi-line JSON frame; wait for subsequent data: or blank line.
+                }
+            }
+            return;
+        }
+        if (dataLines.length === 0 && line.trimStart().startsWith('{')) {
+            try {
+                JSON.parse(line);
+                sawData = true;
+                const res = handleData(line);
+                out.events.push(...res.events);
+                if (res.done) out.done = true;
+            } catch {
+                // Ignore incomplete/non-JSON non-data line.
+            }
+        }
+    };
+
     /**
      * Feed decoded text as it lands. Returns the delta events parsed so far
      * and whether the stream signalled completion.
@@ -225,15 +282,12 @@ function createSseParser(apiFormat) {
      */
     const push = (chunkText) => {
         const out = { events: [], done: false };
-        lineBuf += chunkText;
+        lineBuf = (lineBuf + chunkText).replace(/\r\n/g, '\n');
         let nl;
         while ((nl = lineBuf.indexOf('\n')) !== -1) {
-            const line = lineBuf.slice(0, nl).replace(/\r$/, '');
+            const line = lineBuf.slice(0, nl);
             lineBuf = lineBuf.slice(nl + 1);
-            if (line === '') { dispatch(out); continue; } // blank line ⇒ event boundary
-            if (!line.startsWith('data:')) continue; // event:/id:/retry:/comments
-            // Per spec only ONE leading space is stripped from the value.
-            dataLines.push(line.slice(5).replace(/^ /, ''));
+            processLine(line, out);
         }
         return out;
     };
@@ -242,12 +296,12 @@ function createSseParser(apiFormat) {
      *  the accumulated tool calls (arguments JSON parsed best-effort) and
      *  usage. */
     const finish = () => {
-        if (lineBuf.length > 0) {
-            const line = lineBuf.replace(/\r$/, '');
-            lineBuf = '';
-            if (line.startsWith('data:')) dataLines.push(line.slice(5).replace(/^ /, ''));
-        }
         const pending = { events: [], done: false };
+        if (lineBuf.length > 0) {
+            const line = lineBuf;
+            lineBuf = '';
+            processLine(line, pending);
+        }
         dispatch(pending); // providers may omit the final blank line
         const events = pending.events;
         const done = pending.done;

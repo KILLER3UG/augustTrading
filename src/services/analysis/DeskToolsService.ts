@@ -6903,6 +6903,7 @@ const runStreamingTurn = async (
     options: import('../providers/GenericProviderService').ChatRequestOptions,
     onTextDelta?: (delta: string) => void,
     onToken?: (delta: string) => void,
+    onStreamReset?: () => void,
 ): Promise<import('../providers/GenericProviderService').ChatTurnResult> => {
     let text = '';
     let reasoning = '';
@@ -6919,6 +6920,15 @@ const runStreamingTurn = async (
         onReasoning: chunk => {
             reasoning += chunk;
             prevReasoning?.(chunk);
+        },
+        onOrphanThinkClose: () => {
+            if (text) {
+                reasoning += text;
+                prevReasoning?.(text);
+                text = '';
+            }
+            suppressTextProtocolMarkup = false;
+            onStreamReset?.();
         },
         onFinishReason: reason => {
             finishReason = reason;
@@ -7316,7 +7326,7 @@ export async function runDeskToolLoop(params: {
         const outboundMessages = carry.messages;
         const turnOptions = { ...roundOptions, maxTokens: outbound.maxTokens };
         const turn = streamTurn
-            ? await runStreamingTurn(streamTurn, config, outboundMessages, turnOptions, onTextDelta, onToken)
+            ? await runStreamingTurn(streamTurn, config, outboundMessages, turnOptions, onTextDelta, onToken, onStreamReset)
             : await sendTurn(config, outboundMessages, turnOptions);
         reasoning = [reasoning, turn.reasoning].filter(Boolean).join('\n');
         finalText = turn.text || '';

@@ -20,7 +20,11 @@ const EMPHASIS_PAIRS: Array<[RegExp, string]> = [
  *  orphan `**`/`__` runs — common when a stream is cut mid-emphasis —
  *  are dropped after the paired pass. */
 export const stripTraceMarkers = (text: string): string => {
-    let out = text.replace(/```[a-z]*/gi, '');
+    let out = text
+        .replace(/<\/?(?:think|thinking|thought|reasoning|REASONING_SCRATCHPAD|redacted_thinking)\b[^>]*>/gi, '')
+        .replace(/<\|(?:begin_of_thought|end_of_thought|\/?think)\|>/gi, '')
+        .replace(/◁\/?think▷/gi, '')
+        .replace(/```[a-z]*/gi, '');
     for (const [re, to] of EMPHASIS_PAIRS) out = out.replace(re, to);
     return out
         .replace(/^\s{0,3}#{1,6}\s+/gm, '')

@@ -10,7 +10,7 @@ const PLAN_RE = /FINAL TRADE PLAN|\b(?:Direction|Stop Loss|Take Profit(?:\s*[123
 
 const SCRATCHPAD_START_RE = /(?:^|\n)\s*(?:here(?:['’]s| is)\s+(?:my\s+)?(?:a\s+)?)?thinking\s+process\s*:/i;
 const SCRATCHPAD_META_RE = /Analyze User Input\s*:|Deconstruct (?:the )?Context|Current Round\s*:|YOUR TASK\b|The user (?:is asking|wants|asked)\b/i;
-const THINK_TAG_RE = /<(?:think|thinking|thought|reasoning|REASONING_SCRATCHPAD)|<\|begin_of_thought\||\[(?:THINKING|REASONING)\]|◁think▷/i;
+const THINK_TAG_RE = /<(?:think|thinking|thought|reasoning|REASONING_SCRATCHPAD)|<\|(?:begin_of_thought|think)\||\[(?:THINKING|REASONING)\]|◁think▷/i;
 const LET_ME_THINK_RE = /(?:^|\n)\s*(?:okay[,.]?\s+)?(?:so[,.]?\s+)?(?:let me think|let's think|thinking out loud|internal monologue|chain of thought|wait,\s+i\b)\b/i;
 const ANSWER_MARK_RE = /(?:^|\n)\s*(?:\*\*)?(?:answer|final(?:\s*output)?|response|conclusion|verdict|solution)(?:\*\*)?\s*[:.-]\s*/i;
 const META_PARA_RE = /^(?:Analyze User Input|Deconstruct|My State|Role\s*:|Current Round\s*:|YOUR TASK|Moderator's question|Here's a thinking|Let me think|The user (?:is asking|wants)|I need to (?:analyze|weigh|consider|answer|give|correct|state))/i;
@@ -30,10 +30,10 @@ const eq = (a: string, b: string): boolean => a.trim() === b.trim();
 const THINK_TAG_NAMES = 'think|thinking|thought|reasoning|REASONING_SCRATCHPAD|redacted_thinking';
 const THINK_BLOCK_RE = new RegExp(`<(${THINK_TAG_NAMES})\\b[^>]*>[\\s\\S]*?<\\/\\1>`, 'gi');
 const THINK_ORPHAN_RE = new RegExp(`<\\/?(?:${THINK_TAG_NAMES})\\b[^>]*>`, 'gi');
-const THINK_CLOSE_RE = new RegExp(`<\\/(?:${THINK_TAG_NAMES})>`, 'i');
+const THINK_CLOSE_RE = new RegExp(`<\\/(?:${THINK_TAG_NAMES})\\s*>`, 'i');
 const THINK_OPEN_RE = new RegExp(`<(${THINK_TAG_NAMES})\\b[^>]*>`, 'i');
 
-const SPECIAL_THINK_RE = /<\|begin_of_thought\|>([\s\S]*?)<\|end_of_thought\|>/gi;
+const SPECIAL_THINK_RE = /<\|(?:begin_of_thought|think)\|>([\s\S]*?)<\|(?:end_of_thought|\/think)\|>/gi;
 const SPECIAL_SOLUTION_RE = /<\|begin_of_solution\|>([\s\S]*?)<\|end_of_solution\|>/gi;
 const BRACKET_THINK_RE = /\[(?:THINKING|THINK|REASONING)\]([\s\S]*?)\[\/(?:THINKING|THINK|REASONING)\]/gi;
 const FENCE_THINK_RE = /```(?:thinking|thought|reasoning|scratchpad)\s*\n([\s\S]*?)```/gi;
@@ -341,8 +341,9 @@ export const splitThinkingFromOutput = (
 };
 
 const THINK_OPEN_CLOSE: Array<{ open: RegExp; close: RegExp }> = [
-    { open: /<(think|thinking|thought|reasoning|REASONING_SCRATCHPAD|redacted_thinking)\b[^>]*>/i, close: /<\/(?:think|thinking|thought|reasoning|REASONING_SCRATCHPAD|redacted_thinking)>/i },
+    { open: /<(think|thinking|thought|reasoning|REASONING_SCRATCHPAD|redacted_thinking)\b[^>]*>/i, close: /<\/(?:think|thinking|thought|reasoning|REASONING_SCRATCHPAD|redacted_thinking)\s*>/i },
     { open: /<\|begin_of_thought\|>/i, close: /<\|end_of_thought\|>/i },
+    { open: /<\|think\|>/i, close: /<\|\/think\|>/i },
     { open: /\[(?:THINKING|THINK|REASONING)\]/i, close: /\[\/(?:THINKING|THINK|REASONING)\]/i },
     { open: /◁think▷/i, close: /◁\/think▷/i },
 ];
@@ -356,8 +357,9 @@ const holdIncompleteTag = (buf: string): string => {
     const tail = buf.slice(start);
     if (
         /^<\/?[a-zA-Z|/_]*$/.test(tail)
+        || /^<\/?(?:think|thinking|thought|reasoning|REASONING_SCRATCHPAD|redacted_thinking)\b[^>]{0,64}$/i.test(tail)
         || /^\[[A-Za-z/]*$/.test(tail)
-        || /^<\|[a-z_]*$/.test(tail)
+        || /^<\|\/?[a-z_]*$/.test(tail)
         || /^◁\/?[a-zA-Z]*$/.test(tail)
     ) return tail;
     return '';
@@ -365,20 +367,23 @@ const holdIncompleteTag = (buf: string): string => {
 
 /**
  * Live content gate: route think-tag bodies to the reasoning channel and
- * only yield the public answer. Incomplete tags stay buffered across chunks.
+ * only yield the public answer. Incomplete tags stay buffered across chunks,
+ * and an orphan closing tag (prefilled prompt template) promotes prior text
+ * into reasoning.
  */
 export const createThinkingStreamGate = (): {
-    push: (chunk: string) => { visible: string; thinking: string };
+    push: (chunk: string) => { visible: string; thinking: string; orphanClose?: boolean };
     flush: () => { visible: string; thinking: string };
 } => {
     let buf = '';
     let closeRe: RegExp | null = null;
     return {
-        push(chunk: string): { visible: string; thinking: string } {
+        push(chunk: string): { visible: string; thinking: string; orphanClose?: boolean } {
             if (!chunk) return { visible: '', thinking: '' };
             buf += chunk;
             let visible = '';
             let thinking = '';
+            let orphanClose = false;
             for (;;) {
                 if (closeRe) {
                     const match = buf.match(closeRe);
@@ -402,6 +407,20 @@ export const createThinkingStreamGate = (): {
                     }
                 }
                 if (!found) {
+                    let closeFound: { index: number; len: number } | null = null;
+                    for (const pair of THINK_OPEN_CLOSE) {
+                        pair.close.lastIndex = 0;
+                        const match = pair.close.exec(buf);
+                        if (match && match.index !== undefined && (!closeFound || match.index < closeFound.index)) {
+                            closeFound = { index: match.index, len: match[0].length };
+                        }
+                    }
+                    if (closeFound) {
+                        thinking += buf.slice(0, closeFound.index);
+                        buf = buf.slice(closeFound.index + closeFound.len);
+                        orphanClose = true;
+                        continue;
+                    }
                     const hold = holdIncompleteTag(buf);
                     visible += buf.slice(0, buf.length - hold.length);
                     buf = hold;
@@ -411,7 +430,7 @@ export const createThinkingStreamGate = (): {
                 buf = buf.slice(found.index + found.len);
                 closeRe = found.close;
             }
-            return { visible, thinking };
+            return orphanClose ? { visible, thinking, orphanClose: true } : { visible, thinking };
         },
         flush(): { visible: string; thinking: string } {
             const leftover = buf;

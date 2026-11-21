@@ -149,6 +149,8 @@ export interface ChatRequestOptions {
     /** Abort signal for cancellation. */
     signal?: AbortSignal;
     onReasoning?: (reasoning: string) => void;
+    /** Fired when a prefilled template emits a closing `</think>` with no opening tag. */
+    onOrphanThinkClose?: () => void;
     onUsage?: (usage: TokenUsage) => void;
     /** Why the model stopped, normalized across all four wire formats. Fires
      *  once per completed call. 'length' means the answer was cut off, which a
@@ -470,29 +472,44 @@ export const readWireBody = (
 ): { text: string; reasoning: string } => {
     const stated = statedReasoning || '';
     if (format === 'messages') {
-        const text = Array.isArray(data.content)
+        const rawText = Array.isArray(data.content)
             ? data.content.filter((block: any) => block?.type === 'text').map((block: any) => block.text).join('\n')
             : data.text || '';
-        return { text, reasoning: stated || extractMessagesThinking(data.content) };
+        const stripped = extractAndStripThinkBlocks(rawText);
+        const rawThinking = stated || extractMessagesThinking(data.content);
+        const reasoning = [rawThinking, stripped.leaked].filter(Boolean).join('\n\n');
+        return { text: stripped.visible, reasoning };
     }
     if (format === 'responses') {
-        return { text: data.output_text || '', reasoning: stated || extractResponsesReasoning(data.output) };
+        const stripped = extractAndStripThinkBlocks(data.output_text || '');
+        const rawThinking = stated || extractResponsesReasoning(data.output);
+        const reasoning = [rawThinking, stripped.leaked].filter(Boolean).join('\n\n');
+        return { text: stripped.visible, reasoning };
     }
     if (format === 'google') {
         const parsed = parseGeminiResponse(data);
-        return { text: parsed.text, reasoning: stated || parsed.reasoning };
+        const stripped = extractAndStripThinkBlocks(parsed.text);
+        const rawThinking = stated || parsed.reasoning;
+        const reasoning = [rawThinking, stripped.leaked].filter(Boolean).join('\n\n');
+        return { text: stripped.visible, reasoning };
     }
     // chat_completions: the proxy returns `reasoning` itself, so this only
     // matters when it did not — and the answer may be an array of parts, or
     // carry an inline think block in the string.
     const message = data.choices?.[0]?.message || {};
     const split = splitChatContent(message.content);
+    const nativeReasoning = stated
+        || extractReasoning(message.reasoning_content)
+        || extractReasoning(message.reasoning)
+        || extractReasoning(message.reasoning_text)
+        || extractReasoning(message.thinking)
+        || extractReasoning(message.thought)
+        || extractReasoning(message.reasoning_details);
     return {
         text: split.text,
-        reasoning: stated
-            || extractReasoning(message.reasoning_content)
-            || extractReasoning(message.reasoning)
-            || split.reasoning,
+        reasoning: nativeReasoning
+            ? [nativeReasoning, split.reasoning].filter(Boolean).join('\n\n')
+            : split.reasoning,
     };
 };
 
@@ -906,6 +923,7 @@ async function* chatCompletionsStream(
         const reasoning = deltaReasoning(delta);
         if (reasoning.length > 0) options?.onReasoning?.(reasoning);
         const gated = gate.push(deltaVisibleText(delta));
+        if (gated.orphanClose) options?.onOrphanThinkClose?.();
         if (gated.thinking.length > 0) options?.onReasoning?.(gated.thinking);
         if (gated.visible) yield gated.visible;
     }
@@ -1863,6 +1881,10 @@ async function* streamViaElectronBridge(
             return;
         }
         const gated = gate.push(chunk.delta);
+        if (gated.orphanClose) {
+            queue.length = 0;
+            options?.onOrphanThinkClose?.();
+        }
         if (gated.thinking.length > 0) options?.onReasoning?.(gated.thinking);
         if (gated.visible) queue.push(gated.visible);
         notify();
@@ -2132,36 +2154,24 @@ const reasoningPatchFor = (
     return Object.keys(patch).length > 0 ? patch : undefined;
 };
 
-/** Extract an SSE event's payload per the spec: an event may carry MULTIPLE
- *  `data:` lines (legal — some gateways split large JSON frames across them,
- *  losing tool-call/usage events entirely when only the first line is read,
- *  the exact bug this replaces). Collect every data line, strip one optional
- *  leading space per line, and join with '\n' before the caller JSON.parses.
- *  Returns null when the event carries no data lines. */
-const sseEventPayload = (event: string): string | null => {
-    const dataLines: string[] = [];
-    for (const line of event.split('\n')) {
-        if (line.startsWith('data:')) dataLines.push(line.slice(5).replace(/^ /, ''));
-    }
-    if (dataLines.length === 0) return null;
-    const joined = dataLines.join('\n').trim();
-    return joined || null;
-};
-
 export interface BrowserSseParsedBatch {
     reasoningDeltas: string[];
     textDeltas: string[];
+    orphanClose?: boolean;
     finishReason?: FinishReason;
     usagePayload?: unknown;
     error?: Error;
     done?: boolean;
 }
 
-/** Incremental multi-format SSE parser for the browser `/__provider_proxy` stream
- *  and unit tests. Supports `chat_completions`, Anthropic `messages`, OpenAI
- *  `responses`, and Google `google` while peeling chunk-split `<think>` tags. */
+/** Incremental multi-format SSE / NDJSON parser for the browser `/__provider_proxy`
+ *  stream and unit tests. Supports `chat_completions`, Anthropic `messages`,
+ *  OpenAI `responses`, and Google `google`, dispatching complete JSON frames on
+ *  single newlines as well as blank-line SSE boundaries while peeling chunk-split
+ *  `<think>` tags. */
 export const createBrowserSseParser = (apiFormat: ProviderConfig['apiFormat']) => {
-    let buffer = '';
+    let lineBuf = '';
+    let dataLines: string[] = [];
     const gate = createThinkingStreamGate();
     const toolBuf = new StreamToolCallBuffer();
     let droppedEvents = 0;
@@ -2187,6 +2197,7 @@ export const createBrowserSseParser = (apiFormat: ProviderConfig['apiFormat']) =
     const routeVisible = (rawText: string, batch: BrowserSseParsedBatch): void => {
         if (!rawText) return;
         const gated = gate.push(rawText);
+        if (gated.orphanClose) batch.orphanClose = true;
         if (gated.thinking.length > 0) batch.reasoningDeltas.push(gated.thinking);
         if (gated.visible.length > 0) batch.textDeltas.push(gated.visible);
     };
@@ -2275,8 +2286,10 @@ export const createBrowserSseParser = (apiFormat: ProviderConfig['apiFormat']) =
         routeVisible(deltaVisibleText(delta), batch);
     };
 
-    const consumeEvent = (rawEvent: string, batch: BrowserSseParsedBatch): void => {
-        const data = sseEventPayload(rawEvent);
+    const dispatchDataLines = (batch: BrowserSseParsedBatch): void => {
+        if (dataLines.length === 0) return;
+        const data = dataLines.join('\n').trim();
+        dataLines = [];
         if (!data) return;
         if (data === '[DONE]') {
             batch.done = true;
@@ -2293,28 +2306,65 @@ export const createBrowserSseParser = (apiFormat: ProviderConfig['apiFormat']) =
         handleChunk(chunk, batch);
     };
 
+    const processLine = (rawLine: string, batch: BrowserSseParsedBatch): void => {
+        const line = rawLine.replace(/\r$/, '');
+        if (line === '') {
+            dispatchDataLines(batch);
+            return;
+        }
+        if (line.startsWith('data:')) {
+            dataLines.push(line.slice(5).replace(/^ /, ''));
+            const joined = dataLines.join('\n').trim();
+            if (joined === '[DONE]') {
+                dataLines = [];
+                batch.done = true;
+                return;
+            }
+            if (joined.startsWith('{') || joined.startsWith('[')) {
+                try {
+                    const parsed = JSON.parse(joined);
+                    dataLines = [];
+                    handleChunk(parsed, batch);
+                } catch {
+                    // Multi-line JSON event; wait for remaining data: lines or blank line.
+                }
+            }
+            return;
+        }
+        if (dataLines.length === 0 && line.trimStart().startsWith('{')) {
+            try {
+                const parsed = JSON.parse(line);
+                handleChunk(parsed, batch);
+            } catch {
+                // Ignore incomplete/non-JSON non-data line.
+            }
+        }
+    };
+
     return {
         push(textChunk: string): BrowserSseParsedBatch {
             const batch: BrowserSseParsedBatch = { reasoningDeltas: [], textDeltas: [] };
             if (!textChunk) return batch;
-            buffer = (buffer + textChunk).replace(/\r\n/g, '\n');
-            let sep: number;
-            while ((sep = buffer.indexOf('\n\n')) >= 0) {
-                const event = buffer.slice(0, sep);
-                buffer = buffer.slice(sep + 2);
-                consumeEvent(event, batch);
+            lineBuf = (lineBuf + textChunk).replace(/\r\n/g, '\n');
+            let nl: number;
+            while ((nl = lineBuf.indexOf('\n')) >= 0) {
+                const line = lineBuf.slice(0, nl);
+                lineBuf = lineBuf.slice(nl + 1);
+                processLine(line, batch);
                 if (batch.error) return batch;
             }
             return batch;
         },
         flush(options?: Pick<ChatRequestOptions, 'onStreamToolCalls'>): BrowserSseParsedBatch {
             const batch: BrowserSseParsedBatch = { reasoningDeltas: [], textDeltas: [] };
-            if (buffer.trim()) {
-                const trailing = buffer;
-                buffer = '';
-                consumeEvent(trailing, batch);
+            if (lineBuf.length > 0) {
+                const trailingLine = lineBuf;
+                lineBuf = '';
+                processLine(trailingLine, batch);
                 if (batch.error) return batch;
             }
+            dispatchDataLines(batch);
+            if (batch.error) return batch;
             const flushed = gate.flush();
             if (flushed.thinking.length > 0) batch.reasoningDeltas.push(flushed.thinking);
             if (flushed.visible.length > 0) batch.textDeltas.push(flushed.visible);
@@ -2415,6 +2465,7 @@ async function* streamViaProxy(
             const batch = parser.push(decoder.decode(value, { stream: true }));
             if (batch.usagePayload) reportUsage(config, batch.usagePayload, options, messages);
             if (batch.finishReason) proxyFinish = batch.finishReason;
+            if (batch.orphanClose) options?.onOrphanThinkClose?.();
             for (const r of batch.reasoningDeltas) options?.onReasoning?.(r);
             for (const t of batch.textDeltas) yield t;
             if (batch.error) throw batch.error;
@@ -2422,6 +2473,7 @@ async function* streamViaProxy(
         const tailBatch = parser.flush(options);
         if (tailBatch.usagePayload) reportUsage(config, tailBatch.usagePayload, options, messages);
         if (tailBatch.finishReason) proxyFinish = tailBatch.finishReason;
+        if (tailBatch.orphanClose) options?.onOrphanThinkClose?.();
         for (const r of tailBatch.reasoningDeltas) options?.onReasoning?.(r);
         for (const t of tailBatch.textDeltas) yield t;
         if (tailBatch.error) throw tailBatch.error;

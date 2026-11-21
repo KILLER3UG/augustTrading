@@ -5,7 +5,9 @@ import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
-import { createBrowserSseParser } from '../src/services/providers/GenericProviderService';
+import { createBrowserSseParser, readWireBody } from '../src/services/providers/GenericProviderService';
+import { buildReasoningPatch } from '../src/services/providers/reasoningControls';
+import { stripTraceMarkers } from '../src/utils/traceText';
 import { __futuresRateLimitTestHooks } from '../src/services/analysis/MarketDataService';
 import { executeDeskTool, streamChatWithDeskTools } from '../src/services/analysis/DeskToolsService';
 import { initMemoryFiles } from '../src/services/learning/MemoryFilesService';
@@ -97,6 +99,121 @@ describe('Streaming SSE parsers — multi-format & Electron parity', () => {
         ]);
         const fin = parser.finish();
         assert.equal(fin.sawData, true);
+    });
+
+    it('peels chunk-split <think>, <think >, </think >, <|think|> across all 4 formats and single-newline / NDJSON streams', () => {
+        const assertThinkSplit = (
+            format: 'chat_completions' | 'messages' | 'responses' | 'google',
+            wrap: (s: string) => string[],
+        ) => {
+            const parser = createBrowserSseParser(format);
+            let reasoning = '';
+            let visible = '';
+            const pieces = ['<thi', 'nk >Plan 1. ', '<|think|>ignore-inner', ' still plan</thi', 'nk >Answer $65000 < 66000.'];
+            for (const p of pieces) {
+                for (const frame of wrap(p)) {
+                    const batch = parser.push(frame);
+                    reasoning += batch.reasoningDeltas.join('');
+                    visible += batch.textDeltas.join('');
+                }
+            }
+            const tail = parser.flush();
+            reasoning += tail.reasoningDeltas.join('');
+            visible += tail.textDeltas.join('');
+            assert.equal(visible.trim(), 'Answer $65000 < 66000.');
+            assert.ok(reasoning.includes('Plan 1.'), `${format} missing Plan 1 in reasoning: ${reasoning}`);
+            assert.equal(visible.includes('think'), false, `${format} leaked think tag: ${visible}`);
+        };
+
+        // Single-newline SSE (no blank lines between events) and NDJSON for chat_completions
+        assertThinkSplit('chat_completions', (s) => [`data: ${JSON.stringify({ choices: [{ delta: { content: s } }] })}\n`]);
+        assertThinkSplit('chat_completions', (s) => [`${JSON.stringify({ choices: [{ delta: { content: s } }] })}\n`]);
+        assertThinkSplit('messages', (s) => [`data: ${JSON.stringify({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: s } })}\n`]);
+        assertThinkSplit('responses', (s) => [`data: ${JSON.stringify({ type: 'response.output_text.delta', delta: s })}\n`]);
+        assertThinkSplit('google', (s) => [`data: ${JSON.stringify({ candidates: [{ content: { parts: [{ text: s }] } }] })}\n`]);
+
+        // <|think|>...<|/think|> dedicated block & stripTraceMarkers cleanup
+        const specialParser = createBrowserSseParser('chat_completions');
+        const s1 = specialParser.push('data: {"choices":[{"delta":{"content":"<|thi"}}]}\n');
+        assert.deepEqual(s1.textDeltas, []);
+        const s2 = specialParser.push('data: {"choices":[{"delta":{"content":"nk|>Check funding<|/think|>Short setup."}}]}\n');
+        assert.deepEqual(s2.reasoningDeltas, ['Check funding']);
+        assert.deepEqual(s2.textDeltas, ['Short setup.']);
+        assert.equal(stripTraceMarkers('<think>Inner</think><|think|>X<|/think|>'), 'InnerX');
+
+        // Electron SSE parser handles single-newline SSE, bare NDJSON, and content array parts
+        const ep = createSseParser('chat_completions');
+        const eo1 = ep.push('data: {"choices":[{"delta":{"content":[{"type":"reasoning","text":"R1 "},{"type":"text","text":"V1 "}]}}]}\n');
+        assert.deepEqual(eo1.events, [{ type: 'reasoning', delta: 'R1 ' }, { type: 'text', delta: 'V1 ' }]);
+        const eo2 = ep.push('{"choices":[{"delta":{"content":"NDJSON"}}]}\n');
+        assert.deepEqual(eo2.events, [{ type: 'text', delta: 'NDJSON' }]);
+        assert.equal(ep.finish().sawData, true);
+    });
+
+    it('readWireBody peels <think> blocks across all 4 formats and responses requests reasoning summary', () => {
+        assert.deepEqual(
+            readWireBody('chat_completions', { choices: [{ message: { content: '<think>C-reason</think>C-ans' } }] }),
+            { text: 'C-ans', reasoning: 'C-reason' },
+        );
+        assert.deepEqual(
+            readWireBody('messages', { content: [{ type: 'text', text: '<think>M-reason</think>M-ans' }] }),
+            { text: 'M-ans', reasoning: 'M-reason' },
+        );
+        assert.deepEqual(
+            readWireBody('responses', { output_text: '<think>R-reason</think>R-ans' }),
+            { text: 'R-ans', reasoning: 'R-reason' },
+        );
+        assert.deepEqual(
+            readWireBody('google', { candidates: [{ content: { parts: [{ text: '<think>G-reason</think>G-ans' }] } }] }),
+            { text: 'G-ans', reasoning: 'G-reason' },
+        );
+        const patched = buildReasoningPatch(
+            { id: 'oai', baseUrl: 'https://api.openai.com/v1', apiFormat: 'responses', selectedModel: 'o3-mini' },
+            'high',
+        );
+        assert.deepEqual(patched.patch, { reasoning: { effort: 'high', summary: 'auto' } });
+    });
+
+    it('streamChatWithDeskTools promotes pre-close text to reasoning live on orphan </think>', async () => {
+        const prevFetch = globalThis.fetch;
+        const sseBody = (frames: string[]): string => frames.map(f => `data: ${f}\n\n`).join('');
+        const server = http.createServer((_req, res) => {
+            res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' });
+            res.end(sseBody([
+                JSON.stringify({ choices: [{ delta: { content: 'Prefilled thinking part 1. ' } }] }),
+                JSON.stringify({ choices: [{ delta: { content: 'Part 2.</thi' } }] }),
+                JSON.stringify({ choices: [{ delta: { content: 'nk>Visible answer only.' }, finish_reason: 'stop' }] }),
+                '[DONE]',
+            ]));
+        });
+        await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+        const addr = server.address() as { port: number };
+        await withMemoryStorage('orphan-think-user', async () => {
+            try {
+                let reasoning = '';
+                let resets = 0;
+                let visible = '';
+                for await (const delta of streamChatWithDeskTools(
+                    { id: 'mock', name: 'Mock', baseUrl: `http://127.0.0.1:${addr.port}/v1`, apiKey: 'k', apiFormat: 'chat_completions', models: ['custom-model'], selectedModel: 'custom-model', isEnabled: true, isBuiltIn: false },
+                    [{ role: 'user', content: 'hi' }],
+                    {
+                        defaultSymbol: 'BTCUSDT',
+                        allowedTools: [],
+                        memoryEnabled: false,
+                        onReasoning: chunk => { reasoning += chunk; },
+                        onStreamReset: () => { resets += 1; visible = ''; },
+                    },
+                )) {
+                    visible += delta;
+                }
+                assert.equal(visible.trim(), 'Visible answer only.');
+                assert.equal(reasoning, 'Prefilled thinking part 1. Part 2.');
+                assert.ok(resets >= 1, `expected orphan </think> reset, got ${resets}`);
+            } finally {
+                globalThis.fetch = prevFetch;
+                server.close();
+            }
+        });
     });
 });
 

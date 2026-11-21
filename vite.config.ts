@@ -216,7 +216,7 @@ function devProviderProxy() {
               })),
               ...(responsesSystem ? { instructions: contentToText(responsesSystem.content) } : {}),
               max_output_tokens: request.maxTokens ?? 4096,
-              temperature: request.temperature ?? 0.7
+              ...(request.reasoningPatch?.reasoning ? {} : { temperature: request.temperature ?? 0.7 }),
             };
           } else if (config.apiFormat === 'google') {
             url = googleGenerateUrl(baseUrl, config.selectedModel, apiKey, Boolean(request.stream));
@@ -297,7 +297,14 @@ function devProviderProxy() {
             if (!sse.ok && (sse.status === 400 || sse.status === 422) && activeStreamBody.stream_options) {
               const noStreamOpts = { ...activeStreamBody };
               delete noStreamOpts.stream_options;
-              sse = await fetchFollowingSafeRedirects(fetch, url, { method: 'POST', headers: streamHeaders, body: JSON.stringify(noStreamOpts), signal: upstreamSignal });
+              activeStreamBody = noStreamOpts;
+              sse = await fetchFollowingSafeRedirects(fetch, url, { method: 'POST', headers: streamHeaders, body: JSON.stringify(activeStreamBody), signal: upstreamSignal });
+            }
+            if (!sse.ok && (sse.status === 400 || sse.status === 422) && activeStreamBody.temperature !== undefined && (activeStreamBody.reasoning || activeStreamBody.thinking || activeStreamBody.reasoning_effort)) {
+              const noTempBody = { ...activeStreamBody };
+              delete noTempBody.temperature;
+              activeStreamBody = noTempBody;
+              sse = await fetchFollowingSafeRedirects(fetch, url, { method: 'POST', headers: streamHeaders, body: JSON.stringify(activeStreamBody), signal: upstreamSignal });
             }
             if (!sse.ok || !sse.body) {
               const text = await sse.text();
