@@ -88,6 +88,16 @@ export interface RuinRiskResult {
     cvar95DrawdownPct?: number;
     /** Mean max drawdown across all sequences (Triple-Penance AR(1) read). */
     expectedMaxDrawdownPct?: number;
+    /** Lag-1 autocorrelation of the settled R series, clamped to (−0.95, 0.95). */
+    ar1Rho1?: number | null;
+    /** Bailey–López de Prado Triple-Penance expected max drawdown, in percent
+     *  of equity at the traded risk fraction: the exact Brownian drawdown
+     *  expectation σ²/(2μ) when the edge is positive, else the driftless
+     *  σ·√(2T/π) floor over the AR(1)-effective horizon. */
+    triplePenanceMaxDdPct?: number | null;
+    /** Expected trades underwater at that drawdown (drawdown ÷ per-trade edge);
+     *  null when the edge is ≤ 0 (no recovery in expectation). */
+    triplePenanceTimeUnderwaterTrades?: number | null;
 }
 
 export interface SimulationConfig {
@@ -767,7 +777,7 @@ export const monteCarloToMarkdown = (
     }
     if (ruinRisk) {
         const ledgerBits = ruinRisk.mode === 'ledger_bootstrap'
-            ? ` · bootstrapped from ${ruinRisk.samples} settled R outcomes · CVaR95 drawdown ${ruinRisk.cvar95DrawdownPct?.toFixed(1)}% · expected max drawdown ${ruinRisk.expectedMaxDrawdownPct?.toFixed(1)}%`
+            ? ` · bootstrapped from ${ruinRisk.samples} settled R outcomes · CVaR95 drawdown ${ruinRisk.cvar95DrawdownPct?.toFixed(1)}% · expected max drawdown ${ruinRisk.expectedMaxDrawdownPct?.toFixed(1)}% · AR(1) ρ ${ruinRisk.ar1Rho1?.toFixed(2) ?? '—'} · triple-penance max DD ${ruinRisk.triplePenanceMaxDdPct?.toFixed(1) ?? '—'}%${ruinRisk.triplePenanceTimeUnderwaterTrades !== null && ruinRisk.triplePenanceTimeUnderwaterTrades !== undefined ? ` (≈ ${ruinRisk.triplePenanceTimeUnderwaterTrades} trades underwater)` : ''}`
             : '';
         lines.push(
             `Account risk over 100 fixed-fractional trades: P(≥25% drawdown) ${ruinRisk.prob25pctDrawdown.toFixed(1)}% · P(≥50%) ${ruinRisk.prob50pctDrawdown.toFixed(1)}% · P(≥75%) ${ruinRisk.prob75pctDrawdown.toFixed(1)}% · mean equity after 100 trades ${ruinRisk.expectedEquityAfter100.toLocaleString()} · Kelly-optimal size ${ruinRisk.kellyOptimalSize.toFixed(1)}% of account${ledgerBits}.`,
@@ -1041,7 +1051,11 @@ export const empiricalBootstrapSimulation = (
         const path: number[] = [entry];
         let stepsBuilt = 0;
         while (stepsBuilt < maxSteps) {
-            const start = Math.floor(rng() * Math.max(1, returns.length - blockLen));
+            // Uniform over EVERY legal 5-bar block start (the last block
+            // starts at returns.length − blockLen — the old `length − blockLen`
+            // bound never sampled it, biasing the tail of the tape out of the
+            // bootstrap).
+            const start = Math.floor(rng() * (returns.length - blockLen + 1));
             for (let j = 0; j < blockLen && stepsBuilt < maxSteps; j++) {
                 const prev = path[path.length - 1];
                 path.push(prev * Math.exp(returns[start + j]));
@@ -1171,6 +1185,36 @@ export const calculateRuinRiskFromSeries = (
     const avgLoss = losses.length ? Math.abs(losses.reduce((s, x) => s + x, 0) / losses.length) : 0;
     const b = avgLoss > 0 ? avgWin / avgLoss : 0;
     const kelly = b > 0 ? clamp01((b * p - (1 - p)) / b) : 0;
+    // Triple-Penance inputs (Bailey & López de Prado): the per-trade edge μ,
+    // per-trade volatility σ (both in R), their non-annualized Sharpe, and the
+    // lag-1 autocorrelation that decides how much one trade predicts the next.
+    const meanR = clean.reduce((s, x) => s + x, 0) / clean.length;
+    const varianceR = clean.reduce((s, x) => s + (x - meanR) ** 2, 0) / clean.length;
+    const sigmaR = Math.sqrt(varianceR);
+    let ar1Rho1: number | null = null;
+    if (clean.length >= 3 && varianceR > 0) {
+        let cov = 0;
+        for (let i = 1; i < clean.length; i++) cov += (clean[i] - meanR) * (clean[i - 1] - meanR);
+        const rawRho = cov / ((clean.length - 1) * varianceR);
+        ar1Rho1 = Math.max(-0.95, Math.min(0.95, rawRho));
+    }
+    // Serial correlation stretches the effective horizon: T_eff = N(1−ρ)/(1+ρ)
+    // (the standard AR(1) variance-inflation read — positive autocorrelation
+    // means crowded, clustered outcomes and deeper drawdowns per trade).
+    const effectiveTrades = ar1Rho1 === null
+        ? clean.length
+        : Math.max(1, Math.round(clean.length * (1 - ar1Rho1) / (1 + ar1Rho1)));
+    // Exact Brownian drawdown expectations in R units:
+    //   edge > 0 → asymptotic max-drawdown mean σ²/(2μ) (exponential law);
+    //   edge ≤ 0 → no recovery in expectation; the driftless σ·√(2T/π) over
+    //   the effective horizon is the honest FLOOR (the true value grows
+    //   without bound as the horizon extends).
+    const edge = meanR > 0 && sigmaR > 0;
+    const penanceR = edge
+        ? (sigmaR * sigmaR) / (2 * meanR)
+        : sigmaR * Math.sqrt((2 * effectiveTrades) / Math.PI);
+    const triplePenanceMaxDdPct = sigmaR > 0 ? Number((penanceR * riskFraction * 100).toFixed(2)) : null;
+    const triplePenanceTimeUnderwaterTrades = edge && meanR > 0 ? Number((penanceR / meanR).toFixed(1)) : null;
     return {
         prob25pctDrawdown: Math.round((count25 / sequenceCount) * 1000) / 10,
         prob50pctDrawdown: Math.round((count50 / sequenceCount) * 1000) / 10,
@@ -1181,5 +1225,8 @@ export const calculateRuinRiskFromSeries = (
         samples: clean.length,
         cvar95DrawdownPct: Math.round((worst.reduce((s, x) => s + x, 0) / worst.length) * 10) / 10,
         expectedMaxDrawdownPct: Math.round(meanDd * 10) / 10,
+        ar1Rho1: ar1Rho1 === null ? null : Math.round(ar1Rho1 * 1000) / 1000,
+        triplePenanceMaxDdPct,
+        triplePenanceTimeUnderwaterTrades,
     };
 };
