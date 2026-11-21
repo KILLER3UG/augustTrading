@@ -1,0 +1,533 @@
+// Wave A reliability pins — rate limiting, backward range fetch, trade_math
+// guards, VWAP anchors, universe verification, fib conventions, order-book
+// microstructure and funding carry. All deterministic: global fetch is mocked
+// per test and restored immediately.
+import { describe, it, beforeEach } from 'node:test';
+import assert from 'node:assert/strict';
+import {
+    __futuresRateLimitTestHooks,
+    estimateBookSlippage,
+    fetchOrderBookDepth,
+    verifySymbolAgainstUniverse,
+} from '../src/services/analysis/MarketDataService';
+import { fetchRangeDetailed, runNakedPocsTool, runVwapTool, runTradeMathTool } from '../src/services/analysis/marketTools';
+import { evaluateDrawingAtNow } from '../src/services/trade/chartGeometry';
+import { anchoredSlice } from '../src/services/market/vwapCore';
+import { activeSwingFib } from '../src/services/market/swingStructureCore';
+import { calculateFibonacciLevels } from '../src/services/analysis/TechnicalAnalysisService';
+import { computeTradeMath } from '../src/services/market/tradeMathCore';
+import { executeDeskTool } from '../src/services/analysis/DeskToolsService';
+import type { ChartDrawing } from '../src/services/trade/chartDrawings';
+import type { EvalCandle } from '../src/services/trade/chartGeometry';
+
+// ─── fetch mock plumbing ─────────────────────────────────────────────────────
+
+type MockResponse = { status?: number; headers?: Record<string, string>; json?: unknown };
+type MockHandler = (url: string) => MockResponse | Promise<MockResponse>;
+
+const withMockedFetch = async (handler: MockHandler, fn: (calls: string[]) => Promise<void>): Promise<void> => {
+    const calls: string[] = [];
+    __futuresRateLimitTestHooks.setFetchImpl(async (url: string) => {
+        calls.push(url);
+        const res = await handler(url);
+        const status = res.status ?? 200;
+        return {
+            ok: status >= 200 && status < 300,
+            status,
+            headers: { get: (k: string) => (res.headers?.[k.toLowerCase()] ?? null) },
+            json: async () => res.json,
+        } as unknown as Response;
+    });
+    try {
+        await fn(calls);
+    } finally {
+        __futuresRateLimitTestHooks.reset();
+    }
+};
+
+const NOW = 1_700_000_000_000;
+const STEP_5M = 300_000;
+const STEP_BY_TF: Record<string, number> = {
+    '5m': 300_000, '15m': 900_000, '1h': 3_600_000, '4h': 14_400_000, '1d': 86_400_000,
+};
+const klineRow = (t: number, step: number): unknown[] => [
+    t, '100', '101', '99', '100', '10', t + step - 1, '1000', 100, '50', '500', '0',
+];
+const urlParam = (url: string, key: string): string | null => {
+    const m = new RegExp(`[?&]${key}=([^&]+)`).exec(url);
+    return m ? decodeURIComponent(m[1]) : null;
+};
+const UNIVERSE_TICKERS = [
+    { symbol: 'BTCUSDT', lastPrice: '100', priceChangePercent: '1', quoteVolume: '1000' },
+    { symbol: 'ETHUSDT', lastPrice: '50', priceChangePercent: '2', quoteVolume: '900' },
+];
+const UNIVERSE_INFO = {
+    symbols: [
+        { symbol: 'BTCUSDT', status: 'TRADING', contractType: 'PERPETUAL', quoteAsset: 'USDT', baseAsset: 'BTC' },
+        { symbol: 'ETHUSDT', status: 'TRADING', contractType: 'PERPETUAL', quoteAsset: 'USDT', baseAsset: 'ETH' },
+    ],
+};
+/** Klines + universe + premiumIndex + depth router. */
+const marketHandler = (): MockHandler => (url) => {
+    if (url.includes('/fapi/v1/klines')) {
+        const step = STEP_BY_TF[urlParam(url, 'interval') ?? '5m'] ?? STEP_5M;
+        const start = urlParam(url, 'startTime');
+        const rows: unknown[][] = [];
+        if (start !== null) {
+            const first = Number(start);
+            const end = Number(urlParam(url, 'endTime') ?? String(NOW));
+            const last = Math.min(end - step, first + 1399 * step);
+            for (let t = first; t <= last; t += step) rows.push(klineRow(t, step));
+        } else {
+            const limit = Number(urlParam(url, 'limit') ?? '100');
+            const last = NOW - step;
+            for (let t = last - (limit - 1) * step; t <= last; t += step) rows.push(klineRow(t, step));
+        }
+        return { json: rows };
+    }
+    if (url.includes('/fapi/v1/ticker/24hr')) {
+        return { json: url.includes('symbol=') ? UNIVERSE_TICKERS[0] : UNIVERSE_TICKERS };
+    }
+    if (url.includes('/fapi/v1/exchangeInfo')) return { json: UNIVERSE_INFO };
+    if (url.includes('/fapi/v1/premiumIndex')) {
+        return { json: { markPrice: '100', indexPrice: '100', lastFundingRate: '0.0001', nextFundingTime: String(NOW + 3_600_000) } };
+    }
+    if (url.includes('/fapi/v1/depth')) {
+        return { json: { bids: [['99.5', '3'], ['99', '1']], asks: [['100.5', '2'], ['101', '1']] } };
+    }
+    return { json: {} };
+};
+
+const near = (a: number, b: number, eps = 1e-6): boolean => Math.abs(a - b) <= eps;
+
+// ─── F1: rate limiting ───────────────────────────────────────────────────────
+
+describe('Wave A — F1 futures rate limiting', () => {
+    beforeEach(() => __futuresRateLimitTestHooks.reset());
+
+    it('a 429 with a long Retry-After latches the IP cooldown and fails fast WITHOUT cycling hosts', async () => {
+        await withMockedFetch((url) => (
+            url.includes('/fapi/v1/ping')
+                ? { status: 429, headers: { 'retry-after': '30' }, json: {} }
+                : { json: {} }
+        ), async (calls) => {
+            await assert.rejects(
+                __futuresRateLimitTestHooks.fetch('/fapi/v1/ping'),
+                /429.*failing fast/s,
+            );
+            const pingCalls = calls.filter(u => u.includes('/fapi/v1/ping'));
+            assert.equal(pingCalls.length, 1, 'a 429 must not hammer the remaining hosts');
+            // The latch answers the NEXT call with zero network attempts.
+            await assert.rejects(
+                __futuresRateLimitTestHooks.fetch('/fapi/v1/ping'),
+                /cooldown active/,
+            );
+            assert.equal(pingCalls.length, 1, 'the latch must serve subsequent calls offline');
+            assert.ok(__futuresRateLimitTestHooks.state().cooldownUntil - Date.now() >= 25_000);
+        });
+    });
+
+    it('a 418 stops host cycling immediately and latches the ban window', async () => {
+        await withMockedFetch((url) => (
+            url.includes('/fapi/v1/ping')
+                ? { status: 418, headers: { 'retry-after': '300' }, json: {} }
+                : { json: {} }
+        ), async (calls) => {
+            await assert.rejects(
+                __futuresRateLimitTestHooks.fetch('/fapi/v1/ping'),
+                /418.*failing fast/s,
+            );
+            assert.equal(calls.filter(u => u.includes('/fapi/v1/ping')).length, 1, '418 is IP-level — zero failover attempts');
+            assert.ok(__futuresRateLimitTestHooks.state().cooldownUntil - Date.now() >= 280_000);
+            assert.equal(__futuresRateLimitTestHooks.state().cooldownReason, '418 IP auto-ban');
+        });
+    });
+
+    it('a short 429 backoff retries ONCE inline on the same host', async () => {
+        let pingCalls = 0;
+        await withMockedFetch((url): MockResponse => {
+            if (!url.includes('/fapi/v1/ping')) return { json: {} };
+            pingCalls += 1;
+            return pingCalls === 1
+                ? { status: 429, headers: { 'retry-after': '1' }, json: {} }
+                : { json: {}, headers: { 'x-mbx-used-weight-1m': '500' } };
+        }, async (calls) => {
+            const res = await __futuresRateLimitTestHooks.fetch('/fapi/v1/ping');
+            assert.equal(res.ok, true);
+            const pings = calls.filter(u => u.includes('/fapi/v1/ping'));
+            assert.equal(pings.length, 2, 'exactly one inline retry');
+            assert.ok(pings.every(u => u.startsWith('https://fapi.binance.com')),
+                'the retry stays on the same host (hosts are not cycled through a 429)');
+            assert.equal(__futuresRateLimitTestHooks.state().usedWeight, 500);
+        });
+    });
+
+    it('a 429 without Retry-After uses the conservative default backoff and still retries inline once', async () => {
+        let pingCalls = 0;
+        await withMockedFetch((url) => {
+            if (!url.includes('/fapi/v1/ping')) return { json: {} };
+            pingCalls += 1;
+            return pingCalls === 1 ? { status: 429, json: {} } : { json: {} };
+        }, async (calls) => {
+            const res = await __futuresRateLimitTestHooks.fetch('/fapi/v1/ping');
+            assert.equal(res.ok, true);
+            assert.equal(calls.filter(u => u.includes('/fapi/v1/ping')).length, 2);
+        });
+    });
+
+    it('x-mbx-used-weight-1m is recorded and self-throttles issuance at ≥ 2,160 until the window rolls', async () => {
+        await withMockedFetch(() => ({ json: {}, headers: { 'x-mbx-used-weight-1m': '2300' } }), async () => {
+            __futuresRateLimitTestHooks.seedWeight(2300, 58_000); // window rolls in ~2s
+            const t0 = Date.now();
+            await __futuresRateLimitTestHooks.fetch('/fapi/v1/ping');
+            const elapsed = Date.now() - t0;
+            assert.ok(elapsed >= 1500, `the gauge must hold issuance until the window rolls (elapsed ${elapsed}ms)`);
+            assert.equal(__futuresRateLimitTestHooks.state().usedWeight, 2300);
+            // Cool gauge → no throttle.
+            __futuresRateLimitTestHooks.seedWeight(100, 0);
+            const t1 = Date.now();
+            await __futuresRateLimitTestHooks.fetch('/fapi/v1/ping');
+            assert.ok(Date.now() - t1 < 1000, 'a cool gauge must not throttle');
+        });
+    });
+
+    it('non-429/418 failures still cycle hosts (failover preserved)', async () => {
+        let pingCalls = 0;
+        await withMockedFetch((url) => {
+            if (!url.includes('/fapi/v1/ping')) return { json: {} };
+            pingCalls += 1;
+            return pingCalls === 1 ? { status: 500, json: {} } : { json: {} };
+        }, async (calls) => {
+            const res = await __futuresRateLimitTestHooks.fetch('/fapi/v1/ping');
+            assert.equal(res.ok, true);
+            const pings = calls.filter(u => u.includes('/fapi/v1/ping'));
+            assert.equal(pings.length, 2);
+            assert.ok(pings[0].includes('fapi.binance.com') && pings[1].includes('fapi1.binance.com'));
+        });
+    });
+});
+
+// ─── F2: backward fetchRange ────────────────────────────────────────────────
+
+describe('Wave A — F2 backward fetchRange', () => {
+    beforeEach(() => __futuresRateLimitTestHooks.reset());
+
+    it('keeps the NEWEST bars when the chunk budget clips the window, and says truncated', async () => {
+        await withMockedFetch(marketHandler(), async () => {
+            const end = NOW;
+            const start = end - 200 * 86_400_000; // 200 days of 5m → 42 chunks
+            const r = await fetchRangeDetailed('BTCUSDT', '5m', start, end);
+            assert.equal(r.truncated, true);
+            assert.equal(r.candles.length, 31 * 1400);
+            const last = r.candles[r.candles.length - 1];
+            assert.equal(last.time, end - STEP_5M, 'the newest closed bar survives');
+            assert.equal(r.candles[0].time, end - 31 * 1400 * STEP_5M, 'the OLDEST part of the window is what was dropped');
+            for (let i = 1; i < r.candles.length; i += 1) {
+                assert.ok(r.candles[i - 1].time < r.candles[i].time, 'strictly chronological, no duplicates');
+            }
+        });
+    });
+
+    it('a window inside the budget is not truncated', async () => {
+        await withMockedFetch(marketHandler(), async () => {
+            const end = NOW;
+            const start = end - 3 * 86_400_000;
+            const r = await fetchRangeDetailed('BTCUSDT', '5m', start, end);
+            assert.equal(r.truncated, false);
+            assert.equal(r.candles.length, 3 * 288);
+            assert.equal(r.candles[0].time, start);
+        });
+    });
+
+    it('runNakedPocsTool discloses the clipped lookback in data_quality.notes', async () => {
+        await withMockedFetch(marketHandler(), async () => {
+            const raw = await runNakedPocsTool('BTCUSDT', 'day', 500);
+            const parsed = JSON.parse(raw);
+            assert.equal(parsed.data_quality.bars_used, 31 * 1400);
+            assert.ok(
+                parsed.data_quality.notes.join(' ').includes('CLIPPED'),
+                `notes must name the clip: ${JSON.stringify(parsed.data_quality.notes)}`,
+            );
+            assert.ok(parsed.data_quality.notes.join(' ').includes('NEWEST'), 'the disclosure says the newest data was kept');
+        });
+    });
+});
+
+// ─── F3: trade_math guards ──────────────────────────────────────────────────
+
+describe('Wave A — F3 trade_math guards', () => {
+    beforeEach(() => __futuresRateLimitTestHooks.reset());
+
+    it('refuses non-finite and non-positive targets alongside entry/stop', () => {
+        const candles = Array.from({ length: 30 }, (_, i) => ({ time: i * 60_000, open: 100, high: 100.5, low: 99.5, close: 100, volume: 10 }));
+        assert.equal(computeTradeMath({ direction: 'Long', entry: NaN, stopLoss: 99, takeProfits: [103] }, candles), null);
+        assert.equal(computeTradeMath({ direction: 'Long', entry: 100, stopLoss: -1, takeProfits: [103] }, candles), null);
+        assert.equal(computeTradeMath({ direction: 'Long', entry: 100, stopLoss: 99, takeProfits: [-5] }, candles), null);
+        assert.equal(computeTradeMath({ direction: 'Long', entry: 100, stopLoss: 99, takeProfits: [0] }, candles), null);
+        assert.equal(computeTradeMath({ direction: 'Long', entry: 100, stopLoss: 99, takeProfits: [Infinity] }, candles), null);
+    });
+
+    it('an inverted plan quotes NO net figure: netRewardR/target_atr null, summary "net —"', async () => {
+        await withMockedFetch(marketHandler(), async () => {
+            const raw = await runTradeMathTool('BTCUSDT', 'Long', 100, 101, [99]);
+            const parsed = JSON.parse(raw);
+            assert.equal(parsed.values.gross.inverted, true);
+            assert.equal(parsed.values.gross.ratio, 0);
+            assert.equal(parsed.values.costs.netRewardR, null);
+            assert.equal(parsed.distances_atr.target_atr, null);
+            assert.ok(parsed.one_line_summary.includes('net —'), parsed.one_line_summary);
+            assert.ok(parsed.one_line_summary.includes('INVERTED PLAN'), parsed.one_line_summary);
+            assert.ok(!parsed.one_line_summary.includes('10.49') && !parsed.one_line_summary.includes('199.9'), 'no bogus arithmetic beside the refusal');
+        });
+    });
+
+    it('an invalid direction is REFUSED, never coerced into Long', async () => {
+        const res = await executeDeskTool(
+            { id: 't-dir', name: 'trade_math', arguments: { direction: 'sideways', entry: 100, stop_loss: 99, take_profits: [103] } },
+            { allowedTools: 'all' },
+        );
+        assert.ok(res.content.includes('trade_math rejected: direction must be "Long" or "Short"'), res.content);
+    });
+
+    it('direction is case-insensitive ("SHort" runs as Short)', async () => {
+        await withMockedFetch(marketHandler(), async () => {
+            const res = await executeDeskTool(
+                { id: 't-dir2', name: 'trade_math', arguments: { direction: 'SHort', entry: 100, stop_loss: 101, take_profits: [90] } },
+                { allowedTools: 'all' },
+            );
+            assert.ok(res.content.includes('"direction":"Short"'), res.content);
+            assert.ok(res.content.includes('R:R'), res.content);
+        });
+    });
+});
+
+// ─── 8b: funding carry ──────────────────────────────────────────────────────
+
+describe('Wave A — 8b trade_math funding carry', () => {
+    beforeEach(() => __futuresRateLimitTestHooks.reset());
+
+    it('quotes fundingDragR over the expected hold + minutes to the next 8h settlement', async () => {
+        await withMockedFetch(marketHandler(), async () => {
+            const raw = await runTradeMathTool('BTCUSDT', 'Long', 100, 99, [103], {
+                expectedHoldHours: 24, asofMs: NOW,
+            });
+            const parsed = JSON.parse(raw);
+            assert.equal(parsed.values.funding.rate, 0.0001);
+            // long PAYS the positive rate: −0.0001 × 3 periods × (100/1 notional-per-risk) = −0.03R
+            assert.equal(parsed.values.funding.dragR, -0.03);
+            assert.equal(parsed.values.funding.minutesToNextSettlement, 60);
+            assert.equal(parsed.values.funding.assumption, 'current 8h rate persists over the expected hold');
+            const notes = parsed.data_quality.notes.join(' ');
+            assert.ok(notes.includes('funding drag -0.03R'), notes);
+            assert.ok(notes.includes('ASSUMPTION'), notes);
+        });
+    });
+
+    it('no expectedHoldHours → no funding block (existing callers unchanged)', async () => {
+        await withMockedFetch(marketHandler(), async () => {
+            const raw = await runTradeMathTool('BTCUSDT', 'Long', 100, 99, [103]);
+            const parsed = JSON.parse(raw);
+            assert.equal(parsed.values.funding, undefined);
+        });
+    });
+});
+
+// ─── F4: vwap anchors ───────────────────────────────────────────────────────
+
+describe('Wave A — F4 vwap anchor validation', () => {
+    beforeEach(() => __futuresRateLimitTestHooks.reset());
+
+    it('an unknown anchor is refused with the valid anchor list (never swing_low semantics)', async () => {
+        const raw = await runVwapTool('BTCUSDT', 'diagonal');
+        const parsed = JSON.parse(raw);
+        assert.equal(parsed.data_quality.available, false);
+        assert.ok(parsed.data_quality.reason.includes('unknown anchor "diagonal"'), parsed.data_quality.reason);
+        assert.ok(parsed.data_quality.reason.includes('session_open, swing_high, swing_low, custom'), parsed.data_quality.reason);
+    });
+
+    it('anchoredSlice returns null for an unknown anchor (defense in depth)', () => {
+        const candles = [{ time: 0, open: 1, high: 2, low: 0.5, close: 1, volume: 5 }, { time: 60, open: 1, high: 2, low: 0.5, close: 1, volume: 5 }];
+        assert.equal(anchoredSlice(candles, 'diagonal' as never), null);
+    });
+
+    it('a valid anchor still computes the anchored VWAP', async () => {
+        await withMockedFetch(marketHandler(), async () => {
+            const raw = await runVwapTool('BTCUSDT', 'session_open');
+            const parsed = JSON.parse(raw);
+            assert.equal(parsed.data_quality.available, true);
+            assert.ok(parsed.values.vwap > 0);
+        });
+    });
+});
+
+// ─── F5: universe verifier ──────────────────────────────────────────────────
+
+describe('Wave A — F5 verifySymbolAgainstUniverse', () => {
+    beforeEach(() => __futuresRateLimitTestHooks.reset());
+
+    it('verifies a listed symbol and positively refuses an unlisted one', async () => {
+        await withMockedFetch(marketHandler(), async () => {
+            assert.equal(await verifySymbolAgainstUniverse('BTCUSDT'), 'verified');
+            assert.equal(await verifySymbolAgainstUniverse('FAKEUSDT'), 'unknown-symbol');
+        });
+    });
+
+    it('fails open when the universe feed errors or hangs past the budget', async () => {
+        await withMockedFetch(() => { throw new Error('offline'); }, async () => {
+            assert.equal(await verifySymbolAgainstUniverse('BTCUSDT'), 'unverified');
+        });
+        // A hanging feed must time the budget out — and the coalesced
+        // in-flight universe fetch must SETTLE (reject) so later callers
+        // are not stuck waiting on a wedged promise.
+        await withMockedFetch(() => new Promise<MockResponse>((_resolve, reject) => {
+            setTimeout(() => reject(new Error('wedged')), 200);
+        }), async () => {
+            assert.equal(await verifySymbolAgainstUniverse('BTCUSDT', { budgetMs: 50 }), 'unverified');
+        });
+    });
+
+    it('the market-tool path refuses an unknown symbol before any venue call', async () => {
+        await withMockedFetch(marketHandler(), async (calls) => {
+            await assert.rejects(
+                fetchRangeDetailed('FAKEUSDT', '5m', NOW - 86_400_000, NOW),
+                /unknown symbol "FAKEUSDT"/,
+            );
+            assert.ok(calls.every(u => !u.includes('/fapi/v1/klines')), 'no venue kline round-trip was spent');
+        });
+    });
+});
+
+// ─── Fibonacci conventions ──────────────────────────────────────────────────
+
+describe('Wave A — Fibonacci conventions', () => {
+    const mkCandles = (n: number): EvalCandle[] => Array.from({ length: n }, (_, i) => ({
+        time: i * 3600, open: 100 + i, high: 101 + i, low: 99 + i, close: 100.5 + i,
+    }));
+    const fibDrawing = (a: { t: number; p: number }, b: { t: number; p: number }): ChartDrawing => ({
+        id: 'fib-test', shortId: '#D1', kind: 'fib', origin: 'agent', createdAt: 0, version: 1,
+        color: '#4d9fff', points: [a, b], createdOnTf: '1h',
+    });
+
+    it('drawing fib on an up-swing 100→200 uses STANDARD ratios incl. OTE and extensions', () => {
+        const ev = evaluateDrawingAtNow(fibDrawing({ t: 0, p: 100 }, { t: 11 * 3600, p: 200 }), {
+            symbol: 'BTCUSDT', activeTf: '1h', candles: mkCandles(12), markPrice: 150,
+            priceScaleMode: 'normal', atr14: 2, tickSize: 0, nowMs: 13 * 3600 * 1000,
+        });
+        const L = Object.fromEntries((ev.fibLevels ?? []).map(f => [f.ratio, f.price]));
+        assert.equal(L[0.382], 161.8, '0.382 retracement = 161.8 (high − 0.382R)');
+        assert.equal(L[0.618], 138.2, '0.618 retracement = 138.2');
+        assert.equal(L[0.705], 129.5, '0.705 OTE');
+        assert.equal(L[1.272], 227.2, '1.272 extension');
+        assert.equal(L[1.618], 261.8, '1.618 extension');
+        assert.equal(L[2], 300, '2.0 extension');
+    });
+
+    it('drawing fib on a down-swing 200→100 mirrors correctly (no inverted 38.2/61.8)', () => {
+        const ev = evaluateDrawingAtNow(fibDrawing({ t: 0, p: 200 }, { t: 11 * 3600, p: 100 }), {
+            symbol: 'BTCUSDT', activeTf: '1h', candles: mkCandles(12), markPrice: 150,
+            priceScaleMode: 'normal', atr14: 2, tickSize: 0, nowMs: 13 * 3600 * 1000,
+        });
+        const L = Object.fromEntries((ev.fibLevels ?? []).map(f => [f.ratio, f.price]));
+        assert.equal(L[0.382], 138.2);
+        assert.equal(L[0.618], 161.8);
+        assert.equal(L[0.705], 170.5);
+        assert.equal(L[1.272], 72.8);
+        assert.equal(L[2], 0);
+    });
+
+    it('drawing fib 0.382 parity with calculateFibonacciLevels on the same swing', () => {
+        const tape = Array.from({ length: 50 }, (_, i) => {
+            const close = 101 + 2 * i;
+            const high = i === 49 ? 200 : close + 1;
+            const low = i === 0 ? 100 : close - 2;
+            return { time: i * 3_600_000, open: close - 1, high, low, close, volume: 10 };
+        });
+        const cfl = calculateFibonacciLevels(tape);
+        const calc382 = cfl.levels.find(l => l.ratio === '0.382');
+        const ev = evaluateDrawingAtNow(fibDrawing({ t: 0, p: 100 }, { t: 11 * 3600, p: 200 }), {
+            symbol: 'BTCUSDT', activeTf: '1h', candles: mkCandles(12), markPrice: 150,
+            priceScaleMode: 'normal', atr14: 2, tickSize: 0, nowMs: 13 * 3600 * 1000,
+        });
+        const draw382 = ev.fibLevels?.find(f => f.ratio === 0.382);
+        assert.equal(cfl.swingHigh, 200);
+        assert.equal(cfl.swingLow, 100);
+        assert.ok(calc382 && draw382 && near(calc382.price, draw382.price, 1e-9),
+            `analytic ${calc382?.price} vs drawing ${draw382?.price}`);
+    });
+
+    it('activeSwingFib: standard retracements + 0.705 OTE + extensions with confluence', () => {
+        // 18-candle zigzag: strict fractal high @idx7 (124) and low @idx15 (98).
+        const highs = [110, 112, 114, 116, 118, 120, 122, 124, 122, 120, 118, 116, 114, 112, 110, 108, 108, 112];
+        const lows = [100, 102, 104, 106, 108, 110, 112, 114, 112, 110, 108, 106, 104, 102, 100, 98, 104, 108];
+        const leg = highs.map((h, i) => ({
+            time: (i + 1) * 3_600_000, open: (h + lows[i]) / 2, high: h, low: lows[i],
+            close: lows[i] + (h - lows[i]) * 0.75, volume: 10,
+        }));
+        const af = activeSwingFib(leg, 3, 0.25);
+        assert.ok(af !== null);
+        assert.equal(af.direction, 'bullish');
+        assert.equal(af.from.price, 98);
+        assert.equal(af.to.price, 124);
+        const L = Object.fromEntries(af.levels.map(l => [l.ratio, l.price]));
+        const from = af.from.price;
+        const to = af.to.price;
+        assert.ok(near(L['0.382'], to - 0.382 * (to - from), 1e-9), `0.382=${L['0.382']}`);
+        assert.ok(near(L['0.705'], to - 0.705 * (to - from), 1e-9), `0.705=${L['0.705']}`);
+        assert.ok(near(L['1.272'], from + 1.272 * (to - from), 1e-9), `1.272=${L['1.272']}`);
+        assert.ok(near(L['2.0'], from + 2 * (to - from), 1e-9), `2.0=${L['2.0']}`);
+        assert.ok(L['0.705'] < L['0.618'] && L['0.618'] < L['0.382'], 'deeper ratios sit nearer the swing origin');
+    });
+});
+
+// ─── 8a: order-book microstructure ──────────────────────────────────────────
+
+describe('Wave A — 8a order-book slippage & microprice', () => {
+    const asks = [{ price: 100, qty: 1 }, { price: 101, qty: 2 }, { price: 102, qty: 4 }];
+    const bids = [{ price: 99, qty: 2 }, { price: 98, qty: 3 }];
+
+    it('estimateBookSlippage walks the asks for a buy (vwap, bps, worst level, levels)', () => {
+        const r = estimateBookSlippage(bids, asks, 'buy', 500);
+        assert.equal(r.available, true);
+        assert.equal(r.levelsConsumed, 3);
+        assert.equal(r.worstFillPrice, 102);
+        assert.equal(r.remainingUsd, 0);
+        // 500 / (1 + 2 + 198/102) = 101.190476…
+        assert.ok(near(r.vwapFillPrice ?? 0, 500 / (1 + 2 + 198 / 102), 1e-6), `vwap=${r.vwapFillPrice}`);
+        assert.ok(near(r.slippageBps ?? 0, ((500 / (1 + 2 + 198 / 102)) - 100) / 100 * 10_000, 0.01), `bps=${r.slippageBps}`);
+    });
+
+    it('a thin book refuses with the named shortfall', () => {
+        const r = estimateBookSlippage(bids, asks, 'buy', 10_000);
+        assert.equal(r.available, false);
+        assert.ok(r.reason!.includes('depth insufficient'), r.reason);
+        assert.ok(r.remainingUsd > 0);
+    });
+
+    it('a sell walks the bids and quotes negative bps (worse = lower)', () => {
+        const r = estimateBookSlippage(bids, asks, 'sell', 300);
+        assert.equal(r.available, true);
+        assert.ok((r.slippageBps ?? 0) < 0, `bps=${r.slippageBps}`);
+        assert.equal(r.worstFillPrice, 98);
+    });
+
+    it('fetchOrderBookDepth carries the microprice, fetchedAt, and a ladder the estimator can walk', async () => {
+        __futuresRateLimitTestHooks.reset();
+        await withMockedFetch(marketHandler(), async () => {
+            const book = await fetchOrderBookDepth('BTCUSDT');
+            assert.ok(book.fetchedAt !== undefined && book.fetchedAt > 0);
+            assert.ok(book.micro !== undefined);
+            // microprice = (P_b·Q_a + P_a·Q_b) / (Q_b + Q_a) over the top-5 sums.
+            const top5BidQty = 3 + 1;
+            const top5AskQty = 2 + 1;
+            assert.ok(near(book.micro.microprice, (99.5 * top5AskQty + 100.5 * top5BidQty) / (top5BidQty + top5AskQty), 1e-9),
+                `micro=${book.micro.microprice}`);
+            assert.ok(near(book.micro.top5Imbalance, (top5BidQty - top5AskQty) / (top5BidQty + top5AskQty), 1e-9));
+            const impact = estimateBookSlippage(book.bids, book.asks, 'buy', 150);
+            assert.equal(impact.available, true);
+            assert.equal(impact.levelsConsumed, 1);
+            assert.equal(impact.slippageBps, 0);
+            const thin = estimateBookSlippage(book.bids, book.asks, 'buy', 10_000);
+            assert.equal(thin.available, false, 'thin-book refusal');
+        });
+    });
+});
