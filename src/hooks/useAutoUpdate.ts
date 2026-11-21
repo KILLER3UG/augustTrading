@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { ElectronUpdateStatus as UpdateStatus } from '../types/electron';
+import { APP_VERSION } from '../constants/version';
+import { shouldShowUpdateButton } from '../utils/updateAvailability';
 
 /**
  * Hook for managing app auto-updates in Electron.
@@ -23,7 +25,7 @@ const IDLE_STATUS: UpdateStatus = {
 
 export function useAutoUpdate() {
     const [isElectron, setIsElectron] = useState(false);
-    const [appVersion, setAppVersion] = useState<string | null>(null);
+    const [appVersion, setAppVersion] = useState<string | null>(APP_VERSION);
     const [updateStatus, setUpdateStatus] = useState<UpdateStatus>(IDLE_STATUS);
 
     useEffect(() => {
@@ -83,7 +85,7 @@ export function useAutoUpdate() {
         isElectron,
         appVersion,
         updateStatus,
-        isUpdateAvailable: updateStatus.status === 'available' || updateStatus.status === 'downloaded',
+        isUpdateAvailable: shouldShowUpdateButton(updateStatus, appVersion),
         checkForUpdates,
         downloadUpdate,
         installUpdate,
