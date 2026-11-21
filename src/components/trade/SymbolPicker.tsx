@@ -106,7 +106,6 @@ export const SymbolPicker: React.FC<SymbolPickerProps> = ({
     };
 
     const active = filtered[cursor];
-    const valueMeta = symbols.find(s => s.symbol === value);
 
     return (
         <div className="relative">
@@ -126,11 +125,6 @@ export const SymbolPicker: React.FC<SymbolPickerProps> = ({
                 className="flex items-center gap-1.5 rounded-control px-2 py-1 text-ui-caption font-bold text-zinc-100 transition-colors hover:bg-white/[0.05]"
             >
                 {display(value)}
-                {valueMeta && valueMeta.changePercent24h !== 0 && (
-                    <span className={`font-mono text-ui-xs font-semibold tabular-nums ${valueMeta.changePercent24h >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                        {valueMeta.changePercent24h >= 0 ? '+' : ''}{valueMeta.changePercent24h.toFixed(1)}%
-                    </span>
-                )}
                 <ChevronDown className="h-3.5 w-3.5 text-zinc-500" aria-hidden="true" />
             </button>
             {open && createPortal(

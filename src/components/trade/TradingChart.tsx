@@ -349,7 +349,10 @@ const BarCountdown = ({ barTime, interval }: { barTime: number; interval: ChartI
     }, []);
     const left = Math.max(0, Math.ceil(barTime + intervalSeconds(interval) - now / 1000));
     return (
-        <span className="font-mono text-ui-micro text-zinc-400">
+        <span
+            data-testid="bar-countdown"
+            className="rounded-[3px] border border-hairline bg-zinc-900/95 px-1.5 py-0.5 font-mono text-[10px] leading-none tabular-nums text-zinc-300"
+        >
             {`${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`}
         </span>
     );
@@ -1007,7 +1010,11 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                 vertLines: { color: 'rgba(255,255,255,0.025)' },
                 horzLines: { color: 'rgba(255,255,255,0.025)' },
             },
-            rightPriceScale: { borderColor: 'rgba(255,255,255,0.08)' },
+            rightPriceScale: {
+                borderColor: 'rgba(255,255,255,0.08)',
+                scaleMargins: { top: 0.12, bottom: 0.12 },
+                entireTextOnly: true,
+            },
             timeScale: {
                 borderColor: 'rgba(255,255,255,0.08)', timeVisible: true, secondsVisible: false,
                 // Philippine-time axis labels (lightweight-charts defaults to UTC).
@@ -3265,10 +3272,14 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                 {lastTag && (
                     <div
                         data-testid="last-price-tag"
-                        className="pointer-events-none absolute z-10 flex flex-col items-end"
-                        style={{ top: lastTag.y - 16, right: axisW }}
+                        className="pointer-events-none absolute z-10 flex flex-col items-end gap-1"
+                        style={{ top: Math.max(6, lastTag.y - 10), right: 2 }}
                     >
-                        <span className={`rounded-sm px-1 font-mono text-ui-dense ${lastTag.up ? 'bg-emerald-500/20 text-emerald-300' : 'bg-rose-500/20 text-rose-300'}`}>
+                        <span
+                            data-testid="last-price-pill"
+                            style={{ minWidth: Math.max(48, axisW - 4) }}
+                            className={`rounded-[3px] px-1.5 py-0.5 text-right font-mono text-[11px] font-medium leading-none tabular-nums ${lastTag.up ? 'bg-emerald-700 text-zinc-50' : 'bg-rose-700 text-zinc-50'}`}
+                        >
                             {fmtPriceForChart(lastTag.price)}
                         </span>
                         <BarCountdown barTime={lastTag.barTime} interval={interval} />
@@ -3279,13 +3290,16 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                 {crossPrice && (
                     <div
                         data-testid="crosshair-price-tag"
-                        className="pointer-events-none absolute z-10 flex flex-col items-end"
-                        style={{ top: crossPrice.y - 16, right: axisW }}
+                        className="pointer-events-none absolute z-10 flex flex-col items-end gap-1"
+                        style={{ top: Math.max(6, crossPrice.y - 10), right: 2 }}
                     >
-                        <span className="rounded-sm bg-zinc-700/80 px-1 font-mono text-ui-dense text-zinc-100">
+                        <span
+                            style={{ minWidth: Math.max(48, axisW - 4) }}
+                            className="rounded-[3px] bg-zinc-700 px-1.5 py-0.5 text-right font-mono text-[11px] leading-none tabular-nums text-zinc-100"
+                        >
                             {fmtPriceForChart(crossPrice.price)}
                         </span>
-                        <span className={`font-mono text-ui-micro ${crossPrice.pct >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                        <span className={`rounded-[3px] border border-hairline bg-zinc-900/95 px-1.5 py-0.5 font-mono text-[10px] leading-none tabular-nums ${crossPrice.pct >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                             {`${crossPrice.pct >= 0 ? '+' : ''}${crossPrice.pct.toFixed(2)}%`}
                         </span>
                     </div>
