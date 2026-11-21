@@ -68,16 +68,24 @@ const MAINTENANCE_KEY_PREFIX = 'autonomy_maintenance_v1_';
 
 export type AutonomyMode = 'autonomous' | 'paused';
 
+export type AutonomyRole = 'sentinel' | 'compaction' | 'maintenance' | 'adversary';
+
 export interface AutonomySettings {
     mode: AutonomyMode;
-    /** Optional override seat: `providerId::modelId`. Empty = the first ready
-     *  provider (the same resolution every background job already uses). */
+    /** Optional DEFAULT background seat: `providerId::modelId`. Empty = the
+     *  first ready provider (the same resolution every background job uses). */
     seat?: string;
+    /** Optional PER-ROLE overrides, tried before `seat`: route the fast
+     *  triage loops (sentinel/compaction/maintenance) to a lightweight/local
+     *  seat while reserving the frontier model for the adversary review.
+     *  Absent for a role = fall back to `seat`. */
+    seats?: Partial<Record<AutonomyRole, string>>;
 }
 
 export interface AutonomySnapshot {
     mode: AutonomyMode;
     seat?: string;
+    roleSeats: Partial<Record<AutonomyRole, string>>;
     /** Background model calls in the trailing hour. */
     callsLastHour: number;
     /** Epoch ms until which every model call is refused (provider backoff). */
@@ -147,6 +155,7 @@ export const getAutonomySnapshot = (username: string = getActiveUsername()): Aut
     snapshotCache = {
         mode: settings.mode,
         ...(settings.seat ? { seat: settings.seat } : {}),
+        roleSeats: settings.seats ?? {},
         callsLastHour: callsLastHour(user),
         backoffUntil: backoffUntil > Date.now() ? backoffUntil : null,
         lastMaintenanceAt: maintenanceStamp(user),
@@ -162,6 +171,14 @@ export const setAutonomyMode = async (mode: AutonomyMode, username: string = get
 export const setAutonomySeat = async (seat: string | undefined, username: string = getActiveUsername()): Promise<void> => {
     const settings = await readSettings(username);
     await writeSettings(username, { ...settings, ...(seat ? { seat } : {}) });
+};
+
+export const setAutonomyRoleSeat = async (role: AutonomyRole, seat: string | undefined, username: string = getActiveUsername()): Promise<void> => {
+    const settings = await readSettings(username);
+    const seats = { ...(settings.seats ?? {}) };
+    if (seat) seats[role] = seat;
+    else delete seats[role];
+    await writeSettings(username, { ...settings, seats });
 };
 
 // ── Budget + backoff ─────────────────────────────────────────────────────────
@@ -242,7 +259,7 @@ export interface BackgroundSeat {
  * compaction job and the memory hygiene pass use. No provider, no autonomy
  * model calls; every loop's deterministic path still runs.
  */
-export const resolveBackgroundSeat = async (username: string = getActiveUsername()): Promise<BackgroundSeat | null> => {
+export const resolveBackgroundSeat = async (username: string = getActiveUsername(), role?: AutonomyRole): Promise<BackgroundSeat | null> => {
     try {
         const [{ loadProviderConfigs, getReadyProviders }, { getQuickResponse }] = await Promise.all([
             import('../infrastructure/ProviderConfigService'),
@@ -252,8 +269,15 @@ export const resolveBackgroundSeat = async (username: string = getActiveUsername
         const ready = getReadyProviders(configs);
         const settings = await readSettings(username);
         let config = ready[0];
-        if (settings.seat) {
-            const [providerId, ...modelParts] = settings.seat.split('::');
+        // PER-ROLE ROUTING (dsh pattern): the role's own override wins, then
+        // the default background seat, then the first ready provider. A role
+        // entry may be '' to PIN a role to the default (e.g. force the
+        // adversary onto the frontier model while everything else routes to a
+        // local seat).
+        const roleSeat = role ? settings.seats?.[role] : undefined;
+        const wanted = roleSeat !== undefined ? roleSeat : settings.seat;
+        if (wanted) {
+            const [providerId, ...modelParts] = wanted.split('::');
             const modelId = modelParts.join('::');
             const found = ready.find(c => c.id === providerId && (!modelId || c.selectedModel === modelId));
             if (found) config = found;
@@ -673,7 +697,7 @@ export const runMaintenancePass = async (username: string = getActiveUsername(),
             notes.push(`Maintenance skipped: ${refusal}.`);
             return notes;
         }
-        const seat = await resolveBackgroundSeat(username);
+        const seat = await resolveBackgroundSeat(username, 'maintenance');
         if (!seat) {
             notes.push('Maintenance skipped: no ready provider.');
             return notes;
@@ -753,6 +777,30 @@ export const runMaintenancePass = async (username: string = getActiveUsername(),
         // (2) Skill refinement — ONE skill per pass, through the ONE pen.
         const skillNote = await refineOneSkill(seat, username);
         if (skillNote) notes.push(skillNote);
+
+        // (3) SKILLS BENCH (calibration feedback loop): a skill whose ledger
+        // bucket shows a losing hit rate over a real sample, or an untagged
+        // drifted skill, is FLAGGED for tighten/retire — flagged, not deleted:
+        // retirement is the trader's call (Skills library), the bench only
+        // makes the evidence visible in the feed.
+        try {
+            const { skillIndexRows, usableSkillRows } = await import('../learning/SkillFileService');
+            const { calibrateByDimensions } = await import('../signals/signalCalibration');
+            const { readSignals } = await import('../signals/signalLedger');
+            const known = new Set(usableSkillRows(skillIndexRows()).map(r => r.slug));
+            const buckets = calibrateByDimensions(readSignals(username));
+            for (const b of buckets) {
+                if (b.skillSlug === 'untagged' || !known.has(b.skillSlug)) continue;
+                if (b.fills >= 5 && b.hitRate !== null && b.hitRate < 0.4) {
+                    appendAutonomyRecord({
+                        subsystem: 'skill',
+                        summary: `Skills bench: "${b.skillSlug}" is ${Math.round(b.hitRate * 100)}% over ${b.fills} fills (expectancy ${b.expectancyR === null ? '—' : b.expectancyR.toFixed(2) + 'R'}) — tighten or retire it in the Skills library.`,
+                        undo: { kind: 'none' },
+                    }, username);
+                    notes.push(`Bench flag on "${b.skillSlug}".`);
+                }
+            }
+        } catch { /* no ledger data: no bench flags */ }
 
         await writeMaintenanceStamp(username, { at: now, resolvedAt: now });
         maintenanceCache = { ...maintenanceCache, [username]: now };

@@ -23,6 +23,7 @@
  */
 
 import type { ChatMessage } from '../providers/GenericProviderService';
+import { getActiveUsername } from '../../utils/activeUser';
 import { estimateMessagesTokens } from '../providers/contextCompact';
 
 /** Start summarizing at this share of the window. */
@@ -211,11 +212,16 @@ export const __clearCompactionInFlight = (): void => { inFlight.clear(); };
  */
 export const resolveCompactionComplete = async (): Promise<((prompt: string) => Promise<string>) | null> => {
     try {
-        const [{ loadProviderConfigs, getReadyProviders }, { getQuickResponse }] = await Promise.all([
+        const [{ loadProviderConfigs, getReadyProviders }, { getQuickResponse }, engine] = await Promise.all([
             import('../infrastructure/ProviderConfigService'),
             import('../providers/GenericProviderService'),
+            import('./../trade/autonomyEngine'),
         ]);
-        const config = getReadyProviders(await loadProviderConfigs())[0];
+        // Per-role routing: the compaction summarizer runs on the role seat
+        // when one is configured (a fast/local seat keeps this cheap), else
+        // the first ready provider as before.
+        const seat = await engine.resolveBackgroundSeat(getActiveUsername?.() ?? undefined, 'compaction');
+        const config = seat?.config ?? getReadyProviders(await loadProviderConfigs())[0];
         if (!config) return null;
         return (prompt: string) => getQuickResponse(
             config,

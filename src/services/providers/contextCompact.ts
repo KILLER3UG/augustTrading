@@ -71,6 +71,11 @@ import {
  *  results start with what they are, and that is the part the seat needs to
  *  know it already looked this up. */
 const TOOL_HEAD_KEEP_CHARS = 400;
+/** Stage-1 microcompaction thresholds: a tool output past the protected tail
+ *  larger than this is stubbed EVERY round (zero-LLM-cost) to its head + a
+ *  re-read pointer, before any ceiling math runs. */
+export const MICRO_STUB_CHARS = 2_000;
+export const MICRO_HEAD_KEEP_CHARS = 700;
 
 /** Head kept when old assistant prose is compacted. */
 const ASSISTANT_HEAD_KEEP_CHARS = 600;
@@ -225,6 +230,10 @@ export interface CompactResult {
     /** True when anything was rewritten or dropped. */
     changed: boolean;
     actions: CompactAction[];
+    /** Stage-1 microcompaction: how many chars of stale bulky tool outputs
+     *  were stubbed this pass (0 when none qualified), and how many outputs. */
+    microCompactChars: number;
+    microCompactCount: number;
     /**
      * Still over the ceiling AFTER doing everything possible. Non-zero means
      * the request cannot be made to fit — the caller must say so rather than
@@ -285,6 +294,28 @@ export const compactMessages = (input: CompactInput): CompactResult => {
                 total: IMAGE_TOKEN_ESTIMATE,
             });
         }
+    }
+
+
+    // STAGE-1 MICROCOMPACTION (zero-LLM-cost, every round): a stale bulky tool
+    // output PAST the protected tail is stubbed to its head slice + a re-read
+    // pointer BEFORE any ceiling math — three old packet dumps would otherwise
+    // ride every later round intact until they forced the destructive passes.
+    // Structure is preserved (role, name, tool_call_id stay; the artifact id
+    // lives in the head), and the savings are reported for the trace.
+    let microCompactChars = 0;
+    let microCompactCount = 0;
+    for (let i = 0; i < out.length; i++) {
+        if (inTail(i, out.length, keepAtLeast)) break;
+        const m = out[i];
+        if (m.role !== 'tool') continue;
+        const text = textOf(m.content);
+        if (text.length <= MICRO_STUB_CHARS) continue;
+        if (text.length - MICRO_HEAD_KEEP_CHARS < 400) continue;
+        out[i] = { ...m, content: stubFor(m.name || 'tool result', text, MICRO_HEAD_KEEP_CHARS) };
+        microCompactChars += text.length - MICRO_HEAD_KEEP_CHARS;
+        microCompactCount += 1;
+        actions.push({ kind: 'tool-payload', index: i, ...(m.name ? { name: m.name } : {}), kept: MICRO_HEAD_KEEP_CHARS, total: text.length });
     }
 
     const total = (): number => estimateMessagesTokens(out);
@@ -358,6 +389,8 @@ export const compactMessages = (input: CompactInput): CompactResult => {
     const changed = afterTokens !== beforeTokens;
     const stillOver = Math.max(0, afterTokens - input.ceilingTokens);
     return {
+        microCompactChars,
+        microCompactCount,
         messages: out,
         beforeTokens,
         afterTokens,

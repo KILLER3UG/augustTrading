@@ -17,6 +17,7 @@ import {
     getAutonomySnapshot,
     setAutonomyMode,
     setAutonomySeat,
+    setAutonomyRoleSeat,
     subscribeAutonomy,
     MAX_BACKGROUND_CALLS_PER_HOUR,
 } from '../../../services/trade/autonomyEngine';
@@ -109,6 +110,27 @@ export const AutonomyDrawer: React.FC<{
                             )))}
                         </select>
                     </label>
+                    <details className="rounded-control border border-hairline bg-zinc-950/60 px-2 py-1" data-testid="autonomy-role-seats">
+                        <summary className="cursor-pointer select-none text-ui-2xs text-zinc-500">Per-role overrides</summary>
+                        <div className="mt-1 space-y-1">
+                            {(['adversary', 'sentinel', 'maintenance', 'compaction'] as const).map(role => (
+                                <label key={role} className="flex items-center justify-between gap-2 text-ui-2xs text-zinc-500">
+                                    <span className="shrink-0">{role}</span>
+                                    <select
+                                        data-testid={`autonomy-role-${role}`}
+                                        value={snap.roleSeats[role] ?? ''}
+                                        onChange={ev => void setAutonomyRoleSeat(role, ev.target.value || undefined)}
+                                        className="min-w-0 flex-1 rounded-control border border-hairline bg-zinc-950 px-1 py-0.5 text-ui-2xs text-zinc-200 focus:outline-none"
+                                    >
+                                        <option value="">default</option>
+                                        {providers.filter(p => p.isEnabled).flatMap(p => p.models.map(m => (
+                                            <option key={`${p.id}::${m}`} value={`${p.id}::${m}`}>{p.name} · {m}</option>
+                                        )))}
+                                    </select>
+                                </label>
+                            ))}
+                        </div>
+                    </details>
                     <p className="text-ui-2xs text-zinc-500" data-testid="autonomy-budget-line">
                         {snap.callsLastHour}/{MAX_BACKGROUND_CALLS_PER_HOUR} background calls this hour
                         {snap.backoffUntil ? ` · backing off ${Math.ceil((snap.backoffUntil - Date.now()) / 1000)}s` : ''}
