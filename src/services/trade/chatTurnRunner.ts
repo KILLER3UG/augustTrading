@@ -687,7 +687,11 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
                     candles: snap?.evalCandles ?? [],
                     calibration: null,
                 })).then(review => {
-                    if (review.verdict === 'UNAVAILABLE') return;
+                    // THE GRAPH EDGE: pending_review → (adversary node) → armed.
+                    // APPROVE / CAUTION / UNAVAILABLE arm the watch here — the
+                    // plan was NEVER armed before this point, so there is no
+                    // arm→VETO→disarm race. A VETO leaves it pending for the
+                    // trader's explicit override on the card.
                     const adversary = {
                         ...review,
                         plan: {
@@ -699,17 +703,21 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
                             takeProfits: reviewedProposal.takeProfits,
                         },
                     };
+                    if (review.verdict !== 'VETO' && onPlanPresented) {
+                        onPlanPresented({
+                            planId: reviewedProposal.planId!,
+                            symbol: reviewedProposal.symbol,
+                            direction: reviewedProposal.direction,
+                            entry: reviewedProposal.entry,
+                            stopLoss: reviewedProposal.stopLoss,
+                            takeProfits: reviewedProposal.takeProfits,
+                        }, turn);
+                    }
                     chatStore.mutate(turn.sid, st => ({
                         ...st,
                         entries: st.entries.map(en => (en.id === turn.entryId && en.proposal?.planId === mintedPlanId
                             ? { ...en, proposal: { ...en.proposal!, adversary } } : en)),
                     }));
-                    if (review.verdict === 'VETO') {
-                        // NO auto-arm stands under a VETO: the watch the arm
-                        // path just set is withdrawn until the trader
-                        // explicitly overrides on the card.
-                        void import('./levelWatchService').then(lw => lw.disarm(mintedPlanId));
-                    }
                 }).catch(() => { /* an absent review is the honest state */ });
             }
             return result;
@@ -1226,7 +1234,7 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
         };
         patch(e => settleDockEntry({
             ...e,
-            trace: { ...trace, gateRefusals: e.tools.filter(t => t.includes('rejected')).length },
+            trace: { ...trace, gateRefusals: e.tools.filter(t => t.includes('rejected')).length, microCompactChars: outcome.microCompactChars },
             workedMs: outcome.workedMs,
             // The tier the turn was sent under, so the answer row can show it.
             // It comes out of the executor rather than being resolved again

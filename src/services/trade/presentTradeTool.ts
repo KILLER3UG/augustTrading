@@ -25,7 +25,7 @@ import { parseTradeProposal, mintPlanId, buildTradePlan, type TradeProposal } fr
 import { formatPaperFillAssumptions, PAPER_EXECUTION_RECEIPT } from '../tracking/paperExecution';
 import { beginGateScan, cancelGateScan, evaluatePlanLocalSync, gateReceiptLine } from './proposalGate';
 import { drawingsFromLevelTool, type ChartDrawing } from './chartDrawings';
-import { staleLevelsAtArm, type WatchPlan } from './tradePlanLevels';
+import type { WatchPlan } from './tradePlanLevels';
 
 /** What the turn is running against: the argument bag, the coin it was asked
  *  on, the closed-trade log for the gate, and the canvas truth it must not
@@ -179,11 +179,13 @@ export const runPresentTrade = (ctx: PresentTradeContext, sink: PresentTradeSink
     // test, never a stale-refuse) — and the receipt must evaluate the gate with
     // the SAME null, or it lies about a REFUSED watch that arms fine.
     const watching = ctx.watchable;
-    const armPrice = !watching || ctx.crossCanvas
-        ? null
-        : (typeof ctx.drawnPrice === 'number' && Number.isFinite(ctx.drawnPrice) && ctx.drawnPrice > 0 ? ctx.drawnPrice : null);
-    const stale = watching ? staleLevelsAtArm(plan, armPrice) : [];
-    sink.armPlan?.(plan);
+    // GRAPH EDGE: present_trade does NOT arm. The plan enters `pending_review`
+    // and the CALLER routes it through the isolated adversaryReview node —
+    // APPROVE / CAUTION / UNAVAILABLE arm the watch (the trader's explicit
+    // override clears a VETO). Arming here raced the review: a VETO had to
+    // DISARM an armed watch it had already armed — two edges for one
+    // decision. The stale gate still runs at arm time (levelWatch.arm
+    // refuses a plan already through its levels with the live mark).
     sink.setProposal(proposal);
     sink.onAbort?.(() => {
         cancelled = true;
@@ -200,12 +202,9 @@ export const runPresentTrade = (ctx: PresentTradeContext, sink: PresentTradeSink
         ...proposal.takeProfits.map((_, i) => `${proposal.planId}:TP${i + 1}`)];
     // Only reachable on the VIEWED canvas (crossCanvas ⇒ armPrice is null ⇒
     // stale is empty), so the price named here is genuinely the coin's live mark.
-    const staleWatchLine = `WARNING: the harness REFUSED to watch this plan — price ${ctx.drawnPrice} is already through a stop/target, so every level (${stale.join(', ')}) latched as already-reached and NO [HARNESS SIGNAL] will come for them. Do not claim a watch is live; if the user still wants one, re-present a plan whose levels sit ahead of price.`;
     const watchLine = !watching
-        ? 'NO level-watch is armed and nothing was drawn — this surface has no chart. The trader still sees the plan and can log it from the card.'
-        : stale.length > 0
-            ? staleWatchLine
-            : `The harness now watches these levels — ids ${levelIds.join(', ')} — and will send you a [HARNESS SIGNAL] when one is reached; refer to levels by those ids and never re-announce one that already fired.`;
+        ? 'NO level-watch applies — this surface has no chart. The trader still sees the plan and can log it from the card.'
+        : `The plan is PENDING REVIEW: the isolated adversary review clears it next — APPROVE/CAUTION/UNAVAILABLE arm the harness watch on ids ${levelIds.join(', ')} (a [HARNESS SIGNAL] names the level id when one is reached); a VETO holds the watch for the trader's explicit override on the card. Refer to levels by those ids and never re-announce one that already fired.`;
     // The receipt never states a probability the scan has not yet bounded.
     // Saying "Recorded as 72%" here and capping it at log time would put two
     // numbers for the same plan in the model's own context.

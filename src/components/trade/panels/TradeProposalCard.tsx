@@ -196,7 +196,7 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({
             {/* The adversary reviewer's verdict — an isolated read-only seat
                 read of the plan against the tape. Monochrome badge; the
                 objections live in the detail line below. */}
-            {proposal.adversary && proposal.adversary.verdict !== 'UNAVAILABLE' && (
+            {proposal.adversary && (
                 <span
                     data-testid="adversary-verdict"
                     className={`rounded-control border px-1.5 py-0.5 font-mono text-ui-2xs uppercase tracking-wider ${
@@ -207,7 +207,11 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({
                                 : 'border-hairline bg-white/[0.04] text-zinc-400'
                     }`}
                 >
-                    {proposal.adversary.verdict === 'VETO' && !proposal.adversary.overridden ? 'Adversary VETO' : `Adversary: ${proposal.adversary.verdict}`}
+                    {proposal.adversary.verdict === 'VETO' && !proposal.adversary.overridden
+                        ? 'Adversary VETO · watch held'
+                        : proposal.adversary.verdict === 'UNAVAILABLE'
+                            ? 'Adversary unavailable'
+                            : `Adversary: ${proposal.adversary.verdict} · watch armed`}
                 </span>
             )}
             {plan ? (
