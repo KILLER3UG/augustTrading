@@ -245,6 +245,17 @@ export interface CompositeCandleRead {
     upperTailRatio: number;
     lowerTailRatio: number;
     netDirection: 'bull' | 'bear' | 'doji';
+    /** 2-bar only: shared range of the two bars ÷ the wider bar's range
+     *  (0 when they do not overlap). > 0.75 = Al Brooks' heavy-overlap
+     *  two-bar reversal, where a breakout must clear BOTH bars. */
+    overlapRatio?: number;
+    /** True when the two bars overlap so heavily that the entry trigger must
+     *  clear the extreme of BOTH bars, not just the second. */
+    requiresBothBarsClear?: boolean;
+    /** One-tick beyond the extreme the breakout must clear (both bars when
+     *  heavily overlapped, else the second bar alone). */
+    triggerHigh?: number;
+    triggerLow?: number;
 }
 
 /**
@@ -252,7 +263,7 @@ export interface CompositeCandleRead {
  * open = first.open, close = last.close, high/low = extremes. The body and
  * tail ratios describe the blended bar the way a single bar's would.
  */
-export const compositeCandle = (candles: Kline[], bars: 2 | 3): CompositeCandleRead | null => {
+export const compositeCandle = (candles: Kline[], bars: 2 | 3, tickSize = 0): CompositeCandleRead | null => {
     if (candles.length < bars) return null;
     const tail = candles.slice(-bars);
     const open = tail[0].open;
@@ -264,6 +275,26 @@ export const compositeCandle = (candles: Kline[], bars: 2 | 3): CompositeCandleR
     const body = Math.abs(close - open);
     const upperTail = high - Math.max(open, close);
     const lowerTail = Math.min(open, close) - low;
+    const tick = tickSize > 0 ? tickSize : 0;
+    // Al Brooks' two-bar overlap rule: when the last two closed bars share
+    // more than 75% of the wider bar's range, neither bar alone marks the
+    // reversal — the breakout trigger must clear BOTH extremes.
+    let overlap: Pick<CompositeCandleRead, 'overlapRatio' | 'requiresBothBarsClear' | 'triggerHigh' | 'triggerLow'> = {};
+    if (bars === 2) {
+        const [b1, b2] = tail;
+        const shared = Math.min(b1.high, b2.high) - Math.max(b1.low, b2.low);
+        const widerRange = Math.max(b1.high - b1.low, b2.high - b2.low, 1e-9);
+        const overlapRatio = Math.max(0, shared) / widerRange;
+        const requiresBothBarsClear = overlapRatio > 0.75;
+        const triggerHigh = (requiresBothBarsClear ? Math.max(b1.high, b2.high) : b2.high) + tick;
+        const triggerLow = (requiresBothBarsClear ? Math.min(b1.low, b2.low) : b2.low) - tick;
+        overlap = {
+            overlapRatio: Number(overlapRatio.toFixed(4)),
+            requiresBothBarsClear,
+            triggerHigh: Number(triggerHigh.toFixed(8)),
+            triggerLow: Number(triggerLow.toFixed(8)),
+        };
+    }
     return {
         bars,
         open,
@@ -274,6 +305,7 @@ export const compositeCandle = (candles: Kline[], bars: 2 | 3): CompositeCandleR
         upperTailRatio: Number((upperTail / range).toFixed(4)),
         lowerTailRatio: Number((lowerTail / range).toFixed(4)),
         netDirection: body / range < 0.1 ? 'doji' : close > open ? 'bull' : 'bear',
+        ...overlap,
     };
 };
 
