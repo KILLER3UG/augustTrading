@@ -2256,3 +2256,27 @@ body.motion-reduced *::after {
   animation-iteration-count: 1 !important;
   transition-duration: 0.01ms !important;
 }
+
+/* Unified Electron desktop titlebar (titleBarStyle: 'hidden' + titleBarOverlay).
+   Empty bar space drags the native window; interactive controls opt out so
+   clicks reach the renderer and safe-area padding keeps clear of caption buttons. */
+.titlebar-drag {
+  -webkit-app-region: drag;
+  app-region: drag;
+  user-select: none;
+}
+.titlebar-no-drag,
+.titlebar-drag button,
+.titlebar-drag a,
+.titlebar-drag input,
+.titlebar-drag select,
+.titlebar-drag [role="button"],
+.titlebar-drag [role="group"] {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+.electron-titlebar-bar {
+  height: max(36px, env(titlebar-area-height, 36px));
+  padding-left: max(8px, env(titlebar-area-x, 0px));
+  padding-right: max(144px, calc(100% - env(titlebar-area-x, 0px) - env(titlebar-area-width, calc(100% - 144px)) + 8px));
+}

@@ -53,6 +53,9 @@ export interface SurfaceOutletProps {
     /* ── The shell ────────────────────────────────────────────────────────── */
     onToggleNavRail: () => void;
     navRailExpanded: boolean;
+    /** On Electron the unified TitleBar hosts the sidebar toggle and [D | C]
+     *  pill, so the workspace omits the separate web collapsed-rail chrome. */
+    isElectron?: boolean;
     /* ── The workspace (chart + Chart AI dock) ───────────────────────────── */
     memoryEnabled: boolean;
     strategiesEnabled: boolean;
@@ -127,7 +130,7 @@ export interface SurfaceOutletProps {
 
 const SurfaceOutlet: React.FC<SurfaceOutletProps> = ({
     surface,
-    onToggleNavRail, navRailExpanded,
+    onToggleNavRail, navRailExpanded, isElectron = false,
     memoryEnabled, strategiesEnabled, providers, selectedChatModel, onSelectChatModel,
     onRefreshModels, tradeModeRequest,
     activeUsername, onTradeModeChange, botThreadRows, onBotTurnCommit, onSoloTurnCommit,
@@ -142,30 +145,22 @@ const SurfaceOutlet: React.FC<SurfaceOutletProps> = ({
     // One workspace: whichever of the two desk routes is showing, the same
     // page mounts — the layout pill is the difference, not the route.
     const showWorkspace = surface === 'trade' || surface === 'agents';
+    const collapsedRailChrome = showWorkspace && !isElectron && !navRailExpanded && onToggleNavRail ? (
+        <div
+            data-testid="collapsed-rail-bar"
+            className="flex shrink-0 items-center gap-1.5"
+        >
+            <SidebarToggle expanded={false} onToggle={onToggleNavRail} />
+            <LayoutMiniToggle />
+        </div>
+    ) : undefined;
 
     return (
         <>
-            {/* The content bar is GONE (owner 1.3.1): the dock header names
-                the thread, the bias row carries the session read (SessionChip)
-                and the market state, the sidebar carries the routes. The one
-                thing the bar uniquely owned — the way back into a put-away
-                rail — is the compact flow row below, and only while the rail
-                is away: an expanded sidebar's collapse control lives in its
-                own pill row, and a second one here would be the duplicate the
-                ruling deleted. */}
-            {showWorkspace && !navRailExpanded && onToggleNavRail && (
-                <div
-                    data-testid="collapsed-rail-bar"
-                    className="flex shrink-0 items-center gap-1.5 bg-zinc-950 px-3 py-1.5"
-                >
-                    <SidebarToggle expanded={false} onToggle={onToggleNavRail} />
-                    <LayoutMiniToggle />
-                </div>
-            )}
-
             {showWorkspace && (
                 <React.Suspense fallback={<SurfaceSkeleton />}>
                     <TradeView
+                        leadingChrome={collapsedRailChrome}
                         memoryEnabled={memoryEnabled}
                         strategiesEnabled={strategiesEnabled}
                         providers={providers}

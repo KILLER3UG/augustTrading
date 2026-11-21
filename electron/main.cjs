@@ -5,7 +5,16 @@ const { pathToFileURL } = require('url');
 const { autoUpdater } = require('electron-updater');
 const { spawn } = require('child_process');
 const { resolveRepoPath } = require('../shared/repoSandbox.cjs');
+const { evaluateUpdateChannelPolicy, isStrictlyNewerVersion } = require('../shared/updateVerificationPolicy.cjs');
 const { createSseParser } = require('./sseParser.cjs');
+const pkgPublish = (() => {
+    try {
+        const pkg = require('../package.json');
+        return pkg?.build?.publish ?? {};
+    } catch {
+        return {};
+    }
+})();
 
 // ── REPO BRIDGE (dev only) ──────────────────────────────────────────────────
 // The model may read and edit THIS checkout when the app runs from source and
@@ -1270,8 +1279,20 @@ async function createWindow() {
         // `show: false` alone does not fix it: the window's own background is
         // Electron's default white, so anything that paints behind the
         // renderer — the 4s fail-safe show, a failed load — still shows white.
-        // This is the page color from index.css.
-        backgroundColor: '#0d0c0b',
+        // This is the page color from index.css (`--color-zinc-950`).
+        backgroundColor: '#0a0a0b',
+        ...(process.platform === 'win32' || process.platform === 'linux'
+            ? {
+                titleBarStyle: 'hidden',
+                titleBarOverlay: {
+                    color: '#0a0a0b',
+                    symbolColor: '#a1a1aa',
+                    height: 36,
+                },
+            }
+            : process.platform === 'darwin'
+                ? { titleBarStyle: 'hiddenInset' }
+                : {}),
         show: false,
         // Keep renderer timers/rAF at full rate when the window is hidden or
         // occluded. Electron throttles backgrounded renderers to ~1 timer/min
@@ -1309,6 +1330,19 @@ async function createWindow() {
 
     // Remove menu bar for cleaner look
     mainWindow.setMenuBarVisibility(false);
+
+    if ((process.platform === 'win32' || process.platform === 'linux') && typeof mainWindow.setTitleBarOverlay === 'function') {
+        mainWindow.webContents.on('zoom-changed', () => {
+            try {
+                const factor = mainWindow.webContents.getZoomFactor();
+                mainWindow.setTitleBarOverlay({
+                    color: '#0a0a0b',
+                    symbolColor: '#a1a1aa',
+                    height: Math.max(28, Math.min(64, Math.round(36 * factor))),
+                });
+            } catch { /* overlay update best-effort */ }
+        });
+    }
 
     if (isDev) {
         // Chromium can retain localhost responses between Electron launches,
@@ -1436,6 +1470,17 @@ function setupAutoUpdater() {
     });
 
     autoUpdater.on('update-available', (info) => {
+        if (!isStrictlyNewerVersion(info?.version, app.getVersion())) {
+            updateInfo = {
+                ...updateInfo,
+                status: 'upToDate',
+                version: null,
+                releaseNotes: null,
+                error: null,
+            };
+            sendUpdateStatus();
+            return;
+        }
         updateInfo = {
             ...updateInfo,
             status: 'available',
@@ -1490,12 +1535,36 @@ function setupAutoUpdater() {
     // frame that is not the app window's main frame (see the guard above).
     const refused = { error: 'Refused — the request did not come from the app window.' };
 
+    // ── Update channel verification policy ─────────────────────────────────
+    //
+    // Signed builds (app-update.yml carries `publisherName`) enforce full
+    // Windows Authenticode verification via electron-updater. Unsigned personal
+    // GitHub releases (win.verifyUpdateCodeSignature: false) are allowed when
+    // app-update.yml pins the exact HTTPS owner/repo, relying on HTTPS
+    // transport + electron-updater's SHA-512 verification against latest.yml.
+    const checkUpdateChannelPolicy = async () => {
+        try {
+            const cfg = await autoUpdater.configOnDisk.value;
+            return evaluateUpdateChannelPolicy(cfg, pkgPublish);
+        } catch {
+            return evaluateUpdateChannelPolicy(null, pkgPublish);
+        }
+    };
+    const updateChannelIsVerifiable = async () => {
+        const verdict = await checkUpdateChannelPolicy();
+        return verdict.allowed;
+    };
+    updateGateRef.isVerifiable = updateChannelIsVerifiable;
+    const unverifiableUpdateMessage = async () => {
+        const verdict = await checkUpdateChannelPolicy();
+        return verdict.reason;
+    };
+
     trustedHandle('update:check', async () => {
         if (isInstallerSmoke) return updateInfo; // smoke runs must never contact the update service
-        // Say the problem at the CHECK, not after the user has been invited to
-        // download something this app will refuse to install.
-        if (!(await updateChannelIsVerifiable())) {
-            updateInfo = { ...updateInfo, status: 'error', error: unverifiableUpdateMessage() };
+        const verdict = await checkUpdateChannelPolicy();
+        if (!verdict.allowed) {
+            updateInfo = { ...updateInfo, status: 'error', error: verdict.reason };
             sendUpdateStatus();
             return updateInfo;
         }
@@ -1509,57 +1578,11 @@ function setupAutoUpdater() {
         }
     }, () => ({ ...updateInfo, status: 'error', ...refused }));
 
-    // ── Publisher identity ──────────────────────────────────────────────────
-    //
-    // electron-updater checks a downloaded Windows installer against the
-    // `publisherName` recorded in the app-update.yml beside the INSTALLED app
-    // (electron-updater/out/NsisUpdater.js: `verifySignature` returns NULL when
-    // there is no publisherName, and the caller treats null as PASS - it only
-    // throws when the check produced an actual complaint).
-    //
-    // This project configures no publisherName, because the signing
-    // certificate has not been bought. So the channel carries no identity at
-    // all, and the updater as shipped would install ANY installer it was
-    // handed. The release-side gate (scripts/verify-release-signature.cjs)
-    // stops an unsigned ARTIFACT from being published; it cannot make the
-    // installed app verify what it is given.
-    //
-    // So the app asks the same question before it fetches or runs anything.
-    const updatePublisherIdentity = async () => {
-        try {
-            const cfg = await autoUpdater.configOnDisk.value;
-            const name = cfg && cfg.publisherName;
-            return typeof name === 'string' && name.trim() ? name.trim() : null;
-        } catch {
-            return null;
-        }
-    };
-    // The same "deliberate, never inherited" shape the release gate uses:
-    // shipping unsigned has to be chosen, not inherited. An owner who has
-    // decided to run an unsigned channel says so out loud.
-    const allowUnsignedUpdates = () => process.env.AUGUSTTRADING_ALLOW_UNSIGNED_UPDATES === '1';
-    const updateChannelIsVerifiable = async () => {
-        if (await updatePublisherIdentity()) return true;
-        if (allowUnsignedUpdates()) {
-            console.warn('[AutoUpdater] AUGUSTTRADING_ALLOW_UNSIGNED_UPDATES=1 — installing an update the app cannot verify.');
-            return true;
-        }
-        return false;
-    };
-    updateGateRef.isVerifiable = updateChannelIsVerifiable;
-    const unverifiableUpdateMessage = () =>
-        'This build has no publisher identity, so the app cannot verify the installer it was offered '
-        + '(the update channel carries no code-signing identity). Update installation is refused. '
-        + 'Set build.publish.publisherName in package.json to the subject of your signing certificate, '
-        + 'or set AUGUSTTRADING_ALLOW_UNSIGNED_UPDATES=1 to accept an unverified update deliberately.';
-
     trustedHandle('update:download', async () => {
         if (isInstallerSmoke) return updateInfo; // smoke runs must never download an update
-        // Nothing is fetched that could not be installed: the download is
-        // harmless, but fetching an artifact this app has already refused to
-        // trust only teaches the user a button works.
-        if (!(await updateChannelIsVerifiable())) {
-            updateInfo = { ...updateInfo, status: 'error', error: unverifiableUpdateMessage() };
+        const verdict = await checkUpdateChannelPolicy();
+        if (!verdict.allowed) {
+            updateInfo = { ...updateInfo, status: 'error', error: verdict.reason };
             sendUpdateStatus();
             return updateInfo;
         }
@@ -1582,11 +1605,8 @@ function setupAutoUpdater() {
             console.warn('[AutoUpdater] update:install ignored — no downloaded update');
             return false;
         }
-        // The last gate before an installer runs on this machine. A channel
-        // with no identity has nothing to check the installer against, so
-        // nothing is installed from it.
         if (!(await updateChannelIsVerifiable())) {
-            const message = unverifiableUpdateMessage();
+            const message = await unverifiableUpdateMessage();
             console.error('[AutoUpdater] update:install refused —', message);
             updateInfo = { ...updateInfo, status: 'error', error: message };
             sendUpdateStatus();
@@ -1634,6 +1654,29 @@ function setupAutoUpdater() {
     trustedHandle('update:get-status', () => updateInfo, () => updateInfo);
 
     trustedHandle('app:get-version', () => app.getVersion(), () => '');
+
+    trustedHandle('window:set-titlebar-overlay', (_event, opts) => {
+        if (!mainWindow || mainWindow.isDestroyed() || typeof mainWindow.setTitleBarOverlay !== 'function') {
+            return false;
+        }
+        const next = {};
+        if (opts && typeof opts.color === 'string' && /^#[0-9a-fA-F]{6,8}$/.test(opts.color.trim())) {
+            next.color = opts.color.trim();
+        }
+        if (opts && typeof opts.symbolColor === 'string' && /^#[0-9a-fA-F]{6,8}$/.test(opts.symbolColor.trim())) {
+            next.symbolColor = opts.symbolColor.trim();
+        }
+        if (opts && typeof opts.height === 'number' && Number.isFinite(opts.height)) {
+            next.height = Math.max(28, Math.min(64, Math.round(opts.height)));
+        }
+        if (Object.keys(next).length === 0) return false;
+        try {
+            mainWindow.setTitleBarOverlay(next);
+            return true;
+        } catch {
+            return false;
+        }
+    }, () => false);
 
     trustedHandle('provider:discover', async (_event, config) => {
         if (isInstallerSmoke) {

@@ -89,10 +89,14 @@ export const LayoutPill: React.FC<LayoutPillProps> = ({ surface, onSelectSurface
     );
 };
 
-/** The collapsed sidebar's compact bar (beside `nav-rail-toggle-header`): the
- *  same two segments at D/C, because a put-away rail has no pill to press and
- *  the ruling's toggle must stay reachable from anywhere. */
-export const LayoutMiniToggle: React.FC = () => {
+export interface LayoutMiniToggleProps {
+    surface?: AppSurface;
+    onSelectSurface?: (surface: AppSurface) => void;
+}
+
+/** The collapsed sidebar's compact bar (beside `nav-rail-toggle-header`) and
+ *  the unified Electron titlebar's layout pill: the same two segments at D/C. */
+export const LayoutMiniToggle: React.FC<LayoutMiniToggleProps> = ({ surface, onSelectSurface }) => {
     const layout = useLayout();
     return (
         <div
@@ -105,8 +109,12 @@ export const LayoutMiniToggle: React.FC = () => {
                 <button
                     key={s.layout}
                     type="button"
-                    onClick={() => setWorkspaceLayout(s.layout)}
+                    onClick={() => {
+                        setWorkspaceLayout(s.layout);
+                        onSelectSurface?.(s.surface);
+                    }}
                     aria-pressed={layout === s.layout}
+                    aria-current={surface && surface === s.surface ? 'page' : undefined}
                     title={s.title}
                     data-testid={s.miniTestId}
                     className={`flex h-6 w-6 items-center justify-center rounded-[4px] font-mono text-[10px] font-bold uppercase transition-colors ${

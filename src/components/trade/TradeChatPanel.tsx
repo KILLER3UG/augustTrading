@@ -306,6 +306,8 @@ interface TradeChatPanelProps {
     onConfirmRuleProposal?: (proposal: import('../../services/learning/candidateRuleLoop').RuleProposal, sessionId?: string) => void;
     onDismissRuleProposal?: (proposal: import('../../services/learning/candidateRuleLoop').RuleProposal) => void;
     onRevertRuleProposal?: (proposal: import('../../services/learning/candidateRuleLoop').RuleProposal, sessionId?: string) => void;
+    /** Compact collapsed-rail controls rendered inline in Chat focus mode on Web. */
+    leadingChrome?: React.ReactNode;
 }
 
 /** Empty-state starters. The glyph is a category cue so the row scans by
@@ -378,6 +380,7 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
     layoutMode = 'desk',
     paneVisible = true,
     onRefreshModels,
+    leadingChrome,
 }) => {
     // Session state lives in the module store (chatStore) so an in-flight
     // answer survives switching to another surface tab and back — the panel
@@ -1353,6 +1356,7 @@ ${riskConstitution}`
                     ? 'border-b border-white/[0.05] bg-transparent px-6 py-3'
                     : 'border-b border-hairline bg-zinc-900/20 px-4 py-2.5'
             }`}>
+                {isChatFocus && leadingChrome}
                 <button
                     type="button"
                     onClick={() => { setHistoryOpen(v => !v); setHistoryQuery(''); setHistorySel(0); setHistoryShowAll(false); }}

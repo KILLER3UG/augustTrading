@@ -73,6 +73,9 @@ interface ShellRailProps {
      *  not a column that squeezes it. */
     overlay?: boolean;
     onCloseOverlay?: () => void;
+    /** On Electron the unified TitleBar hosts the layout pill + collapse toggle,
+     *  so the rail omits its duplicate top row to avoid stacked header chrome. */
+    hideTopControls?: boolean;
 }
 
 const ShellRail: React.FC<ShellRailProps> = ({
@@ -81,7 +84,7 @@ const ShellRail: React.FC<ShellRailProps> = ({
     onDeleteConversation, onClearConversation,
     activeUsername, onOpenSettings, onOpenActivity,
     width, isResizing, onResizeStart, onResizeReset, onCollapse,
-    saveStatus, overlay = false, onCloseOverlay,
+    saveStatus, overlay = false, onCloseOverlay, hideTopControls = false,
 }) => {
     // One column on every surface: the workspace merge left ONE desk, so the
     // conversation list (New chat / Pinned / Recent) and the account row ride
@@ -134,14 +137,16 @@ const ShellRail: React.FC<ShellRailProps> = ({
                     Recent fill it, the account row closes it. The resize edge
                     is the column's own. */}
                 <div className="flex min-w-0 flex-1 flex-col" style={{ width }}>
-                    <div className="flex shrink-0 items-center gap-1 px-2 pb-1 pt-2">
-                        <LayoutPill surface={surface} onSelectSurface={onSelectSurface} />
-                        <span aria-hidden="true" className="flex-1" />
-                        {/* The collapse-to-zero control the ruling pairs with
-                            the pill: the same one toggle the header carries,
-                            so both states share a component and a testid. */}
-                        <SidebarToggle expanded onToggle={onCollapse} />
-                    </div>
+                    {!hideTopControls && (
+                        <div className="flex shrink-0 items-center gap-1 px-2 pb-1 pt-2">
+                            <LayoutPill surface={surface} onSelectSurface={onSelectSurface} />
+                            <span aria-hidden="true" className="flex-1" />
+                            {/* The collapse-to-zero control the ruling pairs with
+                                the pill: the same one toggle the header carries,
+                                so both states share a component and a testid. */}
+                            <SidebarToggle expanded onToggle={onCollapse} />
+                        </div>
+                    )}
                     <ConversationGroups
                         conversations={conversations}
                         activeConversationId={activeConversationId}

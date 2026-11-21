@@ -88,6 +88,7 @@ interface ElectronProviderBridge {
     // hook, ProviderConfigService) read `window.electronAPI.*` typed instead of
     // re-casting to `(window as any)`. ──
     platform?: string;
+    setTitleBarOverlay?: (opts: { color?: string; symbolColor?: string; height?: number }) => Promise<boolean>;
     getVersion?: () => Promise<string>;
     checkForUpdates?: () => Promise<ElectronUpdateStatus | null>;
     downloadUpdate?: () => Promise<ElectronUpdateStatus | null>;

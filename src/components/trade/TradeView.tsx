@@ -180,6 +180,9 @@ interface TradeViewProps {
     onVoidSettlementCorrection?: (proposal: SettlementCorrectionProposal) => void;
     onConfirmTradeAction?: (proposal: TradeActionProposal) => void;
     onDismissTradeAction?: (proposal: TradeActionProposal) => void;
+    /** Compact collapsed-rail controls injected inline on Web so collapsing
+     *  the sidebar never adds a separate blank top strip. */
+    leadingChrome?: React.ReactNode;
 }
 
 interface StripData {
@@ -355,7 +358,7 @@ export const useTickFlash = (price: number | undefined): { cls: string; seq: num
 const TradeView: React.FC<TradeViewProps> = ({
     memoryEnabled, strategiesEnabled, providers, selectedChatModel, onSelectChatModel, onRefreshModels, verdict, bots = [], trades = [], botSessionRequest, groupSessionRequest, onRunAnalysis, onAnalysisError, onStopRun, botThreadRows, onBotTurnCommit, onSoloTurnCommit, onSyncConversation, conversationRows, onNewGroup, getAnalysisMessage, onLogProposedTrade, onRejectProposedTrade, onUndoApproval, onConfirmRiskChange, onDismissRiskChange, onRevertRiskChange, onConfirmAiSettingChange, onDismissAiSettingChange, onRevertAiSettingChange, onConfirmStrategyActivation, onDismissStrategyActivation, onRevertStrategyActivation, onConfirmSessionPlan, onDismissSessionPlan, onRevertSessionPlan, onConfirmRuleProposal, onDismissRuleProposal, onRevertRuleProposal, renderGroupSurface, groups = [], registerScrollToMessage, modeRequest, activeUsername, onTradeModeChange,    onToggleWatch, onOpenWatchList, watchOpenCount = 0, pinnedMessageIds,
     onConfirmSettlementCorrection, onDismissSettlementCorrection, onVoidSettlementCorrection,
-    onConfirmTradeAction, onDismissTradeAction }) => {
+    onConfirmTradeAction, onDismissTradeAction, leadingChrome }) => {
     // The chart opens on the coin the SHARED chat session carries. Adopting only
     // from an effect is not enough: the dock mounts in the same commit, a child's
     // effect runs before its parent's, and the dock can re-bind the active session
@@ -1009,6 +1012,7 @@ const TradeView: React.FC<TradeViewProps> = ({
                 was the duplication the reference removes. */}
             <div className={`${chatLayout ? 'hidden' : 'flex'} shrink-0 items-center gap-2 border-b border-hairline bg-zinc-950 px-3 py-2 sm:px-4`}>
                 <div className="flex min-w-0 items-center gap-1.5">
+                    {!chatLayout && leadingChrome}
                     <SymbolPicker symbols={symbols} value={symbol} onChange={changeSymbol}
                         onOpenWatchList={onOpenWatchList}
                         watchOpenCount={watchOpenCount} />
@@ -1271,6 +1275,7 @@ const TradeView: React.FC<TradeViewProps> = ({
                 >
                     <TradeChatPanel
                         {...dockProps}
+                        leadingChrome={chatLayout ? leadingChrome : undefined}
                         layoutMode={workspaceLayout}
                         /* Sync with the pane's visibility: below lg the dock
                             pane is display:none-hidden whenever another mode

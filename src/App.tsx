@@ -142,6 +142,7 @@ import type { SoloTurnRow } from './services/trade/chatTurnMirror';
 // a rename that a future reader should undo.
 import { NAV_RAIL_AUTO_COLLAPSE_PX, NAV_RAIL_EXPANDED_PX } from './components/shell/shellChrome';
 import ShellRail from './components/shell/ShellRail';
+import TitleBar from './components/shell/TitleBar';
 // The Journal pulls recharts + react-virtuoso into its chunk — statically
 // importing it put both on the startup path for a surface most users open
 // after days of logging. Lazy-once like the other surfaces; the deep-link
@@ -2444,6 +2445,9 @@ const App: React.FC = () => {
     // and the Agents surface keeps its own header row — so the bar travels as
     // part of the switch, not as a node App assembles.
 
+    // Unified single-row titlebar on Electron (`titleBarStyle: 'hidden'` + `titleBarOverlay`).
+    const isElectronApp = typeof window !== 'undefined' && window.electronAPI?.isElectron === true;
+
     return (
         // Outer Suspense boundary. fallback={null} so a suspending lazy
         // subtree (e.g. a modal opening) does NOT blank the always-visible
@@ -2600,6 +2604,12 @@ const App: React.FC = () => {
                 no state of its own — the channel does. */}
             <AskUserInputCard />
 
+            <TitleBar
+                surface={surface}
+                onSelectSurface={selectSurface}
+                navRailExpanded={isNavRailOpen}
+                onToggleNavRail={toggleNavRail}
+            />
 
             {/* The shell: one navigation column beside the content, the way the
                 reference draws it. The rail is the full height of the window and
@@ -2638,6 +2648,7 @@ const App: React.FC = () => {
                         saveStatus={saveStatus}
                         overlay={isNavOverlay}
                         onCloseOverlay={closeNavOverlay}
+                        hideTopControls={isElectronApp}
                     />
                 )}
                 {/* Surfaces: pages, not modals. */}
@@ -2651,6 +2662,7 @@ const App: React.FC = () => {
                         surface={surface}
                         onToggleNavRail={toggleNavRail}
                         navRailExpanded={isNavRailOpen}
+                        isElectron={isElectronApp}
                         memoryEnabled={isGlobalMemoryEnabled}
                         strategiesEnabled={isStrategiesEnabled}
                         providers={providerConfigs}

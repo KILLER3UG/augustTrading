@@ -12,7 +12,6 @@ import { Settings, Inbox, AlertTriangleIcon } from '../shared/Icons';
 import Tip from '../ui/Tip';
 import { useUpdateStatusDot } from '../shared/UpdateButton';
 import { useAutoUpdate } from '../../hooks/useAutoUpdate';
-import UpdateButton from '../shared/UpdateButton';
 
 /** The collapsed column is 0px: the rail leaves the layout entirely and its
  *  expand affordance lives in the header (nav-rail-toggle-header). */
@@ -80,12 +79,6 @@ export const AccountRow: React.FC<{
                     <AlertTriangleIcon className="h-3 w-3" aria-hidden="true" /> Save failed
                 </span>
             )}
-            {/* The update control's ONLY reachable home since the content bar
-                died (ruling 1.3.1). It renders nothing in the browser and a
-                quiet version chip while healthy — the account row is the one
-                always-visible foot, so an available update has an action
-                without a second bar. */}
-            <UpdateButton />
             <div className="flex items-center gap-2">
                 <div
                     className="flex min-w-0 flex-1 items-center gap-2 rounded-control py-0.5"

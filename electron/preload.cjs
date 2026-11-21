@@ -21,6 +21,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     },
     isElectron: true,
     platform: process.platform,
+    setTitleBarOverlay: (opts) => ipcRenderer.invoke('window:set-titlebar-overlay', opts),
 
     // Repo bridge — source read/edit/apply, DEV ONLY (AUGUSTTRADING_REPO).
     // Every path is sandboxed in main; the renderer never sees fs or a shell.
