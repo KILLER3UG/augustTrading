@@ -169,7 +169,101 @@ export interface OrderBookData {
         nearestSellWall?: { price: number; distance: number };
     };
     available?: boolean;
+    /** Wall-clock ms when this snapshot was fetched. The point-in-time TTL
+     *  (5s) keeps every served book ≤5s stale; impact quotes refuse older
+     *  reads rather than price a fill against a dead book. */
+    fetchedAt?: number;
 }
+
+export interface BookSlippageEstimate {
+    side: 'buy' | 'sell';
+    notionalUsd: number;
+    available: boolean;
+    reason?: string;
+    /** VWAP fill across the levels the notional consumes. */
+    vwapFillPrice: number | null;
+    /** Signed slippage vs the touched side's best price, in bps — positive
+     *  when the fill is WORSE than best (buys walk up the asks); negative
+     *  when a sell walks down the bids. */
+    slippageBps: number | null;
+    /** Deepest level price the notional touches. */
+    worstFillPrice: number | null;
+    levelsConsumed: number;
+    baseQuantity: number;
+    /** Σ price×qty of the levels actually needed — < notionalUsd when the
+     *  book is too thin, and `remainingUsd` names the shortfall. */
+    notionalFilledUsd: number;
+    remainingUsd: number;
+}
+
+/**
+ * Walk the L2 ladder best-first and report the expected VWAP fill, worst
+ * touched level and slippage bps for an EXACT notional size. Pure — the
+ * get_order_book tool calls this when the model passes notional_usd. A
+ * market/stop order of $N eats the book; this is what it costs.
+ */
+export const estimateBookSlippage = (
+    bids: ReadonlyArray<{ price: number; qty: number }>,
+    asks: ReadonlyArray<{ price: number; qty: number }>,
+    side: 'buy' | 'sell',
+    notionalUsd: number,
+): BookSlippageEstimate => {
+    const base: BookSlippageEstimate = {
+        side,
+        notionalUsd,
+        available: false,
+        vwapFillPrice: null,
+        slippageBps: null,
+        worstFillPrice: null,
+        levelsConsumed: 0,
+        baseQuantity: 0,
+        notionalFilledUsd: 0,
+        remainingUsd: notionalUsd,
+    };
+    if (!Number.isFinite(notionalUsd) || notionalUsd <= 0) {
+        return { ...base, reason: 'notionalUsd must be a positive finite USD amount' };
+    }
+    // A buy eats the asks; a sell hits the bids.
+    const ladder = side === 'buy' ? asks : bids;
+    const best = ladder[0]?.price ?? 0;
+    if (!(best > 0)) {
+        return { ...base, reason: 'order book ladder is empty — no depth to walk' };
+    }
+    let remaining = notionalUsd;
+    let cost = 0;
+    let qtyFilled = 0;
+    let levels = 0;
+    let worst = best;
+    for (const level of ladder) {
+        if (remaining <= 0) break;
+        const levelUsd = level.price * level.qty;
+        const takeUsd = Math.min(levelUsd, remaining);
+        const takeQty = takeUsd / level.price;
+        cost += takeUsd;
+        qtyFilled += takeQty;
+        remaining -= takeUsd;
+        levels += 1;
+        worst = level.price;
+    }
+    const filled = notionalUsd - Math.max(0, remaining);
+    const vwap = qtyFilled > 0 ? cost / qtyFilled : null;
+    const slipBps = vwap !== null ? ((vwap - best) / best) * 10_000 : null;
+    return {
+        side,
+        notionalUsd,
+        available: remaining <= 0,
+        ...(remaining > 0 ? {
+            reason: `book depth insufficient: the top ${ladder.length} level(s) carry $${Math.round(filled)} of the requested $${Math.round(notionalUsd)} — refusing to quote a fill that does not exist`,
+        } : {}),
+        vwapFillPrice: vwap !== null ? Math.round(vwap * 1e8) / 1e8 : null,
+        slippageBps: slipBps !== null ? Math.round(slipBps * 100) / 100 : null,
+        worstFillPrice: worst,
+        levelsConsumed: levels,
+        baseQuantity: Number(qtyFilled.toPrecision(8)),
+        notionalFilledUsd: Math.round(filled * 100) / 100,
+        remainingUsd: Math.round(Math.max(0, remaining) * 100) / 100,
+    };
+};
 
 /**
  * Recent Liquidation data - Shows forced position closures
@@ -302,7 +396,7 @@ const robustBinanceFetch = async (apiPath: string, timeoutMs: number = 10000): P
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
-            const response = await fetch(`${baseUrl}${apiPath}`, {
+            const response = await fetchImpl(`${baseUrl}${apiPath}`, {
                 method: 'GET',
                 signal: controller.signal
             });
@@ -313,15 +407,16 @@ const robustBinanceFetch = async (apiPath: string, timeoutMs: number = 10000): P
                 return response;
             } else {
                 lastStatus = response.status;
-                console.warn(`[MarketDataService] ${baseUrl} returned ${response.status}, trying next...`);
+                if (FUTURES_FETCH_DEBUG) console.warn(`[MarketDataService] ${baseUrl} returned ${response.status}, trying next...`);
             }
         } catch (error) {
             lastError = error as Error;
-            console.warn(`[MarketDataService] Failed with ${baseUrl}, trying next...`);
+            if (FUTURES_FETCH_DEBUG) console.warn(`[MarketDataService] Failed with ${baseUrl}, trying next...`);
             // Continue to next endpoint
         }
     }
 
+    console.warn(`[MarketDataService] All Binance endpoints failed for ${apiPath}${lastStatus ? ` (last status ${lastStatus})` : ''}`);
     if (lastStatus) {
         throw new Error(`Binance API error: ${lastStatus}`);
     }
@@ -353,28 +448,128 @@ const FUTURES_MAX_REQUESTS_PER_MINUTE = 120;
 const FUTURES_SLOT_MAX_WAIT_MS = 1500;
 const futuresRequestTimes: number[] = [];
 
+// ── IP-level rate-limit state ────────────────────────────────────────────────
+// Binance USD-M Futures 429/418 limits are IP-level, NOT per-host: cycling to
+// fapi1/fapi2 after a 429 hammers the same gate and escalates into a 418
+// auto-ban (2 minutes to 3 days). One latch governs every host.
+let futuresCooldownUntilMs = 0;
+let futuresCooldownReason = '';
+const FUTURES_COOLDOWN_MAX_INLINE_WAIT_MS = 2500;
+const FUTURES_429_DEFAULT_BACKOFF_MS = 2000;
+const FUTURES_418_DEFAULT_BAN_MS = 120_000;
+/** Never latch a cooldown beyond Binance's own maximum ban window. */
+const FUTURES_COOLDOWN_MAX_MS = 3 * 24 * 60 * 60 * 1000;
+
+// The authoritative weight gauge (x-mbx-used-weight-1m) — self-throttle at 90%
+// of the 2,400/min ceiling instead of trusting the local request count.
+const FUTURES_WEIGHT_CEILING = 2400;
+export const FUTURES_WEIGHT_THROTTLE_THRESHOLD = Math.floor(FUTURES_WEIGHT_CEILING * 0.9);
+const FUTURES_WEIGHT_MAX_WAIT_MS = 5000;
+let futuresUsedWeight1m = 0;
+let futuresWeightUpdatedAtMs = 0;
+
+/** Per-host last-seen status, for the one concise all-hosts-failed line. */
+const futuresHostLastStatus = new Map<string, { status: number; at: number }>();
+
+/** Verbose per-attempt logging is a debug instrument, not default noise. */
+const FUTURES_FETCH_DEBUG: boolean = (() => {
+    try {
+        if (typeof process !== 'undefined' && typeof process.env !== 'undefined' && process.env.AUGUST_FETCH_DEBUG === '1') return true;
+    } catch { /* non-node runtime */ }
+    try {
+        if (typeof localStorage !== 'undefined' && localStorage.getItem('august_fetch_debug') === '1') return true;
+    } catch { /* private mode */ }
+    return false;
+})();
+
+/** Retry-After: delay-seconds or HTTP-date, bounded to a sane ceiling. */
+const parseRetryAfterMs = (header: string | null): number | null => {
+    if (!header) return null;
+    const trimmed = header.trim();
+    if (!trimmed) return null;
+    const secs = Number(trimmed);
+    if (Number.isFinite(secs) && secs >= 0) return Math.min(secs * 1000, FUTURES_COOLDOWN_MAX_MS);
+    const dateMs = Date.parse(trimmed);
+    if (Number.isFinite(dateMs)) return Math.min(Math.max(0, dateMs - Date.now()), FUTURES_COOLDOWN_MAX_MS);
+    return null;
+};
+
+/** Record the authoritative weight gauge from any response (ok or not). */
+const noteFuturesResponse = (response: Response): void => {
+    try {
+        const weight = Number(response.headers?.get?.('x-mbx-used-weight-1m'));
+        if (Number.isFinite(weight) && weight >= 0) {
+            futuresUsedWeight1m = weight;
+            futuresWeightUpdatedAtMs = Date.now();
+        }
+    } catch { /* header access is best-effort */ }
+};
+
+/** A 429/418 refusal is a FINAL IP-level verdict — never a host-failover cue. */
+class FuturesRateLimitedError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = 'FuturesRateLimitedError';
+    }
+}
+
 const acquireFuturesSlot = async (): Promise<void> => {
     const deadline = Date.now() + FUTURES_SLOT_MAX_WAIT_MS;
+    const weightDeadline = Date.now() + FUTURES_WEIGHT_MAX_WAIT_MS;
     for (;;) {
         const now = Date.now();
         while (futuresRequestTimes.length > 0 && futuresRequestTimes[0] < now - 60_000) futuresRequestTimes.shift();
-        if (futuresRequestTimes.length < FUTURES_MAX_REQUESTS_PER_MINUTE || now >= deadline) {
+        // The reported gauge is fresh for 60s after its last response; past
+        // that it has rolled over and the local count is the only signal.
+        const weightFresh = now - futuresWeightUpdatedAtMs < 60_000;
+        const weightHot = weightFresh && futuresUsedWeight1m >= FUTURES_WEIGHT_THROTTLE_THRESHOLD;
+        const weightCooled = !weightHot || now >= futuresWeightUpdatedAtMs + 60_000;
+        if (futuresRequestTimes.length < FUTURES_MAX_REQUESTS_PER_MINUTE && weightCooled) {
+            futuresRequestTimes.push(now);
+            return;
+        }
+        if (now >= deadline || (weightHot && now >= weightDeadline)) {
+            // Go anyway — Binance's weight limit is the actual authority, and
+            // a 429 now latches an honest cooldown instead of hammering.
             futuresRequestTimes.push(now);
             return;
         }
         // Re-check until a slot genuinely frees, instead of sleeping a fixed
         // 5 s and booking regardless -- which grew the window without bound
         // while making every caller pay the stall.
-        await new Promise<void>(resolve => setTimeout(resolve, Math.min(100, deadline - now)));
+        await new Promise<void>(resolve => setTimeout(resolve, Math.min(100, Math.max(1, deadline - now))));
     }
 };
 
 /**
- * Robust fetch helper for Binance Futures API
- * Tries multiple futures endpoints to handle CORS/SSL issues
- * Enhanced with better error handling and logging
+ * Injectable transport: tests swap `fetchImpl` through the test hooks below
+ * instead of mutating `globalThis.fetch` (which races every concurrent test
+ * file). Production always uses the real global fetch.
  */
-const robustFuturesFetch = async (apiPath: string, timeoutMs: number = 15000): Promise<Response> => {
+const globalFetch: typeof fetch = typeof fetch === 'function'
+    ? fetch.bind(globalThis)
+    : (() => { throw new Error('fetch is unavailable in this runtime'); })();
+let fetchImpl: typeof fetch = globalFetch;
+
+/**
+ * Robust fetch helper for Binance Futures API.
+ * Tries the prod-only futures hosts to handle CORS/SSL issues, with two
+ * IP-level protections:
+ *  - a 429/418 latches a shared cooldown (from Retry-After, bounded) and stops
+ *    host cycling immediately — short waits retry once inline, long waits fail
+ *    fast so adapters emit an honest DATA_UNAVAILABLE envelope;
+ *  - the x-mbx-used-weight-1m gauge self-throttles issuance at 90% of the
+ *    2,400/min ceiling (see acquireFuturesSlot).
+ */
+const robustFuturesFetch = async (apiPath: string, timeoutMs: number = 15000, allowCooldownRetry: boolean = true): Promise<Response> => {
+    const cooldownRemaining = futuresCooldownUntilMs - Date.now();
+    if (cooldownRemaining > 0) {
+        if (allowCooldownRetry && cooldownRemaining <= FUTURES_COOLDOWN_MAX_INLINE_WAIT_MS) {
+            await new Promise<void>(resolve => setTimeout(resolve, cooldownRemaining));
+            return robustFuturesFetch(apiPath, timeoutMs, false);
+        }
+        throw new FuturesRateLimitedError(`Binance Futures unavailable: IP-level cooldown active${futuresCooldownReason ? ` (${futuresCooldownReason})` : ''} for another ${Math.ceil(cooldownRemaining / 1000)}s — failing fast instead of hammering the rate limiter`);
+    }
     await acquireFuturesSlot();
     let lastError: Error | null = null;
     let lastStatus: number | null = null;
@@ -385,9 +580,9 @@ const robustFuturesFetch = async (apiPath: string, timeoutMs: number = 15000): P
             const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
             const fullUrl = `${baseUrl}${apiPath}`;
 
-            console.log(`[MarketDataService] Trying Futures endpoint: ${fullUrl}`);
+            if (FUTURES_FETCH_DEBUG) console.log(`[MarketDataService] Trying Futures endpoint: ${fullUrl}`);
 
-            const response = await fetch(fullUrl, {
+            const response = await fetchImpl(fullUrl, {
                 method: 'GET',
                 signal: controller.signal,
                 headers: {
@@ -396,21 +591,44 @@ const robustFuturesFetch = async (apiPath: string, timeoutMs: number = 15000): P
             });
 
             clearTimeout(timeoutId);
+            noteFuturesResponse(response);
+            futuresHostLastStatus.set(baseUrl, { status: response.status, at: Date.now() });
 
             if (response.ok) {
-                console.log(`[MarketDataService] Success with ${baseUrl}`);
+                if (FUTURES_FETCH_DEBUG) console.log(`[MarketDataService] Success with ${baseUrl}`);
                 return response;
-            } else {
-                lastStatus = response.status;
-                console.warn(`[MarketDataService] ${baseUrl} returned ${response.status}, trying next...`);
             }
+            lastStatus = response.status;
+            if (response.status === 429 || response.status === 418) {
+                const isBan = response.status === 418;
+                const retryAfterMs = parseRetryAfterMs(response.headers?.get?.('retry-after') ?? null);
+                const backoffMs = retryAfterMs ?? (isBan ? FUTURES_418_DEFAULT_BAN_MS : FUTURES_429_DEFAULT_BACKOFF_MS);
+                futuresCooldownUntilMs = Math.max(futuresCooldownUntilMs, Date.now() + backoffMs);
+                futuresCooldownReason = isBan ? '418 IP auto-ban' : '429 rate limit';
+                const remainingMs = futuresCooldownUntilMs - Date.now();
+                // Short wait: one clean inline retry. Long wait: fail fast —
+                // NEVER cycle hosts against an IP-level gate.
+                if (allowCooldownRetry && remainingMs <= FUTURES_COOLDOWN_MAX_INLINE_WAIT_MS) {
+                    await new Promise<void>(resolve => setTimeout(resolve, remainingMs));
+                    return robustFuturesFetch(apiPath, timeoutMs, false);
+                }
+                throw new FuturesRateLimitedError(`Binance Futures ${response.status} (${futuresCooldownReason}): IP cooldown latched for ${Math.ceil(remainingMs / 1000)}s — failing fast without trying the remaining hosts`);
+            }
+            if (FUTURES_FETCH_DEBUG) console.warn(`[MarketDataService] ${baseUrl} returned ${response.status}, trying next...`);
         } catch (error) {
+            if (error instanceof FuturesRateLimitedError) throw error;
             lastError = error as Error;
-            console.warn(`[MarketDataService] Futures API failed with ${baseUrl}:`, (error as Error).message);
+            if (FUTURES_FETCH_DEBUG) console.warn(`[MarketDataService] Futures API failed with ${baseUrl}:`, (error as Error).message);
             // Continue to next endpoint
         }
     }
 
+    // ONE concise line when every host failed — the per-attempt detail is a
+    // debug instrument (AUGUST_FETCH_DEBUG=1 / august_fetch_debug=1).
+    const hostLines = BINANCE_FUTURES_ENDPOINTS
+        .map(h => { const s = futuresHostLastStatus.get(h); return `${h}→${s ? s.status : 'no answer'}`; })
+        .join(', ');
+    console.warn(`[MarketDataService] All Futures endpoints failed for ${apiPath} [${hostLines}]`);
     // If we got a specific HTTP error, throw more info
     if (lastStatus) {
         throw new Error(`All Binance Futures endpoints failed with status: ${lastStatus}`);
@@ -418,6 +636,36 @@ const robustFuturesFetch = async (apiPath: string, timeoutMs: number = 15000): P
 
     // FIX: Always throw if we reach here (all endpoints failed without HTTP status)
     throw lastError || new Error('All Binance Futures endpoints failed');
+};
+
+/** Test hooks: the rate-limit state is module-private; the deterministic
+ *  tests reset it, seed the weight gauge, and drive robustFuturesFetch
+ *  against a mocked global fetch. */
+export const __futuresRateLimitTestHooks = {
+    fetch: robustFuturesFetch,
+    setFetchImpl: (fn: (url: string) => Promise<Response>): void => {
+        fetchImpl = fn as unknown as typeof fetch;
+    },
+    reset: (): void => {
+        fetchImpl = globalFetch;
+        futuresCooldownUntilMs = 0;
+        futuresCooldownReason = '';
+        futuresUsedWeight1m = 0;
+        futuresWeightUpdatedAtMs = 0;
+        futuresRequestTimes.length = 0;
+        futuresHostLastStatus.clear();
+        cache.clear();
+    },
+    seedWeight: (weight: number, ageMs: number = 0): void => {
+        futuresUsedWeight1m = weight;
+        futuresWeightUpdatedAtMs = Date.now() - ageMs;
+    },
+    state: (): { cooldownUntil: number; cooldownReason: string; usedWeight: number; weightAgeMs: number } => ({
+        cooldownUntil: futuresCooldownUntilMs,
+        cooldownReason: futuresCooldownReason,
+        usedWeight: futuresUsedWeight1m,
+        weightAgeMs: Date.now() - futuresWeightUpdatedAtMs,
+    }),
 };
 
 /**
@@ -866,42 +1114,81 @@ export interface SymbolMeta extends SymbolTicker {
     baseAsset: string;
 }
 
+let allFuturesSymbolsInFlight: Promise<SymbolMeta[]> | null = null;
+
 export const fetchAllFuturesSymbols = async (): Promise<SymbolMeta[]> => {
     const cacheKey = 'allfutsymbols_v1';
     const cached = getCached<SymbolMeta[]>(cacheKey);
     if (cached) return cached;
-    const [tickers, info] = await Promise.all([
-        robustFuturesFetch('/fapi/v1/ticker/24hr').then(r => r.json()).catch(() => null),
-        robustFuturesFetch('/fapi/v1/exchangeInfo').then(r => r.json()).catch(() => null),
-    ]);
-    if (!Array.isArray(tickers)) return [];
-    // Only TRADING perpetuals quoted in USDT — the app's whole universe.
-    const baseByName = new Map<string, string>();
-    if (info && Array.isArray(info.symbols)) {
-        for (const s of info.symbols) {
-            if (s?.status === 'TRADING' && s?.contractType === 'PERPETUAL'
-                && s?.quoteAsset === 'USDT' && typeof s.symbol === 'string') {
-                baseByName.set(s.symbol, String(s.baseAsset ?? s.symbol.replace(/USDT$/, '')));
+    // Coalesce concurrent cold callers — N parallel symbol checks must not
+    // turn into N full-universe fetch bursts.
+    if (allFuturesSymbolsInFlight) return allFuturesSymbolsInFlight;
+    allFuturesSymbolsInFlight = (async () => {
+        const [tickers, info] = await Promise.all([
+            robustFuturesFetch('/fapi/v1/ticker/24hr').then(r => r.json()).catch(() => null),
+            robustFuturesFetch('/fapi/v1/exchangeInfo').then(r => r.json()).catch(() => null),
+        ]);
+        if (!Array.isArray(tickers)) return [];
+        // Only TRADING perpetuals quoted in USDT — the app's whole universe.
+        const baseByName = new Map<string, string>();
+        if (info && Array.isArray(info.symbols)) {
+            for (const s of info.symbols) {
+                if (s?.status === 'TRADING' && s?.contractType === 'PERPETUAL'
+                    && s?.quoteAsset === 'USDT' && typeof s.symbol === 'string') {
+                    baseByName.set(s.symbol, String(s.baseAsset ?? s.symbol.replace(/USDT$/, '')));
+                }
             }
         }
+        const fromTicker = (t: any, baseAsset: string): SymbolMeta => ({
+            symbol: t.symbol,
+            baseAsset,
+            lastPrice: parseFloat(t.lastPrice) || 0,
+            changePercent24h: parseFloat(t.priceChangePercent) || 0,
+            quoteVolume: parseFloat(t.quoteVolume) || 0,
+        });
+        const rows: SymbolMeta[] = baseByName.size > 0
+            ? (tickers as any[])
+                .filter((t: any) => typeof t?.symbol === 'string' && baseByName.has(t.symbol))
+                .map((t: any) => fromTicker(t, baseByName.get(t.symbol)!))
+            : (tickers as any[])
+                .filter((t: any) => typeof t?.symbol === 'string' && t.symbol.endsWith('USDT') && !/[_-]/.test(t.symbol))
+                .map((t: any) => fromTicker(t, t.symbol.replace(/USDT$/, '')));
+        rows.sort((a, b) => b.quoteVolume - a.quoteVolume);
+        if (rows.length > 0) setCache(cacheKey, rows);
+        return rows;
+    })().finally(() => { allFuturesSymbolsInFlight = null; });
+    return allFuturesSymbolsInFlight;
+};
+
+export type SymbolUniverseVerdict = 'verified' | 'unverified' | 'unknown-symbol';
+
+/**
+ * Check a symbol against the LIVE USDT-perp universe under a bounded budget.
+ *  - 'verified':       the universe answered and lists the symbol.
+ *  - 'unknown-symbol': the universe answered and does NOT list it — callers
+ *                      refuse immediately, with zero wasted venue round-trips.
+ *  - 'unverified':     the universe is cold, slow or errored — callers FAIL
+ *                      OPEN and let the venue decide, so a valid or freshly
+ *                      listed perp is never falsely blocked.
+ */
+export const verifySymbolAgainstUniverse = async (
+    symbol: string,
+    options: { budgetMs?: number } = {},
+): Promise<SymbolUniverseVerdict> => {
+    const normalized = normalizeSymbol(symbol);
+    const budgetMs = typeof options.budgetMs === 'number' && Number.isFinite(options.budgetMs) && options.budgetMs > 0
+        ? options.budgetMs
+        : 3000;
+    try {
+        const universe = await Promise.race([
+            fetchAllFuturesSymbols(),
+            new Promise<null>(resolve => { setTimeout(() => resolve(null), budgetMs); }),
+        ]);
+        if (!Array.isArray(universe) || universe.length === 0) return 'unverified';
+        return universe.some(s => s.symbol === normalized) ? 'verified' : 'unknown-symbol';
+    } catch {
+        return 'unverified';
     }
-    const fromTicker = (t: any, baseAsset: string): SymbolMeta => ({
-        symbol: t.symbol,
-        baseAsset,
-        lastPrice: parseFloat(t.lastPrice) || 0,
-        changePercent24h: parseFloat(t.priceChangePercent) || 0,
-        quoteVolume: parseFloat(t.quoteVolume) || 0,
-    });
-    const rows: SymbolMeta[] = baseByName.size > 0
-        ? (tickers as any[])
-            .filter((t: any) => typeof t?.symbol === 'string' && baseByName.has(t.symbol))
-            .map((t: any) => fromTicker(t, baseByName.get(t.symbol)!))
-        : (tickers as any[])
-            .filter((t: any) => typeof t?.symbol === 'string' && t.symbol.endsWith('USDT') && !/[_-]/.test(t.symbol))
-            .map((t: any) => fromTicker(t, t.symbol.replace(/USDT$/, '')));
-    rows.sort((a, b) => b.quoteVolume - a.quoteVolume);
-    if (rows.length > 0) setCache(cacheKey, rows);
-    return rows;
 };
 
 /** The MARKET_SCHEMA units half (Meta-RAM): one symbol's tick and lot steps
@@ -1452,6 +1739,7 @@ export const fetchOrderBookDepth = async (symbol: string): Promise<OrderBookData
             micro,
             dominantSide,
             wallDistance,
+            fetchedAt: Date.now(),
             available: true
         };
 
@@ -1485,6 +1773,7 @@ const getDefaultOrderBook = (): OrderBookData => ({
     sellWalls: [],
     dominantSide: 'balanced',
     wallDistance: {},
+    fetchedAt: 0,
     available: false
 });
 
