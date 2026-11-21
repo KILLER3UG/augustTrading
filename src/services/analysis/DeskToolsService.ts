@@ -53,14 +53,15 @@ import {
     fetchMarkIndex,
     fetchOrderBookDepth,
     fetchRecentLiquidations,
-    fetchAllFuturesSymbols,
     normalizeSymbol,
+    verifySymbolAgainstUniverse,
+    estimateBookSlippage,
 } from './MarketDataService';
 // The market-structure tools ride in LAZY, like the hybrid packet: the cores
 // and their adapter stay out of the entry graph until a seat actually calls
 // one (O-146 — the entry chunk is over its ratchet; a static import here
 // grows it for every boot). Types are erased, so they may import statically.
-import type { ProfileAnchor, VwapAnchor } from './marketTools';
+import type { ProfileAnchor } from './marketTools';
 import { candleAlignedTtlMs } from '../../utils/candleTtl';
 import { CHART_INTERVALS } from '../../utils/chartIntervals';
 
@@ -1808,11 +1809,13 @@ export const DESK_TOOL_DEFINITIONS: DeskToolDefinition[] = [
         function: {
             name: 'get_order_book',
             description:
-                'Order-book depth: bid/ask walls and liquidity imbalance near price, plus the top-5 microstructure read (microprice = size-weighted mid, five-level depth imbalance) — LIVE-ONLY by nature, no historical depth, never a training feature. A REST snapshot cached up to ~30s (check `checkedAt`) -- recent liquidity, not a live stream, so never treat a wall as unmoved. Use for entry/stop placement and sweep risk. Works for ANY symbol — scan another coin without the user switching charts.',
+                'Order-book depth: bid/ask walls and liquidity imbalance near price, plus the top-5 microstructure read (microprice = size-weighted mid, five-level depth imbalance) — LIVE-ONLY by nature, no historical depth, never a training feature. A REST snapshot cached up to ~5s (check `checkedAt`) -- recent liquidity, not a live stream, so never treat a wall as unmoved. Pass notional_usd to walk the L2 ladder for that size: expected VWAP fill, slippage bps and the worst level touched (refused when the book cannot absorb the size or the snapshot is stale). Use for entry/stop placement, sweep risk and sizing sanity. Works for ANY symbol — scan another coin without the user switching charts.',
             parameters: {
                 type: 'object',
                 properties: {
                     symbol: { type: 'string', description: 'Any perp symbol, e.g. ETHUSDT (default: the current chart symbol).' },
+                    notional_usd: { type: 'number', description: 'Optional USD order size to price against the L2 ladder (slippage/impact estimate). Buys walk the asks, sells the bids.' },
+                    side: { type: 'string', enum: ['buy', 'sell'], description: 'Which side the order hits (default buy).' },
                 },
                 additionalProperties: false,
             },
@@ -2076,6 +2079,7 @@ export const DESK_TOOL_DEFINITIONS: DeskToolDefinition[] = [
                     equity_usd: { type: 'number', description: 'Account equity for sizing. Without it sizing returns unavailable — never a default.' },
                     risk_percent: { type: 'number', description: 'Risk as % of equity (default 1).' },
                     leverage: { type: 'number', description: 'Leverage for the liquidation estimate (default 10).' },
+                    expected_hold_hours: { type: 'number', description: 'Optional expected holding time in hours. With the coin\'s current funding rate this quotes the funding drag in R (assuming the current 8h rate persists) and the minutes to the next 8h settlement.' },
                 },
                 required: ['direction', 'entry', 'stop_loss', 'take_profits'],
                 additionalProperties: false,
@@ -3220,7 +3224,7 @@ async function runDerivatives(symbol: string, signal?: AbortSignal): Promise<str
     }, null, 2);
 }
 
-async function runOrderBook(symbol: string): Promise<string> {
+async function runOrderBook(symbol: string, notionalUsd?: number, side: 'buy' | 'sell' = 'buy'): Promise<string> {
     const book = await fetchOrderBookDepth(symbol);
     // Emit a compact, bounded JSON object that stays cleanly inside the 2,400-char
     // budget without mid-JSON truncation: leading `checkedAt`, summary metrics,
@@ -3231,6 +3235,22 @@ async function runOrderBook(symbol: string): Promise<string> {
             .slice(0, n);
     const totalBidLevels = Array.isArray(book.bids) ? book.bids.length : 0;
     const totalAskLevels = Array.isArray(book.asks) ? book.asks.length : 0;
+    // L2 impact: walk the ladder for the requested notional — what a
+    // market/stop order of $N actually costs on THIS book. The point-in-time
+    // cache TTL is 5s, so a served snapshot is ≤5s old by construction; a read
+    // older than that (or too thin) refuses rather than quoting a fantasy fill.
+    const bookAgeMs = book.fetchedAt ? Date.now() - book.fetchedAt : null;
+    const bookFresh = bookAgeMs !== null && bookAgeMs <= 5000 && (book.bids?.length ?? 0) > 0;
+    const impact = notionalUsd !== undefined
+        ? bookFresh
+            ? estimateBookSlippage(book.bids, book.asks, side, notionalUsd)
+            : {
+                side, notionalUsd, available: false,
+                reason: `book snapshot is ${bookAgeMs === null ? 'missing a fetch timestamp' : `${bookAgeMs}ms old`} (> 5s point-in-time TTL) or empty — refusing to price a fill against a stale book`,
+                vwapFillPrice: null, slippageBps: null, worstFillPrice: null,
+                levelsConsumed: 0, baseQuantity: 0, notionalFilledUsd: 0, remainingUsd: notionalUsd,
+            }
+        : undefined;
     return JSON.stringify({
         checkedAt: new Date().toISOString(),
         symbol,
@@ -3242,12 +3262,14 @@ async function runOrderBook(symbol: string): Promise<string> {
         askDepth: book.askDepth,
         depthImbalance: book.depthImbalance,
         dominantSide: book.dominantSide,
+        micro: book.micro,
         buyWalls: topWalls(book.buyWalls, 5),
         sellWalls: topWalls(book.sellWalls, 5),
         bids: (book.bids ?? []).slice(0, 8),
         asks: (book.asks ?? []).slice(0, 8),
         totalBidLevels,
         totalAskLevels,
+        ...(impact !== undefined ? { impact } : {}),
     }, null, 2);
 }
 
@@ -3510,6 +3532,9 @@ async function runIndicators(symbol: string, interval: string, groups: string[])
     const notRun = all.slice(MAX_STUDIES_PER_CALL);
     // Structural studies need history; 250 bars covers Ichimoku's 52 plus the
     // volume-profile and pivot lookbacks in one round trip.
+    if (await verifySymbolAgainstUniverse(symbol) === 'unknown-symbol') {
+        return JSON.stringify({ symbol, interval: tf, error: `unknown symbol "${symbol}" — not a TRADING USDT perpetual in the live universe; call run_screener or find_best_setups for real symbols` });
+    }
     const klines = await fetchFuturesOHLCV(symbol, tf, 250);
     if (!klines || klines.length < 30) {
         return JSON.stringify({ symbol, interval: tf, error: `not enough candles (${klines?.length ?? 0}) to compute these studies` });
@@ -5173,9 +5198,14 @@ ${body}`);
             case 'get_derivatives':
                 content = await runDerivatives(asSymbol(call.arguments.symbol, fallback), context.signal);
                 break;
-            case 'get_order_book':
-                content = await runOrderBook(asSymbol(call.arguments.symbol, fallback));
+            case 'get_order_book': {
+                const notionalRaw = Number(call.arguments.notional_usd);
+                const notionalUsd = Number.isFinite(notionalRaw) && notionalRaw > 0 ? notionalRaw : undefined;
+                const sideRaw = asString(call.arguments.side, 'buy').toLowerCase();
+                const obSide: 'buy' | 'sell' = sideRaw === 'sell' ? 'sell' : 'buy';
+                content = await runOrderBook(asSymbol(call.arguments.symbol, fallback), notionalUsd, obSide);
                 break;
+            }
             case 'get_liquidations':
                 content = await runLiquidations(asSymbol(call.arguments.symbol, fallback));
                 break;
@@ -5390,9 +5420,10 @@ ${body}`);
             case 'vwap':
                 content = await (await importMarketTools()).runVwapTool(
                     asSymbol(call.arguments.symbol, fallback),
-                    (['session_open', 'swing_high', 'swing_low', 'custom'].includes(String(call.arguments.anchor))
-                        ? String(call.arguments.anchor)
-                        : 'session_open') as VwapAnchor,
+                    // The raw anchor passes through: the adapter validates it
+                    // against the allowlist and refuses unknown names with the
+                    // valid options — it never silently substitutes one.
+                    asString(call.arguments.anchor, 'session_open'),
                     Number.isFinite(Number(call.arguments.custom_time)) ? Number(call.arguments.custom_time) : undefined,
                 );
                 break;
@@ -5419,17 +5450,31 @@ ${body}`);
                 );
                 break;
             case 'trade_math': {
-                const tps = Array.isArray(call.arguments.take_profits)
-                    ? call.arguments.take_profits.map((t: unknown) => Number(t)).filter((t: number) => Number.isFinite(t))
-                    : [];
+                // Direction is VALIDATED, never coerced: a typo'd direction
+                // used to silently become a Long plan.
+                const dirRaw = asString(call.arguments.direction).toLowerCase();
+                const dirWord = dirRaw === 'long' ? 'Long' : dirRaw === 'short' ? 'Short' : '';
+                if (!dirWord) {
+                    return rejectedResult(call, `trade_math rejected: direction must be "Long" or "Short" (case-insensitive); got "${asString(call.arguments.direction) || '—'}".`);
+                }
+                const rawTps = Array.isArray(call.arguments.take_profits) ? call.arguments.take_profits.map((t: unknown) => Number(t)) : [];
+                // A non-positive or non-finite target REFUSES the call — it
+                // used to be silently filtered, hiding a malformed plan from
+                // the trader while the rest of the read looked clean.
+                if (rawTps.some((t: number) => !Number.isFinite(t) || t <= 0)) {
+                    return rejectedResult(call, 'trade_math rejected: every take_profit must be a positive finite price.');
+                }
+                const tps = rawTps;
                 const tpWeights = Array.isArray(call.arguments.tp_weights)
                     ? call.arguments.tp_weights.map((w: unknown) => Number(w)).filter((w: number) => Number.isFinite(w) && w > 0)
                     : undefined;
                 const explicitTf = asString(call.arguments.interval);
                 const resolvedTf = explicitTf || context.chartInterval || '15m';
+                const holdRaw = Number(call.arguments.expected_hold_hours);
+                const expectedHoldHours = Number.isFinite(holdRaw) && holdRaw > 0 ? holdRaw : undefined;
                 content = await (await importMarketTools()).runTradeMathTool(
                     asSymbol(call.arguments.symbol, fallback),
-                    String(call.arguments.direction) === 'Short' ? 'Short' : 'Long',
+                    dirWord,
                     Number(call.arguments.entry),
                     Number(call.arguments.stop_loss),
                     tps,
@@ -5439,6 +5484,7 @@ ${body}`);
                         equityUsd: Number.isFinite(Number(call.arguments.equity_usd)) ? Number(call.arguments.equity_usd) : undefined,
                         riskPercent: Number.isFinite(Number(call.arguments.risk_percent)) ? Number(call.arguments.risk_percent) : undefined,
                         leverage: Number.isFinite(Number(call.arguments.leverage)) ? Number(call.arguments.leverage) : undefined,
+                        expectedHoldHours,
                     },
                 );
                 break;
@@ -6167,24 +6213,14 @@ ${body}`);
                 // A dead ticker must not be mistaken for a live universe:
                 // when the feed answers, an unknown coin is REFUSED; when it
                 // is unreachable the switch still happens but the receipt
-                // says the symbol was not verified.
+                // says the symbol was not verified. (Shared helper — 3s
+                // budget, fails open; see verifySymbolAgainstUniverse.)
                 let verification = 'NOT VERIFIED — the exchange universe feed did not answer';
-                try {
-                    // `fetchAllFuturesSymbols` takes no signal and can walk
-                    // three hosts at 15s each. A dead feed must not hold a
-                    // simple UI switch hostage, so verification gets its own
-                    // short budget; a slow answer is reported as unverified.
-                    const universe = await Promise.race([
-                        fetchAllFuturesSymbols(),
-                        new Promise<null>(resolve => { setTimeout(() => resolve(null), 3000); }),
-                    ]);
-                    if (universe && universe.length > 0) {
-                        if (!universe.some(s => s.symbol === next)) {
-                            return rejectedResult(call, `switch_chart_symbol rejected: ${next} is not a TRADING USDT perpetual in the live universe. Call run_screener or find_best_setups for real symbols.`);
-                        }
-                        verification = 'verified against the live USDT-perp universe';
-                    }
-                } catch { /* the receipt below names the blind feed */ }
+                const universeVerdict = await verifySymbolAgainstUniverse(next);
+                if (universeVerdict === 'unknown-symbol') {
+                    return rejectedResult(call, `switch_chart_symbol rejected: ${next} is not a TRADING USDT perpetual in the live universe. Call run_screener or find_best_setups for real symbols.`);
+                }
+                if (universeVerdict === 'verified') verification = 'verified against the live USDT-perp universe';
                 const { getActiveSession, setActiveSymbol } = await import('../trade/chatStore');
                 if (!getActiveSession()) {
                     return rejectedResult(call, 'switch_chart_symbol rejected: no active chat session carries the instrument.');
