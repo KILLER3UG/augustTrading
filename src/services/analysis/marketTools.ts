@@ -23,7 +23,7 @@ import {
     normalizeSymbol, fetchFuturesOHLCV, fetchFuturesOHLCVFromTime,
     fetchOpenInterest, fetchOpenInterestHistory, fetchFundingRateHistory,
     fetchMarkIndex, fetchTakerBuySellRatio, fetchTopTraderRatio,
-    fetchLongShortRatio, fetchRecentLiquidations,
+    fetchLongShortRatio, fetchRecentLiquidations, verifySymbolAgainstUniverse,
 } from './MarketDataService';
 import { baseOf } from '../../utils/symbol';
 import { atr14, detectEqualLevels, detectSweepReversals } from '../../utils/smcStructure';
@@ -100,7 +100,17 @@ const r4 = (v: number): number => Number(v.toPrecision(6));
 export const fetchRecentForTools = async (symbol: string, tf: string, limit: number, asofMs: number = Date.now()): Promise<Kline[]> =>
     fetchRecent(symbol, tf, limit, asofMs);
 
+/** Refuse a symbol the live universe positively excludes BEFORE spending a
+ *  venue round trip on it. Fails OPEN on a cold/unreachable universe, so a
+ *  valid or freshly listed perp is never falsely blocked. */
+const ensureTradableSymbol = async (symbol: string): Promise<void> => {
+    if (await verifySymbolAgainstUniverse(symbol) === 'unknown-symbol') {
+        throw new Error(`unknown symbol "${symbol}" — not a TRADING USDT perpetual in the live universe; call run_screener or find_best_setups for real symbols`);
+    }
+};
+
 const fetchRecent = async (symbol: string, tf: string, limit: number, asofMs: number): Promise<Kline[]> => {
+    await ensureTradableSymbol(symbol);
     const raw = await fetchFuturesOHLCV(symbol, tf, limit);
     return closedCandles(raw, tf, asofMs);
 };
@@ -111,17 +121,36 @@ const fetchRecent = async (symbol: string, tf: string, limit: number, asofMs: nu
  *  as-of tool exists to read. Split the window on the expected bar count,
  *  concat ascending, and dedupe by open time. */
 const FETCH_CHUNK_BARS = 1400;
-const fetchRange = async (symbol: string, tf: string, startMs: number, endMs: number): Promise<Kline[]> => {
+/** Absurd-window guard: at most 31 chunks (~43k bars on 5m). When it trips,
+ *  the NEWEST chunks win — the oldest part of the requested window is what
+ *  gets dropped, and the caller is told (see fetchRangeDetailed.truncated). */
+const FETCH_CHUNK_MAX = 30;
+
+export interface RangeFetchResult {
+    candles: Kline[];
+    /** True when the chunk budget clipped the requested window: the delivered
+     *  candles cover only the NEWEST part of [startMs, endMs). */
+    truncated: boolean;
+    requestedSpanDays: number;
+    deliveredSpanDays: number;
+}
+
+export const fetchRangeDetailed = async (symbol: string, tf: string, startMs: number, endMs: number): Promise<RangeFetchResult> => {
+    await ensureTradableSymbol(symbol);
     const span = intervalMs(tf);
     const perChunkMs = span > 0 ? FETCH_CHUNK_BARS * span : Number.MAX_SAFE_INTEGER;
+    // Walk BACKWARD from endMs: when the budget clips the window, the newest
+    // bars always survive — an as-of tool never needs months-old bars more
+    // than it needs the present.
     const chunks: Array<{ start: number; end: number }> = [];
-    let cursor = startMs;
-    while (cursor < endMs) {
-        const chunkEnd = Math.min(cursor + perChunkMs, endMs);
-        chunks.push({ start: cursor, end: chunkEnd });
-        cursor = chunkEnd;
-        if (chunks.length > 30) break; // absurd window guard
+    let cursor = endMs;
+    while (cursor > startMs) {
+        const chunkStart = Math.max(startMs, cursor - perChunkMs);
+        chunks.push({ start: chunkStart, end: cursor });
+        cursor = chunkStart;
+        if (chunks.length > FETCH_CHUNK_MAX) break;
     }
+    const truncated = cursor > startMs;
     const out: Kline[] = [];
     const seen = new Set<number>();
     for (const chunk of chunks) {
@@ -132,8 +161,17 @@ const fetchRange = async (symbol: string, tf: string, startMs: number, endMs: nu
             out.push(c);
         }
     }
-    return out.sort((a, b) => a.time - b.time);
+    out.sort((a, b) => a.time - b.time);
+    return {
+        candles: out,
+        truncated,
+        requestedSpanDays: (endMs - startMs) / UTC_DAY_MS,
+        deliveredSpanDays: out.length > 0 ? (out[out.length - 1].time - out[0].time) / UTC_DAY_MS : 0,
+    };
 };
+
+const fetchRange = async (symbol: string, tf: string, startMs: number, endMs: number): Promise<Kline[]> =>
+    (await fetchRangeDetailed(symbol, tf, startMs, endMs)).candles;
 
 const envelope = <T,>(
     args: {
@@ -291,13 +329,20 @@ export const runNakedPocsTool = async (
         if (granularity === 'day') {
             const tf = '5m';
             const start = utcDayStart(asofMs) - (lookback + 1) * UTC_DAY_MS;
-            const candles = await fetchRange(symbol, tf, start, asofMs);
+            const range = await fetchRangeDetailed(symbol, tf, start, asofMs);
+            const candles = range.candles;
+            // A large lookback can hit the chunk budget — disclose the clip
+            // where the result is read, never silently.
+            const clipNote = range.truncated
+                ? `lookback CLIPPED by the fetch budget: requested ~${Math.round(range.requestedSpanDays)} days, delivered the NEWEST ~${Math.round(range.deliveredSpanDays)} days (${candles.length} bars) — the oldest sessions were dropped`
+                : '';
+            const sessionNotes = clipNote ? [...notes, clipNote] : notes;
             if (candles.length < 50) {
                 return JSON.stringify(envelope({
                     tool: 'naked_pocs', asof: asofMs, symbol, tf,
-                    params: { granularity, lookback }, barsUsed: candles.length, notes,
+                    params: { granularity, lookback }, barsUsed: candles.length, notes: sessionNotes,
                     values: null, distancesAtr: {}, evidence: 'documented',
-                    summary: '', reason: `not enough 5m candles for ${lookback} sessions (${candles.length})`,
+                    summary: '', reason: `not enough 5m candles for ${lookback} sessions (${candles.length})${clipNote ? ` — ${clipNote}` : ''}`,
                 }));
             }
             const atr = atr14(candles.slice(-100));
@@ -322,7 +367,7 @@ export const runNakedPocsTool = async (
             };
             return JSON.stringify(envelope({
                 tool: 'naked_pocs', asof: asofMs, symbol, tf,
-                params: { granularity, lookback }, barsUsed: candles.length, notes,
+                params: { granularity, lookback }, barsUsed: candles.length, notes: sessionNotes,
                 values,
                 distancesAtr: Object.fromEntries(values.naked.map(p => [p.session, p.distance_atr])),
                 evidence: 'documented',
@@ -380,14 +425,27 @@ export const runNakedPocsTool = async (
 
 export type VwapAnchor = 'session_open' | 'swing_high' | 'swing_low' | 'custom';
 
+const VALID_VWAP_ANCHORS: readonly VwapAnchor[] = ['session_open', 'swing_high', 'swing_low', 'custom'];
+
 export const runVwapTool = async (
     symbolInput: string,
-    anchor: VwapAnchor = 'session_open',
+    anchorInput: string = 'session_open',
     customTime?: number,
     asofMs: number = Date.now(),
 ): Promise<string> => {
     const symbol = normalizeSymbol(symbolInput);
     const notes: string[] = ['venue: binance-usdtm-futures'];
+    // Explicit allowlist: an unknown anchor is an honest refusal naming the
+    // valid options — it used to fall through to swing_low semantics.
+    if (!(VALID_VWAP_ANCHORS as readonly string[]).includes(anchorInput)) {
+        return JSON.stringify(envelope({
+            tool: 'vwap', asof: asofMs, symbol, tf: '1h',
+            params: { anchor: anchorInput }, barsUsed: 0, notes,
+            values: null, distancesAtr: {}, evidence: 'structural',
+            summary: '', reason: `unknown anchor "${anchorInput}" — valid anchors: session_open, swing_high, swing_low, custom (custom also needs custom_time, ms epoch)`,
+        }));
+    }
+    const anchor = anchorInput as VwapAnchor;
     try {
         let tf: string;
         let candles: Kline[];
@@ -712,7 +770,7 @@ export const runTradeMathTool = async (
     entry: number,
     stopLoss: number,
     takeProfits: Array<number>,
-    options: { equityUsd?: number; riskPercent?: number; leverage?: number; tf?: string; asofMs?: number; tpWeights?: number[] } = {},
+    options: { equityUsd?: number; riskPercent?: number; leverage?: number; tf?: string; asofMs?: number; tpWeights?: number[]; expectedHoldHours?: number } = {},
 ): Promise<string> => {
     const symbol = normalizeSymbol(symbolInput);
     const tf = options.tf ?? '15m';
@@ -735,14 +793,50 @@ export const runTradeMathTool = async (
                 tool: 'trade_math', asof: asofMs, symbol, tf,
                 params: { direction, entry, stopLoss }, barsUsed: candles.length, notes,
                 values: null, distancesAtr: {}, evidence: 'structural',
-                summary: '', reason: 'entry/stop must be positive finite numbers',
+                summary: '', reason: 'entry, stop loss and every take-profit must be positive finite numbers',
             }));
         }
         if (read.gross.inverted) notes.push('plan is INVERTED for its stated direction — stop/target on the wrong sides; levels refused, not repaired');
-        const values: TradeMathRead = read;
+        // Funding carry: what HOLDING the position costs in R at the coin's
+        // CURRENT 8h rate, if it persists over the expected hold. A long PAYS
+        // a positive rate; a short RECEIVES it. Quoted beside — never folded
+        // into — the fee-net number: it is an assumption, not a cost model.
+        let funding: {
+            rate: number;
+            dragR: number;
+            minutesToNextSettlement: number | null;
+            assumption: 'current 8h rate persists over the expected hold';
+        } | null = null;
+        const holdHours = options.expectedHoldHours;
+        if (typeof holdHours === 'number' && Number.isFinite(holdHours) && holdHours > 0) {
+            const mark = await fetchMarkIndex(symbol);
+            if (mark.available && Number.isFinite(mark.lastFundingRate)) {
+                const periods = holdHours / 8;
+                const stopDistance = Math.abs(entry - stopLoss);
+                const notionalPerRisk = stopDistance > 0 ? entry / stopDistance : 0;
+                const directionSign = direction === 'Long' ? -1 : 1;
+                const dragR = Math.round(directionSign * mark.lastFundingRate * periods * notionalPerRisk * 10000) / 10000;
+                const minutesToNext = mark.nextFundingTime > asofMs ? Math.round((mark.nextFundingTime - asofMs) / 60000) : null;
+                funding = {
+                    rate: mark.lastFundingRate,
+                    dragR,
+                    minutesToNextSettlement: minutesToNext,
+                    assumption: 'current 8h rate persists over the expected hold',
+                };
+                notes.push(`funding drag ${dragR > 0 ? '+' : ''}${dragR}R over ${holdHours}h at the current 8h rate ${mark.lastFundingRate} (${direction === 'Long' ? 'long pays' : 'short receives'}); next settlement in ${minutesToNext ?? '?'}m — ASSUMPTION: the current rate persists`);
+            }
+        }
+        const values: TradeMathRead & { funding?: typeof funding } = { ...read, ...(funding !== null ? { funding } : {}) };
         const blendedNote = read.blendedMultiTp
             ? ` (blended ${read.blendedMultiTp.targetsCount}-TP ${read.blendedMultiTp.grossRatio}R gross${read.blendedMultiTp.netRewardR !== null ? ` / ${read.blendedMultiTp.netRewardR}R net` : ''})`
             : '';
+        // An inverted plan quotes NO net arithmetic: the net figure and the
+        // target distance print as "—" beside the INVERTED PLAN stamp.
+        const netPart = read.gross.inverted
+            ? 'net — (inverted: no net R:R is quoted)'
+            : read.costs.netRewardR !== null
+                ? `net ${read.costs.netRewardR} of costs`
+                : 'net —';
         return JSON.stringify(envelope({
             tool: 'trade_math', asof: asofMs, symbol, tf,
             params: { direction, entry, stopLoss, takeProfits, equityUsd: options.equityUsd, riskPercent: options.riskPercent, leverage: options.leverage, tpWeights: options.tpWeights },
@@ -750,10 +844,10 @@ export const runTradeMathTool = async (
             values,
             distancesAtr: {
                 stop_atr: read.atr && read.atr > 0 ? r2(read.gross.risk / read.atr) : null,
-                target_atr: read.atr && read.atr > 0 ? r2(read.gross.reward / read.atr) : null,
+                target_atr: read.atr && read.atr > 0 && !read.gross.inverted ? r2(read.gross.reward / read.atr) : null,
             },
             evidence: 'structural',
-            summary: `R:R ${read.gross.ratio}${read.costs.costR !== null ? ` gross, ${read.costs.netRewardR} net of costs` : ''}${blendedNote}${read.gross.inverted ? ' — INVERTED PLAN' : ''}${read.sizing.available ? `, size ${read.sizing.qty} @ ${read.sizing.leverageNeeded}× needed` : ', size unavailable (no equity)'}`,
+            summary: `R:R ${read.gross.ratio} gross, ${netPart}${blendedNote}${read.gross.inverted ? ' — INVERTED PLAN' : ''}${read.sizing.available ? `, size ${read.sizing.qty} @ ${read.sizing.leverageNeeded}× needed` : ', size unavailable (no equity)'}`,
         }));
     } catch (error) {
         return JSON.stringify(envelope({
