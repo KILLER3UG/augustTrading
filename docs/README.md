@@ -15,10 +15,11 @@ One reading path. Everything else is evidence, kept where it belongs.
    see. [engineering/conventions.md](engineering/conventions.md) — code style and the canonical
    single-source modules.
 6. [plan/open-items.md](plan/open-items.md) — the only working list: what is open, with the code
-   that proves each row is still open. An approved redesign still in flight sits beside it as
-   [plan/agent-driven-august.md](plan/agent-driven-august.md).
+   that proves each row is still open.
 7. [architecture/system-map.md](architecture/system-map.md) — how the code implements the flow.
    [architecture/learning-loop.md](architecture/learning-loop.md) is the memory loop in depth.
+   [architecture/app-flow.md](architecture/app-flow.md) is the end-to-end execution graph: every
+   live node, edge, guardrail and write-owner, verified against the current tree.
 
 ## The tree
 

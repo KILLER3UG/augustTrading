@@ -4,11 +4,11 @@
 transcription — it carries the code that proves it is still open at the commit the row was last
 re-measured.
 
-An approved redesign that is still in flight lives beside the register as
-**[agent-driven-august.md](agent-driven-august.md)**. It is a working document, not a second register:
-it holds the design, the phases and the removal-parity proofs, and it is deleted as its phases land —
-a closed phase is git history. Nothing in it overrides a row; when a phase closes, the row moves here
-and then out.
+An approved redesign that is still in flight lives beside the register as a working document (design,
+phases, removal-parity proofs), deleted as its phases land — a closed phase is git history. Nothing in
+it overrides a row; when a phase closes, the row moves here and then out. The agent-driven redesign's
+document has fully landed and is gone; the live execution graph now lives at
+[architecture/app-flow.md](../architecture/app-flow.md).
 
 There is no roadmap and no separate decision log. The order of work is what the owner's focus says
 ([docs/product/focus.md](../product/focus.md)): analysis, accuracy, signals. A row that needs an
