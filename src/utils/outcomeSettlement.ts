@@ -55,3 +55,24 @@ export const settlementActionFor = (input: SettlementInput): SettlementAction =>
 
 /** How long the Undo window stays open. */
 export const SETTLEMENT_UNDO_MS = 15_000;
+
+/** STALE-NEWS WINDOW: a shadow outcome whose deciding candle is older than
+ *  this is old news — the trader has been living with the result for days,
+ *  and a toast arriving now reads as a glitch (the boot-scan re-detected a
+ *  days-old stop hit because the latch was lost). Fresh outcomes toast; stale
+ *  ones are marked notified silently (the result stays visible in the
+ *  Journal/Signals where it already lives). */
+export const SHADOW_STALE_NEWS_MS = 24 * 60 * 60 * 1000;
+
+/** True when a shadow outcome's deciding candle is older than the stale-news
+ *  window. Unparseable/absent timestamps are FRESH (toast) — absence is not
+ *  evidence of staleness. */
+export const isStaleShadowNews = (
+    hitAt: string | undefined,
+    now = Date.now(),
+    windowMs = SHADOW_STALE_NEWS_MS,
+): boolean => {
+    if (!hitAt) return false;
+    const t = Date.parse(hitAt);
+    return Number.isFinite(t) && now - t > windowMs;
+};

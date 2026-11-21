@@ -39,6 +39,12 @@ export interface AutopilotResolution {
     recoveredAfterSlTouch?: boolean;
     /** Human-readable summary for the banner. */
     detail: string;
+    /** ISO timestamp of the DECIDING candle (the bar that hit SL/TP), when
+     *  the tape scan produced one. This is what the stale-news guard reads:
+     *  an outcome whose deciding bar is days old is old news, not a live
+     *  alert — detectedAt alone says when the app noticed, not when it
+     *  happened. */
+    hitAt?: string;
     detectedAt: string;
     timeToOutcome?: string;
     slOptimizationData?: SLOptimizationData;
@@ -161,6 +167,10 @@ class OutcomeAutopilotServiceClass {
         this.shadowNotified.clear();
         this.loadedUser = user;
         try {
+            // A shadow mark made moments ago queued its persist on this chain;
+            // reading BEFORE that write lands would wipe the just-earned latch
+            // with the older disk state.
+            await this.writeChain.catch(() => { /* a failed prior write still serves its bytes */ });
             const stored = await getPreferenceObject<LegacyPersistedState & PersistedPartitions>(
                 PREF_KEYS.OUTCOME_AUTOPILOT_STATE
             );
@@ -176,9 +186,21 @@ class OutcomeAutopilotServiceClass {
                 (mine.processed || []).forEach(id => this.processed.add(id));
                 (mine.dismissed || []).forEach(id => this.dismissed.add(id));
                 (mine.shadowNotified || []).forEach(id => this.shadowNotified.add(id));
-                this.pruneIdSets();
             }
+            // BOOT RACE: shadow marks made while this load was in flight are
+            // unioned AFTER the disk state, REGARDLESS of whether the user's
+            // partition existed yet — init's clear() above must not wipe a
+            // latch the previous session persisted or that a pre-init
+            // resolution just earned.
+            this.preInitShadowNotified.forEach(id => this.shadowNotified.add(id));
+            this.preInitShadowNotified.clear();
+            if (mine) this.pruneIdSets();
             if (isLegacy) void this.persist(); // migrate to the partition map
+            // Flush registrations that arrived during the load — now the
+            // latch is live and register() can suppress shadow-notified ids.
+            for (const pending of this.pendingRegisters.splice(0)) {
+                this.register(pending.messageId, pending.analysis, pending.leverage);
+            }
         } catch (err) {
             console.warn('[OutcomeAutopilot] Failed to load state:', err);
             if (gen !== this.initGeneration || this.loadedUser !== user) return;
@@ -196,7 +218,23 @@ class OutcomeAutopilotServiceClass {
      * the authoritative `reg.leverage` used by every later PnL resolution
      * (it stayed stale while register early-returned on existing id).
      */
+    /** Registrations that arrived before init() finished its async load —
+     *  flushed after the latch restores, or a boot-race turn would re-detect
+     *  days-old outcomes whose shadow latch hadn't loaded yet. */
+    private pendingRegisters: Array<{ messageId: string; analysis: TradeAnalysis; leverage: number }> = [];
+    /** Shadow marks made before init() finished — unioned after the load so
+     *  init's clear+reload cannot wipe them. */
+    private preInitShadowNotified = new Set<string>();
+
     register(messageId: string, analysis: TradeAnalysis, leverage: number): void {
+        // BOOT RACE: init() is async (disk read). A register that arrives
+        // before the latch loads would re-detect days-old outcomes whose
+        // shadow mark was persisted last session — the exact stale toast the
+        // latch exists to prevent. Buffer and flush after the load.
+        if (!this.initialized) {
+            this.pendingRegisters.push({ messageId, analysis, leverage });
+            return;
+        }
         if (this.processed.has(messageId) || this.dismissed.has(messageId)
             || this.shadowNotified.has(messageId)) return;
         const lev = leverage || LEGACY_LEVERAGE;
@@ -282,6 +320,8 @@ class OutcomeAutopilotServiceClass {
     markShadowNotified(messageId: string): boolean {
         if (this.shadowNotified.has(messageId)) return false;
         this.shadowNotified.add(messageId);
+        // A mark made before init() finished must survive init's clear+reload.
+        if (!this.initialized) this.preInitShadowNotified.add(messageId);
         this.pruneIdSets();
         // The outcome stays available for this session's banner; only future
         // registrations are suppressed. Drop the registration like a resolved
@@ -590,6 +630,7 @@ class OutcomeAutopilotServiceClass {
             recoveredAfterSlTouch: !!result.slHit && !scaleOutDetected,
             detail: `${hitTarget} hit${levelPrice !== undefined ? ` @ ${levelPrice}` : ''}${exitNote}${result.slHit ? ' · recovered after SL touch' : ' · clean'}${scaleOutDetected ? ' · TP1 scale-out to breakeven' : ''}${!scaleOutDetected && result.tpHits && result.tpHits.length > 1 ? ' · TP1 partial scale-out, remainder to last TP' : ''}${result.timeToOutcome ? ` · ${result.timeToOutcome} after analysis` : ''}`,
             detectedAt: new Date().toISOString(),
+            hitAt: result.hitCandleTime,
             timeToOutcome: result.timeToOutcome,
             slOptimizationData: this.computeSLOptimization(reg, result),
             excursions: result.excursions,
@@ -619,6 +660,7 @@ class OutcomeAutopilotServiceClass {
             hitTarget: 'SL',
             detail: `Stop loss hit${result.slHit?.price !== undefined ? ` @ ${result.slHit.price}` : ''}${result.timeToOutcome ? ` · ${result.timeToOutcome} after analysis` : ''}`,
             detectedAt: new Date().toISOString(),
+            hitAt: result.hitCandleTime,
             timeToOutcome: result.timeToOutcome || result.slHit?.timeAfterAnalysis,
             slOptimizationData: this.computeSLOptimization(reg, result),
             excursions: result.excursions,
@@ -676,8 +718,12 @@ class OutcomeAutopilotServiceClass {
     }
 
     private async persist(): Promise<void> {
-        const user = this.loadedUser;
-        if (!user) return; // no partition owner yet — never write to the shared key
+        // FALLBACK: a shadow mark can land before init() resolves (boot race).
+        // Dropping the write made the latch memory-only for that session — the
+        // exact stale re-toast this service guards against. Attribute to the
+        // active profile instead of silently losing it.
+        const user = this.loadedUser ?? (getActiveUsername() || null);
+        if (!user) return;
         const snapshot: PersistedUserState = {
             // Keep the same window as the in-memory trim — a narrower
             // persist window would resurrect old messages as

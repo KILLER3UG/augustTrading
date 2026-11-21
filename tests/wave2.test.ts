@@ -206,6 +206,57 @@ describe('Wave 2 invariants', () => {
     });
 
     // ── (e) per-role seat routing ────────────────────────────────────────────
+
+    // ── stale-news shadow guard ────────────────────────────────────────────
+    it('isStaleShadowNews: a days-old deciding candle is stale; absent/invalid timestamps are fresh', async () => {
+        const { isStaleShadowNews, SHADOW_STALE_NEWS_MS } = await import('../src/utils/outcomeSettlement');
+        const now = Date.now();
+        assert.equal(isStaleShadowNews(new Date(now - SHADOW_STALE_NEWS_MS - 60_000).toISOString(), now), true,
+            '25h-old deciding candle = stale news');
+        assert.equal(isStaleShadowNews(new Date(now - 3 * 24 * 60 * 60 * 1000).toISOString(), now), true,
+            '3-day-old deciding candle = stale news (the reported bug)');
+        assert.equal(isStaleShadowNews(new Date(now - 60_000).toISOString(), now), false,
+            'a minute-old deciding candle is fresh');
+        assert.equal(isStaleShadowNews(undefined, now), false, 'absent timestamp = fresh (absence is not staleness)');
+        assert.equal(isStaleShadowNews('not-a-date', now), false, 'unparseable = fresh');
+    });
+
+    it('the shadow latch survives init clear+reload — pre-init marks and persisted marks both hold', async () => {
+        const svcModule = await import('../src/services/ui/OutcomeAutopilotService');
+        const svc = svcModule.OutcomeAutopilotService as unknown as {
+            markShadowNotified: (id: string) => boolean;
+            register: (id: string, analysis: unknown, leverage: number) => void;
+            init: (user?: string) => Promise<void>;
+            reset: () => void;
+        };
+        const analysis = {
+            coinName: 'BTCUSDT', direction: 'Long', entry: 100, stopLoss: 98,
+            stopLossPercentage: '-2', takeProfit: [{ percentage: '+6' }], confidence: 'High',
+            leverage: '10',
+        };
+        // Pre-init mark: the boot race — a resolution lands while init's disk
+        // read is still in flight. init's clear() must not wipe it.
+        svc.reset();
+        const firstToast = svc.markShadowNotified('msg-boot-race');
+        assert.equal(firstToast, true, 'first shadow resolution toasts');
+        await svc.init(USER); // init loads AFTER the mark
+        svc.register('msg-boot-race', analysis, 10);
+        // Registration is suppressed (shadowNotified has the id) — a second
+        // shadow resolution would only toast via markShadowNotified, which
+        // now returns false.
+        assert.equal(svc.markShadowNotified('msg-boot-race'), false,
+            'the latch holds across init for a pre-init mark');
+        // Persisted latch: a mark from LAST session (on disk) suppresses the
+        // toast on the next boot.
+        svc.reset();
+        await svc.init(USER);
+        const toast = svc.markShadowNotified('msg-days-old');
+        assert.equal(toast, true);
+        await svc.init(USER); // re-init same user reloads from disk
+        assert.equal(svc.markShadowNotified('msg-days-old'), false,
+            'the persisted latch suppresses the re-toast after a reload');
+    });
+
     it('resolveBackgroundSeat routes per role: role override → default seat → first ready provider', async () => {
         const { setAutonomySeat, setAutonomyRoleSeat } = await import('../src/services/trade/autonomyEngine');
         // Seed TWO ready providers so the routing has a choice.

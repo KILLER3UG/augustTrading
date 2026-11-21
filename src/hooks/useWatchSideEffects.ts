@@ -4,6 +4,7 @@ import { OutcomeAutopilotService, AutopilotResolution } from '../services/ui/Out
 import { appendWatchEpisode } from '../utils/watchList';
 import { autoJournalPolicyFor } from '../utils/autoJournalRules';
 import { settlementActionFor, SETTLEMENT_UNDO_MS } from '../utils/outcomeSettlement';
+import { isStaleShadowNews } from '../utils/outcomeSettlement';
 import { getHarnessSettings } from '../utils/harnessSettings';
 import { describeWatchTick } from '../utils/watchTicks';
 import { ticketExpiryLine } from '../utils/paperPnl';
@@ -57,6 +58,14 @@ export const useWatchSideEffects = ({
                 // boots, and without the persisted mark the same old result
                 // re-toasted on every launch.
                 if (OutcomeAutopilotService.markShadowNotified(messageId)) {
+                    // STALE-NEWS GUARD: the deciding candle, not the detection
+                    // time, decides freshness. A boot scan that finds a stop
+                    // hit from DAYS ago announces nothing — the toast used to
+                    // arrive days after the stop and read as a glitch. The
+                    // latch still records the outcome (Journal/Signals shows it).
+                    if (isStaleShadowNews(resolution.hitAt)) {
+                        return;
+                    }
                     toast.success('Shadow: outcome detected (not recorded)', `${resolution.detail} — settlement is in shadow mode.`);
                 }
                 return;
