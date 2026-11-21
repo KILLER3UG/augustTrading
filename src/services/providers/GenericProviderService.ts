@@ -867,13 +867,13 @@ async function* chatCompletionsStream(
         const delta = chunk.choices[0]?.delta as any;
         toolBuf.push(delta);
         const reasoning = deltaReasoning(delta);
-        if (reasoning.trim()) options?.onReasoning?.(reasoning);
+        if (reasoning.length > 0) options?.onReasoning?.(reasoning);
         const gated = gate.push(deltaVisibleText(delta));
-        if (gated.thinking.trim()) options?.onReasoning?.(gated.thinking);
+        if (gated.thinking.length > 0) options?.onReasoning?.(gated.thinking);
         if (gated.visible) yield gated.visible;
     }
     const flushed = gate.flush();
-    if (flushed.thinking.trim()) options?.onReasoning?.(flushed.thinking);
+    if (flushed.thinking.length > 0) options?.onReasoning?.(flushed.thinking);
     if (flushed.visible) yield flushed.visible;
     toolBuf.finish(options);
     reportFinishReason(config, streamFinish ?? 'unknown', options);
@@ -1826,7 +1826,7 @@ async function* streamViaElectronBridge(
             return;
         }
         const gated = gate.push(chunk.delta);
-        if (gated.thinking.trim()) options?.onReasoning?.(gated.thinking);
+        if (gated.thinking.length > 0) options?.onReasoning?.(gated.thinking);
         if (gated.visible) queue.push(gated.visible);
         notify();
     });
@@ -1874,8 +1874,8 @@ async function* streamViaElectronBridge(
         // not the queue, and yielding result.text on top would double-paint.
         // Same order the other two streaming paths use.
         const flushed = gate.flush();
-        if (flushed.thinking.trim()) options?.onReasoning?.(flushed.thinking);
-        if (flushed.visible) yield flushed.visible;
+        if (flushed.thinking.length > 0) options?.onReasoning?.(flushed.thinking);
+        if (flushed.visible) { yielded += flushed.visible; yield flushed.visible; }
         if (!result.ok) {
             const error = new Error(result.message || 'Provider request failed.');
             if (result.status !== undefined) (error as { status?: number }).status = result.status;
@@ -1890,10 +1890,13 @@ async function* streamViaElectronBridge(
         // the provider's raw accumulated text and `yielded` is the VISIBLE output
         // after the think-gate stripped inline reasoning — so slicing by a
         // character count re-emits stripped markup or duplicates text whenever the
-        // two differ (the 2026-10-27 audit L-5). A prefix test is the property that
-        // matters: if the painted text is not a prefix of the raw text, the gate
-        // removed something and what was painted is the answer.
-        if (result.text && result.text.startsWith(yielded) && result.text.length > yielded.length) {
+        // two differ (the 2026-10-27 audit L-5). When nothing streamed at all,
+        // peel inline `<think>` blocks first so raw markup never enters answer prose.
+        if (!yielded && result.text) {
+            const stripped = extractAndStripThinkBlocks(result.text);
+            if (stripped.leaked) options?.onReasoning?.(stripped.leaked);
+            if (stripped.visible) yield stripped.visible;
+        } else if (result.text && result.text.startsWith(yielded) && result.text.length > yielded.length) {
             yield result.text.slice(yielded.length);
         }
     } finally {
@@ -2160,9 +2163,9 @@ async function* streamViaProxy(
     const toolBuf = new StreamToolCallBuffer();
     const forwardDelta = (delta: Record<string, unknown>): string => {
         const reasoning = deltaReasoning(delta);
-        if (reasoning.trim()) options?.onReasoning?.(reasoning);
+        if (reasoning.length > 0) options?.onReasoning?.(reasoning);
         const gated = gate.push(deltaVisibleText(delta));
-        if (gated.thinking.trim()) options?.onReasoning?.(gated.thinking);
+        if (gated.thinking.length > 0) options?.onReasoning?.(gated.thinking);
         return gated.visible;
     };
     try {
@@ -2244,7 +2247,7 @@ async function* streamViaProxy(
             }
         }
         const flushed = gate.flush();
-        if (flushed.thinking.trim()) options?.onReasoning?.(flushed.thinking);
+        if (flushed.thinking.length > 0) options?.onReasoning?.(flushed.thinking);
         if (flushed.visible) yield flushed.visible;
         toolBuf.finish(options);
         reportFinishReason(config, proxyFinish ?? 'unknown', options);

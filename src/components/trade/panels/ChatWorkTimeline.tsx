@@ -172,6 +172,7 @@ const ChatWorkTimeline: React.FC<ChatWorkTimelineProps> = ({ entry }) => {
                     key={`thought-${s}`}
                     thinking={segs[s]}
                     running={running && s === segs.length - 1}
+                    persistedMs={s === 0 ? entry.workedMs : undefined}
                     startedAt={startedAt}
                 />
             );

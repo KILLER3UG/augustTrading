@@ -62,6 +62,16 @@ function createSseParser(apiFormat) {
         const status = (nested && (nested.status || nested.code)) || json.status;
         return { type: 'error', message: String(message).slice(0, 400), ...(typeof status === 'number' ? { status } : {}) };
     };
+    const extractReasoningValue = (val) => {
+        if (!val) return '';
+        if (typeof val === 'string') return val;
+        if (Array.isArray(val)) return val.map(extractReasoningValue).filter(Boolean).join('');
+        if (typeof val === 'object') {
+            return extractReasoningValue(val.text ?? val.summary ?? val.content ?? val.reasoning ?? val.reasoning_content);
+        }
+        return '';
+    };
+
     const handleChatCompletions = (data) => {
         const events = [];
         if (data === '[DONE]') return { events, done: true };
@@ -76,9 +86,11 @@ function createSseParser(apiFormat) {
             events.push({ type: 'text', delta: delta.content });
         }
         // Reasoning tokens ride several field spellings across OpenAI-compatible
-        // servers (B.AI/vLLM/DeepSeek); take whichever carries them.
-        const reasoning = delta.reasoning_content ?? delta.reasoning ?? delta.reasoning_text;
-        if (typeof reasoning === 'string' && reasoning.length > 0) {
+        // servers (B.AI/vLLM/DeepSeek/OpenRouter/KiloCode); take whichever carries them.
+        const reasoning = extractReasoningValue(
+            delta.reasoning_content ?? delta.reasoning ?? delta.reasoning_text ?? delta.reasoning_details
+        );
+        if (reasoning.length > 0) {
             events.push({ type: 'reasoning', delta: reasoning });
         }
         if (Array.isArray(delta.tool_calls)) {
@@ -88,6 +100,28 @@ function createSseParser(apiFormat) {
                 if (tc.id) slot.id = tc.id;
                 if (tc.function?.name) slot.name += tc.function.name;
                 if (typeof tc.function?.arguments === 'string') slot.args += tc.function.arguments;
+            }
+        }
+        return { events, done: false };
+    };
+
+    const handleGemini = (data) => {
+        const events = [];
+        let json; try { json = JSON.parse(data); } catch { return { events, done: false }; }
+        const failed = errorFrom(data, json);
+        if (failed) return { events: [failed], done: true };
+        if (json.usageMetadata) {
+            usage = {
+                prompt_tokens: json.usageMetadata.promptTokenCount,
+                completion_tokens: json.usageMetadata.candidatesTokenCount,
+                total_tokens: json.usageMetadata.totalTokenCount,
+            };
+        }
+        const parts = json?.candidates?.[0]?.content?.parts;
+        if (Array.isArray(parts)) {
+            for (const part of parts) {
+                if (!part || typeof part.text !== 'string' || part.text.length === 0) continue;
+                events.push({ type: part.thought === true ? 'reasoning' : 'text', delta: part.text });
             }
         }
         return { events, done: false };
@@ -154,6 +188,7 @@ function createSseParser(apiFormat) {
     const handleData = (data) => {
         if (apiFormat === 'messages') return handleMessages(data);
         if (apiFormat === 'responses') return handleResponses(data);
+        if (apiFormat === 'gemini') return handleGemini(data);
         return handleChatCompletions(data);
     };
 

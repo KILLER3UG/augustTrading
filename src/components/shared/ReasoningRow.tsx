@@ -132,9 +132,7 @@ const ReasoningRow: React.FC<ReasoningRowProps> = ({
         : null;
     const seconds = running ? liveSeconds : settledSeconds ?? frozenSeconds;
     const meta = seconds !== null ? formatElapsed(seconds) : null;
-    // The row labels the TRACE. A custom label (e.g. "Moderator thinking")
-    // carries information and shows as-is; the default line reads the way the
-    // reference reads.
+    // While running: "Thinking"; once settled: "Thinking complete" (preserving custom labels).
     const rowLabel = label !== 'Thinking'
         ? label
         : running ? 'Thinking' : 'Thinking complete';
@@ -152,6 +150,7 @@ const ReasoningRow: React.FC<ReasoningRowProps> = ({
             className={`thinking-row reasoning-row group/reasoning ${open ? 'is-open' : ''} ${className}`.trim()}
             summaryClassName="reasoning-row-summary"
             bodyClassName="reasoning-row-body thinking-row-body custom-scrollbar"
+            testId="thinking-block"
             state={running ? 'running' : 'ok'}
             open={open}
             onToggle={setOpen}

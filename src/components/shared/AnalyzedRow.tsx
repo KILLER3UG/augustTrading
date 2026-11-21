@@ -49,11 +49,9 @@ export interface AnalyzedRowProps {
  * freezes when the answer text begins.
  */
 const AnalyzedRow: React.FC<AnalyzedRowProps> = ({ running = false, className = '', summary, persistedMs, startedAt, title, activity, children }) => {
-    // Collapsed by default, like the reference: the line names the work and
-    // the steps are one click away. The body stays mounted, so an assertion
-    // can still read it; auto-opening on every run is what made a conversation
-    // read as a pile of cards.
-    const [open, setOpen] = useState(false);
+    // Open by default so the thinking block and executed tool steps are
+    // immediately legible in the turn timeline; the user can click to fold.
+    const [open, setOpen] = useState(true);
     const turnStartMs = typeof startedAt === 'number' && Number.isFinite(startedAt) ? startedAt : null;
     const wasRunningRef = useRef(running);
     const startedAtRef = useRef<number | null>(turnStartMs ?? (running ? Date.now() : null));
