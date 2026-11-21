@@ -24,7 +24,7 @@ import {
     fetchOpenInterest, fetchOpenInterestHistory, fetchFundingRateHistory,
     fetchMarkIndex, fetchTakerBuySellRatio, fetchTopTraderRatio,
     fetchLongShortRatio, fetchRecentLiquidations, verifySymbolAgainstUniverse,
-    fetchFundingInfo,
+    fetchFundingInfo, fetchSpotOHLCV,
 } from './MarketDataService';
 import { baseOf } from '../../utils/symbol';
 import { atr14, detectEqualLevels, detectSweepReversals } from '../../utils/smcStructure';
@@ -34,12 +34,17 @@ import { fundingState, liquidationRisk, oiPriceState, positioningState } from '.
 import { btcRelative, relativeStrengthRank } from '../market/crossMarketCore';
 import { effortVsResult } from '../market/effortResultCore';
 import { dedupeLevels, priorPeriodLevels, roundNumberRows, sessionLevelRows } from '../market/levelsCore';
-import { deltaSeries, cvdDivergence, flowEvents } from '../market/orderFlowCore';
+import { deltaSeries, cvdDivergence, flowEvents, spotPerpCvdDivergence, vpin } from '../market/orderFlowCore';
 import { regimeRead } from '../market/regimeCore';
+import {
+    barbwire, bbKcSqueeze, climaxBar, ema20GapStreak, expectedMove1Sigma,
+    hurstExponent, nr7, reversalOverlapTrap, strongestTrendScan,
+    trendScanTStat, varianceRatio, yangZhangVol,
+} from '../market/volRegimeCore';
 import { scanPlaybooks, type PlaybookContext, type PlaybookMatch } from '../market/playbooksCore';
 import { previousPeriods, sessionWindowsForDay, utcDayStart, utcWeekStart, UTC_DAY_MS } from '../market/sessionConvention';
-import { activeSwingFib, readStructure } from '../market/swingStructureCore';
-import { readImbalances } from '../market/imbalanceCore';
+import { activeSwingFib, barCountPullback, compositeCandle, insideClusters, readStructure } from '../market/swingStructureCore';
+import { microMeasuringGaps, readImbalances } from '../market/imbalanceCore';
 import { readSrZones, readRangeState } from '../market/zonesCore';
 import { readWyckoff } from '../market/wyckoffCore';
 import { computeFundingDrag, computeTradeMath, type TradeMathRead } from '../market/tradeMathCore';
@@ -545,6 +550,19 @@ export const runOrderFlowTool = async (
         const netDelta = recentDeltas.reduce((s, d) => s + d.delta, 0);
         const divergence = cvdDivergence(candles, series, window);
         const events = flowEvents(candles, atr, Math.max(40, window * 2));
+        // Wave B: the SPOT leg — the same venue's spot market over the same
+        // closed-bar window. A missing/failing spot market (perp-only listing)
+        // degrades to an honest unavailable block, never a perp stand-in.
+        let spotCandles: Kline[] = [];
+        try {
+            spotCandles = await fetchSpotOHLCV(symbol, tf, Math.max(80, window * 3));
+        } catch (e) {
+            notes.push(`spot leg refused: ${(e as Error).message}`);
+        }
+        const spotPerp = spotPerpCvdDivergence(candles, spotCandles);
+        if (!spotPerp.available && spotPerp.reason) notes.push(`spot/perp divergence unavailable: ${spotPerp.reason}`);
+        const vpinRead = vpin(candles);
+        if (!vpinRead.available && vpinRead.reason) notes.push(`VPIN unavailable: ${vpinRead.reason}`);
         const values = {
             window_bars: recent.length,
             cvd_now: Math.round(series.cvd * 100) / 100,
@@ -553,6 +571,8 @@ export const runOrderFlowTool = async (
             sell_volume: Math.round(series.sellVolume * 100) / 100,
             price_cvd_divergence: divergence,
             events: events?.events ?? [],
+            spot_perp_divergence: spotPerp,
+            vpin: vpinRead,
             note: 'delta = 2 × takerBuy − volume per candle; a taker-buy field is a measurement, but candle aggregation is NOT footprint',
         };
         return JSON.stringify(envelope({
@@ -561,7 +581,7 @@ export const runOrderFlowTool = async (
             values,
             distancesAtr: {},
             evidence: 'documented',
-            summary: `CVD ${Math.round(series.cvd)}, window net delta ${Math.round(netDelta)}${divergence ? `, ${divergence} price/CVD divergence` : ''}${events?.events.length ? `, ${events.events.length} absorption/exhaustion event(s)` : ''}`,
+            summary: `CVD ${Math.round(series.cvd)}, window net delta ${Math.round(netDelta)}${divergence ? `, ${divergence} price/CVD divergence` : ''}${events?.events.length ? `, ${events.events.length} absorption/exhaustion event(s)` : ''}${spotPerp.available ? `, spot/perp ${spotPerp.classification}` : ''}${vpinRead.available ? `, VPIN ${vpinRead.vpin} (p${vpinRead.vpinPercentile ?? '?'})${vpinRead.toxicityWarning ? ' TOXICITY WARNING' : ''}` : ''}`,
         }));
     } catch (error) {
         return JSON.stringify(envelope({
@@ -743,14 +763,60 @@ export const runRegimeTool = async (
                 summary: '', reason: `need ≥80 closed candles on ${tf} (got ${candles.length})`,
             }));
         }
-        const values = read;
+        // Wave B quant pack: Yang-Zhang vol + percentiles (90-bar floor),
+        // compression flags, expected move, Hurst/VR/trend-scan (100-bar
+        // floor) and the Al Brooks bar-geometry flags. Every floor refusal
+        // is named in the output instead of a thin number.
+        const barSeconds = (intervalMs(tf) || 3_600_000) / 1000;
+        const percentileBarsOk = candles.length >= 90;
+        const quantBarsOk = candles.length >= 100;
+        const yz = yangZhangVol(candles, barSeconds, 30, 60);
+        const trendScanPoints = quantBarsOk ? trendScanTStat(candles.map(c => c.close)) : null;
+        const strongest = trendScanPoints ? strongestTrendScan(trendScanPoints) : null;
+        const ema20 = ema20GapStreak(candles);
+        const climax = climaxBar(candles);
+        const quant = {
+            yangZhangVol: yz
+                ? {
+                    perBar: yz.perBar,
+                    annualizedPct: yz.annualizedPct,
+                    percentile: percentileBarsOk ? yz.percentile : null,
+                }
+                : { available: false, reason: 'need ≥32 closed bars for the Yang-Zhang window' },
+            volPercentile: percentileBarsOk ? (yz?.percentile ?? null) : null,
+            volPercentileRefused: percentileBarsOk ? null : `need ≥90 closed bars for a percentile (got ${candles.length})`,
+            atrPercentile: percentileBarsOk ? read.atrPercentile : null,
+            bbKcSqueeze: bbKcSqueeze(candles),
+            nr7: nr7(candles),
+            expectedMove1Sigma: yz ? expectedMove1Sigma(yz.perBar, candles[candles.length - 1].close, 1) : null,
+            hurst: quantBarsOk ? hurstExponent(candles.map(c => c.close)) : null,
+            hurstRefused: quantBarsOk ? null : `need ≥100 closed bars (got ${candles.length})`,
+            varianceRatio: quantBarsOk
+                ? { k4: varianceRatio(candles.map(c => c.close), 4), k8: varianceRatio(candles.map(c => c.close), 8) }
+                : null,
+            trendScan: strongest
+                ? { tStat: strongest.tStat, horizonBars: strongest.horizonBars, horizons: trendScanPoints!.map(p => p.horizonBars) }
+                : null,
+            trendScanRefused: quantBarsOk ? null : `need ≥100 closed bars (got ${candles.length})`,
+            thresholds: { percentileBars: 90, quantBars: 100 },
+        };
+        const brooks = {
+            barbwire: barbwire(candles),
+            reversalOverlapTrap: reversalOverlapTrap(candles),
+            ema20GapStreak: ema20.streak,
+            maGapBarSetup: ema20.maGapBarSetup,
+            climaxBar: climax.isClimax,
+            climaxBodyVsMedian: climax.bodyVsMedian,
+            climaxTrendStreak: climax.trendStreak,
+        };
+        const values = { ...read, quant, brooks };
         return JSON.stringify(envelope({
             tool: 'get_regime', asof: asofMs, symbol, tf,
             params: {}, barsUsed: candles.length, notes,
             values,
             distancesAtr: {},
             evidence: 'structural',
-            summary: `${read.direction} (ADX ${read.directionStrength}, efficiency ${read.efficiency}, dwell ${read.dwell} bars) · volatility ${read.volatility}${read.atrPercentile !== null ? ` (ATR p${read.atrPercentile})` : ''}`,
+            summary: `${read.direction} (ADX ${read.directionStrength}, efficiency ${read.efficiency}, dwell ${read.dwell} bars) · volatility ${read.volatility}${read.atrPercentile !== null ? ` (ATR p${read.atrPercentile})` : ''}${quant.bbKcSqueeze ? ' · BB-in-KC squeeze' : ''}${quant.nr7.isNr7 ? ' · NR7' : ''}${brooks.barbwire ? ' · BARBWIRE (no stop entries)' : ''}${brooks.climaxBar ? ' · climax bar' : ''}`,
         }));
     } catch (error) {
         return JSON.stringify(envelope({
@@ -1246,8 +1312,17 @@ export const runSwingStructureTool = async (
         }
         const fib = activeSwingFib(candles, atr);
         const last = candles[candles.length - 1].close;
+        // Wave B: Al Brooks bar geometry — the pullback count, the blended
+        // 2/3-bar candles and the wick-inclusive inside clusters.
+        const pullback = barCountPullback(candles);
+        const composite2 = compositeCandle(candles, 2);
+        const composite3 = compositeCandle(candles, 3);
+        const clusters = insideClusters(candles);
         const values = {
             trend: structure.trend,
+            bar_count: pullback,
+            composite_candle: { two_bar: composite2, three_bar: composite3 },
+            inside_cluster: clusters.length > 0 ? clusters : null,
             swing_labels: structure.labels.slice(-6).map(l => ({
                 tag: l.tag, price: r4(l.swing.price), kind: l.swing.kind,
                 time: l.swing.time,
@@ -1273,7 +1348,7 @@ export const runSwingStructureTool = async (
                 ? { last_break_level: r2(Math.abs(last - structure.lastBreak.level) / atr) }
                 : {},
             evidence: 'structural',
-            summary: `${structure.trend} on ${tf}${structure.lastBreak ? `; last ${structure.lastBreak.kind} ${structure.lastBreak.direction} through ${r4(structure.lastBreak.level)}` : ''}${fib ? `; fib from the ${fib.direction} swing, best confluence ${Math.max(...fib.levels.map(l => l.confluence))}` : ''}`,
+            summary: `${structure.trend} on ${tf}${structure.lastBreak ? `; last ${structure.lastBreak.kind} ${structure.lastBreak.direction} through ${r4(structure.lastBreak.level)}` : ''}${fib ? `; fib from the ${fib.direction} swing, best confluence ${Math.max(...fib.levels.map(l => l.confluence))}` : ''}${pullback ? `; ${pullback.label} pullback count` : ''}${clusters.length > 0 ? `; ${clusters.map(c => c.kind).join('/')} cluster` : ''}`,
         }));
     } catch (error) {
         return JSON.stringify(envelope({
@@ -1386,12 +1461,15 @@ export const runImbalancesTool = async (
             }));
         }
         const last = candles[candles.length - 1].close;
+        // Wave B: Al Brooks micro measuring gaps (3-bar, midpoint projection).
+        const microGaps = microMeasuringGaps(candles);
         const values = {
             gaps: gaps.map(g => ({
                 direction: g.direction, top: r4(g.top), bottom: r4(g.bottom),
                 size_atr: g.sizeAtr, displacement_atr: g.displacementAtr,
                 age_bars: g.ageBars, fill: g.fill, fill_pct: g.fillPct,
             })),
+            micro_measuring_gaps: microGaps,
             thresholds: { min_size_atr: 0.3, min_displacement_atr: 0.8 },
             note: 'order blocks are deliberately absent — weakest evidence, added last per the tools-upgrade plan',
         };
@@ -1402,7 +1480,7 @@ export const runImbalancesTool = async (
             values,
             distancesAtr: Object.fromEntries(gaps.slice(0, 5).map((g, i) => [`gap_${i + 1}_mid`, r2(Math.abs((g.top + g.bottom) / 2 - last) / atr)])),
             evidence: 'structural',
-            summary: `${gaps.length} FVG(s) ≥0.3×ATR with displacement, ${unfilled} unfilled`,
+            summary: `${gaps.length} FVG(s) ≥0.3×ATR with displacement, ${unfilled} unfilled${microGaps.length > 0 ? `, ${microGaps.length} micro measuring gap(s)` : ''}`,
         }));
     } catch (error) {
         return JSON.stringify(envelope({

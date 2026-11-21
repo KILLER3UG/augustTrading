@@ -2001,7 +2001,7 @@ export const DESK_TOOL_DEFINITIONS: DeskToolDefinition[] = [
         function: {
             name: 'order_flow',
             description:
-                'Candle-level order flow over a window: CVD, window net delta, buy/sell volume split, price-vs-CVD divergence, and absorption/exhaustion events. EVERY delta number here is an ESTIMATE from taker-buy volume per candle, not footprint. Call before claiming "buyers are absorbing" or "delta is diverging".',
+                'Candle-level order flow over a window: CVD, window net delta, buy/sell volume split, price-vs-CVD divergence, absorption/exhaustion events, SPOT-vs-PERP CVD divergence (aligned closed bars, classified spot_led / perp_chase / aligned / absorption_risk — refused when the spot market is missing or the bars do not align) and a VPIN toxicity read with its percentile (refused under 20 volume buckets). EVERY delta number here is an ESTIMATE from taker-buy volume per candle, not footprint. Call before claiming "buyers are absorbing" or "delta is diverging".',
             parameters: {
                 type: 'object',
                 properties: {
@@ -2049,7 +2049,7 @@ export const DESK_TOOL_DEFINITIONS: DeskToolDefinition[] = [
         function: {
             name: 'get_regime',
             description:
-                'The market\'s regime on one timeframe as a STATE: trend/range/neutral (ADX + efficiency ratio, with a real neutral band and bars-in-state dwell) and separately compressed/normal/high volatility (ATR + Bollinger-bandwidth percentiles). Tag your decision with the returned regime_id. Call before any read whose meaning depends on regime — a breakout in compression and a breakout in a trend are different facts.',
+                'The market\'s regime on one timeframe as a STATE: trend/range/neutral (ADX + efficiency ratio, with a real neutral band and bars-in-state dwell) and separately compressed/normal/high volatility (ATR + Bollinger-bandwidth percentiles). Also carries the quant pack: Yang-Zhang volatility with its percentile (refused under 90 closed bars), BB-in-KC squeeze, NR7, ±1σ expected move, Hurst + Lo–MacKinlay variance ratios + trend-scanning t-stats (refused under 100 closed bars), and the Brooks bar-geometry flags (barbwire chop, reversal-overlap trap, EMA20 gap-bar streak, climax bar). Tag your decision with the returned regime_id. Call before any read whose meaning depends on regime — a breakout in compression and a breakout in a trend are different facts.',
             parameters: {
                 type: 'object',
                 properties: {
@@ -2091,7 +2091,7 @@ export const DESK_TOOL_DEFINITIONS: DeskToolDefinition[] = [
         function: {
             name: 'swing_structure',
             description:
-                'Swing structure on one timeframe: the HH/HL/LH/LL pivot sequence, the last BOS or CHoCH (close beyond the last opposing swing, with its direction), the sequence trend, and Fibonacci retracements from the ACTIVE swing with a confluence count per level. Call before claiming "higher lows", "structure broke", or quoting a fib level.',
+                'Swing structure on one timeframe: the HH/HL/LH/LL pivot sequence, the last BOS or CHoCH (close beyond the last opposing swing, with its direction), the sequence trend, Fibonacci retracements from the ACTIVE swing with a confluence count per level, the Brooks bar-count pullback (H1–H4/L1–L4 with exact trigger and invalidation prices), blended 2/3-bar composite candles, and wick-inclusive ii/iii/ioi clusters with breakout triggers. Call before claiming "higher lows", "structure broke", or quoting a fib level.',
             parameters: {
                 type: 'object',
                 properties: {
@@ -2123,7 +2123,7 @@ export const DESK_TOOL_DEFINITIONS: DeskToolDefinition[] = [
         function: {
             name: 'imbalances',
             description:
-                'Fair value gaps with the state that matters: size in ATR, the creating candle\'s displacement, age, and fill state (untouched / partial / through-midpoint / filled). Detection reuses the packet\'s own FVG detector. Order blocks are deliberately absent — weakest evidence, added last. Call before claiming "there\'s an unfilled gap below".',
+                'Fair value gaps with the state that matters: size in ATR, the creating candle\'s displacement, age, and fill state (untouched / partial / through-midpoint / filled), plus Al Brooks micro measuring gaps with their midpoint measured-move projections and tested status. Detection reuses the packet\'s own FVG detector. Order blocks are deliberately absent — weakest evidence, added last. Call before claiming "there\'s an unfilled gap below".',
             parameters: {
                 type: 'object',
                 properties: {
