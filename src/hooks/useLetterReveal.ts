@@ -25,8 +25,6 @@ import { getIdleMotionEnabled, subscribeIdleMotion } from '../services/desk/idle
 
 const TICK_MS = 16;
 const CHARS_PER_TICK = 3;
-const BURST_BACKLOG = 240;
-const BURST_CHARS_PER_TICK = 5;
 /** A mount with more text than this is a surface hop mid-stream, not a first
  *  chunk: show it whole and type only what arrives next. */
 const INSTANT_MOUNT_CHARS = 120;
@@ -40,7 +38,9 @@ export const useLetterReveal = (text: string, active: boolean): string => {
     useEffect(() => subscribeIdleMotion(setIdleMotion), []);
     const reduced = prefersReducedMotion() || !idleMotion;
     const [revealed, setRevealed] = useState(
-        active && text.length > INSTANT_MOUNT_CHARS ? text.length : 0,
+        active
+            ? (text.length > INSTANT_MOUNT_CHARS ? text.length : Math.min(text.length, Math.max(12, CHARS_PER_TICK)))
+            : text.length,
     );
     const previous = useRef(text);
 
@@ -51,9 +51,13 @@ export const useLetterReveal = (text: string, active: boolean): string => {
             setRevealed(text.length);
             return;
         }
+        if (prior.length === 0 && text.length > 0) {
+            setRevealed(Math.min(text.length, Math.max(12, CHARS_PER_TICK)));
+            return;
+        }
         if (prior.length > 0 && !text.startsWith(prior)) {
-            // A new turn/version — start this text from its first letter.
-            setRevealed(0);
+            // A new turn/version — start this text from its first visible slice.
+            setRevealed(Math.min(text.length, Math.max(12, CHARS_PER_TICK)));
             return;
         }
         setRevealed(current => Math.min(current, text.length));
@@ -78,7 +82,7 @@ export const useLetterReveal = (text: string, active: boolean): string => {
                 const target = text.length;
                 if (current >= target) return current;
                 const pending = target - current;
-                const step = pending > BURST_BACKLOG ? BURST_CHARS_PER_TICK : CHARS_PER_TICK;
+                const step = Math.max(CHARS_PER_TICK, Math.ceil(pending * 0.35));
                 return Math.min(target, current + step);
             });
         }, TICK_MS);

@@ -88,10 +88,9 @@ export interface SoloTurnRow {
 
 export type SoloTurnCommit = (row: SoloTurnRow, conversationId: string) => void;
 
-/** How often the mirror may write. The pipeline's own live writer is
- *  frame-throttled; a timer at this interval is the same order of magnitude
- *  (≈5 writes/s) and survives a hidden surface. */
-const MIRROR_INTERVAL_MS = 200;
+/** How often the mirror may write. Uses a short non-rAF timer (30ms) so live
+ *  reasoning/tool/token updates mirror promptly even when a tab or pane is hidden. */
+const MIRROR_INTERVAL_MS = 30;
 
 export interface EntryMirror {
     /** Commit whatever the entry holds NOW and unsubscribe. Idempotent. */

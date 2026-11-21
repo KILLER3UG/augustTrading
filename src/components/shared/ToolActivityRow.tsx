@@ -156,7 +156,8 @@ const ToolRowGroupView: React.FC<{ group: ToolRowGroup; running: boolean }> = ({
         </div>
     );
 
-    if (!expandable) return <div className="tool-row-static">{line}</div>;
+    const rowState = anyCalling ? 'calling' : anyFailed ? 'failed' : 'done';
+    if (!expandable) return <div className="tool-row-static" data-testid="tool-row" data-state={rowState}>{line}</div>;
 
     return (
         <Disclosure
@@ -164,7 +165,7 @@ const ToolRowGroupView: React.FC<{ group: ToolRowGroup; running: boolean }> = ({
             summaryClassName="tool-row-summary"
             bodyClassName="tool-row-body custom-scrollbar"
             testId="tool-row"
-            detailsProps={{ 'data-fold-count': group.count, 'data-kind': kind }}
+            detailsProps={{ 'data-fold-count': group.count, 'data-kind': kind, 'data-state': rowState }}
             open={open}
             onToggle={setOpen}
             label={`${group.label} (${kindName})${group.count > 1 ? ` ×${group.count}` : ''} — ${open ? 'collapse' : 'expand'}`}

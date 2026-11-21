@@ -3751,6 +3751,9 @@ export interface DeskToolContext {
      *  progress for anything over ~2s). The loop supplies it; a context without
      *  one is silent exactly as before. */
     onSlowCall?: (label: string) => void;
+    /** Fires immediately as each individual call inside `executeDeskTools`
+     *  resolves, before the remaining calls in `Promise.all` settle. */
+    onResult?: (result: DeskToolResult) => void;
     trades?: LoggedTrade[];
     chartInterval?: string;
     chartLevels?: { label: string; price: number }[];
@@ -6525,14 +6528,18 @@ export async function executeDeskTools(
     return Promise.all(calls.map(call => {
         // One tool asks a HUMAN, and a human is not a 20-second lookup: the
         // question carries its own window and rides the turn's stop signal.
-        if (call.name === 'ask_user_input') return executeDeskTool(call, context);
-        return withinToolDeadline(
-            call,
-            (signal) => executeDeskTool(call, { ...context, signal }),
-            context.signal,
-            DESK_TOOL_TIMEOUT_MS,
-            context.onSlowCall,
-        );
+        const work = call.name === 'ask_user_input'
+            ? executeDeskTool(call, context)
+            : withinToolDeadline(
+                call,
+                (signal) => executeDeskTool(call, { ...context, signal }),
+                context.signal,
+                DESK_TOOL_TIMEOUT_MS,
+                context.onSlowCall,
+            );
+        return context.onResult
+            ? work.then(res => { context.onResult?.(res); return res; })
+            : work;
     }));
 }
 
@@ -6774,10 +6781,12 @@ const runStreamingTurn = async (
     messages: import('../providers/GenericProviderService').ChatMessage[],
     options: import('../providers/GenericProviderService').ChatRequestOptions,
     onTextDelta?: (delta: string) => void,
+    onToken?: (delta: string) => void,
 ): Promise<import('../providers/GenericProviderService').ChatTurnResult> => {
     let text = '';
     let reasoning = '';
     let toolCalls: Array<{ id: string; name: string; arguments: Record<string, unknown> }> = [];
+    let suppressTextProtocolMarkup = false;
     const prevReasoning = options.onReasoning;
     // The stream reports its stop signal on the way through; a turn that hit
     // the token ceiling produced this text AND is incomplete, which the
@@ -6797,8 +6806,24 @@ const runStreamingTurn = async (
         onStreamToolCalls: calls => { toolCalls = calls; },
     });
     for await (const delta of stream) {
+        const prevLen = text.length;
         text += delta;
-        onTextDelta?.(delta);
+        if (!suppressTextProtocolMarkup) {
+            const tagAt = text.search(/<(?:tool_call\b|function\s*=|parameter\s*=)/i);
+            if (tagAt >= 0) {
+                suppressTextProtocolMarkup = true;
+                if (tagAt > prevLen) {
+                    const cleanPrefix = text.slice(prevLen, tagAt);
+                    if (cleanPrefix) {
+                        onTextDelta?.(cleanPrefix);
+                        onToken?.(cleanPrefix);
+                    }
+                }
+                continue;
+            }
+            onTextDelta?.(delta);
+            onToken?.(delta);
+        }
     }
     return {
         text,
@@ -6872,6 +6897,8 @@ export async function runDeskToolLoop(params: {
     ) => AsyncGenerator<string, void, unknown>;
     /** Receives streamed text deltas from `streamTurn` rounds. */
     onTextDelta?: (delta: string) => void;
+    /** Receives streamed visible answer tokens from `streamTurn` rounds. */
+    onToken?: (delta: string) => void;
     /** A self-heal bounce is about to discard the streamed-so-far text (it
      *  was a malformed tool-call attempt, not the answer). Streaming callers
      *  clear their accumulator so the corrected turn paints alone. */
@@ -6898,6 +6925,10 @@ export async function runDeskToolLoop(params: {
      *  callback above carries human labels, so a caller that must know WHICH
      *  tool ran (was the tape read, or only a plan presented?) reads this. */
     onToolCall?: (name: string) => void;
+    /** Fires the moment an individual tool call begins executing. */
+    onToolStart?: (call: DeskToolCall) => void;
+    /** Fires the moment an individual tool call resolves. */
+    onToolEnd?: (result: DeskToolResult) => void;
     /** This turn's artifact scope; see `DeskToolContext.artifactOwner`. */
     artifactOwner?: string;
     /** Fires once per RESULT that carries a payload, so the caller can persist
@@ -6949,6 +6980,7 @@ export async function runDeskToolLoop(params: {
         sendTurn,
         streamTurn,
         onTextDelta,
+        onToken,
         onStreamReset,
         options,
         defaultSymbol,
@@ -6963,6 +6995,8 @@ export async function runDeskToolLoop(params: {
         onToolEvent,
         onToolProgress,
         onToolCall,
+        onToolStart,
+        onToolEnd,
         artifactOwner = '',
         onToolPayload,
         onToolAction,
@@ -7161,7 +7195,7 @@ export async function runDeskToolLoop(params: {
         const outboundMessages = carry.messages;
         const turnOptions = { ...roundOptions, maxTokens: outbound.maxTokens };
         const turn = streamTurn
-            ? await runStreamingTurn(streamTurn, config, outboundMessages, turnOptions, onTextDelta)
+            ? await runStreamingTurn(streamTurn, config, outboundMessages, turnOptions, onTextDelta, onToken)
             : await sendTurn(config, outboundMessages, turnOptions);
         reasoning = [reasoning, turn.reasoning].filter(Boolean).join('\n');
         finalText = turn.text || '';
@@ -7415,12 +7449,50 @@ export async function runDeskToolLoop(params: {
         }
         calls = fresh;
 
-        // Text-protocol tags in a LIVE-streamed turn painted raw markup into
-        // the bubble (valid `<tool_call name=…>` blocks included — the tags
-        // are transport, not the answer). Wipe it before the results round;
-        // the continuation turn restates anything the user needs to see.
-        if (streamTurn && turn.toolCalls.length === 0 && calls.length > 0) {
+        // Pre-tool streamed text in a round that invoked tools is preamble /
+        // protocol tags, never the final public answer: fold any plain preamble
+        // into reasoning if needed and clear the live bubble before tools run so
+        // Thinking -> Tool Execution -> Output stays strictly ordered.
+        if (streamTurn && calls.length > 0) {
+            const preToolProse = stripTextToolCalls(turn.text).trim();
+            if (preToolProse && !turn.reasoning.trim()) {
+                options?.onReasoning?.(preToolProse);
+                reasoning = [reasoning, preToolProse].filter(Boolean).join('\n');
+            }
             onStreamReset?.();
+        }
+
+        const chartSymbol = (defaultSymbol ?? '').trim().toUpperCase();
+        const reportedResults = new WeakSet<DeskToolResult>();
+        const reportToolCompletion = (r: DeskToolResult): void => {
+            if (reportedResults.has(r)) return;
+            reportedResults.add(r);
+            onToolEnd?.(r);
+            const foreign = r.symbol && r.symbol.toUpperCase() !== chartSymbol ? r.symbol : null;
+            const label = digestToolResult(r.name, r.ok, r.content, foreign);
+            onToolEvent?.(label);
+            if (onToolPayload) {
+                const artifact = findArtifactIdIn(r.content);
+                const seen = findClipIn(r.content);
+                onToolPayload({
+                    toolCallId: r.toolCallId,
+                    name: r.name,
+                    label,
+                    ok: r.ok,
+                    artifact,
+                    ...(seen ? { kept: seen.kept, total: seen.total } : {}),
+                    text: artifact ? '' : r.content,
+                });
+            }
+        };
+
+        // Emit tool-started events BEFORE executing any call (including
+        // executeExtraTool / forged / built-in) so the UI renders each tool in
+        // its active "calling..." state while executing, never after settling.
+        for (const c of calls) {
+            onToolCall?.(c.name);
+            onToolStart?.(c);
+            onToolEvent?.(`calling ${toolLabel(c.name)}…`);
         }
 
         // Extra tools (debate mailbox) execute here — they touch orchestration
@@ -7444,7 +7516,9 @@ export async function runDeskToolLoop(params: {
                 // mailbox send queued behind the signal must not run after the
                 // trader stopped the turn. The budget is the other gate below.
                 if (options?.signal?.aborted && call.name !== 'ask_user_input') {
-                    extraResults.push(rejectedResult(call, `${call.name} rejected: the turn was stopped before this action ran.`));
+                    const rejected = rejectedResult(call, `${call.name} rejected: the turn was stopped before this action ran.`);
+                    extraResults.push(rejected);
+                    reportToolCompletion(rejected);
                     continue;
                 }
                 // The extra lane (chart actions, mailbox, the human question) runs
@@ -7452,22 +7526,19 @@ export async function runDeskToolLoop(params: {
                 // a chart write can still run past the turn's ceiling. The question
                 // is exempt: its window is the human's, not a lookup's.
                 if (budgetExceeded() && call.name !== 'ask_user_input') {
-                    extraResults.push(budgetReceipt(call));
+                    const receipt = budgetReceipt(call);
+                    extraResults.push(receipt);
+                    reportToolCompletion(receipt);
                     continue;
                 }
                 const handled = await executeExtraTool(call);
                 if (handled) {
                     extraResults.push(handled);
+                    reportToolCompletion(handled);
                     continue;
                 }
             }
             coreCalls.push(call);
-        }
-        // One line per call — the transcript renders each call as its own
-        // compact status row (joined lines can't be attributed per-tool).
-        for (const c of calls) {
-            onToolCall?.(c.name);
-            onToolEvent?.(`calling ${toolLabel(c.name)}…`);
         }
         // Forged tools (model-authored recipes) execute through their own
         // hardened path BEFORE the built-in executor sees the calls — but the
@@ -7502,7 +7573,7 @@ export async function runDeskToolLoop(params: {
                     loadedToolNames.add(name);
                     if (!loaded.includes(name)) loaded.push(name);
                 }
-                loadResults.push({
+                const loadedRes: DeskToolResult = {
                     toolCallId: call.id,
                     name: 'load_tools',
                     ok: true,
@@ -7512,16 +7583,22 @@ export async function runDeskToolLoop(params: {
                             ? { unknown, note: 'Names must come from the TOOL CATALOGUE block.' }
                             : {}),
                     }),
-                });
+                };
+                loadResults.push(loadedRes);
+                reportToolCompletion(loadedRes);
                 continue;
             }
             if (!call.name.startsWith('custom_')) { builtInCalls.push(call); continue; }
             if (!seatAllows(allowedTools, call.name)) {
-                forgedResults.push(rejectedResult(call, `${call.name} rejected: this tool is not available on this seat.`));
+                const denied = rejectedResult(call, `${call.name} rejected: this tool is not available on this seat.`);
+                forgedResults.push(denied);
+                reportToolCompletion(denied);
                 continue;
             }
             if (overBudget) {
-                forgedResults.push(budgetReceipt(call));
+                const receipt = budgetReceipt(call);
+                forgedResults.push(receipt);
+                reportToolCompletion(receipt);
                 continue;
             }
             // A forged recipe is an HTTPS call the MODEL wrote, so it gets the
@@ -7534,10 +7611,17 @@ export async function runDeskToolLoop(params: {
                     ?? { toolCallId: call.id, name: call.name, ok: true, content: FORGED_MISS },
                 options?.signal,
             );
-            if (forged.content !== FORGED_MISS) forgedResults.push(forged);
+            if (forged.content !== FORGED_MISS) {
+                forgedResults.push(forged);
+                reportToolCompletion(forged);
+            }
         }
         const coreResults = overBudget
-            ? builtInCalls.map(budgetReceipt)
+            ? builtInCalls.map(c => {
+                const r = budgetReceipt(c);
+                reportToolCompletion(r);
+                return r;
+            })
             : builtInCalls.length > 0
             ? await executeDeskTools(builtInCalls, {
                 defaultSymbol,
@@ -7565,6 +7649,7 @@ export async function runDeskToolLoop(params: {
                 modelName: config.selectedModel,
                 providerId: config.id,
                 onSlowCall: label => onToolProgress?.(`${label} · still working…`),
+                onResult: r => reportToolCompletion(r),
             })
             : [];
         const results = [...replays, ...extraResults, ...forgedResults, ...loadResults, ...coreResults];
@@ -7602,31 +7687,9 @@ export async function runDeskToolLoop(params: {
             if (r.ok && !isDataUnavailable(r.content)) answeredThisTurn.set(key, Date.now());
             else answeredThisTurn.delete(key);
         }
-        // One digest line per result, coin-prefixed when the call targeted a
-        // symbol other than the chart's — a mixed BTC/ETH turn must read
-        // unambiguously in the transcript.
-        const chartSymbol = (defaultSymbol ?? '').trim().toUpperCase();
+        // Any remaining result not emitted incrementally above (e.g. replays):
         for (const r of results) {
-            const foreign = r.symbol && r.symbol.toUpperCase() !== chartSymbol ? r.symbol : null;
-            const label = digestToolResult(r.name, r.ok, r.content, foreign);
-            onToolEvent?.(label);
-            // The REAL bytes behind that one line. Keyed on `r.toolCallId`, never
-            // on a position in `results` — see ToolPayload. A clipped result
-            // ships no `text`: its bytes are paged by id instead, so nothing is
-            // stored twice.
-            if (onToolPayload) {
-                const artifact = findArtifactIdIn(r.content);
-                const seen = findClipIn(r.content);
-                onToolPayload({
-                    toolCallId: r.toolCallId,
-                    name: r.name,
-                    label,
-                    ok: r.ok,
-                    artifact,
-                    ...(seen ? { kept: seen.kept, total: seen.total } : {}),
-                    text: artifact ? '' : r.content,
-                });
-            }
+            reportToolCompletion(r);
         }
         // persist proposal/custom tool side-effects (the transcript's
         // "Saved to memory"-style status rows). The loop does not know seat
@@ -7750,6 +7813,12 @@ export interface StreamWithDeskToolsOptions extends ChatRequestOptions {
     onToolProgress?: (line: string) => void;
     /** Same contract as the loop options: the model's tool NAME per call. */
     onToolCall?: (name: string) => void;
+    /** Fires when an individual tool call starts executing. */
+    onToolStart?: (call: DeskToolCall) => void;
+    /** Fires when an individual tool call resolves. */
+    onToolEnd?: (result: DeskToolResult) => void;
+    /** Fires per streamed visible answer token. */
+    onToken?: (delta: string) => void;
     /** Fires once when the loop settles, with the turn-level facts a
      *  streaming generator cannot return (its yield type is text). The caller
      *  reads `recoveredFromTruncation` to know a ceiling-hit was REPAIRED —
@@ -7955,6 +8024,9 @@ export async function* streamChatWithDeskTools(
         onToolEvent,
         onToolProgress,
         onToolCall,
+        onToolStart,
+        onToolEnd,
+        onToken,
         onToolAction,
         // NOT part of `chatOptions`: the loop reads this off its OWN parameters,
         // so leaving it in the rest-spread meant it was forwarded to the provider
@@ -8094,8 +8166,9 @@ export async function* streamChatWithDeskTools(
         config,
         messages: enriched,
         sendTurn: sendChatTurn,
-        streamTurn: nativeTools ? streamChatRequest : undefined,
-        onTextDelta: nativeTools ? onTextDelta : undefined,
+        streamTurn: streamChatRequest,
+        onTextDelta,
+        onToken,
         onStreamReset: onLoopReset,
         options: chatOptions,
         defaultSymbol,
@@ -8150,6 +8223,8 @@ export async function* streamChatWithDeskTools(
         appendSystemNotice,
         onToolAction,
         onToolCall,
+        onToolStart,
+        onToolEnd,
         onToolPayload,
         speaker: seatName,
         onToolEvent: line => {
@@ -8251,9 +8326,12 @@ export async function* streamChatWithDeskTools(
             afterTokens: compactedFinal.afterTokens,
         })
         : null;
-    yield* streamChatRequest(
+    for await (const delta of streamChatRequest(
         config,
         finalCarry ? finalCarry.messages : compactedFinal.messages,
         { ...continuationOptions, maxTokens: compactedFinal.maxTokens },
-    );
+    )) {
+        onToken?.(delta);
+        yield delta;
+    }
 }

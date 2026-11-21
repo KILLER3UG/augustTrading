@@ -79,7 +79,14 @@ export interface ChatWorkTimelineProps {
 
 const ChatWorkTimeline: React.FC<ChatWorkTimelineProps> = ({ entry }) => {
     const reasoning = entry.reasoning ?? '';
-    const running = !!entry.streaming && !entry.text;
+    const turnStreaming = !!entry.streaming;
+    const hasAnswerText = Boolean(entry.text && entry.text.trim().length > 0);
+    const pairedCalls = useMemo(
+        () => pairToolRows(entry.tools.filter(line => !isHarnessNoticeLine(line))),
+        [entry.tools],
+    );
+    const hasCallingTool = turnStreaming && pairedCalls.some(r => r.state === 'calling');
+    const running = turnStreaming && (!hasAnswerText || hasCallingTool);
     // One start stamp for every clock in this turn. Both homes mount a fresh
     // row when the trader hops surfaces; without the stamp each mount read
     // "0s" and the turn appeared to restart.
@@ -119,10 +126,7 @@ const ChatWorkTimeline: React.FC<ChatWorkTimelineProps> = ({ entry }) => {
     // the rows below render, so the headline and the card can never disagree
     // about how many commands the turn ran. A reasoning-only turn has no
     // command to count and keeps the "Analyzed" form.
-    const callCount = useMemo(
-        () => pairToolRows(entry.tools.filter(line => !isHarnessNoticeLine(line))).length,
-        [entry.tools],
-    );
+    const callCount = pairedCalls.length;
     const ranSummary = callCount > 0
         ? `Ran ${callCount} ${callCount === 1 ? 'command' : 'commands'}`
         : null;
@@ -159,7 +163,7 @@ const ChatWorkTimeline: React.FC<ChatWorkTimelineProps> = ({ entry }) => {
             // FIFO by label, so a payload is attached by position in the buffer
             // it was rendered from, never by a lookup that could drift.
             const ids = buf.map(() => idBuf.shift() ?? '');
-            nodes.push(<ToolActivityRow key={key} lines={buf} running={running} payloadIds={ids} />);
+            nodes.push(<ToolActivityRow key={key} lines={buf} running={turnStreaming} payloadIds={ids} />);
             buf = [];
         }
     };
@@ -171,7 +175,7 @@ const ChatWorkTimeline: React.FC<ChatWorkTimelineProps> = ({ entry }) => {
                 <ReasoningRow
                     key={`thought-${s}`}
                     thinking={segs[s]}
-                    running={running && s === segs.length - 1}
+                    running={turnStreaming && s === segs.length - 1 && !hasCallingTool && !hasAnswerText}
                     persistedMs={s === 0 ? entry.workedMs : undefined}
                     startedAt={startedAt}
                 />

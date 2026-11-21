@@ -9,6 +9,8 @@ import { useRef, useCallback, useEffect } from 'react';
  * one) — the global-writer defect in the 2026-10-27 audit L-7. Each key now keeps its
  * own latest arguments and one frame flushes them all.
  */
+const COALESCE_MS = 24;
+
 export function useRafThrottle<T extends (...args: any[]) => void>(
     fn: T,
     keyOf?: (...args: Parameters<T>) => string,
@@ -16,16 +18,16 @@ export function useRafThrottle<T extends (...args: any[]) => void>(
     const fnRef = useRef(fn);
     fnRef.current = fn; // always call the latest closure
 
-    const frameRef = useRef<number | null>(null);
+    const timerRef = useRef<number | null>(null);
     const pendingRef = useRef<Map<string, any[]>>(new Map());
     const DEFAULTS = '';
 
-    // Cancel any pending frame on unmount.
+    // Cancel any pending timer on unmount.
     useEffect(() => {
         return () => {
-            if (frameRef.current !== null) {
-                cancelAnimationFrame(frameRef.current);
-                frameRef.current = null;
+            if (timerRef.current !== null) {
+                window.clearTimeout(timerRef.current);
+                timerRef.current = null;
             }
             pendingRef.current.clear();
         };
@@ -38,19 +40,22 @@ export function useRafThrottle<T extends (...args: any[]) => void>(
     }, []);
 
     const throttled = useCallback((...args: any[]) => {
-        pendingRef.current.set(keyOf ? keyOf(...(args as Parameters<T>)) : DEFAULTS, args);
-        if (frameRef.current !== null) return; // already scheduled
-
-        frameRef.current = requestAnimationFrame(() => {
-            frameRef.current = null;
-            drain();
-        });
+        const key = keyOf ? keyOf(...(args as Parameters<T>)) : DEFAULTS;
+        if (timerRef.current === null) {
+            fnRef.current(...args);
+            timerRef.current = window.setTimeout(() => {
+                timerRef.current = null;
+                if (pendingRef.current.size > 0) drain();
+            }, COALESCE_MS);
+            return;
+        }
+        pendingRef.current.set(key, args);
     }, [keyOf, drain]) as T & { flush: () => void };
 
     throttled.flush = useCallback(() => {
-        if (frameRef.current !== null) {
-            cancelAnimationFrame(frameRef.current);
-            frameRef.current = null;
+        if (timerRef.current !== null) {
+            window.clearTimeout(timerRef.current);
+            timerRef.current = null;
         }
         drain();
     }, [drain]);

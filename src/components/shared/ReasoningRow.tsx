@@ -68,7 +68,11 @@ const ReasoningRow: React.FC<ReasoningRowProps> = ({
             ? Math.max(0, Math.round((Date.now() - (turnStartMs ?? Date.now())) / 1000))
             : null,
     );
-    const [settledSeconds, setSettledSeconds] = useState<number | null>(null);
+    const [settledSeconds, setSettledSeconds] = useState<number | null>(() => (
+        !running && turnStartMs !== null && typeof persistedMs !== 'number'
+            ? Math.max(0, Math.round((Date.now() - turnStartMs) / 1000))
+            : null
+    ));
     // The live body only follows the stream's bottom while the reader IS at
     // the bottom — scrolling up to re-read must win over the auto-follow.
     const bodyPinnedRef = useRef(true);
