@@ -4453,7 +4453,7 @@ const checkSkillWrites = async () => {
 
     // ─── Wave B: spot/perp divergence, VPIN, quant regime, Brooks geometry ──
     const ofc = loadModule('src/services/market/orderFlowCore');
-    const vrc = loadModule('src/services/market/volRegimeCore');
+    const vrcB = loadModule('src/services/market/volRegimeCore');
     const icB = loadModule('src/services/market/imbalanceCore');
     const mkBar = (t, price, vol, buy) =>
         ({ time: t, open: price, high: price + 1, low: price - 1, close: price, volume: vol, takerBuyVolume: buy });
@@ -4500,7 +4500,7 @@ const checkSkillWrites = async () => {
         const close = 101 + 2 * i;
         yzTape.push(mk(i * 3600000, close - 1, close + 1, close - 2, close, 10));
     }
-    const yz = vrc.yangZhangVol(yzTape, 3600, 30, 60);
+    const yz = vrcB.yangZhangVol(yzTape, 3600, 30, 60);
     ok('vol: Yang-Zhang per-bar sigma is positive with a percentile on a 100-bar tape',
         yz !== null && yz.perBar > 0 && yz.percentile !== null && yz.percentile >= 0 && yz.percentile <= 100,
         yz && JSON.stringify(yz));
@@ -4515,40 +4515,40 @@ const checkSkillWrites = async () => {
         wideTape.push(mk(i * 3600000, close - 0.2, close + 0.2, close - 0.2, close, 10));
     }
     ok('vol: BB-in-KC squeeze fires on a tight tape, not on a dispersed one',
-        vrc.bbKcSqueeze(tightTape) === true && vrc.bbKcSqueeze(wideTape) === false);
+        vrcB.bbKcSqueeze(tightTape) === true && vrcB.bbKcSqueeze(wideTape) === false);
     const nrTape = [];
     const nrHighs = [105, 104, 103, 102, 101, 100.8, 100.5];
     const nrLows = [95, 96, 97, 98, 99, 99.4, 99.8];
     for (let i = 0; i < 7; i++) nrTape.push(mk(i * 3600000, (nrHighs[i] + nrLows[i]) / 2, nrHighs[i], nrLows[i], (nrHighs[i] + nrLows[i]) / 2, 10));
     ok('vol: NR7 flags the narrowest range of the last 7 bars',
-        vrc.nr7(nrTape).isNr7 === true && Math.abs(vrc.nr7(nrTape).range - 0.7) < 1e-9);
+        vrcB.nr7(nrTape).isNr7 === true && Math.abs(vrcB.nr7(nrTape).range - 0.7) < 1e-9);
     ok('vol: the ±1σ expected move scales with sqrt(horizon) (σ 0.01, price 100, 4 bars → $2 / 2%)',
         (() => {
-            const em = vrc.expectedMove1Sigma(0.01, 100, 4);
+            const em = vrcB.expectedMove1Sigma(0.01, 100, 4);
             return em !== null && Math.abs(em.dollars - 2) < 1e-9 && Math.abs(em.percent - 2) < 1e-9 && em.horizonBars === 4;
         })());
     const rndW = (() => { let a = 42; return () => { a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; })();
     const rwCloses = [100];
     for (let i = 1; i < 300; i++) rwCloses.push(rwCloses[i - 1] + (rndW() - 0.5) * 2);
-    const vrRw = vrc.varianceRatio(rwCloses, 4);
+    const vrRw = vrcB.varianceRatio(rwCloses, 4);
     ok('vol: the variance ratio of a random walk sits near 1 (0.8–1.25)',
         vrRw !== null && vrRw > 0.8 && vrRw < 1.25, `vr=${vrRw}`);
     ok('vol: the variance ratio refuses a tape shorter than k×4+1',
-        vrc.varianceRatio([100, 101, 102], 4) === null);
-    const hRw = vrc.hurstExponent(rwCloses);
+        vrcB.varianceRatio([100, 101, 102], 4) === null);
+    const hRw = vrcB.hurstExponent(rwCloses);
     ok('vol: the Hurst exponent of a random walk sits near 0.5 (0.35–0.65) and refuses thin tapes',
-        hRw !== null && hRw > 0.35 && hRw < 0.65 && vrc.hurstExponent(rwCloses.slice(0, 40)) === null,
+        hRw !== null && hRw > 0.35 && hRw < 0.65 && vrcB.hurstExponent(rwCloses.slice(0, 40)) === null,
         `h=${hRw}`);
     const rampCloses = [];
     for (let i = 0; i < 90; i++) rampCloses.push(100 + 2 * i + (i % 2) * 0.5);
-    const scan = vrc.trendScanTStat(rampCloses);
+    const scan = vrcB.trendScanTStat(rampCloses);
     let scanStrongest = null;
     if (scan) scanStrongest = scan.reduce((best, p) => (Math.abs(p.tStat) > Math.abs(best.tStat) ? p : best));
     ok('vol: trend scanning returns all four horizons with a |t| above 10 on a clean ramp',
         scan !== null && scan.length === 4 && scanStrongest !== null && Math.abs(scanStrongest.tStat) > 10,
         scan && JSON.stringify(scan));
     ok('vol: trend scanning refuses a tape under the shortest horizon',
-        vrc.trendScanTStat(rampCloses.slice(0, 8)) === null);
+        vrcB.trendScanTStat(rampCloses.slice(0, 8)) === null);
 
     const wireBars = [
         mk(0, 100.4, 101.5, 99.5, 100.1, 10),
@@ -4556,26 +4556,26 @@ const checkSkillWrites = async () => {
         mk(120000, 100.1, 101.4, 99.7, 100.3, 10),
     ];
     ok('brooks: barbwire flags 3 overlapping doji/tail bars',
-        vrc.barbwire(wireBars) === true);
+        vrcB.barbwire(wireBars) === true);
     const prevBull = mk(0, 100, 110, 90, 90);
     ok('brooks: the reversal-overlap trap flags a bull reversal whose midpoint sits above the prior low',
-        vrc.reversalOverlapTrap([prevBull, mk(60000, 95, 108, 94, 105)]) === true
-        && vrc.reversalOverlapTrap([prevBull, mk(60000, 80, 100, 70, 95)]) === false);
+        vrcB.reversalOverlapTrap([prevBull, mk(60000, 95, 108, 94, 105)]) === true
+        && vrcB.reversalOverlapTrap([prevBull, mk(60000, 80, 100, 70, 95)]) === false);
     const gapTape = [];
     for (let i = 0; i < 40; i++) gapTape.push(mk(i * 3600000, 100, 100.5, 99.5, 100, 10));
     for (let i = 0; i < 25; i++) gapTape.push(mk((40 + i) * 3600000, 101 + i, 101.5 + i, 100.5 + i, 101.5 + i, 10));
-    const gapRun = vrc.ema20GapStreak(gapTape);
+    const gapRun = vrcB.ema20GapStreak(gapTape);
     ok('brooks: an EMA(20) gap run of 20+ bars builds a streak',
         gapRun.streak >= 20, JSON.stringify(gapRun));
     gapTape.push(mk(65 * 3600000, 124, 125, 100, 121));
-    const gapSetup = vrc.ema20GapStreak(gapTape);
+    const gapSetup = vrcB.ema20GapStreak(gapTape);
     ok('brooks: the first bar to re-touch the EMA after the gap run fires maGapBarSetup',
         gapSetup.maGapBarSetup === true && gapSetup.streak === 0);
     const climaxTape = [mk(0, 100, 101, 99, 100.5, 10)];
     for (let i = 1; i <= 25; i++) climaxTape.push(mk(i * 3600000, 100.5 + i, 102 + i, 100 + i, 101.5 + i, 10));
     climaxTape.push(mk(26 * 3600000, 126, 132, 125, 131, 10));
     ok('brooks: a 6-point body after a 25-bar grind flags the climax',
-        vrc.climaxBar(climaxTape).isClimax === true && vrc.climaxBar(climaxTape).bodyVsMedian >= 2.5);
+        vrcB.climaxBar(climaxTape).isClimax === true && vrcB.climaxBar(climaxTape).bodyVsMedian >= 2.5);
 
     const pbBars = [
         mk(0, 11, 12, 9, 11, 10),
@@ -4630,6 +4630,76 @@ const checkSkillWrites = async () => {
     ok('brooks: the bull micro measuring gap projects the 3-bar midpoint and marks it tested',
         mmg.length === 1 && mmg[0].direction === 'bull' && Math.abs(mmg[0].midpoint - 101) < 1e-9 && mmg[0].tested === true,
         mmg && JSON.stringify(mmg));
+
+    // ─── Wave C: empirical bootstrap, ledger ruin, N_eff, stationary bootstrap, Deribit ──
+    const mcC = loadModule('src/services/analysis/MonteCarloService');
+    const jtC = loadModule('src/services/analysis/journalTools');
+    const bootTape = [];
+    let bootPrice = 100;
+    for (let i = 0; i < 150; i++) {
+        bootPrice *= 1 + ((i % 7) - 3) * 0.025;
+        bootTape.push(mk(i * 3600000, bootPrice * 0.999, bootPrice * 1.004, bootPrice * 0.996, bootPrice, 10));
+    }
+    const bootCfg = { entry: 100, stopLoss: 95, takeProfits: [110], direction: 'Long', numSimulations: 400, maxSteps: 100, seed: 42, candles: bootTape };
+    const bootA = mcC.empiricalBootstrapSimulation(bootCfg);
+    const bootB = mcC.empiricalBootstrapSimulation(bootCfg);
+    ok('monte carlo: the empirical bootstrap is deterministic, labeled, and resamples 150 closed bars',
+        bootA !== null && bootB !== null && bootA.mode === 'empirical_bootstrap' && bootB.mode === 'empirical_bootstrap'
+        && bootA.winRate === bootB.winRate && bootA.cvar95R === bootB.cvar95R && bootA.barsUsed === 150,
+        bootA && JSON.stringify({ mode: bootA.mode, winRate: bootA.winRate, cvar95R: bootA.cvar95R, bars: bootA.barsUsed }));
+    ok('monte carlo: the fee drag is charged — avgWin on a +10% TP lands strictly below 10%',
+        bootA !== null && bootA.avgWinPercent > 0 && bootA.avgWinPercent < 10,
+        bootA && JSON.stringify({ avgWin: bootA.avgWinPercent }));
+    ok('monte carlo: the bootstrap reports the barrier odds, timing, tail MAE and CVaR95',
+        bootA !== null && bootA.pHitTpBeforeSl > 0 && bootA.pHitTpBeforeSl <= 100
+        && bootA.expectedBarsToBarrier >= 1 && bootA.tailMaeP95 >= 0 && typeof bootA.cvar95R === 'number');
+    ok('monte carlo: under 100 closed bars the empirical bootstrap is REFUSED (null → gbm_fallback/refusal upstream)',
+        mcC.empiricalBootstrapSimulation({ ...bootCfg, candles: bootTape.slice(0, 50) }) === null);
+    const ledgerRs = [];
+    for (let i = 0; i < 25; i++) ledgerRs.push(i % 3 === 0 ? -1 : 2);
+    const ruinLedger = mcC.calculateRuinRiskFromSeries(ledgerRs, 10000, 5000, 99);
+    ok('ruin: the ledger bootstrap carries the CVaR95 drawdown, the expected max drawdown and the sample count',
+        ruinLedger !== null && ruinLedger.mode === 'ledger_bootstrap' && ruinLedger.samples === 25
+        && ruinLedger.cvar95DrawdownPct >= ruinLedger.expectedMaxDrawdownPct && ruinLedger.expectedMaxDrawdownPct > 0,
+        ruinLedger && JSON.stringify(ruinLedger));
+    ok('ruin: under 20 settled outcomes the ledger bootstrap REFUSES (null)',
+        mcC.calculateRuinRiskFromSeries(ledgerRs.slice(0, 19), 10000, 5000, 99) === null
+        && mcC.calculateRuinRiskFromSeries([], 10000, 5000) === null);
+
+    const nEffDisjoint = jtC.computeNEffective([
+        { emittedAt: 0, resolvedAt: 100 },
+        { emittedAt: 200, resolvedAt: 300 },
+        { emittedAt: 400, resolvedAt: 500 },
+    ]);
+    const nEffSame = jtC.computeNEffective([
+        { emittedAt: 0, resolvedAt: 100 },
+        { emittedAt: 0, resolvedAt: 100 },
+        { emittedAt: 0, resolvedAt: 100 },
+    ]);
+    ok('N_eff: disjoint windows keep nEffective == rawN; identical windows collapse to 1',
+        nEffDisjoint.rawN === 3 && nEffDisjoint.nEffective === 3
+        && nEffSame.rawN === 3 && nEffSame.nEffective === 1);
+    const sigWinners = [];
+    for (let i = 0; i < 30; i++) sigWinners.push(i % 3 === 0 ? 0.1 : 1);
+    const sigStrong = jtC.stationaryBootstrapPValue(sigWinners, { iterations: 500, seed: 5 });
+    const sigNoise = [];
+    for (let i = 0; i < 30; i++) sigNoise.push((i % 2 === 0 ? 0.4 : -0.4) * (i % 5 === 0 ? 1 : -1));
+    const sigWeak = jtC.stationaryBootstrapPValue(sigNoise, { iterations: 500, seed: 6 });
+    ok('N_eff: the stationary bootstrap separates a real edge (p < 0.05) from noise (p high)',
+        sigStrong.available === true && sigStrong.pValue !== null && sigStrong.pValue < 0.05
+        && sigWeak.available === true && (sigWeak.pValue ?? 1) > 0.05,
+        `strong=${JSON.stringify(sigStrong)} weak=${JSON.stringify(sigWeak)}`);
+    ok('N_eff: under 10 entries the significance test refuses',
+        jtC.stationaryBootstrapPValue([1, 2, 3]).available === false);
+
+    const deribitPayload = { result: { data: [[1, 50, 51, 49, 55], [2, 55, 56, 54, 61]] } };
+    ok('deribit: the DVOL parser takes the latest index close',
+        md.parseDeribitVolIndex(deribitPayload) === 61
+        && md.parseDeribitVolIndex({ result: { data: [] } }) === null
+        && md.parseDeribitVolIndex(null) === null);
+    const deribitGate = md.optionsContextGate('SOLUSDT');
+    ok('deribit: the options context is quoted for BTC and ETH only — SOL refuses without a call',
+        deribitGate.allowed === false && /BTC and ETH only/.test(deribitGate.reason ?? ''));
 
     // imbalanceCore — a bullish FVG by construction: a.high=100 < c.low=102,
     // displacement candle body 3×ATR. Fill depth is measured from later bars.
