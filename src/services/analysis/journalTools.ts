@@ -43,6 +43,103 @@ import { filterTradesBySimulationMode, countSimulatedTrades, type SimulationStat
  *  how small a sample may be before it proves nothing. */
 export const MIN_RATE_SAMPLE = 5;
 
+export interface SignalWindow {
+    emittedAt: number;
+    resolvedAt: number;
+}
+
+/**
+ * Sample uniqueness: resolved signals whose [emittedAt, resolvedAt] windows
+ * overlap were exposed to the SAME move — 6 signals riding one BTC pump are
+ * one observation, not six. Each window is weighted by the inverse of the
+ * number of windows it overlaps (itself included), so N_eff = Σ 1/concurrency
+ * ≤ rawN, with equality only for perfectly disjoint windows.
+ */
+export const computeNEffective = (
+    windows: Array<{ emittedAt: number; resolvedAt: number }>,
+): { rawN: number; nEffective: number } => {
+    const rawN = windows.length;
+    let nEffective = 0;
+    for (let i = 0; i < rawN; i++) {
+        let concurrent = 1;
+        for (let j = 0; j < rawN; j++) {
+            if (j === i) continue;
+            const a = windows[i];
+            const b = windows[j];
+            const overlap = Math.min(a.resolvedAt, b.resolvedAt) - Math.max(a.emittedAt, b.emittedAt);
+            if (overlap > 0) concurrent += 1;
+        }
+        nEffective += 1 / concurrent;
+    }
+    return { rawN, nEffective: Math.round(nEffective * 100) / 100 };
+};
+
+export interface EntrySignificance {
+    available: boolean;
+    reason?: string;
+    entries: number;
+    observedMeanR: number;
+    pValue: number | null;
+    iterations: number;
+    meanBlockLength: number;
+}
+
+/**
+ * Stationary block-bootstrap entry significance (Politis–Romano): the
+ * entries' own detrended R series is resampled with circular blocks of
+ * geometrically distributed length, and the p-value is the share of
+ * resample means that reach the OBSERVED mean — the probability that random
+ * timing on the same entries produces the measured edge. Refuses under 10
+ * entries (an insignificant test on an insignificant sample).
+ */
+export const stationaryBootstrapPValue = (
+    entryReturns: number[],
+    options: { iterations?: number; meanBlockLength?: number; seed?: number } = {},
+): EntrySignificance => {
+    const iterations = options.iterations ?? 2000;
+    const meanBlockLength = options.meanBlockLength ?? 10;
+    const entries = entryReturns.filter(r => Number.isFinite(r));
+    const base: EntrySignificance = {
+        available: false,
+        entries: entries.length,
+        observedMeanR: entries.length ? entries.reduce((s, x) => s + x, 0) / entries.length : 0,
+        pValue: null,
+        iterations,
+        meanBlockLength,
+    };
+    if (entries.length < 10) {
+        return { ...base, reason: `only ${entries.length} entr(ies) (need ≥ 10) — significance is not quotable` };
+    }
+    const observed = base.observedMeanR;
+    const detrended = entries.map(r => r - observed);
+    let seed = options.seed ?? 2000;
+    const rng = (): number => {
+        seed = (seed + 0x6d2b79f5) | 0;
+        let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+    const n = detrended.length;
+    let exceed = 0;
+    for (let b = 0; b < iterations; b++) {
+        let sum = 0;
+        let count = 0;
+        let pos = Math.floor(rng() * n);
+        while (count < n) {
+            sum += detrended[pos % n];
+            count += 1;
+            let block = 1;
+            while (block < n && rng() > 1 / meanBlockLength) {
+                block += 1;
+                pos += 1;
+            }
+            pos += 1;
+        }
+        if (sum / n >= observed) exceed += 1;
+    }
+    return { ...base, available: true, pValue: Math.round(((exceed + 1) / (iterations + 1)) * 10000) / 10000 };
+};
+
 /**
  * The regime a caller asked for. A trailing numeric segment is a BAR COUNT
  * from the live read (`regimeCore.regimeId` = `trend:normal:100`), not a
@@ -69,6 +166,10 @@ export interface SetupBaseRateParams {
     playbook?: string;
     /** Default `'real'`: simulated paper rows are excluded from real base rates. */
     simulationMode?: SimulationStatsMode;
+    /** Resolved signal windows (signal ledger) for the sample-uniqueness read. */
+    signalWindows?: Array<{ emittedAt: number; resolvedAt: number }>;
+    /** The resolved signals' R outcomes — the entry-significance bootstrap. */
+    entryReturns?: number[];
 }
 
 /**
@@ -98,7 +199,14 @@ export const runSetupBaseRateTool = (
             checkedAt: new Date(asofMs).toISOString(),
             symbol: params.coin ?? '(all)',
             tf: 'journal',
-            params: { ...params } as Record<string, unknown>,
+            params: {
+                coin: params.coin ?? null,
+                direction: params.direction ?? null,
+                family: params.family ?? null,
+                regime: params.regime ?? null,
+                playbook: params.playbook ?? null,
+                simulationMode: params.simulationMode ?? null,
+            } as Record<string, unknown>,
             data_quality: {
                 available: values !== null && reason === undefined,
                 bars_used: barsUsed,
@@ -154,6 +262,16 @@ export const runSetupBaseRateTool = (
         ].filter((s): s is string => s !== null).join('; ');
         return make(null, '', `sample too thin: ${stats?.sample ?? 0} matching closed rows${bucket} (need ≥${MIN_RATE_SAMPLE}) — no base rate is quoted${coverage ? `; ${coverage}` : ''}`);
     }
+    // Wave C: sample uniqueness — resolved signals riding the same move are
+    // ONE observation. The rate is gated on the EFFECTIVE sample, and both
+    // counts are disclosed so nothing masquerades as independent evidence.
+    const uniqueness = params.signalWindows ? computeNEffective(params.signalWindows) : null;
+    if (uniqueness && uniqueness.nEffective < MIN_RATE_SAMPLE) {
+        return make(null, '', `sample uniqueness too thin: ${uniqueness.rawN} resolved signal(s) overlap into nEffective ${uniqueness.nEffective} (need ≥ ${MIN_RATE_SAMPLE} effective) — no base rate is quoted`);
+    }
+    const significance = params.entryReturns && params.entryReturns.length >= 10
+        ? stationaryBootstrapPValue(params.entryReturns, { seed: asofMs })
+        : null;
     const winRate = stats.winRate;
     const ci = wilsonInterval95(stats.wins, stats.sample);
     const scope = [
@@ -186,6 +304,8 @@ export const runSetupBaseRateTool = (
         playbook_conditioned: playbook !== undefined,
         simulated_excluded: simulatedExcluded,
         simulation_mode: simMode,
+        sample_uniqueness: uniqueness,
+        entry_significance: significance,
         coverage: { considered: considered.length, with_regime: withRegime, with_playbook: withPlaybook },
     };
     const avg = stats.avgR !== null ? `${stats.avgR.toFixed(2)}R` : 'R n/a';

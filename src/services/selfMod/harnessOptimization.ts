@@ -69,6 +69,7 @@ import type { SignalMemoryRecipe } from '../../types/signal';
 import { getPreferenceObject, setPreferenceObject } from '../infrastructure/PreferencesService';
 import { PROMPT_REGISTRY } from '../../constants/promptRegistry';
 import { readSignals } from '../signals/signalLedger';
+import { computeNEffective, MIN_RATE_SAMPLE } from '../analysis/journalTools';
 import { getActiveUsername } from '../../utils/activeUser';
 import { getMemoryFiles } from '../learning/MemoryFilesService';
 import { collectMarketSchemaFacts, learnedSchemaTraps, syncMarketSchema, MARKET_SCHEMA_FOLDER } from '../learning/MarketSchemaService';
@@ -658,18 +659,24 @@ export const runHarnessOptimizationPass = async (
         const p = state.proposal;
         const approvedAt = p.approvedAt ? Date.parse(p.approvedAt) : NaN;
         if (Number.isFinite(approvedAt)) {
-            const post = fills.filter(r => r.at >= approvedAt);
+            const postRows = rows.filter(r => r.resolution && r.resolution.at >= approvedAt);
+            const post = postRows.map(r => r.resolution!);
             const won = post.filter(r => r.status === 'won').length;
             const lost = post.filter(r => r.status === 'lost').length;
             const expired = post.filter(r => r.status === 'expired').length;
             const holdoutFills = won + lost + expired;
             p.holdout = { fills: post.length, won, lost, expired, hitRate: hitRateOf(post) };
+            // Wave C: the holdout is graded on the EFFECTIVE sample —
+            // overlapping resolved signals (one move, many signals) are one
+            // observation, so a crowded window cannot trigger a revert.
+            const holdoutUniqueness = computeNEffective(postRows.map(r => ({ emittedAt: r.signal.emittedAt, resolvedAt: r.resolution!.at })));
             const parent = (state.parentPool ?? []).find(x => x.id === p.id);
             if (parent) {
                 parent.holdout = { ...p.holdout };
                 gradeParent(parent);
             }
             if (holdoutFills >= HOLDOUT_MIN_FILLS
+                && holdoutUniqueness.nEffective >= MIN_RATE_SAMPLE
                 && p.holdout.hitRate !== null
                 && p.baseline.hitRate !== null
                 && p.holdout.hitRate < p.baseline.hitRate - HOLDOUT_REGRESSION_PP) {
