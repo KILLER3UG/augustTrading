@@ -169,7 +169,7 @@ export interface FibonacciLevels {
     trend: 'up' | 'down';
     swingHigh: number;
     swingLow: number;
-    levels: { ratio: string; price: number }[];  // 0.236, 0.382, 0.5, 0.618, 0.786, 1.0
+    levels: { ratio: string; price: number; kind: 'retracement' | 'extension' }[];  // 0.236…0.786 retracements + 1.272/1.618/2.0 extensions
 }
 
 export interface KeyLevelsEnhanced {
@@ -1333,19 +1333,28 @@ export const calculateFibonacciLevels = (klines: Kline[]): FibonacciLevels => {
     const lastPrice = recentKlines[recentKlines.length - 1].close;
     const trend: 'up' | 'down' = lastPrice > firstPrice ? 'up' : 'down';
 
-    const fibRatios = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
+    const fibRatios = [0, 0.236, 0.382, 0.5, 0.618, 0.705, 0.786, 1];
+    const extensionRatios = [1.272, 1.618, 2];
     const range = swingHigh - swingLow;
 
-    const levels = fibRatios.map(ratio => {
-        const price = trend === 'up'
-            ? swingHigh - range * ratio  // Retracement from high
-            : swingLow + range * ratio;  // Retracement from low
-
-        return {
-            ratio: ratio.toString(),
-            price: Math.round(price * 100) / 100
-        };
-    });
+    // STANDARD convention, shared with the chart's fib drawings and
+    // activeSwingFib: retracements measure the give-back from the extreme the
+    // trend ran to; extensions project the leg PAST it with the SIGNED range
+    // (a down-leg extends downward). A level at or below zero is omitted.
+    const levels = [
+        ...fibRatios.map((ratio): FibonacciLevels['levels'][number] => {
+            const raw = trend === 'up'
+                ? swingHigh - range * ratio  // Retracement from high
+                : swingLow + range * ratio;  // Retracement from low
+            return { ratio: ratio.toString(), price: Math.round(raw * 100) / 100, kind: 'retracement' };
+        }),
+        ...extensionRatios.map((ratio): FibonacciLevels['levels'][number] => {
+            const raw = trend === 'up'
+                ? swingHigh + range * (ratio - 1)
+                : swingLow - range * (ratio - 1);
+            return { ratio: ratio.toString(), price: Math.round(raw * 100) / 100, kind: 'extension' };
+        }),
+    ].filter(l => l.price > 0);
 
     return {
         trend,

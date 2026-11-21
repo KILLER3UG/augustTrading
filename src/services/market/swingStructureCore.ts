@@ -117,6 +117,10 @@ export const readStructure = (candles: Kline[], k = 2): StructureRead | null => 
 export interface FibLevel {
     ratio: string;
     price: number;
+    /** 'retracement' ratios measure the give-back from the swing end;
+     *  'extension' ratios project the leg past its end — never confuse the
+     *  two (a 1.272 continuation is not a 1.272 retracement). */
+    kind: 'retracement' | 'extension';
     /** Swings whose price sits within tolerance of the level. */
     confluence: number;
 }
@@ -164,14 +168,15 @@ export const activeSwingFib = (candles: Kline[], atr: number, toleranceAtr = 0.2
         // fib drawings and calculateFibonacciLevels.
         ...FIB_RATIOS.map(([ratio, r]) => {
             const price = to.price - (to.price - from.price) * r;
-            return { ratio, price, confluence: confluenceAt(price) };
+            return { ratio, price, kind: 'retracement' as const, confluence: confluenceAt(price) };
         }),
-        // Extensions: level = start + r × (end − start) — the leg projected
-        // past its end.
+        // Extensions: level = start + r × (end − start) with the SIGNED
+        // range — a down-leg extends downward. A level at or below zero
+        // (deep legs × 2.0) is omitted, never emitted as a negative price.
         ...FIB_EXTENSION_RATIOS.map(([ratio, r]) => {
             const price = from.price + (to.price - from.price) * r;
-            return { ratio, price, confluence: confluenceAt(price) };
+            return { ratio, price, kind: 'extension' as const, confluence: confluenceAt(price) };
         }),
-    ];
+    ].filter(l => l.price > 0);
     return { from, to, direction: bullish ? 'bullish' : 'bearish', levels, toleranceAtr };
 };

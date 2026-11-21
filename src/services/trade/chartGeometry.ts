@@ -49,8 +49,10 @@ export interface DrawingEvaluatedAtNow {
     projectedPrice: number | null;
     /** Bounds for range shapes (`rect`, `channel`, `fib`). */
     bounds?: { upper: number; lower: number };
-    /** Concrete Fibonacci retracement prices (linear or log interpolated). */
-    fibLevels?: Array<{ ratio: number; price: number; distanceAtr: number | null }>;
+    /** Concrete Fibonacci retracement prices (linear or log interpolated),
+     *  plus continuation extensions (`kind: 'extension'`, labeled so a
+     *  1.272 continuation is never mistaken for a retracement ratio). */
+    fibLevels?: Array<{ ratio: number; price: number; distanceAtr: number | null; kind: 'retracement' | 'extension' }>;
     /** Canonical R:R & bracket metrics for `long_position` / `short_position`. */
     positionMetrics?: PositionBoxMetrics;
     /** Signed price delta: `projectedPrice - markPrice` (positive = level above mark). */
@@ -482,27 +484,35 @@ export const evaluateDrawingAtNow = (
                     // measures how far price has given back from the swing END
                     // (b, the newer anchor) toward the START (a) — on a
                     // 100→200 up-swing, 0.382 = 161.8 and 0.618 = 138.2.
-                    // Extensions project the leg PAST its end.
-                    const fibLevelAt = (ratio: number, px: number | null): { ratio: number; price: number; distanceAtr: number | null } => {
-                        const price = px !== null ? round4(px) : null;
+                    // Extensions project the leg PAST its end with the SIGNED
+                    // range (a down-leg 200→100 extends DOWNWARD: 1.272 =
+                    // 72.8), are labeled `extension`, and a level that lands
+                    // at or below zero (deep legs × 2.0) is OMITTED — never a
+                    // negative price on the chart or in the model's read.
+                    fibLevels = [
+                        ...FIB_RATIOS.map(ratio => ({
+                            ratio,
+                            kind: 'retracement' as const,
+                            px: interpolateScalePrice(b.p, a.p, ratio, ctx.priceScaleMode),
+                            fallback: b.p - (b.p - a.p) * ratio,
+                        })),
+                        ...FIB_EXTENSION_RATIOS.map(ratio => ({
+                            ratio,
+                            kind: 'extension' as const,
+                            px: interpolateScalePrice(a.p, b.p, ratio, ctx.priceScaleMode),
+                            fallback: a.p + (b.p - a.p) * ratio,
+                        })),
+                    ].map(({ ratio, kind, px, fallback }) => {
+                        const price = px !== null ? round4(px) : round4(fallback);
                         return {
                             ratio,
-                            price: price ?? round4(b.p - (b.p - a.p) * ratio),
-                            distanceAtr: mark !== null && atr !== null && atr > 0 && price !== null
+                            kind,
+                            price,
+                            distanceAtr: mark !== null && atr !== null && atr > 0
                                 ? Math.round((Math.abs(price - mark) / atr) * 100) / 100
                                 : null,
                         };
-                    };
-                    fibLevels = [
-                        ...FIB_RATIOS.map(ratio => fibLevelAt(
-                            ratio,
-                            interpolateScalePrice(b.p, a.p, ratio, ctx.priceScaleMode),
-                        )),
-                        ...FIB_EXTENSION_RATIOS.map(ratio => fibLevelAt(
-                            ratio,
-                            interpolateScalePrice(a.p, b.p, ratio, ctx.priceScaleMode),
-                        )),
-                    ];
+                    }).filter(l => l.price > 0);
                     // Nearest fib level to current mark becomes projectedPrice.
                     if (mark !== null && fibLevels.length > 0) {
                         const nearest = fibLevels.reduce((best, cur) =>
