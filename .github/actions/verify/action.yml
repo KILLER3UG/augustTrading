@@ -100,13 +100,15 @@ runs:
     # build and also when the build shrinks more than 10% below the ceiling,
     # so the ratchet keeps binding instead of drifting loose.
     # Dropped from 1200 when the skill lifecycle, its ledger and the approval
-    # machinery were deleted: the entry chunk got smaller, and a ceiling that
-    # no longer binds is not a gate.
+    # machinery were deleted, then from 1000 to 56 when the autonomy surfaces
+    # went lazy (Wave 2) and proper per-surface code-splitting kicked in: the
+    # entry chunk shrank to the bootstrapper, and a ceiling that no longer
+    # binds is not a gate.
     - name: Startup chunk stays under the ratchet
       shell: bash
       run: |
         set -euo pipefail
-        CEILING_KB=1000
+        CEILING_KB=56
         STALE_FLOOR_KB=$(( CEILING_KB * 90 / 100 ))
         entry=$(ls -S dist/assets/index-*.js | head -1)
         if [ -z "$entry" ]; then
