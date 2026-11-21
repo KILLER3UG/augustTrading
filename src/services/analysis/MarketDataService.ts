@@ -1021,6 +1021,37 @@ export const fetchFuturesOHLCVFromTime = async (
 };
 
 /**
+ * SPOT klines via the existing spot transport (robustBinanceFetch →
+ * /api/v3/klines) — the perp/spot CVD comparison needs the same bar
+ * vocabulary (taker-buy field 9 kept) from the same venue's SPOT market.
+ * Unknown symbols refuse before any call (same guard as the perp reads); a
+ * failing spot market (or a perp-only listing) returns [] — the caller
+ * discloses the missing spot leg instead of approximating it from the perp.
+ */
+export const fetchSpotOHLCV = async (
+    symbol: string,
+    timeframe: string = '1h',
+    limit: number = 100
+): Promise<Kline[]> => {
+    const normalizedSymbol = normalizeSymbol(symbol);
+    await ensureKnownSymbol(normalizedSymbol);
+    const cacheKey = `spotohlcv_${normalizedSymbol}_${timeframe}_${limit}`;
+    const cached = getCached<Kline[]>(cacheKey);
+    if (cached) return cached;
+    try {
+        const response = await robustBinanceFetch(`/api/v3/klines?symbol=${normalizedSymbol}&interval=${timeframe}&limit=${limit}`);
+        const data = await response.json();
+        const klines = gateCandles(toKlines(data), `spot klines ${normalizedSymbol} ${timeframe}`);
+        setCache(cacheKey, klines);
+        return klines;
+    } catch (error) {
+        if (error instanceof Error && error.message.startsWith('unknown symbol')) throw error;
+        console.error(`Failed to fetch spot OHLCV for ${normalizedSymbol}:`, error);
+        return [];
+    }
+};
+
+/**
  * Fetch current price and 24h statistics
  */
 export const fetchMarketData = async (symbol: string): Promise<MarketData> => {

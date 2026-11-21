@@ -180,3 +180,155 @@ export const activeSwingFib = (candles: Kline[], atr: number, toleranceAtr = 0.2
     ].filter(l => l.price > 0);
     return { from, to, direction: bullish ? 'bullish' : 'bearish', levels, toleranceAtr };
 };
+
+// ─── Wave B: Al Brooks bar-count pullbacks, composite candles, inside clusters ──
+
+export type PullbackLabel = 'H1' | 'H2' | 'H3' | 'H4' | 'L1' | 'L2' | 'L3' | 'L4';
+
+export interface PullbackRead {
+    direction: 'bull' | 'bear';
+    /** Active resumption count, clamped to 4 for the label (count is exact). */
+    label: PullbackLabel;
+    /** Exact consecutive resumption bars counted. */
+    count: number;
+    /** One tick beyond the newest signal bar's extreme. */
+    triggerPrice: number;
+    /** The pullback's opposite extreme (bull: lowest low; bear: highest high). */
+    invalidationPrice: number;
+}
+
+/**
+ * Bar-count pullback engine (Al Brooks H1–H4 / L1–L4). Walking backward from
+ * the newest closed bar: a bar whose high exceeds its predecessor's high
+ * extends the bull resumption count (H); a bar whose low undercuts its
+ * predecessor's low extends the bear count (L). The trigger sits one tick
+ * beyond the newest signal bar's extreme; the invalidation is the pullback's
+ * opposite extreme. `tickSize` is caller-supplied (0 → trigger = the extreme).
+ */
+export const barCountPullback = (candles: Kline[], tickSize = 0): PullbackRead | null => {
+    if (candles.length < 2) return null;
+    const last = candles[candles.length - 1];
+    const prev = candles[candles.length - 2];
+    const tick = tickSize > 0 ? tickSize : 0;
+    const higherHigh = last.high > prev.high;
+    const lowerLow = last.low < prev.low;
+    if (!higherHigh && !lowerLow) return null;
+    const bull = higherHigh;
+    let count = 1;
+    let extreme = bull ? Math.min(prev.low, last.low) : Math.max(prev.high, last.high);
+    for (let i = candles.length - 2; i > 0; i--) {
+        const c = candles[i];
+        const p = candles[i - 1];
+        const extendsStreak = bull ? c.high > p.high : c.low < p.low;
+        if (!extendsStreak) break;
+        count += 1;
+        extreme = bull ? Math.min(extreme, p.low, c.low) : Math.max(extreme, p.high, c.high);
+    }
+    const label = ((bull ? 'H' : 'L') + Math.min(4, count)) as PullbackLabel;
+    return {
+        direction: bull ? 'bull' : 'bear',
+        label,
+        count,
+        triggerPrice: Number((bull ? last.high + tick : last.low - tick).toFixed(8)),
+        invalidationPrice: Number(extreme.toFixed(8)),
+    };
+};
+
+export interface CompositeCandleRead {
+    bars: 2 | 3;
+    open: number;
+    high: number;
+    low: number;
+    close: number;
+    /** |close − open| ÷ range of the blended bar. */
+    bodyRatio: number;
+    upperTailRatio: number;
+    lowerTailRatio: number;
+    netDirection: 'bull' | 'bear' | 'doji';
+}
+
+/**
+ * Blend the last `bars` (2 or 3) closed bars into ONE synthetic candle:
+ * open = first.open, close = last.close, high/low = extremes. The body and
+ * tail ratios describe the blended bar the way a single bar's would.
+ */
+export const compositeCandle = (candles: Kline[], bars: 2 | 3): CompositeCandleRead | null => {
+    if (candles.length < bars) return null;
+    const tail = candles.slice(-bars);
+    const open = tail[0].open;
+    const close = tail[tail.length - 1].close;
+    const high = Math.max(...tail.map(c => c.high));
+    const low = Math.min(...tail.map(c => c.low));
+    const range = high - low;
+    if (!(range > 0)) return null;
+    const body = Math.abs(close - open);
+    const upperTail = high - Math.max(open, close);
+    const lowerTail = Math.min(open, close) - low;
+    return {
+        bars,
+        open,
+        high,
+        low,
+        close,
+        bodyRatio: Number((body / range).toFixed(4)),
+        upperTailRatio: Number((upperTail / range).toFixed(4)),
+        lowerTailRatio: Number((lowerTail / range).toFixed(4)),
+        netDirection: body / range < 0.1 ? 'doji' : close > open ? 'bull' : 'bear',
+    };
+};
+
+export interface InsideClusterRead {
+    kind: 'ii' | 'iii' | 'ioi';
+    /** Indices into the passed series, oldest first. */
+    indices: number[];
+    /** Breakout triggers: one tick beyond the cluster's reference extremes. */
+    breakoutHigh: number;
+    breakoutLow: number;
+}
+
+const isInsideBar = (inner: Kline, outer: Kline): boolean =>
+    inner.high <= outer.high && inner.low >= outer.low;
+
+/**
+ * Wick-inclusive inside-bar clusters over the most recent bars, most recent
+ * first (up to `max`): ii (bar inside bar), iii (three nested), ioi (inside,
+ * outside, inside). Breakout triggers sit one tick beyond the reference bar's
+ * extremes (the outer bar for ii/iii, the outside bar for ioi).
+ */
+export const insideClusters = (candles: Kline[], tickSize = 0, max = 3): InsideClusterRead[] => {
+    const out: InsideClusterRead[] = [];
+    const tick = tickSize > 0 ? tickSize : 0;
+    for (let i = candles.length - 1; i >= 3 && out.length < max; i--) {
+        const c0 = candles[i - 3];
+        const c1 = candles[i - 2];
+        const c2 = candles[i - 1];
+        const c3 = candles[i];
+        if (isInsideBar(c3, c2) && isInsideBar(c2, c1) && isInsideBar(c1, c0)) {
+            out.push({
+                kind: 'iii',
+                indices: [i - 2, i - 1, i],
+                breakoutHigh: Number((c1.high + tick).toFixed(8)),
+                breakoutLow: Number((c1.low - tick).toFixed(8)),
+            });
+            continue;
+        }
+        if (isInsideBar(c2, c1) && isInsideBar(c1, c0) && !(c3.high <= c2.high && c3.low >= c2.low)) {
+            out.push({
+                kind: 'ii',
+                indices: [i - 2, i - 1],
+                breakoutHigh: Number((c1.high + tick).toFixed(8)),
+                breakoutLow: Number((c1.low - tick).toFixed(8)),
+            });
+            continue;
+        }
+        if (isInsideBar(c1, c0) && c2.high >= c1.high && c2.low <= c1.low && isInsideBar(c3, c2)) {
+            out.push({
+                kind: 'ioi',
+                indices: [i - 2, i - 1, i],
+                breakoutHigh: Number((c2.high + tick).toFixed(8)),
+                breakoutLow: Number((c2.low - tick).toFixed(8)),
+            });
+        }
+    }
+    return out;
+};

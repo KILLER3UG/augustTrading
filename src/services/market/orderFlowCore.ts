@@ -143,3 +143,184 @@ export const flowEvents = (
     }
     return { events: events.slice(-6), windowBars: n };
 };
+
+// ─── Wave B: spot-vs-perp CVD divergence + VPIN ─────────────────────────
+
+export interface SpotPerpDivergence {
+    available: boolean;
+    reason?: string;
+    /** Σ(2·takerBuy − volume) over the aligned window, per book. */
+    spotCvd: number | null;
+    perpCvd: number | null;
+    /** (perpCvd − spotCvd) / (Σ perp volume + Σ spot volume) ∈ [−1, 1]. */
+    normalizedDeltaDivergence: number | null;
+    classification: 'spot_led' | 'perp_chase' | 'aligned' | 'absorption_risk' | null;
+    /** Closed bars the two books share (timestamp intersection). */
+    alignedBars: number;
+    spotBarsUsed: number;
+    perpBarsUsed: number;
+    /** Declared thresholds, visible for audit. */
+    thresholds: { minAlignedBars: number; strongRateShare: number; dominantRatio: number };
+}
+
+/**
+ * Spot-vs-perp CVD divergence over the ALIGNED closed-bar window (timestamp
+ * intersection — a missing or misaligned spot bar never masquerades as a
+ * zero-delta bar). Classification rules, all volume-normalized:
+ *  - same sign and one book ≥ `dominantRatio` (2×) the other → spot_led / perp_chase;
+ *  - opposite signs → absorption_risk;
+ *  - otherwise → aligned.
+ */
+export const spotPerpCvdDivergence = (
+    perpCandles: Kline[],
+    spotCandles: Kline[],
+    options: { minAlignedBars?: number; strongRateShare?: number; dominantRatio?: number } = {},
+): SpotPerpDivergence => {
+    const minAlignedBars = options.minAlignedBars ?? 10;
+    const strongRateShare = options.strongRateShare ?? 0.05;
+    const dominantRatio = options.dominantRatio ?? 2;
+    const base: SpotPerpDivergence = {
+        available: false,
+        spotCvd: null,
+        perpCvd: null,
+        normalizedDeltaDivergence: null,
+        classification: null,
+        alignedBars: 0,
+        spotBarsUsed: spotCandles.length,
+        perpBarsUsed: perpCandles.length,
+        thresholds: { minAlignedBars, strongRateShare, dominantRatio },
+    };
+    const perpSeries = deltaSeries(perpCandles);
+    const spotSeries = deltaSeries(spotCandles);
+    if (!perpSeries || perpCandles.length === 0) {
+        return { ...base, reason: 'perp candles lack taker-buy volume — perp CVD is not measurable' };
+    }
+    if (!spotSeries || spotCandles.length === 0) {
+        return { ...base, reason: 'spot candles unavailable or lack taker-buy volume — spot CVD is not measurable' };
+    }
+    // Timestamp intersection: only bars BOTH books closed, aligned by open time.
+    const spotByTime = new Map(spotCandles.map(c => [c.time, c]));
+    const aligned = perpCandles.filter(c => spotByTime.has(c.time));
+    if (aligned.length < minAlignedBars) {
+        return { ...base, reason: `only ${aligned.length} aligned closed bar(s) between spot and perp (need ≥ ${minAlignedBars}) — divergence is not quotable` };
+    }
+    let spotCvd = 0;
+    let perpCvd = 0;
+    let volumeSum = 0;
+    for (const c of aligned) {
+        const s = spotByTime.get(c.time)!;
+        spotCvd += 2 * (s.takerBuyVolume ?? 0) - s.volume;
+        perpCvd += 2 * (c.takerBuyVolume ?? 0) - c.volume;
+        volumeSum += c.volume + s.volume;
+    }
+    if (!(volumeSum > 0)) {
+        return { ...base, reason: 'aligned window carries no volume — divergence is not quotable' };
+    }
+    const perpRate = perpCvd / aligned.length;
+    const spotRate = spotCvd / aligned.length;
+    const volRef = volumeSum / (2 * aligned.length);
+    const normalized = (perpCvd - spotCvd) / volumeSum;
+    const perpDominates = Math.abs(perpRate) >= dominantRatio * Math.abs(spotRate);
+    const spotDominates = Math.abs(spotRate) >= dominantRatio * Math.abs(perpRate);
+    const perpQuiet = Math.abs(perpRate) < strongRateShare * volRef;
+    const spotQuiet = Math.abs(spotRate) < strongRateShare * volRef;
+    let classification: SpotPerpDivergence['classification'];
+    if (perpRate >= 0 !== spotRate >= 0) classification = 'absorption_risk';
+    else if (spotDominates && !perpDominates) classification = 'spot_led';
+    else if (perpDominates && !spotDominates) classification = 'perp_chase';
+    else classification = 'aligned';
+    return {
+        available: true,
+        spotCvd: Math.round(spotCvd * 100) / 100,
+        perpCvd: Math.round(perpCvd * 100) / 100,
+        normalizedDeltaDivergence: Math.round(normalized * 10000) / 10000,
+        classification,
+        alignedBars: aligned.length,
+        spotBarsUsed: spotCandles.length,
+        perpBarsUsed: perpCandles.length,
+        thresholds: { minAlignedBars, strongRateShare, dominantRatio },
+    };
+};
+
+export interface VpinRead {
+    available: boolean;
+    reason?: string;
+    /** Rolling mean of the last `rollingWindow` bucket imbalances (0–1). */
+    vpin: number | null;
+    /** Empirical percentile of that rolling VPIN over the bucket history. */
+    vpinPercentile: number | null;
+    buckets: number;
+    toxicityWarning: boolean;
+    /** Declared thresholds, visible for audit. */
+    thresholds: { minBuckets: number; targetBuckets: number; rollingWindow: number; toxicPercentile: number };
+}
+
+/**
+ * Volume-synchronized probability of informed trading: closed bars are split
+ * into equal-VOLUME buckets (buy vs sell volume accumulated proportionally to
+ * each bar's own taker ratio), each bucket scores |buy − sell| / (buy + sell),
+ * and the VPIN is the rolling mean of the last `rollingWindow` bucket scores.
+ * The percentile is the current rolling VPIN's rank among every rolling value
+ * on the bucket history. Refuses under `minBuckets` buckets or when any bar
+ * lacks taker-buy volume (a partial series would silently misweight buckets).
+ */
+export const vpin = (
+    candles: Kline[],
+    options: { minBuckets?: number; targetBuckets?: number; rollingWindow?: number; toxicPercentile?: number } = {},
+): VpinRead => {
+    const minBuckets = options.minBuckets ?? 20;
+    const targetBuckets = options.targetBuckets ?? 50;
+    const rollingWindow = options.rollingWindow ?? 20;
+    const toxicPercentile = options.toxicPercentile ?? 90;
+    const thresholds = { minBuckets, targetBuckets, rollingWindow, toxicPercentile };
+    const missingTaker = candles.some(c => typeof c.takerBuyVolume !== 'number' || !Number.isFinite(c.takerBuyVolume));
+    if (missingTaker) {
+        return { available: false, reason: 'candles lack taker-buy volume — VPIN buckets are not measurable', vpin: null, vpinPercentile: null, buckets: 0, toxicityWarning: false, thresholds };
+    }
+    const totalVolume = candles.reduce((s, c) => s + c.volume, 0);
+    const bucketSize = totalVolume / targetBuckets;
+    if (!(bucketSize > 0)) {
+        return { available: false, reason: 'no volume on the window — VPIN is not measurable', vpin: null, vpinPercentile: null, buckets: 0, toxicityWarning: false, thresholds };
+    }
+    const probs: number[] = [];
+    let accBuy = 0;
+    let accSell = 0;
+    for (const c of candles) {
+        let buyRemaining = c.takerBuyVolume as number;
+        let sellRemaining = c.volume - (c.takerBuyVolume as number);
+        while (buyRemaining + sellRemaining > 0) {
+            const need = bucketSize - (accBuy + accSell);
+            const take = Math.min(need, buyRemaining + sellRemaining);
+            const buyShare = buyRemaining + sellRemaining > 0 ? buyRemaining / (buyRemaining + sellRemaining) : 0;
+            accBuy += take * buyShare;
+            accSell += take * (1 - buyShare);
+            buyRemaining -= take * buyShare;
+            sellRemaining -= take * (1 - buyShare);
+            if (accBuy + accSell >= bucketSize - 1e-9) {
+                probs.push(Math.abs(accBuy - accSell) / (accBuy + accSell));
+                accBuy = 0;
+                accSell = 0;
+            }
+        }
+    }
+    if (probs.length < minBuckets) {
+        return { available: false, reason: `only ${probs.length} volume bucket(s) built (need ≥ ${minBuckets}) — VPIN is not quotable`, vpin: null, vpinPercentile: null, buckets: probs.length, toxicityWarning: false, thresholds };
+    }
+    const rolling: number[] = [];
+    for (let i = rollingWindow; i <= probs.length; i++) {
+        const win = probs.slice(i - rollingWindow, i);
+        rolling.push(win.reduce((s, p) => s + p, 0) / rollingWindow);
+    }
+    const current = rolling[rolling.length - 1];
+    const percentile = rolling.length > 1
+        ? Math.round((rolling.filter(v => v <= current).length / rolling.length) * 100)
+        : null;
+    return {
+        available: true,
+        vpin: Number(current.toPrecision(6)),
+        vpinPercentile: percentile,
+        buckets: probs.length,
+        toxicityWarning: percentile !== null && percentile >= toxicPercentile,
+        thresholds,
+    };
+};

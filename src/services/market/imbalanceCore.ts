@@ -95,3 +95,51 @@ export const readImbalances = (
     }
     return reads;
 };
+
+// ─── Wave B: Al Brooks micro measuring gaps ─────────────────────────────
+
+export interface MicroMeasuringGap {
+    direction: 'bull' | 'bear';
+    /** Index of the surge bar (the middle of the 3-bar pattern). */
+    index: number;
+    time: number;
+    /** The gap midpoint — the deterministic measured-move projection. */
+    midpoint: number;
+    /** True when later price already traded to the midpoint. */
+    tested: boolean;
+}
+
+/**
+ * Micro measuring gaps (Al Brooks): a bull surge where the bar AFTER the
+ * surge opens/trades at or above the bar BEFORE it (`next.low ≥ prev.high`)
+ * leaves a 3-bar gap whose MIDPOINT is the measured-move projection; the
+ * mirror holds for bear surges. `tested` reports whether later price already
+ * traded back to the midpoint. Most recent first, bounded by `max`.
+ */
+export const microMeasuringGaps = (candles: Kline[], max = 3): MicroMeasuringGap[] => {
+    const out: MicroMeasuringGap[] = [];
+    for (let i = candles.length - 2; i >= 1 && out.length < max; i--) {
+        const prev = candles[i - 1];
+        const next = candles[i + 1];
+        const bullSurge = candles[i].close > candles[i].open;
+        const bearSurge = candles[i].close < candles[i].open;
+        const bull = bullSurge && next.low >= prev.high;
+        const bear = bearSurge && next.high <= prev.low;
+        if (!bull && !bear) continue;
+        const midpoint = bull
+            ? (prev.high + next.low) / 2
+            : (prev.low + next.high) / 2;
+        const later = candles.slice(i + 2);
+        const tested = bull
+            ? later.some(c => c.low <= midpoint)
+            : later.some(c => c.high >= midpoint);
+        out.push({
+            direction: bull ? 'bull' : 'bear',
+            index: i,
+            time: candles[i].time,
+            midpoint: Number(midpoint.toFixed(8)),
+            tested,
+        });
+    }
+    return out;
+};
