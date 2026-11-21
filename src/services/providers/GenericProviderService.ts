@@ -306,11 +306,13 @@ function reportUsageDirect(
 export function extractReasoning(value: unknown): string {
     if (typeof value === 'string') return value;
     if (Array.isArray(value)) {
-        return value.map(extractReasoning).filter(Boolean).join('\n');
+        return value.map(extractReasoning).filter(Boolean).join('');
     }
     if (value && typeof value === 'object') {
         const obj = value as Record<string, unknown>;
-        return extractReasoning(obj.text ?? obj.content ?? obj.reasoning ?? obj.reasoning_content);
+        return extractReasoning(
+            obj.text ?? obj.summary ?? obj.thinking ?? obj.thought ?? obj.content ?? obj.reasoning ?? obj.reasoning_content,
+        );
     }
     return '';
 }
@@ -346,18 +348,53 @@ export function splitChatContent(content: unknown): { text: string; reasoning: s
     };
 }
 
-function deltaReasoning(delta: { reasoning_content?: unknown; reasoning?: unknown; reasoning_details?: unknown; content?: unknown }): string {
+function deltaReasoning(delta: {
+    reasoning_content?: unknown;
+    reasoning?: unknown;
+    reasoning_text?: unknown;
+    thinking?: unknown;
+    thought?: unknown;
+    reasoning_details?: unknown;
+    content?: unknown;
+}): string {
     const fromField = extractReasoning(delta?.reasoning_content)
         || extractReasoning(delta?.reasoning)
+        || extractReasoning(delta?.reasoning_text)
+        || extractReasoning(delta?.thinking)
+        || extractReasoning(delta?.thought)
         || extractReasoning(delta?.reasoning_details);
-    if (typeof delta?.content === 'string') return fromField;
-    const fromContent = splitChatContent(delta?.content).reasoning;
-    return [fromField, fromContent].filter(Boolean).join('\n');
+    if (!Array.isArray(delta?.content)) return fromField;
+    let fromParts = '';
+    for (const part of delta.content) {
+        if (!part || typeof part !== 'object') continue;
+        const block = part as { type?: string; thought?: boolean; thinking?: string; text?: string };
+        const type = String(block.type || '');
+        if (type === 'thinking' || type === 'reason' || block.thought === true) {
+            const inner = block.thinking ?? block.text ?? '';
+            if (typeof inner === 'string') fromParts += inner;
+        }
+    }
+    if (!fromField) return fromParts;
+    if (!fromParts) return fromField;
+    return `${fromField}${fromParts}`;
 }
 
 function deltaVisibleText(delta: { content?: unknown }): string {
     if (typeof delta?.content === 'string') return delta.content;
-    return splitChatContent(delta?.content).text;
+    if (!Array.isArray(delta?.content)) return '';
+    let out = '';
+    for (const part of delta.content) {
+        if (typeof part === 'string') {
+            out += part;
+            continue;
+        }
+        if (!part || typeof part !== 'object') continue;
+        const block = part as { type?: string; thought?: boolean; text?: string };
+        const type = String(block.type || '');
+        if (type === 'thinking' || type === 'reason' || block.thought === true) continue;
+        if (typeof block.text === 'string') out += block.text;
+    }
+    return out;
 }
 
 // `requestReasoningSideChannel` now lives in shared/providerRequestPolicy.cjs
@@ -1972,7 +2009,13 @@ async function* streamChatRequestOnce(
         // provider proxy, which passes SSE through. Direct SDK streaming from
         // the browser fails for providers without CORS headers (e.g. opencode).
         if (usesDevProviderProxy()) {
-            if (effectiveConfig.apiFormat === 'chat_completions') {
+            const canStreamFormat = effectiveConfig.apiFormat === 'chat_completions'
+                || (!options?.jsonMode && (
+                    effectiveConfig.apiFormat === 'messages'
+                    || effectiveConfig.apiFormat === 'responses'
+                    || effectiveConfig.apiFormat === 'google'
+                ));
+            if (canStreamFormat) {
                 const startedAt = Date.now();
                 try {
                     yield* streamViaProxy(effectiveConfig, messages, options);
@@ -1985,7 +2028,7 @@ async function* streamChatRequestOnce(
                 }
                 return;
             }
-            // Other formats: non-streaming through the proxy (existing behavior).
+            // JSON-mode fallback for non-chat_completions formats through the proxy.
             const full = await sendChatRequestOnce(effectiveConfig, messages, options);
             yield full;
             return;
@@ -2036,6 +2079,15 @@ class StreamToolCallBuffer {
             if (typeof f?.function?.arguments === 'string') part.args += f.function.arguments;
             this.parts.set(idx, part);
         }
+    }
+
+    pushFragment(index: number, init: { id?: string; name?: string; argsDelta?: string }): void {
+        const idx = Number.isFinite(index) ? index : 0;
+        const part = this.parts.get(idx) ?? { id: '', name: '', args: '' };
+        if (typeof init.id === 'string' && init.id) part.id = init.id;
+        if (typeof init.name === 'string' && init.name) part.name += init.name;
+        if (typeof init.argsDelta === 'string' && init.argsDelta) part.args += init.argsDelta;
+        this.parts.set(idx, part);
     }
 
     /** Deliver complete calls to onStreamToolCalls; returns them (null = none). */
@@ -2096,6 +2148,182 @@ const sseEventPayload = (event: string): string | null => {
     return joined || null;
 };
 
+export interface BrowserSseParsedBatch {
+    reasoningDeltas: string[];
+    textDeltas: string[];
+    finishReason?: FinishReason;
+    usagePayload?: unknown;
+    error?: Error;
+    done?: boolean;
+}
+
+/** Incremental multi-format SSE parser for the browser `/__provider_proxy` stream
+ *  and unit tests. Supports `chat_completions`, Anthropic `messages`, OpenAI
+ *  `responses`, and Google `google` while peeling chunk-split `<think>` tags. */
+export const createBrowserSseParser = (apiFormat: ProviderConfig['apiFormat']) => {
+    let buffer = '';
+    const gate = createThinkingStreamGate();
+    const toolBuf = new StreamToolCallBuffer();
+    let droppedEvents = 0;
+
+    const toChunkError = (chunk: any): Error | null => {
+        if (!chunk || typeof chunk !== 'object') return null;
+        const errObj = chunk.error && typeof chunk.error === 'object' ? chunk.error : null;
+        const isErrEvent = chunk.type === 'error' || chunk.type === 'response.failed';
+        if (!errObj && !chunk.error && !isErrEvent) return null;
+        const message = errObj?.message
+            || errObj?.type
+            || chunk.response?.error?.message
+            || (typeof chunk.error === 'string' ? chunk.error : '')
+            || `Provider stream error (${errObj?.code ?? 'unknown'})`;
+        const error = new Error(String(message));
+        const code = errObj?.code ?? chunk.status;
+        if (typeof code === 'number') (error as any).status = code;
+        else if (typeof code === 'string' && /^\d{3}$/.test(code)) (error as any).status = Number(code);
+        if (errObj?.status !== undefined) (error as any).status = errObj.status;
+        return error;
+    };
+
+    const routeVisible = (rawText: string, batch: BrowserSseParsedBatch): void => {
+        if (!rawText) return;
+        const gated = gate.push(rawText);
+        if (gated.thinking.length > 0) batch.reasoningDeltas.push(gated.thinking);
+        if (gated.visible.length > 0) batch.textDeltas.push(gated.visible);
+    };
+
+    const handleChunk = (chunk: any, batch: BrowserSseParsedBatch): void => {
+        const err = toChunkError(chunk);
+        if (err) {
+            batch.error = err;
+            batch.done = true;
+            return;
+        }
+        if (apiFormat === 'messages') {
+            if (chunk?.type === 'message_start' && chunk?.message?.usage) {
+                batch.usagePayload = { usage: chunk.message.usage };
+            } else if (chunk?.type === 'content_block_start' && chunk?.content_block?.type === 'tool_use') {
+                toolBuf.pushFragment(chunk.index ?? 0, {
+                    id: chunk.content_block.id || '',
+                    name: chunk.content_block.name || '',
+                });
+            } else if (chunk?.type === 'content_block_delta') {
+                const d = chunk.delta || {};
+                if (d.type === 'text_delta' && typeof d.text === 'string' && d.text.length > 0) {
+                    routeVisible(d.text, batch);
+                } else if (d.type === 'thinking_delta' || d.type === 'reasoning_delta') {
+                    const reasoning = typeof d.thinking === 'string' ? d.thinking : (typeof d.text === 'string' ? d.text : '');
+                    if (reasoning.length > 0) batch.reasoningDeltas.push(reasoning);
+                } else if (d.type === 'input_json_delta' && typeof d.partial_json === 'string') {
+                    toolBuf.pushFragment(chunk.index ?? 0, { argsDelta: d.partial_json });
+                }
+            } else if (chunk?.type === 'message_delta') {
+                if (chunk.usage) batch.usagePayload = chunk;
+                if (chunk.delta?.stop_reason) batch.finishReason = normalizeFinishReason(chunk.delta.stop_reason);
+            } else if (chunk?.type === 'message_stop') {
+                batch.done = true;
+            }
+            return;
+        }
+        if (apiFormat === 'responses') {
+            if (chunk?.type === 'response.output_text.delta' && typeof chunk.delta === 'string') {
+                routeVisible(chunk.delta, batch);
+            } else if (
+                (chunk?.type === 'response.reasoning_summary_text.delta'
+                    || chunk?.type === 'response.output_reasoning.text.delta'
+                    || chunk?.type === 'response.reasoning_text.delta')
+                && typeof chunk.delta === 'string'
+                && chunk.delta.length > 0
+            ) {
+                batch.reasoningDeltas.push(chunk.delta);
+            } else if (chunk?.type === 'response.output_item.added' && chunk?.item?.type === 'function_call') {
+                toolBuf.pushFragment(chunk.output_index ?? 0, {
+                    id: chunk.item.call_id || chunk.item.id || '',
+                    name: chunk.item.name || '',
+                });
+            } else if (chunk?.type === 'response.function_call_arguments.delta' && typeof chunk.delta === 'string') {
+                toolBuf.pushFragment(chunk.output_index ?? 0, { argsDelta: chunk.delta });
+            } else if (chunk?.type === 'response.completed') {
+                if (chunk.response?.usage) batch.usagePayload = { usage: chunk.response.usage };
+                const status = chunk.response?.status;
+                if (status) batch.finishReason = normalizeFinishReason(status);
+                batch.done = true;
+            }
+            return;
+        }
+        if (apiFormat === 'google') {
+            if (chunk?.usageMetadata) batch.usagePayload = chunk;
+            const candidate = chunk?.candidates?.[0];
+            if (candidate?.finishReason) batch.finishReason = normalizeFinishReason(candidate.finishReason);
+            const parts = candidate?.content?.parts;
+            if (Array.isArray(parts)) {
+                for (const part of parts) {
+                    if (!part || typeof part.text !== 'string' || part.text.length === 0) continue;
+                    if (part.thought === true) batch.reasoningDeltas.push(part.text);
+                    else routeVisible(part.text, batch);
+                }
+            }
+            return;
+        }
+        // chat_completions (default)
+        if (chunk?.usage) batch.usagePayload = chunk;
+        const finish = chunk?.choices?.[0]?.finish_reason;
+        if (finish) batch.finishReason = normalizeFinishReason(finish);
+        const delta = chunk?.choices?.[0]?.delta || {};
+        toolBuf.push(delta);
+        const reasoning = deltaReasoning(delta);
+        if (reasoning.length > 0) batch.reasoningDeltas.push(reasoning);
+        routeVisible(deltaVisibleText(delta), batch);
+    };
+
+    const consumeEvent = (rawEvent: string, batch: BrowserSseParsedBatch): void => {
+        const data = sseEventPayload(rawEvent);
+        if (!data) return;
+        if (data === '[DONE]') {
+            batch.done = true;
+            return;
+        }
+        let chunk: any;
+        try {
+            chunk = JSON.parse(data);
+        } catch {
+            droppedEvents += 1;
+            if (droppedEvents === 1) console.warn(`[ProxyStream] Dropping non-JSON SSE events (first seen: ${data.slice(0, 80)})`);
+            return;
+        }
+        handleChunk(chunk, batch);
+    };
+
+    return {
+        push(textChunk: string): BrowserSseParsedBatch {
+            const batch: BrowserSseParsedBatch = { reasoningDeltas: [], textDeltas: [] };
+            if (!textChunk) return batch;
+            buffer = (buffer + textChunk).replace(/\r\n/g, '\n');
+            let sep: number;
+            while ((sep = buffer.indexOf('\n\n')) >= 0) {
+                const event = buffer.slice(0, sep);
+                buffer = buffer.slice(sep + 2);
+                consumeEvent(event, batch);
+                if (batch.error) return batch;
+            }
+            return batch;
+        },
+        flush(options?: Pick<ChatRequestOptions, 'onStreamToolCalls'>): BrowserSseParsedBatch {
+            const batch: BrowserSseParsedBatch = { reasoningDeltas: [], textDeltas: [] };
+            if (buffer.trim()) {
+                const trailing = buffer;
+                buffer = '';
+                consumeEvent(trailing, batch);
+                if (batch.error) return batch;
+            }
+            const flushed = gate.flush();
+            if (flushed.thinking.length > 0) batch.reasoningDeltas.push(flushed.thinking);
+            if (flushed.visible.length > 0) batch.textDeltas.push(flushed.visible);
+            toolBuf.finish(options);
+            return batch;
+        },
+    };
+};
+
 async function* streamViaProxy(
     config: ProviderConfig,
     messages: ChatMessage[],
@@ -2151,105 +2379,52 @@ async function* streamViaProxy(
         }
         return attempt;
     }, (config.name as ProviderName) || 'Provider', 3, options?.signal);
+    const contentType = (response.headers?.get?.('content-type') || '').toLowerCase();
+    if (contentType.includes('application/json') && !contentType.includes('text/event-stream')) {
+        const data = await response.json().catch(() => ({}));
+        if (data?.error) {
+            throw new Error(data.error.message || 'Provider request failed.');
+        }
+        const { text, reasoning } = readWireBody(config.apiFormat, data);
+        if (reasoning.trim()) options?.onReasoning?.(reasoning.trim());
+        reportUsage(config, data, options, messages);
+        observeFinishReason(config, data, options);
+        const toolCalls = data?.choices?.[0]?.message?.tool_calls;
+        if (Array.isArray(toolCalls) && toolCalls.length > 0) {
+            const calls = toolCalls.map((tc: any, i: number) => ({
+                id: tc?.id || `call_${i}`,
+                name: String(tc?.function?.name || ''),
+                arguments: parseStreamedToolArguments(String(tc?.function?.arguments || '')),
+            })).filter((c: { name: string }) => c.name);
+            if (calls.length > 0) options?.onStreamToolCalls?.(calls);
+        }
+        if (text) yield text;
+        return;
+    }
     if (!response.body) {
         throw new Error('Provider stream returned no body.');
     }
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
-    let buffer = '';
-    let droppedEvents = 0;
+    const parser = createBrowserSseParser(config.apiFormat);
     let proxyFinish: FinishReason | undefined;
-    const gate = createThinkingStreamGate();
-    const toolBuf = new StreamToolCallBuffer();
-    const forwardDelta = (delta: Record<string, unknown>): string => {
-        const reasoning = deltaReasoning(delta);
-        if (reasoning.length > 0) options?.onReasoning?.(reasoning);
-        const gated = gate.push(deltaVisibleText(delta));
-        if (gated.thinking.length > 0) options?.onReasoning?.(gated.thinking);
-        return gated.visible;
-    };
     try {
         for (;;) {
             const { done, value } = await reader.read();
             if (done) break;
-            buffer += decoder.decode(value, { stream: true });
-            // SSE events are separated by a blank line; each event carries a
-            // `data:` payload (possibly `data: [DONE]` at the end). Some
-            // gateways emit CRLF line endings — normalize first so the
-            // blank-line scan (and the per-line `data:` match below) never
-            // strand an event behind a '\r\r\n' separator.
-            buffer = buffer.replace(/\r\n/g, '\n');
-            let sep: number;
-            while ((sep = buffer.indexOf('\n\n')) >= 0) {
-                const event = buffer.slice(0, sep);
-                buffer = buffer.slice(sep + 2);
-                // ALL data: lines of the event, joined — multi-line data is
-                // legal SSE (see sseEventPayload).
-                const data = sseEventPayload(event);
-                if (!data || data === '[DONE]') continue;
-                let chunk: any;
-                try {
-                    chunk = JSON.parse(data);
-                } catch {
-                    droppedEvents++;
-                    if (droppedEvents === 1) console.warn(`[ProxyStream] Dropping non-JSON SSE events (first seen: ${data.slice(0, 80)})`);
-                    continue; // partial / non-JSON event
-                }
-                // A provider error event is a real failure — surface it instead
-                // of silently finishing the stream as if it completed cleanly.
-                if (chunk?.error) {
-                    const message = chunk.error.message || `Provider stream error (${chunk.error.code ?? 'unknown'})`;
-                    const error = new Error(message);
-                    // error.code is usually a STRING ('invalid_request_error')
-                    // — only a NUMERIC code is a status. The old
-                    // parseInt(code)||0 stamped status=0 onto every string
-                    // code, which downstream truthiness checks read as a
-                    // present status. Leave it unset unless it's really numeric.
-                    if (typeof chunk.error.code === 'number') (error as any).status = chunk.error.code;
-                    else if (typeof chunk.error.code === 'string' && /^\d{3}$/.test(chunk.error.code)) (error as any).status = Number(chunk.error.code);
-                    if (chunk.error.status !== undefined) (error as any).status = chunk.error.status;
-                    throw error;
-                }
-                reportUsage(config, chunk, options, messages);
-                if (chunk?.choices?.[0]?.finish_reason) {
-                    proxyFinish = normalizeFinishReason(chunk.choices[0].finish_reason);
-                }
-                toolBuf.push(chunk?.choices?.[0]?.delta || {});
-                const visible = forwardDelta(chunk?.choices?.[0]?.delta || {});
-                if (visible) yield visible;
-            }
+            const batch = parser.push(decoder.decode(value, { stream: true }));
+            if (batch.usagePayload) reportUsage(config, batch.usagePayload, options, messages);
+            if (batch.finishReason) proxyFinish = batch.finishReason;
+            for (const r of batch.reasoningDeltas) options?.onReasoning?.(r);
+            for (const t of batch.textDeltas) yield t;
+            if (batch.error) throw batch.error;
         }
-        // Flush any trailing buffer (final event without a blank line).
-        if (buffer.trim()) {
-            const data = sseEventPayload(buffer);
-            if (data && data !== '[DONE]') {
-                let chunk: any;
-                try {
-                    chunk = JSON.parse(data);
-                } catch { /* trailing partial event — ignore */ }
-                if (chunk?.error) {
-                    // Provider error in the final event must propagate, not
-                    // be silently swallowed like a partial event would be.
-                    const error = new Error(chunk.error.message || `Provider stream error (${chunk.error.code ?? 'unknown'})`);
-                    if (typeof chunk.error.code === 'number') (error as any).status = chunk.error.code;
-                    else if (typeof chunk.error.code === 'string' && /^\d{3}$/.test(chunk.error.code)) (error as any).status = Number(chunk.error.code);
-                    if (chunk.error.status !== undefined) (error as any).status = chunk.error.status;
-                    throw error;
-                }
-                if (chunk) {
-                    if (chunk?.choices?.[0]?.finish_reason) {
-                        proxyFinish = normalizeFinishReason(chunk.choices[0].finish_reason);
-                    }
-                    toolBuf.push(chunk?.choices?.[0]?.delta || {});
-                    const visible = forwardDelta(chunk?.choices?.[0]?.delta || {});
-                    if (visible) yield visible;
-                }
-            }
-        }
-        const flushed = gate.flush();
-        if (flushed.thinking.length > 0) options?.onReasoning?.(flushed.thinking);
-        if (flushed.visible) yield flushed.visible;
-        toolBuf.finish(options);
+        const tailBatch = parser.flush(options);
+        if (tailBatch.usagePayload) reportUsage(config, tailBatch.usagePayload, options, messages);
+        if (tailBatch.finishReason) proxyFinish = tailBatch.finishReason;
+        for (const r of tailBatch.reasoningDeltas) options?.onReasoning?.(r);
+        for (const t of tailBatch.textDeltas) yield t;
+        if (tailBatch.error) throw tailBatch.error;
         reportFinishReason(config, proxyFinish ?? 'unknown', options);
     } finally {
         reader.releaseLock();

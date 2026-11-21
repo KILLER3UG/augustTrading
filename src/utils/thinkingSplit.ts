@@ -350,10 +350,16 @@ const THINK_OPEN_CLOSE: Array<{ open: RegExp; close: RegExp }> = [
 const holdIncompleteTag = (buf: string): string => {
     const lt = buf.lastIndexOf('<');
     const br = buf.lastIndexOf('[');
-    const start = Math.max(lt, br);
+    const uni = buf.lastIndexOf('◁');
+    const start = Math.max(lt, br, uni);
     if (start < 0) return '';
     const tail = buf.slice(start);
-    if (/^<\/?[a-zA-Z|/]*$/.test(tail) || /^\[[A-Za-z/]*$/.test(tail) || /^<\|[a-z_]*$/.test(tail)) return tail;
+    if (
+        /^<\/?[a-zA-Z|/_]*$/.test(tail)
+        || /^\[[A-Za-z/]*$/.test(tail)
+        || /^<\|[a-z_]*$/.test(tail)
+        || /^◁\/?[a-zA-Z]*$/.test(tail)
+    ) return tail;
     return '';
 };
 

@@ -217,7 +217,7 @@ function devProviderProxy() {
               temperature: request.temperature ?? 0.7
             };
           } else if (config.apiFormat === 'google') {
-            url = googleGenerateUrl(baseUrl, config.selectedModel, apiKey, false);
+            url = googleGenerateUrl(baseUrl, config.selectedModel, apiKey, Boolean(request.stream));
             if (apiKey) headers['x-goog-api-key'] = apiKey;
             body = chatMessagesToGemini(messages, {
               maxTokens: request.maxTokens,
@@ -262,15 +262,31 @@ function devProviderProxy() {
           // (direct browser SDK calls are blocked by providers without CORS
           // headers, e.g. opencode). The renderer parses the SSE events.
           if (request.stream) {
-            const streamBody: Record<string, unknown> = { ...body, stream: true, stream_options: { include_usage: true } };
-            let sse = await fetchFollowingSafeRedirects(fetch, url, { method: 'POST', headers, body: JSON.stringify(streamBody), signal: AbortSignal.timeout(300000) });
+            const streamBody: Record<string, unknown> = config.apiFormat === 'chat_completions'
+              ? { ...body, stream: true, stream_options: { include_usage: true } }
+              : config.apiFormat === 'google'
+                ? { ...body }
+                : { ...body, stream: true };
+            const streamHeaders: Record<string, string> = {
+              ...headers,
+              Accept: 'text/event-stream',
+              'Accept-Encoding': 'identity',
+            };
+            const clientAbort = new AbortController();
+            const onClientClose = (): void => {
+              if (!res.writableEnded) clientAbort.abort();
+            };
+            req.on('close', onClientClose);
+            res.on('close', onClientClose);
+            const upstreamSignal = AbortSignal.any([clientAbort.signal, AbortSignal.timeout(300000)]);
+            let sse = await fetchFollowingSafeRedirects(fetch, url, { method: 'POST', headers: streamHeaders, body: JSON.stringify(streamBody), signal: upstreamSignal });
             if (!sse.ok && (request.jsonMode || request.jsonSchema) && (sse.status === 400 || sse.status === 422) && streamBody.response_format) {
               const fallbackBody = { ...streamBody };
               stepDownResponseFormat(fallbackBody, request.jsonMode);
-              sse = await fetchFollowingSafeRedirects(fetch, url, { method: 'POST', headers, body: JSON.stringify(fallbackBody), signal: AbortSignal.timeout(300000) });
+              sse = await fetchFollowingSafeRedirects(fetch, url, { method: 'POST', headers: streamHeaders, body: JSON.stringify(fallbackBody), signal: upstreamSignal });
               if (!sse.ok && (sse.status === 400 || sse.status === 422) && fallbackBody.response_format) {
                 delete fallbackBody.response_format;
-                sse = await fetchFollowingSafeRedirects(fetch, url, { method: 'POST', headers, body: JSON.stringify(fallbackBody), signal: AbortSignal.timeout(300000) });
+                sse = await fetchFollowingSafeRedirects(fetch, url, { method: 'POST', headers: streamHeaders, body: JSON.stringify(fallbackBody), signal: upstreamSignal });
               }
             }
             if (!sse.ok || !sse.body) {
@@ -280,17 +296,41 @@ function devProviderProxy() {
               res.end(JSON.stringify({ ok: false, status: sse.status, body: text.slice(0, 2000), message: '', reasoning: '' }));
               return;
             }
+            const upstreamType = (sse.headers.get('content-type') || '').toLowerCase();
+            if (upstreamType.includes('application/json') && !upstreamType.includes('text/event-stream')) {
+              const jsonText = await sse.text();
+              res.statusCode = 200;
+              res.setHeader('Content-Type', 'application/json');
+              res.end(jsonText);
+              return;
+            }
             res.statusCode = 200;
-            res.setHeader('Content-Type', 'text/event-stream');
-            res.setHeader('Cache-Control', 'no-cache');
+            res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+            res.setHeader('Cache-Control', 'no-cache, no-transform');
             res.setHeader('Connection', 'keep-alive');
+            res.setHeader('X-Accel-Buffering', 'no');
+            res.socket?.setNoDelay?.(true);
+            res.flushHeaders?.();
             const reader = sse.body.getReader();
             const decoder = new TextDecoder();
             try {
               for (;;) {
+                if (clientAbort.signal.aborted) {
+                  await reader.cancel().catch(() => undefined);
+                  break;
+                }
                 const { done, value } = await reader.read();
                 if (done) break;
-                res.write(decoder.decode(value, { stream: true }));
+                const chunkText = decoder.decode(value, { stream: true });
+                if (chunkText) {
+                  res.write(chunkText);
+                  (res as { flush?: () => void }).flush?.();
+                }
+              }
+              const tail = decoder.decode();
+              if (tail && !clientAbort.signal.aborted) {
+                res.write(tail);
+                (res as { flush?: () => void }).flush?.();
               }
             } catch (streamError) {
               // Mid-stream upstream failure: headers are already committed as
@@ -299,12 +339,16 @@ function devProviderProxy() {
               // renderer's SSE parser — the failure would look like a clean
               // completion. Emit an SSE error event instead; streamViaProxy
               // treats a chunk.error as a real failure and surfaces it.
-              const message = streamError instanceof Error ? streamError.message : 'Provider stream interrupted.';
-              res.write(`data: ${JSON.stringify({ error: { message, code: 'stream_interrupted' } })}\n\n`);
+              if (!clientAbort.signal.aborted && !res.writableEnded) {
+                const message = streamError instanceof Error ? streamError.message : 'Provider stream interrupted.';
+                res.write(`data: ${JSON.stringify({ error: { message, code: 'stream_interrupted' } })}\n\n`);
+              }
             } finally {
+              req.off?.('close', onClientClose);
+              res.off?.('close', onClientClose);
               reader.releaseLock();
             }
-            res.end();
+            if (!res.writableEnded) res.end();
             return;
           }
           let upstream = await fetchFollowingSafeRedirects(fetch, url, { method: 'POST', headers, body: JSON.stringify(body), signal: AbortSignal.timeout(120000) });

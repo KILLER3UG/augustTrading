@@ -67,7 +67,9 @@ function createSseParser(apiFormat) {
         if (typeof val === 'string') return val;
         if (Array.isArray(val)) return val.map(extractReasoningValue).filter(Boolean).join('');
         if (typeof val === 'object') {
-            return extractReasoningValue(val.text ?? val.summary ?? val.content ?? val.reasoning ?? val.reasoning_content);
+            return extractReasoningValue(
+                val.text ?? val.summary ?? val.thinking ?? val.thought ?? val.content ?? val.reasoning ?? val.reasoning_content
+            );
         }
         return '';
     };
@@ -88,7 +90,7 @@ function createSseParser(apiFormat) {
         // Reasoning tokens ride several field spellings across OpenAI-compatible
         // servers (B.AI/vLLM/DeepSeek/OpenRouter/KiloCode); take whichever carries them.
         const reasoning = extractReasoningValue(
-            delta.reasoning_content ?? delta.reasoning ?? delta.reasoning_text ?? delta.reasoning_details
+            delta.reasoning_content ?? delta.reasoning ?? delta.reasoning_text ?? delta.thinking ?? delta.thought ?? delta.reasoning_details
         );
         if (reasoning.length > 0) {
             events.push({ type: 'reasoning', delta: reasoning });
@@ -162,6 +164,7 @@ function createSseParser(apiFormat) {
                 break;
             case 'response.reasoning_summary_text.delta':
             case 'response.output_reasoning.text.delta':
+            case 'response.reasoning_text.delta':
                 if (typeof json.delta === 'string' && json.delta.length > 0) events.push({ type: 'reasoning', delta: json.delta });
                 break;
             case 'response.output_item.added': {
