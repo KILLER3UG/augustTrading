@@ -492,28 +492,67 @@ export const mutate = (id: string, fn: (s: LiveSession) => LiveSession): void =>
     emit();
 };
 
-/** Select — or create — the session that stands in for an App conversation, and
- *  make it the active one.
+/** True when a bound App conversation has no dock-side entries, active stream,
+ *  or non-solo persona session that would make reusing it hijack a thread. */
+export const isConversationEmptyInStore = (conversationId: string): boolean => {
+    ensureLoaded();
+    if (!conversationId) return true;
+    if (isConversationRunning(conversationId)) return false;
+    return !sessions.some(s =>
+        s.conversationId === conversationId && (
+            s.entries.length > 0
+            || controllers.has(s.id)
+            || (!!s.kind && s.kind !== 'solo')
+            || !!s.botId
+            || !!s.groupId
+        ));
+};
+
+export interface BindConversationOpts {
+    symbol?: string;
+    interval?: string;
+    effort?: ReasoningEffort;
+    soloModel?: string;
+}
+
+/** Select — or create — the solo session that stands in for an App
+ *  conversation, and make it the active one.
  *
  *  The Agents surface and the Chart AI dock are ONE conversation across two
  *  surfaces, and `ChatSession.conversationId` is the link. Hopping from a chat
  *  to the dock therefore has to land on that conversation's session, not on
  *  whichever session was last used.
  *
- *  A session is adopted only when it is genuinely blank: one that already holds
- *  a transcript of its own must keep its own binding, or "New chat" would answer
- *  with the previous conversation's rows. */
-export const bindConversation = (conversationId: string): string => {
+ *  A session is adopted only when it is genuinely blank AND an unbound solo
+ *  chat: one that already holds a transcript, has an active stream, or belongs
+ *  to a panel/bot/group must keep its own binding, or "New chat" would answer
+ *  with the previous conversation's rows or hijack a panel. */
+export const bindConversation = (conversationId: string, opts?: BindConversationOpts): string => {
     ensureLoaded();
-    const bound = sessions.find(s => s.conversationId === conversationId);
+    const bound = sessions.find(s => s.conversationId === conversationId && (!s.kind || s.kind === 'solo') && !s.botId && !s.groupId);
     if (bound) {
         activeId = bound.id;
         emit();
         return bound.id;
     }
-    const blank = sessions.find(s => !s.conversationId && s.entries.length === 0);
+    const blank = sessions.find(s =>
+        !s.conversationId
+        && s.entries.length === 0
+        && (!s.kind || s.kind === 'solo')
+        && !s.botId
+        && !s.groupId
+        && !controllers.has(s.id));
     if (blank) {
-        sessions = sessions.map(s => (s.id === blank.id ? { ...s, conversationId } : s));
+        sessions = sessions.map(s => (s.id === blank.id
+            ? {
+                ...s,
+                conversationId,
+                ...(opts?.symbol ? { symbol: opts.symbol } : {}),
+                ...(opts?.interval ? { interval: opts.interval } : {}),
+                ...(opts?.effort ? { effort: opts.effort } : {}),
+                ...(opts?.soloModel ? { soloModel: opts.soloModel } : {}),
+            }
+            : s));
         activeId = blank.id;
         emit();
         return blank.id;
@@ -522,13 +561,18 @@ export const bindConversation = (conversationId: string): string => {
     // between the two homes of ONE conversation, and `TradeView` reads the coin
     // off the session it lands on: a session born with no symbol made the chart
     // open on its default while the conversation it joined was about ETH. The
-    // dock's own "New chat" already stamps the setup on screen (see addSession's
-    // call there) — this is the same rule on the path a surface switch takes.
+    // dock's own "New chat" stamps the setup on screen via `opts` — this keeps
+    // both paths aligned.
     const from = getActiveSession();
+    const symbol = opts?.symbol ?? from?.symbol;
+    const interval = opts?.interval ?? from?.interval;
     return addSession({
+        kind: 'solo',
         conversationId,
-        ...(from?.symbol ? { symbol: from.symbol } : {}),
-        ...(from?.interval ? { interval: from.interval } : {}),
+        ...(symbol ? { symbol } : {}),
+        ...(interval ? { interval } : {}),
+        ...(opts?.effort ? { effort: opts.effort } : {}),
+        ...(opts?.soloModel ? { soloModel: opts.soloModel } : {}),
     });
 };
 

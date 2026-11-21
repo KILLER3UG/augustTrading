@@ -99,7 +99,7 @@ import { effortDialUp } from './components/shared/effortDial';
 import { nextEffortTier } from './components/shared/effortScale';
 import { DEFAULT_FRAMEWORKS } from './constants/models';
 import { isProviderReady } from './utils/providerUtils';
-import { defaultLeverage, createNewConversation, findReusableThrowawayConversation } from './utils/conversationUtils';
+import { defaultLeverage, createNewConversation, findReusableThrowawayConversation, isEmptyConversation } from './utils/conversationUtils';
 import { type ThreadSelection, threadForProvider } from './utils/agentThreads';
 import {
     groupDisplayName,
@@ -1340,8 +1340,17 @@ const App: React.FC = () => {
         setHybridIntelligenceMirror(isHybridIntelligenceEnabled);
     }, [isHybridIntelligenceEnabled]);
 
+    const startDeskChatRef = useRef<() => void>(() => {});
+    const isConversationBlank = useCallback(
+        (conv: Conversation) => isEmptyConversation(conv) && chatStore.isConversationEmptyInStore(conv.id),
+        [],
+    );
+    const onNewConversationShortcut = useCallback(() => {
+        startDeskChatRef.current();
+    }, []);
+
     // Conversation housekeeping (extracted to hooks/useConversationHousekeeping.ts):
-    // create/load/delete sessions, edit user messages, Ctrl+N + "/" shortcuts.
+    // create/load/delete sessions, edit user messages, Ctrl+N shortcut.
     const {
 
         handleNewConversation,
@@ -1353,6 +1362,8 @@ const App: React.FC = () => {
         conversationHistory, setConversationHistory,
         activeConversation, activeConversationId, setActiveConversationId,
         updateMessages, handleCancelAnalysis,
+        isConversationBlank,
+        onNewConversationShortcut,
         confirmDialog, toast,
     });
 
@@ -1947,10 +1958,20 @@ const App: React.FC = () => {
     const lastFollowedConversationRef = useRef<string | null>(null);
     useEffect(() => {
         const bound = dockActiveSession?.conversationId ?? null;
-        if (!bound || bound === lastFollowedConversationRef.current) return;
+        if (!bound || conversationHistory.length === 0) return;
+        if (!conversationHistory.some(c => c.id === bound)) {
+            // An orphaned/pre-seed dock binding must yield to App's loaded
+            // active conversation so reloaded/seeded threads render intact.
+            if (activeConversationId && conversationHistory.some(c => c.id === activeConversationId)) {
+                lastFollowedConversationRef.current = activeConversationId;
+                chatStore.bindConversation(activeConversationId);
+            }
+            return;
+        }
+        if (bound === lastFollowedConversationRef.current) return;
         lastFollowedConversationRef.current = bound;
         if (bound !== activeConversationId) handleLoadConversation(bound);
-    }, [dockActiveSession?.conversationId, activeConversationId, handleLoadConversation]);
+    }, [dockActiveSession?.conversationId, activeConversationId, conversationHistory, handleLoadConversation]);
 
     /** The canonical conversation for the bot the dock is bound to, as rows,
      *  recomputed whenever `messages` changes.
@@ -2269,16 +2290,23 @@ const App: React.FC = () => {
         // binding. bindConversation finds or mints the conversation's session
         // and makes it active, so App's active conversation and the dock's
         // active session name the same conversation by construction.
+        lastFollowedConversationRef.current = id;
         chatStore.bindConversation(id);
         handleLoadConversation(id);
         selectTeamThread();
-        setSurface('agents');
-    }, [handleLoadConversation, selectTeamThread, setSurface]);
-    const startDeskChat = useCallback(() => {
-        handleStartNewConversation();
+        if (surface !== 'trade' && surface !== 'agents') setSurface('agents');
+    }, [handleLoadConversation, selectTeamThread, surface, setSurface]);
+    const startDeskChat = useCallback((opts?: chatStore.BindConversationOpts) => {
+        const newId = handleStartNewConversation();
+        lastFollowedConversationRef.current = newId;
+        chatStore.bindConversation(newId, opts);
         selectTeamThread();
-        setSurface('agents');
-    }, [handleStartNewConversation, selectTeamThread, setSurface]);
+        if (surface !== 'trade' && surface !== 'agents') setSurface('agents');
+    }, [handleStartNewConversation, selectTeamThread, surface, setSurface]);
+    startDeskChatRef.current = () => startDeskChat();
+    const startDockNewChat = useCallback((opts?: chatStore.BindConversationOpts) => {
+        startDeskChat(opts);
+    }, [startDeskChat]);
     // The rail's New chat row prints "Ctrl K" (mock v3), so the chord must DO
     // that. It lives in its own listener because `startDeskChat` is declared
     // after the surface handler above (a const used earlier is a TDZ crash).
@@ -2626,7 +2654,7 @@ const App: React.FC = () => {
                     <ShellRail
                         surface={surface}
                         onSelectSurface={selectSurface}
-                        onNewChat={startDeskChat}
+                        onNewChat={() => startDeskChat()}
                         // Every profile is a workspace. The active one is first
                         // and expanded; the rest are a click to switch. The
                         // merged set guarantees the CURRENT profile always has
@@ -2677,6 +2705,8 @@ const App: React.FC = () => {
                         onSoloTurnCommit={commitSoloChatTurn}
                         onSyncConversation={ensureDockTurnConversation}
                         conversationRows={messages}
+                        activeConversationId={activeConversationId}
+                        onNewChat={startDockNewChat}
                         onNewGroup={() => setIsNewGroupOpen(true)}
                         verdict={chartVerdict}
                         bots={bots}

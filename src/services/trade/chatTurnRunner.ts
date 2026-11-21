@@ -244,6 +244,10 @@ export interface ChatTurnRunnerDeps {
      *  reason as `botThreadRows`: the bot must answer from the conversation the
      *  trader is looking at, not from a copy. */
     conversationRows?: Message[];
+    /** App's active conversation id corresponding to `conversationRows`, so a
+     *  brand-new conversation minted mid-send never merges stale rows from the
+     *  previously selected conversation in the same JS turn. */
+    activeConversationId?: string | null;
     /** Composer attachment tray (read at send, cleared after). */
     attachments: Attachment[];
     /** Attached images as the analysis pipeline takes them. */
@@ -340,7 +344,7 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
     const {
         symbol, interval, effort, selectedChatModel, chartLevels, allDrawings, trades,
         getChartSnapshot, provider, configForSeat, systemPromptFor, bots, activeId, draft,
-        sessions, botThreadRows, conversationRows, attachments, attachedImages,
+        sessions, botThreadRows, conversationRows, activeConversationId, attachments, attachedImages,
         clearAttachments, setDraft, setContextAt, addModelDrawings,
         clearModelDrawings, clearAllDrawings, onPlanPresented, onBotTurnCommit, onSoloTurnCommit, onSyncConversation, onRunAnalysis, onAnalysisError,
     } = deps;
@@ -954,7 +958,7 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
      *  ATR14, active studies, evaluated User vs AI #D1..#Dn drawings, armed plans)
      *  without dumping a 6k-token REST hybrid packet on every turn. Falls back to
      *  the REST packet only when no canvas snapshot exists. */
-    const buildContextBlock = async (): Promise<string> => {
+    const buildContextBlock = async (forSid?: string): Promise<string> => {
         const nowMs = Date.now();
         const snap = getChartSnapshot?.() ?? null;
         const plansBlock = [
@@ -997,7 +1001,9 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
                 activeStudies,
                 drawings: mergedDrawings,
             });
-            setContextAt(snap.capturedAt || nowMs);
+            if (!forSid || chatStore.getActiveId() === forSid) {
+                setContextAt(snap.capturedAt || nowMs);
+            }
             return buildTier0UserTurnContext({
                 symbol,
                 interval,
@@ -1030,7 +1036,9 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
             const packet = await (await hybridService()).fetchHybridData(symbol);
             const markdown = (await hybridService()).generateHybridPromptInjection(packet, { compact: true });
             const atMs = Date.now();
-            setContextAt(atMs);
+            if (!forSid || chatStore.getActiveId() === forSid) {
+                setContextAt(atMs);
+            }
             packetCache.set(symbol, { markdown, atMs });
             return buildTradeChatContext({ symbol, interval, contextWindowTokens: provider?.contextWindowTokens, packetMarkdown: markdown, fetchedAtMs: atMs, drawingsDescription, onScreenDescription: onScreen, plansDescription: plansBlock, postMortemBrief, liveMarkPrice, formingCandle, currentTradeCount: trades.length });
         } catch {
@@ -1379,11 +1387,16 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
         // Reading the raw session here is what let a turn said in the Chat
         // surface reach the trader but never reach the bot: two views of one
         // conversation, which is the split this merge exists to remove.
+        const canUseCanonicalRows = !!(
+            turnConversationId
+            && session.conversationId === turnConversationId
+            && (!activeConversationId || turnConversationId === activeConversationId)
+        );
         const conversation = entriesForSession(
             session.entries,
             session.botId && bots.some(b => b.id === session.botId)
                 ? botThreadRows
-                : (turnConversationId ? conversationRows : undefined),
+                : (canUseCanonicalRows ? conversationRows : undefined),
         );
         const retryIdx = retryEntry ? conversation.findIndex(e => e.id === retryEntry.id) : -1;
         const history = retryIdx >= 0 ? conversation.slice(0, retryIdx) : conversation;
@@ -1437,7 +1450,7 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
             ...(isSolo && !session.botId && selectedChatModel ? { soloModel: selectedChatModel } : {}),
             entries: [...s.entries, ...(retryEntry ? [] : [userEntry]), ...(isSolo ? [soloAiEntry] : [])],
         }));
-        const contextBlockRaw = await buildContextBlock();
+        const contextBlockRaw = await buildContextBlock(sid);
         const contextBlock = focusLine ? `${contextBlockRaw}
 
 ${focusLine}` : contextBlockRaw;
@@ -1869,7 +1882,7 @@ ${focusLine}` : contextBlockRaw;
         mutate(sid, s => ({ ...s, updatedAt: Date.now(), entries: [...s.entries, noticeEntry, aiEntry] }));
         const controller = new AbortController();
         chatStore.beginRun(sid, controller);
-        const contextBlock = await buildContextBlock();
+        const contextBlock = await buildContextBlock(sid);
         if (controller.signal.aborted) {
             mutate(sid, s => ({ ...s, entries: s.entries.filter(e => e.id !== aiEntry.id) }));
             endRunOwned(sid, controller);

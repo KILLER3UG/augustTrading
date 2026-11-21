@@ -71,6 +71,8 @@ export interface SurfaceOutletProps {
     onSoloTurnCommit: (row: SoloTurnRow, conversationId: string) => void;
     onSyncConversation: (conversationId?: string) => string | null;
     conversationRows: Message[];
+    activeConversationId?: string | null;
+    onNewChat?: (opts?: { symbol?: string; interval?: string; effort?: ReasoningEffort; soloModel?: string }) => void;
     onNewGroup: () => void;
     verdict: TradeAnalysis | null;
     bots: AgentBot[];
@@ -134,7 +136,7 @@ const SurfaceOutlet: React.FC<SurfaceOutletProps> = ({
     memoryEnabled, strategiesEnabled, providers, selectedChatModel, onSelectChatModel,
     onRefreshModels, tradeModeRequest,
     activeUsername, onTradeModeChange, botThreadRows, onBotTurnCommit, onSoloTurnCommit,
-    onSyncConversation, conversationRows, onNewGroup, verdict, bots, trades, groupTabs,
+    onSyncConversation, conversationRows, activeConversationId, onNewChat, onNewGroup, verdict, bots, trades, groupTabs,
     botSessionRequest, groupSessionRequest, onRunAnalysisFromChat, onAnalysisError,
     onCancelAnalysis, getAnalysisMessage, onLogProposedTrade, onRejectProposedTrade, onUndoApproval, onConfirmRiskChange, onDismissRiskChange, onRevertRiskChange, onConfirmAiSettingChange, onDismissAiSettingChange, onRevertAiSettingChange, onConfirmStrategyActivation, onDismissStrategyActivation, onRevertStrategyActivation, onConfirmSessionPlan, onDismissSessionPlan, onRevertSessionPlan, onConfirmRuleProposal, onDismissRuleProposal, onRevertRuleProposal, registerScrollToMessage,
     onToggleWatch, onOpenWatchList, watchOpenCount, watchOpenR, pinnedMessageIds,
@@ -178,6 +180,8 @@ const SurfaceOutlet: React.FC<SurfaceOutletProps> = ({
                         onSoloTurnCommit={onSoloTurnCommit}
                         onSyncConversation={onSyncConversation}
                         conversationRows={conversationRows}
+                        activeConversationId={activeConversationId}
+                        onNewChat={onNewChat}
                         onNewGroup={onNewGroup}
                         verdict={verdict}
                         bots={bots}

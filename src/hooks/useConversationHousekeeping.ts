@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef } from 'react';
-import { createNewConversation, findReusableEmptyConversation, isThrowawayConversation } from '../utils/conversationUtils';
+import { createNewConversation, isEmptyConversation, isThrowawayConversation } from '../utils/conversationUtils';
 import type { ConfirmOptions } from '../components/shared/ConfirmDialog';
 import type { Conversation, Message } from '../types';
 
@@ -21,13 +21,19 @@ export interface UseConversationHousekeepingArgs {
      * run while leaving every other thread's run alone.
      */
     handleCancelAnalysis: (conversationId?: string) => void;
+    /** Optional predicate to verify whether an App conversation is also blank in
+     *  the dock store (no dock entries, active stream, or panel/bot binding). */
+    isConversationBlank?: (conv: Conversation) => boolean;
+    /** Optional unified new-chat callback invoked by Ctrl/Cmd+N so the shortcut
+     *  synchronizes both App conversations and the dock session store. */
+    onNewConversationShortcut?: () => void;
     confirmDialog: (opts: ConfirmOptions) => Promise<boolean>;
     toast: { success: (title: string, message?: string) => void };
 }
 
 export interface UseConversationHousekeepingResult {
     handleClearAllConversations: () => Promise<void>;
-    handleNewConversation: () => void;
+    handleNewConversation: () => string;
     handleLoadConversation: (id: string) => void;
     handleDeleteConversations: (ids: string[]) => void;
     handleDeleteConversationFromSidebar: (id: string) => Promise<void>;
@@ -45,6 +51,7 @@ export const useConversationHousekeeping = (args: UseConversationHousekeepingArg
         conversationHistory, setConversationHistory,
         activeConversation, activeConversationId, setActiveConversationId,
         updateMessages, handleCancelAnalysis,
+        isConversationBlank, onNewConversationShortcut,
         confirmDialog, toast,
     } = args;
 
@@ -96,9 +103,9 @@ export const useConversationHousekeeping = (args: UseConversationHousekeepingArg
     };
 
     // F3: New conversation (Ctrl/Cmd+N shortcut + palette action).
-    // Reuse an existing blank session instead of minting another empty one —
-    // "New" from a filled session should return to the unused blank tab.
-    const handleNewConversation = useCallback(() => {
+    // Reuse an existing truly-blank session instead of minting another empty one —
+    // "New" from a filled or streaming session returns to the unused blank tab or mints one.
+    const handleNewConversation = useCallback((): string => {
         // A new thread does NOT stop what is running in the old one. The run
         // belongs to the conversation it was typed in, and its answer is
         // written back into that conversation — so opening another thread
@@ -106,7 +113,11 @@ export const useConversationHousekeeping = (args: UseConversationHousekeepingArg
         // defect E-45 names: the machinery to survive a switch was already
         // in the pipeline, and this call killed the run before it could be
         // used.)
-        const reusable = findReusableEmptyConversation(conversationHistory, activeConversationId);
+        const blankCheck = isConversationBlank ?? isEmptyConversation;
+        const active = conversationHistory.find(c => c.id === activeConversationId);
+        const reusable = (active && blankCheck(active))
+            ? active
+            : conversationHistory.find(c => c.id !== activeConversationId && blankCheck(c)) ?? null;
         if (reusable) {
             if (reusable.id !== activeConversationId) {
                 setConversationHistory(prev => [
@@ -115,7 +126,7 @@ export const useConversationHousekeeping = (args: UseConversationHousekeepingArg
                 ]);
                 setActiveConversationId(reusable.id);
             }
-            return;
+            return reusable.id;
         }
         const newConv = createNewConversation();
         if (activeConversation) {
@@ -124,7 +135,8 @@ export const useConversationHousekeeping = (args: UseConversationHousekeepingArg
         }
         setConversationHistory(prev => [newConv, ...prev]);
         setActiveConversationId(newConv.id);
-    }, [conversationHistory, activeConversationId, activeConversation, setConversationHistory, setActiveConversationId]);
+        return newConv.id;
+    }, [conversationHistory, activeConversationId, activeConversation, isConversationBlank, setConversationHistory, setActiveConversationId]);
 
     // F3: Ctrl/Cmd+N = new conversation. ("/" used to focus the composer; the
     // #chat-composer element it looked up was deleted in 78bc027, so the branch
@@ -134,12 +146,13 @@ export const useConversationHousekeeping = (args: UseConversationHousekeepingArg
         const onKey = (e: KeyboardEvent) => {
             if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'n') {
                 e.preventDefault();
-                handleNewConversation();
+                if (onNewConversationShortcut) onNewConversationShortcut();
+                else handleNewConversation();
             }
         };
         document.addEventListener('keydown', onKey);
         return () => document.removeEventListener('keydown', onKey);
-    }, [handleNewConversation]);
+    }, [handleNewConversation, onNewConversationShortcut]);
 
     /**
      * Load a conversation — a VIEW change, not a run's death.
