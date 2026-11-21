@@ -149,7 +149,7 @@ const GeneralTab: React.FC<{ tab: GeneralTabProps }> = ({ tab: props }) => {
                             moved here from the Data tab (stage 3): they are analysis
                             behavior. The cost cap that used to be in this list went
                             with the debate engine. */}
-                        <SettingsGroup title="Harness dials" description="Model effort, the session guard, the edge floor and the default leverage.">
+                        <SettingsGroup title="Harness dials" description="Model effort, the session guard, the edge floor, the default leverage and the trader's Risk Constitution.">
                             <HarnessControls />
                         </SettingsGroup>
 
