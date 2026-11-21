@@ -27,6 +27,7 @@ import {
     isDataUnavailable, MINIMAL_CLIP_NOTE, neutralizeHarnessNotes,
 } from '../../utils/harnessMarks';
 import { buildMemoryHints } from '../../utils/memoryHints';
+import { extractTraderQuestion, TRADER_QUESTION_MARKER } from '../trade/tradeChatContext';
 export { DATA_UNAVAILABLE_PREFIX, isDataUnavailable } from '../../utils/harnessMarks';
 import { HARNESS_CONTRACT_PROMPT } from '../../constants/prompts';
 import type { GoalPatch, GoalRef, GoalTrigger } from '../../schemas/goal';
@@ -7883,9 +7884,16 @@ export async function* streamChatWithDeskTools(
             const { listProfileMemories } = await import('../learning/profileMemory');
             const { usableSkillRows, skillIndexRows } = await import('../learning/SkillFileService');
             const last = messages[messages.length - 1];
-            const lastText = typeof last?.content === 'string' ? last.content : '';
+            const lastText = typeof last?.content === 'string'
+                ? last.content
+                : Array.isArray(last?.content)
+                    ? last.content.filter(p => p?.type === 'text').map(p => p.text).join('\n')
+                    : '';
+            const matchText = (options?.lastUserMessage && options.lastUserMessage.trim())
+                ? extractTraderQuestion(options.lastUserMessage)
+                : extractTraderQuestion(lastText);
             const hints = buildMemoryHints(
-                lastText,
+                matchText,
                 listProfileMemories().map(e => ({
                     slug: e.slug, description: e.description, aliases: e.aliases,
                     sensitive: e.sensitive, body: e.body,
@@ -7900,9 +7908,28 @@ export async function* streamChatWithDeskTools(
                 usableSkillRows(skillIndexRows()).map(r => r.slug),
             );
             if (hints.length > 0 && last) {
+                const hintBlock = harnessTurn(hints.join('\n'));
+                const injectBeforeQuestion = (rawText: string): string => {
+                    const markerIdx = rawText.lastIndexOf(TRADER_QUESTION_MARKER);
+                    if (markerIdx !== -1) {
+                        const before = rawText.slice(0, markerIdx).trimEnd();
+                        const questionPart = rawText.slice(markerIdx);
+                        return before
+                            ? `${before}\n\n${hintBlock}\n\n${questionPart}`
+                            : `${hintBlock}\n\n${questionPart}`;
+                    }
+                    return rawText.trim() ? `${hintBlock}\n\n${rawText}` : hintBlock;
+                };
+                const nextContent = typeof last.content === 'string'
+                    ? injectBeforeQuestion(last.content)
+                    : Array.isArray(last.content)
+                        ? last.content.map((part, idx) => (idx === 0 && part?.type === 'text'
+                            ? { ...part, text: injectBeforeQuestion(part.text) }
+                            : part))
+                        : last.content;
                 outbound = messages.slice(0, -1).concat([{
                     ...last,
-                    content: `${lastText}\n\n${harnessTurn(hints.join('\n'))}`,
+                    content: nextContent,
                 }]);
             }
         } catch (err) {

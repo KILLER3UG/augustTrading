@@ -216,6 +216,42 @@ export const describeChartSnapshotForModel = (snap: {
  * study values, evaluated User vs AI `#D1..#Dn` drawings, armed plans,
  * session plan, active rules, and any mid-session skill/memory delta note.
  */
+export const TRADER_QUESTION_MARKER = '---\nTrader question:\n';
+
+/**
+ * Assemble the user-role turn payload so attached chart context, files, and
+ * panel room transcripts always sit ABOVE the trader's actual question at the
+ * very end. Keeps fast/preview models focused on answering the question rather
+ * than continuing or echoing trailing context blocks.
+ */
+export const composeUserTurnMessage = (input: {
+    contextBlock?: string;
+    fileBlocks?: string;
+    extraContext?: string;
+    traderQuestion: string;
+}): string => {
+    const contextParts = [
+        (input.contextBlock ?? '').trim(),
+        (input.fileBlocks ?? '').trim(),
+        (input.extraContext ?? '').trim(),
+    ].filter(Boolean);
+    const question = (input.traderQuestion ?? '').trim();
+    if (contextParts.length === 0) return question;
+    if (!question) return contextParts.join('\n\n');
+    return `${contextParts.join('\n\n')}\n\n${TRADER_QUESTION_MARKER}${question}`;
+};
+
+/**
+ * Extract only the trader's raw question from a wrapped user turn message so
+ * hint matchers and guards never match against `[CHART MANIFEST]` boilerplate.
+ */
+export const extractTraderQuestion = (content: string): string => {
+    if (typeof content !== 'string' || !content) return '';
+    const idx = content.lastIndexOf(TRADER_QUESTION_MARKER);
+    if (idx !== -1) return content.slice(idx + TRADER_QUESTION_MARKER.length).trim();
+    return content.trim();
+};
+
 export const buildTier0UserTurnContext = (
     input: Omit<Tier0ManifestInput, 'sessionPlanBlock' | 'activeRulesBlock'> & { currentTradeCount?: number },
 ): string => {

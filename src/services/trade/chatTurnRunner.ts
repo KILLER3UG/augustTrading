@@ -37,7 +37,7 @@ import { DESK_TOOL_NAMES } from '../../utils/toolKinds';
 import { settleDockEntry } from '../../utils/rowSettlement';
 import { CHART_ACTION_TOOL_DEFS } from '../analysis/deskToolShared';
 import { focusedGoal } from '../goals/GoalService';
-import { buildTier0UserTurnContext, buildTradeChatContext, describeChartSnapshotForModel } from './tradeChatContext';
+import { buildTier0UserTurnContext, buildTradeChatContext, composeUserTurnMessage, describeChartSnapshotForModel, extractTraderQuestion } from './tradeChatContext';
 import {
     describeDrawingsForModel, drawingFromChartTool, drawingsFromDetectedPattern, drawingsFromLevelTool, type ChartDrawing,
     MODEL_COLOR_NAMES, createDrawingId,
@@ -1053,8 +1053,10 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
         /** Panel seats: keep the bubble EMPTY while the stream could still
          *  collapse to a pure (pass), so silence never takes a visible turn. */
         hidePass?: boolean;
+        /** The trader's raw question text before context/manifest wrapping. */
+        rawTraderQuestion?: string;
     }): Promise<string> => {
-        const { sid, entryId, config, messages, mailboxSeat, mailbox, onMailSent, onAction, hidePass } = params;
+        const { sid, entryId, config, messages, mailboxSeat, mailbox, onMailSent, onAction, hidePass, rawTraderQuestion } = params;
         const controller = chatStore.getController(sid);
         if (!controller) return '';
         // One snapshot per seat turn feeds BOTH stamps (live mark + forming
@@ -1158,11 +1160,14 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
         // transport reports it. Bracket the seat's turn so the line the trader
         // reads is a measured fact, not a guess from a missing sentence.
         const lastUser = [...messages].reverse().find(m => m && m.role === 'user');
-        const lastUserMessage = typeof lastUser?.content === 'string'
+        const lastUserContent = typeof lastUser?.content === 'string'
             ? lastUser.content
             : Array.isArray(lastUser?.content)
                 ? lastUser.content.map(p => (typeof p === 'string' ? p : (p as { text?: string }).text ?? '')).join('\n')
                 : undefined;
+        const lastUserMessage = (rawTraderQuestion && rawTraderQuestion.trim())
+            ? rawTraderQuestion.trim()
+            : (lastUserContent ? extractTraderQuestion(lastUserContent) : undefined);
         // Per-run recorder: see chatSurfaceTurn's note and the 2026-10-27 audit L-7.
         const { value: outcome, summary } = await withTruncationWindow(async (recordFinishReason) => await runToolTurn({
             config,
@@ -1451,7 +1456,11 @@ ${focusLine}` : contextBlockRaw;
             }
             return;
         }
-        const userText = `${contextBlock}\n\n${text}${fileBlocks}`;
+        const userText = composeUserTurnMessage({
+            contextBlock,
+            fileBlocks,
+            traderQuestion: text,
+        });
 
         // ── SOLO (optionally bound to a roster bot persona) ────────────────
         if (isSolo) {
@@ -1515,7 +1524,7 @@ ${focusLine}` : contextBlockRaw;
             ];
             const messages = pruneHistoryImages(rawMessages, DEFAULT_MAX_HISTORY_IMAGES).messages;
             try {
-                await runSeatTurn({ sid, entryId: aiEntry.id, config: soloProvider, messages, mailboxSeat: '' });
+                await runSeatTurn({ sid, entryId: aiEntry.id, config: soloProvider, messages, mailboxSeat: '', rawTraderQuestion: text });
             } catch (e) {
                 // An explicit Stop throws a transport AbortError — that is a
                 // user action, not a failure: the bubble keeps what streamed
@@ -1690,7 +1699,12 @@ ${focusLine}` : contextBlockRaw;
                     : roomTranscript
                         ? 'Answer the user for this chart. Other seats already spoke (shown above) — build on or rebut their read, do not repeat it. You can @Name another seat to pull it into the conversation next, or send_message to a peer seat by name mid-turn to compare a number.'
                         : 'You are the first seat to answer for this chart.';
-                const userMsg = `${userText}\n\n${turnIntro}${roomTranscript ? `\n\n${roomTranscript}` : ''}`;
+                const userMsg = composeUserTurnMessage({
+                    contextBlock,
+                    fileBlocks,
+                    extraContext: [turnIntro, roomTranscript].filter(Boolean).join('\n\n'),
+                    traderQuestion: text,
+                });
                 const aiEntry: LiveEntry = {
                     id: newId('a'), role: 'ai', text: '', tools: [], streaming: true,
                     speaker: seat.name,
@@ -1728,6 +1742,7 @@ ${focusLine}` : contextBlockRaw;
                         mailboxSeat: seat.name,
                         mailbox,
                         hidePass: true,
+                        rawTraderQuestion: text,
                         onAction: line => seatActions.push(line),
                         onMailSent: info => mutate(sid, s => ({
                             ...s,

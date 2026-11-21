@@ -36,8 +36,10 @@ import type { StreamWithDeskToolsOptions } from '../analysis/DeskToolsService';
 import { emptyTokenUsage, mergeTokenUsage } from '../../utils/tokenUsage';
 import type { TokenUsage } from '../../utils/tokenUsage';
 import { splitThinkingFromOutput } from '../../utils/thinkingSplit';
+import { detectHarnessEcho, HARNESS_ECHO_RETRY_INSTRUCTION } from '../../utils/harnessEchoGuard';
 import { getHarnessSettings } from '../../utils/harnessSettings';
 import type { ReasoningEffort } from '../providers/reasoningControls';
+export { detectHarnessEcho } from '../../utils/harnessEchoGuard';
 
 /** What the row should look like right now. Every method is a display intent,
  *  never a storage shape — the caller decides whether that means a chatStore
@@ -241,7 +243,7 @@ export const runToolTurn = async (req: ToolTurnRequest): Promise<ToolTurnOutcome
     };
 };
 
-const runToolTurnInner = async (req: ToolTurnRequest): Promise<InnerOutcome> => {
+const runToolTurnInner = async (req: ToolTurnRequest, attempt = 0): Promise<InnerOutcome> => {
     const { events, signal, startedAt } = req;
     let raw = '';
     let reasoning = '';
@@ -301,6 +303,22 @@ const runToolTurnInner = async (req: ToolTurnRequest): Promise<InnerOutcome> => 
     // half-written answer the trader chose to cut.
     if (signal.aborted) {
         return { text: full, carry: full, reasoning, leaked: false, interrupted: true, ...(steered ? { steered: true } : {}), ...(microCompactChars > 0 ? { microCompactChars } : {}), workedMs };
+    }
+
+    const echo = detectHarnessEcho(full);
+    if (echo.matched) {
+        events.setText('');
+        if (attempt === 0) {
+            events.addToolLine('harness framing echo detected — retrying cleanly');
+            return runToolTurnInner(
+                {
+                    ...req,
+                    messages: [...req.messages, { role: 'user', content: HARNESS_ECHO_RETRY_INSTRUCTION }],
+                },
+                attempt + 1,
+            );
+        }
+        throw new Error('The model echoed internal harness framing instead of answering. Retry or switch models.');
     }
 
     const settled = splitThinkingFromOutput(reasoning, full);
