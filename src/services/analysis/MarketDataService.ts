@@ -5,6 +5,7 @@
 
 // Using fetch directly instead of ccxt for better browser/mobile compatibility
 import { coerceCandles } from '../../utils/candleShape';
+import { yangZhangVol } from '../market/volRegimeCore';
 
 const BINANCE_API_BASE = 'https://api.binance.com';
 const BINANCE_FUTURES_API = 'https://fapi.binance.com';
@@ -1160,6 +1161,101 @@ export const fetchFundingInfo = async (symbol: string): Promise<number | null> =
     } catch {
         // Not cached: a missing fundingInfo retries on the next call.
         return null;
+    }
+};
+
+// ─── Wave C: Deribit options context (DVOL / volatility risk premium) ──────
+
+export interface OptionsContext {
+    available: boolean;
+    reason?: string;
+    /** The underlying the options context describes (BTC or ETH). */
+    symbol?: string;
+    /** Deribit's DVOL implied-volatility index, in annualized % (e.g. 55.2). */
+    dvol?: number;
+    /** The perp tape's Yang-Zhang realized volatility, annualized %. */
+    realizedVolPct?: number | null;
+    /** VRP = DVOL − realized vol, in volatility points (positive = options
+     *  price more insurance than the tape has been delivering). */
+    vrp?: number | null;
+    fetchedAt?: number;
+}
+
+/** Deribit public REST — zero-key, short timeout, 60s cache. BTC/ETH only. */
+const deribitFetch = async (url: string, timeoutMs = 3500): Promise<Response> => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+        return await fetchImpl(url, { method: 'GET', signal: controller.signal, headers: { Accept: 'application/json' } });
+    } finally {
+        clearTimeout(timer);
+    }
+};
+
+/** Parse the get_volatility_index_data payload → the latest DVOL value. Pure. */
+export const parseDeribitVolIndex = (payload: unknown): number | null => {
+    const rows = (payload as { result?: { data?: unknown[] } } | null)?.result?.data;
+    if (!Array.isArray(rows) || rows.length === 0) return null;
+    const last = rows[rows.length - 1];
+    const close = Array.isArray(last) ? Number(last[4]) : NaN;
+    return Number.isFinite(close) && close > 0 ? close : null;
+};
+
+/**
+ * Options context for BTC and ETH: Deribit's DVOL index minus the perp tape's
+ * Yang-Zhang realized volatility — the volatility risk premium, the number an
+ * options seller is paid to carry. Every other symbol, a timeout, an HTTP
+ * error or an unusable payload refuses cleanly (available: false + reason) —
+ * core market reads are never blocked on the options leg.
+ */
+/** The symbol gate for the options context, pure and pinnable: BTC/ETH only. */
+export const optionsContextGate = (symbol: string): { allowed: boolean; base: string; reason?: string } => {
+    const normalized = normalizeSymbol(symbol);
+    const base = normalized.replace(/USDT$/, '');
+    if (base !== 'BTC' && base !== 'ETH') {
+        return { allowed: false, base, reason: `options context is quoted for BTC and ETH only (got ${normalized})` };
+    }
+    return { allowed: true, base };
+};
+
+export const fetchDeribitOptionsContext = async (symbol: string): Promise<OptionsContext> => {
+    const gate = optionsContextGate(symbol);
+    if (!gate.allowed) {
+        return { available: false, reason: gate.reason };
+    }
+    const base = gate.base;
+    const cacheKey = `deribit_${base}`;
+    const cached = getCached<OptionsContext>(cacheKey, 60_000);
+    if (cached) return cached;
+    try {
+        // Deribit's get_volatility_index_data takes MILLSECOND epoch bounds
+        // (its rows come back [ts_ms, o, h, l, c]) — seconds or the wrong
+        // param names answer HTTP 400.
+        const endTs = Date.now();
+        const startTs = endTs - 24 * 3_600_000;
+        const res = await deribitFetch(`https://www.deribit.com/api/v2/public/get_volatility_index_data?currency=${base}&resolution=3600&start_timestamp=${startTs}&end_timestamp=${endTs}`);
+        if (!res.ok) {
+            return { available: false, reason: `Deribit returned HTTP ${res.status}` };
+        }
+        const dvol = parseDeribitVolIndex(await res.json());
+        if (dvol === null) {
+            return { available: false, reason: 'Deribit returned no usable DVOL value' };
+        }
+        const candles = await fetchFuturesOHLCV(gate.base, '1h', 100);
+        const yz = yangZhangVol(candles, 3_600, 30, 60);
+        const realizedVolPct = yz ? yz.annualizedPct : null;
+        const result: OptionsContext = {
+            available: true,
+            symbol: base,
+            dvol,
+            realizedVolPct,
+            vrp: realizedVolPct !== null ? Number((dvol - realizedVolPct).toPrecision(6)) : null,
+            fetchedAt: Date.now(),
+        };
+        setCache(cacheKey, result);
+        return result;
+    } catch (error) {
+        return { available: false, reason: `Deribit fetch failed: ${error instanceof Error ? error.message : String(error)}` };
     }
 };
 

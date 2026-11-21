@@ -15,6 +15,8 @@
 
 import { clamp01 } from '../../utils/math';
 import { targetsByDistance } from '../../utils/riskReward';
+import { roundTripCostR } from '../../utils/netRiskReward';
+import type { Kline } from '../../types/message';
 
 export interface MonteCarloResult {
     simulations: number;
@@ -51,6 +53,18 @@ export interface MonteCarloResult {
         lower: number;                // 5th percentile outcome
         upper: number;                // 95th percentile outcome
     };
+    /** Wave C: how the paths were generated. */
+    mode?: 'empirical_bootstrap' | 'gbm_fallback';
+    /** P(a resolved path hits a TP before the SL). */
+    pHitTpBeforeSl?: number;
+    /** Mean bars to the first barrier touch (resolved paths). */
+    expectedBarsToBarrier?: number;
+    /** 95th percentile of max adverse excursion (% of entry). */
+    tailMaeP95?: number;
+    /** Mean R over the worst 5% of resolved paths (net of costs). */
+    cvar95R?: number;
+    /** Closed bars the empirical bootstrap resampled. */
+    barsUsed?: number;
 }
 
 // Labeled Monte Carlo result for per-AI display
@@ -66,6 +80,14 @@ export interface RuinRiskResult {
     prob75pctDrawdown: number;
     expectedEquityAfter100: number;   // Expected account value after 100 trades
     kellyOptimalSize: number;         // Kelly criterion position size (0-1)
+    /** Wave C: the ruin sim bootstrapped the trader's ACTUAL settled R series. */
+    mode?: 'parametric' | 'ledger_bootstrap';
+    /** Settled R outcomes the ledger bootstrap resampled. */
+    samples?: number;
+    /** Mean of the worst 5% of simulated max drawdowns (percent of equity). */
+    cvar95DrawdownPct?: number;
+    /** Mean max drawdown across all sequences (Triple-Penance AR(1) read). */
+    expectedMaxDrawdownPct?: number;
 }
 
 export interface SimulationConfig {
@@ -738,9 +760,17 @@ export const monteCarloToMarkdown = (
         // number, which the receipt must say so the trader can audit it.
         lines.push(`Assumptions: ${inputs.maxSteps} candles maximum; ATR ${inputs.atrSource === 'measured' ? 'measured from the tape (ATR14)' : 'supplied by the caller'}, timeframe is a label only; neutral initial drift/regime. Seed ${result.seedUsed ?? 'unknown'}. Average duration includes timeouts.`);
     }
+    if (result.mode === 'empirical_bootstrap') {
+        lines.push(`Empirical bootstrap: paths resample the tape's own closed-bar log returns in 5-bar blocks (fat tails and clustering preserved) · P(TP before SL) ${result.pHitTpBeforeSl?.toFixed(1)}% of resolved paths · expected ${result.expectedBarsToBarrier?.toFixed(0)} bars to a barrier · tail MAE p95 ${result.tailMaeP95?.toFixed(2)}% · CVaR95 ${result.cvar95R?.toFixed(2)}R (mean R of the worst 5%, net of costs) · ${result.barsUsed ?? '—'} closed bars resampled.`);
+    } else if (result.mode === 'gbm_fallback') {
+        lines.push(`GBM fallback: fewer than 100 closed bars were available, so these paths are parametric normal random walks scaled by ATR — NOT the tape's own return distribution; treat every number here as coarse.`);
+    }
     if (ruinRisk) {
+        const ledgerBits = ruinRisk.mode === 'ledger_bootstrap'
+            ? ` · bootstrapped from ${ruinRisk.samples} settled R outcomes · CVaR95 drawdown ${ruinRisk.cvar95DrawdownPct?.toFixed(1)}% · expected max drawdown ${ruinRisk.expectedMaxDrawdownPct?.toFixed(1)}%`
+            : '';
         lines.push(
-            `Account risk over 100 fixed-fractional trades: P(≥25% drawdown) ${ruinRisk.prob25pctDrawdown.toFixed(1)}% · P(≥50%) ${ruinRisk.prob50pctDrawdown.toFixed(1)}% · P(≥75%) ${ruinRisk.prob75pctDrawdown.toFixed(1)}% · mean equity after 100 trades ${ruinRisk.expectedEquityAfter100.toLocaleString()} · Kelly-optimal size ${ruinRisk.kellyOptimalSize.toFixed(1)}% of account.`,
+            `Account risk over 100 fixed-fractional trades: P(≥25% drawdown) ${ruinRisk.prob25pctDrawdown.toFixed(1)}% · P(≥50%) ${ruinRisk.prob50pctDrawdown.toFixed(1)}% · P(≥75%) ${ruinRisk.prob75pctDrawdown.toFixed(1)}% · mean equity after 100 trades ${ruinRisk.expectedEquityAfter100.toLocaleString()} · Kelly-optimal size ${ruinRisk.kellyOptimalSize.toFixed(1)}% of account${ledgerBits}.`,
         );
     }
     lines.push(
@@ -942,4 +972,214 @@ export const calculateRuinRiskAsync = (
     return withWorkerTimeout(workerPromise, id, () =>
         calculateRuinRisk(accountBalance, positionSize, leverage, monteCarloResult, seed)
     );
+};
+
+// ─── Wave C: empirical block-bootstrap simulation + ledger ruin ─────────
+
+export interface EmpiricalBootstrapConfig {
+    entry: number;
+    stopLoss: number;
+    takeProfits: number[];
+    direction: 'Long' | 'Short';
+    numSimulations?: number;
+    maxSteps?: number;
+    seed?: number;
+    /** The CLOSED bars whose log returns are block-resampled (≥ 100). */
+    candles: Kline[];
+}
+
+export type EmpiricalBootstrapResult = MonteCarloResult & {
+    mode: 'empirical_bootstrap';
+    pHitTpBeforeSl: number;
+    expectedBarsToBarrier: number;
+    tailMaeP95: number;
+    cvar95R: number;
+    barsUsed: number;
+};
+
+/**
+ * Empirical block-bootstrap barrier simulation: resample the tape's OWN
+ * closed-bar log returns in overlapping blocks (preserving fat tails and
+ * volatility clustering a normal GBM cannot produce), build paths from the
+ * entry, and resolve them with the SAME stop-first barrier logic as the GBM
+ * path. Every resolved outcome is charged the round-trip fee/slippage drag
+ * from utils/netRiskReward, so avgWin/EV are NET of costs. Deterministic:
+ * the seed derives from the setup identity + the 'empirical' mode tag.
+ * Returns null when fewer than 100 closed bars are supplied (the caller
+ * falls back to the labeled GBM path or refuses).
+ */
+export const empiricalBootstrapSimulation = (
+    config: EmpiricalBootstrapConfig,
+): EmpiricalBootstrapResult | null => {
+    const { entry, stopLoss, takeProfits, direction, numSimulations = 1000, maxSteps = 100, seed } = config;
+    const candles = config.candles;
+    if (!Array.isArray(candles) || candles.length < 100) return null;
+    const returns: number[] = [];
+    for (let i = 1; i < candles.length; i++) {
+        const prev = candles[i - 1].close;
+        const cur = candles[i].close;
+        if (prev > 0 && cur > 0) returns.push(Math.log(cur / prev));
+    }
+    if (returns.length < 100) return null;
+    const blockLen = 5;
+    const stopDistancePct = (Math.abs(entry - stopLoss) / entry) * 100;
+    if (!(stopDistancePct > 0)) return null;
+    const costR = roundTripCostR({ stopDistancePct });
+    const costPct = costR.known ? (costR.costR as number) * stopDistancePct : 0;
+
+    const identity = [entry, stopLoss, takeProfits.join(','), direction, 'empirical-bootstrap', candles.length].join('|');
+    const seedUsed = seed ?? hashIdentity(identity);
+    const rng = mulberry32(seedUsed);
+
+    const outcomes: Array<'TP1' | 'TP2' | 'TP3' | 'SL' | 'TIMEOUT'> = [];
+    const pnls: number[] = [];
+    const rs: number[] = [];
+    const drawdowns: number[] = [];
+    const steps: number[] = [];
+
+    for (let sim = 0; sim < numSimulations; sim++) {
+        const path: number[] = [entry];
+        let stepsBuilt = 0;
+        while (stepsBuilt < maxSteps) {
+            const start = Math.floor(rng() * Math.max(1, returns.length - blockLen));
+            for (let j = 0; j < blockLen && stepsBuilt < maxSteps; j++) {
+                const prev = path[path.length - 1];
+                path.push(prev * Math.exp(returns[start + j]));
+                stepsBuilt += 1;
+            }
+        }
+        const result = evaluatePath(path, entry, stopLoss, takeProfits, direction, true);
+        // Fee/slippage drag: the round trip costs costR × (stop distance in %)
+        // of the entry — charged to every RESOLVED outcome (a timed-out path
+        // is not a trade and pays nothing).
+        const pnlNet = result.outcome === 'TIMEOUT'
+            ? result.pnlPercent
+            : result.pnlPercent - costPct;
+        outcomes.push(result.outcome);
+        pnls.push(pnlNet);
+        drawdowns.push(result.maxDrawdown);
+        steps.push(result.stepsToOutcome);
+        if (result.outcome !== 'TIMEOUT') {
+            rs.push(pnlNet / stopDistancePct);
+        }
+    }
+
+    const resolvedIdx = outcomes.map((o, i) => (o === 'TIMEOUT' ? -1 : i)).filter(i => i >= 0);
+    const resolvedPnls = resolvedIdx.map(i => pnls[i]);
+    const resolvedRs = resolvedIdx.map(i => rs[i]);
+    const winCount = outcomes.filter(o => o === 'TP1' || o === 'TP2' || o === 'TP3').length;
+    const resolvedCount = resolvedIdx.length;
+    const expectedValue = resolvedPnls.length ? resolvedPnls.reduce((s, x) => s + x, 0) / resolvedPnls.length : 0;
+    const winSamples = resolvedPnls.filter(p => p > 0);
+    const lossSamples = resolvedPnls.filter(p => p < 0);
+    const avgWinPercent = winSamples.length ? winSamples.reduce((s, x) => s + x, 0) / winSamples.length : 0;
+    const avgLossPercent = lossSamples.length ? Math.abs(lossSamples.reduce((s, x) => s + x, 0) / lossSamples.length) : 0;
+    const sorted = [...pnls].sort((a, b) => a - b);
+    const lower = sorted[Math.floor(numSimulations * 0.05)];
+    const upper = sorted[Math.floor(numSimulations * 0.95)];
+    const sortedRs = [...resolvedRs].sort((a, b) => a - b);
+    const worstCount = Math.max(1, Math.floor(sortedRs.length * 0.05));
+    const worstRs = sortedRs.slice(0, worstCount);
+    const cvar95R = worstRs.reduce((s, x) => s + x, 0) / worstRs.length;
+    const sortedDrawdowns = [...drawdowns].sort((a, b) => a - b);
+    const tailMaeP95 = sortedDrawdowns[Math.floor(numSimulations * 0.95)];
+    const resolvedSteps = resolvedIdx.map(i => steps[i]);
+    const pHitTpBeforeSl = resolvedCount > 0 ? (winCount / resolvedCount) * 100 : 0;
+    const expectedBarsToBarrier = resolvedSteps.length ? resolvedSteps.reduce((s, x) => s + x, 0) / resolvedSteps.length : 0;
+
+    return {
+        simulations: numSimulations,
+        winRate: Math.round((winCount / numSimulations) * 1000) / 10,
+        winCount,
+        expectedValue: Math.round(expectedValue * 100) / 100,
+        timeframe: 'empirical',
+        avgWinPercent: Math.round(avgWinPercent * 100) / 100,
+        avgLossPercent: Math.round(avgLossPercent * 100) / 100,
+        seedUsed: seedUsed,
+        resolvedCount,
+        probabilities: {
+            tp1Hit: Math.round((outcomes.filter(o => o === 'TP1').length / numSimulations) * 1000) / 10,
+            tp2Hit: Math.round((outcomes.filter(o => o === 'TP2').length / numSimulations) * 1000) / 10,
+            tp3Hit: Math.round((outcomes.filter(o => o === 'TP3').length / numSimulations) * 1000) / 10,
+            slHit: Math.round((outcomes.filter(o => o === 'SL').length / numSimulations) * 1000) / 10,
+            timeout: Math.round((outcomes.filter(o => o === 'TIMEOUT').length / numSimulations) * 1000) / 10,
+        },
+        maxDrawdownAvg: Math.round(drawdowns.reduce((s, x) => s + x, 0) / numSimulations * 100) / 100,
+        timeToOutcomeAvg: Math.round(steps.reduce((s, x) => s + x, 0) / numSimulations * 10) / 10,
+        confidenceInterval: { lower: Math.round(lower * 100) / 100, upper: Math.round(upper * 100) / 100 },
+        mode: 'empirical_bootstrap',
+        pHitTpBeforeSl: Math.round(pHitTpBeforeSl * 10) / 10,
+        expectedBarsToBarrier: Math.round(expectedBarsToBarrier * 10) / 10,
+        tailMaeP95: Math.round(tailMaeP95 * 100) / 100,
+        cvar95R: Math.round(cvar95R * 10000) / 10000,
+        barsUsed: candles.length,
+    };
+};
+
+/**
+ * Account-level ruin simulation bootstrapped from the trader's ACTUAL settled
+ * R outcomes (journal + signal ledger, deduped by the caller) — never a
+ * parametric guess. Each of the 1000 sequences of 100 trades resamples the
+ * real R distribution with replacement (seeded), applies it as a
+ * fixed-fractional equity update, and records the max drawdown. Adds the
+ * 95% CVaR of the drawdown distribution and the Triple-Penance-style
+ * expected max drawdown. Returns null under 20 samples (the caller refuses).
+ */
+export const calculateRuinRiskFromSeries = (
+    rSeries: number[],
+    accountBalance: number,
+    positionSize: number,
+    seed?: number,
+): (RuinRiskResult & { mode: 'ledger_bootstrap'; samples: number; cvar95DrawdownPct: number; expectedMaxDrawdownPct: number }) | null => {
+    if (!Array.isArray(rSeries) || rSeries.length < 20) return null;
+    if (!(accountBalance > 0) || !(positionSize > 0)) return null;
+    const clean = rSeries.filter(r => Number.isFinite(r));
+    if (clean.length < 20) return null;
+    const riskFraction = Math.min(1, positionSize / accountBalance);
+    const rng = mulberry32(seed ?? hashIdentity(['ledger-bootstrap', clean.length, clean.reduce((s, x) => s + x, 0), accountBalance, positionSize].join('|')));
+    const sequenceCount = 1000;
+    const tradesPerSequence = 100;
+    const maxDrawdowns: number[] = [];
+    const finalEquities: number[] = [];
+    let count25 = 0;
+    let count50 = 0;
+    let count75 = 0;
+    for (let seq = 0; seq < sequenceCount; seq++) {
+        let equity = accountBalance;
+        let peak = accountBalance;
+        let maxDd = 0;
+        for (let t = 0; t < tradesPerSequence; t++) {
+            const r = clean[Math.floor(rng() * clean.length)];
+            equity *= 1 + r * riskFraction;
+            peak = Math.max(peak, equity);
+            maxDd = Math.max(maxDd, (peak - equity) / peak);
+        }
+        if (maxDd >= 0.25) count25 += 1;
+        if (maxDd >= 0.5) count50 += 1;
+        if (maxDd >= 0.75) count75 += 1;
+        maxDrawdowns.push(maxDd * 100);
+        finalEquities.push(equity);
+    }
+    const sortedDd = [...maxDrawdowns].sort((a, b) => a - b);
+    const worstCount = Math.max(1, Math.floor(sequenceCount * 0.05));
+    const worst = sortedDd.slice(-worstCount);
+    const meanDd = sortedDd.reduce((s, x) => s + x, 0) / sortedDd.length;
+    const wins = clean.filter(r => r > 0);
+    const losses = clean.filter(r => r < 0);
+    const p = wins.length / clean.length;
+    const avgWin = wins.length ? wins.reduce((s, x) => s + x, 0) / wins.length : 0;
+    const avgLoss = losses.length ? Math.abs(losses.reduce((s, x) => s + x, 0) / losses.length) : 0;
+    const b = avgLoss > 0 ? avgWin / avgLoss : 0;
+    const kelly = b > 0 ? clamp01((b * p - (1 - p)) / b) : 0;
+    return {
+        prob25pctDrawdown: Math.round((count25 / sequenceCount) * 1000) / 10,
+        prob50pctDrawdown: Math.round((count50 / sequenceCount) * 1000) / 10,
+        prob75pctDrawdown: Math.round((count75 / sequenceCount) * 1000) / 10,
+        expectedEquityAfter100: Math.round(finalEquities.reduce((s, x) => s + x, 0) / sequenceCount),
+        kellyOptimalSize: Math.round(kelly * 1000) / 10,
+        mode: 'ledger_bootstrap',
+        samples: clean.length,
+        cvar95DrawdownPct: Math.round((worst.reduce((s, x) => s + x, 0) / worst.length) * 10) / 10,
+        expectedMaxDrawdownPct: Math.round(meanDd * 10) / 10,
+    };
 };

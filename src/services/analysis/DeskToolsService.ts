@@ -56,6 +56,7 @@ import {
     normalizeSymbol,
     verifySymbolAgainstUniverse,
     estimateBookSlippage,
+    fetchDeribitOptionsContext,
 } from './MarketDataService';
 // The market-structure tools ride in LAZY, like the hybrid packet: the cores
 // and their adapter stay out of the entry graph until a seat actually calls
@@ -63,7 +64,7 @@ import {
 // grows it for every boot). Types are erased, so they may import statically.
 import type { ProfileAnchor } from './marketTools';
 import { candleAlignedTtlMs } from '../../utils/candleTtl';
-import { CHART_INTERVALS } from '../../utils/chartIntervals';
+import { CHART_INTERVALS, intervalSeconds, type ChartInterval } from '../../utils/chartIntervals';
 
 /** The one lazy door to the market-structure tool adapters. */
 const importMarketTools = (): Promise<typeof import('./marketTools')> => import('./marketTools');
@@ -86,6 +87,7 @@ import type { LoggedTrade } from '../../types';
 import type { ToolAction } from '../../types/message';
 import type { ChartDrawing } from '../trade/chartDrawings';
 import { computeAtr14, evaluateChartDrawings } from '../trade/chartGeometry';
+import type { RuinRiskResult } from './MonteCarloService';
 import type { ChartSnapshot } from '../../components/trade/TradingChart';
 import type { DiagnosisBrief } from '../tracking/diagnosisBrief';
 import { PANEL_MAIL_TOOLS, type PanelMailbox } from './PanelMailbox';
@@ -1841,7 +1843,7 @@ export const DESK_TOOL_DEFINITIONS: DeskToolDefinition[] = [
         function: {
             name: 'get_btc_context',
             description:
-                'BTC dominance, dominance trend, and whether BTC sits on a major level. Required before trading alts.',
+                'BTC dominance, dominance trend, and whether BTC sits on a major level. Required before trading alts. For BTC and ETH the response also carries the options context: Deribit\'s DVOL implied-volatility index vs the tape\'s realized volatility (the volatility risk premium) — refused cleanly for every other symbol and never blocking the dominance read.',
             parameters: {
                 type: 'object',
                 properties: {
@@ -3280,7 +3282,11 @@ async function runLiquidations(symbol: string): Promise<string> {
 
 async function runBtcContext(symbol: string): Promise<string> {
     const risk = await calculateCorrelationRisk(symbol);
-    return JSON.stringify({ checkedAt: new Date().toISOString(), ...risk }, null, 2);
+    // Wave C: the options leg — Deribit DVOL vs the tape's realized vol
+    // (the volatility risk premium), BTC and ETH only, refused cleanly
+    // everywhere else and never blocking the correlation read.
+    const optionsContext = await fetchDeribitOptionsContext(symbol);
+    return JSON.stringify({ checkedAt: new Date().toISOString(), ...risk, optionsContext }, null, 2);
 }
 
 function runSession(): string {
@@ -5523,6 +5529,16 @@ ${body}`);
                 // accuracy modules; keep them out of the entry graph too.
                 const jt = await import('./journalTools');
                 if (call.name === 'setup_base_rate') {
+                    // Wave C: the resolved signal ledger feeds the sample
+                    // uniqueness (N_eff) and the entry-significance bootstrap.
+                    let signalWindows: Array<{ emittedAt: number; resolvedAt: number }> | undefined;
+                    let entryReturns: number[] | undefined;
+                    try {
+                        const { readSignals } = await import('../signals/signalLedger');
+                        const settled = readSignals().filter(r => r.resolution && Number.isFinite(r.resolution.outcomeR));
+                        signalWindows = settled.map(r => ({ emittedAt: r.signal.emittedAt, resolvedAt: r.resolution!.at }));
+                        entryReturns = settled.map(r => r.resolution!.outcomeR);
+                    } catch { /* ledger unavailable → no uniqueness disclosure this call */ }
                     content = jt.runSetupBaseRateTool(context.trades ?? [], {
                         coin: asString(call.arguments.coin) || undefined,
                         direction: String(call.arguments.direction) === 'Long' ? 'Long'
@@ -5530,6 +5546,8 @@ ${body}`);
                         family: asString(call.arguments.family) || undefined,
                         regime: asString(call.arguments.regime) || undefined,
                         playbook: asString(call.arguments.playbook) || undefined,
+                        signalWindows,
+                        entryReturns,
                     });
                 } else if (call.name === 'risk_state') {
                     content = jt.runRiskStateTool(context.trades ?? []);
@@ -6260,14 +6278,22 @@ ${body}`);
                     return rejectedResult(call, `run_monte_carlo rejected: take_profits needs 1–3 positive, finite prices ${dirWord === 'Long' ? 'above' : 'below'} entry.`);
                 }
                 const tps = [...new Set(rawTps)].sort((a, b) => (dirWord === 'Long' ? a - b : b - a));
-                // O-64: the simulation's volatility is MEASURED, not tied to
-                // the plan's own stop. The old `2 * stopDistance` default made
-                // volatility a function of the trader's stop choice — a wider
-                // stop assumed a wilder market — and the receipt then reported
-                // win rates off that circular number. With no atr supplied,
-                // the app measures ATR14 from the tape at the requested
-                // timeframe; when the tape cannot be measured the call is
-                // REFUSED with the named gap, never silently simulated.
+                const ivl = (asString(call.arguments.timeframe) || context.chartInterval || '1h').slice(0, 20);
+                const sym = asSymbol(call.arguments.symbol, fallback);
+                // Wave C: the tape is fetched ONCE — it feeds the ATR
+                // measurement AND the empirical block-bootstrap (≥ 100 closed
+                // bars resample the tape's OWN returns; a shorter tape falls
+                // back to the labeled GBM path).
+                const { fetchFuturesOHLCV } = await import('./MarketDataService');
+                const { closedCandles } = await importMarketTools();
+                const { calculateIndicators } = await import('./TechnicalAnalysisService');
+                const tape = await fetchFuturesOHLCV(sym, ivl, 220).catch(() => []);
+                const asofNow = Date.now();
+                const stepSec = intervalSeconds(ivl as ChartInterval) || 3600;
+                const closed = tape.length > 0 ? closedCandles(tape, ivl, asofNow) : [];
+                const measuredAtr = tape.length >= 30
+                    ? calculateIndicators(tape).atr
+                    : NaN;
                 const callerAtr = call.arguments.atr === undefined ? NaN : numeric(call.arguments.atr);
                 const callerAtrValid = priceOk(callerAtr) && Number.isFinite(callerAtr / entry);
                 if (call.arguments.atr !== undefined && !callerAtrValid) {
@@ -6279,16 +6305,8 @@ ${body}`);
                     atr = callerAtr;
                     atrSource = 'caller';
                 } else {
-                    const ivl = (asString(call.arguments.timeframe) || context.chartInterval || '1h').slice(0, 20);
-                    const sym = asSymbol(call.arguments.symbol, fallback);
-                    const { fetchKlinesTagged } = await import('./KlineService');
-                    const { calculateIndicators } = await import('./TechnicalAnalysisService');
-                    const tagged = await fetchKlinesTagged(sym, ivl, 120).catch(() => null);
-                    const measuredAtr = tagged && tagged.candles.length >= 30
-                        ? calculateIndicators(tagged.candles).atr
-                        : NaN;
                     if (!priceOk(measuredAtr) || !Number.isFinite(measuredAtr / entry)) {
-                        return rejectedResult(call, `run_monte_carlo rejected: no atr supplied and ATR14 could not be measured from the tape for ${sym} ${ivl} (${tagged ? `${tagged.candles.length} candles` : 'fetch failed'}). Retry once; if it still fails, either supply atr explicitly — the receipt will name it as caller-supplied — or skip the simulation.`);
+                        return rejectedResult(call, `run_monte_carlo rejected: no atr supplied and ATR14 could not be measured from the tape for ${sym} ${ivl} (${tape.length > 0 ? `${tape.length} candles fetched` : 'fetch failed'}). Retry once; if it still fails, either supply atr explicitly — the receipt will name it as caller-supplied — or skip the simulation.`);
                     }
                     atr = measuredAtr;
                     atrSource = 'measured';
@@ -6311,30 +6329,66 @@ ${body}`);
                 if (ruinArgs && (sizeRaw > balRaw || levRaw < 1 || !Number.isFinite(sizeRaw * levRaw))) {
                     return rejectedResult(call, 'run_monte_carlo rejected: position_size is margin, cannot exceed account_balance, and leverage must be at least 1.');
                 }
-                const { runSimulationAsync, calculateRuinRiskAsync, monteCarloToMarkdown } = await import('./MonteCarloService');
-                const mc = await runSimulationAsync({
-                    entry,
-                    stopLoss,
-                    takeProfits: tps,
-                    explicitTargetsOnly: true,
-                    direction: dirWord,
-                    atr,
-                    timeframe: (asString(call.arguments.timeframe) || context.chartInterval || '1h').slice(0, 20),
-                    numSimulations,
-                    maxSteps,
-                });
-                let ruin;
+                const { runSimulationAsync, empiricalBootstrapSimulation, calculateRuinRiskFromSeries, monteCarloToMarkdown } = await import('./MonteCarloService');
+                // Wave C: the account ruin sim bootstraps the trader's ACTUAL
+                // settled R series (journal + signal ledger, deduped by
+                // provenance) — refused under 20 samples rather than faked
+                // from a parametric guess.
+                let ruinSeries: number[] = [];
                 if (ruinArgs) {
-                    ruin = await calculateRuinRiskAsync(ruinArgs.accountBalance, ruinArgs.positionSize, ruinArgs.leverage, mc);
+                    const journalRs = (context.trades ?? [])
+                        .filter(t => t.outcome !== 'PENDING' && Number.isFinite(t.realizedR ?? t.rMultiple))
+                        .map(t => (t.realizedR ?? t.rMultiple) as number);
+                    const { readSignals } = await import('../signals/signalLedger');
+                    const signalRows = readSignals();
+                    const signalRs = signalRows
+                        .filter(row => row.resolution && Number.isFinite(row.resolution.outcomeR))
+                        .map(row => ({ emittedAt: row.signal.emittedAt, resolvedAt: row.resolution!.at, r: row.resolution!.outcomeR }));
+                    ruinSeries = [...journalRs, ...signalRs.map(s => s.r)];
+                    if (ruinSeries.length < 20) {
+                        return rejectedResult(call, `run_monte_carlo rejected: account ruin needs ≥ 20 settled R outcomes (journal + signal ledger); got ${ruinSeries.length}. Refusing to fake ruin from a parametric guess.`);
+                    }
                 }
-                content = monteCarloToMarkdown(mc, ruin, {
+                let mc;
+                if (closed.length >= 100) {
+                    mc = empiricalBootstrapSimulation({
+                        entry,
+                        stopLoss,
+                        takeProfits: tps,
+                        direction: dirWord,
+                        numSimulations,
+                        maxSteps,
+                        candles: closed,
+                    });
+                }
+                if (!mc) {
+                    // Fewer than 100 closed bars (or a degenerate tape): the
+                    // labeled GBM fallback — never an unlabeled guess.
+                    mc = await runSimulationAsync({
+                        entry,
+                        stopLoss,
+                        takeProfits: tps,
+                        explicitTargetsOnly: true,
+                        direction: dirWord,
+                        atr,
+                        timeframe: ivl,
+                        numSimulations,
+                        maxSteps,
+                    });
+                    mc.mode = 'gbm_fallback';
+                }
+                let ruin: RuinRiskResult | null = null;
+                if (ruinArgs && ruinSeries.length >= 20) {
+                    ruin = calculateRuinRiskFromSeries(ruinSeries, ruinArgs.accountBalance, ruinArgs.positionSize);
+                }
+                content = monteCarloToMarkdown(mc, ruin ?? undefined, {
                     symbol: asSymbol(call.arguments.symbol, fallback),
                     direction: dirWord,
                     entry,
                     stopLoss,
                     takeProfits: tps,
                     atr,
-                    timeframe: (asString(call.arguments.timeframe) || context.chartInterval || '1h').slice(0, 20),
+                    timeframe: ivl,
                     maxSteps,
                     atrSource,
                 });
