@@ -254,6 +254,12 @@ interface TradeChatPanelProps {
      *  thread is `utils/agentThreads`' job and a second caller of it with its
      *  own arguments would be a second opinion about message ownership. */
     conversationRows?: Message[];
+    /** App's active conversation id corresponding to `conversationRows`, so a
+     *  session switch never merges stale rows from another conversation. */
+    activeConversationId?: string | null;
+    /** Unified synchronized new-chat handler owned by App so dock `+`, sidebar
+     *  `New chat`, and keyboard shortcuts all create a clean thread in sync. */
+    onNewChat?: (opts?: { symbol?: string; interval?: string; effort?: ReasoningEffort; soloModel?: string }) => void;
     /** Commit a bot turn asked HERE into the canonical conversation.
      *  `answer === undefined` is the trader's question; a string is the
      *  settled answer. Fired twice, so the question shows in the other
@@ -368,7 +374,7 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
     renderGroupSurface, groups = [],
     registerScrollToMessage,
     onToggleCollapsed, expanded, onToggleExpanded,
-    onNewGroup, botThreadRows, conversationRows, onBotTurnCommit,
+    onNewGroup, botThreadRows, conversationRows, activeConversationId, onNewChat, onBotTurnCommit,
     onSoloTurnCommit,
     onSyncConversation,
     onToggleWatch, pinnedMessageIds,
@@ -476,7 +482,9 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
     // levels, and has no counterpart to be a view of.
     const canonicalRows = boundBot
         ? botThreadRows
-        : (activeSession.conversationId ? conversationRows : undefined);
+        : (activeSession.conversationId && (!activeConversationId || activeSession.conversationId === activeConversationId)
+            ? conversationRows
+            : undefined);
     const entries = useMemo<LiveEntry[]>(
         () => entriesForSession(activeSession.entries, canonicalRows),
         [activeSession.entries, canonicalRows],
@@ -765,6 +773,7 @@ ${riskConstitution}`
         sessions,
         botThreadRows,
         conversationRows,
+        activeConversationId,
         attachments,
         attachedImages,
         clearAttachments,
@@ -779,7 +788,7 @@ ${riskConstitution}`
         onSyncConversation,
         onRunAnalysis,
         onAnalysisError,
-    }), [symbol, interval, memoryEnabled, effort, selectedChatModel, chartLevels, allDrawings, trades, getChartSnapshot, provider, configForSeat, systemPromptFor, getIndexDeltaNote, bots, activeId, draft, sessions, botThreadRows, conversationRows, attachments, attachedImages, clearAttachments, setDraft, setContextAt, addModelDrawings, clearModelDrawings, clearAllDrawings, onPlanPresented, onBotTurnCommit, onSoloTurnCommit, onSyncConversation, onRunAnalysis, onAnalysisError]);
+    }), [symbol, interval, memoryEnabled, effort, selectedChatModel, chartLevels, allDrawings, trades, getChartSnapshot, provider, configForSeat, systemPromptFor, getIndexDeltaNote, bots, activeId, draft, sessions, botThreadRows, conversationRows, activeConversationId, attachments, attachedImages, clearAttachments, setDraft, setContextAt, addModelDrawings, clearModelDrawings, clearAllDrawings, onPlanPresented, onBotTurnCommit, onSoloTurnCommit, onSyncConversation, onRunAnalysis, onAnalysisError]);
     const { send: runnerSend, runFullAnalysis, runHarnessTurn } = runner;
     // Slash templates ride HERE, in front of the runner: `/brief /audit /scan`
     // expand to their desk instructions; `/handoff` does NOT send — it mints a
@@ -1094,6 +1103,23 @@ ${riskConstitution}`
         setContextAt(null);
     }, [symbol, activeId]);
 
+    // Switching sessions (via New chat, history palette, or sidebar) must close
+    // transient popovers, reset scroll-away state, and clear composer remnants
+    // when landing on an unused empty solo thread.
+    const prevSessionSwitchRef = useRef(activeId);
+    useEffect(() => {
+        if (prevSessionSwitchRef.current === activeId) return;
+        prevSessionSwitchRef.current = activeId;
+        setShowNewMenu(false);
+        setHistoryOpen(false);
+        setPanelPickerFor(null);
+        setScrolledAway(false);
+        if (activeSession.entries.length === 0 && !busy) {
+            setDraft('');
+            clearAttachments();
+        }
+    }, [activeId, activeSession.entries.length, busy, clearAttachments]);
+
     // NOTE: no unmount-abort on purpose. Switching to another surface tab
     // unmounts this panel; the run must keep streaming into the store so
     // returning shows the completed answer. Only an explicit Stop (or
@@ -1181,6 +1207,21 @@ ${riskConstitution}`
      *  the parameter is gone rather than merely unused, so it cannot be
      *  reintroduced by a call site that "just needs a quick session". */
     const addSession = useCallback((kind: 'solo' | 'panel' = 'solo'): void => {
+        setShowNewMenu(false);
+        setHistoryOpen(false);
+        setPanelPickerFor(null);
+        setScrolledAway(false);
+        setDraft('');
+        clearAttachments();
+        if (kind === 'solo' && onNewChat) {
+            onNewChat({
+                symbol,
+                interval,
+                effort,
+                ...(selectedChatModel ? { soloModel: selectedChatModel } : {}),
+            });
+            return;
+        }
         // A new session starts bound to the chart + composer state on screen,
         // so coming back to it restores exactly this setup (send re-stamps on
         // every turn; a bot-bound session takes its model from the bot).
@@ -1191,9 +1232,8 @@ ${riskConstitution}`
             effort,
             ...(kind === 'solo' && selectedChatModel ? { soloModel: selectedChatModel } : {}),
         });
-        setShowNewMenu(false);
         if (kind === 'panel') setPanelPickerFor(id);
-    }, [symbol, interval, effort, selectedChatModel]);
+    }, [symbol, interval, effort, selectedChatModel, onNewChat, clearAttachments]);
 
     const removeSession = useCallback((id: string): void => {
         // Abort the session's runs FIRST: chatStore.removeSession kills the
@@ -1345,16 +1385,16 @@ ${riskConstitution}`
 
     return (
         <div
-            className={`relative flex h-full min-h-0 flex-col bg-transparent ${isChatFocus ? '' : 'border-l border-hairline lg:border-l-0'}`}
+            className={`relative flex h-full min-h-0 flex-col ${isChatFocus ? 'bg-transparent' : 'bg-zinc-900/25'}`}
             data-testid="trade-chat-panel"
         >
-            {/* Header — quiet single-row bar. In Chat focus mode it runs flush
+            {/* Header — borderless tonal bar. In Chat focus mode it runs flush
                 across the workspace with an interactive thread title switcher;
                 in Desk mode it stays compact above the market context row. */}
             <div className={`@container flex shrink-0 items-center gap-2.5 ${
                 isChatFocus
-                    ? 'border-b border-white/[0.05] bg-transparent px-6 py-3'
-                    : 'border-b border-hairline bg-zinc-900/20 px-4 py-2.5'
+                    ? 'bg-transparent px-6 py-3'
+                    : 'bg-transparent px-4 py-2.5'
             }`}>
                 {isChatFocus && leadingChrome}
                 <button
@@ -1394,7 +1434,7 @@ ${riskConstitution}`
                                     the ONE click-outside rung, index.css
                                     --z-shield. */}
                                 <div className="fixed inset-0 z-shield" aria-hidden onClick={() => setShowNewMenu(false)} />
-                                <div className="absolute right-0 top-9 z-shield max-h-96 w-56 overflow-y-auto rounded-bubble border border-hairline bg-zinc-900 p-1 shadow-elevated" data-testid="chat-new-menu">
+                                <div className="motion-popover-down absolute right-0 top-9 z-shield max-h-96 w-56 overflow-y-auto rounded-xl border border-white/[0.08] bg-zinc-900/95 p-1 shadow-elevated backdrop-blur-md" data-testid="chat-new-menu">
                                     {isPanel && (
                                         <button type="button" onClick={() => { setShowNewMenu(false); setPanelPickerFor(activeId); }}
                                             className="block w-full rounded-control px-2 py-1.5 text-left text-ui-dense text-zinc-300 hover:bg-white/[0.06]">
@@ -1604,8 +1644,8 @@ ${riskConstitution}`
                             {QUICK_PROMPTS.map(({ text, Icon }) => (
                                 <button key={text} type="button" disabled={!ready} onClick={() => void send(text)}
                                     className={isChatFocus
-                                        ? 'group flex items-center gap-2.5 rounded-card border border-hairline bg-zinc-900 px-3.5 py-2.5 text-left text-ui-caption text-zinc-300 transition-colors hover:border-line hover:bg-zinc-800 hover:text-zinc-100 disabled:border-hairline disabled:bg-zinc-900 disabled:text-zinc-500'
-                                        : 'group inline-flex w-full items-center gap-2.5 rounded-control px-3 py-2 text-left text-ui-dense text-zinc-400 transition-colors hover:bg-white/[0.04] hover:text-zinc-100 disabled:text-zinc-600 disabled:hover:bg-transparent'}
+                                        ? 'group flex items-center gap-2.5 rounded-xl border border-white/[0.06] bg-zinc-900/65 px-3.5 py-2.5 text-left text-ui-caption text-zinc-300 transition-colors hover:border-white/[0.10] hover:bg-zinc-800/80 hover:text-zinc-100 disabled:border-white/[0.04] disabled:bg-zinc-900/40 disabled:text-zinc-500'
+                                        : 'group inline-flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-ui-dense text-zinc-400 transition-colors hover:bg-white/[0.05] hover:text-zinc-100 disabled:text-zinc-600 disabled:hover:bg-transparent'}
                                 >
                                     <Icon className="h-3.5 w-3.5 shrink-0 text-zinc-500 transition-colors group-hover:text-zinc-200 group-disabled:text-zinc-600" aria-hidden="true" />
                                     <span className="min-w-0 truncate">{text}</span>

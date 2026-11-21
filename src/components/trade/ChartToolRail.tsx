@@ -66,7 +66,7 @@ const RailButton: React.FC<RailButtonProps> = ({ title, active = false, disabled
     </button>
 );
 
-const RailSep: React.FC = () => <span className="my-0.5 h-px w-5 shrink-0 bg-white/[0.07]" aria-hidden />;
+const RailSep: React.FC = () => <span className="my-0.5 h-px w-5 shrink-0 bg-white/[0.04]" aria-hidden />;
 
 export interface ChartToolRailProps {
     tool: DrawTool;
@@ -124,7 +124,7 @@ export const ChartToolRail: React.FC<ChartToolRailProps> = ({
             data-testid="chart-tool-rail"
             role="toolbar"
             aria-label="Chart drawing tools"
-            className="absolute left-0 top-0 z-20 flex h-full w-10 flex-col items-center gap-0.5 overflow-y-auto overflow-x-hidden border-r border-hairline bg-zinc-950 py-1.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+            className="absolute left-0 top-0 z-20 flex h-full w-10 flex-col items-center gap-0.5 overflow-y-auto overflow-x-hidden border-r border-white/[0.04] bg-zinc-900/30 py-1.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         >
             <RailButton
                 title="Cursor — select, drag, pan & zoom (Esc)"
@@ -295,7 +295,7 @@ export const ChartToolRail: React.FC<ChartToolRailProps> = ({
                             dock dismisses the palette; the panel rides z-flyout
                             above its own backdrop. */}
                         <div className="fixed inset-0 z-shield" aria-hidden onClick={() => setPaletteOpen(false)} />
-                        <div className="absolute bottom-0 left-9 z-flyout flex flex-col gap-1 rounded-bubble border border-hairline bg-zinc-900 p-2 shadow-elevated" data-testid="rail-palette">
+                        <div className="motion-popover-in absolute bottom-0 left-9 z-flyout flex flex-col gap-1 rounded-xl border border-white/[0.08] bg-zinc-900/95 p-2 shadow-elevated backdrop-blur-md" data-testid="rail-palette">
                             {DRAW_COLORS.map(c => (
                                 <button
                                     key={c}

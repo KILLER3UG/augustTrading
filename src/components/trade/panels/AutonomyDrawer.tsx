@@ -80,9 +80,9 @@ export const AutonomyDrawer: React.FC<{
                 data-testid="autonomy-drawer"
                 role="dialog"
                 aria-label="Autonomy activity"
-                className="absolute right-0 top-9 z-shield w-80 overflow-hidden rounded-bubble border border-hairline bg-zinc-900 shadow-elevated"
+                className="motion-popover-down absolute right-0 top-9 z-shield w-80 overflow-hidden rounded-xl border border-white/[0.08] bg-zinc-900/95 shadow-elevated backdrop-blur-md"
             >
-                <div className="flex items-center justify-between border-b border-hairline px-3 py-2">
+                <div className="flex items-center justify-between border-b border-white/[0.05] px-3 py-2">
                     <span className="text-ui-dense font-medium text-zinc-200">Desk autonomy</span>
                     <button
                         type="button"

@@ -110,6 +110,10 @@ interface TradeViewProps {
      *  and the Agents surface show ONE thread rather than two transcripts.
      *  Read through `entriesForSession`; absent ⇒ the dock is its own chat. */
     conversationRows?: Message[];
+    /** App's active conversation id corresponding to `conversationRows`. */
+    activeConversationId?: string | null;
+    /** Synchronized new-chat trigger from App so dock `+` matches sidebar `New chat`. */
+    onNewChat?: (opts?: { symbol?: string; interval?: string; effort?: ReasoningEffort; soloModel?: string }) => void;
     /** Resolve the analysis message `onRunAnalysis` created, so the dock can
      *  show what its settled verdict was built on. Threaded straight through to
      *  `TradeChatPanel` — the chart surface owns no verdict rendering itself.
@@ -356,7 +360,7 @@ export const useTickFlash = (price: number | undefined): { cls: string; seq: num
 
 
 const TradeView: React.FC<TradeViewProps> = ({
-    memoryEnabled, strategiesEnabled, providers, selectedChatModel, onSelectChatModel, onRefreshModels, verdict, bots = [], trades = [], botSessionRequest, groupSessionRequest, onRunAnalysis, onAnalysisError, onStopRun, botThreadRows, onBotTurnCommit, onSoloTurnCommit, onSyncConversation, conversationRows, onNewGroup, getAnalysisMessage, onLogProposedTrade, onRejectProposedTrade, onUndoApproval, onConfirmRiskChange, onDismissRiskChange, onRevertRiskChange, onConfirmAiSettingChange, onDismissAiSettingChange, onRevertAiSettingChange, onConfirmStrategyActivation, onDismissStrategyActivation, onRevertStrategyActivation, onConfirmSessionPlan, onDismissSessionPlan, onRevertSessionPlan, onConfirmRuleProposal, onDismissRuleProposal, onRevertRuleProposal, renderGroupSurface, groups = [], registerScrollToMessage, modeRequest, activeUsername, onTradeModeChange,    onToggleWatch, onOpenWatchList, watchOpenCount = 0, pinnedMessageIds,
+    memoryEnabled, strategiesEnabled, providers, selectedChatModel, onSelectChatModel, onRefreshModels, verdict, bots = [], trades = [], botSessionRequest, groupSessionRequest, onRunAnalysis, onAnalysisError, onStopRun, botThreadRows, onBotTurnCommit, onSoloTurnCommit, onSyncConversation, conversationRows, activeConversationId, onNewChat, onNewGroup, getAnalysisMessage, onLogProposedTrade, onRejectProposedTrade, onUndoApproval, onConfirmRiskChange, onDismissRiskChange, onRevertRiskChange, onConfirmAiSettingChange, onDismissAiSettingChange, onRevertAiSettingChange, onConfirmStrategyActivation, onDismissStrategyActivation, onRevertStrategyActivation, onConfirmSessionPlan, onDismissSessionPlan, onRevertSessionPlan, onConfirmRuleProposal, onDismissRuleProposal, onRevertRuleProposal, renderGroupSurface, groups = [], registerScrollToMessage, modeRequest, activeUsername, onTradeModeChange,    onToggleWatch, onOpenWatchList, watchOpenCount = 0, pinnedMessageIds,
     onConfirmSettlementCorrection, onDismissSettlementCorrection, onVoidSettlementCorrection,
     onConfirmTradeAction, onDismissTradeAction, leadingChrome }) => {
     // The chart opens on the coin the SHARED chat session carries. Adopting only
@@ -1010,7 +1014,7 @@ const TradeView: React.FC<TradeViewProps> = ({
                 dropped. The sparkline left with the merge: the live chart
                 sits directly below, and a second small chart of the same data
                 was the duplication the reference removes. */}
-            <div className={`${chatLayout ? 'hidden' : 'flex'} shrink-0 items-center gap-2 border-b border-hairline bg-zinc-950 px-3 py-2 sm:px-4`}>
+            <div className={`${chatLayout ? 'hidden' : 'flex'} shrink-0 items-center gap-2 border-b border-white/[0.04] bg-zinc-950 px-3 py-2 sm:px-4`}>
                 <div className="flex min-w-0 items-center gap-1.5">
                     {!chatLayout && leadingChrome}
                     <SymbolPicker symbols={symbols} value={symbol} onChange={changeSymbol}
@@ -1187,7 +1191,7 @@ const TradeView: React.FC<TradeViewProps> = ({
                     <div
                         data-testid="trade-sidebar"
                         data-book-open={bookOpen ? 'true' : 'false'}
-                        className="shrink-0 border-t border-hairline"
+                        className="shrink-0 border-t border-white/[0.04] bg-zinc-900/35"
                     >
                         <button
                             type="button"
@@ -1204,11 +1208,15 @@ const TradeView: React.FC<TradeViewProps> = ({
                             </span>
                             <span className="ml-auto text-zinc-500">{bookOpen ? '▾' : '▴'}</span>
                         </button>
-                        {bookOpen && (
-                            <div style={{ height: BOOK_DRAWER_HEIGHT }} className="overflow-hidden">
-                                <OrderBookPanel bare symbol={symbol} live={feed.depthLive} liveDepth={feed.depth} />
+                        <div className="motion-accordion" data-open={bookOpen ? 'true' : 'false'}>
+                            <div>
+                                {bookOpen && (
+                                    <div style={{ height: BOOK_DRAWER_HEIGHT }} className="overflow-hidden">
+                                        <OrderBookPanel bare symbol={symbol} live={feed.depthLive} liveDepth={feed.depth} />
+                                    </div>
+                                )}
                             </div>
-                        )}
+                        </div>
                     </div>
                 )}
                 {/* Below lg the book pane: full-height OrderBookPanel (bare
@@ -1297,6 +1305,8 @@ const TradeView: React.FC<TradeViewProps> = ({
                         onSoloTurnCommit={onSoloTurnCommit}
                         onSyncConversation={onSyncConversation}
                         conversationRows={conversationRows}
+                        activeConversationId={activeConversationId}
+                        onNewChat={onNewChat}
                     />
                 </RightPanel>
                 {dockCollapsed && !isBelowLg && (

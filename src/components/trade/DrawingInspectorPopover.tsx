@@ -110,7 +110,7 @@ export const DrawingInspectorPopover: React.FC<DrawingInspectorPopoverProps> = (
             data-testid="drawing-inspector-popover"
             role="dialog"
             aria-label={`Edit ${drawing.shortId ?? drawing.kind} drawing`}
-            className="absolute z-30 w-[228px] rounded-bubble border border-hairline bg-zinc-900 p-2.5 shadow-elevated"
+            className="motion-popover-down absolute z-30 w-[228px] rounded-xl border border-white/[0.08] bg-zinc-900/95 p-2.5 shadow-elevated backdrop-blur-md"
             style={{ left, top }}
             onPointerDown={ev => ev.stopPropagation()}
             onKeyDown={ev => {

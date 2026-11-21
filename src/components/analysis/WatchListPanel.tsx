@@ -50,10 +50,10 @@ const WatchListPanel: React.FC<WatchListPanelProps> = ({
     if (!isVisible) return null;
 
     return (
-        <div className="fixed inset-0 z-modal flex items-end justify-end bg-black/50 sm:items-stretch" role="dialog" aria-label="Pinned signals">
+        <div className="motion-backdrop-in fixed inset-0 z-modal flex items-end justify-end bg-black/50 backdrop-blur-[2px] sm:items-stretch" role="dialog" aria-label="Pinned signals">
             <button type="button" className="absolute inset-0 cursor-default" aria-label="Close pinned signals overlay" onClick={onClose} />
-            <div ref={dialogRef} className="relative flex h-[85vh] w-full max-w-md flex-col overflow-hidden rounded-t-2xl border border-hairline bg-zinc-950 shadow-elevated sm:h-full sm:rounded-none sm:border-l sm:border-t-0 sm:border-b-0">
-                <div className="flex items-center gap-2 border-b border-hairline px-4 py-3">
+            <div ref={dialogRef} className="motion-drawer-right relative flex h-[85vh] w-full max-w-md flex-col overflow-hidden rounded-t-2xl border border-white/[0.06] bg-zinc-950 shadow-elevated sm:h-full sm:rounded-none sm:border-l sm:border-t-0 sm:border-b-0">
+                <div className="flex items-center gap-2 border-b border-white/[0.05] px-4 py-3">
                     <PinIcon className="h-4 w-4 text-zinc-300" aria-hidden="true" />
                     <h2 className="text-ui-base font-semibold text-zinc-100">Pinned signals</h2>
                     <span className="text-ui-dense text-zinc-500">{openCount} open</span>

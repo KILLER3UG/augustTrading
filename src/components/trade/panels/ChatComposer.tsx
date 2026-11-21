@@ -176,7 +176,7 @@ const ChatComposer: React.FC<ChatComposerProps> = ({
                 onRemove={removeAttachment}
             />
         )}
-        <div className="rounded-[20px] border border-white/[0.09] bg-zinc-900/90 px-3.5 pb-2.5 pt-3 shadow-[0_8px_28px_rgba(0,0,0,0.35)] transition-[border-color,background-color,box-shadow] duration-150 ease-[var(--ease-snappy)] focus-within:border-white/[0.18] focus-within:bg-zinc-900">
+        <div className="rounded-[20px] border border-white/[0.07] bg-zinc-900/90 px-3.5 pb-2.5 pt-3 shadow-[0_8px_28px_rgba(0,0,0,0.32)] transition-[border-color,background-color,box-shadow] duration-150 ease-[var(--ease-out-expo)] focus-within:border-white/[0.15] focus-within:bg-zinc-900">
             <textarea
                 ref={composerRef}
                 data-testid="composer-input"
@@ -243,7 +243,7 @@ const ChatComposer: React.FC<ChatComposerProps> = ({
                                 rung for every click-outside backdrop — see
                                 index.css --z-shield. */}
                             <div className="fixed inset-0 z-shield" aria-hidden onClick={() => setShowAttachMenu(false)} />
-                            <div className="absolute bottom-10 left-0 z-shield w-52 rounded-card border border-white/[0.1] bg-zinc-900/95 p-1 shadow-elevated backdrop-blur-md" data-testid="attach-menu">
+                            <div className="motion-popover-in absolute bottom-10 left-0 z-shield w-52 rounded-xl border border-white/[0.08] bg-zinc-900/95 p-1 shadow-elevated backdrop-blur-md" data-testid="attach-menu">
                                 <button type="button" onClick={() => { setShowAttachMenu(false); fileInputRef.current?.click(); }}
                                     className="flex w-full items-center gap-2.5 rounded-control px-2.5 py-2 text-left text-ui-dense text-zinc-300 transition-colors hover:bg-white/[0.06] hover:text-zinc-100">
                                     <FileText className="h-3.5 w-3.5 text-zinc-500" aria-hidden="true" /> Upload files &amp; images

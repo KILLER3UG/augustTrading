@@ -3143,7 +3143,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                                 onClick={() => setIndicatorMenuOpen(false)}
                                 className="fixed inset-0 z-20 cursor-default" />
                             <div role="menu" data-testid="chart-indicator-menu"
-                                className="absolute left-0 top-full z-30 mt-1 w-44 rounded-control border border-hairline bg-zinc-900 py-1 shadow-elevated">
+                                className="motion-popover-down absolute left-0 top-full z-30 mt-1 w-44 rounded-xl border border-white/[0.08] bg-zinc-900/95 py-1 shadow-elevated backdrop-blur-md">
                                 {offerableIndicatorIds.map(id => {
                                     const on = indicatorSettings.visible[id];
                                     return (
@@ -3421,7 +3421,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                     return (
                         <div
                             data-testid="drawing-toolbar"
-                            className="absolute z-20 flex items-center gap-0.5 rounded-bubble border border-hairline bg-zinc-900/95 px-1 py-1 shadow-elevated"
+                            className="motion-popover-in absolute z-20 flex items-center gap-0.5 rounded-xl border border-white/[0.08] bg-zinc-900/95 px-1.5 py-1 shadow-elevated backdrop-blur-md"
                             style={{ left, top }}
                         >
                             {DRAW_COLORS.map(c => (

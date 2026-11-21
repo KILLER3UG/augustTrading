@@ -116,9 +116,13 @@ const ConversationRow: React.FC<{
         };
     }, [menuOpen]);
     return (
-        <div className={`group relative flex items-center rounded-control ${
-            selected ? 'bg-white/[0.06] text-zinc-100' : 'text-zinc-500'
-        } ${pinned ? 'border-l-2 border-zinc-400/70 pl-1' : ''}`}>
+        <div className={`group relative flex items-center rounded-lg transition-colors duration-150 ${
+            selected
+                ? 'bg-white/[0.07] text-zinc-100'
+                : pinned
+                    ? 'bg-white/[0.025] text-zinc-400 hover:bg-white/[0.05]'
+                    : 'text-zinc-500 hover:bg-white/[0.04]'
+        }`}>
             {renaming ? (
                 <input
                     autoFocus
@@ -184,7 +188,7 @@ const ConversationRow: React.FC<{
             {menuOpen && (
                 <div
                     ref={menuRef}
-                    className="absolute right-1 top-full z-20 mt-0.5 flex flex-col rounded-control border border-hairline bg-zinc-900 py-1 shadow-elevated"
+                    className="motion-popover-down absolute right-1 top-full z-20 mt-0.5 flex flex-col rounded-xl border border-white/[0.08] bg-zinc-900/95 py-1 shadow-elevated backdrop-blur-md"
                 >
                     <button
                         type="button"
@@ -244,7 +248,7 @@ export const ConversationGroups: React.FC<ConversationGroupsProps> = ({
     const isRunning = (id: string): boolean => runningAgentIds?.has(id) ?? false;
 
     return (
-        <div className="flex min-h-0 flex-1 flex-col">
+        <div className="flex min-h-0 flex-1 flex-col px-2 pt-2">
             <div className="flex shrink-0 flex-col gap-0.5">
                 <button
                     type="button"
@@ -252,7 +256,7 @@ export const ConversationGroups: React.FC<ConversationGroupsProps> = ({
                     aria-label="New chat"
                     title="New chat · Ctrl+K"
                     onClick={onNewChat}
-                    className="flex w-full items-center gap-2.5 rounded-control px-2.5 py-2 text-left text-ui-caption text-zinc-400 transition-colors duration-150 ease-[var(--ease-snappy)] hover:bg-white/[0.05] hover:text-zinc-100"
+                    className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-ui-caption text-zinc-300 transition-colors duration-150 ease-[var(--ease-out-expo)] hover:bg-white/[0.06] hover:text-zinc-100"
                 >
                     <span className="text-ui-base leading-none" aria-hidden="true">+</span>
                     <span className="flex-1 truncate">New chat</span>

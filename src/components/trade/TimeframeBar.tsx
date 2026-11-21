@@ -71,7 +71,7 @@ const TimeframeBar: React.FC<TimeframeBarProps> = ({ interval, onIntervalChange,
     };
 
     return (
-        <div className={`relative flex shrink-0 flex-wrap items-center gap-1 ${className ?? 'border-b border-hairline px-3 py-2'}`}>
+        <div className={`relative flex shrink-0 flex-wrap items-center gap-1 ${className ?? 'px-3 py-1.5'}`}>
             {compact ? (
                 <>
                     <button type="button" data-testid="tf-compact" ref={chipRef}
@@ -95,7 +95,7 @@ const TimeframeBar: React.FC<TimeframeBarProps> = ({ interval, onIntervalChange,
                                 for the same reason. */}
                             <div className="fixed inset-0 z-shield" aria-hidden onClick={() => setMenuOpen(false)} />
                             <div role="menu" data-testid="tf-compact-menu"
-                                className={`absolute left-0 ${menuUp ? 'bottom-8' : 'top-8'} z-flyout w-28 rounded-bubble border border-hairline bg-zinc-900 p-1 shadow-elevated`}>
+                                className={`absolute left-0 ${menuUp ? 'motion-popover-in bottom-8' : 'motion-popover-down top-8'} z-flyout w-28 rounded-xl border border-white/[0.08] bg-zinc-900/95 p-1 shadow-elevated backdrop-blur-md`}>
                                 {shownIntervals.map(tf => (
                                     <button key={tf} type="button" role="menuitem"
                                         onClick={() => { onIntervalChange(tf); setMenuOpen(false); }}
@@ -122,7 +122,7 @@ const TimeframeBar: React.FC<TimeframeBarProps> = ({ interval, onIntervalChange,
                     type="button"
                     onClick={() => onIntervalChange(tf)}
                     className={`rounded-control px-2.5 py-1 font-mono text-ui-dense font-medium tabular-nums transition-colors ${
-                        interval === tf ? 'bg-zinc-700 text-zinc-100 ring-1 ring-white/[0.07]' : 'text-zinc-500 hover:bg-white/[0.05] hover:text-zinc-200'
+                        interval === tf ? 'bg-white/[0.08] text-zinc-100' : 'text-zinc-500 hover:bg-white/[0.05] hover:text-zinc-200'
                     }`}
                 >
                     {tf}
@@ -147,7 +147,7 @@ const TimeframeBar: React.FC<TimeframeBarProps> = ({ interval, onIntervalChange,
                         backdrop must clear the dock (z-drawer) and the panel
                         must clear its own backdrop. */}
                     <div className="fixed inset-0 z-shield" aria-hidden onClick={() => setOpen(false)} />
-                    <div className={`absolute left-2 ${pickerUp ? 'bottom-9' : 'top-9'} z-flyout w-40 rounded-bubble border border-hairline bg-zinc-900 p-1 shadow-elevated`} data-testid="tf-picker">
+                    <div className={`absolute left-2 ${pickerUp ? 'motion-popover-in bottom-9' : 'motion-popover-down top-9'} z-flyout w-40 rounded-xl border border-white/[0.08] bg-zinc-900/95 p-1 shadow-elevated backdrop-blur-md`} data-testid="tf-picker">
                         {/* A SECTION HEADING, so it takes the reference's rule:
                             small, muted, sentence case — not the uppercase
                             letter-spaced eyebrow the data readouts keep. */}

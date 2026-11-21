@@ -72,8 +72,8 @@ const ChatHistoryPalette: React.FC<ChatHistoryPaletteProps> = ({
     };
 
     return (
-        <div className="absolute inset-0 z-40 flex items-start justify-center bg-black/55 px-6 pt-20 backdrop-blur-[2px]" data-testid="chat-history-backdrop" onClick={onClose}>
-        <div className="w-full max-w-md overflow-hidden rounded-[16px] border border-white/[0.1] bg-zinc-900/95 shadow-elevated backdrop-blur-md" data-testid="chat-history" onClick={e => e.stopPropagation()}>
+        <div className="motion-backdrop-in absolute inset-0 z-40 flex items-start justify-center bg-black/55 px-6 pt-20 backdrop-blur-[2px]" data-testid="chat-history-backdrop" onClick={onClose}>
+        <div className="motion-dialog-in w-full max-w-md overflow-hidden rounded-2xl border border-white/[0.08] bg-zinc-900/95 shadow-elevated backdrop-blur-md" data-testid="chat-history" onClick={e => e.stopPropagation()}>
             <input
                 autoFocus
                 value={query}
@@ -142,7 +142,7 @@ const ChatHistoryPalette: React.FC<ChatHistoryPaletteProps> = ({
                     </button>
                 )}
             </div>
-            <div className="flex items-center justify-between border-t border-hairline px-4 py-2 text-ui-xs text-zinc-600">
+            <div className="flex items-center justify-between border-t border-white/[0.06] px-4 py-2 text-ui-xs text-zinc-600">
                 <span>↑↓ to navigate</span>
                 <span>↵ to select</span>
             </div>

@@ -508,17 +508,17 @@ const SettingsMenu: React.FC<SettingsMenuProps> = (props) => {
 
     return (
         <>
-            <div className="fixed inset-0 z-modal bg-black/70" onClick={requestClose} aria-hidden="true" />
+            <div className="motion-backdrop-in fixed inset-0 z-modal bg-black/70 backdrop-blur-[2px]" onClick={requestClose} aria-hidden="true" />
             <div
                 ref={dialogRef}
                 role="dialog"
                 aria-modal="true"
                 aria-labelledby="settings-title"
                 data-testid="settings-window"
-                className="fixed left-1/2 top-1/2 z-modal flex h-[min(88vh,900px)] w-[min(1080px,96vw)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-bubble border border-hairline bg-zinc-950 shadow-elevated motion-fade"
+                className="motion-modal-in fixed left-1/2 top-1/2 z-modal flex h-[min(88vh,900px)] w-[min(1080px,96vw)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-2xl border border-white/[0.08] bg-zinc-950 shadow-elevated"
             >
                 {/* Top bar — sidebar toggle, back/forward, breadcrumb, close. */}
-                <div className="flex h-11 shrink-0 items-center gap-1.5 border-b border-hairline bg-zinc-900/40 px-3">
+                <div className="flex h-11 shrink-0 items-center gap-1.5 border-b border-white/[0.05] bg-zinc-900/40 px-3">
                     <button
                         type="button"
                         onClick={() => setSidebarCollapsed(v => !v)}
@@ -566,7 +566,7 @@ const SettingsMenu: React.FC<SettingsMenuProps> = (props) => {
                     <aside
                         data-testid="settings-sidebar"
                         aria-label="Settings sections"
-                        className={`shrink-0 overflow-hidden bg-zinc-950/60 ${sidebarCollapsed ? 'w-0' : 'w-64 border-r border-hairline'}`}
+                        className={`shrink-0 overflow-hidden bg-zinc-950/60 transition-[width] duration-200 ease-[var(--ease-out-expo)] ${sidebarCollapsed ? 'w-0' : 'w-64 border-r border-white/[0.05]'}`}
                     >
                         <div className={`flex h-full w-64 flex-col transition-[opacity,transform] duration-[var(--motion-base)] ease-[var(--motion-ease)] ${
                             sidebarCollapsed ? 'pointer-events-none -translate-x-3 opacity-0' : 'translate-x-0 opacity-100'

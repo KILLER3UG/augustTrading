@@ -315,6 +315,7 @@
   --radius-control: 10px;
   --radius-composer: 16px;
   --ease-snappy: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
   /* ELEVATION (v4): one shadow, for one kind of thing. The reference casts a
      shadow on a FLOATING layer — a menu, a modal, a palette, a notice — and
      nowhere else; its resting cards and controls are cut planes separated by
@@ -752,17 +753,28 @@ body {
   .stream-typing::after { animation: none; }
 }
 
-/* Chart AI transcript rows fade in as they land (the reference's rendering
-   feel). Opacity only — a row that slides is the "flick" this replaced. */
+/* Chart AI transcript rows and streaming tokens fade in calmly without layout jitter. */
 @keyframes chat-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes stream-fade-in {
   from { opacity: 0; }
   to { opacity: 1; }
 }
 .chat-fade-in {
   animation: chat-fade-in var(--motion-fast) var(--motion-ease);
 }
+.stream-token-fade {
+  animation: stream-fade-in 210ms var(--ease-out-expo) both;
+}
+.stream-block-fade {
+  animation: stream-fade-in 220ms var(--ease-out-expo) both;
+}
 @media (prefers-reduced-motion: reduce) {
-  .chat-fade-in { animation: none; }
+  .chat-fade-in,
+  .stream-token-fade,
+  .stream-block-fade { animation: none; }
 }
 
 /* ===== REASONING ROW (collapsible thinking) =====
@@ -2114,12 +2126,16 @@ select {
   box-shadow: var(--shadow-elevated);
 }
 .analyzed-row .reasoning-row-body {
-  border-color: var(--color-hairline);
-  background: var(--color-surface-panel);
+  border-color: rgba(255, 255, 255, 0.05);
+  background: rgba(255, 255, 255, 0.025);
+}
+.analyzed-row .analyzed-row-body > * + *,
+.analyzed-row .tool-activity-list > * + * {
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
 }
 .tool-row-body {
-  border-color: var(--color-hairline);
-  background: var(--color-surface-page);
+  border-color: rgba(255, 255, 255, 0.05);
+  background: rgba(10, 10, 11, 0.72);
 }
 
 /* The empty conversation's 48px grid was a decoration behind no data. A
@@ -2186,6 +2202,22 @@ body {
   from { opacity: 0; transform: scale(0.96); }
   to { opacity: 1; transform: scale(1); }
 }
+@keyframes motion-popover-up {
+  from { opacity: 0; transform: translateY(4px) scale(0.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes motion-popover-down {
+  from { opacity: 0; transform: translateY(-4px) scale(0.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes motion-dialog-in {
+  from { opacity: 0; transform: translateY(6px) scale(0.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes motion-modal-centered {
+  from { opacity: 0; transform: translateY(6px) scale(0.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
 
 /* Page / tab / panel / list / chart entrances. */
 .motion-page { animation: motion-rise var(--motion-base) var(--motion-ease) both; }
@@ -2193,12 +2225,66 @@ body {
 .motion-panel-in { animation: motion-panel-in var(--motion-base) var(--motion-ease) both; }
 .motion-panel-out { animation: motion-panel-out var(--motion-fast) var(--motion-ease) both; }
 .motion-pop { animation: motion-pop var(--motion-fast) var(--motion-ease) both; }
+.motion-popover-in {
+  animation: motion-popover-up 160ms var(--ease-out-expo) both;
+  transform-origin: bottom center;
+}
+.motion-popover-down {
+  animation: motion-popover-down 160ms var(--ease-out-expo) both;
+  transform-origin: top center;
+}
+.motion-backdrop-in { animation: motion-fade 150ms var(--ease-out-expo) both; }
+.motion-dialog-in { animation: motion-dialog-in 180ms var(--ease-out-expo) both; }
+.motion-modal-in { animation: motion-modal-centered 180ms var(--ease-out-expo) both; }
+.motion-drawer-left { animation: motion-enter-left 180ms var(--ease-out-expo) both; }
+.motion-drawer-right { animation: motion-enter-right 180ms var(--ease-out-expo) both; }
 .motion-fade { animation: motion-fade var(--motion-base) var(--motion-ease) both; }
 .motion-enter-right { animation: motion-enter-right var(--motion-base) var(--motion-ease) both; }
 .motion-enter-left { animation: motion-enter-left var(--motion-base) var(--motion-ease) both; }
 .motion-toast-in { animation: motion-enter-right var(--motion-base) var(--motion-ease) both; }
 .motion-toast-out { animation: motion-panel-out var(--motion-fast) var(--motion-ease) both; }
 .motion-highlight { animation: motion-rise var(--motion-slow) var(--motion-ease) both; }
+
+/* Smooth accordion & native <details> disclosure transitions. */
+.motion-accordion {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition: grid-template-rows 180ms var(--ease-out-expo),
+              opacity 160ms var(--ease-out-expo);
+}
+.motion-accordion[data-open='true'] {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+.motion-accordion > * {
+  overflow: hidden;
+  min-height: 0;
+}
+
+@supports (interpolate-size: allow-keywords) {
+  details.thinking-row,
+  details.tool-row,
+  details.analyzed-row {
+    interpolate-size: allow-keywords;
+  }
+  details.thinking-row::details-content,
+  details.tool-row::details-content,
+  details.analyzed-row::details-content {
+    opacity: 0;
+    block-size: 0;
+    overflow: hidden;
+    transition: block-size 180ms var(--ease-out-expo),
+                opacity 160ms var(--ease-out-expo),
+                content-visibility 180ms allow-discrete;
+  }
+  details.thinking-row[open]::details-content,
+  details.tool-row[open]::details-content,
+  details.analyzed-row[open]::details-content {
+    opacity: 1;
+    block-size: auto;
+  }
+}
 
 /* A list arrives as a short cascade, not a wall. 20ms steps keep the last row
    inside the 250ms ceiling even for an eight-row card. */
@@ -2242,8 +2328,10 @@ body[data-settings-open='true'] .toast-stack {
    own "Reduce motion" switch (body.motion-reduced). */
 @media (prefers-reduced-motion: reduce) {
   .motion-page, .motion-tab, .motion-panel-in, .motion-panel-out, .motion-pop,
-  .motion-fade, .motion-enter-right, .motion-enter-left, .motion-toast-in,
-  .motion-toast-out, .motion-highlight, .motion-list > *,
+  .motion-popover-in, .motion-popover-down, .motion-backdrop-in,
+  .motion-dialog-in, .motion-modal-in, .motion-drawer-left, .motion-drawer-right,
+  .motion-accordion, .motion-fade, .motion-enter-right, .motion-enter-left,
+  .motion-toast-in, .motion-toast-out, .motion-highlight, .motion-list > *,
   .motion-press, .motion-lift, .motion-icon {
     animation: none !important;
     transition: none !important;

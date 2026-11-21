@@ -32,7 +32,7 @@ const TitleBar: React.FC<TitleBarProps> = ({
     return (
         <header
             data-testid="desktop-titlebar"
-            className="titlebar-drag electron-titlebar-bar flex shrink-0 items-center gap-2 border-b border-hairline bg-zinc-950"
+            className="titlebar-drag electron-titlebar-bar flex shrink-0 items-center gap-2 bg-zinc-950"
         >
             <div className="titlebar-no-drag flex shrink-0 items-center gap-1.5">
                 <SidebarToggle expanded={navRailExpanded} onToggle={onToggleNavRail} />

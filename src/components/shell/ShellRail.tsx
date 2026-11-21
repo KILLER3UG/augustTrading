@@ -113,7 +113,7 @@ const ShellRail: React.FC<ShellRailProps> = ({
                     aria-label="Close navigation"
                     data-testid="shell-rail-backdrop"
                     onClick={onCloseOverlay}
-                    className="fixed inset-0 z-30 bg-black/60"
+                    className="motion-backdrop-in fixed inset-0 z-30 bg-black/60 backdrop-blur-[2px]"
                 />
             )}
             <aside
@@ -125,11 +125,11 @@ const ShellRail: React.FC<ShellRailProps> = ({
                     width,
                     ...(overlay ? { maxWidth: 'calc(100vw - 24px)' } : null),
                 }}
-                className={`flex h-full border-r border-hairline bg-zinc-950 ${
+                className={`flex h-full border-r border-white/[0.04] bg-zinc-900/50 ${
                     overlay
-                        ? 'fixed inset-y-0 left-0 z-40 shadow-elevated'
+                        ? 'motion-drawer-left fixed inset-y-0 left-0 z-40 bg-zinc-950 shadow-elevated'
                         : 'relative shrink-0'
-                } ${isResizing ? '' : 'transition-[width] duration-150 ease-[var(--ease-snappy)]'}`}
+                } ${isResizing ? '' : 'transition-[width] duration-150 ease-[var(--ease-out-expo)]'}`}
             >
                 {/* The conversation column: the [Desk | Chat] pill + the rail's
                     collapse toggle head it (the pill IS the surface switch —

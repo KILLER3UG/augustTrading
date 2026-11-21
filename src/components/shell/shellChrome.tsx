@@ -69,7 +69,7 @@ export const AccountRow: React.FC<{
     return (
         <div
             data-testid="nav-account"
-            className="flex shrink-0 flex-col gap-1 border-t border-hairline px-3 py-2.5"
+            className="flex shrink-0 flex-col gap-1 px-3 pb-2.5 pt-2"
         >
             {saveStatus === 'ERROR' && (
                 <span role="status" aria-label="Save failed"

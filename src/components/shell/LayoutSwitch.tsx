@@ -62,7 +62,7 @@ export const LayoutPill: React.FC<LayoutPillProps> = ({ surface, onSelectSurface
             role="group"
             aria-label="Workspace layout"
             data-testid="layout-pill"
-            className="flex items-center rounded-control border border-hairline bg-zinc-900/60 p-0.5"
+            className="flex items-center rounded-control bg-zinc-900/80 p-0.5"
         >
             {SEGMENTS.map((s) => (
                 <button
@@ -76,9 +76,9 @@ export const LayoutPill: React.FC<LayoutPillProps> = ({ surface, onSelectSurface
                     aria-current={surface === s.surface ? 'page' : undefined}
                     title={s.title}
                     data-testid={s.testId}
-                    className={`flex h-6 items-center justify-center rounded-[4px] px-2 text-ui-2xs font-medium tracking-wide transition-colors ${
+                    className={`flex h-6 items-center justify-center rounded-[6px] px-2 text-ui-2xs font-medium tracking-wide transition-colors ${
                         layout === s.layout
-                            ? 'bg-zinc-700/80 text-zinc-100'
+                            ? 'bg-zinc-800 text-zinc-100'
                             : 'text-zinc-500 hover:text-zinc-300'
                     }`}
                 >
@@ -103,7 +103,7 @@ export const LayoutMiniToggle: React.FC<LayoutMiniToggleProps> = ({ surface, onS
             role="group"
             aria-label="Workspace layout"
             data-testid="layout-pill-mini"
-            className="flex items-center rounded-control border border-hairline bg-zinc-900/60 p-0.5"
+            className="flex items-center rounded-control bg-zinc-900/80 p-0.5"
         >
             {SEGMENTS.map((s) => (
                 <button
@@ -117,9 +117,9 @@ export const LayoutMiniToggle: React.FC<LayoutMiniToggleProps> = ({ surface, onS
                     aria-current={surface && surface === s.surface ? 'page' : undefined}
                     title={s.title}
                     data-testid={s.miniTestId}
-                    className={`flex h-6 w-6 items-center justify-center rounded-[4px] font-mono text-[10px] font-bold uppercase transition-colors ${
+                    className={`flex h-6 w-6 items-center justify-center rounded-[6px] font-mono text-[10px] font-bold uppercase transition-colors ${
                         layout === s.layout
-                            ? 'bg-zinc-700/80 text-zinc-100'
+                            ? 'bg-zinc-800 text-zinc-100'
                             : 'text-zinc-500 hover:text-zinc-300'
                     }`}
                 >

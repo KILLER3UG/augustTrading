@@ -90,7 +90,7 @@ export interface ModelMenuProps {
     returnFocusTo?: HTMLElement | null;
 }
 
-interface Pos { top: number; left: number; maxHeight: number }
+interface Pos { top: number; left: number; maxHeight: number; openUp: boolean }
 interface ProviderPanelPos { top: number; left: number }
 
 /** Open upward from the trigger, because the composer's card is at the bottom
@@ -110,7 +110,7 @@ const computeUpward = (anchor: ModelMenuAnchor, h: number): Pos => {
     if (left + MAIN_W > viewportW - FLYOUT_VIEWPORT_MARGIN) {
         left = Math.max(FLYOUT_VIEWPORT_MARGIN, viewportW - MAIN_W - FLYOUT_VIEWPORT_MARGIN);
     }
-    return { top, left, maxHeight: usedH };
+    return { top, left, maxHeight: usedH, openUp };
 };
 
 /** The provider panel sits to the RIGHT of the main panel and flips to the
@@ -136,7 +136,7 @@ const ModelMenu: React.FC<ModelMenuProps> = ({
     const [freeOnly, setFreeOnly] = useState(readFreeOnlyPref);
     const [query, setQuery] = useState('');
     const [starred, setStarred] = useState<string[]>(readStarredModels);
-    const [pos, setPos] = useState<Pos>({ top: Math.max(FLYOUT_VIEWPORT_MARGIN, anchor.top - GAP - MAX_H), left: anchor.left, maxHeight: MAX_H });
+    const [pos, setPos] = useState<Pos>({ top: Math.max(FLYOUT_VIEWPORT_MARGIN, anchor.top - GAP - MAX_H), left: anchor.left, maxHeight: MAX_H, openUp: true });
 
     const mainRef = useRef<HTMLDivElement>(null);
     const providerRef = useRef<HTMLDivElement>(null);
@@ -193,7 +193,7 @@ const ModelMenu: React.FC<ModelMenuProps> = ({
     useLayoutEffect(() => {
         const h = mainRef.current?.getBoundingClientRect().height ?? MAX_H;
         const next = computeUpward({ top: aTop, bottom: aBottom, left: aLeft, right: aLeft }, h);
-        setPos(prev => (prev.top === next.top && prev.left === next.left && prev.maxHeight === next.maxHeight) ? prev : next);
+        setPos(prev => (prev.top === next.top && prev.left === next.left && prev.maxHeight === next.maxHeight && prev.openUp === next.openUp) ? prev : next);
     }, [aTop, aBottom, aLeft, rows.length, showEffort, effort]);
 
     // Focus enters the panel on open; it returns to the trigger on close.
@@ -321,7 +321,7 @@ const ModelMenu: React.FC<ModelMenuProps> = ({
             onPointerDownCapture={(e) => e.stopPropagation()}
             onKeyDown={onProviderPanelKeyDown}
             style={{ top: providerPanelPos.top, left: providerPanelPos.left, width: PROVIDER_W }}
-            className="fixed z-flyout rounded-bubble border border-hairline bg-zinc-900 p-1 shadow-elevated"
+            className="fixed z-flyout rounded-xl border border-white/[0.08] bg-zinc-900/95 p-1 shadow-elevated backdrop-blur-md motion-popover-in"
         >
             <div className="custom-scrollbar max-h-64 overflow-y-auto">
                 {readyProviders.map(p => (
@@ -367,14 +367,14 @@ const ModelMenu: React.FC<ModelMenuProps> = ({
                 onPointerDownCapture={(e) => e.stopPropagation()}
                 onKeyDown={onMainKeyDown}
                 style={{ top: pos.top, left: pos.left, width: MAIN_W, maxHeight: pos.maxHeight }}
-                className="fixed z-flyout flex flex-col rounded-bubble border border-hairline bg-zinc-900 shadow-elevated outline-none"
+                className={`fixed z-flyout flex flex-col rounded-xl border border-white/[0.08] bg-zinc-900/95 shadow-elevated backdrop-blur-md outline-none ${pos.openUp ? 'motion-popover-in' : 'motion-popover-down'}`}
             >
                 <button type="button" role="menuitem" aria-haspopup="menu" aria-expanded={providersOpen}
                     data-testid="model-menu-provider-row"
                     onMouseEnter={() => setProvidersOpen(true)}
                     onClick={() => setProvidersOpen(v => !v)}
                     title={`${activeProvider?.name ?? 'No provider'} — ${activeProvider?.apiFormat ?? ''}`}
-                    className="flex shrink-0 items-center gap-2 border-b border-hairline px-3 py-2.5 text-left transition-colors hover:bg-white/[0.04]">
+                    className="flex shrink-0 items-center gap-2 border-b border-white/[0.05] px-3 py-2.5 text-left transition-colors hover:bg-white/[0.04]">
                     <Box className="h-4 w-4 shrink-0 text-zinc-400" aria-hidden="true" />
                     <span className="min-w-0 flex-1 truncate text-ui-sm font-medium text-zinc-100" title={activeProvider?.name ?? 'No ready provider'}>{activeProvider?.name ?? 'No ready provider'}</span>
                     <span className="shrink-0 rounded-control border border-hairline px-1 text-ui-2xs uppercase tracking-wider text-zinc-500">API</span>

@@ -139,10 +139,10 @@ export const SymbolPicker: React.FC<SymbolPickerProps> = ({
                     <div className="fixed inset-0 z-shield" aria-hidden="true" onClick={() => setOpen(false)} />
                     <div
                         data-testid="symbol-picker"
-                        className="fixed z-flyout w-80 overflow-hidden rounded-bubble border border-hairline bg-zinc-900 shadow-elevated"
+                        className={`fixed z-flyout w-80 overflow-hidden rounded-xl border border-white/[0.08] bg-zinc-900/95 shadow-elevated backdrop-blur-md ${anchor.bottom !== undefined ? 'motion-popover-in' : 'motion-popover-down'}`}
                         style={anchor}
                     >
-                        <div className="flex items-center gap-2 border-b border-hairline px-3 py-2">
+                        <div className="flex items-center gap-2 border-b border-white/[0.05] px-3 py-2">
                             <Search className="h-3.5 w-3.5 shrink-0 text-zinc-500" aria-hidden="true" />
                             <input
                                 ref={inputRef}
