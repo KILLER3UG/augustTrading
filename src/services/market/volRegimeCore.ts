@@ -58,7 +58,7 @@ const yangZhangVariance = (bars: Kline[]): number | null => {
     const k = 0.34 / (1.34 + (m + 1) / (m - 1));
     const varO = sampleVariance(o);
     const varC = sampleVariance(c);
-    const varRS = rs / Math.max(1, m - 1);
+    const varRS = rs / Math.max(1, m);
     return Math.max(0, varO + k * varC + (1 - k) * varRS);
 };
 
@@ -82,9 +82,8 @@ export const yangZhangVol = (
     if (estimates.length === 0) return null;
     const perBar = estimates[estimates.length - 1];
     const barsPerYear = (365 * 24 * 3600) / Math.max(1, barSeconds);
-    const history = estimates.slice(0, -1);
-    const percentile = history.length >= minHistory
-        ? Math.round((history.filter(v => v <= perBar).length / history.length) * 100)
+    const percentile = estimates.length >= minHistory
+        ? Math.round((estimates.filter(v => v <= perBar).length / estimates.length) * 100)
         : null;
     return {
         perBar: Number(perBar.toPrecision(8)),
@@ -185,14 +184,16 @@ export const varianceRatio = (closes: number[], k: number): number | null => {
     if (varA <= 0) return null;
     let acc = 0;
     let count = 0;
-    for (let i = k; i < m; i++) {
+    for (let i = k - 1; i < m; i++) {
         const sum = logs.slice(i - k + 1, i + 1).reduce((s, x) => s + x, 0);
         acc += (sum - k * mu) ** 2;
         count += 1;
     }
     if (count <= 0) return null;
-    // VR = Var(k-period sums) / (k · Var(1-period returns)) — ≈ 1 for IID.
-    const varK = acc / count;
+    // VR = Var(k-period sums) / (k · Var(1-period returns)) with Lo–MacKinlay
+    // small-sample bias correction (1 − k/m) — ≈ 1 for IID.
+    const biasFactor = Math.max(1e-9, 1 - k / m);
+    const varK = acc / (count * biasFactor);
     return Number((varK / (k * varA)).toPrecision(6));
 };
 

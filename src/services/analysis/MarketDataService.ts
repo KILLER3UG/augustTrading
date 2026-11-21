@@ -1095,6 +1095,7 @@ export const fetchMarketData = async (symbol: string): Promise<MarketData> => {
  */
 export const fetchFundingRate = async (symbol: string): Promise<number | null> => {
     const normalizedSymbol = normalizeSymbol(symbol);
+    await ensureKnownSymbol(normalizedSymbol);
     const cacheKey = `funding_${normalizedSymbol}`;
 
     const cached = getCached<number>(cacheKey, POINT_IN_TIME_TTL);
@@ -1132,6 +1133,7 @@ export const fetchFundingRate = async (symbol: string): Promise<number | null> =
         // (Not cached: `cached !== null` treats a stored null as a miss.)
         return null;
     } catch (error) {
+        if (error instanceof Error && error.message.startsWith('unknown symbol')) throw error;
         console.warn(`Failed to fetch funding rate for ${normalizedSymbol}:`, error);
         return null;
     }
@@ -1146,6 +1148,7 @@ export const fetchFundingRate = async (symbol: string): Promise<number | null> =
  */
 export const fetchFundingInfo = async (symbol: string): Promise<number | null> => {
     const normalizedSymbol = normalizeSymbol(symbol);
+    await ensureKnownSymbol(normalizedSymbol);
     const cacheKey = `fundinginfo_${normalizedSymbol}`;
     const cached = getCached<number | null>(cacheKey);
     if (cached !== null) return cached;
@@ -1158,7 +1161,8 @@ export const fetchFundingInfo = async (symbol: string): Promise<number | null> =
         const result = hours !== null && hours > 0 ? hours : null;
         if (result !== null) setCache(cacheKey, result);
         return result;
-    } catch {
+    } catch (error) {
+        if (error instanceof Error && error.message.startsWith('unknown symbol')) throw error;
         // Not cached: a missing fundingInfo retries on the next call.
         return null;
     }
@@ -1479,6 +1483,7 @@ export const fetchSymbolUnits = async (symbol: string): Promise<SymbolUnits | nu
  */
 export const fetchOpenInterest = async (symbol: string): Promise<{ oi: number; oiValue: number }> => {
     const normalizedSymbol = normalizeSymbol(symbol);
+    await ensureKnownSymbol(normalizedSymbol);
     const cacheKey = `oi_${normalizedSymbol}`;
 
     const cached = getCached<{ oi: number; oiValue: number }>(cacheKey);
@@ -1513,6 +1518,7 @@ export const fetchOpenInterest = async (symbol: string): Promise<{ oi: number; o
         setCache(cacheKey, result);
         return result;
     } catch (error) {
+        if (error instanceof Error && error.message.startsWith('unknown symbol')) throw error;
         console.warn(`Failed to fetch OI for ${normalizedSymbol}:`, error);
         return { oi: 0, oiValue: 0 };
     }
@@ -1529,6 +1535,7 @@ export const fetchLongShortRatio = async (symbol: string): Promise<{
     sentiment: 'extreme_long' | 'long_bias' | 'neutral' | 'short_bias' | 'extreme_short';
 }> => {
     const normalizedSymbol = normalizeSymbol(symbol);
+    await ensureKnownSymbol(normalizedSymbol);
     const cacheKey = `lsr_${normalizedSymbol}`;
 
     const cached = getCached<ReturnType<typeof fetchLongShortRatio> extends Promise<infer T> ? T : never>(cacheKey);
@@ -1560,6 +1567,7 @@ export const fetchLongShortRatio = async (symbol: string): Promise<{
         setCache(cacheKey, result);
         return result;
     } catch (error) {
+        if (error instanceof Error && error.message.startsWith('unknown symbol')) throw error;
         console.warn(`Failed to fetch Long/Short ratio for ${normalizedSymbol}:`, error);
         return { longAccount: 50, shortAccount: 50, ratio: 1, sentiment: 'neutral' };
     }
@@ -1576,6 +1584,7 @@ export const fetchTopTraderRatio = async (symbol: string): Promise<{
     sentiment: 'extreme_long' | 'long_bias' | 'neutral' | 'short_bias' | 'extreme_short';
 }> => {
     const normalizedSymbol = normalizeSymbol(symbol);
+    await ensureKnownSymbol(normalizedSymbol);
     const cacheKey = `ttr_${normalizedSymbol}`;
 
     const cached = getCached<ReturnType<typeof fetchTopTraderRatio> extends Promise<infer T> ? T : never>(cacheKey);
@@ -1606,6 +1615,7 @@ export const fetchTopTraderRatio = async (symbol: string): Promise<{
         setCache(cacheKey, result);
         return result;
     } catch (error) {
+        if (error instanceof Error && error.message.startsWith('unknown symbol')) throw error;
         console.warn(`Failed to fetch Top Trader ratio for ${normalizedSymbol}:`, error);
         return { longAccount: 50, shortAccount: 50, ratio: 1, sentiment: 'neutral' };
     }
@@ -1622,6 +1632,7 @@ export const fetchTakerBuySellRatio = async (symbol: string): Promise<{
     pressure: 'strong_buying' | 'buying' | 'neutral' | 'selling' | 'strong_selling';
 }> => {
     const normalizedSymbol = normalizeSymbol(symbol);
+    await ensureKnownSymbol(normalizedSymbol);
     const cacheKey = `tbs_${normalizedSymbol}`;
 
     const cached = getCached<ReturnType<typeof fetchTakerBuySellRatio> extends Promise<infer T> ? T : never>(cacheKey);
@@ -1652,6 +1663,7 @@ export const fetchTakerBuySellRatio = async (symbol: string): Promise<{
         setCache(cacheKey, result);
         return result;
     } catch (error) {
+        if (error instanceof Error && error.message.startsWith('unknown symbol')) throw error;
         console.warn(`Failed to fetch Taker Buy/Sell for ${normalizedSymbol}:`, error);
         return { buyVolume: 0, sellVolume: 0, ratio: 1, pressure: 'neutral' };
     }
@@ -1666,6 +1678,7 @@ export const fetchFundingRateHistory = async (
     symbol: string, limit = 21,
 ): Promise<{ t: number; rate: number }[]> => {
     const normalizedSymbol = normalizeSymbol(symbol);
+    await ensureKnownSymbol(normalizedSymbol);
     const cacheKey = `fundhist_${normalizedSymbol}_${limit}`;
     const cached = getCached<{ t: number; rate: number }[]>(cacheKey);
     if (cached) return cached;
@@ -1679,6 +1692,7 @@ export const fetchFundingRateHistory = async (
         setCache(cacheKey, rows);
         return rows;
     } catch (error) {
+        if (error instanceof Error && error.message.startsWith('unknown symbol')) throw error;
         console.warn(`Failed to fetch funding history for ${normalizedSymbol}:`, error);
         return [];
     }
@@ -1694,6 +1708,7 @@ export const fetchOpenInterestHistory = async (
     symbol: string, period = '1h', limit = 24,
 ): Promise<{ t: number; oi: number; value: number }[]> => {
     const normalizedSymbol = normalizeSymbol(symbol);
+    await ensureKnownSymbol(normalizedSymbol);
     const cacheKey = `oihist_${normalizedSymbol}_${period}_${limit}`;
     const cached = getCached<{ t: number; oi: number; value: number }[]>(cacheKey);
     if (cached) return cached;
@@ -1706,6 +1721,7 @@ export const fetchOpenInterestHistory = async (
         setCache(cacheKey, rows);
         return rows;
     } catch (error) {
+        if (error instanceof Error && error.message.startsWith('unknown symbol')) throw error;
         console.warn(`Failed to fetch OI history for ${normalizedSymbol}:`, error);
         return [];
     }
@@ -1720,6 +1736,7 @@ export const fetchBasisHistory = async (
     symbol: string, period = '1h', limit = 24,
 ): Promise<{ t: number; basis: number; basisRate: number }[]> => {
     const normalizedSymbol = normalizeSymbol(symbol);
+    await ensureKnownSymbol(normalizedSymbol);
     const cacheKey = `basis_${normalizedSymbol}_${period}_${limit}`;
     const cached = getCached<{ t: number; basis: number; basisRate: number }[]>(cacheKey);
     if (cached) return cached;
@@ -1732,6 +1749,7 @@ export const fetchBasisHistory = async (
         setCache(cacheKey, rows);
         return rows;
     } catch (error) {
+        if (error instanceof Error && error.message.startsWith('unknown symbol')) throw error;
         console.warn(`Failed to fetch basis for ${normalizedSymbol}:`, error);
         return [];
     }
@@ -1753,6 +1771,7 @@ const fundingStreakOf = (rows: { t: number; rate: number }[]): number => {
  */
 export const fetchDerivativesData = async (symbol: string): Promise<DerivativesData> => {
     const normalizedSymbol = normalizeSymbol(symbol);
+    await ensureKnownSymbol(normalizedSymbol);
     const cacheKey = `derivatives_${normalizedSymbol}`;
 
     const cached = getCached<DerivativesData>(cacheKey);
@@ -1829,6 +1848,7 @@ export const fetchDerivativesData = async (symbol: string): Promise<DerivativesD
         setCache(cacheKey, result);
         return result;
     } catch (error) {
+        if (error instanceof Error && error.message.startsWith('unknown symbol')) throw error;
         console.error(`Failed to fetch derivatives data for ${normalizedSymbol}:`, error);
         // Return neutral defaults
         return {
@@ -2079,6 +2099,7 @@ export const fetchRecentLiquidations = async (symbol: string): Promise<Liquidati
 
     // Short-circuit FIRST — don't even read the cache, don't hammer.
     if (liquidationsSourceUnavailable) return getRetiredLiquidations();
+    await ensureKnownSymbol(normalizedSymbol);
 
     const cacheKey = `liquidations_${normalizedSymbol}`;
 
@@ -2202,6 +2223,7 @@ export const fetchRecentLiquidations = async (symbol: string): Promise<Liquidati
         setCache(cacheKey, result);
         return result;
     } catch (error) {
+        if (error instanceof Error && error.message.startsWith('unknown symbol')) throw error;
         console.warn(`Failed to fetch liquidations for ${normalizedSymbol}:`, error);
         return getDefaultLiquidations();
     }

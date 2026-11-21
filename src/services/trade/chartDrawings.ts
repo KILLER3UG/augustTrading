@@ -106,7 +106,7 @@ const KINDS: readonly string[] = [
 ];
 
 /** Fibonacci retracement ratios drawn between a fib's two anchors. */
-export const FIB_RATIOS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1] as const;
+export const FIB_RATIOS = [0, 0.236, 0.382, 0.5, 0.618, 0.705, 0.786, 1] as const;
 
 /** TradingView-style palette for the user's drawing tools (theme-aligned:
  *  emerald/rose/amber/sky/violet). Lives here (not in the chart component)
@@ -969,7 +969,7 @@ export const describeDrawingsForModel = (
                 const low = Math.min(a.p, b.p);
                 const concreteFibs = ev?.fibLevels
                     ? ev.fibLevels.map(f => `${(f.ratio * 100).toFixed(1).replace(/\.0$/, '')}%=${fmt(f.price)}`).join(', ')
-                    : FIB_RATIOS.map(r => `${(r * 100).toFixed(1).replace(/\.0$/, '')}%=${fmt(a.p + (b.p - a.p) * r)}`).join(', ');
+                    : FIB_RATIOS.map(r => `${(r * 100).toFixed(1).replace(/\.0$/, '')}%=${fmt(b.p - (b.p - a.p) * r)}`).join(', ');
                 return `- ${handle}fibonacci retracement${tfTag}${tag} from ${fmt(low)} to ${fmt(high)}, levels [${concreteFibs}], spans ${spanName(Math.abs(b.t - a.t))}${evalTail}${suffix}`;
             }
             case 'channel': {

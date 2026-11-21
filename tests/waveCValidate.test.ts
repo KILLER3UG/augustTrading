@@ -228,6 +228,15 @@ describe('Wave C — Deribit options context', () => {
 
 // ─── C3: the four distilled Skills ──────────────────────────────────────────
 
+import {
+    parseSkillMarkdown,
+} from '../src/services/learning/SkillFileService';
+import {
+    skillFormatIssues,
+    scanSkillText,
+} from '../src/utils/skillFrontmatter';
+import { toAnthropicTools } from '../src/services/analysis/DeskToolsService';
+
 describe('Wave C — distilled Skills', () => {
     const skills = [
         'brooks-trend-pullback-h2-l2',
@@ -235,16 +244,25 @@ describe('Wave C — distilled Skills', () => {
         'confirmed-range-and-breakout',
         'spot-perp-crowding-fade',
     ];
-    it('all four SKILL.md files exist with frontmatter and the required sections', () => {
+    it('all four SKILL.md files exist with frontmatter, pass loader validation, and align with real desk tool names', () => {
+        const knownTools = new Set((toAnthropicTools() as Array<{ name: string }>).map(t => t.name));
         for (const slug of skills) {
             const file = path.join(ROOT, 'skills', slug, 'SKILL.md');
             assert.ok(fs.existsSync(file), `${file} missing`);
             const text = fs.readFileSync(file, 'utf-8');
-            assert.match(text, /^---\nname: /m, `${slug}: frontmatter name`);
-            assert.match(text, /^description: /m, `${slug}: frontmatter description`);
+            const parsed = parseSkillMarkdown(text);
+            assert.ok(parsed && parsed.name && parsed.description && parsed.body, `${slug}: parseSkillMarkdown`);
+            assert.deepEqual(skillFormatIssues(text), [], `${slug}: format issues`);
+            assert.deepEqual(scanSkillText(text), [], `${slug}: security scan findings`);
             for (const section of ['## When to use', '## Steps', '## Pitfalls', '## Verification']) {
                 assert.ok(text.includes(section), `${slug}: missing ${section}`);
             }
+            // Every referenced tool name in backticks must be a real registered desk tool.
+            for (const m of text.matchAll(/`(get_regime|swing_structure|order_flow|imbalances|trade_math|run_monte_carlo|get_key_levels|sr_zones|liquidity|get_order_book|setup_base_rate|get_btc_context|derivatives_state|get_derivatives)`/g)) {
+                assert.ok(knownTools.has(m[1]), `${slug}: unknown tool ${m[1]}`);
+            }
+            assert.ok(!text.includes('expectedHoldHours'), `${slug}: must use snake_case expected_hold_hours`);
+            assert.ok(!text.includes('get_derivatives.funding_state'), `${slug}: funding_state lives on derivatives_state, not get_derivatives`);
         }
     });
 });

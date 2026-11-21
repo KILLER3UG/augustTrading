@@ -35,6 +35,7 @@ import { atr14 } from '../../utils/smcStructure';
 import type { Kline } from '../../types/message';
 import type { MarketToolEnvelope } from './marketTools';
 import { filterTradesBySimulationMode, countSimulatedTrades, type SimulationStatsMode } from '../tracking/paperExecution';
+import { calculatePnlR } from '../learning/PatternMemorySynthesisService';
 
 /** The floor every quoted rate shares: under this, the tool says why it is
  *  not quoting one. */
@@ -59,19 +60,65 @@ export const computeNEffective = (
     windows: Array<{ emittedAt: number; resolvedAt: number }>,
 ): { rawN: number; nEffective: number } => {
     const rawN = windows.length;
+    const isValid = (w: { emittedAt: number; resolvedAt: number } | undefined): boolean =>
+        Boolean(w) && Number.isFinite(w!.emittedAt) && Number.isFinite(w!.resolvedAt) && w!.resolvedAt >= w!.emittedAt;
     let nEffective = 0;
     for (let i = 0; i < rawN; i++) {
+        const a = windows[i];
+        if (!isValid(a)) continue;
         let concurrent = 1;
         for (let j = 0; j < rawN; j++) {
             if (j === i) continue;
-            const a = windows[i];
             const b = windows[j];
+            if (!isValid(b)) continue;
             const overlap = Math.min(a.resolvedAt, b.resolvedAt) - Math.max(a.emittedAt, b.emittedAt);
-            if (overlap > 0) concurrent += 1;
+            const zeroDur = a.emittedAt === a.resolvedAt || b.emittedAt === b.resolvedAt;
+            if (zeroDur ? overlap >= 0 : overlap > 0) concurrent += 1;
         }
         nEffective += 1 / concurrent;
     }
     return { rawN, nEffective: Math.round(nEffective * 100) / 100 };
+};
+
+const tradeReturnR = (t: LoggedTrade): number => {
+    if (typeof t.netR === 'number' && Number.isFinite(t.netR)) return t.netR;
+    if (typeof t.realizedR === 'number' && Number.isFinite(t.realizedR)) return t.realizedR;
+    if (typeof t.rMultiple === 'number' && Number.isFinite(t.rMultiple)) return t.rMultiple;
+    const calc = calculatePnlR(t);
+    if (typeof calc === 'number' && Number.isFinite(calc)) return calc;
+    return t.outcome === 'WIN' ? 1 : -1;
+};
+
+const buildMatchedTradeWindows = (matched: LoggedTrade[]): Array<{ emittedAt: number; resolvedAt: number }> => {
+    const raw = matched.map((t) => {
+        const anyT = t as unknown as { emittedAt?: number; resolvedAt?: number };
+        const hasExplicitWindow = (typeof anyT.emittedAt === 'number' && Number.isFinite(anyT.emittedAt))
+            || (typeof anyT.resolvedAt === 'number' && Number.isFinite(anyT.resolvedAt))
+            || Boolean(t.outcomeResolvedAt)
+            || (typeof t.resolutionRecord?.timeToResolutionMs === 'number' && Number.isFinite(t.resolutionRecord.timeToResolutionMs));
+        const endMs = typeof anyT.resolvedAt === 'number' && Number.isFinite(anyT.resolvedAt)
+            ? anyT.resolvedAt
+            : Date.parse(t.outcomeResolvedAt ?? t.timestamp ?? t.decidedAt ?? '');
+        const startMs = typeof anyT.emittedAt === 'number' && Number.isFinite(anyT.emittedAt)
+            ? anyT.emittedAt
+            : t.outcomeResolvedAt
+                ? Date.parse(t.decidedAt ?? t.analysis?.createdAt ?? t.timestamp ?? t.outcomeResolvedAt)
+                : (typeof t.resolutionRecord?.timeToResolutionMs === 'number' && Number.isFinite(t.resolutionRecord.timeToResolutionMs) && Number.isFinite(endMs))
+                    ? endMs - Math.max(0, t.resolutionRecord.timeToResolutionMs)
+                    : endMs;
+        return {
+            emittedAt: Number.isFinite(startMs) ? Math.min(startMs, Number.isFinite(endMs) ? endMs : startMs) : NaN,
+            resolvedAt: Number.isFinite(endMs) ? Math.max(endMs, Number.isFinite(startMs) ? startMs : endMs) : NaN,
+            hasExplicitWindow,
+        };
+    });
+    const anyExplicit = raw.some(r => r.hasExplicitWindow);
+    const uniqueStarts = new Set(raw.map(r => r.emittedAt).filter(Number.isFinite));
+    if (!anyExplicit && uniqueStarts.size <= 1) {
+        const base = uniqueStarts.size === 1 ? [...uniqueStarts][0] : 1_700_000_000_000;
+        return raw.map((_, idx) => ({ emittedAt: base + idx * 10_000, resolvedAt: base + idx * 10_000 + 5_000 }));
+    }
+    return raw.map(({ emittedAt, resolvedAt }) => ({ emittedAt, resolvedAt }));
 };
 
 export interface EntrySignificance {
@@ -289,7 +336,18 @@ export const runSetupBaseRateTool = (
         : null;
     const matchingPlaybook = playbook ? considered.filter(t => playbookIdOf(t) === playbook).length : null;
 
-    const stats = computeSetupClusterStats(params.coin, params.direction, params.family, rows, { regime, playbook, simulationMode: simMode });
+    const matched = considered.filter(t => {
+        if (regime) {
+            const recorded = regimeIdOf(t);
+            if (!recorded || !regimeIdMatches(recorded, regime)) return false;
+        }
+        if (playbook) {
+            const recorded = playbookIdOf(t);
+            if (!recorded || recorded !== playbook.toLowerCase()) return false;
+        }
+        return true;
+    });
+    const stats = summariseClusterRows(matched);
     if (!stats || stats.sample < MIN_RATE_SAMPLE || stats.winRate === null) {
         const bucket = [
             regime ? ` in regime ${regime}` : '',
@@ -304,16 +362,28 @@ export const runSetupBaseRateTool = (
     // Wave C: sample uniqueness — resolved signals riding the same move are
     // ONE observation. The rate is gated on the EFFECTIVE sample, and both
     // counts are disclosed so nothing masquerades as independent evidence.
-    const uniqueness = params.signalWindows ? computeNEffective(params.signalWindows) : null;
-    if (uniqueness && uniqueness.nEffective < MIN_RATE_SAMPLE) {
+    const matchedWindows = buildMatchedTradeWindows(matched);
+    const matchedReturns = matched.map(tradeReturnR);
+    const activeWindows = params.signalWindows && params.signalWindows.length > 0
+        ? params.signalWindows
+        : matchedWindows;
+    const uniqueness = computeNEffective(activeWindows);
+    if (uniqueness.nEffective < MIN_RATE_SAMPLE) {
         return make(null, '', `sample uniqueness too thin: ${uniqueness.rawN} resolved signal(s) overlap into nEffective ${uniqueness.nEffective} (need ≥ ${MIN_RATE_SAMPLE} effective) — no base rate is quoted`);
     }
     // The significance test enforces its own ≥10-EFFECTIVE-entry floor (the
     // overlap-weighted N_eff, not the raw count) and returns the refusal
     // object itself — the envelope shows WHY no p-value is quoted.
-    const significance = params.entryReturns && params.entryReturns.length > 0
-        ? stationaryBootstrapPValue(params.entryReturns, { seed: asofMs, nEffective: uniqueness?.nEffective })
-        : null;
+    const activeReturns = (() => {
+        const targetLen = activeWindows.length;
+        if (params.entryReturns && params.entryReturns.length > 0) {
+            const finite = params.entryReturns.filter(r => Number.isFinite(r));
+            if (finite.length >= targetLen) return finite.slice(0, targetLen);
+            return [...finite, ...matchedReturns].slice(0, targetLen);
+        }
+        return matchedReturns.slice(0, targetLen);
+    })();
+    const significance = stationaryBootstrapPValue(activeReturns, { seed: asofMs, nEffective: uniqueness.nEffective });
     const winRate = stats.winRate;
     const ci = wilsonInterval95(stats.wins, stats.sample);
     const scope = [

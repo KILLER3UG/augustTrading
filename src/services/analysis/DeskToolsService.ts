@@ -3249,7 +3249,8 @@ async function runOrderBook(symbol: string, notionalUsd?: number, side: 'buy' | 
             : {
                 side, notionalUsd, available: false,
                 reason: `book snapshot is ${bookAgeMs === null ? 'missing a fetch timestamp' : `${bookAgeMs}ms old`} (> 5s point-in-time TTL) or empty — refusing to price a fill against a stale book`,
-                vwapFillPrice: null, slippageBps: null, worstFillPrice: null,
+                referencePrice: null, referenceSource: 'unavailable' as const,
+                vwapFillPrice: null, slippageVsMidBps: null, impactVsTopBps: null, worstFillPrice: null,
                 levelsConsumed: 0, baseQuantity: 0, notionalFilledUsd: 0, remainingUsd: notionalUsd,
             }
         : undefined;
@@ -5529,23 +5530,52 @@ ${body}`);
                 // accuracy modules; keep them out of the entry graph too.
                 const jt = await import('./journalTools');
                 if (call.name === 'setup_base_rate') {
-                    // Wave C: the resolved signal ledger feeds the sample
-                    // uniqueness (N_eff) and the entry-significance bootstrap.
+                    const wantCoin = asString(call.arguments.coin) || undefined;
+                    const wantDir = String(call.arguments.direction) === 'Long' ? 'Long'
+                        : String(call.arguments.direction) === 'Short' ? 'Short' : undefined;
+                    const wantFamily = asString(call.arguments.family) || undefined;
+                    const wantRegime = asString(call.arguments.regime) || undefined;
+                    const wantPlaybook = asString(call.arguments.playbook) || undefined;
+                    // Wave C: only use the resolved signal ledger for N_eff and
+                    // significance when it matches the requested filter AND covers
+                    // at least as many fills as the matched journal rows; otherwise
+                    // runSetupBaseRateTool reads the matched journal rows directly.
                     let signalWindows: Array<{ emittedAt: number; resolvedAt: number }> | undefined;
                     let entryReturns: number[] | undefined;
                     try {
-                        const { readSignals } = await import('../signals/signalLedger');
-                        const settled = readSignals().filter(r => r.resolution && Number.isFinite(r.resolution.outcomeR));
-                        signalWindows = settled.map(r => ({ emittedAt: r.signal.emittedAt, resolvedAt: r.resolution!.at }));
-                        entryReturns = settled.map(r => r.resolution!.outcomeR);
-                    } catch { /* ledger unavailable → no uniqueness disclosure this call */ }
+                        const [{ readSignals }, scs] = await Promise.all([
+                            import('../signals/signalLedger'),
+                            import('../learning/setupClusterStats'),
+                        ]);
+                        const journalMatchedCount = wantFamily || wantPlaybook
+                            ? -1
+                            : scs.clusterRows(context.trades ?? [], { coin: wantCoin, direction: wantDir }).filter(t => {
+                                if (!wantRegime) return true;
+                                const rec = scs.regimeIdOf(t);
+                                return rec !== null && scs.regimeIdMatches(rec, jt.normaliseRegimeQuery(wantRegime));
+                            }).length;
+                        const normRegime = wantRegime ? jt.normaliseRegimeQuery(wantRegime) : undefined;
+                        const settled = readSignals().filter(r => {
+                            if (!r.resolution || r.resolution.status === 'never_triggered' || !Number.isFinite(r.resolution.outcomeR)) return false;
+                            if (wantCoin && baseOf(r.signal.coin) !== baseOf(wantCoin)) return false;
+                            if (wantDir && r.signal.direction !== wantDir.toLowerCase()) return false;
+                            if (normRegime) {
+                                const sigRegime = r.signal.marketRegime?.trim().toLowerCase();
+                                if (!sigRegime || !scs.regimeIdMatches(sigRegime, normRegime)) return false;
+                            }
+                            return true;
+                        });
+                        if (settled.length > 0 && journalMatchedCount >= 0 && settled.length >= journalMatchedCount) {
+                            signalWindows = settled.map(r => ({ emittedAt: r.signal.emittedAt, resolvedAt: r.resolution!.at }));
+                            entryReturns = settled.map(r => r.resolution!.outcomeR);
+                        }
+                    } catch { /* ledger unavailable → fall back to matched journal rows */ }
                     content = jt.runSetupBaseRateTool(context.trades ?? [], {
-                        coin: asString(call.arguments.coin) || undefined,
-                        direction: String(call.arguments.direction) === 'Long' ? 'Long'
-                            : String(call.arguments.direction) === 'Short' ? 'Short' : undefined,
-                        family: asString(call.arguments.family) || undefined,
-                        regime: asString(call.arguments.regime) || undefined,
-                        playbook: asString(call.arguments.playbook) || undefined,
+                        coin: wantCoin,
+                        direction: wantDir,
+                        family: wantFamily,
+                        regime: wantRegime,
+                        playbook: wantPlaybook,
                         signalWindows,
                         entryReturns,
                     });
@@ -6336,13 +6366,14 @@ ${body}`);
                 // from a parametric guess.
                 let ruinSeries: number[] = [];
                 if (ruinArgs) {
-                    const journalRs = (context.trades ?? [])
-                        .filter(t => t.outcome !== 'PENDING' && Number.isFinite(t.realizedR ?? t.rMultiple))
-                        .map(t => (t.realizedR ?? t.rMultiple) as number);
+                    const journalRs = filterTradesBySimulationMode(context.trades ?? [], 'real')
+                        .filter(t => t.source !== 'signal' && (t.outcome === 'WIN' || t.outcome === 'LOSS'))
+                        .map(t => t.netR ?? t.realizedR ?? t.rMultiple)
+                        .filter((r): r is number => typeof r === 'number' && Number.isFinite(r));
                     const { readSignals } = await import('../signals/signalLedger');
                     const signalRows = readSignals();
                     const signalRs = signalRows
-                        .filter(row => row.resolution && Number.isFinite(row.resolution.outcomeR))
+                        .filter(row => row.resolution && row.resolution.status !== 'never_triggered' && Number.isFinite(row.resolution.outcomeR))
                         .map(row => ({ emittedAt: row.signal.emittedAt, resolvedAt: row.resolution!.at, r: row.resolution!.outcomeR }));
                     ruinSeries = [...journalRs, ...signalRs.map(s => s.r)];
                     if (ruinSeries.length < 20) {

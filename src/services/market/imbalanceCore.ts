@@ -49,13 +49,12 @@ export const readImbalances = (
     const minSizeAtr = options.minSizeAtr ?? 0.3;
     const minDisplacementAtr = options.minDisplacementAtr ?? 0.8;
     const maxGaps = options.maxGaps ?? 8;
-    // detectFvg indexes into the series it is given (openedAt is an index
-    // into the completed series minus nothing — it slices its own tail), so
-    // hand it the whole completed series and read ages against that.
+    // detectFvg runs over klines.slice(0, -1).slice(-lookback), so openedAt is
+    // relative to that trailing window — align `completed` identically.
     const gaps: Fvg[] = detectFvg(candles, lookback, maxGaps);
     if (gaps.length === 0) return [];
 
-    const completed = candles.slice(0, -1); // detectFvg ignores the forming bar
+    const completed = candles.slice(0, -1).slice(-lookback);
     const reads: ImbalanceRead[] = [];
     for (const g of gaps) {
         const size = g.top - g.bottom;

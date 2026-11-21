@@ -19,6 +19,8 @@
  */
 
 import { getActiveUsername } from '../../utils/activeUser';
+import { plannedRiskRewardSigned, targetsByDistance } from '../../utils/riskReward';
+import { roundTripCostR } from '../../utils/netRiskReward';
 
 export type AdversaryVerdict = 'APPROVE' | 'CAUTION' | 'VETO' | 'UNAVAILABLE';
 
@@ -62,14 +64,22 @@ const ADVERSARY_SYSTEM = [
 export const fallbackAdversaryVerdict = (input: AdversaryInput): AdversaryReview => {
     const { plan, markPrice, atr } = input;
     const risk = Math.abs(plan.entry - plan.stopLoss);
-    const target = [...plan.takeProfits].sort((a, b) =>
-        plan.direction === 'Long'
-            ? Math.abs(a - plan.entry) - Math.abs(b - plan.entry)
-            : Math.abs(b - plan.entry) - Math.abs(a - plan.entry))[0] ?? plan.entry;
-    const reward = Math.abs(target - plan.entry);
-    const netRr = risk > 0 ? reward / risk : 0;
+    const target = targetsByDistance(plan.entry, plan.takeProfits)[0] ?? plan.entry;
+    const signed = plannedRiskRewardSigned({
+        direction: plan.direction,
+        entry: plan.entry,
+        stopLoss: plan.stopLoss,
+        takeProfits: plan.takeProfits,
+    });
+    const stopDistancePct = plan.entry > 0 ? (risk / plan.entry) * 100 : 0;
+    const cost = roundTripCostR({ stopDistancePct });
+    const netRr = signed.inverted ? 0 : Math.max(0, signed.ratio - (cost.known ? (cost.costR as number) : 0));
     const objections: string[] = [];
     let verdict: AdversaryVerdict = 'APPROVE';
+    if (signed.inverted) {
+        objections.push('plan levels are inverted for the stated direction.');
+        verdict = 'VETO';
+    }
     if (markPrice !== null && Number.isFinite(markPrice)) {
         const throughStop = plan.direction === 'Long' ? markPrice <= plan.stopLoss : markPrice >= plan.stopLoss;
         const throughTarget = plan.direction === 'Long' ? markPrice >= target : markPrice <= target;
@@ -131,25 +141,28 @@ export const runAdversaryReview = async (input: AdversaryInput): Promise<Adversa
     const fallback = fallbackAdversaryVerdict(input);
     try {
         const { resolveBackgroundSeat } = await import('./autonomyEngine');
-        const { plannedRiskReward } = await import('../../utils/riskReward');
         const { trendBias } = await import('./regime');
         const seat = await resolveBackgroundSeat(getActiveUsername(), 'adversary');
         if (!seat) return { verdict: 'UNAVAILABLE', objections: [], invalidationCheck: '', at: Date.now() };
 
-        const rr = plannedRiskReward({
+        const signed = plannedRiskRewardSigned({
+            direction: input.plan.direction,
             entry: input.plan.entry,
             stopLoss: input.plan.stopLoss,
             takeProfits: input.plan.takeProfits,
         });
+        const risk = Math.abs(input.plan.entry - input.plan.stopLoss);
+        const stopDistancePct = input.plan.entry > 0 ? (risk / input.plan.entry) * 100 : 0;
+        const cost = roundTripCostR({ stopDistancePct });
+        const rr = signed.inverted ? 0 : Math.max(0, signed.ratio - (cost.known ? (cost.costR as number) : 0));
         const closes = input.candles.map(c => c.close);
         const bias = closes.length >= 30 ? trendBias(closes) : null;
-        const risk = Math.abs(input.plan.entry - input.plan.stopLoss);
         const packet = JSON.stringify({
             plan: {
                 id: input.plan.planId, symbol: input.plan.symbol, direction: input.plan.direction,
                 entry: input.plan.entry, stop: input.plan.stopLoss, targets: input.plan.takeProfits,
             },
-            net_rr_after_fees: rr !== null && Number.isFinite(rr) ? Number(rr.toFixed(2)) : null,
+            net_rr_after_fees: Number.isFinite(rr) ? Number(rr.toFixed(2)) : null,
             mark: input.markPrice,
             atr14: input.atr,
             stop_distance_vs_atr: input.atr && input.atr > 0 ? Number((risk / input.atr).toFixed(2)) : null,

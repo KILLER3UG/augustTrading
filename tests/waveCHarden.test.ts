@@ -13,12 +13,19 @@ import assert from 'node:assert/strict';
 import {
     empiricalBootstrapSimulation,
     calculateRuinRiskFromSeries,
+    monteCarloToMarkdown,
+    runSimulation,
 } from '../src/services/analysis/MonteCarloService';
 import {
     computeNEffective,
     stationaryBootstrapPValue,
     runSetupBaseRateTool,
 } from '../src/services/analysis/journalTools';
+import {
+    gradeParent,
+    MIN_HOLDOUT_SAMPLE,
+    type HarnessParent,
+} from '../src/services/selfMod/harnessOptimization';
 import { compositeCandle } from '../src/services/market/swingStructureCore';
 import type { LoggedTrade } from '../src/types/trade';
 import type { Kline } from '../src/types/message';
@@ -190,6 +197,141 @@ describe('Wave C hardening — entry significance floor', () => {
         assert.equal(r.rawN, 6);
         assert.equal(r.nEffective, 1);
     });
+
+    it('computeNEffective collapses zero-duration identical timestamps and rejects invalid/inverted windows', () => {
+        const zeroDur = computeNEffective(Array.from({ length: 6 }, () => ({ emittedAt: 1_700_000_000_000, resolvedAt: 1_700_000_000_000 })));
+        assert.equal(zeroDur.rawN, 6);
+        assert.equal(zeroDur.nEffective, 1);
+
+        const invalid = computeNEffective([
+            { emittedAt: NaN, resolvedAt: 100 },
+            { emittedAt: 200, resolvedAt: 100 }, // inverted
+            { emittedAt: 300, resolvedAt: 400 },
+        ]);
+        assert.equal(invalid.rawN, 3);
+        assert.equal(invalid.nEffective, 1);
+    });
+
+    it('setup_base_rate evaluates entry_significance over the exact same matched series on mixed ledgers (6+14 refused, 12+8 accepted)', () => {
+        const mkTrade = (i: number, coin: string, direction: 'Long' | 'Short', outcome: 'WIN' | 'LOSS'): LoggedTrade => ({
+            id: `${coin}-${i}`,
+            timestamp: new Date(1_700_000_000_000 + i * 3_600_000).toISOString(),
+            decidedAt: new Date(1_700_000_000_000 + i * 3_600_000).toISOString(),
+            outcomeResolvedAt: new Date(1_700_000_000_000 + i * 3_600_000 + 1_800_000).toISOString(),
+            outcome,
+            realizedR: outcome === 'WIN' ? 2 : -1,
+            analysis: {
+                coinName: coin,
+                direction,
+                detectedPatternFamily: 'pullback',
+                entryPoints: [{ price: '100' }],
+                stopLoss: direction === 'Long' ? '95' : '105',
+                takeProfit: [{ price: direction === 'Long' ? '110' : '90' }],
+            },
+        }) as unknown as LoggedTrade;
+
+        const mixedRefused: LoggedTrade[] = [
+            ...Array.from({ length: 6 }, (_, i) => mkTrade(i, 'BTCUSDT', 'Long', i % 3 === 2 ? 'LOSS' : 'WIN')),
+            ...Array.from({ length: 14 }, (_, i) => mkTrade(i + 6, 'ETHUSDT', 'Short', i % 2 === 0 ? 'WIN' : 'LOSS')),
+        ];
+        const refused = JSON.parse(runSetupBaseRateTool(mixedRefused, { coin: 'BTC', direction: 'Long' }, 1_700_100_000_000));
+        assert.equal(refused.data_quality.available, true);
+        assert.equal(refused.values.sample, 6);
+        assert.equal(refused.values.sample_uniqueness.rawN, 6);
+        assert.equal(refused.values.sample_uniqueness.nEffective, 6);
+        assert.equal(refused.values.entry_significance.available, false);
+        assert.equal(refused.values.entry_significance.entries, 6);
+        assert.equal(refused.values.entry_significance.nEffective, 6);
+        assert.equal(refused.values.entry_significance.entries, refused.values.sample_uniqueness.rawN);
+
+        const mixedAccepted: LoggedTrade[] = [
+            ...Array.from({ length: 12 }, (_, i) => mkTrade(i, 'BTCUSDT', 'Long', i % 4 === 3 ? 'LOSS' : 'WIN')),
+            ...Array.from({ length: 8 }, (_, i) => mkTrade(i + 12, 'ETHUSDT', 'Short', 'LOSS')),
+        ];
+        const accepted = JSON.parse(runSetupBaseRateTool(mixedAccepted, { coin: 'BTC', direction: 'Long' }, 1_700_100_000_000));
+        assert.equal(accepted.data_quality.available, true);
+        assert.equal(accepted.values.sample, 12);
+        assert.equal(accepted.values.sample_uniqueness.rawN, 12);
+        assert.equal(accepted.values.sample_uniqueness.nEffective, 12);
+        assert.equal(accepted.values.entry_significance.available, true);
+        assert.equal(accepted.values.entry_significance.entries, 12);
+        assert.equal(accepted.values.entry_significance.nEffective, 12);
+        assert.equal(accepted.values.entry_significance.entries, accepted.values.sample_uniqueness.rawN);
+    });
+});
+
+describe('Wave C hardening — empirical MC receipt drift & O-150 holdout gate', () => {
+    it('empirical bootstrap accepts 100 closed bars, discloses tape drift without "neutral initial drift", and handles high timeout without NaN CVaR95', () => {
+        // Trending down tape (~ -19% over 220 bars)
+        const downTape: Kline[] = [];
+        let p = 100;
+        const stepFactor = Math.pow(0.81, 1 / 219);
+        for (let i = 0; i < 220; i++) {
+            if (i > 0) p *= stepFactor * (1 + (i % 2 === 0 ? 0.004 : -0.004));
+            downTape.push(bar(i * 3_600_000, p * 1.001, p * 1.005, p * 0.995, p));
+        }
+        const emp100 = empiricalBootstrapSimulation({
+            entry: 100, stopLoss: 95, takeProfits: [110], direction: 'Long',
+            numSimulations: 200, maxSteps: 20, seed: 42, candles: downTape.slice(0, 100),
+        });
+        assert.ok(emp100 !== null && emp100.mode === 'empirical_bootstrap', '100 closed bars (99 returns) must enter empirical_bootstrap');
+        assert.ok(Number.isFinite(emp100.cvar95R), `cvar95R must stay finite even with timeouts: ${emp100.cvar95R}`);
+
+        const emp = empiricalBootstrapSimulation({
+            entry: 100, stopLoss: 95, takeProfits: [110], direction: 'Long',
+            numSimulations: 400, maxSteps: 100, seed: 42, candles: downTape,
+        });
+        assert.ok(emp !== null && emp.tapeDriftPct < -10);
+        const empMd = monteCarloToMarkdown(emp, undefined, {
+            symbol: 'BTCUSDT', direction: 'Long', entry: 100, stopLoss: 95, takeProfits: [110],
+            atr: 2, timeframe: '1h', maxSteps: 100, atrSource: 'measured',
+        });
+        assert.ok(!empMd.includes('neutral initial drift'), `empirical receipt must never print neutral initial drift:\n${empMd}`);
+        assert.match(empMd, /resampled tape drift -\d+\.\d% over 220 bars/);
+
+        const gbm = runSimulation({
+            entry: 100, stopLoss: 95, takeProfits: [110], explicitTargetsOnly: true,
+            direction: 'Long', atr: 2, timeframe: '1h', numSimulations: 400, maxSteps: 100, seed: 42,
+        });
+        gbm.mode = 'gbm_fallback';
+        const gbmMd = monteCarloToMarkdown(gbm, undefined, {
+            symbol: 'BTCUSDT', direction: 'Long', entry: 100, stopLoss: 95, takeProfits: [110],
+            atr: 2, timeframe: '1h', maxSteps: 100, atrSource: 'measured',
+        });
+        assert.ok(gbmMd.includes('neutral initial drift'), `GBM fallback receipt must print neutral initial drift:\n${gbmMd}`);
+    });
+
+    it('O-150 gradeParent refuses 6 overlapping fills (nEffective < 6) and grades 6 disjoint fills', () => {
+        const mkParent = (rawN: number, nEffective: number): HarnessParent => ({
+            id: 'p1',
+            promptId: 'analysis.risk_rules',
+            text: 'rule',
+            kind: 'stop-swept',
+            approvedAt: new Date(1_700_000_000_000).toISOString(),
+            ledgerId: 'l1',
+            baseline: { hitRate: 0.6, samples: 20 },
+            holdout: {
+                fills: 6,
+                won: 2,
+                lost: 4,
+                expired: 0,
+                hitRate: 2 / 6,
+                uniqueness: { rawN, nEffective },
+            },
+            deltaPp: null,
+            status: 'measuring',
+        });
+
+        const overlapping = mkParent(6, 1);
+        gradeParent(overlapping);
+        assert.equal(overlapping.status, 'measuring');
+        assert.equal(overlapping.deltaPp, null);
+
+        const disjoint = mkParent(6, MIN_HOLDOUT_SAMPLE);
+        gradeParent(disjoint);
+        assert.equal(disjoint.status, 'graded');
+        assert.equal(disjoint.deltaPp, Math.round((2 / 6 - 0.6) * 100));
+    });
 });
 
 // ─── Fix 4: the ledger ruin's AR(1) rho + Triple-Penance fields ─────────────
@@ -217,5 +359,21 @@ describe('Wave C hardening — ledger ruin AR(1) + triple penance', () => {
 
     it('refuses under 20 samples exactly as before', () => {
         assert.equal(calculateRuinRiskFromSeries(series.slice(0, 19), 10_000, 5_000, 99), null);
+    });
+
+    it('positive AR(1) serial correlation inflates Triple-Penance drawdown vs negative correlation', () => {
+        // Same marginal distribution (12 wins of +2R, 12 losses of -1R), opposite serial order:
+        // clustered streaks (ρ > 0) vs alternating outcomes (ρ < 0).
+        const clustered = [
+            ...Array.from({ length: 12 }, () => 2),
+            ...Array.from({ length: 12 }, () => -1),
+        ];
+        const alternating = Array.from({ length: 24 }, (_, i) => (i % 2 === 0 ? 2 : -1));
+        const pos = calculateRuinRiskFromSeries(clustered, 10_000, 2_000, 99);
+        const neg = calculateRuinRiskFromSeries(alternating, 10_000, 2_000, 99);
+        assert.ok(pos !== null && neg !== null);
+        assert.ok((pos.ar1Rho1 ?? 0) > 0 && (neg.ar1Rho1 ?? 0) < 0);
+        assert.ok((pos.triplePenanceMaxDdPct ?? 0) > (neg.triplePenanceMaxDdPct ?? Infinity),
+            `clustered DD (${pos.triplePenanceMaxDdPct}%) must exceed alternating DD (${neg.triplePenanceMaxDdPct}%)`);
     });
 });

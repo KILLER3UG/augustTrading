@@ -555,7 +555,7 @@ export const runOrderFlowTool = async (
         // degrades to an honest unavailable block, never a perp stand-in.
         let spotCandles: Kline[] = [];
         try {
-            spotCandles = await fetchSpotOHLCV(symbol, tf, Math.max(80, window * 3));
+            spotCandles = closedCandles(await fetchSpotOHLCV(symbol, tf, Math.max(80, window * 3)), tf, asofMs);
         } catch (e) {
             notes.push(`spot leg refused: ${(e as Error).message}`);
         }
@@ -795,7 +795,7 @@ export const runRegimeTool = async (
                 ? { k4: varianceRatio(candles.map(c => c.close), 4), k8: varianceRatio(candles.map(c => c.close), 8) }
                 : null,
             trendScan: strongest
-                ? { tStat: strongest.tStat, horizonBars: strongest.horizonBars, horizons: trendScanPoints!.map(p => p.horizonBars) }
+                ? { tStat: strongest.tStat, horizonBars: strongest.horizonBars, horizons: trendScanPoints!.map(p => p.horizonBars), byHorizon: trendScanPoints }
                 : null,
             trendScanRefused: quantBarsOk ? null : `need ≥100 closed bars (got ${candles.length})`,
             thresholds: { percentileBars: 90, quantBars: 100 },
@@ -1022,6 +1022,7 @@ export const runDerivativesStateTool = async (
     const symbol = normalizeSymbol(symbolInput);
     const notes: string[] = ['venue: binance-usdtm-futures', 'thresholds are declared starting parameters to validate, not edges'];
     try {
+        await ensureTradableSymbol(symbol);
         // Price series (1h closed) + the derivatives series, all cached at
         // the MarketDataService layer. Failures come back empty/null and the
         // envelope says so per-read — a missing series never blocks the others.
@@ -1335,7 +1336,7 @@ export const runSwingStructureTool = async (
                 ? {
                     direction: fib.direction,
                     from: r4(fib.from.price), to: r4(fib.to.price),
-                    levels: fib.levels.map(l => ({ ratio: l.ratio, price: r4(l.price), confluence: l.confluence })),
+                    levels: fib.levels.map(l => ({ ratio: l.ratio, kind: l.kind, price: r4(l.price), confluence: l.confluence })),
                     tolerance_atr: fib.toleranceAtr,
                 }
                 : null,
@@ -1465,7 +1466,7 @@ export const runImbalancesTool = async (
         const microGaps = microMeasuringGaps(candles);
         const values = {
             gaps: gaps.map(g => ({
-                direction: g.direction, top: r4(g.top), bottom: r4(g.bottom),
+                direction: g.direction, top: r4(g.top), bottom: r4(g.bottom), midpoint: r4(g.midpoint),
                 size_atr: g.sizeAtr, displacement_atr: g.displacementAtr,
                 age_bars: g.ageBars, fill: g.fill, fill_pct: g.fillPct,
             })),

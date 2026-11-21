@@ -4779,6 +4779,56 @@ const checkSkillWrites = async () => {
         && /nEffective >= MIN_HOLDOUT_SAMPLE/.test(harnessSrc)
         && /uniqueness:\s*\{\s*rawN/.test(harnessSrc)
         && !/MIN_RATE_SAMPLE/.test(harnessSrc));
+
+    // Audit pins: mixed setup_base_rate consistency, empirical MC drift disclosure, O-150 gradeParent
+    const mixedAuditRows = [
+        ...Array.from({ length: 6 }, (_, i) => ({
+            id: `btc-${i}`,
+            outcome: i % 3 === 2 ? 'LOSS' : 'WIN',
+            timestamp: new Date(1_700_000_000_000 + i * 3_600_000).toISOString(),
+            decidedAt: new Date(1_700_000_000_000 + i * 3_600_000).toISOString(),
+            outcomeResolvedAt: new Date(1_700_000_000_000 + i * 3_600_000 + 1_800_000).toISOString(),
+            realizedR: i % 3 === 2 ? -1 : 2,
+            analysis: { coinName: 'BTCUSDT', direction: 'Long', entryPoints: [{ price: '100' }], stopLoss: '95', takeProfit: [{ price: '110' }] },
+        })),
+        ...Array.from({ length: 14 }, (_, i) => ({
+            id: `eth-${i}`,
+            outcome: 'WIN',
+            timestamp: new Date(1_700_000_000_000 + (i + 6) * 3_600_000).toISOString(),
+            decidedAt: new Date(1_700_000_000_000 + (i + 6) * 3_600_000).toISOString(),
+            outcomeResolvedAt: new Date(1_700_000_000_000 + (i + 6) * 3_600_000 + 1_800_000).toISOString(),
+            realizedR: 2,
+            analysis: { coinName: 'ETHUSDT', direction: 'Short', entryPoints: [{ price: '100' }], stopLoss: '105', takeProfit: [{ price: '90' }] },
+        })),
+    ];
+    const mixedBaseRate = JSON.parse(jtC.runSetupBaseRateTool(mixedAuditRows, { coin: 'BTC', direction: 'Long' }, 1_700_100_000_000));
+    ok('setup_base_rate: entry_significance matches sample_uniqueness on mixed 6+14 ledger (entries=6, rawN=6, nEffective=6)',
+        mixedBaseRate.values.sample === 6
+        && mixedBaseRate.values.sample_uniqueness.rawN === 6
+        && mixedBaseRate.values.sample_uniqueness.nEffective === 6
+        && mixedBaseRate.values.entry_significance.available === false
+        && mixedBaseRate.values.entry_significance.entries === 6,
+        JSON.stringify(mixedBaseRate.values));
+
+    const empMd = mcC.monteCarloToMarkdown(bootA, undefined, {
+        symbol: 'BTCUSDT', direction: 'Long', entry: 100, stopLoss: 95, takeProfits: [110],
+        atr: 2, timeframe: '1h', maxSteps: 100, atrSource: 'measured',
+    });
+    ok('monte carlo: empirical_bootstrap receipt discloses resampled tape drift and never prints neutral initial drift',
+        empMd.includes('resampled tape drift') && !empMd.includes('neutral initial drift'),
+        empMd);
+
+    const hoAudit = loadModule('src/services/selfMod/harnessOptimization.ts');
+    const overlapParent = {
+        id: 'p-ov', promptId: 'analysis.risk_rules', text: 'x', kind: 'stop-swept',
+        approvedAt: new Date(1_700_000_000_000).toISOString(), ledgerId: 'l-ov',
+        baseline: { hitRate: 0.6, samples: 20 },
+        holdout: { fills: 6, won: 1, lost: 5, expired: 0, hitRate: 1 / 6, uniqueness: { rawN: 6, nEffective: 1 } },
+        deltaPp: null, status: 'measuring',
+    };
+    hoAudit.gradeParent(overlapParent);
+    ok('O-150: gradeParent refuses 6 overlapping fills (nEffective 1 < 6)',
+        overlapParent.status === 'measuring' && overlapParent.deltaPp === null);
     const mdsSrc = hardSrc('src/services/analysis/MarketDataService.ts');
     ok('deribit: the VRP realized leg is a 30-day daily Yang-Zhang window, labeled in the output',
         /realizedVolWindow/.test(mdsSrc) && /'1d',\s*60/.test(mdsSrc) && /86_400, 30, 32/.test(mdsSrc));

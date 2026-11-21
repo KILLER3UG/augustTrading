@@ -213,7 +213,7 @@ export const barCountPullback = (candles: Kline[], tickSize = 0): PullbackRead |
     const higherHigh = last.high > prev.high;
     const lowerLow = last.low < prev.low;
     if (!higherHigh && !lowerLow) return null;
-    const bull = higherHigh;
+    const bull = higherHigh && lowerLow ? last.close >= last.open : higherHigh;
     let count = 1;
     let extreme = bull ? Math.min(prev.low, last.low) : Math.max(prev.high, last.high);
     for (let i = candles.length - 2; i > 0; i--) {
@@ -341,6 +341,15 @@ export const insideClusters = (candles: Kline[], tickSize = 0, max = 3): InsideC
                 indices: [i - 2, i - 1, i],
                 breakoutHigh: Number((c1.high + tick).toFixed(8)),
                 breakoutLow: Number((c1.low - tick).toFixed(8)),
+            });
+            continue;
+        }
+        if (i === candles.length - 1 && isInsideBar(c3, c2) && isInsideBar(c2, c1) && !isInsideBar(c1, c0)) {
+            out.push({
+                kind: 'ii',
+                indices: [i - 1, i],
+                breakoutHigh: Number((c2.high + tick).toFixed(8)),
+                breakoutLow: Number((c2.low - tick).toFixed(8)),
             });
             continue;
         }

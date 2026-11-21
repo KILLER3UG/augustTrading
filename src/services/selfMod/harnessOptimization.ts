@@ -611,7 +611,7 @@ export const rankParents = (pool: HarnessParent[]): HarnessParent[] =>
         .filter(p => p.deltaPp !== null)
         .sort((a, b) => (b.deltaPp! - a.deltaPp!) || b.approvedAt.localeCompare(a.approvedAt));
 
-const gradeParent = (p: HarnessParent): void => {
+export const gradeParent = (p: HarnessParent): void => {
     if (p.holdout && p.holdout.fills >= HOLDOUT_MIN_FILLS
         // O-150: a holdout crowded with overlapping signals is ONE
         // observation repeated — it never grades a promotion or a revert.
@@ -671,7 +671,11 @@ export const runHarnessOptimizationPass = async (
         const p = state.proposal;
         const approvedAt = p.approvedAt ? Date.parse(p.approvedAt) : NaN;
         if (Number.isFinite(approvedAt)) {
-            const postRows = rows.filter(r => r.resolution && r.resolution.at >= approvedAt);
+            const postRows = rows.filter(r =>
+                r.resolution
+                && (r.resolution.status === 'won' || r.resolution.status === 'lost' || r.resolution.status === 'expired')
+                && r.resolution.at >= approvedAt,
+            );
             const post = postRows.map(r => r.resolution!);
             const won = post.filter(r => r.status === 'won').length;
             const lost = post.filter(r => r.status === 'lost').length;
@@ -679,7 +683,7 @@ export const runHarnessOptimizationPass = async (
             const holdoutFills = won + lost + expired;
             const holdoutUniqueness = computeNEffective(postRows.map(r => ({ emittedAt: r.signal.emittedAt, resolvedAt: r.resolution!.at })));
             p.holdout = {
-                fills: post.length, won, lost, expired, hitRate: hitRateOf(post),
+                fills: holdoutFills, won, lost, expired, hitRate: hitRateOf(post),
                 uniqueness: { rawN: holdoutUniqueness.rawN, nEffective: holdoutUniqueness.nEffective },
             };
             // Wave C / O-150: the holdout is graded on the EFFECTIVE sample —

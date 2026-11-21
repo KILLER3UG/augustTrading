@@ -103,6 +103,19 @@ describe('Wave B — spot/perp CVD divergence', () => {
         assert.equal(r.available, false);
         assert.match(r.reason ?? '', /taker-buy volume/);
     });
+
+    it('classifies bearish spot_led and perp_chase when the other book has 0 delta (50% taker buy)', () => {
+        const { perp: p1, spot: s1 } = mkPair(20, 0.15, 0.5); // spot negative, perp 0
+        const rSpotLed = spotPerpCvdDivergence(p1, s1);
+        assert.equal(rSpotLed.classification, 'spot_led');
+        const { perp: p2, spot: s2 } = mkPair(20, 0.5, 0.15); // perp negative, spot 0
+        const rPerpChase = spotPerpCvdDivergence(p2, s2);
+        assert.equal(rPerpChase.classification, 'perp_chase');
+        const { perp: p3, spot: s3 } = mkPair(20, 0.5, 0.5); // both 0
+        const rZero = spotPerpCvdDivergence(p3, s3);
+        assert.equal(rZero.classification, 'aligned');
+        assert.equal(Object.is(rZero.spotCvd, -0), false);
+    });
 });
 
 // ─── B1: VPIN ───────────────────────────────────────────────────────────────
@@ -176,8 +189,15 @@ describe('Wave B — volatility & compression pack', () => {
         assert.ok(wide.annualizedPct > wide.perBar * 100);
     });
 
-    it('Yang-Zhang refuses a window thinner than 3 bars', () => {
+    it('Yang-Zhang refuses a window thinner than 3 bars and quotes percentile right at 90 closed bars', () => {
         assert.equal(yangZhangVol([bar(0, 100, 101, 99, 100)], 3600, 30, 10), null);
+        const tape90: Kline[] = [];
+        for (let i = 0; i < 90; i++) {
+            const p = 100 + Math.sin(i * 0.3) * 2;
+            tape90.push(bar(i * 3600, p - 0.5, p + 1, p - 1, p));
+        }
+        const yz90 = yangZhangVol(tape90, 3600, 30, 60);
+        assert.ok(yz90 !== null && yz90.percentile !== null, '90-bar tape yields 60 estimates and satisfies minHistory=60');
     });
 
     it('bbKcSqueeze fires on a tight tape and stays off when closes disperse', () => {
@@ -410,6 +430,17 @@ describe('Wave B — Brooks bar geometry', () => {
         ];
         const ioi = insideClusters(ioiBars, 0.5);
         assert.ok(ioi.some(c => c.kind === 'ioi' && near(c.breakoutHigh, 111.5) && near(c.breakoutLow, 88.5)), JSON.stringify(ioi));
+        // live ii at the right edge (two newest bars nested inside c1, no breakout bar yet)
+        const liveIiBars = [
+            bar(0, 100, 110, 90, 105),
+            bar(60, 101, 109, 91, 104), // c1 (outer)
+            bar(120, 102, 107, 93, 103), // c2 (inside c1)
+            bar(180, 103, 105, 95, 104), // c3 (inside c2)
+        ];
+        // Make c1 NOT inside c0 so it's ii (not iii)
+        liveIiBars[1] = bar(60, 101, 112, 91, 104);
+        const liveIi = insideClusters(liveIiBars, 0.5);
+        assert.ok(liveIi.some(c => c.kind === 'ii' && c.indices[0] === 2 && c.indices[1] === 3 && near(c.breakoutHigh, 107.5) && near(c.breakoutLow, 92.5)), JSON.stringify(liveIi));
     });
 });
 

@@ -65,6 +65,8 @@ export interface MonteCarloResult {
     cvar95R?: number;
     /** Closed bars the empirical bootstrap resampled. */
     barsUsed?: number;
+    /** Realized net drift (%) of the resampled tape over `barsUsed` bars. */
+    tapeDriftPct?: number;
 }
 
 // Labeled Monte Carlo result for per-AI display
@@ -764,16 +766,24 @@ export const monteCarloToMarkdown = (
         `Avg win ${result.avgWinPercent !== undefined ? result.avgWinPercent.toFixed(2) : '—'}% · avg loss ${result.avgLossPercent !== undefined ? result.avgLossPercent.toFixed(2) : '—'}% · avg adverse excursion ${result.maxDrawdownAvg.toFixed(2)}% · avg resolution ${result.timeToOutcomeAvg.toFixed(0)} candles`,
         `5th–95th percentile trade PnL range: ${result.confidenceInterval.lower.toFixed(2)}% to ${result.confidenceInterval.upper.toFixed(2)}% (per-trade PnL, not account equity).`,
     ];
+    const fmtTapeDrift = (r: MonteCarloResult): string => {
+        const d = typeof r.tapeDriftPct === 'number' && Number.isFinite(r.tapeDriftPct) ? r.tapeDriftPct : 0;
+        return `resampled tape drift ${d >= 0 ? '+' : ''}${d.toFixed(1)}% over ${r.barsUsed ?? '—'} bars`;
+    };
     if (inputs) {
         // O-64: the volatility input is named. `measured` = ATR14 computed
         // from the tape the desk already fetches; `caller` = the model's own
         // number, which the receipt must say so the trader can audit it.
-        lines.push(`Assumptions: ${inputs.maxSteps} candles maximum; ATR ${inputs.atrSource === 'measured' ? 'measured from the tape (ATR14)' : 'supplied by the caller'}, timeframe is a label only; neutral initial drift/regime. Seed ${result.seedUsed ?? 'unknown'}. Average duration includes timeouts.`);
+        const atrLabel = inputs.atrSource === 'measured' ? 'measured from the tape (ATR14)' : 'supplied by the caller';
+        const driftClause = result.mode === 'empirical_bootstrap'
+            ? fmtTapeDrift(result)
+            : 'timeframe is a label only; neutral initial drift/regime';
+        lines.push(`Assumptions: ${inputs.maxSteps} candles maximum; ATR ${atrLabel}, ${driftClause}. Seed ${result.seedUsed ?? 'unknown'}. Average duration includes timeouts.`);
     }
     if (result.mode === 'empirical_bootstrap') {
-        lines.push(`Empirical bootstrap: paths resample the tape's own closed-bar log returns in 5-bar blocks (fat tails and clustering preserved) · P(TP before SL) ${result.pHitTpBeforeSl?.toFixed(1)}% of resolved paths · expected ${result.expectedBarsToBarrier?.toFixed(0)} bars to a barrier · tail MAE p95 ${result.tailMaeP95?.toFixed(2)}% · CVaR95 ${result.cvar95R?.toFixed(2)}R (mean R of the worst 5%, net of costs) · ${result.barsUsed ?? '—'} closed bars resampled.`);
+        lines.push(`Empirical bootstrap: paths resample the tape's own closed-bar log returns in 5-bar blocks (fat tails and clustering preserved; ${fmtTapeDrift(result)}) · P(TP before SL) ${result.pHitTpBeforeSl?.toFixed(1)}% of resolved paths · expected ${result.expectedBarsToBarrier?.toFixed(0)} bars to a barrier · tail MAE p95 ${result.tailMaeP95?.toFixed(2)}% · CVaR95 ${result.cvar95R?.toFixed(2)}R (mean R of the worst 5%, net of costs) · ${result.barsUsed ?? '—'} closed bars resampled.`);
     } else if (result.mode === 'gbm_fallback') {
-        lines.push(`GBM fallback: fewer than 100 closed bars were available, so these paths are parametric normal random walks scaled by ATR — NOT the tape's own return distribution; treat every number here as coarse.`);
+        lines.push(`GBM fallback: fewer than 100 closed bars were available, so these paths are parametric normal random walks scaled by ATR (neutral initial drift) — NOT the tape's own return distribution; treat every number here as coarse.`);
     }
     if (ruinRisk) {
         const ledgerBits = ruinRisk.mode === 'ledger_bootstrap'
@@ -1005,6 +1015,7 @@ export type EmpiricalBootstrapResult = MonteCarloResult & {
     tailMaeP95: number;
     cvar95R: number;
     barsUsed: number;
+    tapeDriftPct: number;
 };
 
 /**
@@ -1030,7 +1041,10 @@ export const empiricalBootstrapSimulation = (
         const cur = candles[i].close;
         if (prev > 0 && cur > 0) returns.push(Math.log(cur / prev));
     }
-    if (returns.length < 100) return null;
+    if (returns.length < 99) return null;
+    const totalLogReturn = returns.reduce((s, r) => s + r, 0);
+    const rawDriftPct = Math.round((Math.exp(totalLogReturn) - 1) * 1000) / 10;
+    const tapeDriftPct = rawDriftPct === 0 ? 0 : rawDriftPct;
     const blockLen = 5;
     const stopDistancePct = (Math.abs(entry - stopLoss) / entry) * 100;
     if (!(stopDistancePct > 0)) return null;
@@ -1043,7 +1057,6 @@ export const empiricalBootstrapSimulation = (
 
     const outcomes: Array<'TP1' | 'TP2' | 'TP3' | 'SL' | 'TIMEOUT'> = [];
     const pnls: number[] = [];
-    const rs: number[] = [];
     const drawdowns: number[] = [];
     const steps: number[] = [];
 
@@ -1073,14 +1086,11 @@ export const empiricalBootstrapSimulation = (
         pnls.push(pnlNet);
         drawdowns.push(result.maxDrawdown);
         steps.push(result.stepsToOutcome);
-        if (result.outcome !== 'TIMEOUT') {
-            rs.push(pnlNet / stopDistancePct);
-        }
     }
 
     const resolvedIdx = outcomes.map((o, i) => (o === 'TIMEOUT' ? -1 : i)).filter(i => i >= 0);
     const resolvedPnls = resolvedIdx.map(i => pnls[i]);
-    const resolvedRs = resolvedIdx.map(i => rs[i]);
+    const resolvedRs = resolvedPnls.map(p => p / stopDistancePct);
     const winCount = outcomes.filter(o => o === 'TP1' || o === 'TP2' || o === 'TP3').length;
     const resolvedCount = resolvedIdx.length;
     const expectedValue = resolvedPnls.length ? resolvedPnls.reduce((s, x) => s + x, 0) / resolvedPnls.length : 0;
@@ -1094,7 +1104,7 @@ export const empiricalBootstrapSimulation = (
     const sortedRs = [...resolvedRs].sort((a, b) => a - b);
     const worstCount = Math.max(1, Math.floor(sortedRs.length * 0.05));
     const worstRs = sortedRs.slice(0, worstCount);
-    const cvar95R = worstRs.reduce((s, x) => s + x, 0) / worstRs.length;
+    const cvar95R = worstRs.length > 0 ? worstRs.reduce((s, x) => s + x, 0) / worstRs.length : 0;
     const sortedDrawdowns = [...drawdowns].sort((a, b) => a - b);
     const tailMaeP95 = sortedDrawdowns[Math.floor(numSimulations * 0.95)];
     const resolvedSteps = resolvedIdx.map(i => steps[i]);
@@ -1127,6 +1137,7 @@ export const empiricalBootstrapSimulation = (
         tailMaeP95: Math.round(tailMaeP95 * 100) / 100,
         cvar95R: Math.round(cvar95R * 10000) / 10000,
         barsUsed: candles.length,
+        tapeDriftPct,
     };
 };
 
@@ -1164,9 +1175,9 @@ export const calculateRuinRiskFromSeries = (
         let maxDd = 0;
         for (let t = 0; t < tradesPerSequence; t++) {
             const r = clean[Math.floor(rng() * clean.length)];
-            equity *= 1 + r * riskFraction;
+            equity = Math.max(0, equity * (1 + r * riskFraction));
             peak = Math.max(peak, equity);
-            maxDd = Math.max(maxDd, (peak - equity) / peak);
+            maxDd = peak > 0 ? Math.max(maxDd, (peak - equity) / peak) : 1;
         }
         if (maxDd >= 0.25) count25 += 1;
         if (maxDd >= 0.5) count50 += 1;
@@ -1198,22 +1209,16 @@ export const calculateRuinRiskFromSeries = (
         const rawRho = cov / ((clean.length - 1) * varianceR);
         ar1Rho1 = Math.max(-0.95, Math.min(0.95, rawRho));
     }
-    // Serial correlation stretches the effective horizon: T_eff = N(1−ρ)/(1+ρ)
-    // (the standard AR(1) variance-inflation read — positive autocorrelation
-    // means crowded, clustered outcomes and deeper drawdowns per trade).
-    const effectiveTrades = ar1Rho1 === null
-        ? clean.length
-        : Math.max(1, Math.round(clean.length * (1 - ar1Rho1) / (1 + ar1Rho1)));
-    // Exact Brownian drawdown expectations in R units:
-    //   edge > 0 → asymptotic max-drawdown mean σ²/(2μ) (exponential law);
-    //   edge ≤ 0 → no recovery in expectation; the driftless σ·√(2T/π) over
-    //   the effective horizon is the honest FLOOR (the true value grows
-    //   without bound as the horizon extends).
-    const edge = meanR > 0 && sigmaR > 0;
+    // Serial correlation inflates long-run diffusion variance by (1+ρ)/(1−ρ)
+    // (Bailey & López de Prado Triple Penance: positive autocorrelation
+    // stretches streaks of losses, increasing σ_eff and expected max drawdown).
+    const ar1Scale = ar1Rho1 === null ? 1 : (1 + ar1Rho1) / (1 - ar1Rho1);
+    const sigmaEffR = sigmaR * Math.sqrt(ar1Scale);
+    const edge = meanR > 0 && sigmaEffR > 0;
     const penanceR = edge
-        ? (sigmaR * sigmaR) / (2 * meanR)
-        : sigmaR * Math.sqrt((2 * effectiveTrades) / Math.PI);
-    const triplePenanceMaxDdPct = sigmaR > 0 ? Number((penanceR * riskFraction * 100).toFixed(2)) : null;
+        ? (sigmaEffR * sigmaEffR) / (2 * meanR)
+        : sigmaEffR * Math.sqrt((2 * clean.length) / Math.PI);
+    const triplePenanceMaxDdPct = sigmaEffR > 0 ? Number((penanceR * riskFraction * 100).toFixed(2)) : null;
     const triplePenanceTimeUnderwaterTrades = edge && meanR > 0 ? Number((penanceR / meanR).toFixed(1)) : null;
     return {
         prob25pctDrawdown: Math.round((count25 / sequenceCount) * 1000) / 10,

@@ -213,5 +213,6 @@ export const computeFundingDrag = (input: FundingDragInput): number => {
     if (!Number.isFinite(input.fundingRate) || !Number.isFinite(input.settlements) || input.settlements <= 0) return 0;
     const notionalPerRisk = input.entry / stopDistance;
     const directionSign = input.direction === 'Long' ? 1 : -1;
-    return Math.round(directionSign * input.fundingRate * input.settlements * notionalPerRisk * 10000) / 10000;
+    const raw = Math.round(directionSign * input.fundingRate * input.settlements * notionalPerRisk * 10000) / 10000;
+    return raw === 0 ? 0 : raw;
 };

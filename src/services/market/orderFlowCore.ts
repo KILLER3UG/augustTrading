@@ -15,7 +15,7 @@ import type { Kline } from '../../types/message';
 
 /** Per-candle delta: 2·takerBuy − volume. `null` when the field is absent. */
 export const candleDelta = (c: Kline): number | null =>
-    typeof c.takerBuyVolume === 'number' && Number.isFinite(c.takerBuyVolume) && c.volume > 0
+    typeof c.takerBuyVolume === 'number' && Number.isFinite(c.takerBuyVolume) && c.takerBuyVolume >= 0 && c.volume >= 0
         ? 2 * c.takerBuyVolume - c.volume
         : null;
 
@@ -130,6 +130,7 @@ export const flowEvents = (
     const events: FlowEvent[] = [];
     for (let i = 0; i < n; i++) {
         const c = recent[i];
+        if (!(c.volume > 0)) continue;
         const d = recentDeltas[i].delta;
         const z = (c.volume - mu) / sd;
         if (z < zThreshold) continue;
@@ -224,16 +225,20 @@ export const spotPerpCvdDivergence = (
     const spotDominates = Math.abs(spotRate) >= dominantRatio * Math.abs(perpRate);
     const perpQuiet = Math.abs(perpRate) < strongRateShare * volRef;
     const spotQuiet = Math.abs(spotRate) < strongRateShare * volRef;
+    const oppositeActive = !perpQuiet && !spotQuiet && ((perpRate > 0 && spotRate < 0) || (perpRate < 0 && spotRate > 0));
     let classification: SpotPerpDivergence['classification'];
-    if (perpRate >= 0 !== spotRate >= 0) classification = 'absorption_risk';
-    else if (spotDominates && !perpDominates) classification = 'spot_led';
-    else if (perpDominates && !spotDominates) classification = 'perp_chase';
+    if (perpQuiet && spotQuiet) classification = 'aligned';
+    else if (oppositeActive) classification = 'absorption_risk';
+    else if (spotDominates && !perpDominates && !spotQuiet) classification = 'spot_led';
+    else if (perpDominates && !spotDominates && !perpQuiet) classification = 'perp_chase';
+    else if ((perpRate > 0 && spotRate < 0) || (perpRate < 0 && spotRate > 0)) classification = 'absorption_risk';
     else classification = 'aligned';
+    const cleanZero = (v: number): number => (v === 0 ? 0 : v);
     return {
         available: true,
-        spotCvd: Math.round(spotCvd * 100) / 100,
-        perpCvd: Math.round(perpCvd * 100) / 100,
-        normalizedDeltaDivergence: Math.round(normalized * 10000) / 10000,
+        spotCvd: cleanZero(Math.round(spotCvd * 100) / 100),
+        perpCvd: cleanZero(Math.round(perpCvd * 100) / 100),
+        normalizedDeltaDivergence: cleanZero(Math.round(normalized * 10000) / 10000),
         classification,
         alignedBars: aligned.length,
         spotBarsUsed: spotCandles.length,
@@ -285,18 +290,19 @@ export const vpin = (
     const probs: number[] = [];
     let accBuy = 0;
     let accSell = 0;
+    const eps = Math.max(1e-9, bucketSize * 1e-9);
     for (const c of candles) {
-        let buyRemaining = c.takerBuyVolume as number;
-        let sellRemaining = c.volume - (c.takerBuyVolume as number);
-        while (buyRemaining + sellRemaining > 0) {
+        if (!(c.volume > 0)) continue;
+        const buyVol = Math.max(0, Math.min(c.volume, c.takerBuyVolume as number));
+        const buyShare = buyVol / c.volume;
+        let rem = c.volume;
+        while (rem > eps) {
             const need = bucketSize - (accBuy + accSell);
-            const take = Math.min(need, buyRemaining + sellRemaining);
-            const buyShare = buyRemaining + sellRemaining > 0 ? buyRemaining / (buyRemaining + sellRemaining) : 0;
+            const take = Math.min(need, rem);
             accBuy += take * buyShare;
             accSell += take * (1 - buyShare);
-            buyRemaining -= take * buyShare;
-            sellRemaining -= take * (1 - buyShare);
-            if (accBuy + accSell >= bucketSize - 1e-9) {
+            rem -= take;
+            if (accBuy + accSell >= bucketSize - eps) {
                 probs.push(Math.abs(accBuy - accSell) / (accBuy + accSell));
                 accBuy = 0;
                 accSell = 0;

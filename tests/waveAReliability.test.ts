@@ -10,12 +10,14 @@ import {
     fetchOrderBookDepth,
     verifySymbolAgainstUniverse,
 } from '../src/services/analysis/MarketDataService';
-import { fetchRangeDetailed, runNakedPocsTool, runVwapTool, runTradeMathTool } from '../src/services/analysis/marketTools';
+import { fetchRangeDetailed, runNakedPocsTool, runVwapTool, runTradeMathTool, runDerivativesStateTool, runRegimeTool, runImbalancesTool } from '../src/services/analysis/marketTools';
 import { evaluateDrawingAtNow } from '../src/services/trade/chartGeometry';
+import { FIB_RATIOS as DRAW_FIB_RATIOS } from '../src/services/trade/chartDrawings';
 import { anchoredSlice } from '../src/services/market/vwapCore';
 import { activeSwingFib } from '../src/services/market/swingStructureCore';
 import { calculateFibonacciLevels } from '../src/services/analysis/TechnicalAnalysisService';
-import { computeTradeMath } from '../src/services/market/tradeMathCore';
+import { computeTradeMath, computeFundingDrag } from '../src/services/market/tradeMathCore';
+import { fallbackAdversaryVerdict } from '../src/services/trade/adversaryReview';
 import { executeDeskTool } from '../src/services/analysis/DeskToolsService';
 import type { ChartDrawing } from '../src/services/trade/chartDrawings';
 import type { EvalCandle } from '../src/services/trade/chartGeometry';
@@ -608,6 +610,76 @@ describe('Wave A — 8a order-book slippage & microprice', () => {
             assert.ok((impact.slippageVsMidBps ?? 0) > 0);
             const thin = estimateBookSlippage(book.bids, book.asks, 'buy', 10_000);
             assert.equal(thin.available, false, 'thin-book refusal');
+        });
+    });
+});
+
+describe('Wave A/B/C audit pins — universe gate, fib OTE parity, adversary Short/inverted, -0 guard, envelope fields', () => {
+    beforeEach(() => __futuresRateLimitTestHooks.reset());
+
+    it('runDerivativesStateTool refuses an unknown symbol with zero futures data calls', async () => {
+        await withMockedFetch(marketHandler(), async (calls) => {
+            const parsed = JSON.parse(await runDerivativesStateTool('FAKECOINUSDT'));
+            assert.equal(parsed.data_quality.available, false);
+            assert.equal(calls.filter(u => u.includes('/fapi/v1/klines') || u.includes('/futures/data/')).length, 0);
+        });
+    });
+
+    it('FIB_RATIOS in chartDrawings includes 0.705 OTE', () => {
+        assert.ok((DRAW_FIB_RATIOS as readonly number[]).includes(0.705));
+    });
+
+    it('computeFundingDrag never returns -0 on zero Short funding rate', () => {
+        const drag = computeFundingDrag({ direction: 'Short', entry: 100, stopLoss: 105, fundingRate: 0, settlements: 3 });
+        assert.equal(Object.is(drag, -0), false);
+        assert.equal(drag, 0);
+    });
+
+    it('fallbackAdversaryVerdict evaluates Short nearest target, deducts round-trip fees, and VETOes inverted brackets', () => {
+        const shortThin = fallbackAdversaryVerdict({
+            plan: { planId: 's1', symbol: 'BTCUSDT', direction: 'Short', entry: 100, stopLoss: 102, takeProfits: [90, 98.1] },
+            markPrice: 100, atr: 2, candles: [{ close: 100 }],
+        });
+        // Nearest target is 98.1 (0.95R gross < 1R after fees) → CAUTION
+        assert.equal(shortThin.verdict, 'CAUTION');
+        assert.ok(shortThin.objections.some(o => o.includes('below 1')));
+
+        const inverted = fallbackAdversaryVerdict({
+            plan: { planId: 's2', symbol: 'BTCUSDT', direction: 'Long', entry: 100, stopLoss: 102, takeProfits: [95] },
+            markPrice: 100, atr: 2, candles: [{ close: 100 }],
+        });
+        assert.equal(inverted.verdict, 'VETO');
+        assert.ok(inverted.objections.some(o => o.includes('inverted')));
+    });
+
+    it('get_regime exposes trendScan.byHorizon and imbalances exposes gaps[].midpoint', async () => {
+        await withMockedFetch((url) => {
+            if (url.includes('/fapi/v1/klines')) {
+                const rows: unknown[][] = [];
+                for (let i = 0; i < 120; i++) {
+                    const t = NOW - (120 - i) * 3_600_000;
+                    let open = 100 + i * 0.4 + (i % 3) * 0.3;
+                    let high = open + 1.2;
+                    let low = open - 0.6;
+                    let close = open + 0.6;
+                    // Create a clear bullish FVG around bar 115: bar 114 high < bar 116 low
+                    if (i === 114) { open = 146; high = 147; low = 145; close = 146.5; }
+                    if (i === 115) { open = 147; high = 154; low = 146.5; close = 153.5; }
+                    if (i === 116) { open = 153; high = 155; low = 151; close = 154; }
+                    if (i > 116) { open = 154; high = 155; low = 152; close = 154.5; }
+                    rows.push([t, String(open), String(high), String(low), String(close), '10', t + 3_599_000, '1000', 10, '5', '500', '0']);
+                }
+                return { json: rows };
+            }
+            return marketHandler()(url);
+        }, async () => {
+            const reg = JSON.parse(await runRegimeTool('BTCUSDT', '1h', NOW));
+            assert.equal(reg.data_quality.available, true);
+            assert.ok(Array.isArray(reg.values.quant.trendScan.byHorizon) && reg.values.quant.trendScan.byHorizon.length === 4);
+
+            const imb = JSON.parse(await runImbalancesTool('BTCUSDT', '1h', NOW));
+            assert.equal(imb.data_quality.available, true);
+            assert.ok(imb.values.gaps.length >= 1 && typeof imb.values.gaps[0].midpoint === 'number');
         });
     });
 });
