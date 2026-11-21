@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import * as dbService from '../services/infrastructure/dbService';
 import { isValidUserProfile } from '../utils/profileUtils';
-import { exportDataAsFile, exportPreferencesData, importPreferencesData } from '../services/infrastructure/ExportService';
 import { clearQueueForUser } from '../services/infrastructure/OfflineQueueService';
 import { phtDayKey } from '../utils/timezone';
 
@@ -47,7 +46,7 @@ export const useUserProfiles = (params: UseUserProfilesParams) => {
                 const prefsBackup = (data as unknown as Record<string, unknown>)?._preferencesBackup;
                 if (prefsBackup && typeof prefsBackup === 'object') {
                     try {
-                        const report = await importPreferencesData(prefsBackup as Record<string, any>);
+                        const report = await (await import('../services/infrastructure/ExportService')).importPreferencesData(prefsBackup as Record<string, any>);
                         // Non-silent skip reporting (finding F12): the backup
                         // sweep exports every key it can read, but restores
                         // are gated by the allow-list — surface what did NOT
@@ -125,11 +124,11 @@ export const useUserProfiles = (params: UseUserProfilesParams) => {
                 ...profile,
                 _exportedAt: new Date().toISOString(),
                 _appVersion: '3.5',
-                _preferencesBackup: await exportPreferencesData(),
+                _preferencesBackup: await (await import('../services/infrastructure/ExportService')).exportPreferencesData(),
             };
 
             const filename = `august_backup_${activeUsername}_${phtDayKey()}.json`;
-            const result = await exportDataAsFile(fullBackup, filename);
+            const result = await (await import('../services/infrastructure/ExportService')).exportDataAsFile(fullBackup, filename);
 
             if (!result.success) {
                 toast.error("Export Failed", result.error);

@@ -13,14 +13,7 @@
 import React, { useEffect, useState, useSyncExternalStore } from 'react';
 import { useEscapeClose } from '../../../hooks/useEscapeClose';
 import type { ProviderConfig } from '../../../types/provider';
-import {
-    getAutonomySnapshot,
-    setAutonomyMode,
-    setAutonomySeat,
-    setAutonomyRoleSeat,
-    subscribeAutonomy,
-    MAX_BACKGROUND_CALLS_PER_HOUR,
-} from '../../../services/trade/autonomyEngine';
+
 import {
     canUndoAutonomyRecord,
     listAutonomyRecords,
@@ -28,6 +21,14 @@ import {
     undoAutonomyRecord,
     type AutonomyRecord,
 } from '../../../services/trade/autonomyLedger';
+import {
+    getAutonomySnapshot,
+    subscribeAutonomy,
+    setAutonomyMode,
+    setAutonomySeat,
+    setAutonomyRoleSeat,
+    MAX_BACKGROUND_CALLS_PER_HOUR,
+} from '../../../services/trade/autonomySettings';
 
 const timeAgo = (at: number): string => {
     const s = Math.max(1, Math.floor((Date.now() - at) / 1000));

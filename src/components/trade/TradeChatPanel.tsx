@@ -89,7 +89,7 @@ import * as watchService from '../../services/trade/watchService';
 import * as levelWatch from '../../services/trade/levelWatchService';
 import { slashTemplateOf, expandSlashTemplate } from '../../utils/composerRefs';
 import { buildHandoffCheckpoint } from '../../utils/handoffCheckpoint';
-import { AutonomyControl } from './panels/AutonomyDrawer';
+const AutonomyControl = React.lazy(() => import('./panels/AutonomyDrawer').then(m => ({ default: m.AutonomyControl })));
 import ChatHistoryPalette from './panels/ChatHistoryPalette';
 import ChatTranscriptList from './panels/ChatTranscriptList';
 import ChatComposer from './panels/ChatComposer';
@@ -1366,7 +1366,9 @@ ${riskConstitution}`
                     <ChevronDown className="h-3.5 w-3.5 shrink-0 text-zinc-500 transition-colors group-hover:text-zinc-300" aria-hidden="true" />
                 </button>
                 <div className="ml-auto flex shrink-0 items-center gap-0.5">
-                    <AutonomyControl providers={providers} />
+                    <React.Suspense fallback={null}>
+                        <AutonomyControl providers={providers} />
+                    </React.Suspense>
                     <button type="button" onClick={() => addSession('solo')} aria-label="New chat" title="New chat"
                         className="hit-target flex items-center justify-center rounded-control p-1.5 text-zinc-500 transition-colors hover:bg-white/[0.06] hover:text-zinc-100">
                         <Plus className="h-3.5 w-3.5" aria-hidden="true" />

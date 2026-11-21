@@ -12,7 +12,6 @@ import { Capacitor } from '@capacitor/core';
 import { getUserProfile, saveUserProfile, overwriteUserProfile } from './dbService';
 import { isValidUserProfile } from '../../utils/profileUtils';
 import { phtDayKey } from '../../utils/timezone';
-import { exportPreferencesData, importPreferencesData } from './ExportService';
 
 export interface BackupMetadata {
     id: string;
@@ -131,7 +130,7 @@ export const createBackup = async (username: string): Promise<BackupMetadata | n
         // F6: preferences sidecar — provider configs (with keys), learning
         // rules, price alerts, autopilot state. Restoring a backup previously
         // only restored the profile, silently dropping all of these.
-        const preferences = await exportPreferencesData();
+        const preferences = await (await import('./ExportService')).exportPreferencesData();
         // The export records what it skipped; carry it up to the person who
         // pressed the button instead of leaving it inside the sidecar file.
         const notices = Array.isArray(preferences._backup_notices)
@@ -494,7 +493,7 @@ export const restoreBackup = async (
             try {
                 const preferences = JSON.parse(record.preferencesJson);
                 if (preferences && typeof preferences === 'object') {
-                    const report = await importPreferencesData(preferences);
+                    const report = await (await import('./ExportService')).importPreferencesData(preferences);
                     if (report.failedKeys.length > 0) {
                         throw new Error(`${report.failedKeys.length} preference key(s) could not be written: ${report.failedKeys.join(', ')}`);
                     }

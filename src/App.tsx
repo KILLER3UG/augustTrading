@@ -1,6 +1,7 @@
 
 import React, { useState, useEffect, useRef, useCallback, useMemo, useSyncExternalStore } from 'react';
 import { reapplyIdleMotionClass } from './services/desk/idleMotion';
+import type { BackupMetadata } from './services/infrastructure/BackupService';
 
 // Apply the user's persisted stillness preference to <body> on app startup,
 // before the first running row can paint.
@@ -125,7 +126,6 @@ import { getPreference, setPreference, removePreference, PREF_KEYS } from './ser
 // AI Learning Services - Adaptive Learning, Mistake Patterns, Insight Extraction
 import { ProviderConfig, type ReasoningEffort } from './types/provider';
 import { isProviderOnCooldown, providerCooldownRemainingMs } from './services/infrastructure/ProviderHealthService';
-import { stopAutoBackup, createBackup, getBackups, type BackupMetadata } from './services/infrastructure/BackupService';
 import { useWatchSideEffects } from './hooks/useWatchSideEffects';
 import { useSurfaceRouter } from './hooks/useSurfaceRouter';
 import { useColumnResize } from './hooks/useColumnResize';
@@ -975,7 +975,7 @@ const App: React.FC = () => {
         if (previous !== current) {
             // Stop the old user's backup scheduler; loadUserData starts
             // a fresh one for the new user.
-            if (previous !== null) stopAutoBackup();
+            if (previous !== null) void import('./services/infrastructure/BackupService').then(m => m.stopAutoBackup());
             // No AI response cache exists to clear (removed). Only tool/data
             // caches remain, which are in-memory and never persist across
             // users or reloads.
@@ -986,7 +986,7 @@ const App: React.FC = () => {
     // Final cleanup — stop the auto-backup scheduler when the app unmounts.
     useEffect(() => {
         return () => {
-            stopAutoBackup();
+            void import('./services/infrastructure/BackupService').then(m => m.stopAutoBackup());
         };
     }, []);
 
@@ -2362,7 +2362,7 @@ const App: React.FC = () => {
                 // signal and it used to be dropped on the floor here.
                 // The window is closing, so a toast is not an option — the
                 // console is the signal, and it names what was lost.
-                void createBackup(activeUsernameRef.current)
+                void import('./services/infrastructure/BackupService').then(m => m.createBackup(activeUsernameRef.current ?? ''))
                     .then((metadata) => {
                         if (metadata) return;
                         console.error(
@@ -2405,7 +2405,7 @@ const App: React.FC = () => {
         const check = async (): Promise<void> => {
             let backups: BackupMetadata[];
             try {
-                backups = await getBackups(activeUsername);
+                backups = await (await import('./services/infrastructure/BackupService')).getBackups(activeUsername);
             } catch {
                 return; // the backup store is unreadable — the watchdog is best-effort
             }

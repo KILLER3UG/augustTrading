@@ -4,8 +4,8 @@
  */
 
 import { getUserProfile, saveUserProfile } from '../infrastructure/dbService';
-import { createBackup, getBackups, BackupMetadata } from '../infrastructure/BackupService';
 import { getPreference, setPreference, removePreference, getPreferenceObject, setPreferenceObject, PREF_KEYS } from '../infrastructure/PreferencesService';
+import type { BackupMetadata } from '../infrastructure/BackupService';
 import { selectRecoveryBackup } from '../../utils/backupSelection';
 
 /**
@@ -55,7 +55,7 @@ export const checkDataIntegrity = async (
     }
 
     // Check for existing backups
-    const backups = await getBackups(username);
+    const backups = await (await import('../infrastructure/BackupService')).getBackups(username);
     const hasBackups = backups.length > 0;
     const latestBackup = backups.length > 0 ? backups[0] : null;
     // A recovery suggestion must hold MORE trades than the profile has now.
@@ -165,7 +165,7 @@ export const createStartupBackup = async (username: string): Promise<BackupMetad
     console.log(`[DataIntegrity] Creating startup backup for ${username}`);
 
     try {
-        const metadata = await createBackup(username);
+        const metadata = await (await import('../infrastructure/BackupService')).createBackup(username);
         if (metadata) {
             console.log(`[DataIntegrity] Startup backup created: ${metadata.id} (${metadata.tradeCount} trades)`);
         }

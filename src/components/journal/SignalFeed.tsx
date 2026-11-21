@@ -19,7 +19,6 @@ import { foldRefusals, readSignalEvents, readSignals, type SignalRefusalRow } fr
 import { readTrackedPositions } from '../../services/tracking/positionStore';
 import { settleDueSignals, settleRefusedSignals } from '../../services/signals/signalService';
 import { exportTrajectoryJsonl } from '../../services/learning/trajectoryExport';
-import { exportTextAsFile } from '../../services/infrastructure/ExportService';
 import { summariseSignals } from '../../services/signals/signalResolver';
 import { FEE_TAKER_BPS } from '../../utils/netRiskReward';
 import { MIN_ACCURACY_FILLS, scoreSignals } from '../../services/signals/signalAccuracy';
@@ -385,7 +384,7 @@ const SignalFeed: React.FC<SignalFeedProps> = ({ user }) => {
                             data-testid="trajectory-export"
                             onClick={() => {
                                 void exportTrajectoryJsonl({ user: activeUser }).then(({ jsonl, count }) => {
-                                    void exportTextAsFile(jsonl, `august-trajectory-${new Date().toISOString().slice(0, 10)}.jsonl`);
+                                    void import('../../services/infrastructure/ExportService').then(m => m.exportTextAsFile(jsonl, `august-trajectory-${new Date().toISOString().slice(0, 10)}.jsonl`));
                                     setNote(count > 0
                                         ? `Exported ${count} trajectory record${count === 1 ? '' : 's'} (JSONL).`
                                         : 'No resolved signals to export yet.');

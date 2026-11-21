@@ -8,7 +8,6 @@ import {
 
 import { ProviderConfig } from '../types/provider';
 import { readyProviderModels, isProviderReady } from '../utils/providerUtils';
-import { analyzeTradingView, streamQuickResponse } from '../services/providers/GenericAnalysisService';
 import type { ToolAction } from '../types/message';
 import { WireAuditEntry, type ReasoningEffort } from '../services/providers/reasoningControls';
 import { getActiveUsername } from '../utils/activeUser';
@@ -62,7 +61,6 @@ const HYBRID_REUSE_MAX_AGE_MS = 60_000;
 const RATE_LIMIT_COOLDOWN_MS = 60_000;
 
 // Learning services
-import { generateWeightedVotingContext } from '../services/backtesting/ModelPerformanceService';
 import { threadForProvider } from '../utils/agentThreads';
 import { formatInvokedSkillSection, resolveInvokedSkills } from '../services/learning/SkillFileService';
 import { extractDebateTemplate, DebateTemplate } from '../utils/debateTemplates';
@@ -240,8 +238,8 @@ const MAX_INITIAL_ANALYSIS_RETRIES = 1;
 
 async function analyzeTradingViewWithTransientRetry(
     config: ProviderConfig,
-    params: Parameters<typeof analyzeTradingView>[1],
-): Promise<Awaited<ReturnType<typeof analyzeTradingView>>> {
+    params: Parameters<typeof import('../services/providers/GenericAnalysisService')['analyzeTradingView']>[1],
+): Promise<Awaited<ReturnType<typeof import('../services/providers/GenericAnalysisService')['analyzeTradingView']>>> {
     let lastError: unknown;
     for (let attempt = 0; attempt <= MAX_INITIAL_ANALYSIS_RETRIES; attempt++) {
         if (attempt > 0) await new Promise(r => setTimeout(r, 2000));
@@ -251,6 +249,10 @@ async function analyzeTradingViewWithTransientRetry(
                 err.name = 'AbortError';
                 throw err;
             }
+            // Lazy: the hybrid analysis engine (Technical/MonteCarlo/Candle
+            // detectors) stays out of the eager startup graph — it loads on
+            // the first Full-analysis run (CI entry-chunk ratchet).
+            const { analyzeTradingView } = await import('../services/providers/GenericAnalysisService');
             return await analyzeTradingView(config, params);
         } catch (e: any) {
             const isAbort = e?.name === 'AbortError' || e?.code === 'ABORT_ERR' || e?.name === 'TimeoutError';
@@ -994,7 +996,10 @@ export function useAnalysisPipeline(params: UseAnalysisPipelineParams) {
             ).length;
             if (closedSample >= 3 && enabledProviders.length > 0) {
                 try {
-                    learningInjection = generateWeightedVotingContext(
+                    // Lazy: the ensemble context builder rides the same
+                    // deferred analysis-engine chunk as analyzeTradingView.
+                    const perfModule = await import('../services/backtesting/ModelPerformanceService');
+                    learningInjection = perfModule.generateWeightedVotingContext(
                         enabledProviders.map(p => p.config.id),
                         pendingPattern || undefined,
                     );
@@ -1179,7 +1184,10 @@ export function useAnalysisPipeline(params: UseAnalysisPipelineParams) {
                 // is built for the desk branch only — this transport takes no
                 // context argument, so the notebook blocks do not reach bot
                 // threads.
-                responseText = await streamQuickResponse(
+                // Lazy: same deferred engine chunk as the full-analysis path.
+                (globalThis as { __sq?: unknown }).__sq = undefined;
+                const quick = await import('../services/providers/GenericAnalysisService');
+                responseText = await quick.streamQuickResponse(
                     provider.config,
                     promptToSend,
                     // Bot threads see ONLY their own thread (derived view).

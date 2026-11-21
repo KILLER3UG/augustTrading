@@ -22,7 +22,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { ChevronLeftIcon, Pencil, Trash2 } from '../shared/Icons';
 import StatusPill from '../ui/StatusPill';
-import { exportTextAsFile } from '../../services/infrastructure/ExportService';
 import { memoryEntryTitle, memoryUpdatedLabel } from '../../services/learning/memoryTopics';
 import { phtDayYear } from '../../utils/timezone';
 import { memoryExportFilename, memoryExportMarkdown } from '../../services/learning/memoryExport';
@@ -157,7 +156,7 @@ const ProfileMemoryCard: React.FC<ProfileMemoryCardProps> = ({ memoryModel, onOp
     };
 
     const exportMemory = async (): Promise<void> => {
-        const result = await exportTextAsFile(memoryExportMarkdown(entries), memoryExportFilename());
+        const result = await (await import('../../services/infrastructure/ExportService')).exportTextAsFile(memoryExportMarkdown(entries), memoryExportFilename());
         setNote(result.success
             ? `Exported ${entries.length} ${entries.length === 1 ? 'memory' : 'memories'} as Markdown.`
             : result.error ?? 'The export failed.');

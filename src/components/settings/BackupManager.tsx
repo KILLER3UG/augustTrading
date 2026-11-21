@@ -1,5 +1,5 @@
+import type { BackupMetadata } from '../../services/infrastructure/BackupService';
 import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { getBackups, createBackup, deleteBackup, exportBackupToFile, importBackupFromText, restoreBackup, BackupMetadata } from '../../services/infrastructure/BackupService';
 import { getUserProfile } from '../../services/infrastructure/dbService';
 import { loadSessions } from '../../services/trade/chatSessions';
 import { exportMessagesCSV, exportMessagesMarkdown } from '../../utils/reportExport';
@@ -31,7 +31,7 @@ export const BackupManager: React.FC<BackupManagerProps> = ({ username, onProfil
   const refresh = useCallback(async () => {
     setIsLoading(true);
     try {
-      setBackups(await getBackups(username));
+      setBackups(await (await import('../../services/infrastructure/BackupService')).getBackups(username));
     } catch (err) {
       console.warn('[BackupManager] Failed to load backups:', err);
       setStatus({ kind: 'error', text: 'Failed to load backups.' });
@@ -49,7 +49,7 @@ export const BackupManager: React.FC<BackupManagerProps> = ({ username, onProfil
     setIsCreating(true);
     setStatus(null);
     try {
-      const meta = await createBackup(username);
+      const meta = await (await import('../../services/infrastructure/BackupService')).createBackup(username);
       if (meta) {
         if (meta.notices?.length) {
           // A partial backup is not a clean one. Amber, not emerald, and it names
@@ -77,7 +77,7 @@ export const BackupManager: React.FC<BackupManagerProps> = ({ username, onProfil
     setBusyId(id);
     setStatus(null);
     try {
-      await exportBackupToFile(id);
+      await (await import('../../services/infrastructure/BackupService')).exportBackupToFile(id);
       setStatus({ kind: 'success', text: 'Backup exported as a JSON file.' });
     } catch (err) {
       console.error('[BackupManager] Export failed:', err);
@@ -95,7 +95,7 @@ export const BackupManager: React.FC<BackupManagerProps> = ({ username, onProfil
     setIsImporting(true);
     setStatus(null);
     try {
-      const result = await importBackupFromText(await file.text());
+      const result = await (await import('../../services/infrastructure/BackupService')).importBackupFromText(await file.text());
       if (!result.ok) {
         setStatus({
           kind: 'error',
@@ -129,7 +129,7 @@ export const BackupManager: React.FC<BackupManagerProps> = ({ username, onProfil
     setBusyId(id);
     setStatus(null);
     try {
-      const result = await restoreBackup(id);
+      const result = await (await import('../../services/infrastructure/BackupService')).restoreBackup(id);
       if (result.success) {
         // Restore reports skipped allow-list misses — surface them (audit
         // R1 #12: a partial restore that reads as fully clean is its own bug).
@@ -156,7 +156,7 @@ export const BackupManager: React.FC<BackupManagerProps> = ({ username, onProfil
     setBusyId(id);
     setStatus(null);
     try {
-      const ok = await deleteBackup(id);
+      const ok = await (await import('../../services/infrastructure/BackupService')).deleteBackup(id);
       setStatus(ok
         ? { kind: 'success', text: 'Backup deleted.' }
         : { kind: 'error', text: 'Delete failed.' });

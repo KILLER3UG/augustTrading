@@ -31,11 +31,10 @@ import GlobalLearningService from '../services/learning/GlobalLearningService';
 import { PriceAlertService } from '../services/ui/PriceAlertService';
 import { OutcomeAutopilotService } from '../services/ui/OutcomeAutopilotService';
 import { initTracker, resetTracker } from '../services/tracking/trackerService';
-import { ensureBackgroundLoops, initAutonomy } from '../services/trade/autonomyEngine';
+
 import { storageService } from '../services/infrastructure/StorageService';
 import { offlineQueue } from '../services/infrastructure/OfflineQueueService';
 import { runMigrations, checkDataIntegrity, createStartupBackup, logIntegrityEvent } from '../services/validation/DataIntegrityService';
-import { startAutoBackup } from '../services/infrastructure/BackupService';
 import { getPreferenceObject, PREF_KEYS } from '../services/infrastructure/PreferencesService';
 import { primeChatSessions } from '../services/trade/chatSessions';
 import * as chatStore from '../services/trade/chatStore';
@@ -361,9 +360,12 @@ export const useUserProfileLoader = (args: UseUserProfileLoaderArgs): UseUserPro
             // The autonomy engine: hydrate this profile's mode/seat cache and
             // start the background heartbeat (self-throttling; every loop
             // re-checks mode, budget, backoff and the memory switch at fire
-            // time, so a paused or memory-OFF desk stays inert).
-            await initAutonomy(username);
-            ensureBackgroundLoops();
+            // time, so a paused or memory-OFF desk stays inert). Lazy import:
+            // the engine must not sit in the eager startup graph.
+            await import('../services/trade/autonomyEngine')
+                .then(m => m.initAutonomy(username))
+                .then(() => import('../services/trade/autonomyEngine'))
+                .then(m => m.ensureBackgroundLoops());
             if (isStale()) return;
             await initConfluenceService();
             if (isStale()) return;
@@ -488,7 +490,7 @@ export const useUserProfileLoader = (args: UseUserProfileLoaderArgs): UseUserPro
                     console.warn('[DataIntegrity] Startup backup failed:', err)
                 );
 
-                startAutoBackup(username);
+                void import('../services/infrastructure/BackupService').then(m => m.startAutoBackup(username));
 
                 const integrityCheck = await checkDataIntegrity(username, tradeCount);
                 if (isStale()) return;
