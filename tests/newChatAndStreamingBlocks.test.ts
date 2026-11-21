@@ -4,6 +4,9 @@ import { createRequire } from 'node:module';
 import * as chatStore from '../src/services/trade/chatStore';
 import { createThinkingStreamGate } from '../src/utils/thinkingSplit';
 import { splitStableMarkdownBlocks, canRenderPlainStreamingProse } from '../src/utils/streamBlocks';
+import { createBrowserSseParser } from '../src/services/providers/GenericProviderService';
+import { runDeskToolLoop } from '../src/services/analysis/DeskToolsService';
+import type { ProviderConfig } from '../src/types/provider';
 
 const require = createRequire(import.meta.url);
 const { createSseParser } = require('../electron/sseParser.cjs') as {
@@ -158,5 +161,123 @@ describe('thinkingSplit & streamBlocks — live tag peeling and markdown block s
         assert.equal(canRenderPlainStreamingProse(active), true);
         assert.equal(canRenderPlainStreamingProse('**Bold** level'), false);
         assert.equal(canRenderPlainStreamingProse('- Bullet item'), false);
+    });
+});
+
+describe('createBrowserSseParser — incremental SSE reasoning across dialects', () => {
+    it('extracts reasoning_content, reasoning, reasoning_text, thinking, reasoning_details and split <think> chunks incrementally', () => {
+        const parser = createBrowserSseParser('chat_completions');
+        const chunks = [
+            'data: {"choices":[{"delta":{"reasoning_content":"R1 "}}]}\n\n',
+            'data: {"choices":[{"delta":{"reasoning":"R2 "}}]}\n\n',
+            'data: {"choices":[{"delta":{"reasoning_text":"R3 "}}]}\n\n',
+            'data: {"choices":[{"delta":{"thinking":"R4 "}}]}\n\n',
+            'data: {"choices":[{"delta":{"reasoning_details":[{"text":"R5 "}]}}]}\n\n',
+            'data: {"choices":[{"delta":{"content":"<thi"}}]}\n\n',
+            'data: {"choices":[{"delta":{"content":"nk>R6</thi"}}]}\n\n',
+            'data: {"choices":[{"delta":{"content":"nk>Out 1 "}}]}\n\n',
+            'data: {"choices":[{"delta":{"content":"Out 2"}}]}\n\n',
+            'data: [DONE]\n\n',
+        ];
+        const reasoning: string[] = [];
+        const text: string[] = [];
+        for (const chunk of chunks) {
+            const b = parser.push(chunk);
+            reasoning.push(...b.reasoningDeltas);
+            text.push(...b.textDeltas);
+        }
+        const tail = parser.flush();
+        reasoning.push(...tail.reasoningDeltas);
+        text.push(...tail.textDeltas);
+        assert.equal(reasoning.join(''), 'R1 R2 R3 R4 R5 R6');
+        assert.equal(text.join(''), 'Out 1 Out 2');
+    });
+
+    it('streams Anthropic thinking_delta and Google thought parts without buffering', () => {
+        const msgParser = createBrowserSseParser('messages');
+        const b1 = msgParser.push('data: {"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":"Step A"}}\n\n');
+        assert.deepEqual(b1.reasoningDeltas, ['Step A']);
+        assert.deepEqual(b1.textDeltas, []);
+        const b2 = msgParser.push('data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"Final A"}}\n\n');
+        assert.deepEqual(b2.textDeltas, ['Final A']);
+
+        const gemParser = createBrowserSseParser('google');
+        const g1 = gemParser.push('data: {"candidates":[{"content":{"parts":[{"thought":true,"text":"Check B"}]}}]}\n\n');
+        assert.deepEqual(g1.reasoningDeltas, ['Check B']);
+        const g2 = gemParser.push('data: {"candidates":[{"content":{"parts":[{"text":"Final B"}]}}]}\n\n');
+        assert.deepEqual(g2.textDeltas, ['Final B']);
+    });
+});
+
+describe('runDeskToolLoop — strict Thinking -> Tool -> Output chronological callback order', () => {
+    it('emits onReasoning -> onToolStart -> onToolEnd -> onToken across a multi-round turn', async () => {
+        const cfg: ProviderConfig = {
+            id: 'test-prov',
+            name: 'Test',
+            apiKey: 'test-key',
+            baseUrl: 'https://example.invalid/v1',
+            apiFormat: 'chat_completions',
+            isEnabled: true,
+            isBuiltIn: false,
+            models: ['test-model'],
+            selectedModel: 'test-model',
+        };
+        const timeline: string[] = [];
+        let round = 0;
+        const result = await runDeskToolLoop({
+            config: cfg,
+            messages: [{ role: 'user', content: 'Check ETH bias' }],
+            nativeTools: true,
+            allowedTools: 'all',
+            options: {
+                onReasoning: chunk => timeline.push(`reasoning:${chunk.trim()}`),
+            },
+            onStreamReset: () => timeline.push('reset'),
+            onToolStart: call => timeline.push(`toolStart:${call.name}`),
+            onToolEnd: res => timeline.push(`toolEnd:${res.name}`),
+            onToken: tok => timeline.push(`token:${tok}`),
+            executeExtraTool: async call => {
+                timeline.push(`exec:${call.name}`);
+                return { toolCallId: call.id, name: call.name, ok: true, content: `ok:${call.name}` };
+            },
+            sendTurn: async () => {
+                throw new Error('sendTurn should not be called when streamTurn is supplied');
+            },
+            streamTurn: async function* (_cfg, _msgs, opts) {
+                round += 1;
+                if (round === 1) {
+                    opts?.onReasoning?.('Think round 1');
+                    opts?.onFinishReason?.('tool_calls');
+                    opts?.onStreamToolCalls?.([{ id: 'c1', name: 'tool_one', arguments: {} }]);
+                    return;
+                }
+                if (round === 2) {
+                    opts?.onReasoning?.('Think round 2');
+                    opts?.onFinishReason?.('tool_calls');
+                    opts?.onStreamToolCalls?.([{ id: 'c2', name: 'tool_two', arguments: {} }]);
+                    return;
+                }
+                opts?.onReasoning?.('Think round 3');
+                yield 'Final ';
+                yield 'Answer';
+                opts?.onFinishReason?.('stop');
+            },
+        });
+        assert.equal(result.finalText, 'Final Answer');
+        assert.deepEqual(timeline, [
+            'reasoning:Think round 1',
+            'reset',
+            'toolStart:tool_one',
+            'exec:tool_one',
+            'toolEnd:tool_one',
+            'reasoning:Think round 2',
+            'reset',
+            'toolStart:tool_two',
+            'exec:tool_two',
+            'toolEnd:tool_two',
+            'reasoning:Think round 3',
+            'token:Final ',
+            'token:Answer',
+        ]);
     });
 });
