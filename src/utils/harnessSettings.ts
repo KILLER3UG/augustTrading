@@ -32,6 +32,12 @@ export interface HarnessSettings {
      *  the preset's research-tight 2 is the shipped default, and the card
      *  path (a risk change) is the agent's way to propose a different one. */
     guardStreakPause?: number;
+    /** The trader's RISK CONSTITUTION — their own immutable-for-the-model
+     *  rule sheet, injected verbatim into the frozen session prefix. Written
+     *  ONLY by the trader in Settings (autonomous memory/post-mortem writers
+     *  are structurally unable to touch harness settings); length-capped so
+     *  one paste cannot bloat every future prefix. */
+    riskConstitution?: string;
     /** Composer speed dial (port of Minara's Fast/Quality toggle):
      *  'quality' (default) = the built-in role→effort schedule; 'fast' =
      *  one step down on every reasoning task (verdicts still reason, just

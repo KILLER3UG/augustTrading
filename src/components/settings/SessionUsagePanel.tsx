@@ -183,6 +183,25 @@ export const HarnessControls: React.FC = () => {
                 />
             </label>
             <label className="block text-ui-dense text-zinc-400">
+                Risk constitution (your immutable rule sheet)
+                <span className="mt-0.5 block text-ui-2xs leading-4 text-zinc-500">
+                    Injected verbatim into every chat session's frozen system
+                    prefix. Autonomous writers (memory, post-mortems, skills)
+                    can never change it — only you, here. Keep it to hard
+                    rules: max risk, session limits, instruments you refuse.
+                </span>
+                <textarea
+                    data-testid="risk-constitution"
+                    maxLength={1200}
+                    rows={4}
+                    value={settings.riskConstitution ?? ''}
+                    placeholder="e.g. Never more than 2 concurrent positions. No entries 30min before red-folder news. Max 1% total heat."
+                    onChange={e => persist({ riskConstitution: e.target.value.slice(0, 1200) })}
+                    className="mt-1 w-full rounded-control border border-zinc-700 bg-zinc-950 px-2 py-1 text-zinc-100"
+                />
+                <span className="text-ui-2xs text-zinc-600">{(settings.riskConstitution ?? '').length}/1200</span>
+            </label>
+            <label className="block text-ui-dense text-zinc-400">
                 Minimum net edge (R)
                 <span className="mt-0.5 block text-ui-2xs leading-4 text-zinc-500">
                     Refuse a plan whose net expectancy at its own probability is at or
