@@ -179,8 +179,20 @@ describe('Wave C — Deribit options context', () => {
                 return fake({ result: { data: [[Date.now() - 3600e3, 50, 51, 49, 55], [Date.now(), 55, 56, 54, 61]] } });
             }
             if (url.includes('/fapi/v1/klines')) {
+                // The VRP's realized leg is now 30 closed DAILY bars — serve a
+                // deterministic daily walk with real variance (a flat tape has
+                // no Yang-Zhang volatility and the leg correctly refuses).
                 const rows: unknown[][] = [];
-                for (let t = 0; t < 100; t++) rows.push([t, '100', '101', '99', '100', '10', t + 999, '1', 1, '5', '5', '0']);
+                let p = 100;
+                let a = 7;
+                for (let t = 0; t < 60; t++) {
+                    a = (a + 0x6d2b79f5) | 0;
+                    let x = Math.imul(a ^ (a >>> 15), 1 | a);
+                    x = (x + Math.imul(x ^ (x >>> 7), 61 | x)) ^ x;
+                    const rnd = ((x ^ (x >>> 14)) >>> 0) / 4294967296;
+                    p *= 1 + (rnd - 0.5) * 0.04;
+                    rows.push([t * 86400e3, String(p * 0.99), String(p * 1.01), String(p * 0.98), String(p), '10', t * 86400e3 + 86399e3, '1', 1, '5', '5', '0']);
+                }
                 return fake(rows);
             }
             if (url.includes('/fapi/v1/ticker/24hr') && !url.includes('symbol=')) {
@@ -195,6 +207,7 @@ describe('Wave C — Deribit options context', () => {
         assert.equal(btc.available, true, `BTC context refused: ${btc.reason ?? 'no reason'}`);
         assert.equal(btc.symbol, 'BTC');
         assert.equal(btc.dvol, 61);
+        assert.equal(btc.realizedVolWindow, '30d daily Yang-Zhang');
         assert.ok(btc.realizedVolPct !== null && btc.realizedVolPct !== undefined && btc.realizedVolPct > 0);
         assert.ok(near(btc.vrp ?? 0, 61 - (btc.realizedVolPct as number), 1e-6));
         const sol = await fetchDeribitOptionsContext('SOLUSDT');

@@ -4701,6 +4701,88 @@ const checkSkillWrites = async () => {
     ok('deribit: the options context is quoted for BTC and ETH only — SOL refuses without a call',
         deribitGate.allowed === false && /BTC and ETH only/.test(deribitGate.reason ?? ''));
 
+    // ─── Wave C hardening: overlap rule, barrier invariants, significance floor, penance ──
+    const overlapHeavy = ss.compositeCandle([
+        mk(0, 99, 102, 98, 101),
+        mk(60000, 101, 101.6, 98.4, 100.5),
+    ], 2, 0.25);
+    ok('brooks: overlapRatio > 0.75 sets requiresBothBarsClear and the trigger clears BOTH bars',
+        overlapHeavy !== null && overlapHeavy.overlapRatio === 0.8 && overlapHeavy.requiresBothBarsClear === true
+        && overlapHeavy.triggerHigh === 102.25 && overlapHeavy.triggerLow === 97.75,
+        overlapHeavy && JSON.stringify(overlapHeavy));
+    const overlapLight = ss.compositeCandle([
+        mk(0, 100, 110, 90, 105),
+        mk(60000, 103, 105, 95, 100.5),
+    ], 2, 0.25);
+    ok('brooks: overlapRatio <= 0.75 leaves the trigger on the second bar alone',
+        overlapLight !== null && overlapLight.overlapRatio === 0.5 && overlapLight.requiresBothBarsClear === false
+        && overlapLight.triggerHigh === 105.25 && overlapLight.triggerLow === 94.75,
+        overlapLight && JSON.stringify(overlapLight));
+
+    const centered = [];
+    {
+        let a = 99;
+        const rnd = () => {
+            a = (a + 0x6d2b79f5) | 0;
+            let t = Math.imul(a ^ (a >>> 15), 1 | a);
+            t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+            return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+        };
+        const rets = [];
+        for (let i = 0; i < 220; i++) {
+            const u1 = Math.max(rnd(), 1e-12);
+            rets.push(Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * rnd()) * 0.006);
+        }
+        const m = rets.reduce((s, x) => s + x, 0) / rets.length;
+        let price = 100;
+        for (let i = 0; i < 220; i++) {
+            price *= Math.exp(rets[i] - m);
+            centered.push(mk(i * 3600000, price * 0.999, price * 1.002, price * 0.998, price, 10));
+        }
+    }
+    const symMetric = mcC.empiricalBootstrapSimulation({ entry: 100, stopLoss: 95, takeProfits: [105], direction: 'Long', numSimulations: 800, maxSteps: 600, seed: 42, candles: centered });
+    ok('monte carlo: a ZERO-DRIFT tape lands the symmetric +5%/-5% bracket near 50% (42–58%)',
+        symMetric !== null && symMetric.pHitTpBeforeSl >= 42 && symMetric.pHitTpBeforeSl <= 58,
+        symMetric && `pHitTpBeforeSl=${symMetric.pHitTpBeforeSl}`);
+    const twoToOne = mcC.empiricalBootstrapSimulation({ entry: 100, stopLoss: 95, takeProfits: [110], direction: 'Long', numSimulations: 800, maxSteps: 600, seed: 42, candles: centered });
+    ok('monte carlo: a ZERO-DRIFT tape lands the 2:1 +10%/-5% bracket near 35% (25–40%) with avgWin below the raw TP',
+        twoToOne !== null && twoToOne.pHitTpBeforeSl >= 25 && twoToOne.pHitTpBeforeSl <= 40
+        && twoToOne.avgWinPercent > 0 && twoToOne.avgWinPercent < 10,
+        twoToOne && `pHitTpBeforeSl=${twoToOne.pHitTpBeforeSl} avgWin=${twoToOne.avgWinPercent}`);
+
+    const sigWin20 = [];
+    for (let i = 0; i < 20; i++) sigWin20.push(i % 5 < 3 ? 2 : -1);
+    const sigThinNeff = jtC.stationaryBootstrapPValue(sigWin20, { seed: 11, nEffective: 6 });
+    ok('N_eff: the significance test refuses on nEffective < 10 even with 20 raw entries',
+        sigThinNeff.available === false && sigThinNeff.nEffective === 6
+        && /sample too thin: nEffective 6 \(need >= 10\) — no significance p-value is quoted/.test(sigThinNeff.reason ?? ''),
+        sigThinNeff && sigThinNeff.reason);
+    const sigScaled = jtC.stationaryBootstrapPValue(sigWin20, { seed: 11 });
+    ok('N_eff: the bootstrap block length scales with the sample (N=20 → 3, never above ⌊N/3⌋)',
+        sigScaled.meanBlockLength === 3 && sigScaled.available === true && sigScaled.pValue > 0.0005 && sigScaled.pValue < 0.05,
+        sigScaled && `p=${sigScaled.pValue} block=${sigScaled.meanBlockLength}`);
+
+    const ruinPenance = mcC.calculateRuinRiskFromSeries(ledgerRs, 10000, 5000, 99);
+    ok('ruin: the ledger bootstrap reports the AR(1) rho (clamped) and the Triple-Penance drawdown',
+        ruinPenance !== null && ruinPenance.ar1Rho1 !== null && ruinPenance.ar1Rho1 > -0.95 && ruinPenance.ar1Rho1 < 0.95
+        && ruinPenance.triplePenanceMaxDdPct > 0 && ruinPenance.triplePenanceMaxDdPct < 100
+        && ruinPenance.triplePenanceTimeUnderwaterTrades > 0,
+        ruinPenance && JSON.stringify({ rho: ruinPenance.ar1Rho1, dd: ruinPenance.triplePenanceMaxDdPct, uw: ruinPenance.triplePenanceTimeUnderwaterTrades }));
+    const ruinLosers = mcC.calculateRuinRiskFromSeries(ledgerRs.map((_, i) => (i % 5 === 0 ? 1 : -1)), 10000, 5000, 99);
+    ok('ruin: a losing ledger has no expected recovery (time underwater null) and still quotes the driftless floor',
+        ruinLosers !== null && ruinLosers.triplePenanceTimeUnderwaterTrades === null && ruinLosers.triplePenanceMaxDdPct > 0);
+
+    const hardSrc = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+    const harnessSrc = hardSrc('src/services/selfMod/harnessOptimization.ts');
+    ok('O-150: the holdout grades on the EFFECTIVE sample (MIN_HOLDOUT_SAMPLE) with rawN and nEffective stored',
+        /MIN_HOLDOUT_SAMPLE\s*=\s*6/.test(harnessSrc)
+        && /nEffective >= MIN_HOLDOUT_SAMPLE/.test(harnessSrc)
+        && /uniqueness:\s*\{\s*rawN/.test(harnessSrc)
+        && !/MIN_RATE_SAMPLE/.test(harnessSrc));
+    const mdsSrc = hardSrc('src/services/analysis/MarketDataService.ts');
+    ok('deribit: the VRP realized leg is a 30-day daily Yang-Zhang window, labeled in the output',
+        /realizedVolWindow/.test(mdsSrc) && /'1d',\s*60/.test(mdsSrc) && /86_400, 30, 32/.test(mdsSrc));
+
     // imbalanceCore — a bullish FVG by construction: a.high=100 < c.low=102,
     // displacement candle body 3×ATR. Fill depth is measured from later bars.
     // Five overlapping fillers lead so the tape clears the ≥10-candle floor
