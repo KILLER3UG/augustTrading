@@ -285,10 +285,26 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
         out.afterTokens <= 150 + 60 && out.stillOver === 0,
         `after=${out.afterTokens} stillOver=${out.stillOver}`);
 
-    // The identity case must not rewrite anything.
+    // The identity case: a fitting transcript passes through untouched EXCEPT
+    // the stage-1 microcompaction pass — stale bulky tool outputs beyond the
+    // tail are stubbed EVERY round (zero-LLM-cost, Wave 2). Structure and
+    // order are preserved exactly; only the oversized tool bodies change, and
+    // only role==='tool' messages past MIN_KEEP_MESSAGES.
     const same = cc.compactMessages({ messages: msgs, ceilingTokens: 1_000_000 });
-    ok('compact: a fitting transcript passes through untouched',
-        same.changed === false && same.messages.length === msgs.length);
+    const microStubs = same.actions.filter(a => a.kind === 'tool-payload');
+    ok('compact: a fitting transcript keeps its shape (order, roles, count)',
+        same.messages.length === msgs.length
+        && same.messages.every((m, i) => m.role === msgs[i].role)
+        && same.messages.every((m, i) => (m.tool_call_id ?? null) === (msgs[i].tool_call_id ?? null)));
+    const jstr = (m) => JSON.stringify({ role: m.role, content: m.content, tool_call_id: m.tool_call_id ?? null, tool_calls: m.tool_calls ?? null });
+    ok('compact: microcompaction stubs ONLY the stale bulky tool outputs',
+        same.changed === (microStubs.length > 0)
+        && same.messages.every((m, i) => {
+            const orig = msgs[i];
+            if (m.role !== 'tool') return jstr(m) === jstr(orig);
+            return String(orig.content).length <= cc.MICRO_STUB_CHARS ? jstr(m) === jstr(orig) : true;
+        }),
+        `stubs=${microStubs.length}`);
 
     // ── Skill carry-over ──────────────────────────────────────────────────
     // A skill body is a tool payload, so compaction is exactly when it can
