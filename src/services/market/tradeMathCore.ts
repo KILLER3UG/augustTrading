@@ -189,3 +189,29 @@ export const computeTradeMath = (input: TradeMathInput, candles: Kline[]): Trade
 
 /** The fee tier the cost line quotes, echoed for the tool output. */
 export const feeTierBps = FEE_TAKER_BPS;
+
+export interface FundingDragInput {
+    direction: 'Long' | 'Short';
+    entry: number;
+    stopLoss: number;
+    /** The CURRENT per-settlement funding rate (decimal, e.g. 0.0001 = 0.01%). */
+    fundingRate: number;
+    /** How many funding settlements fall inside the expected hold. */
+    settlements: number;
+}
+
+/**
+ * Funding carry in R: notional funding ÷ risk. A LONG pays a positive rate
+ * (positive dragR = cost); a SHORT receives it (negative dragR = credit).
+ * dragR = sign × rate × settlements × (entry / |entry − stop|) — e.g.
+ * entry 100 / stop 95, rate 0.0001, 3 settlements → 3 × 0.0001 / 0.05
+ * = +0.006 R of cost for the Long (earned by the Short). Pure — pinned.
+ */
+export const computeFundingDrag = (input: FundingDragInput): number => {
+    const stopDistance = Math.abs(input.entry - input.stopLoss);
+    if (!(stopDistance > 0) || input.entry <= 0) return 0;
+    if (!Number.isFinite(input.fundingRate) || !Number.isFinite(input.settlements) || input.settlements <= 0) return 0;
+    const notionalPerRisk = input.entry / stopDistance;
+    const directionSign = input.direction === 'Long' ? 1 : -1;
+    return Math.round(directionSign * input.fundingRate * input.settlements * notionalPerRisk * 10000) / 10000;
+};

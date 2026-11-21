@@ -24,6 +24,7 @@ import {
     fetchOpenInterest, fetchOpenInterestHistory, fetchFundingRateHistory,
     fetchMarkIndex, fetchTakerBuySellRatio, fetchTopTraderRatio,
     fetchLongShortRatio, fetchRecentLiquidations, verifySymbolAgainstUniverse,
+    fetchFundingInfo,
 } from './MarketDataService';
 import { baseOf } from '../../utils/symbol';
 import { atr14, detectEqualLevels, detectSweepReversals } from '../../utils/smcStructure';
@@ -41,7 +42,7 @@ import { activeSwingFib, readStructure } from '../market/swingStructureCore';
 import { readImbalances } from '../market/imbalanceCore';
 import { readSrZones, readRangeState } from '../market/zonesCore';
 import { readWyckoff } from '../market/wyckoffCore';
-import { computeTradeMath, type TradeMathRead } from '../market/tradeMathCore';
+import { computeFundingDrag, computeTradeMath, type TradeMathRead } from '../market/tradeMathCore';
 import { buildVolumeProfile, nakedPocs, pricePositionVsValue, sessionPocs } from '../market/volumeProfileCore';
 import { anchoredSlice, computeVwap, vwapPosition } from '../market/vwapCore';
 
@@ -798,32 +799,48 @@ export const runTradeMathTool = async (
         }
         if (read.gross.inverted) notes.push('plan is INVERTED for its stated direction — stop/target on the wrong sides; levels refused, not repaired');
         // Funding carry: what HOLDING the position costs in R at the coin's
-        // CURRENT 8h rate, if it persists over the expected hold. A long PAYS
+        // CURRENT per-settlement rate, counted at the REAL funding interval
+        // (/fapi/v1/fundingInfo) or an explicit assumed-8h note. A long PAYS
         // a positive rate; a short RECEIVES it. Quoted beside — never folded
-        // into — the fee-net number: it is an assumption, not a cost model.
+        // into — the fee-net figure. INVERTED plans quote no funding at all.
         let funding: {
             rate: number;
+            settlements: number;
+            fundingIntervalHours: number;
+            intervalSource: 'fundingInfo' | 'assumed 8h funding interval';
             dragR: number;
             minutesToNextSettlement: number | null;
-            assumption: 'current 8h rate persists over the expected hold';
+            assumption: 'current per-settlement rate persists over the expected hold';
         } | null = null;
         const holdHours = options.expectedHoldHours;
-        if (typeof holdHours === 'number' && Number.isFinite(holdHours) && holdHours > 0) {
-            const mark = await fetchMarkIndex(symbol);
+        if (!read.gross.inverted && typeof holdHours === 'number' && Number.isFinite(holdHours) && holdHours > 0) {
+            const [mark, infoHours] = await Promise.all([
+                fetchMarkIndex(symbol),
+                fetchFundingInfo(symbol),
+            ]);
             if (mark.available && Number.isFinite(mark.lastFundingRate)) {
-                const periods = holdHours / 8;
-                const stopDistance = Math.abs(entry - stopLoss);
-                const notionalPerRisk = stopDistance > 0 ? entry / stopDistance : 0;
-                const directionSign = direction === 'Long' ? -1 : 1;
-                const dragR = Math.round(directionSign * mark.lastFundingRate * periods * notionalPerRisk * 10000) / 10000;
+                const fundingIntervalHours = infoHours ?? 8;
+                const intervalSource: 'fundingInfo' | 'assumed 8h funding interval' = infoHours !== null ? 'fundingInfo' : 'assumed 8h funding interval';
                 const minutesToNext = mark.nextFundingTime > asofMs ? Math.round((mark.nextFundingTime - asofMs) / 60000) : null;
+                // Settlements inside the hold: the first at minutesToNext
+                // (when the clock is known), then one per interval.
+                const holdMinutes = holdHours * 60;
+                const settlements = minutesToNext === null
+                    ? Math.max(0, Math.floor(holdMinutes / (fundingIntervalHours * 60)))
+                    : (holdMinutes >= minutesToNext
+                        ? 1 + Math.max(0, Math.floor((holdMinutes - minutesToNext) / (fundingIntervalHours * 60)))
+                        : 0);
+                const dragR = computeFundingDrag({ direction, entry, stopLoss, fundingRate: mark.lastFundingRate, settlements });
                 funding = {
                     rate: mark.lastFundingRate,
+                    settlements,
+                    fundingIntervalHours,
+                    intervalSource,
                     dragR,
                     minutesToNextSettlement: minutesToNext,
-                    assumption: 'current 8h rate persists over the expected hold',
+                    assumption: 'current per-settlement rate persists over the expected hold',
                 };
-                notes.push(`funding drag ${dragR > 0 ? '+' : ''}${dragR}R over ${holdHours}h at the current 8h rate ${mark.lastFundingRate} (${direction === 'Long' ? 'long pays' : 'short receives'}); next settlement in ${minutesToNext ?? '?'}m — ASSUMPTION: the current rate persists`);
+                notes.push(`funding ${dragR > 0 ? 'cost' : 'credit'} ${Math.abs(dragR)}R over ${holdHours}h (${settlements} settlement${settlements === 1 ? '' : 's'} × ${mark.lastFundingRate} at a ${intervalSource === 'fundingInfo' ? `measured ${fundingIntervalHours}h` : 'ASSUMED 8h'} interval; ${direction === 'Long' ? 'long pays' : 'short receives'} a positive rate); next settlement in ${minutesToNext ?? '?'}m`);
             }
         }
         const values: TradeMathRead & { funding?: typeof funding } = { ...read, ...(funding !== null ? { funding } : {}) };
