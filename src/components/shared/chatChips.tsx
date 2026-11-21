@@ -15,6 +15,8 @@ import { copyText } from '../../utils/clipboard';
 import MarkdownContent from './MarkdownContent';
 import { effortChoiceOf } from './effortScale';
 import { useLetterReveal } from '../../hooks/useLetterReveal';
+import { getIdleMotionEnabled, subscribeIdleMotion } from '../../services/desk/idleMotion';
+import { canRenderPlainStreamingProse, splitStableMarkdownBlocks } from '../../utils/streamBlocks';
 import type { ReasoningEffort } from '../../types/provider';
 
 /** Hover chip on USER bubbles: re-run the turn from this message — the
@@ -231,38 +233,42 @@ export const ThinkingTierChip: React.FC<{ effort: ReasoningEffort; className?: s
     );
 };
 
-/** The streamed answer, written letter by letter.
+/** The streamed answer, progressively revealed with calm per-segment opacity fade-in.
  *
- *  The provider sends chunks, so a fast model can land a whole paragraph at
- *  once. `useLetterReveal` reveals the received text at 3 characters per frame
- *  (5 when a burst builds a backlog), which reads as writing without waiting
- *  for the turn to finish. It is timer-based and snaps to the full text when
- *  the tab hides, when the turn settles, or when a remounted row already holds
- *  a long text — the three ways the old rAF prefix reveal used to strand a
- *  tail. Copy and the action chips read the source text, never this prefix.
+ *  `useLetterReveal` paces chunked provider bursts smoothly using a timer
+ *  (never an rAF-only trap that stalls when backgrounded) and snaps to the full
+ *  text immediately at settle, on tab hide, or when reduced motion is active.
  *
- *  The revealed prefix is rendered as MARKDOWN while it arrives, through the
- *  same `MarkdownContent` the settled answer uses and with the same classes,
- *  so nothing reflows at settle. It used to be raw pre-wrapped text, which
- *  meant a bold level, a table or a list only appeared once the turn was over
- *  — the formatting the trader was waiting for arrived as a jump. The parse is
- *  bucketed (below) rather than per letter: react-markdown on every frame is
- *  the expensive, flickering version of this effect, and 24 characters is
- *  short enough that the formatting still keeps up with the writing.
+ *  While streaming, completed top-level markdown blocks keep stable keys so
+ *  settled paragraphs never re-fade or re-parse, while only newly arrived segments
+ *  in the growing block fade in via `.stream-token-fade` / `.stream-block-fade`.
  */
-const PARSE_STEP = 24;
+const PARSE_STEP = 16;
+const MAX_ACTIVE_FADE_SPANS = 8;
+
+const prefersOsReducedMotion = (): boolean => typeof window !== 'undefined'
+    && typeof window.matchMedia === 'function'
+    && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 export const FadingText: React.FC<{ text: string; streaming: boolean; className?: string }> = ({ text, streaming, className }) => {
+    const [idleMotion, setIdleMotion] = useState<boolean>(getIdleMotionEnabled);
+    useEffect(() => subscribeIdleMotion(setIdleMotion), []);
+    const motionEnabled = idleMotion && !prefersOsReducedMotion();
     const visible = useLetterReveal(text, streaming);
     const typingRef = useRef<HTMLDivElement>(null);
     const scrollerRef = useRef<HTMLElement | null>(null);
-    // The last parsed slice, rebuilt only every PARSE_STEP received
-    // characters. Writing this ref during render is the repo's accepted idiom
-    // (`conventions.md` › "Two idioms that look like mistakes"): the value is
-    // derived from committed props and a later hook in this same render must
-    // already see it. `visible.length < len` is the reset for a NEW turn, whose
-    // text starts over from empty and would otherwise reuse the old node.
-    const parsedRef = useRef<{ len: number; node: React.ReactNode }>({ len: -1, node: null });
+    // Bucketed markdown node for formatted growing active block; written during
+    // render per the repo's derived-cache idiom (conventions.md).
+    const parsedRef = useRef<{ blockIdx: number; len: number; node: React.ReactNode }>({ blockIdx: -1, len: -1, node: null });
+    // Incremental token slices for plain growing prose so only newly arrived
+    // characters wear `.stream-token-fade` without re-fading settled prefix.
+    const proseTrackRef = useRef<{
+        blockIdx: number;
+        totalLen: number;
+        settledPrefix: string;
+        segs: Array<{ id: number; text: string }>;
+        seq: number;
+    }>({ blockIdx: -1, totalLen: 0, settledPrefix: '', segs: [], seq: 0 });
 
     // Keep the transcript pinned while letters grow the answer. The check is a
     // live distance, not a flag: a reader who scrolled up stays where they are.
@@ -289,28 +295,70 @@ export const FadingText: React.FC<{ text: string; streaming: boolean; className?
         if (distance < 64) scroller.scrollTop = scroller.scrollHeight;
     }, [visible, streaming]);
 
-    if (streaming) {
-        const last = parsedRef.current;
-        if (last.len < 0 || visible.length < last.len || visible.length - last.len >= PARSE_STEP) {
-            parsedRef.current = {
-                len: visible.length,
-                node: (
-                    <MarkdownContent
-                        content={visible}
-                        className={`!text-ui-base [&_p]:my-1 [&_li]:text-ui-base ${className ?? ''}`}
-                    />
-                ),
-            };
+    if (streaming && motionEnabled) {
+        const { committed, active } = splitStableMarkdownBlocks(visible);
+        const activeIdx = committed.length;
+        const mdClass = `!text-ui-base [&_p]:my-1 [&_li]:text-ui-base ${className ?? ''}`;
+
+        let activeNode: React.ReactNode = null;
+        if (active) {
+            if (canRenderPlainStreamingProse(active)) {
+                const track = proseTrackRef.current;
+                const priorJoined = track.settledPrefix + track.segs.map(s => s.text).join('');
+                if (track.blockIdx !== activeIdx || !active.startsWith(priorJoined)) {
+                    track.blockIdx = activeIdx;
+                    track.settledPrefix = '';
+                    track.seq += 1;
+                    track.segs = [{ id: track.seq, text: active }];
+                    track.totalLen = active.length;
+                } else if (active.length > track.totalLen) {
+                    const added = active.slice(track.totalLen);
+                    track.seq += 1;
+                    track.segs = [...track.segs, { id: track.seq, text: added }];
+                    if (track.segs.length > MAX_ACTIVE_FADE_SPANS) {
+                        const overflow = track.segs.length - MAX_ACTIVE_FADE_SPANS;
+                        track.settledPrefix += track.segs.slice(0, overflow).map(s => s.text).join('');
+                        track.segs = track.segs.slice(overflow);
+                    }
+                    track.totalLen = active.length;
+                }
+                activeNode = (
+                    <div key={`block-${activeIdx}`} className="my-1 whitespace-pre-wrap text-ui-base leading-relaxed text-zinc-200">
+                        {track.settledPrefix}
+                        {track.segs.map(seg => (
+                            <span key={seg.id} className="stream-token-fade">{seg.text}</span>
+                        ))}
+                    </div>
+                );
+            } else {
+                const last = parsedRef.current;
+                if (last.blockIdx !== activeIdx || last.len < 0 || active.length < last.len || active.length - last.len >= PARSE_STEP) {
+                    parsedRef.current = {
+                        blockIdx: activeIdx,
+                        len: active.length,
+                        node: <MarkdownContent content={active} className={mdClass} />,
+                    };
+                }
+                activeNode = (
+                    <div key={`block-${activeIdx}`} className="stream-block-fade">
+                        {parsedRef.current.node}
+                    </div>
+                );
+            }
         }
-        /* The reveal caret belonged to the raw-text state. Markdown owns its
-           own block spacing now, and a caret after a partial list or table
-           would sit in the wrong place. */
+
         return (
-            <div ref={typingRef} className={`stream-typing text-ui-base leading-relaxed text-zinc-200 ${className ?? ''}`}>
-                {parsedRef.current.node}
+            <div ref={typingRef} className={`text-ui-base leading-relaxed text-zinc-200 ${className ?? ''}`} data-streaming="true">
+                {committed.map((block, i) => (
+                    <div key={`block-${i}`} className="stream-block-fade">
+                        <MarkdownContent content={block} className={mdClass} />
+                    </div>
+                ))}
+                {activeNode}
             </div>
         );
     }
+
     return (
         <MarkdownContent content={text} className={`!text-ui-base [&_p]:my-1 [&_li]:text-ui-base ${className ?? ''}`} />
     );

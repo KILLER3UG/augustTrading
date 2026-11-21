@@ -21,6 +21,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
+import { getIdleMotionEnabled, subscribeIdleMotion } from '../services/desk/idleMotion';
 
 const TICK_MS = 16;
 const CHARS_PER_TICK = 3;
@@ -35,7 +36,9 @@ const prefersReducedMotion = (): boolean => typeof window !== 'undefined'
     && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 export const useLetterReveal = (text: string, active: boolean): string => {
-    const reduced = prefersReducedMotion();
+    const [idleMotion, setIdleMotion] = useState<boolean>(getIdleMotionEnabled);
+    useEffect(() => subscribeIdleMotion(setIdleMotion), []);
+    const reduced = prefersReducedMotion() || !idleMotion;
     const [revealed, setRevealed] = useState(
         active && text.length > INSTANT_MOUNT_CHARS ? text.length : 0,
     );
