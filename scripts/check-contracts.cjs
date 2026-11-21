@@ -4451,6 +4451,186 @@ const checkSkillWrites = async () => {
         tmCore.computeFundingDrag({ direction: 'Long', entry: 100, stopLoss: 100, fundingRate: 0.0001, settlements: 3 }) === 0
         && tmCore.computeFundingDrag({ direction: 'Long', entry: 100, stopLoss: 95, fundingRate: 0.0001, settlements: 0 }) === 0);
 
+    // ─── Wave B: spot/perp divergence, VPIN, quant regime, Brooks geometry ──
+    const ofc = loadModule('src/services/market/orderFlowCore');
+    const vrc = loadModule('src/services/market/volRegimeCore');
+    const icB = loadModule('src/services/market/imbalanceCore');
+    const mkBar = (t, price, vol, buy) =>
+        ({ time: t, open: price, high: price + 1, low: price - 1, close: price, volume: vol, takerBuyVolume: buy });
+    const perpAlign = [];
+    const spotAlign = [];
+    for (let i = 0; i < 20; i++) {
+        perpAlign.push(mkBar(i * 3600000, 100, 100, 85));
+        spotAlign.push(mkBar(i * 3600000, 100, 100, 85));
+    }
+    const divAligned = ofc.spotPerpCvdDivergence(perpAlign, spotAlign);
+    ok('spot/perp: identical books classify ALIGNED with zero normalized divergence',
+        divAligned.available === true && divAligned.classification === 'aligned'
+        && divAligned.alignedBars === 20 && divAligned.normalizedDeltaDivergence === 0,
+        divAligned && JSON.stringify(divAligned));
+    const divAbsorb = ofc.spotPerpCvdDivergence(
+        perpAlign.map(b => ({ ...b, takerBuyVolume: 90 })),
+        spotAlign.map(b => ({ ...b, takerBuyVolume: 10 })),
+    );
+    ok('spot/perp: opposite books classify ABSORPTION_RISK with |normalized| > 0.79',
+        divAbsorb.classification === 'absorption_risk' && Math.abs(divAbsorb.normalizedDeltaDivergence ?? 0) > 0.79,
+        divAbsorb && JSON.stringify(divAbsorb));
+    const divMisaligned = ofc.spotPerpCvdDivergence(perpAlign, spotAlign.slice(0, 5));
+    ok('spot/perp: a misaligned/short spot window is REFUSED, never zero-filled',
+        divMisaligned.available === false && /aligned closed bar/.test(divMisaligned.reason ?? ''));
+    const divNoTaker = ofc.spotPerpCvdDivergence(perpAlign, spotAlign.map(b => ({ ...b, takerBuyVolume: undefined })));
+    ok('spot/perp: missing taker-buy volume refuses the divergence',
+        divNoTaker.available === false && /taker-buy volume/.test(divNoTaker.reason ?? ''));
+    const vpinOneSided = [];
+    for (let i = 0; i < 4; i++) vpinOneSided.push(mkBar(i * 60000, 100, 100, i % 2 === 0 ? 100 : 0));
+    const vpinHot = ofc.vpin(vpinOneSided, { minBuckets: 4, targetBuckets: 4, rollingWindow: 2 });
+    ok('vpin: one-sided bars build 4 buckets, VPIN 1.0, percentile 100, toxicity flagged',
+        vpinHot.available === true && vpinHot.buckets === 4 && vpinHot.vpin === 1
+        && vpinHot.vpinPercentile === 100 && vpinHot.toxicityWarning === true,
+        vpinHot && JSON.stringify(vpinHot));
+    const vpinThin = ofc.vpin(vpinOneSided.slice(0, 2), { minBuckets: 20, targetBuckets: 2 });
+    ok('vpin: under the bucket floor it REFUSES (available false, warning off)',
+        vpinThin.available === false && vpinThin.toxicityWarning === false && /bucket/.test(vpinThin.reason ?? ''));
+    const vpinNoTaker = ofc.vpin([{ time: 0, open: 1, high: 2, low: 0.5, close: 1, volume: 10 }]);
+    ok('vpin: missing taker-buy volume refuses (never approximated)',
+        vpinNoTaker.available === false && /taker-buy volume/.test(vpinNoTaker.reason ?? ''));
+
+    const yzTape = [];
+    for (let i = 0; i < 100; i++) {
+        const close = 101 + 2 * i;
+        yzTape.push(mk(i * 3600000, close - 1, close + 1, close - 2, close, 10));
+    }
+    const yz = vrc.yangZhangVol(yzTape, 3600, 30, 60);
+    ok('vol: Yang-Zhang per-bar sigma is positive with a percentile on a 100-bar tape',
+        yz !== null && yz.perBar > 0 && yz.percentile !== null && yz.percentile >= 0 && yz.percentile <= 100,
+        yz && JSON.stringify(yz));
+    const tightTape = [];
+    for (let i = 0; i < 40; i++) {
+        const close = 100 + (i % 2) * 0.1;
+        tightTape.push(mk(i * 3600000, close - 0.2, close + 0.2, close - 0.2, close, 10));
+    }
+    const wideTape = [];
+    for (let i = 0; i < 40; i++) {
+        const close = 100 + i * 5;
+        wideTape.push(mk(i * 3600000, close - 0.2, close + 0.2, close - 0.2, close, 10));
+    }
+    ok('vol: BB-in-KC squeeze fires on a tight tape, not on a dispersed one',
+        vrc.bbKcSqueeze(tightTape) === true && vrc.bbKcSqueeze(wideTape) === false);
+    const nrTape = [];
+    const nrHighs = [105, 104, 103, 102, 101, 100.8, 100.5];
+    const nrLows = [95, 96, 97, 98, 99, 99.4, 99.8];
+    for (let i = 0; i < 7; i++) nrTape.push(mk(i * 3600000, (nrHighs[i] + nrLows[i]) / 2, nrHighs[i], nrLows[i], (nrHighs[i] + nrLows[i]) / 2, 10));
+    ok('vol: NR7 flags the narrowest range of the last 7 bars',
+        vrc.nr7(nrTape).isNr7 === true && Math.abs(vrc.nr7(nrTape).range - 0.7) < 1e-9);
+    ok('vol: the ±1σ expected move scales with sqrt(horizon) (σ 0.01, price 100, 4 bars → $2 / 2%)',
+        (() => {
+            const em = vrc.expectedMove1Sigma(0.01, 100, 4);
+            return em !== null && Math.abs(em.dollars - 2) < 1e-9 && Math.abs(em.percent - 2) < 1e-9 && em.horizonBars === 4;
+        })());
+    const rndW = (() => { let a = 42; return () => { a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; })();
+    const rwCloses = [100];
+    for (let i = 1; i < 300; i++) rwCloses.push(rwCloses[i - 1] + (rndW() - 0.5) * 2);
+    const vrRw = vrc.varianceRatio(rwCloses, 4);
+    ok('vol: the variance ratio of a random walk sits near 1 (0.8–1.25)',
+        vrRw !== null && vrRw > 0.8 && vrRw < 1.25, `vr=${vrRw}`);
+    ok('vol: the variance ratio refuses a tape shorter than k×4+1',
+        vrc.varianceRatio([100, 101, 102], 4) === null);
+    const hRw = vrc.hurstExponent(rwCloses);
+    ok('vol: the Hurst exponent of a random walk sits near 0.5 (0.35–0.65) and refuses thin tapes',
+        hRw !== null && hRw > 0.35 && hRw < 0.65 && vrc.hurstExponent(rwCloses.slice(0, 40)) === null,
+        `h=${hRw}`);
+    const rampCloses = [];
+    for (let i = 0; i < 90; i++) rampCloses.push(100 + 2 * i + (i % 2) * 0.5);
+    const scan = vrc.trendScanTStat(rampCloses);
+    let scanStrongest = null;
+    if (scan) scanStrongest = scan.reduce((best, p) => (Math.abs(p.tStat) > Math.abs(best.tStat) ? p : best));
+    ok('vol: trend scanning returns all four horizons with a |t| above 10 on a clean ramp',
+        scan !== null && scan.length === 4 && scanStrongest !== null && Math.abs(scanStrongest.tStat) > 10,
+        scan && JSON.stringify(scan));
+    ok('vol: trend scanning refuses a tape under the shortest horizon',
+        vrc.trendScanTStat(rampCloses.slice(0, 8)) === null);
+
+    const wireBars = [
+        mk(0, 100.4, 101.5, 99.5, 100.1, 10),
+        mk(60000, 100.2, 101.3, 99.6, 100.9, 10),
+        mk(120000, 100.1, 101.4, 99.7, 100.3, 10),
+    ];
+    ok('brooks: barbwire flags 3 overlapping doji/tail bars',
+        vrc.barbwire(wireBars) === true);
+    const prevBull = mk(0, 100, 110, 90, 90);
+    ok('brooks: the reversal-overlap trap flags a bull reversal whose midpoint sits above the prior low',
+        vrc.reversalOverlapTrap([prevBull, mk(60000, 95, 108, 94, 105)]) === true
+        && vrc.reversalOverlapTrap([prevBull, mk(60000, 80, 100, 70, 95)]) === false);
+    const gapTape = [];
+    for (let i = 0; i < 40; i++) gapTape.push(mk(i * 3600000, 100, 100.5, 99.5, 100, 10));
+    for (let i = 0; i < 25; i++) gapTape.push(mk((40 + i) * 3600000, 101 + i, 101.5 + i, 100.5 + i, 101.5 + i, 10));
+    const gapRun = vrc.ema20GapStreak(gapTape);
+    ok('brooks: an EMA(20) gap run of 20+ bars builds a streak',
+        gapRun.streak >= 20, JSON.stringify(gapRun));
+    gapTape.push(mk(65 * 3600000, 124, 125, 100, 121));
+    const gapSetup = vrc.ema20GapStreak(gapTape);
+    ok('brooks: the first bar to re-touch the EMA after the gap run fires maGapBarSetup',
+        gapSetup.maGapBarSetup === true && gapSetup.streak === 0);
+    const climaxTape = [mk(0, 100, 101, 99, 100.5, 10)];
+    for (let i = 1; i <= 25; i++) climaxTape.push(mk(i * 3600000, 100.5 + i, 102 + i, 100 + i, 101.5 + i, 10));
+    climaxTape.push(mk(26 * 3600000, 126, 132, 125, 131, 10));
+    ok('brooks: a 6-point body after a 25-bar grind flags the climax',
+        vrc.climaxBar(climaxTape).isClimax === true && vrc.climaxBar(climaxTape).bodyVsMedian >= 2.5);
+
+    const pbBars = [
+        mk(0, 11, 12, 9, 11, 10),
+        mk(60000, 13, 14, 10.5, 13, 10),
+        mk(120000, 13, 9, 8, 9, 10),
+        mk(180000, 9, 11, 7, 10, 10),
+        mk(240000, 12, 13, 9.5, 12, 10),
+    ];
+    const pbPull = ss.barCountPullback(pbBars, 0.5);
+    ok('brooks: the bar-count pullback reads H2 with a one-tick trigger and the pullback invalidation',
+        pbPull !== null && pbPull.label === 'H2' && pbPull.count === 2
+        && Math.abs(pbPull.triggerPrice - 13.5) < 1e-9 && Math.abs(pbPull.invalidationPrice - 7) < 1e-9,
+        pbPull && JSON.stringify(pbPull));
+    const pbClampBars = [mk(0, 11, 11, 9, 10, 10)];
+    for (let i = 1; i <= 6; i++) pbClampBars.push(mk(i * 60000, 10 + i, 11 + i, 9 + i, 10 + i, 10));
+    const pbClampPull = ss.barCountPullback(pbClampBars);
+    ok('brooks: counts beyond 4 clamp the LABEL to H4 while the exact count stays 6',
+        pbClampPull !== null && pbClampPull.label === 'H4' && pbClampPull.count === 6);
+
+    const compBars = [
+        mk(0, 103, 104, 99, 103, 10),
+        mk(60000, 103, 106, 100, 101, 10),
+        mk(120000, 101, 105, 98, 104, 10),
+    ];
+    const comp2 = ss.compositeCandle(compBars, 2);
+    const comp3 = ss.compositeCandle(compBars, 3);
+    ok('brooks: the 2-bar composite blends open/close/extremes with body+tail ratios',
+        comp2 !== null && comp2.open === 103 && comp2.close === 104 && comp2.high === 106 && comp2.low === 98
+        && Math.abs(comp2.bodyRatio - 0.125) < 1e-9 && Math.abs(comp2.upperTailRatio - 0.25) < 1e-9
+        && Math.abs(comp2.lowerTailRatio - 0.625) < 1e-9, comp2 && JSON.stringify(comp2));
+    ok('brooks: the 3-bar composite spans the first open to the last close (bull)',
+        comp3 !== null && comp3.open === 103 && comp3.close === 104 && comp3.netDirection === 'bull');
+
+    const insideBars = [
+        mk(0, 105, 110, 90, 105, 10),
+        mk(60000, 104, 108, 92, 104, 10),
+        mk(120000, 103.5, 106, 94, 103.5, 10),
+        mk(180000, 104, 105.5, 95, 104, 10),
+    ];
+    const clusters = ss.insideClusters(insideBars, 0.5);
+    ok('brooks: the iii cluster is detected with triggers one tick beyond the outer bar',
+        clusters.some(c => c.kind === 'iii' && Math.abs(c.breakoutHigh - 108.5) < 1e-9 && Math.abs(c.breakoutLow - 91.5) < 1e-9),
+        clusters && JSON.stringify(clusters));
+
+    const mmgBars = [
+        mk(0, 100.5, 101, 99, 100, 10),
+        mk(60000, 101, 105, 100.5, 104, 10),
+        mk(120000, 105.5, 107, 101, 103, 10),
+        mk(180000, 103, 104, 100.5, 102, 10),
+    ];
+    const mmg = icB.microMeasuringGaps(mmgBars);
+    ok('brooks: the bull micro measuring gap projects the 3-bar midpoint and marks it tested',
+        mmg.length === 1 && mmg[0].direction === 'bull' && Math.abs(mmg[0].midpoint - 101) < 1e-9 && mmg[0].tested === true,
+        mmg && JSON.stringify(mmg));
+
     // imbalanceCore — a bullish FVG by construction: a.high=100 < c.low=102,
     // displacement candle body 3×ATR. Fill depth is measured from later bars.
     // Five overlapping fillers lead so the tape clears the ≥10-candle floor
