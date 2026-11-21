@@ -1175,6 +1175,10 @@ export interface OptionsContext {
     dvol?: number;
     /** The perp tape's Yang-Zhang realized volatility, annualized %. */
     realizedVolPct?: number | null;
+    /** The realized-vol window the VRP was computed against (e.g.
+     *  "30d daily Yang-Zhang") — DVOL is a 30-day index, so the realized
+     *  leg must match its horizon. */
+    realizedVolWindow?: string;
     /** VRP = DVOL − realized vol, in volatility points (positive = options
      *  price more insurance than the tape has been delivering). */
     vrp?: number | null;
@@ -1241,14 +1245,23 @@ export const fetchDeribitOptionsContext = async (symbol: string): Promise<Option
         if (dvol === null) {
             return { available: false, reason: 'Deribit returned no usable DVOL value' };
         }
-        const candles = await fetchFuturesOHLCV(gate.base, '1h', 100);
-        const yz = yangZhangVol(candles, 3_600, 30, 60);
+        // VRP compares like with like: Deribit's DVOL is a 30-DAY implied
+        // index, so the realized leg is 30 closed DAILY bars (Yang-Zhang,
+        // 365-day crypto annualization) — not 100 hours of 1h bars, which
+        // mixed a 30-day implied against a ~4-day realized window.
+        const daily = await fetchFuturesOHLCV(gate.base, '1d', 60).catch(() => []);
+        const dailyClosed = daily.filter(c => c.time + 86_400_000 <= Date.now());
+        const yz = dailyClosed.length >= 32
+            ? yangZhangVol(dailyClosed.slice(-32), 86_400, 30, 32)
+            : null;
         const realizedVolPct = yz ? yz.annualizedPct : null;
+        const realizedVolWindow = `30d daily Yang-Zhang${yz ? '' : ` (unavailable: ${dailyClosed.length} closed daily bars)`}`;
         const result: OptionsContext = {
             available: true,
             symbol: base,
             dvol,
             realizedVolPct,
+            realizedVolWindow,
             vrp: realizedVolPct !== null ? Number((dvol - realizedVolPct).toPrecision(6)) : null,
             fetchedAt: Date.now(),
         };
