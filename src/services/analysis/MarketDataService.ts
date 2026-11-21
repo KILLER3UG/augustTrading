@@ -180,12 +180,19 @@ export interface BookSlippageEstimate {
     notionalUsd: number;
     available: boolean;
     reason?: string;
+    /** The reference the slippage is measured against: the book MID
+     *  (bestBid + bestAsk) / 2 — never the touched side's own best. */
+    referencePrice: number | null;
+    referenceSource: 'mid' | 'unavailable';
     /** VWAP fill across the levels the notional consumes. */
     vwapFillPrice: number | null;
-    /** Signed slippage vs the touched side's best price, in bps — positive
-     *  when the fill is WORSE than best (buys walk up the asks); negative
-     *  when a sell walks down the bids. */
-    slippageBps: number | null;
+    /** Signed VWAP-vs-MID slippage in bps: a buy filling above mid is
+     *  positive, a sell filling below mid is negative. */
+    slippageVsMidBps: number | null;
+    /** Strictly ≥ 0 cost of eating the ladder vs the touched side's TOP
+     *  price, in bps — the impact of the size itself, for both buys and
+     *  sells (a sell filling BELOW its best bid is a positive cost). */
+    impactVsTopBps: number | null;
     /** Deepest level price the notional touches. */
     worstFillPrice: number | null;
     levelsConsumed: number;
@@ -197,8 +204,26 @@ export interface BookSlippageEstimate {
 }
 
 /**
+ * The standard size-weighted microprice: (P_b·Q_a + P_a·Q_b) / (Q_b + Q_a).
+ * A heavy BID side pulls the fair price UP toward the ask (and vice versa).
+ * Pure — pinned by contracts and unit tests.
+ */
+export const computeMicroprice = (
+    bestBid: number,
+    bestAsk: number,
+    bidQty: number,
+    askQty: number,
+): number | null => {
+    if (!Number.isFinite(bestBid) || !Number.isFinite(bestAsk)) return null;
+    if (!Number.isFinite(bidQty) || !Number.isFinite(askQty) || bidQty < 0 || askQty < 0) return null;
+    const sum = bidQty + askQty;
+    if (!(sum > 0)) return null;
+    return (bestBid * askQty + bestAsk * bidQty) / sum;
+};
+
+/**
  * Walk the L2 ladder best-first and report the expected VWAP fill, worst
- * touched level and slippage bps for an EXACT notional size. Pure — the
+ * touched level and slippage for an EXACT notional size. Pure — the
  * get_order_book tool calls this when the model passes notional_usd. A
  * market/stop order of $N eats the book; this is what it costs.
  */
@@ -212,8 +237,11 @@ export const estimateBookSlippage = (
         side,
         notionalUsd,
         available: false,
+        referencePrice: null,
+        referenceSource: 'unavailable',
         vwapFillPrice: null,
-        slippageBps: null,
+        slippageVsMidBps: null,
+        impactVsTopBps: null,
         worstFillPrice: null,
         levelsConsumed: 0,
         baseQuantity: 0,
@@ -226,9 +254,14 @@ export const estimateBookSlippage = (
     // A buy eats the asks; a sell hits the bids.
     const ladder = side === 'buy' ? asks : bids;
     const best = ladder[0]?.price ?? 0;
+    const bestOpposite = (side === 'buy' ? bids : asks)[0]?.price ?? 0;
     if (!(best > 0)) {
         return { ...base, reason: 'order book ladder is empty — no depth to walk' };
     }
+    // The reference is the BOOK MID, not the touched side's own best —
+    // measuring a buy against bestAsk would hide the half-spread it already
+    // pays the moment it crosses.
+    const mid = bestOpposite > 0 ? (best + bestOpposite) / 2 : best;
     let remaining = notionalUsd;
     let cost = 0;
     let qtyFilled = 0;
@@ -247,7 +280,10 @@ export const estimateBookSlippage = (
     }
     const filled = notionalUsd - Math.max(0, remaining);
     const vwap = qtyFilled > 0 ? cost / qtyFilled : null;
-    const slipBps = vwap !== null ? ((vwap - best) / best) * 10_000 : null;
+    const vsMidBps = vwap !== null ? ((vwap - mid) / mid) * 10_000 : null;
+    // Strictly ≥ 0: the impact of the SIZE itself against the side's top —
+    // a sell's fill below its best bid is a POSITIVE cost.
+    const impactVsTopBps = vwap !== null ? Math.abs((vwap - best) / best) * 10_000 : null;
     return {
         side,
         notionalUsd,
@@ -255,8 +291,11 @@ export const estimateBookSlippage = (
         ...(remaining > 0 ? {
             reason: `book depth insufficient: the top ${ladder.length} level(s) carry $${Math.round(filled)} of the requested $${Math.round(notionalUsd)} — refusing to quote a fill that does not exist`,
         } : {}),
+        referencePrice: mid,
+        referenceSource: 'mid',
         vwapFillPrice: vwap !== null ? Math.round(vwap * 1e8) / 1e8 : null,
-        slippageBps: slipBps !== null ? Math.round(slipBps * 100) / 100 : null,
+        slippageVsMidBps: vsMidBps !== null ? Math.round(vsMidBps * 100) / 100 : null,
+        impactVsTopBps: impactVsTopBps !== null ? Math.round(impactVsTopBps * 100) / 100 : null,
         worstFillPrice: worst,
         levelsConsumed: levels,
         baseQuantity: Number(qtyFilled.toPrecision(8)),
@@ -461,12 +500,15 @@ const FUTURES_418_DEFAULT_BAN_MS = 120_000;
 const FUTURES_COOLDOWN_MAX_MS = 3 * 24 * 60 * 60 * 1000;
 
 // The authoritative weight gauge (x-mbx-used-weight-1m) — self-throttle at 90%
-// of the 2,400/min ceiling instead of trusting the local request count.
+// of the 2,400/min ceiling instead of trusting the local request count. The
+// gauge is only valid within the UTC MINUTE it was reported in: when
+// Math.floor(Date.now() / 60000) rolls over, Binance's window resets and
+// stale weight must never throttle the next minute.
 const FUTURES_WEIGHT_CEILING = 2400;
 export const FUTURES_WEIGHT_THROTTLE_THRESHOLD = Math.floor(FUTURES_WEIGHT_CEILING * 0.9);
 const FUTURES_WEIGHT_MAX_WAIT_MS = 5000;
 let futuresUsedWeight1m = 0;
-let futuresWeightUpdatedAtMs = 0;
+let futuresWeightMinute = -1;
 
 /** Per-host last-seen status, for the one concise all-hosts-failed line. */
 const futuresHostLastStatus = new Map<string, { status: number; at: number }>();
@@ -500,7 +542,7 @@ const noteFuturesResponse = (response: Response): void => {
         const weight = Number(response.headers?.get?.('x-mbx-used-weight-1m'));
         if (Number.isFinite(weight) && weight >= 0) {
             futuresUsedWeight1m = weight;
-            futuresWeightUpdatedAtMs = Date.now();
+            futuresWeightMinute = Math.floor(Date.now() / 60_000);
         }
     } catch { /* header access is best-effort */ }
 };
@@ -515,29 +557,36 @@ class FuturesRateLimitedError extends Error {
 
 const acquireFuturesSlot = async (): Promise<void> => {
     const deadline = Date.now() + FUTURES_SLOT_MAX_WAIT_MS;
-    const weightDeadline = Date.now() + FUTURES_WEIGHT_MAX_WAIT_MS;
     for (;;) {
         const now = Date.now();
         while (futuresRequestTimes.length > 0 && futuresRequestTimes[0] < now - 60_000) futuresRequestTimes.shift();
-        // The reported gauge is fresh for 60s after its last response; past
-        // that it has rolled over and the local count is the only signal.
-        const weightFresh = now - futuresWeightUpdatedAtMs < 60_000;
-        const weightHot = weightFresh && futuresUsedWeight1m >= FUTURES_WEIGHT_THROTTLE_THRESHOLD;
-        const weightCooled = !weightHot || now >= futuresWeightUpdatedAtMs + 60_000;
-        if (futuresRequestTimes.length < FUTURES_MAX_REQUESTS_PER_MINUTE && weightCooled) {
+        // The gauge is only valid within the UTC minute it was reported in:
+        // when Math.floor(Date.now() / 60000) rolls over, Binance's window
+        // resets and stale weight never throttles the next minute.
+        const minute = Math.floor(now / 60_000);
+        const weightHot = futuresWeightMinute === minute && futuresUsedWeight1m >= FUTURES_WEIGHT_THROTTLE_THRESHOLD;
+        const countHot = futuresRequestTimes.length >= FUTURES_MAX_REQUESTS_PER_MINUTE;
+        if (!weightHot && !countHot) {
             futuresRequestTimes.push(now);
             return;
         }
-        if (now >= deadline || (weightHot && now >= weightDeadline)) {
-            // Go anyway — Binance's weight limit is the actual authority, and
-            // a 429 now latches an honest cooldown instead of hammering.
+        const msLeftInMinute = 60_000 - (now % 60_000);
+        // Hot gauge with more than the short wait budget left in the minute:
+        // FAIL FAST — sleeping 5 s and firing anyway would slam straight into
+        // the 2,400 ceiling and a 429/418.
+        if (weightHot && msLeftInMinute > FUTURES_WEIGHT_MAX_WAIT_MS) {
+            throw new FuturesRateLimitedError(`Binance Futures weight gauge ${futuresUsedWeight1m}/${FUTURES_WEIGHT_CEILING} with ${(msLeftInMinute / 1000).toFixed(1)}s left in the minute — failing fast instead of slamming the ceiling`);
+        }
+        // The count gate keeps its bounded escape (the live price strip must
+        // not starve); a hot gauge waits out the last ≤5 s of the minute.
+        if (!weightHot && now >= deadline) {
             futuresRequestTimes.push(now);
             return;
         }
         // Re-check until a slot genuinely frees, instead of sleeping a fixed
         // 5 s and booking regardless -- which grew the window without bound
         // while making every caller pay the stall.
-        await new Promise<void>(resolve => setTimeout(resolve, Math.min(100, Math.max(1, deadline - now))));
+        await new Promise<void>(resolve => setTimeout(resolve, Math.min(100, Math.max(1, msLeftInMinute))));
     }
 };
 
@@ -651,20 +700,21 @@ export const __futuresRateLimitTestHooks = {
         futuresCooldownUntilMs = 0;
         futuresCooldownReason = '';
         futuresUsedWeight1m = 0;
-        futuresWeightUpdatedAtMs = 0;
+        futuresWeightMinute = -1;
         futuresRequestTimes.length = 0;
         futuresHostLastStatus.clear();
         cache.clear();
     },
-    seedWeight: (weight: number, ageMs: number = 0): void => {
+    seedWeight: (weight: number, minutesAgo: number = 0): void => {
         futuresUsedWeight1m = weight;
-        futuresWeightUpdatedAtMs = Date.now() - ageMs;
+        futuresWeightMinute = Math.floor(Date.now() / 60_000) - minutesAgo;
     },
-    state: (): { cooldownUntil: number; cooldownReason: string; usedWeight: number; weightAgeMs: number } => ({
+    state: (): { cooldownUntil: number; cooldownReason: string; usedWeight: number; weightMinute: number; currentMinute: number } => ({
         cooldownUntil: futuresCooldownUntilMs,
         cooldownReason: futuresCooldownReason,
         usedWeight: futuresUsedWeight1m,
-        weightAgeMs: Date.now() - futuresWeightUpdatedAtMs,
+        weightMinute: futuresWeightMinute,
+        currentMinute: Math.floor(Date.now() / 60_000),
     }),
 };
 
@@ -775,6 +825,7 @@ export const fetchFuturesOHLCV = async (
     limit: number = 100
 ): Promise<Kline[]> => {
     const normalizedSymbol = normalizeSymbol(symbol);
+    await ensureKnownSymbol(normalizedSymbol);
     const cacheKey = `futohlcv_${normalizedSymbol}_${timeframe}_${limit}`;
 
     const cached = getCached<Kline[]>(cacheKey);
@@ -789,6 +840,7 @@ export const fetchFuturesOHLCV = async (
         setCache(cacheKey, klines);
         return klines;
     } catch (error) {
+        if (error instanceof Error && error.message.startsWith('unknown symbol')) throw error;
         console.error(`Failed to fetch futures OHLCV for ${normalizedSymbol}:`, error);
         throw error;
     }
@@ -802,6 +854,7 @@ export const fetchFuturesOHLCV = async (
  */
 export const fetchFuturesTicker24h = async (symbol: string): Promise<MarketData> => {
     const normalizedSymbol = normalizeSymbol(symbol);
+    await ensureKnownSymbol(normalizedSymbol);
     const cacheKey = `futmarket_${normalizedSymbol}`;
 
     const cached = getCached<MarketData>(cacheKey, POINT_IN_TIME_TTL);
@@ -908,6 +961,7 @@ export const fetchFuturesOHLCVFromTime = async (
     endTime?: number
 ): Promise<Kline[]> => {
     const normalizedSymbol = normalizeSymbol(symbol);
+    await ensureKnownSymbol(normalizedSymbol);
     const actualEndTime = endTime || Date.now();
 
     // Mirror the spot twin's caching: the autopilot's 60s poll verifies every
@@ -947,6 +1001,7 @@ export const fetchFuturesOHLCVFromTime = async (
             setCache(cacheKey, klines);
             return klines;
         } catch (error) {
+            if (error instanceof Error && error.message.startsWith('unknown symbol')) throw error;
             console.error(`Failed to fetch Futures OHLCV for ${normalizedSymbol}:`, error);
             // NO silent SPOT fallback. This endpoint feeds OUTCOME
             // VERIFICATION: scoring a TP/SL hit against spot candles while
@@ -1051,6 +1106,33 @@ export const fetchFundingRate = async (symbol: string): Promise<number | null> =
 };
 
 /**
+ * The coin's REAL funding interval in hours (/fapi/v1/fundingInfo — most
+ * coins settle every 8h, some every 4h or 1h). Cached long (listing
+ * parameters change on listing events, not on price); null when the endpoint
+ * answers nothing usable — the caller then says "assumed 8h funding
+ * interval" instead of pretending the interval was measured.
+ */
+export const fetchFundingInfo = async (symbol: string): Promise<number | null> => {
+    const normalizedSymbol = normalizeSymbol(symbol);
+    const cacheKey = `fundinginfo_${normalizedSymbol}`;
+    const cached = getCached<number | null>(cacheKey);
+    if (cached !== null) return cached;
+    try {
+        const response = await robustFuturesFetch(`/fapi/v1/fundingInfo?symbol=${normalizedSymbol}`, POINT_IN_TIME_FETCH_MS);
+        const data = await response.json();
+        const hours = Array.isArray(data) && Number.isFinite(Number(data[0]?.fundingIntervalHours))
+            ? Number(data[0].fundingIntervalHours)
+            : null;
+        const result = hours !== null && hours > 0 ? hours : null;
+        if (result !== null) setCache(cacheKey, result);
+        return result;
+    } catch {
+        // Not cached: a missing fundingInfo retries on the next call.
+        return null;
+    }
+};
+
+/**
  * Mark / index price + funding clock from the SAME premiumIndex payload
  * fetchFundingRate already reads (it discarded these fields). The trade
  * surface's stats strip shows Mark and Oracle (index) like Minara's perps
@@ -1066,6 +1148,7 @@ export interface MarkIndexData {
 
 export const fetchMarkIndex = async (symbol: string): Promise<MarkIndexData> => {
     const normalizedSymbol = normalizeSymbol(symbol);
+    await ensureKnownSymbol(normalizedSymbol);
     const cacheKey = `markindex_${normalizedSymbol}`;
     const cached = getCached<MarkIndexData>(cacheKey, LIVE_MARK_TTL);
     if (cached) return cached;
@@ -1086,6 +1169,7 @@ export const fetchMarkIndex = async (symbol: string): Promise<MarkIndexData> => 
         setCache(cacheKey, result);
         return result;
     } catch (error) {
+        if (error instanceof Error && error.message.startsWith('unknown symbol')) throw error;
         console.warn(`Failed to fetch mark/index for ${normalizedSymbol}:`, error);
         return empty;
     }
@@ -1188,6 +1272,18 @@ export const verifySymbolAgainstUniverse = async (
         return universe.some(s => s.symbol === normalized) ? 'verified' : 'unknown-symbol';
     } catch {
         return 'unverified';
+    }
+};
+
+/**
+ * Point-in-time fetcher guard: a symbol the live universe POSITIVELY excludes
+ * refuses before ANY venue HTTP call (zero wasted round-trips). Fails OPEN on
+ * a cold/timed-out/errored universe — a valid or freshly listed perp is never
+ * blocked. The message is the refusal receipt the tool layer surfaces.
+ */
+export const ensureKnownSymbol = async (normalizedSymbol: string): Promise<void> => {
+    if (await verifySymbolAgainstUniverse(normalizedSymbol) === 'unknown-symbol') {
+        throw new Error(`unknown symbol "${normalizedSymbol}" — not a TRADING USDT perpetual in the live universe; call run_screener or find_best_setups for real symbols`);
     }
 };
 
@@ -1616,6 +1712,7 @@ export const fetchDerivativesData = async (symbol: string): Promise<DerivativesD
  */
 export const fetchOrderBookDepth = async (symbol: string): Promise<OrderBookData> => {
     const normalizedSymbol = normalizeSymbol(symbol);
+    await ensureKnownSymbol(normalizedSymbol);
     const cacheKey = `orderbook_${normalizedSymbol}`;
 
     const cached = getCached<OrderBookData>(cacheKey, POINT_IN_TIME_TTL);
@@ -1714,9 +1811,10 @@ export const fetchOrderBookDepth = async (symbol: string): Promise<OrderBookData
         // five-level depth skew.
         const top5BidQty = bids.slice(0, 5).reduce((s, b) => s + b.qty, 0);
         const top5AskQty = asks.slice(0, 5).reduce((s, a) => s + a.qty, 0);
-        const micro: OrderBookData['micro'] = top5BidQty + top5AskQty > 0
+        const microprice = computeMicroprice(bestBid, bestAsk, top5BidQty, top5AskQty);
+        const micro: OrderBookData['micro'] = microprice !== null
             ? {
-                microprice: (bestBid * top5AskQty + bestAsk * top5BidQty) / (top5BidQty + top5AskQty),
+                microprice,
                 top5BidQty,
                 top5AskQty,
                 top5Imbalance: (top5BidQty - top5AskQty) / (top5BidQty + top5AskQty),
@@ -1754,6 +1852,7 @@ export const fetchOrderBookDepth = async (symbol: string): Promise<OrderBookData
         setCache(cacheKey, result);
         return result;
     } catch (error) {
+        if (error instanceof Error && error.message.startsWith('unknown symbol')) throw error;
         console.warn(`Failed to fetch order book for ${normalizedSymbol}:`, error);
         return getDefaultOrderBook();
     }
