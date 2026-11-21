@@ -420,6 +420,8 @@ interface CompactedOutbound {
     windowTokens: number;
     ceilingTokens: number;
     afterTokens: number;
+    /** Stage-1 microcompaction savings for THIS round (see contextCompact). */
+    microCompactChars: number;
 }
 
 const compactOutbound = (
@@ -460,6 +462,7 @@ const compactOutbound = (
         windowTokens: result.windowTokens,
         ceilingTokens: result.ceilingTokens,
         afterTokens: result.afterTokens,
+        microCompactChars: result.microCompactChars,
     };
 };
 
@@ -2489,7 +2492,7 @@ export const DESK_TOOL_DEFINITIONS: DeskToolDefinition[] = [
         type: 'function',
         function: {
             name: 'scan_confluence',
-            description: 'Composite watchlist scan (ONE call, ONE turn): for up to 8 symbols x 3 timeframes, fetch live candles and return a RANKED multi-timeframe confluence summary (trend-bias agreement + code-detected setups). Use it when the trader asks to scan a watchlist, compare coins, or find what agrees across timeframes — instead of N separate get_market_packet calls. Results are ranked best-first; raw per-pair detail spills to the tool artifact store.',
+            description: 'Composite watchlist scan (ONE call, ONE turn): for up to 8 symbols x 3 timeframes, fetch live candles and return a RANKED multi-timeframe confluence summary (trend-bias agreement + code-detected setups). Use it when the trader asks to scan a watchlist, compare coins, or find what agrees across timeframes — instead of N separate get_market_packet calls. Results are ranked best-first; raw per-pair detail spills to the tool artifact store. When NOT to use: a single-symbol deep-dive (use get_market_packet / scan_setups), or a repeat scan this turn (the ranked rows are already above).',
             parameters: {
                 type: 'object',
                 properties: {
@@ -2938,7 +2941,10 @@ export const INITIAL_DESK_TOOL_NAMES: readonly string[] = [
     'get_key_levels',
     'get_session_context',
     'read_tool_output',
-    'recall',
+    // `recall` (the legacy alias of memory_search_sessions) is DEFERRED: the
+    // canonical name is always loaded, and loading both cost ~1.2kB of schema
+    // for two names for one handler. It stays reachable via load_tools and
+    // the executor keeps accepting it for old transcripts.
     // The reader the skills index orders the seat to open BEFORE acting. A
     // deferred reader made that instructed call an unloaded name on native
     // seats, and a schema-free guess on text transports.
@@ -6723,6 +6729,9 @@ export interface DeskToolLoopResult {
     /** True when the trader steered mid-turn: the loop injected their message
      *  and skipped the remaining batch calls with synthetic results. */
     steered?: boolean;
+    /** Stage-1 microcompaction savings across every round of this turn
+     *  (chars stubbed from stale bulky tool outputs). */
+    microCompactChars?: number;
     /** True when the final text REPLACES already-streamed markup: the last
      *  round painted a malformed tool-call attempt live, the budget ran out
      *  before it could self-heal, and the loop wiped the bubble via
@@ -6971,6 +6980,7 @@ export async function runDeskToolLoop(params: {
         requireFirstToolRound = false,
     } = params;
     let steeredThisTurn = false;
+    let microCompactCharsTotal = 0;
     const messages = [...params.messages];
     // The inbox notice lands AFTER the desk-tools block inside the system
     // message — the last thing the seat reads before its turn.
@@ -7136,6 +7146,7 @@ export async function runDeskToolLoop(params: {
         // Compacting here rather than once at entry is what stops an eight-round
         // turn from growing past the window in round five.
         const outbound = compactOutbound(config, messages, roundOptions.maxTokens, onToolEvent);
+        microCompactCharsTotal += outbound.microCompactChars;
         // A skill the seat read is a procedure it is still following; when
         // compaction takes the body, this request gets a bounded restoration —
         // or, with no room, a notice naming what to re-open. It rides only the
@@ -7328,6 +7339,7 @@ export async function runDeskToolLoop(params: {
                 endedWithToolCalls: false,
                 ...(recovered ? { recoveredFromTruncation: true } : {}),
                 ...(steeredThisTurn ? { steered: true } : {}),
+                microCompactChars: microCompactCharsTotal,
                 loadedSkills: skillBodiesThisTurn,
                 ...(paintedMarkup ? { repaintFinal: true } : {}),
             };
@@ -7696,6 +7708,7 @@ export async function runDeskToolLoop(params: {
         usedTools,
         endedWithToolCalls: true,
         ...(steeredThisTurn ? { steered: true } : {}),
+        microCompactChars: microCompactCharsTotal,
         loadedSkills: skillBodiesThisTurn,
     };
 }
@@ -7740,7 +7753,7 @@ export interface StreamWithDeskToolsOptions extends ChatRequestOptions {
      *  streaming generator cannot return (its yield type is text). The caller
      *  reads `recoveredFromTruncation` to know a ceiling-hit was REPAIRED —
      *  the "PROVIDER STOPPED EARLY" notice must not fire over a whole answer. */
-    onLoopMeta?: (meta: { recoveredFromTruncation: boolean; steered?: boolean }) => void;
+    onLoopMeta?: (meta: { recoveredFromTruncation: boolean; steered?: boolean; microCompactChars?: number }) => void;
     /** See the main options interface — same contract, so a payload can be
      *  persisted from the streaming loop too. */
     onToolPayload?: (payload: ToolPayload) => void;
@@ -8136,7 +8149,7 @@ export async function* streamChatWithDeskTools(
     // `artifactOwner` so a concurrent turn's artifacts survive.
     void loopPromise.finally(() => clearToolArtifacts(artifactOwner)).catch(() => { /* `loop` below rethrows the real error */ });
     const loop = await loopPromise; // propagates the loop's error, if any
-    options?.onLoopMeta?.({ recoveredFromTruncation: !!loop.recoveredFromTruncation, steered: !!loop.steered });
+    options?.onLoopMeta?.({ recoveredFromTruncation: !!loop.recoveredFromTruncation, steered: !!loop.steered, microCompactChars: loop.microCompactChars });
 
     if (loop.usedTools.length === 0 && loop.finalText.trim() && !streamedLive) {
         yield loop.finalText;
