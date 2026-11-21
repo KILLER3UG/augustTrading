@@ -45,6 +45,7 @@ import { buildLearningRulesIndex } from '../../utils/learningRulesIndex';
 import { dedupeInjectionBlocks } from '../../utils/memoryInjectionDedup';
 import { storageService } from '../infrastructure/StorageService';
 import { indexBudgetFor } from '../../utils/promptIndexBudget';
+import { getHarnessSettings } from '../../utils/harnessSettings';
 import { DEFAULT_CONTEXT_WINDOW_TOKENS, resolveContextWindow } from '../../utils/contextWindow';
 import { activeStrategiesBlock } from '../learning/strategyStore';
 import { recordSeatInjections } from '../learning/MemoryInjectionService';
@@ -170,6 +171,16 @@ export interface ChatSurfacePrompt {
  */
 export const surfacePromptWith = (mandate: string, where: string, opts: { memoryEnabled?: boolean; strategiesEnabled?: boolean; windowTokens?: number; matchText?: string; record?: { runId?: string; coin?: string } } = {}): ChatSurfacePrompt => {
     const memoryEnabled = opts.memoryEnabled !== false;
+    // The trader's Risk Constitution rides the Agents-surface prefix too —
+    // same source, same cap, same immutability contract as the dock.
+    let constitutionBlock = '';
+    try {
+        const constitution = (getHarnessSettings().riskConstitution ?? '').slice(0, 1200);
+        constitutionBlock = constitution
+            ? `[TRADER RISK CONSTITUTION — written by the trader; immutable to you and to every autonomous writer. These rules override any plan you would otherwise endorse; a plan that violates them is refused, not negotiated.]
+${constitution}`
+            : '';
+    } catch { /* absent settings = no block */ }
     const budget = indexBudgetFor(opts.windowTokens ?? DEFAULT_CONTEXT_WINDOW_TOKENS);
     // The harness's risk-math block — the ONE registered prompt the
     // harness-optimization pass may revise (O-150). Resolved through the

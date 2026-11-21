@@ -254,6 +254,7 @@ const ChatWorkTimeline: React.FC<ChatWorkTimelineProps> = ({ entry }) => {
                                 )}
                                 <p>turn {entry.trace.totalMs}ms · in {entry.trace.tokensIn} tok / out {entry.trace.tokensOut} tok
                                     {entry.trace.gateRefusals > 0 ? ` · ${entry.trace.gateRefusals} gate refusal${entry.trace.gateRefusals === 1 ? '' : 's'}` : ''}
+                                    {entry.trace.microCompactChars ? ` · microcompaction −${entry.trace.microCompactChars.toLocaleString()} chars` : ''}
                                 </p>
                             </div>
                         </details>

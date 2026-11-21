@@ -133,7 +133,7 @@ export const runAdversaryReview = async (input: AdversaryInput): Promise<Adversa
         const { resolveBackgroundSeat } = await import('./autonomyEngine');
         const { plannedRiskReward } = await import('../../utils/riskReward');
         const { trendBias } = await import('./regime');
-        const seat = await resolveBackgroundSeat(input.plan.symbol ? getActiveUsername() : undefined);
+        const seat = await resolveBackgroundSeat(getActiveUsername(), 'adversary');
         if (!seat) return { verdict: 'UNAVAILABLE', objections: [], invalidationCheck: '', at: Date.now() };
 
         const rr = plannedRiskReward({

@@ -58,6 +58,8 @@ export interface TurnTrace {
     tokensIn: number;
     tokensOut: number;
     gateRefusals: number;
+    /** Stage-1 microcompaction savings for this turn (chars stubbed). */
+    microCompactChars?: number;
 }
 
 export type LiveEntry = StoredChatEntry & {
