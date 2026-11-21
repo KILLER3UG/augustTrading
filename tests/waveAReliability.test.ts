@@ -186,18 +186,19 @@ describe('Wave A — F1 futures rate limiting', () => {
 
     it('a hot gauge (≥ 2,160 in the CURRENT minute) fails fast while > 5s remain in the minute', async () => {
         await withMockedFetch(() => ({ json: {} }), async () => {
-            __futuresRateLimitTestHooks.seedWeight(2300, 0); // reported THIS minute → hot
-            const msLeft = 60_000 - (Date.now() % 60_000);
-            if (msLeft > 5000) {
+            const realNow = Date.now;
+            // Pin 10s into the UTC minute so 50s remain (> 5s grace) regardless of wall-clock seconds.
+            Date.now = () => 1_700_000_010_000;
+            try {
+                __futuresRateLimitTestHooks.seedWeight(2300, 0); // reported THIS minute → hot
                 await assert.rejects(
                     __futuresRateLimitTestHooks.fetch('/fapi/v1/ping'),
                     /weight gauge 2300\/2400/,
                 );
-            } else {
-                // Within the 5s grace the gate waits out the minute and proceeds.
-                await __futuresRateLimitTestHooks.fetch('/fapi/v1/ping');
+                assert.equal(__futuresRateLimitTestHooks.state().usedWeight, 2300);
+            } finally {
+                Date.now = realNow;
             }
-            assert.equal(__futuresRateLimitTestHooks.state().usedWeight, 2300);
         });
     });
 
