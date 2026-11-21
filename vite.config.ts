@@ -509,8 +509,9 @@ export default defineConfig(() => {
             // schemas) is only exercised by Full-analysis runs — group it so
             // the startup chunk stays lean and the engine caches independently
             // (the CI entry-chunk ratchet).
-            if (/[\/]src[\/]services[\/](analysis|backtesting|validation)[\/]/.test(id)) return 'desk-engine';
-            if (/[\/]src[\/]schemas[\/]/.test(id)) return 'desk-schemas';
+            const normalized = id.replace(/\\/g, '/');
+            if (normalized.includes('/src/services/analysis/') || normalized.includes('/src/services/backtesting/') || normalized.includes('/src/services/validation/')) return 'desk-engine';
+            if (normalized.includes('/src/schemas/')) return 'desk-schemas';
             if (id.includes('node_modules/technicalindicators')) return 'vendor-crypto';
             // zod is imported eagerly by the schema boundaries, but it changes
             // rarely — its own chunk keeps it out of the app-code hash so

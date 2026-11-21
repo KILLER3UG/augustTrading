@@ -61,7 +61,7 @@ export interface AutonomySnapshot {
 // ── Settings (mode + seat) ───────────────────────────────────────────────────
 
 const listeners = new Set<() => void>();
-let settingsCache: Record<string, AutonomySettings> = {};
+const settingsCache: Record<string, AutonomySettings> = {};
 
 const settingsKey = (username: string): string => `${SETTINGS_KEY_PREFIX}${(username || 'default').trim() || 'default'}`;
 
