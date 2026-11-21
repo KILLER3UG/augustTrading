@@ -121,6 +121,9 @@ export const anchoredSlice = (
         // The caller passes candles already sliced to the session open.
         return candles;
     }
+    // Defense in depth for direct callers: anything but the two swing anchors
+    // yields NO slice — it never silently degrades to swing_low.
+    if (anchor !== 'swing_high' && anchor !== 'swing_low') return null;
     let extremeIdx = 0;
     for (let i = 1; i < candles.length; i++) {
         const better = anchor === 'swing_high'

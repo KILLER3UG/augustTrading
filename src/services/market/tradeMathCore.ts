@@ -77,6 +77,12 @@ export interface TradeMathRead {
 export const computeTradeMath = (input: TradeMathInput, candles: Kline[]): TradeMathRead | null => {
     const { entry, stopLoss } = input;
     if (!Number.isFinite(entry) || !Number.isFinite(stopLoss) || entry <= 0 || stopLoss <= 0) return null;
+    // A supplied target that is not a positive finite price REFUSES the read —
+    // silently dropping one used to let the remaining arithmetic print a bogus
+    // net figure (10.49R, 199.9R) beside the INVERTED PLAN stamp.
+    for (const tp of input.takeProfits) {
+        if (typeof tp === 'number' && (!Number.isFinite(tp) || tp <= 0)) return null;
+    }
 
     const signed = plannedRiskRewardSigned({
         entry, stopLoss, takeProfits: input.takeProfits, direction: input.direction,
@@ -84,8 +90,11 @@ export const computeTradeMath = (input: TradeMathInput, candles: Kline[]): Trade
     const stopDistancePct = (Math.abs(entry - stopLoss) / entry) * 100;
     const cost = roundTripCostR({ stopDistancePct });
     // Net reward at the nearest target: gross reward in R minus the cost.
-    const grossRewardR = signed.risk > 0 ? signed.reward / signed.risk : 0;
-    const netRewardR = cost.known ? Math.round((grossRewardR - (cost.costR as number)) * 10000) / 10000 : null;
+    // An INVERTED plan quotes NO net figure: its signed reward is the distance
+    // to a level on the wrong side of entry, and arithmetic on it read like a
+    // real expectancy beside the refusal stamp.
+    const grossRewardR = signed.risk > 0 && !signed.inverted ? signed.reward / signed.risk : 0;
+    const netRewardR = !signed.inverted && cost.known ? Math.round((grossRewardR - (cost.costR as number)) * 10000) / 10000 : null;
     const breakEven = breakEvenWinRate({ rewardRatio: signed.ratio, costR: cost.costR });
 
     const atr = currentAtr(candles);
