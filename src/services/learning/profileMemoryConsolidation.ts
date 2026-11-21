@@ -223,7 +223,7 @@ export const rememberWithConsolidation = async (
             // retire, not forget: the survivor's derivedFrom names these very
             // slugs, and the trader-facing cascade would take the merged row
             // down with its own first input.
-            if (retireMergedMemory(candidate.slug, user)) outcome.removed.push(candidate.slug);
+            if (retireMergedMemory(candidate.slug, keeper.slug, user)) outcome.removed.push(candidate.slug);
         }
         outcome.merged = keeper.slug;
     }

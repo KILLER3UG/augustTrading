@@ -109,6 +109,17 @@ export interface ProfileMemoryEntry {
      *  days. `deletedBy` says whose hand removed it. */
     deletedAt?: string;
     deletedBy?: 'trader' | 'model';
+    /** BI-TEMPORAL VALIDITY (Wave 2): `validFrom` stamps when THIS version
+     *  became the truth (creation or content change); `invalidatedAt` +
+     *  `supersededBy` stamp when it stopped being served (a consolidation
+     *  merge names its survivor; a trader/model forget names nothing). The
+     *  row stays auditable — the model is never served a contradicting pair,
+     *  because every reader filters invalidated rows exactly like deleted
+     *  ones. Absent on legacy rows (read the stamps from createdAt). */
+    validFrom?: string;
+    invalidatedAt?: string;
+    supersededBy?: string;
+    invalidatedBy?: 'trader' | 'model' | 'consolidation';
     /** The row as it read BEFORE this edit — "now X, previously Y". One
      *  generation deep; the history is provenance, not a version store. */
     previous?: { body: string; description: string; updatedAt: string };
@@ -524,7 +535,7 @@ export const profileMemoryPressure = (username?: string): ProfileMemoryPressure 
 
 /** All entries for the active user, oldest first. */
 export const listProfileMemories = (username?: string): ProfileMemoryEntry[] =>
-    factsAll(username || getActiveUsername()).filter(e => !e.deletedAt);
+    factsAll(username || getActiveUsername()).filter(e => !e.deletedAt && !e.invalidatedAt);
 
 /** Soft-deleted rows, newest first — the undo list behind the 30-day window. */
 export const listDeletedProfileMemories = (username?: string): ProfileMemoryEntry[] =>
@@ -628,6 +639,13 @@ ${input.body}`);
         createdAt: now,
         updatedAt: now,
         version: idx >= 0 ? (prior!.version ?? 1) + 1 : 1,
+        // BI-TEMPORAL: a new row's validity starts at creation; a body edit
+        // starts a NEW validity window (the previous window lives in
+        // `previous.updatedAt`); a metadata-only re-save keeps the window.
+        validFrom: idx >= 0
+            ? (prior!.body !== input.body.trim() ? now : (prior!.validFrom ?? prior!.createdAt))
+            : now,
+        ...(idx >= 0 ? { invalidatedAt: undefined, supersededBy: undefined, invalidatedBy: undefined } : {}),
         // "now X, previously Y": one generation of provenance, stamped only
         // when the body actually changed — re-saving identical text is not
         // history, it is churn.
@@ -708,11 +726,12 @@ export const forgetProfileMemory = (
         }
     }
     const deletedAt = new Date().toISOString();
+    const invalidatedAt = deletedAt;
     const tombstoned: ProfileMemoryEntry[] = [];
     for (let i = 0; i < all.length; i++) {
         const e = all[i];
         if (!doomed.has(e.slug) || e.deletedAt) continue;
-        const t = { ...e, deletedAt, deletedBy: by, updatedAt: deletedAt, version: (e.version ?? 1) + 1 };
+        const t = { ...e, deletedAt, invalidatedAt, invalidatedBy: by, updatedAt: deletedAt, version: (e.version ?? 1) + 1 };
         all[i] = t;
         tombstoned.push(t);
     }
@@ -734,6 +753,11 @@ export const restoreProfileMemory = (slug: string, username?: string): boolean =
     const restored = { ...all[idx] };
     delete restored.deletedAt;
     delete restored.deletedBy;
+    // An undo also clears the bi-temporal invalidation the forget stamped —
+    // the row is live again in every reader.
+    delete restored.invalidatedAt;
+    delete restored.invalidatedBy;
+    delete restored.supersededBy;
     all[idx] = restored;
     scheduleFactWrite(restored.slug, restored, user);
     return true;
@@ -744,9 +768,12 @@ export const purgeDeletedProfileMemories = (username?: string, days = 30): numbe
     const user = username || getActiveUsername();
     const all = factsAll(user);
     const cutoff = Date.now() - Math.max(1, days) * 86_400_000;
-    const removedEntries = all.filter(e => e.deletedAt && Date.parse(e.deletedAt) < cutoff);
+    const removedEntries = all.filter(e =>
+        (e.deletedAt && Date.parse(e.deletedAt) < cutoff)
+        || (e.invalidatedAt && Date.parse(e.invalidatedAt) < cutoff));
     if (removedEntries.length === 0) return 0;
-    factsCache = all.filter(e => !e.deletedAt || Date.parse(e.deletedAt) >= cutoff);
+    factsCache = all.filter(e => !((e.deletedAt && Date.parse(e.deletedAt) < cutoff)
+        || (e.invalidatedAt && Date.parse(e.invalidatedAt) < cutoff)));
     for (const e of removedEntries) scheduleFactWrite(e.slug, null, user);
     return removedEntries.length;
 };
@@ -762,13 +789,26 @@ export const purgeDeletedProfileMemories = (username?: string, days = 30): numbe
  * same write path, different operation: the trader forgetting a fact is not the
  * consolidator consuming one.
  */
-export const retireMergedMemory = (slug: string, username?: string): boolean => {
+export const retireMergedMemory = (slug: string, supersededBy: string, username?: string): boolean => {
     const user = username || getActiveUsername();
     const all = factsAll(user);
     const idx = all.findIndex(e => e.slug === slug);
     if (idx < 0) return false;
-    factsCache = all.filter(e => e.slug !== slug);
-    scheduleFactWrite(slug, null, user);
+    // BI-TEMPORAL retire: the loser stays AUDITABLE (invalidatedAt +
+    // supersededBy name the survivor) but leaves every reader — the model is
+    // never served a contradicting pair, and the merge trail is on the row
+    // itself, not only on the survivor's derivedFrom.
+    const nowIso = new Date().toISOString();
+    all[idx] = {
+        ...all[idx],
+        invalidatedAt: nowIso,
+        invalidatedBy: 'consolidation',
+        supersededBy,
+        updatedAt: nowIso,
+        version: (all[idx].version ?? 1) + 1,
+    };
+    factsCache = all;
+    scheduleFactWrite(slug, all[idx], user);
     return true;
 };
 

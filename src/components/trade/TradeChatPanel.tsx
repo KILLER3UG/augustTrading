@@ -94,6 +94,9 @@ import ChatHistoryPalette from './panels/ChatHistoryPalette';
 import ChatTranscriptList from './panels/ChatTranscriptList';
 import ChatComposer from './panels/ChatComposer';
 import { consumePendingSkillTry } from '../chat/skillDeepLink';
+import { contentVersion } from '../../services/learning/SkillFileService';
+import { listProfileMemories } from '../../services/learning/profileMemory';
+import { getHarnessSettings } from '../../utils/harnessSettings';
 import ModelPicker from '../shared/ModelPicker';
 import NewBotDialog from '../chat/NewBotDialog';
 
@@ -575,11 +578,28 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
     const sessionSystemPromptCacheRef = useRef<Map<string, {
         prompt: string;
         skillSlugs: string[];
+        /** slug → description snapshot, so the delta note can name EDITED or
+         *  REMOVED skills, not only added ones. */
+        skillIndexSnapshot: Record<string, string>;
         memorySig: string;
+        /** slug → description snapshot of the frozen memory index. */
+        memorySnapshot: Record<string, string>;
         strategiesSig: string;
     }>>(new Map());
 
     const activePromptCacheKeyRef = useRef<string>('');
+
+    // The trader's Risk Constitution (Settings → Harness): injected FIRST in
+    // the frozen prefix, length-capped, and hashed into the cache key — an
+    // explicit edit in Settings starts a NEW prefix (never a mid-session
+    // mutation by the harness), and no autonomous writer can touch harness
+    // settings, so the block is immutable to the model and every loop.
+    const riskConstitution = (getHarnessSettings().riskConstitution ?? '').slice(0, 1200);
+    const constitutionBlock = riskConstitution
+        ? `[TRADER RISK CONSTITUTION — written by the trader; immutable to you and to every autonomous writer. These rules override any plan you would otherwise endorse; a plan that violates them is refused, not negotiated.]
+${riskConstitution}`
+        : '';
+    const constitutionHash = riskConstitution ? contentVersion(riskConstitution) : '';
 
     /** The system prompt every seat of this session answers under. Frozen per
      *  (session, seat, provider/model, memory/strategy toggle) so the system
@@ -594,6 +614,7 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
             provider?.selectedModel ?? '',
             memoryEnabled !== false ? 'mem1' : 'mem0',
             strategiesEnabled !== false ? 'strat1' : 'strat0',
+            constitutionHash,
             roleNote ?? '',
         ].join('|');
         activePromptCacheKeyRef.current = cacheKey;
@@ -619,8 +640,18 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
             }
         }
         const persona = [agent?.persona, roleNote].filter(Boolean).join('\n\n');
-        const base = `${TRADE_CHAT_SYSTEM_PROMPT}${skillsBlock ? `\n\n${skillsBlock}` : ''}${strategiesBlock ? `\n\n${strategiesBlock}` : ''}${memoryBlock ? `\n\n${memoryBlock}` : ''}${agent?.notes ? `\n\n## Your private notes\n${agent.notes}` : ''}`;
-        const skillSlugs = skillsBlock ? usableSkillRows(skillIndexRows()).map(r => r.slug) : [];
+        const base = `${constitutionBlock ? `${constitutionBlock}
+
+` : ''}${TRADE_CHAT_SYSTEM_PROMPT}${skillsBlock ? `\n\n${skillsBlock}` : ''}${strategiesBlock ? `\n\n${strategiesBlock}` : ''}${memoryBlock ? `\n\n${memoryBlock}` : ''}${agent?.notes ? `\n\n## Your private notes\n${agent.notes}` : ''}`;
+        const skillRows = usableSkillRows(skillIndexRows());
+        const skillSlugs = skillsBlock ? skillRows.map(r => r.slug) : [];
+        const skillIndexSnapshot = Object.fromEntries(skillRows.map(r => [r.slug, r.description]));
+        const memorySnapshot: Record<string, string> = {};
+        if (memoryEnabled !== false) {
+            try {
+                for (const e of listProfileMemories(undefined)) memorySnapshot[e.slug] = e.description;
+            } catch { /* a snapshot miss just weakens the delta note */ }
+        }
         recordSeatInjections({
             coin: symbol,
             skills: skillSlugs.slice(0, 8),
@@ -636,7 +667,9 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
         sessionSystemPromptCacheRef.current.set(cacheKey, {
             prompt,
             skillSlugs,
+            skillIndexSnapshot,
             memorySig: memoryBlock,
+            memorySnapshot,
             strategiesSig: strategiesBlock,
         });
         return prompt;
@@ -650,15 +683,31 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
         if (!cached) return '';
         const notes: string[] = [];
         try {
-            const currentSlugs = usableSkillRows(skillIndexRows()).map(r => r.slug);
-            const addedSkills = currentSlugs.filter(s => !cached.skillSlugs.includes(s));
-            if (addedSkills.length > 0) {
-                notes.push(`New skills since session start: ${addedSkills.slice(0, 8).join(', ')} (call skill_view to read).`);
-            }
+            // NAMED diffs against the frozen snapshots — a bare "changed" note
+            // made the model burn a memory_read round just to learn WHAT
+            // changed (the Wave-2 delta ruling).
+            const skillRows = usableSkillRows(skillIndexRows());
+            const currentSkillMap: Record<string, string> = Object.fromEntries(skillRows.map(r => [r.slug, r.description]));
+            const addedSkills = skillRows.map(r => r.slug).filter(sg => !(sg in cached.skillIndexSnapshot));
+            const removedSkills = cached.skillSlugs.filter(sg => !(sg in currentSkillMap));
+            const editedSkills = skillRows.filter(r => r.slug in cached.skillIndexSnapshot && cached.skillIndexSnapshot[r.slug] !== r.description).map(r => r.slug);
+            if (addedSkills.length > 0) notes.push(`New skills since session start: ${addedSkills.slice(0, 8).join(', ')} (call skill_view to read).`);
+            if (editedSkills.length > 0) notes.push(`Skills edited since session start: ${editedSkills.slice(0, 8).join(', ')} (re-read with skill_view; the frozen copy is stale).`);
+            if (removedSkills.length > 0) notes.push(`Skills removed/merged since session start: ${removedSkills.slice(0, 8).join(', ')} (drop them from your working set).`);
             if (memoryEnabled !== false) {
-                const currentMem = buildProfileMemoryIndex(undefined, indexBudgetFor(provider ? resolveContextWindow(provider).tokens : DEFAULT_CONTEXT_WINDOW_TOKENS).memory);
-                if (currentMem !== cached.memorySig) {
-                    notes.push('User memory index changed since session start — call memory_read if relevant.');
+                const currentMemSlugs: Record<string, string> = {};
+                try {
+                    for (const e of listProfileMemories(undefined)) currentMemSlugs[e.slug] = e.description;
+                } catch { /* no store: no memory delta */ }
+                const addedMem = Object.keys(currentMemSlugs).filter(sg => !(sg in cached.memorySnapshot));
+                const removedMem = Object.keys(cached.memorySnapshot).filter(sg => !(sg in currentMemSlugs));
+                const editedMem = Object.keys(currentMemSlugs).filter(sg => sg in cached.memorySnapshot && cached.memorySnapshot[sg] !== currentMemSlugs[sg]);
+                if (addedMem.length > 0 || removedMem.length > 0 || editedMem.length > 0) {
+                    const parts: string[] = [];
+                    if (addedMem.length > 0) parts.push(`added: ${addedMem.slice(0, 6).join(', ')}`);
+                    if (editedMem.length > 0) parts.push(`edited: ${editedMem.slice(0, 6).join(', ')}`);
+                    if (removedMem.length > 0) parts.push(`removed: ${removedMem.slice(0, 6).join(', ')}`);
+                    notes.push(`User memory index changed since session start — ${parts.join('; ')} (memory_read the ones that matter).`);
                 }
             }
             const currentStrat = strategiesForPrompt();
