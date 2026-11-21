@@ -78,6 +78,9 @@ export interface EntrySignificance {
     available: boolean;
     reason?: string;
     entries: number;
+    /** The effective sample the test was gated on (min of entries and the
+     *  caller's N_eff from the signal-uniqueness read). */
+    nEffective?: number;
     observedMeanR: number;
     pValue: number | null;
     iterations: number;
@@ -89,26 +92,37 @@ export interface EntrySignificance {
  * entries' own detrended R series is resampled with circular blocks of
  * geometrically distributed length, and the p-value is the share of
  * resample means that reach the OBSERVED mean — the probability that random
- * timing on the same entries produces the measured edge. Refuses under 10
- * entries (an insignificant test on an insignificant sample).
+ * timing on the same entries produces the measured edge.
+ *
+ * Hard floor: under 10 EFFECTIVE entries (raw count or the caller's N_eff
+ * from the overlap-weighted signal windows, whichever is smaller) the test
+ * refuses — an insignificant test on an insignificant sample. The block
+ * length scales with the sample (⌈N^(1/3)⌉, never above ⌊N/3⌋) so small
+ * samples cannot resample degenerate near-identical blocks, and for N ≤ 20
+ * the quoted p is floored by the EXACT sign-flip randomization p — a
+ * structured short series can never quote an impossibly small p from a
+ * degenerate block resample.
  */
 export const stationaryBootstrapPValue = (
     entryReturns: number[],
-    options: { iterations?: number; meanBlockLength?: number; seed?: number } = {},
+    options: { iterations?: number; meanBlockLength?: number; seed?: number; nEffective?: number } = {},
 ): EntrySignificance => {
     const iterations = options.iterations ?? 2000;
-    const meanBlockLength = options.meanBlockLength ?? 10;
     const entries = entryReturns.filter(r => Number.isFinite(r));
-    const base: EntrySignificance = {
-        available: false,
+    const nEffective = Math.min(entries.length, options.nEffective ?? entries.length);
+    const scaledBlock = Math.max(1, Math.min(Math.round(Math.cbrt(entries.length)), Math.floor(entries.length / 3)));
+    const meanBlockLength = Math.max(1, Math.min(options.meanBlockLength ?? scaledBlock, Math.floor(entries.length / 3) || 1));
+    const entries_base: Omit<EntrySignificance, 'available'> = {
         entries: entries.length,
+        nEffective,
         observedMeanR: entries.length ? entries.reduce((s, x) => s + x, 0) / entries.length : 0,
         pValue: null,
         iterations,
         meanBlockLength,
     };
-    if (entries.length < 10) {
-        return { ...base, reason: `only ${entries.length} entr(ies) (need ≥ 10) — significance is not quotable` };
+    const base: EntrySignificance = { available: false, ...entries_base };
+    if (entries.length < 10 || nEffective < 10) {
+        return { ...base, reason: `sample too thin: nEffective ${nEffective} (need >= 10) — no significance p-value is quoted` };
     }
     const observed = base.observedMeanR;
     const detrended = entries.map(r => r - observed);
@@ -137,7 +151,32 @@ export const stationaryBootstrapPValue = (
         }
         if (sum / n >= observed) exceed += 1;
     }
-    return { ...base, available: true, pValue: Math.round(((exceed + 1) / (iterations + 1)) * 10000) / 10000 };
+    const bootP = (exceed + 1) / (iterations + 1);
+    // Small-sample honesty: a block resample can DEGENERATE on a structured
+    // short series (every 3-bar window of a period-5 pattern holds the same
+    // win/loss mix, so the resample mean barely moves and p crashes to the
+    // 1/(B+1) floor — an impossible false positive). When the exact sign-flip
+    // randomization is enumerable (N ≤ 20 → 2^20 Gray-code steps), quote the
+    // LARGER of the two p-values: the exact permutation p is a hard floor no
+    // bootstrap artifact can undercut.
+    let exactP: number | null = null;
+    if (n <= 20) {
+        const signs = new Array<number>(n).fill(1);
+        let sum = entries.reduce((s, x) => s + x, 0);
+        const total = sum;
+        const tol = 1e-9 * (1 + Math.abs(total));
+        let exactExceed = sum >= total - tol ? 1 : 0;
+        for (let g = 1; g < (1 << n); g++) {
+            const bit = g & -g;
+            const i = Math.round(Math.log2(bit));
+            signs[i] = -signs[i];
+            sum += 2 * signs[i] * entries[i];
+            if (sum >= total - tol) exactExceed += 1;
+        }
+        exactP = exactExceed / (1 << n);
+    }
+    const pValue = exactP === null ? bootP : Math.max(bootP, exactP);
+    return { ...base, available: true, pValue: Math.round(pValue * 10000) / 10000 };
 };
 
 /**
@@ -269,8 +308,11 @@ export const runSetupBaseRateTool = (
     if (uniqueness && uniqueness.nEffective < MIN_RATE_SAMPLE) {
         return make(null, '', `sample uniqueness too thin: ${uniqueness.rawN} resolved signal(s) overlap into nEffective ${uniqueness.nEffective} (need ≥ ${MIN_RATE_SAMPLE} effective) — no base rate is quoted`);
     }
-    const significance = params.entryReturns && params.entryReturns.length >= 10
-        ? stationaryBootstrapPValue(params.entryReturns, { seed: asofMs })
+    // The significance test enforces its own ≥10-EFFECTIVE-entry floor (the
+    // overlap-weighted N_eff, not the raw count) and returns the refusal
+    // object itself — the envelope shows WHY no p-value is quoted.
+    const significance = params.entryReturns && params.entryReturns.length > 0
+        ? stationaryBootstrapPValue(params.entryReturns, { seed: asofMs, nEffective: uniqueness?.nEffective })
         : null;
     const winRate = stats.winRate;
     const ci = wilsonInterval95(stats.wins, stats.sample);

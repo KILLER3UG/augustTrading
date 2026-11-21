@@ -69,7 +69,7 @@ import type { SignalMemoryRecipe } from '../../types/signal';
 import { getPreferenceObject, setPreferenceObject } from '../infrastructure/PreferencesService';
 import { PROMPT_REGISTRY } from '../../constants/promptRegistry';
 import { readSignals } from '../signals/signalLedger';
-import { computeNEffective, MIN_RATE_SAMPLE } from '../analysis/journalTools';
+import { computeNEffective } from '../analysis/journalTools';
 import { getActiveUsername } from '../../utils/activeUser';
 import { getMemoryFiles } from '../learning/MemoryFilesService';
 import { collectMarketSchemaFacts, learnedSchemaTraps, syncMarketSchema, MARKET_SCHEMA_FOLDER } from '../learning/MarketSchemaService';
@@ -92,6 +92,12 @@ export const MIN_RECURRING_FAILURES = 2;
 /** The holdout window: resolved FILLS (won/lost/expired — `never_triggered`
  *  is not a fill) after approval before the verdict is even computed. */
 export const HOLDOUT_MIN_FILLS = 6;
+
+/** O-150: the holdout grades only on the EFFECTIVE sample — resolved fills
+ *  whose signal windows overlap rode the same move, so the concurrency-
+ *  weighted N_eff, not the raw fill count, must clear this floor before a
+ *  promotion is graded or a revert recommended. */
+export const MIN_HOLDOUT_SAMPLE = 6;
 
 /** Post-approval hit-rate regression, in probability points, that flips the
  *  row to revert-recommended. 10pp over ≥6 fills: noise around a small
@@ -142,6 +148,9 @@ export interface HarnessHoldoutState {
     expired: number;
     hitRate: number | null;
     evaluatedAt?: string;
+    /** O-150: the overlap-weighted sample the grading is gated on — rawN is
+     *  the resolved fill count, nEffective the concurrency-weighted read. */
+    uniqueness?: { rawN: number; nEffective: number };
 }
 
 /** One ranked rollback candidate: a previously approved harness revision
@@ -604,6 +613,9 @@ export const rankParents = (pool: HarnessParent[]): HarnessParent[] =>
 
 const gradeParent = (p: HarnessParent): void => {
     if (p.holdout && p.holdout.fills >= HOLDOUT_MIN_FILLS
+        // O-150: a holdout crowded with overlapping signals is ONE
+        // observation repeated — it never grades a promotion or a revert.
+        && (p.holdout.uniqueness?.nEffective ?? 0) >= MIN_HOLDOUT_SAMPLE
         && p.holdout.hitRate !== null && p.baseline.hitRate !== null) {
         p.deltaPp = Math.round((p.holdout.hitRate - p.baseline.hitRate) * 100);
         p.status = 'graded';
@@ -665,24 +677,28 @@ export const runHarnessOptimizationPass = async (
             const lost = post.filter(r => r.status === 'lost').length;
             const expired = post.filter(r => r.status === 'expired').length;
             const holdoutFills = won + lost + expired;
-            p.holdout = { fills: post.length, won, lost, expired, hitRate: hitRateOf(post) };
-            // Wave C: the holdout is graded on the EFFECTIVE sample —
-            // overlapping resolved signals (one move, many signals) are one
-            // observation, so a crowded window cannot trigger a revert.
             const holdoutUniqueness = computeNEffective(postRows.map(r => ({ emittedAt: r.signal.emittedAt, resolvedAt: r.resolution!.at })));
+            p.holdout = {
+                fills: post.length, won, lost, expired, hitRate: hitRateOf(post),
+                uniqueness: { rawN: holdoutUniqueness.rawN, nEffective: holdoutUniqueness.nEffective },
+            };
+            // Wave C / O-150: the holdout is graded on the EFFECTIVE sample —
+            // overlapping resolved signals (one move, many signals) are one
+            // observation, so a crowded window cannot trigger a revert. Both
+            // counts are stored on the row so the card can show them.
             const parent = (state.parentPool ?? []).find(x => x.id === p.id);
             if (parent) {
                 parent.holdout = { ...p.holdout };
                 gradeParent(parent);
             }
             if (holdoutFills >= HOLDOUT_MIN_FILLS
-                && holdoutUniqueness.nEffective >= MIN_RATE_SAMPLE
+                && holdoutUniqueness.nEffective >= MIN_HOLDOUT_SAMPLE
                 && p.holdout.hitRate !== null
                 && p.baseline.hitRate !== null
                 && p.holdout.hitRate < p.baseline.hitRate - HOLDOUT_REGRESSION_PP) {
                 if (p.status !== 'revert-recommended') {
                     p.status = 'revert-recommended';
-                    p.revertReason = `holdout hit rate ${(p.holdout.hitRate * 100).toFixed(0)}% vs baseline ${(p.baseline.hitRate * 100).toFixed(0)}% over ${holdoutFills} fills — below the ${(HOLDOUT_REGRESSION_PP * 100).toFixed(0)}pp regression bar`;
+                    p.revertReason = `holdout hit rate ${(p.holdout.hitRate * 100).toFixed(0)}% vs baseline ${(p.baseline.hitRate * 100).toFixed(0)}% over ${holdoutFills} fills (nEffective ${holdoutUniqueness.nEffective} of rawN ${holdoutUniqueness.rawN}) — below the ${(HOLDOUT_REGRESSION_PP * 100).toFixed(0)}pp regression bar`;
                     console.log('[HarnessOpt] revert recommended:', p.revertReason);
                 }
             }
