@@ -401,10 +401,43 @@ export const skillLibraryVersion = (skills: SkillFile[] = listSkillFiles()): str
         .sort((a, b) => String(a[0]).localeCompare(String(b[0])))),
 );
 
-export const formatSkillIndex = (rows: SkillIndexRow[] = skillIndexRows()): string => {
-    if (rows.length === 0) return '(the skills library is empty)';
-    return rows.map(r => `- ${r.slug}: ${r.name} — ${r.description || '(no description)'}`).join('\n');
+/**
+ * Compact skills-library index for a seat's system prompt: a plain list of
+ * slug + description, exactly as Claude lists a skill. The model opens any
+ * one of them with `skill_view` before acting. ONE renderer for every
+ * consumer (prompt index, refusal text, notebook map) — a refusal text and a
+ * prompt index disagreeing is how a writer trusts a stale library.
+ */
+export const buildSkillsIndexForPrompt = (
+    rows: SkillIndexRow[],
+    max = 30,
+    where = 'this chart',
+): string => {
+    if (rows.length === 0) return '';
+    // A skill that fails the format is a NOTE, not procedure: the next read is
+    // not built on one. It is dropped HERE, not from the index — the desk
+    // index and the trader's library still list it, with the reasons, because
+    // a writer that cannot see a skill cannot repair it. The drop is logged
+    // once per build so it is not silent.
+    const usable = usableSkillRows(rows);
+    if (usable.length < rows.length) {
+        for (const r of rows) {
+            if (r.formatIssues.length > 0) {
+                console.warn(`[skillIndex] "${r.slug}" is out of format and was NOT loaded into the prompt: ${r.formatIssues.join('; ')}`);
+            }
+        }
+    }
+    if (usable.length === 0) return '';
+    const shown = usable.slice(0, max);
+    return [
+        `## Skills library - ${usable.length} skill${usable.length === 1 ? '' : 's'}. Each line is WHEN to use it; the body is the procedure. Open one with skill_view (pass {"skill": "<slug>"}) before acting on it, and cite the slug you used. APPLY any that match ${where}.`,
+        ...shown.map(r => `- ${r.slug} - ${(r.description || r.name || '(no description)').trim()}`),
+        usable.length > max ? `...and ${usable.length - max} more - skill_view reads any one by slug.` : '',
+    ].filter(Boolean).join('\n');
 };
+
+export const formatSkillIndex = (rows: SkillIndexRow[] = skillIndexRows()): string =>
+    buildSkillsIndexForPrompt(usableSkillRows(rows));
 
 /** The answer a refused `skill_write` gives back, and the reason it is a long
  *  one: a create refusal carries the WHOLE library, not only the near-matches,
