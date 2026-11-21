@@ -229,7 +229,7 @@ const ChatWorkTimeline: React.FC<ChatWorkTimelineProps> = ({ entry }) => {
                         <WireAuditRow entries={wireAudit} noTrace={noTrace} />
                     )}
                     {settled && entry.trace && (
-                        <details data-testid="turn-trace" className="mt-1 rounded-control border border-hairline bg-zinc-950/50 px-2 py-1">
+                        <details data-testid="turn-trace" className="mt-0.5 py-0.5">
                             <summary className="cursor-pointer select-none font-mono text-ui-2xs uppercase tracking-wider text-zinc-500">
                                 Trace · {entry.trace.cacheWarm === null
                                     ? 'first turn'

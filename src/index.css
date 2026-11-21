@@ -944,7 +944,7 @@ body {
 }
 .thinking-row .reasoning-row-summary {
   padding: 3px 0;
-  min-height: 28px;
+  min-height: 26px;
   gap: 7px;
   color: var(--color-zinc-500);
   font-size: var(--text-ui-caption);
@@ -954,17 +954,19 @@ body {
 .thinking-row .reasoning-row-glyph { width: 13px; height: 13px; color: var(--color-zinc-600); }
 .thinking-row .reasoning-row-label { color: var(--color-zinc-500); }
 .thinking-row .reasoning-row-meta { color: var(--color-zinc-600); font-size: var(--text-ui-xs); }
-.thinking-row .reasoning-row-chevron { margin-left: 1px; color: var(--color-zinc-600); }
+.thinking-row .reasoning-row-chevron { margin-left: 2px; color: var(--color-zinc-600); }
 .thinking-row .reasoning-row-body {
-  /* NO lines at all (owner, 2026-11-03, per the reference): the trace is a
-     flat block under the summary, indented to align with the label text past
-     the glyph — no left rule, no top rule, no box. */
-  margin: 4px 0 10px 0;
-  padding: 2px 0 2px 20px;
+  /* Vertical left guide rail aligned beneath the lightbulb icon, matching
+     the Kimi Code reference's flat borderless timeline. */
+  margin: 4px 0 10px 6px;
+  padding: 2px 0 2px 16px;
   border-top: 0;
-  border-left: 0;
-  max-height: 16rem;
+  border-right: 0;
+  border-bottom: 0;
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
+  max-height: 22rem;
   overflow-y: auto;
+  background: transparent;
   color: var(--color-zinc-500);
   font-size: var(--text-ui-caption);
   line-height: 1.75;
@@ -1001,12 +1003,12 @@ body {
   animation: none;
 }
 .analyzed-row .reasoning-row-body {
-  padding: 0;
-  margin-top: 2px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: var(--radius-card);
-  background: rgba(255, 255, 255, 0.018);
-  overflow: hidden;
+  padding: 2px 0 4px;
+  margin-top: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  overflow: visible;
 }
 /* The card's own line: a bare quiet row of text, with subtle hover lift. */
 .analyzed-row > summary {
@@ -1024,9 +1026,7 @@ body {
 .analyzed-row > summary .reasoning-row-chevron {
   color: var(--color-zinc-500);
 }
-/* A step inside the card is a ROW: a crisp hairline between every consecutive
-   step (whether expandable `<details>`, plain static tool row, or thinking row),
-   its own generous padding, and subtle hover affordance. */
+/* Steps inside the work timeline are borderless inline rows rather than boxed cells. */
 .analyzed-row .reasoning-row,
 .analyzed-row .tool-row {
   border: 0;
@@ -1035,49 +1035,60 @@ body {
 }
 .analyzed-row .analyzed-row-body > * + *,
 .analyzed-row .tool-activity-list > * + * {
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  border-top: 0;
 }
 .analyzed-row .reasoning-row > summary {
-  padding: 9px 14px;
+  padding: 3px 0;
+  min-height: 26px;
+  gap: 7px;
   font-size: var(--text-ui-caption);
-  transition: background-color 140ms var(--ease-snappy), color 140ms var(--ease-snappy);
+  background: transparent;
+  transition: color 140ms var(--ease-snappy);
 }
 .analyzed-row .reasoning-row > summary:hover {
-  background: rgba(255, 255, 255, 0.025);
+  background: transparent;
 }
-.analyzed-row .reasoning-row > summary .reasoning-row-label { color: var(--color-zinc-300); }
+.analyzed-row .reasoning-row > summary .reasoning-row-label { color: var(--color-zinc-400); }
+.analyzed-row .reasoning-row > summary:hover .reasoning-row-label { color: var(--color-zinc-200); }
 .analyzed-row .reasoning-row .reasoning-row-body {
-  margin: 0;
-  padding: 4px 14px 12px 34px;
+  margin: 4px 0 10px 6px;
+  padding: 2px 0 2px 16px;
   border: 0;
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 0;
   background: transparent;
+  max-height: 22rem;
+  overflow-y: auto;
 }
 
 /* ── A tool row that expands onto its real output ────────────────────────── */
 .tool-row > summary {
   cursor: pointer;
   list-style: none;
-  transition: background-color 140ms var(--ease-snappy);
+  transition: color 140ms var(--ease-snappy);
 }
 .tool-row > summary::-webkit-details-marker { display: none; }
 .analyzed-row .tool-row > summary {
-  padding: 9px 14px;
+  padding: 3px 0;
+  min-height: 26px;
+  background: transparent;
 }
 .analyzed-row .tool-row > summary:hover {
-  background: rgba(255, 255, 255, 0.025);
+  background: transparent;
 }
 .analyzed-row .tool-row-static {
-  padding: 9px 14px;
+  padding: 3px 0;
+  min-height: 26px;
 }
 .tool-row-body {
   max-height: 15rem;
   overflow-y: auto;
-  margin: 2px 12px 12px;
-  padding: 10px 12px;
-  border: 1px solid rgba(255, 255, 255, 0.07);
-  border-radius: var(--radius-control);
-  background: rgba(10, 10, 11, 0.92);
+  margin: 4px 0 8px 6px;
+  padding: 8px 12px;
+  border: 0;
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 0 8px 8px 0;
+  background: rgba(255, 255, 255, 0.025);
 }
 .tool-row-output {
   margin: 0;
@@ -2125,17 +2136,18 @@ select {
   border-radius: var(--radius-control);
   box-shadow: var(--shadow-elevated);
 }
-.analyzed-row .reasoning-row-body {
-  border-color: rgba(255, 255, 255, 0.05);
-  background: rgba(255, 255, 255, 0.025);
+.analyzed-row > .reasoning-row-body {
+  border-color: transparent;
+  background: transparent;
 }
 .analyzed-row .analyzed-row-body > * + *,
 .analyzed-row .tool-activity-list > * + * {
-  border-top: 1px solid rgba(255, 255, 255, 0.04);
+  border-top: 0;
 }
 .tool-row-body {
-  border-color: rgba(255, 255, 255, 0.05);
-  background: rgba(10, 10, 11, 0.72);
+  border-color: transparent;
+  border-left-color: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.025);
 }
 
 /* The empty conversation's 48px grid was a decoration behind no data. A

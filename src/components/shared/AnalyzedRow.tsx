@@ -126,10 +126,11 @@ const AnalyzedRow: React.FC<AnalyzedRowProps> = ({ running = false, className = 
     // printing "· 0s" beside a tool count made a fast read look like it did
     // nothing. A reasoning-only turn keeps "Analyzed for Ns", where the
     // duration is the only thing that happened.
+    const durationTag = seconds !== null && seconds > 0 ? ` · ${formatElapsed(seconds)}` : '';
     const detail = running
         ? (seconds !== null ? (runningActivity ? ` · ${formatElapsed(seconds)}` : ` for ${formatElapsed(seconds)}`) : '')
         : ranTools
-            ? (title ? ` · ${title.charAt(0).toLowerCase()}${title.slice(1)}` : '')
+            ? `${title ? ` · ${title.charAt(0).toLowerCase()}${title.slice(1)}` : ''}${durationTag}`
             : (seconds !== null ? ` for ${formatElapsed(seconds)}` : '') + (title ? ` · ${title.charAt(0).toLowerCase()}${title.slice(1)}` : '');
 
     return (

@@ -126,13 +126,13 @@ const ToolRowGroupView: React.FC<{ group: ToolRowGroup; running: boolean }> = ({
     const kindName = toolKindLabel(kind);
 
     const line = (
-        <div className="flex items-center gap-2 text-ui-caption leading-5 text-zinc-500" data-kind={kind}>
+        <div className="group/tool flex items-center gap-2 text-ui-caption leading-5 text-zinc-500" data-kind={kind}>
             {anyCalling ? (
                 <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-zinc-400 animate-pulse motion-reduce:animate-none" aria-hidden="true" />
             ) : (
                 <Glyph className={`h-3.5 w-3.5 shrink-0 ${anyFailed ? 'text-zinc-400' : 'text-zinc-600'}`} aria-hidden="true" />
             )}
-            <span className={`shrink-0 ${anyCalling ? 'text-zinc-400' : anyFailed ? 'text-zinc-300' : 'text-zinc-300'}`}>
+            <span className={`shrink-0 transition-colors group-hover/tool:text-zinc-200 ${anyCalling ? 'text-zinc-400' : anyFailed ? 'text-zinc-300' : 'text-zinc-300'}`}>
                 {group.label}
             </span>
             {group.count > 1 && (
@@ -141,14 +141,14 @@ const ToolRowGroupView: React.FC<{ group: ToolRowGroup; running: boolean }> = ({
             {anyCalling ? (
                 <span className="min-w-0 truncate text-zinc-500" title="calling…">calling…</span>
             ) : detail ? (
-                <span className="min-w-0 truncate text-zinc-500" title={detail}>{detail}</span>
+                <span className="min-w-0 truncate text-zinc-500 transition-colors group-hover/tool:text-zinc-300" title={detail}>{detail}</span>
             ) : anyFailed ? (
                 <span className="min-w-0 truncate text-rose-400/90" title="failed">failed</span>
             ) : null}
             {expandable && (
                 <ChevronRight
-                    className={`ml-auto h-3 w-3 shrink-0 transition-transform duration-150 ease-[var(--ease-snappy)] ${
-                        open ? 'rotate-90 text-zinc-300' : 'text-zinc-600'
+                    className={`ml-0.5 h-3 w-3 shrink-0 transition-transform duration-150 ease-[var(--ease-snappy)] ${
+                        open ? 'rotate-90 text-zinc-300' : 'text-zinc-600 group-hover/tool:text-zinc-400'
                     }`}
                     aria-hidden="true"
                 />
