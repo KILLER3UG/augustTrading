@@ -14,6 +14,7 @@
  */
 
 import { loadSessions, type ChatSession, type StoredChatEntry } from './chatSessions';
+import { searchChatHistory } from '../infrastructure/sessionSearch';
 
 export interface SessionSearchParams {
     query: string;
@@ -204,3 +205,99 @@ export const formatSessionSearchDigest = (result: SessionSearchResult, budgetCha
 /** Session ids are opaque; the transcript tool may need the row back. */
 export const sessionById = (id: string): ChatSession | null =>
     loadSessions().find(s => s.id === id) ?? null;
+
+// ─── Unified Chat + Desk episodic search ───────────────────────────────────
+
+/** Which HOME a hit came from. A query about "what we concluded" must find
+ *  both the canonical Chat conversations and the dock's chat sessions; the
+ *  seat needs the tag to know which surface to open for more context. */
+export type SessionSurface = 'chat' | 'desk';
+
+export interface UnifiedSessionSearchHit extends SessionSearchHit {
+    surface: SessionSurface;
+}
+
+export interface UnifiedSessionSearchResult {
+    hits: UnifiedSessionSearchHit[];
+    scannedSessions: number;
+    scannedEntries: number;
+    /** Honest per-surface match counts BEFORE the final global cap — a surface
+     *  that found 4 hits but lost them to the 3000-char budget is still shown. */
+    matchedBySurface: Record<SessionSurface, number>;
+}
+
+/**
+ * Search BOTH conversation stores with one ranking formula:
+ *  - `desk`: the Chart AI dock's `chatSessions` (synchronous, loadSessions);
+ *  - `chat`: the canonical Chat-surface conversations on the profile, through
+ *    the SAME `searchChatHistory` index that powers `recall_chat`.
+ * Both hit lists merge by score then recency, then take the tool's shared
+ * limit. The `session_search` budget (TOOL_BUDGETS = 3000) is applied only by
+ * the formatter, so ranking never depends on which surface won a char race.
+ */
+export const searchAllSessionsForTool = async (
+    params: SessionSearchParams,
+    nowMs = Date.now(),
+    username?: string,
+): Promise<UnifiedSessionSearchResult> => {
+    const query = (params?.query ?? '').trim();
+    const desk = searchChatSessionsForTool(params, nowMs);
+    const limit = Math.max(1, Math.min(SESSION_SEARCH_MAX_LIMIT,
+        Math.floor(Number(params.limit) || SESSION_SEARCH_DEFAULT_LIMIT)));
+    const chatRaw = query ? await searchChatHistory(query, username, limit) : [];
+    const chat: UnifiedSessionSearchHit[] = chatRaw.map(h => ({
+        sessionId: h.conversationId,
+        title: h.conversationTitle,
+        at: h.at,
+        symbol: params.symbol?.trim().toUpperCase() || undefined,
+        role: h.speaker === 'user' ? 'user' : 'ai',
+        excerpt: h.excerpt,
+        score: Math.round(h.score * 100) / 100,
+        before: [],
+        after: [],
+        surface: 'chat',
+    }));
+    const deskHits: UnifiedSessionSearchHit[] = desk.hits.map(h => ({ ...h, surface: 'desk' }));
+    const hits = [...deskHits, ...chat]
+        .sort((a, b) => b.score - a.score || (a.at < b.at ? 1 : -1))
+        .slice(0, limit);
+    return {
+        hits,
+        scannedSessions: desk.scannedSessions,
+        scannedEntries: desk.scannedEntries,
+        matchedBySurface: { desk: deskHits.length, chat: chat.length },
+    };
+};
+
+/** The bounded digest for the unified tool. The surface tag is part of the
+ *  line, never a separate preamble: a clipped hit still says where it came
+ *  from, and the cap still stops at a WHOLE hit. */
+export const formatUnifiedSessionSearchDigest = (
+    result: UnifiedSessionSearchResult,
+    budgetChars = 3000,
+): string => {
+    const surfaces = result.matchedBySurface;
+    const header = result.hits.length === 0
+        ? `No matching turns in Chat or Desk sessions (${surfaces.chat} chat / ${surfaces.desk} desk match(es) before the cap).`
+        : `${result.hits.length} match(es) — Chat ${surfaces.chat} · Desk ${surfaces.desk} — ${result.scannedSessions} desk session(s), ${result.scannedEntries} turns scanned — verbatim excerpts:`;
+    if (result.hits.length === 0) return header;
+    const lines: string[] = [header];
+    let used = header.length;
+    let shown = 0;
+    for (const hit of result.hits) {
+        const block = [
+            `[${shown + 1}] (${hit.surface}) ${hit.title}${hit.symbol ? ` · ${hit.symbol}` : ''} · ${hit.at} · ${hit.role} · score ${hit.score}`,
+            hit.excerpt,
+            ...(hit.before.length ? [`before: ${hit.before.join(' | ')}`] : []),
+            ...(hit.after.length ? [`after: ${hit.after.join(' | ')}`] : []),
+        ].map(l => `- ${l}`).join('\n');
+        if (used + block.length > budgetChars) {
+            lines.push(`(${result.hits.length - shown} more match(es) withheld — raise the limit or narrow the query.)`);
+            break;
+        }
+        lines.push(block);
+        used += block.length + 1;
+        shown += 1;
+    }
+    return lines.join('\n');
+};

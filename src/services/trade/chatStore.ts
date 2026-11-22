@@ -142,6 +142,20 @@ export interface HarnessSignal {
 let sessions: LiveSession[] = [];
 let activeId = '';
 let loaded = false;
+
+/**
+ * Session-boundary re-prime of the frozen curated-memory snapshot. The prefix
+ * stays frozen WITHIN a session (KV-cache stability), but every New Chat,
+ * New Session, session switch or conversation bind is a NEW prefix: memory
+ * writes from the session being left must be read back from disk here, without
+ * waiting for an Electron restart. Lazy import keeps the store's boot chunk
+ * from pulling the curated-memory service in; a failure never blocks a switch.
+ */
+const reprimeSnapshotForNewSession = (): void => {
+    void import('../learning/curatedMemory')
+        .then(m => m.reprimeCuratedMemorySnapshotForSession(getActiveUsername() || 'default'))
+        .catch(() => { /* a snapshot refresh never blocks a session switch */ });
+};
 /** The user the in-memory sessions were loaded for — the persist guard's
  *  anchor. Writing while this differs from getActiveUsername() would leak
  *  one user's chats into another's storage key. */
@@ -417,6 +431,7 @@ export const setActiveId = (id: string): void => {
     ensureLoaded();
     if (id === activeId) return;
     activeId = id;
+    reprimeSnapshotForNewSession();
     emit();
 };
 
@@ -442,7 +457,10 @@ export const addSession = (partial: Partial<LiveSession> = {}, activate = true):
         entries: partial.entries ?? [],
     };
     sessions = capSessions([...sessions, fresh]);
-    if (activate) activeId = fresh.id;
+    if (activate) {
+        activeId = fresh.id;
+        reprimeSnapshotForNewSession();
+    }
     emit();
     return fresh.id;
 };
@@ -462,11 +480,15 @@ export const removeSession = (id: string): string => {
         const fresh: LiveSession = { ...createSession(), entries: [] };
         sessions = [fresh];
         activeId = fresh.id;
+        reprimeSnapshotForNewSession();
         emit();
         return fresh.id;
     }
     sessions = next;
-    if (id === activeId) activeId = next[next.length - 1].id;
+    if (id === activeId) {
+        activeId = next[next.length - 1].id;
+        reprimeSnapshotForNewSession();
+    }
     emit();
     return activeId;
 };
@@ -532,6 +554,7 @@ export const bindConversation = (conversationId: string, opts?: BindConversation
     const bound = sessions.find(s => s.conversationId === conversationId && (!s.kind || s.kind === 'solo') && !s.botId && !s.groupId);
     if (bound) {
         activeId = bound.id;
+        reprimeSnapshotForNewSession();
         emit();
         return bound.id;
     }
@@ -554,6 +577,7 @@ export const bindConversation = (conversationId: string, opts?: BindConversation
             }
             : s));
         activeId = blank.id;
+        reprimeSnapshotForNewSession();
         emit();
         return blank.id;
     }

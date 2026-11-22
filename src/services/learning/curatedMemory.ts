@@ -68,6 +68,10 @@ export interface CuratedMemoryReceipt {
     maxChars: number;
     undoSnapshot: string;
     error?: CuratedMemoryFailure;
+    /** The NEW rule this write proposed, in the SAME shape the background
+     *  reviewer fingerprints. Undo records THIS — not the restored bytes —
+     *  or the durable rejected list could never match a re-proposal. */
+    rejectedContent?: string;
     /** capacity_exceeded only: the numbers behind the refusal. */
     currentChars?: number;
     attemptedChars?: number;
@@ -178,6 +182,13 @@ const applyCuratedMemoryOpsUnlocked = async (
     const base = await readBlob(username);
     const current = target === 'user' ? base.user : base.memory;
     const undoSnapshot = current;
+    // EXACT shape learningPassWiring.emit() uses for its durable-skip check:
+    // [content, old_text] per op, joined with ' | '. The fingerprint helper
+    // collapses whitespace/case, so this is the stable semantic identity.
+    const rejectedContent = (Array.isArray(operations) ? operations : []).flatMap(op => [
+        String((op as CuratedMemoryOp | null)?.content ?? ''),
+        String((op as CuratedMemoryOp | null)?.old_text ?? ''),
+    ]).join(' | ');
 
     const fail = (
         error: CuratedMemoryFailure,
@@ -190,6 +201,7 @@ const applyCuratedMemoryOpsUnlocked = async (
         usageChars: current.length,
         maxChars,
         undoSnapshot,
+        rejectedContent,
         error,
         message,
         ...extra,
@@ -269,6 +281,7 @@ const applyCuratedMemoryOpsUnlocked = async (
         usageChars: candidate.length,
         maxChars,
         undoSnapshot,
+        rejectedContent,
         message: candidate === current
             ? 'No change (the operations were no-ops on the current bytes).'
             : `Saved. ${targetLabel(target)} is now ${candidate.length} / ${maxChars} chars.`,
@@ -486,6 +499,19 @@ export const primeCuratedMemorySnapshot = async (
     snapshotCacheOwner = username;
     return snap;
 };
+
+/**
+ * Re-prime the cache at a SESSION BOUNDARY (New Chat / New Session, or a switch
+ * to another session). The freeze is deliberately scoped to ONE session: the
+ * system prefix must stay byte-stable while a turn streams (KV-cache), but a
+ * NEW session is a NEW prefix, so writes from the previous session have to be
+ * live in it without an Electron restart. `primeCuratedMemorySnapshot` already
+ * captures fresh bytes from disk — this named entry point makes the boundary
+ * explicit for the session store and for contract pins.
+ */
+export const reprimeCuratedMemorySnapshotForSession = async (
+    username = getActiveUsername() || 'default',
+): Promise<CuratedMemorySnapshot> => primeCuratedMemorySnapshot(username);
 
 /** The primed snapshot, or an empty one before priming (never a throw). */
 export const getCachedCuratedMemorySnapshot = (username = getActiveUsername() || 'default'): CuratedMemorySnapshot => {
