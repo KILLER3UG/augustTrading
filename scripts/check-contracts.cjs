@@ -7699,6 +7699,140 @@ const checkWaveHardeningFixes = () => {
         !deep.includes('200%=') && deep.includes('127.2%='));
 };
 
+// ─── 62. Pass-1 agent-driven memory, skills and background learning ────────
+// The four subsystems are pure where it matters: caps, refusal shapes, tool
+// allow-lists, promotion floors and the eligibility/lock rules are pinned here
+// so a future "small cleanup" cannot move a number the seat relies on.
+const checkAgentMemorySkills = async () => {
+    const store = new Map();
+    global.localStorage = {
+        getItem: k => (store.has(k) ? store.get(k) : null),
+        setItem: (k, v) => store.set(k, String(v)),
+        removeItem: k => store.delete(k),
+        clear: () => store.clear(),
+        key: i => [...store.keys()][i] ?? null,
+        get length() { return store.size; },
+    };
+    global.window = global;
+    global.window.localStorage = global.localStorage;
+    global.Event = class Event { constructor(t) { this.type = t; } };
+    global.CustomEvent = class CustomEvent extends global.Event {
+        constructor(t, o) { super(t); this.detail = o && o.detail; }
+    };
+    global.window.dispatchEvent = () => true;
+    global.window.addEventListener = () => {};
+    global.window.removeEventListener = () => {};
+    const now = Date.parse('2026-11-22T12:00:00.000Z');
+
+    const curated = loadModule('src/services/learning/curatedMemory.ts');
+    ok('agent memory: the two caps are 1,500 / 2,500 and never alias',
+        curated.USER_MD_MAX_CHARS === 1500 && curated.MEMORY_MD_MAX_CHARS === 2500
+        && curated.maxCharsForTarget('user') === 1500 && curated.maxCharsForTarget('memory') === 2500);
+    ok('agent memory: an add is a dated ## [YYYY-MM-DD] entry, not raw prose',
+        curated.isoDayStamp(now) === '2026-11-22'
+        && curated.formatCuratedEntry('  Keep risk small  ', now) === '## [2026-11-22]\nKeep risk small');
+    const snap = await curated.captureCuratedMemorySnapshot('contract-curated-user');
+    const promptBlock = curated.buildCuratedMemoryPromptBlock(snap);
+    ok('agent memory: the frozen block carries capacity indicators and the freshness rule',
+        snap.userMax === 1500 && snap.memoryMax === 2500
+        && Number.isFinite(snap.userPct) && Number.isFinite(snap.memoryPct)
+        && /\[USER\.md — \d+% — [\d,]+\/1,500 chars\]/.test(promptBlock)
+        && /\[MEMORY\.md — \d+% — [\d,]+\/2,500 chars\]/.test(promptBlock)
+        && /never live market truth/i.test(curated.CURATED_MEMORY_FRESHNESS_RULE));
+
+    const ss = loadModule('src/services/trade/sessionSearchTool.ts');
+    ok('session_search: excerpts quote the original bytes, not a paraphrase',
+        ss.verbatimExcerpt('prefix needle suffix', 'needle', 12).includes('needle'));
+    ok('session_search: exact phrase outranks a lone term; recency never makes a score negative',
+        ss.scoreEntry('ETH funding spike was a squeeze', ['eth', 'funding', 'spike'], 'eth funding spike', 'user', now - 1000, now)
+        > ss.scoreEntry('ETH', ['eth', 'funding', 'spike'], 'eth funding spike', 'user', now, now)
+        && ss.scoreEntry('ETH', ['eth'], 'eth', 'ai', now - 3650 * 86_400_000, now) > 0);
+    ok('session_search: an empty store answers honestly instead of inventing a hit',
+        /No matching turns/.test(ss.formatSessionSearchDigest({ hits: [], scannedSessions: 0, scannedEntries: 0 })));
+
+    const sm = loadModule('src/services/learning/skillManage.ts');
+    ok('skill_manage: a backticked tool after call/use is checked against the real registry',
+        sm.findUnknownToolReferences('Use `get_chart_view` then invoke `invented_desk_tool`',
+            new Set(['get_chart_view', 'memory'])).join(',') === 'invented_desk_tool');
+    const sections = [
+        '## When to Use\nwhen', '## Procedure\nhow', '## Pitfalls\nno', '## Verification\ncheck',
+    ].join('\n');
+    ok('skill_manage: Procedure and Steps are one required section for BOTH gates',
+        sm.missingPlaybookSections(sections).length === 0
+        && sm.missingPlaybookSections(sections.replace('## Procedure', '## Steps')).length === 0
+        && sm.missingPlaybookSections('## Procedure\nhow').length === 3);
+    ok('skill_manage: O-150 promotion floor and Curator 14d/30d thresholds are pinned',
+        sm.MIN_HOLDOUT_SAMPLE === 6 && sm.CURATOR_STALE_DAYS === 14 && sm.CURATOR_ARCHIVE_DAYS === 30);
+
+    const br = loadModule('src/services/learning/backgroundReview.ts');
+    ok('post-turn review: the only writable tools are memory and skill_manage',
+        [...br.BACKGROUND_REVIEW_ALLOWED_TOOLS].sort().join(',') === 'memory,skill_manage'
+        && br.BACKGROUND_REVIEW_MIN_TOOL_CALLS === 4);
+    ok('post-turn review: disabled, under-four and cue-free turns do not fire',
+        !br.shouldRunBackgroundReview({ enabled: false, toolCallCount: 9, userMessage: 'wrong' })
+        && !br.shouldRunBackgroundReview({ enabled: true, toolCallCount: 3, userMessage: 'please continue' })
+        && br.shouldRunBackgroundReview({ enabled: true, toolCallCount: 4, userMessage: 'please continue' })
+        && br.shouldRunBackgroundReview({ enabled: true, toolCallCount: 0, userMessage: 'No, that is wrong.' }));
+    ok('post-turn review: a bare "No," and "Remember:" are correction cues',
+        br.CORRECTION_CUE_RE.test('No, retry that.') && br.CORRECTION_CUE_RE.test('Remember: keep the stop.'));
+    ok('agent memory: a two-file pair write exists and all mutations share one lock',
+        typeof curated.setCuratedMemoryTexts === 'function' && typeof curated.withCuratedMemoryWriteLock === 'function');
+
+    const md = loadModule('src/services/learning/memoryDream.ts');
+    ok('dream: the first consolidation is eligible on the 5-session gate alone',
+        md.dreamEligibility({}, 5, now).eligible === true
+        && md.dreamEligibility({}, 4, now).eligible === false);
+    ok('dream: 24h AND 5 new sessions gate every later run',
+        md.dreamEligibility({ lastRunAt: new Date(now - 25 * 3_600_000).toISOString() }, 5, now).eligible === true
+        && md.dreamEligibility({ lastRunAt: new Date(now - 1 * 3_600_000).toISOString() }, 5, now).eligible === false
+        && md.dreamEligibility({ lastRunAt: new Date(now - 25 * 3_600_000).toISOString() }, 4, now).eligible === false);
+    const relative = md.resolveRelativeDates('yesterday and 3 days ago', now);
+    ok('dream: relative dates become absolute ISO days across the whole string',
+        relative.resolved.length === 2 && relative.text === '2026-11-21 and 2026-11-19'
+        && relative.resolved[0].isoDay === '2026-11-21' && relative.resolved[1].isoDay === '2026-11-19');
+    const many = Array.from({ length: 6 }, (_, i) => `## [2026-11-2${i}]\n${'q'.repeat(600)}${i}`).join('\n\n');
+    const consolidated = md.consolidateMemoryCore({ userMd: '', memoryMd: many, nowMs: now, ledger: [] });
+    ok('dream: cap enforcement is entry-granular, oldest first, and reported',
+        consolidated.memoryMd.length <= 2500 && consolidated.capDropped.length > 0
+        && consolidated.capDropped[0].day === '2026-11-20');
+
+    const desk = loadModule('src/services/analysis/DeskToolsService.ts');
+    const tk = loadModule('src/utils/toolKinds.ts');
+    const deskSrc = fs.readFileSync(path.join(ROOT, 'src/services/analysis/DeskToolsService.ts'), 'utf8');
+    const surfaceSrc = fs.readFileSync(path.join(ROOT, 'src/services/trade/chatSurfaceTurn.ts'), 'utf8');
+    const mSurface = /export const CHAT_SURFACE_TOOLS = \[([\s\S]*?)\n\];/.exec(surfaceSrc);
+    const surfaceNames = mSurface
+        ? [...mSurface[1].split('\n').map(l => l.split('//')[0]).join('\n').matchAll(/'([^']+)'/g)].map(x => x[1])
+        : [];
+    const newTools = ['memory', 'session_search', 'skill_manage'];
+    ok('agent tools: all three are declared in the desk catalogue with a target/action schema',
+        newTools.every(n => desk.DESK_TOOL_DEFINITIONS.some(d => d.function.name === n))
+        && /enum: \['user', 'memory'\]/.test(deskSrc)
+        && /enum: \['create', 'patch', 'archive', 'unarchive'\]/.test(deskSrc));
+    ok('agent tools: all three are GRANTED to the dock seat and the Chat seat',
+        newTools.every(n => tk.DESK_TOOL_NAMES.includes(n)) && surfaceNames.length > 20
+        && newTools.every(n => surfaceNames.includes(n)));
+    ok('agent tools: receipts and digests get their own TOOL_BUDGETS',
+        /memory: 1600/.test(deskSrc) && /session_search: 3000/.test(deskSrc) && /skill_manage: 2400/.test(deskSrc));
+    const memoryCase = deskSrc.slice(deskSrc.indexOf("case 'memory':"), deskSrc.indexOf("case 'session_search':"));
+    ok('agent tools: the memory case refuses bad actions and applies the privacy gate',
+        /is not add \| patch \| remove/.test(memoryCase) && /filterMemoryWrite/.test(memoryCase)
+        && /sensitiveMemoryEnabled/.test(memoryCase));
+    const skillCase = deskSrc.slice(deskSrc.indexOf("case 'skill_manage':"), deskSrc.indexOf("case 'repo_read':"));
+    ok('agent tools: skill_manage enforces the same earlier-round review as skill_write',
+        /skillReview\?\.indexVersion/.test(skillCase) && /context\.skillReview\)/.test(skillCase));
+    const wiringSrc = fs.readFileSync(path.join(ROOT, 'src/services/learning/learningPassWiring.ts'), 'utf8');
+    ok('background writing: the no-trader pass carries the same privacy gate',
+        /filterMemoryWrite/.test(wiringSrc) && /sensitiveMemoryEnabled/.test(wiringSrc));
+    const runnerSrc = fs.readFileSync(path.join(ROOT, 'src/services/trade/chatTurnRunner.ts'), 'utf8');
+    const reviewHook = runnerSrc.slice(runnerSrc.indexOf('const maybeReviewSessions'));
+    ok('post-turn review: the hook reads the just-settled turn from the canonical store',
+        /chatStore\.getSnapshot\(\)\.sessions/.test(reviewHook.slice(0, 600)));
+    const loaderSrc = fs.readFileSync(path.join(ROOT, 'src/hooks/useUserProfileLoader.ts'), 'utf8');
+    ok('profile load: the Curator runs for the profile being loaded, not the outgoing one',
+        /runSkillCurator\(\{ username \}\)/.test(loaderSrc));
+};
+
 const finishReport = () => {
     console.log(`contracts: ${passed} passed, ${failures.length} failed`);
     for (const f of failures) console.log(`  FAIL ${f}`);
@@ -7727,5 +7861,6 @@ checkSkillWrites()
     .then(checkAgentHandExecutor)
     .then(checkThinkingTagGate)
     .then(checkWaveHardeningFixes)
+    .then(checkAgentMemorySkills)
     .catch(e => { failures.push(`async runtime checks threw: ${e instanceof Error ? e.stack : String(e)}`); })
     .then(finishReport);
