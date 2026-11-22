@@ -351,7 +351,7 @@ const TrackedPostMortem: React.FC<TrackedPostMortemProps> = ({ trade, username, 
                     sub={position.gaps.length > 0 ? 'missing closed 5m bars' : 'none inside the window'}
                 />
                 <Metric
-                    label="Journal"
+                    label="Trade Log"
                     value={position.journalSettledAt !== undefined ? 'settled' : 'open'}
                     sub={position.journalSettledAt !== undefined ? phtStamp(position.journalSettledAt) : 'no settled outcome yet'}
                 />

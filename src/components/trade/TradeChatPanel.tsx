@@ -39,7 +39,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type { FollowOutput, VirtuosoHandle } from 'react-virtuoso';
-import { Activity, ChevronDown, Compass, Crosshair, Eye, History, MoreHorizontal, PanelRightOpen, Plus, X } from '../shared/Icons';
+import { Activity, ChevronDown, Crosshair, History, MoreHorizontal, PanelRightOpen, Plus, X } from '../shared/Icons';
 import JumpToLatestFab from '../shared/JumpToLatestFab';
 import { ProviderConfig } from '../../types/provider';
 import type { LoggedTrade } from '../../types';
@@ -101,6 +101,7 @@ import { listProfileMemories } from '../../services/learning/profileMemory';
 import { getHarnessSettings } from '../../utils/harnessSettings';
 import ModelPicker from '../shared/ModelPicker';
 import NewBotDialog from '../chat/NewBotDialog';
+import TurnPlanPill, { useClearTurnPlanOnSettle } from './TurnPlanPill';
 
 /** The running-turn identity moved beside the orchestrator that mints it
  *  (services/trade/chatTurnRunner); re-exported so the canvas owner
@@ -318,13 +319,12 @@ interface TradeChatPanelProps {
     leadingChrome?: React.ReactNode;
 }
 
-/** Empty-state starters. The glyph is a category cue so the row scans by
- *  intent; the chip's text is what gets sent, byte-for-byte unchanged. */
+/** The three trading starters of the calm empty state. The chip's text is
+ *  what gets sent, byte-for-byte unchanged — no hidden rewrite, no URL. */
 const QUICK_PROMPTS: { text: string; Icon: React.FC<{ className?: string }> }[] = [
-    { text: 'Read this chart', Icon: Eye },
-    { text: 'Key levels?', Icon: Crosshair },
-    { text: 'What is the bias?', Icon: Compass },
-    { text: 'Order-flow pressure?', Icon: Activity },
+    { text: 'Scan top USDT futures setups', Icon: Activity },
+    { text: 'Audit BTC 1h structure & positioning', Icon: Crosshair },
+    { text: 'Review my recent Trade Log edge', Icon: History },
 ];
 
 /**
@@ -498,6 +498,10 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
      *  pipeline's own — `beginConversationRun` — so this cannot drift from it. */
     const conversationBusy = !!activeSession.conversationId && !!snap.conversationRunning[activeSession.conversationId];
     const busy = !!snap.running[activeId] || conversationBusy;
+    // The plan is turn-scoped: the same flag that shows Stop also owns the
+    // pill's lifetime. When it flips false, clear this session's checklist so
+    // a settled turn cannot leave a stale "In progress" above the composer.
+    useClearTurnPlanOnSettle(activeId, busy);
 
     /** The freshest mark for the levels card's Dist column + "last" divider —
      *  read from the canvas snapshot (the markPrice@1s line), never a re-fetch. */
@@ -1650,7 +1654,7 @@ ${riskConstitution}`
                             data-testid="dock-quick-prompts"
                         >
                             {QUICK_PROMPTS.map(({ text, Icon }) => (
-                                <button key={text} type="button" disabled={!ready} onClick={() => void send(text)}
+                                <button key={text} type="button" disabled={!ready} aria-label={text} onClick={() => void send(text)}
                                     className={isChatFocus
                                         ? 'group flex items-center gap-2.5 rounded-xl border border-white/[0.06] bg-zinc-900/65 px-3.5 py-2.5 text-left text-ui-caption text-zinc-300 transition-colors hover:border-white/[0.10] hover:bg-zinc-800/80 hover:text-zinc-100 disabled:border-white/[0.04] disabled:bg-zinc-900/40 disabled:text-zinc-500'
                                         : 'group inline-flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-ui-dense text-zinc-400 transition-colors hover:bg-white/[0.05] hover:text-zinc-100 disabled:text-zinc-600 disabled:hover:bg-transparent'}
@@ -1721,6 +1725,10 @@ ${riskConstitution}`
             />
             </div>
 
+            {/* The turn's collapsed plan checklist sits immediately above the
+                composer in BOTH layouts — this panel is the dock and the Chat
+                composer. It renders nothing until the seat calls update_plan. */}
+            <TurnPlanPill sessionId={activeId} />
             {/* Composer — the reference's layout: a workspace-style section
                 header (symbol · panel seats · bot · packet age), then one
                 rounded-bubble card holding the input and its toolbar, then a plain

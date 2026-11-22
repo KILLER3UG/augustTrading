@@ -232,7 +232,7 @@ const JournalInner: React.FC<JournalProps> = ({
             <div className="shrink-0 px-5 pt-7 pb-2 sm:px-8 flex items-start justify-between gap-4">
                 <div className="min-w-0">
                     <p className="mb-1.5 text-ui-2xs font-semibold uppercase tracking-[0.14em] text-zinc-500">Performance ledger</p>
-                    <h2 className="font-serif text-ui-display font-medium tracking-[-0.025em] text-zinc-100">Journal</h2>
+                    <h2 className="font-serif text-ui-display font-medium tracking-[-0.025em] text-zinc-100">Trade Log</h2>
                     {!documentOpen && (
                         <p className="text-ui-caption text-zinc-500 mt-2">{trades.length} {trades.length === 1 ? 'trade' : 'trades'} · decisions, outcomes, and evidence</p>
                     )}

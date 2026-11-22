@@ -61,6 +61,13 @@ export interface ConversationGroupsProps {
     /** Pin/unpin from the row's actions menu (the trader's own keep-at-top). */
     onTogglePin?: (id: string) => void;
     onOpenSearch?: () => void;
+    /** Utility routes beside Recents: Settings (Memory/Skills) and the
+     *  Jobs/Activity drawer. Both already exist — these rows only name them. */
+    onOpenSettings?: () => void;
+    /** Customize lands on a specific Settings tab (Memory) rather than the
+     *  gear's remembered section. Falls back to onOpenSettings. */
+    onOpenCustomize?: () => void;
+    onOpenActivity?: () => void;
 }
 
 const ConversationRow: React.FC<{
@@ -227,7 +234,8 @@ const ConversationRow: React.FC<{
 export const ConversationGroups: React.FC<ConversationGroupsProps> = ({
     conversations, activeConversationId, onNewChat, onOpenConversation,
     onDeleteConversation, onClearConversation, runningAgentIds, pinnedIds,
-    onTogglePin,
+    onTogglePin, onOpenSearch,
+    onOpenSettings, onOpenCustomize, onOpenActivity,
 }) => {
     // A conversation with no messages is a placeholder, not a record: it is
     // hidden unless it is the one on screen (a fresh New chat stays visible).
@@ -246,6 +254,18 @@ export const ConversationGroups: React.FC<ConversationGroupsProps> = ({
         [rows, pinnedIds],
     );
     const isRunning = (id: string): boolean => runningAgentIds?.has(id) ?? false;
+    // Search is app-level: the row publishes a window event and App opens its
+    // search drawer over the existing unified session search. The optional
+    // callback is a direct route for hosts that own the drawer themselves.
+    const openSearch = (): void => {
+        window.dispatchEvent(new CustomEvent('august:open-search'));
+        onOpenSearch?.();
+    };
+    const utilityRows: Array<{ id: string; label: string; testid: string; onClick: () => void }> = [
+        { id: 'search', label: 'Search', testid: 'rail-search', onClick: openSearch },
+        { id: 'customize', label: 'Customize', testid: 'rail-customize', onClick: () => (onOpenCustomize ?? onOpenSettings)?.() },
+        { id: 'watches', label: 'Watches', testid: 'rail-watches', onClick: () => onOpenActivity?.() },
+    ];
 
     return (
         <div className="flex min-h-0 flex-1 flex-col px-2 pt-2">
@@ -264,6 +284,23 @@ export const ConversationGroups: React.FC<ConversationGroupsProps> = ({
             </div>
 
             <div className="mt-3 min-h-0 flex-1 overflow-y-auto custom-scrollbar" data-testid="shell-conversations">
+                {/* Quiet utility rows above Recents. They share the list's
+                    typography and hit target so they read as navigation, not
+                    as a second toolbar; each names an existing destination. */}
+                <div className="mb-2 flex flex-col gap-0.5">
+                    {utilityRows.map(row => (
+                        <button
+                            key={row.id}
+                            type="button"
+                            aria-label={row.label}
+                            data-testid={row.testid}
+                            onClick={row.onClick}
+                            className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-ui-caption text-zinc-500 transition-colors duration-150 hover:bg-white/[0.04] hover:text-zinc-200"
+                        >
+                            <span className="min-w-0 flex-1 truncate">{row.label}</span>
+                        </button>
+                    ))}
+                </div>
                 {pinned.length > 0 && (
                     <div className="mb-2">
                         <div className="px-2.5 pb-1 text-ui-2xs font-semibold uppercase tracking-[0.14em] text-zinc-600">Pinned</div>

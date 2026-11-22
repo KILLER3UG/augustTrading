@@ -26,7 +26,7 @@ const GROUP_LABELS: Record<string, string> = {
     analysis: 'Analysis',
     learning: 'Learning',
     strategy: 'Strategy',
-    notebook: 'Notebook',
+    notebook: 'Memory',
 };
 
 const groupKeyOf = (id: string): string => id.split('.')[0] || 'other';

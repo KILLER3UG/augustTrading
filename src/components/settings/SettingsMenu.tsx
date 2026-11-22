@@ -170,11 +170,17 @@ const NavTabButton: React.FC<{
     icon: React.ReactNode;
     label: string;
     badge?: string;
-}> = ({ active, onClick, icon, label, badge }) => (
+    /**
+     * Stable testid slug. Explicit ONLY where a human-facing label was
+     * renamed: "Trade Log" must keep the historic `settings-section-journal`
+     * id (AGENTS.md: ids and testids stay stable when a label changes).
+     */
+    sectionId?: string;
+}> = ({ active, onClick, icon, label, badge, sectionId }) => (
     <button
         type="button"
         onClick={onClick}
-        data-testid={'settings-section-' + label.toLowerCase().replace(/[^a-z]+/g, '-')}
+        data-testid={'settings-section-' + (sectionId ?? label.toLowerCase().replace(/[^a-z]+/g, '-'))}
         aria-current={active ? 'page' : undefined}
         aria-label={label}
         className={`motion-press flex w-full items-center justify-between gap-2 rounded-control px-2.5 py-2 text-left text-ui-sm font-medium transition-colors ${
@@ -249,7 +255,7 @@ const NAV_GROUPS: NavGroup[] = [
         title: 'Account',
         entries: [
             { id: 'profile', label: 'Profile', icon: <User className={NAV_ICON} />, keywords: 'account trader switch export data version about' },
-            { id: 'journal', label: 'Journal', icon: <HistoryIcon className={NAV_ICON} />, keywords: 'trades log summary insights statistics win rate' },
+            { id: 'journal', label: 'Trade Log', icon: <HistoryIcon className={NAV_ICON} />, keywords: 'trades log summary insights statistics win rate' },
             { id: 'actions', label: 'Data', icon: <Database className={NAV_ICON} />, keywords: 'usage backup restore session tokens' },
         ],
     },
@@ -276,10 +282,10 @@ const SETTINGS_SEARCH_ROWS: SettingsSearchHit[] = [
     { id: 'prompts', label: 'Prompt library', tab: 'prompts', keywords: 'prompts template edit override' },
     { id: 'instructions', label: 'Custom instructions', tab: 'instructions', keywords: 'system rules persona behaviour' },
     { id: 'memory', label: 'Memory behavior', tab: 'memory', keywords: 'global notebook switches learning sensitive' },
-    { id: 'notebook', label: 'Notebook', tab: 'memory', keywords: 'memory files entries export learning surface' },
+    { id: 'notebook', label: 'Memory files', tab: 'memory', keywords: 'memory files entries export learning surface' },
     { id: 'playbooks', label: 'Playbooks', tab: 'strategies', keywords: 'strategy book pdf upload studio' },
     { id: 'profile', label: 'Profile', tab: 'profile', keywords: 'trader account switch version update' },
-    { id: 'journal', label: 'Trading journal', tab: 'journal', keywords: 'trades log summary insights statistics' },
+    { id: 'journal', label: 'Trade Log', tab: 'journal', keywords: 'trades log summary insights statistics' },
     { id: 'storage', label: 'Storage location', tab: 'actions', keywords: 'sqlite indexeddb journal disk path' },
     { id: 'backup', label: 'Backups', tab: 'actions', keywords: 'backup restore export import json' },
     { id: 'usage', label: 'Session usage', tab: 'actions', keywords: 'tokens usage cost training export' },
@@ -633,6 +639,7 @@ const SettingsMenu: React.FC<SettingsMenuProps> = (props) => {
                                                     icon={entry.icon}
                                                     label={entry.label}
                                                     badge={navBadge(entry.id)}
+                                                    sectionId={entry.id === 'journal' ? 'journal' : undefined}
                                                 />
                                             ))}
                                         </div>

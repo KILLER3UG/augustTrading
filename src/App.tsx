@@ -133,6 +133,10 @@ import type { AppSurface } from './hooks/useSurface';
 import type { SettingsTab } from './components/settings/SettingsMenu';
 import type { TradeMode } from './components/trade/TradeView';
 import type { SoloTurnRow } from './services/trade/chatTurnMirror';
+import UtilityRail from './components/shell/UtilityRail';
+import {
+    searchAllSessionsForTool, sessionById, type UnifiedSessionSearchHit,
+} from './services/trade/sessionSearchTool';
 // The rail is DELETED (2026-10-28). Its live row and collapse threshold moved
 // to shellChrome; the update control moved to the header. Nothing imports the
 // old module, and the dead test reference went with it.
@@ -231,6 +235,12 @@ const App: React.FC = () => {
     const [isWatchListVisible, setIsWatchListVisible] = useState(false);
     /** Background-jobs drawer (status-stack pattern). */
     const [isJobsDrawerVisible, setIsJobsDrawerVisible] = useState(false);
+    /** The rail's Search row publishes `august:open-search`; this drawer is
+     *  App's one listener and calls the existing unified session search. */
+    const [isSearchOpen, setIsSearchOpen] = useState(false);
+    const [searchQuery, setSearchQuery] = useState('');
+    const [searchHits, setSearchHits] = useState<UnifiedSessionSearchHit[]>([]);
+    const [searchMessage, setSearchMessage] = useState('');
 
 
     // Provider configuration (API keys, base URLs, custom providers), plus the
@@ -2357,6 +2367,38 @@ const App: React.FC = () => {
     }, []);
 
 
+    // The rail's Search row → a small drawer over the app's one unified
+    // session search (Chat conversations + Desk transcripts). No second index.
+    useEffect(() => {
+        const onOpenSearch = (): void => {
+            setIsSearchOpen(true);
+            setSearchQuery('');
+            setSearchHits([]);
+            setSearchMessage('');
+        };
+        window.addEventListener('august:open-search', onOpenSearch);
+        return () => window.removeEventListener('august:open-search', onOpenSearch);
+    }, []);
+    useEffect(() => {
+        if (!isSearchOpen || !searchQuery.trim()) {
+            setSearchHits([]);
+            setSearchMessage('');
+            return;
+        }
+        let alive = true;
+        const timer = window.setTimeout(() => {
+            void searchAllSessionsForTool({ query: searchQuery, limit: 8 }, Date.now(), activeUsername || undefined)
+                .then(result => {
+                    if (!alive) return;
+                    setSearchHits(result.hits);
+                    setSearchMessage(result.hits.length === 0
+                        ? `No matches for “${searchQuery}”.`
+                        : `${result.hits.length} match(es) · Chat ${result.matchedBySurface.chat} · Desk ${result.matchedBySurface.desk}`);
+                });
+        }, 120);
+        return () => { alive = false; window.clearTimeout(timer); };
+    }, [isSearchOpen, searchQuery, activeUsername]);
+
     useWatchSideEffects({
         messagesRef,
         setConversationHistory,
@@ -2627,6 +2669,66 @@ const App: React.FC = () => {
                     onClose={() => setIsJobsDrawerVisible(false)}
                 />
             </React.Suspense>
+            {/* The rail's Search row opens THIS drawer, not a second search
+                surface. The query goes straight to the app's unified session
+                search; a hit opens the conversation through the same route the
+                rail's Recent rows use. */}
+            {isSearchOpen && (
+                <div
+                    data-testid="search-drawer"
+                    role="dialog"
+                    aria-label="Search conversations and sessions"
+                    className="motion-popover-down fixed right-4 top-16 z-shield flex max-h-[70vh] w-[380px] max-w-[calc(100vw-32px)] flex-col rounded-xl border border-white/[0.08] bg-zinc-900/95 p-3 shadow-elevated backdrop-blur-md"
+                >
+                    <div className="flex items-center justify-between gap-2">
+                        <h2 className="text-ui-sm font-semibold text-zinc-100">Search</h2>
+                        <button
+                            type="button"
+                            aria-label="Close search"
+                            title="Close"
+                            data-testid="search-close"
+                            onClick={() => setIsSearchOpen(false)}
+                            className="rounded-control px-1.5 py-0.5 text-ui-caption text-zinc-500 transition-colors hover:bg-white/[0.06] hover:text-zinc-200"
+                        >
+                            ×
+                        </button>
+                    </div>
+                    <input
+                        autoFocus
+                        value={searchQuery}
+                        onChange={e => setSearchQuery(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Escape') setIsSearchOpen(false); }}
+                        aria-label="Search conversations and sessions"
+                        placeholder="Search conversations and sessions"
+                        data-testid="search-input"
+                        className="mt-2 w-full rounded-control border border-white/[0.08] bg-zinc-950 px-2.5 py-2 text-ui-caption text-zinc-100 placeholder:text-zinc-600 focus:border-zinc-600 focus:outline-none"
+                    />
+                    <div className="mt-2 min-h-0 max-h-80 space-y-1 overflow-y-auto custom-scrollbar" data-testid="search-results">
+                        {searchMessage && <p className="px-1 text-ui-2xs text-zinc-600" role="status">{searchMessage}</p>}
+                        {searchHits.map(hit => (
+                            <button
+                                key={`${hit.surface}-${hit.sessionId}-${hit.at}`}
+                                type="button"
+                                aria-label={`Open ${hit.title}`}
+                                data-testid="search-hit"
+                                onClick={() => {
+                                    const conversationId = hit.surface === 'chat'
+                                        ? hit.sessionId
+                                        : sessionById(hit.sessionId)?.conversationId;
+                                    if (conversationId) openDeskConversation(conversationId);
+                                    setIsSearchOpen(false);
+                                }}
+                                className="block w-full rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-white/[0.05]"
+                            >
+                                <span className="block truncate font-mono text-ui-2xs uppercase tracking-wider text-zinc-600">
+                                    {hit.surface}{hit.symbol ? ` · ${hit.symbol}` : ''} · {hit.title}
+                                </span>
+                                <span className="mt-0.5 block text-ui-caption leading-5 text-zinc-400">{hit.excerpt}</span>
+                            </button>
+                        ))}
+                    </div>
+                </div>
+            )}
             {/* The trader's half of ask_user_input: a seat that parked its turn on
                 a question renders here, above the composer, in BOTH homes. It owns
                 no state of its own — the channel does. */}
@@ -2667,6 +2769,10 @@ const App: React.FC = () => {
                         onClearConversation={(id) => { void handleClearChat(id); }}
                         activeUsername={activeUsername}
                         onOpenSettings={() => setIsSettingsMenuVisible(true)}
+                        onOpenCustomize={() => {
+                            setSettingsSection('memory');
+                            setIsSettingsMenuVisible(true);
+                        }}
                         onOpenActivity={() => setIsJobsDrawerVisible(true)}
                         width={railResize.width}
                         isResizing={railResize.isResizing}
@@ -2753,6 +2859,17 @@ const App: React.FC = () => {
                         renderGroupSurface={renderGroupSurface}
                     />
                 </main>
+                {/* The right utility rail sits BESIDE the chat/desk stage, not
+                    inside it, so no surface's width geometry changes. It is
+                    collapsed to a single quiet trigger by default. */}
+                <UtilityRail
+                    onOpenChart={() => setSurface('trade')}
+                    onOpenTradeLog={() => {
+                        setSettingsSection('journal');
+                        setIsSettingsMenuVisible(true);
+                    }}
+                    username={activeUsername}
+                />
 
 
                 </div>

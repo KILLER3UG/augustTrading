@@ -59,6 +59,8 @@ interface ShellRailProps {
     onClearConversation: (id: string) => void;
     activeUsername: string | null;
     onOpenSettings: () => void;
+    /** The Customize row lands on a named Settings tab (Memory). */
+    onOpenCustomize?: () => void;
     onOpenActivity?: () => void;
     /** The dragged width of the conversation column; the whole rail is it. */
     width: number;
@@ -82,7 +84,7 @@ const ShellRail: React.FC<ShellRailProps> = ({
     surface, onSelectSurface, onNewChat,
     conversations, activeConversationId, onOpenConversation,
     onDeleteConversation, onClearConversation,
-    activeUsername, onOpenSettings, onOpenActivity,
+    activeUsername, onOpenSettings, onOpenCustomize, onOpenActivity,
     width, isResizing, onResizeStart, onResizeReset, onCollapse,
     saveStatus, overlay = false, onCloseOverlay, hideTopControls = false,
 }) => {
@@ -156,6 +158,9 @@ const ShellRail: React.FC<ShellRailProps> = ({
                         onOpenConversation={onOpenConversation}
                         onDeleteConversation={onDeleteConversation}
                         onClearConversation={onClearConversation}
+                        onOpenSettings={onOpenSettings}
+                        onOpenCustomize={onOpenCustomize}
+                        onOpenActivity={onOpenActivity}
                     />
                     <AccountRow
                         expanded
