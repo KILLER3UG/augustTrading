@@ -345,6 +345,27 @@ export const useUserProfileLoader = (args: UseUserProfileLoaderArgs): UseUserPro
             await seedBundledSkills(username);
             if (isStale()) return;
 
+            // Pass-1 curated memory: prime the SYNC snapshot the frozen
+            // system prefix reads (one read per boot/user switch), then run
+            // the one-time legacy-notebook preservation. Both are idempotent;
+            // the migration never deletes the legacy notebook bytes.
+            const { primeCuratedMemorySnapshot, migrateLegacyNotebookToCuratedMemory } = await import('../services/learning/curatedMemory');
+            await primeCuratedMemorySnapshot(username);
+            if (isStale()) return;
+            await migrateLegacyNotebookToCuratedMemory(username);
+            if (isStale()) return;
+            // Warm the skill-lifecycle mirror and run the zero-LLM inactivity
+            // Curator once per profile load (agent skills go stale at 14d,
+            // archived at 30d — reversible, never touching user/bundled/pinned).
+            const { primeSkillMetaCache, runSkillCurator } = await import('../services/learning/skillManage');
+            await primeSkillMetaCache(username);
+            if (isStale()) return;
+            // EXPLICIT username: `last_active_user` is only written at the
+            // tail of this loader, so the ambient active user is still the
+            // OUTGOING profile here. Without it the Curator would both run on
+            // the wrong profile and overwrite the mirror just primed above.
+            void runSkillCurator({ username }).catch(() => { /* best-effort */ });
+
             // Captured, not fired: the regime ledger's cache is read by the
             // settlement path's regime resolution, so it must be hydrated
             // before anything asks it a question.

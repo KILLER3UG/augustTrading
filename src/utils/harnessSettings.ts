@@ -69,6 +69,13 @@ export interface HarnessSettings {
      * deliberate too.
      */
     selfModificationMode: SelfModMode;
+    /** Post-turn background learning pass (Hermes-style four signals).
+     *  Writes ONLY USER.md/MEMORY.md entries or probation skills, receipted
+     *  and reversible. Default ON; the trader can switch it off here. */
+    backgroundReviewEnabled: boolean;
+    /** Periodic "Dream" consolidation of USER.md/MEMORY.md (>= 24h + >= 5 new
+     *  sessions, or a manual trigger). Default ON. */
+    memoryDreamEnabled: boolean;
 }
 
 const KEY = 'harness_settings_v1';
@@ -128,6 +135,17 @@ export const getHarnessSettings = (): HarnessSettings => {
         selfModificationMode: stored.selfModificationMode === 'config'
             ? stored.selfModificationMode
             : 'off',
+        // Pass-1 agent-driven learning, both opt-OUT only on an explicit false
+        // (the shipped default is ON — the passes are receipted, reversible and
+        // restricted to memory/skill_manage, so an absent key must not read as
+        // the app losing its learning loop):
+        //  - backgroundReviewEnabled: the post-turn pass that detects the four
+        //    learning signals and may write USER.md / MEMORY.md or create a
+        //    PROBATION skill. Never touches the ledger, trades or code.
+        //  - memoryDreamEnabled: the periodic consolidation of the two bounded
+        //    files (>= 24h + >= 5 new sessions, or a manual /dream).
+        backgroundReviewEnabled: stored.backgroundReviewEnabled !== false,
+        memoryDreamEnabled: stored.memoryDreamEnabled !== false,
         // The trader's Risk Constitution rides the frozen session prefix;
         // length-capped here at the STORE so one oversized paste cannot bloat
         // every future prefix regardless of what the editor sends.

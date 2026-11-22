@@ -93,6 +93,19 @@ const MemoryTab: React.FC<{ tab: MemoryTabProps }> = ({ tab: props }) => {
     // mount; the entries card no longer carries them.
     const [learning, setLearning] = useState(() => isTraderLearningEnabled());
     const [sensitive, setSensitive] = useState(() => getHarnessSettings().sensitiveMemoryEnabled === true);
+    const [backgroundReview, setBackgroundReview] = useState(() => getHarnessSettings().backgroundReviewEnabled !== false);
+    const [memoryDream, setMemoryDream] = useState(() => getHarnessSettings().memoryDreamEnabled !== false);
+
+    const toggleBackgroundReview = (): void => {
+        const next = !backgroundReview;
+        saveHarnessSettings({ backgroundReviewEnabled: next });
+        setBackgroundReview(next);
+    };
+    const toggleMemoryDream = (): void => {
+        const next = !memoryDream;
+        saveHarnessSettings({ memoryDreamEnabled: next });
+        setMemoryDream(next);
+    };
 
     const toggleLearning = (): void => {
         const next = !learning;
@@ -154,6 +167,20 @@ const MemoryTab: React.FC<{ tab: MemoryTabProps }> = ({ tab: props }) => {
                             description="Allow facts about health, finances or identity; secrets are always refused."
                             testid="memory-sensitive-toggle"
                             control={<ToggleSwitch checked={sensitive} onChange={toggleSensitive} label="Include sensitive topics in memory" />}
+                        />
+                        <BehaviorRow
+                            icon={<BrainIcon className="h-4 w-4" aria-hidden="true" />}
+                            title="Review turns for durable lessons"
+                            description="After a substantive turn, a zero-model pass may add a dated USER.md / MEMORY.md entry or a probation skill. Writes are receipted and reversible; the ledger and trades are never touched."
+                            testid="background-review-toggle"
+                            control={<ToggleSwitch checked={backgroundReview} onChange={toggleBackgroundReview} label="Review turns for durable lessons" />}
+                        />
+                        <BehaviorRow
+                            icon={<FolderIcon className="h-4 w-4" aria-hidden="true" />}
+                            title="Periodic memory consolidation"
+                            description="Consolidate the two bounded memory files after 24 hours and 5 new sessions (or a manual trigger). Relative dates, duplicates and ledger contradictions are resolved before the hard caps are enforced."
+                            testid="memory-dream-toggle"
+                            control={<ToggleSwitch checked={memoryDream} onChange={toggleMemoryDream} label="Periodic memory consolidation" />}
                         />
                     </div>
                 </SettingsGroup>

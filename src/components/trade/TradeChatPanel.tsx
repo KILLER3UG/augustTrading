@@ -73,6 +73,7 @@ import { saveBot, type AgentBot } from '../../services/agents/agentRoster';
 import { resolveAgentContext, SINGLE_AGENT_MEMORY_BUDGET, type ResolvedAgentContext } from '../../services/agents/agentContext';
 import { getFirstReadyProvider, isProviderReady, formatModelDisplayName, computeChatModelFallback } from '../../utils/providerUtils';
 import { skillIndexRows, usableSkillRows } from '../../services/learning/SkillFileService';
+import { promptSkillRows } from '../../services/learning/skillManage';
 import { getMemoryFiles } from '../../services/learning/MemoryFilesService';
 import { buildNotebookTopicsIndex } from '../../services/learning/memoryTopics';
 import { indexBudgetFor } from '../../utils/promptIndexBudget';
@@ -80,6 +81,7 @@ import { DEFAULT_CONTEXT_WINDOW_TOKENS, resolveContextWindow } from '../../utils
 import { buildLearningRulesIndex } from '../../utils/learningRulesIndex';
 import { storageService } from '../../services/infrastructure/StorageService';
 import { buildProfileMemoryIndex } from '../../services/learning/profileMemory';
+import { buildCuratedMemoryPromptBlock, getCachedCuratedMemorySnapshot } from '../../services/learning/curatedMemory';
 import { buildGoalsIndex } from '../../services/goals/GoalService';
 import type { ReasoningEffort } from '../../services/providers/reasoningControls';
 import { useChatAttachments } from '../../hooks/useChatAttachments';
@@ -546,7 +548,7 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
             const rules = memoryEnabled !== false
                 ? buildLearningRulesIndex(storageService.loadLearningRules().rules, Math.min(6, budget.skills))
                 : '';
-            return [goals, buildSkillsIndexForPrompt(skillIndexRows(), budget.skills), rules, topics].filter(Boolean).join('\n\n');
+            return [goals, buildSkillsIndexForPrompt(promptSkillRows(), budget.skills), rules, topics].filter(Boolean).join('\n\n');
         } catch {
             return '';
         }
@@ -637,6 +639,12 @@ ${riskConstitution}`
         const memoryBlock = memoryEnabled !== false
             ? buildProfileMemoryIndex(undefined, indexBudgetFor(provider ? resolveContextWindow(provider).tokens : DEFAULT_CONTEXT_WINDOW_TOKENS).memory)
             : '';
+        // The FROZEN curated-memory snapshot (USER.md + MEMORY.md), captured
+        // once per session key below — mid-session `memory` writes land on
+        // disk and answer with receipts, they never rewrite this prefix.
+        const curatedMemoryBlock = memoryEnabled !== false
+            ? buildCuratedMemoryPromptBlock(getCachedCuratedMemorySnapshot())
+            : '';
         let agent: ResolvedAgentContext | null = null;
         if (bot) {
             try {
@@ -653,7 +661,7 @@ ${riskConstitution}`
         const persona = [agent?.persona, roleNote].filter(Boolean).join('\n\n');
         const base = `${constitutionBlock ? `${constitutionBlock}
 
-` : ''}${TRADE_CHAT_SYSTEM_PROMPT}${skillsBlock ? `\n\n${skillsBlock}` : ''}${strategiesBlock ? `\n\n${strategiesBlock}` : ''}${memoryBlock ? `\n\n${memoryBlock}` : ''}${agent?.notes ? `\n\n## Your private notes\n${agent.notes}` : ''}`;
+` : ''}${TRADE_CHAT_SYSTEM_PROMPT}${skillsBlock ? `\n\n${skillsBlock}` : ''}${strategiesBlock ? `\n\n${strategiesBlock}` : ''}${memoryBlock ? `\n\n${memoryBlock}` : ''}${curatedMemoryBlock ? `\n\n${curatedMemoryBlock}` : ''}${agent?.notes ? `\n\n## Your private notes\n${agent.notes}` : ''}`;
         const skillRows = usableSkillRows(skillIndexRows());
         const skillSlugs = skillsBlock ? skillRows.map(r => r.slug) : [];
         const skillIndexSnapshot = Object.fromEntries(skillRows.map(r => [r.slug, r.description]));

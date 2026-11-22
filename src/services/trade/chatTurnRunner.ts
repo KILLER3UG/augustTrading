@@ -35,6 +35,7 @@ import type { HybridDataPacket } from '../analysis/HybridIntelligenceService';
 const hybridService = (): Promise<typeof import('../analysis/HybridIntelligenceService')> => import('../analysis/HybridIntelligenceService');
 import { DESK_TOOL_NAMES } from '../../utils/toolKinds';
 import { settleDockEntry } from '../../utils/rowSettlement';
+import { maybeRunAgentLearningPass, maybeRunMemoryDreamIfDue } from '../learning/learningPassWiring';
 import { CHART_ACTION_TOOL_DEFS } from '../analysis/deskToolShared';
 import { focusedGoal } from '../goals/GoalService';
 import { buildTier0UserTurnContext, buildTradeChatContext, composeUserTurnMessage, describeChartSnapshotForModel, extractTraderQuestion } from './tradeChatContext';
@@ -1290,8 +1291,40 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
      *  the model the trader is actually talking to — the panel's FIRST seat
      *  when several are selected, else the session's own pick. The every-2-sends
      *  cadence lives inside the learner, not here. Best-effort:
-     *  no ready provider means no pass, and a throw never reaches the turn. */
-    const maybeReviewSessions = (learnerCfg: ProviderConfig | null): void => {
+     *  no ready provider means no pass, and a throw never reaches the turn.
+     *
+     *  Pass-1 agent-driven learning rides the SAME hook: the background
+     *  review (four Hermes signals; writes ONLY USER.md/MEMORY.md entries or
+     *  a probation skill, receipted + reversible) and the periodic Dream
+     *  consolidation. Both are zero-LLM, so they run even with no provider
+     *  configured — the model-led learner below keeps its own gate. */
+    const maybeReviewSessions = (learnerCfg: ProviderConfig | null, sid?: string): void => {
+        // THE TURN JUST FINISHED. The `sessions` prop is the render snapshot
+        // captured when `send` began — it cannot contain the answer settling
+        // right now. Read the canonical store FRESH (the same source the title
+        // hook at :382 uses), or the review evaluates the PREVIOUS turn.
+        const freshSessions = chatStore.getSnapshot().sessions;
+        const session = (sid ? freshSessions.find(s => s.id === sid) : undefined)
+            ?? freshSessions[freshSessions.length - 1];
+        if (session) {
+            const lastUser = [...session.entries].reverse().find(e => e.role === 'user' && e.text.trim());
+            const lastAi = [...session.entries].reverse().find(e => e.role === 'ai');
+            // skill_view lines rendered under the answer name the skill that
+            // was opened — the review's skill-gap signal needs which ones.
+            const skillsUsed = lastAi
+                ? lastAi.tools
+                    .map(t => /skill_view\D*([a-z0-9][a-z0-9-]*)/i.exec(t)?.[1] ?? '')
+                    .filter(s => s.length > 0)
+                : [];
+            void maybeRunAgentLearningPass({
+                sid: session.id,
+                userMessage: lastUser?.text ?? '',
+                assistantMessage: lastAi?.text ?? '',
+                toolCallCount: lastAi?.tools.length ?? 0,
+                skillsUsed,
+            }).catch(() => { /* a learning pass never breaks a turn */ });
+            void maybeRunMemoryDreamIfDue().catch(() => { /* best-effort */ });
+        }
         const model = learnerCfg ?? provider;
         if (!model) return;
         const user = getActiveUsername();
@@ -1575,7 +1608,7 @@ ${focusLine}` : contextBlockRaw;
             } finally {
                 mutate(sid, s => ({ ...s, entries: s.entries.map(en => (en.id === aiEntry.id ? settleDockEntry({ ...en, ...(en.workedMs === undefined ? { workedMs: workedMsFor(soloStartedAt) } : {}) }, 'completed') : en)) }));
                 endRunOwned(sid, controller);
-                maybeReviewSessions(learnerCfg);
+                maybeReviewSessions(learnerCfg, sid);
                 // THE TURN HAS TO TEACH THE BOT. `recordBotTurnOutcome` writes
                 // the lesson into this bot's own memory.md and feeds a closed
                 // bot-authored trade into the shared skills/evidence path. The
@@ -1813,7 +1846,7 @@ ${focusLine}` : contextBlockRaw;
             }
         } finally {
             endRunOwned(sid, controller);
-            maybeReviewSessions(learnerCfg);
+            maybeReviewSessions(learnerCfg, sid);
             // The room has settled: start the (fire-and-forget) title call.
             suggestSessionTitle(sid);
         }
