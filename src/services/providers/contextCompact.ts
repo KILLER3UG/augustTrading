@@ -57,7 +57,7 @@
 import type { ChatMessage, ContentPart } from './GenericProviderService';
 import type { ProviderConfig } from '../../types/provider';
 import { estimateTokens } from '../../utils/tokenEstimate';
-import { clipNote, findArtifactIdIn, harnessTurn } from '../../utils/harnessMarks';
+import { clipNote, findArtifactIdIn, harnessTurn, HARNESS_TURN_MARK } from '../../utils/harnessMarks';
 import {
     DEFAULT_OUTPUT_RESERVE_TOKENS,
     MIN_KEEP_MESSAGES,
@@ -271,12 +271,42 @@ const stubFor = (label: string, text: string, keep: number): string => {
 const inTail = (index: number, length: number, keepAtLeast: number): boolean =>
     index >= length - keepAtLeast;
 
+/** Is this user-role message the harness speaking (a continuation nudge, a
+ *  results block, a repair instruction) rather than the trader? Harness turns
+ *  ride the `user` role because most transports have no mid-conversation
+ *  system role — see `utils/harnessMarks.ts`. */
+const isHarnessAuthoredUserTurn = (m: ChatMessage): boolean =>
+    m.role === 'user' && typeof m.content === 'string' && m.content.includes(HARNESS_TURN_MARK);
+
+/**
+ * Where the ACTIVE turn begins: the newest user message the TRADER authored.
+ *
+ * Everything from this index to the end of the array is the turn in flight —
+ * the question being answered, the harness continuations that keep it going,
+ * and every tool result the seat is reasoning over RIGHT NOW. Compaction
+ * protects that span whole: the live-tested failure was the active turn's
+ * freshly fetched `get_market_packet` / `get_regime` results being shortened
+ * mid-turn, which sent the seat back to re-fetch what it had just been handed.
+ *
+ * Returns 0 when no trader turn exists (an all-harness array) — the
+ * conservative reading, since then everything might be part of the work.
+ */
+export const activeTurnStartIndex = (messages: readonly ChatMessage[]): number => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+        if (messages[i].role === 'user' && !isHarnessAuthoredUserTurn(messages[i])) return i;
+    }
+    return 0;
+};
+
 /**
  * Fit a message array to a token ceiling, oldest-first, losing the least
  * load-bearing bytes first. See the header for the order and the guarantees.
+ *
+ * `protectFrom` is the index the ACTIVE turn starts at: indices at or above it
+ * are left untouched this pass (null disables that protection — the emergency
+ * path, where the active turn itself cannot fit).
  */
-export const compactMessages = (input: CompactInput): CompactResult => {
-    const keepAtLeast = Math.max(MIN_KEEP_MESSAGES, input.keepAtLeast ?? 0);
+const compactToFit = (input: CompactInput, keepAtLeast: number, protectFrom: number | null): CompactResult => {
     const beforeTokens = estimateMessagesTokens(input.messages);
     const actions: CompactAction[] = [];
 
@@ -307,6 +337,9 @@ export const compactMessages = (input: CompactInput): CompactResult => {
     let microCompactCount = 0;
     for (let i = 0; i < out.length; i++) {
         if (inTail(i, out.length, keepAtLeast)) break;
+        // The active turn's own results are never micro-stubbed in the normal
+        // path — only the emergency pass (protectFrom = null) may touch them.
+        if (protectFrom !== null && i >= protectFrom) break;
         const m = out[i];
         if (m.role !== 'tool') continue;
         const text = textOf(m.content);
@@ -326,6 +359,7 @@ export const compactMessages = (input: CompactInput): CompactResult => {
         for (let i = 0; i < out.length; i++) {
             if (total() <= input.ceilingTokens) break;
             if (inTail(i, out.length, keepAtLeast)) break;
+            if (protectFrom !== null && i >= protectFrom) break;
             const m = out[i];
             if (pass === 'tool' && m.role !== 'tool') continue;
             if (pass === 'assistant' && (m.role !== 'assistant' || m.tool_calls?.length)) continue;
@@ -364,7 +398,8 @@ export const compactMessages = (input: CompactInput): CompactResult => {
             const first = out[g[0]];
             return first?.role !== 'system'
                 && !g.includes(lastUserIndex)
-                && !inTail(g[0], out.length, keepAtLeast);
+                && !inTail(g[0], out.length, keepAtLeast)
+                && (protectFrom === null || g[0] < protectFrom);
         });
         if (!droppable) break;
         // ONE action per group: a group is the unit the trader lost, and
@@ -407,9 +442,45 @@ export const compactMessages = (input: CompactInput): CompactResult => {
     };
 }
 
+/**
+ * Compact an outbound array, protecting the ACTIVE turn.
+ *
+ * Two passes, by escalation:
+ *  1. **Older turns first** — everything before `activeTurnStartIndex` is
+ *     fair game (micro-stub, shorten, drop); the active turn's question,
+ *     continuations and tool results are untouched.
+ *  2. **Emergency only** — when even the fully protected request is still over
+ *     the ceiling, the active turn itself cannot fit, and its OLDEST tool
+ *     results are trimmed (the tail — the newest results and the forming
+ *     answer — stays protected by `keepAtLeast`). This is the last resort the
+ *     live thrash bug made necessary: a single multi-tool turn that alone
+ *     crosses the ceiling must still send, but it must not quietly lose the
+ *     results it is about to reason over while older turns could pay instead.
+ */
+export const compactMessages = (input: CompactInput): CompactResult => {
+    const keepAtLeast = Math.max(MIN_KEEP_MESSAGES, input.keepAtLeast ?? 0);
+    const protectedRun = compactToFit(input, keepAtLeast, activeTurnStartIndex(input.messages));
+    if (protectedRun.stillOver <= 0) return protectedRun;
+    return compactToFit(input, keepAtLeast, null);
+};
+
+/** Compact token count for a human line: `912k`, `1.2M`, `640k`. */
+const fmtTokens = (n: number): string => {
+    if (n >= 1_000_000) {
+        const m = Math.round(n / 100_000) / 10;
+        return `${m % 1 === 0 ? m.toFixed(0) : m.toFixed(1)}M`;
+    }
+    if (n >= 1_000) return `${Math.round(n / 1_000)}k`;
+    return String(n);
+};
+
 /** Human line for the transcript. Written from the ACTIONS the compactor
  *  actually took, so it cannot claim a drop that never happened — the same rule
- *  that keeps every other harness notice a measurement. */
+ *  that keeps every other harness notice a measurement.
+ *
+ *  Calm by design (2026-11-23): one muted sentence, no all-caps shout, no
+ *  overflow — the trader needs to know what was folded away and the token
+ *  span, not a warning. */
 const compactNotice = (actions: CompactAction[], before: number, after: number): string => {
     if (actions.length === 0) return '';
     const images = actions.filter(a => a.kind === 'image-prune').length;
@@ -417,12 +488,11 @@ const compactNotice = (actions: CompactAction[], before: number, after: number):
     const prose = actions.filter(a => a.kind === 'assistant-text').length;
     const drops = actions.filter(a => a.kind === 'turn-drop').length;
     const parts: string[] = [];
-    if (images) parts.push(`${images} older chart snapshot${images === 1 ? '' : 's'} omitted`);
-    if (payloads) parts.push(`${payloads} old tool result${payloads === 1 ? '' : 's'} shortened`);
-    if (prose) parts.push(`${prose} earlier repl${prose === 1 ? 'y' : 'ies'} shortened`);
-    if (drops) parts.push(`${drops} earlier turn${drops === 1 ? '' : 's'} dropped`);
-    return `COMPACTED FOR THE CONTEXT WINDOW: ${parts.join(', ')} — ${before.toLocaleString()} → ${after.toLocaleString()} estimated tokens. `
-        + 'What was cut is missing from THIS request, not from your journal; re-run the lookup if the seat needs it.';
+    if (payloads) parts.push(`${payloads} old tool result${payloads === 1 ? '' : 's'}`);
+    if (drops) parts.push(`${drops} older turn${drops === 1 ? '' : 's'}`);
+    if (prose) parts.push(`${prose} earlier repl${prose === 1 ? 'y' : 'ies'}`);
+    if (images) parts.push(`${images} older chart snapshot${images === 1 ? '' : 's'}`);
+    return `Compacted ${parts.join(', ')} · ${fmtTokens(before)} → ${fmtTokens(after)} estimated tokens`;
 };
 
 // ─── Skill carry-over ───────────────────────────────────────────────────────

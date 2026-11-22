@@ -617,14 +617,14 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
     }
 })();
 
-// ─── 10c. silent 80% compaction: the digest must be safe to inject ────────
+// ─── 10c. silent 90% compaction: the digest must be safe to inject ────────
 (() => {
     const cj = loadModule('src/services/trade/contextCompactionJob.ts');
     const msg = (role, content) => ({ role, content });
-    ok('compaction: the trigger is 80% of the window, not the ceiling',
-        cj.COMPACTION_TRIGGER_RATIO === 0.8
-        && cj.shouldCompact({ tokens: 799_000, windowTokens: 1_000_000, ratio: 0.799 }) === false
-        && cj.shouldCompact({ tokens: 800_000, windowTokens: 1_000_000, ratio: 0.8 }) === true);
+    ok('compaction: the trigger is 90% of the window, not the ceiling',
+        cj.COMPACTION_TRIGGER_RATIO === 0.9
+        && cj.shouldCompact({ tokens: 899_000, windowTokens: 1_000_000, ratio: 0.899 }) === false
+        && cj.shouldCompact({ tokens: 900_000, windowTokens: 1_000_000, ratio: 0.9 }) === true);
     ok('compaction: usage is a ratio of the real window, clamped to 1',
         Math.abs(cj.compactionUsage([msg('user', 'x'.repeat(400))], 50).ratio - 1) <= 1e-9
         && cj.compactionUsage([msg('user', 'x'.repeat(400))], 10_000).ratio < 0.5,
@@ -652,11 +652,11 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
     ok('compaction: a summary missing ANY of the four headings is discarded, not stored',
         cj.sanitizeSummary('## Symbols\n- BTCUSDT\n## Decisions\n(none)\n## Open tasks\n(none)\n' + 'filler '.repeat(20), many) === null
         && cj.sanitizeSummary('## Symbols\n- BTCUSDT\n## Decisions\n(none)\n## Other context\n(none)\n' + 'filler '.repeat(20), many) === null);
-    ok('compaction: the 128k model compacts at 80% of 128k, not 80% of the 1M default',
+    ok('compaction: the 128k model compacts at 90% of 128k, not 90% of the 1M default',
         cj.shouldCompact(cj.compactionUsage(many, 128_000)) === false
-        && cj.shouldCompact({ tokens: 102_400, windowTokens: 128_000, ratio: 0.8 }) === true
-        && cj.shouldCompact({ tokens: 102_399, windowTokens: 128_000, ratio: 102_399 / 128_000 }) === false
-        && cj.shouldCompact({ tokens: 799_000, windowTokens: 1_000_000, ratio: 0.799 }) === false);
+        && cj.shouldCompact({ tokens: 115_200, windowTokens: 128_000, ratio: 0.9 }) === true
+        && cj.shouldCompact({ tokens: 115_199, windowTokens: 128_000, ratio: 115_199 / 128_000 }) === false
+        && cj.shouldCompact({ tokens: 899_000, windowTokens: 1_000_000, ratio: 0.899 }) === false);
 })();
 
 // ─── 10. the shared index budget — one table, scaled to the window ─────────
@@ -689,8 +689,11 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
 
 // ─── 10b. the default window is the owner's 1M for every model ────────────
 // The resolver, the index budget and the compactor must agree on the number an
-// unstated model gets. This is a default, not a cap: a user override, a
-// provider-stated limit or a discovered per-model window still wins.
+// unstated model gets. This is a default, not a cap: a user override or a
+// provider-ENFORCED limit (stated in a rejection) wins — a window a model
+// merely PUBLISHED at discovery does not (the 2026-11-23 Ernie thrash: a
+// catalog entry shrank a 1M gateway model to ~16k and the loop compacted the
+// live turn at ~14k tokens, every round).
 (() => {
     const cw = loadModule('src/utils/contextWindow.ts');
     const unstated = cw.resolveContextWindow({ id: 'p', name: 'P', selectedModel: 'any-model' });
@@ -698,6 +701,34 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
         cw.DEFAULT_CONTEXT_WINDOW_TOKENS === 1_000_000
         && unstated.tokens === 1_000_000 && unstated.source === 'default',
         JSON.stringify(unstated));
+    const ernie = cw.resolveContextWindow({
+        id: 'kilocode', name: 'Kilocode', selectedModel: 'ernie-5.5-flash-preview-free',
+        modelContextWindows: { 'ernie-5.5-flash-preview-free': 16_384 },
+    });
+    ok('context window: a catalog-published window never shrinks the 1M default (Kilocode · Ernie thrash fix)',
+        ernie.tokens === 1_000_000 && ernie.source === 'default',
+        JSON.stringify(ernie));
+    cw.recordMeasuredContextWindow('kilocode', 'ernie-5.5-flash-preview-free', 131_072);
+    const enforced = cw.resolveContextWindow({
+        id: 'kilocode', name: 'Kilocode', selectedModel: 'ernie-5.5-flash-preview-free',
+        modelContextWindows: { 'ernie-5.5-flash-preview-free': 16_384 },
+    });
+    ok('context window: a provider-ENFORCED limit (stated in a rejection) wins over the default',
+        enforced.tokens === 131_072 && enforced.source === 'measured',
+        JSON.stringify(enforced));
+    const override = cw.resolveContextWindow({
+        id: 'kilocode', name: 'Kilocode', selectedModel: 'ernie-5.5-flash-preview-free',
+        contextWindowTokens: 262_144,
+    });
+    ok('context window: the user override beats every other source',
+        override.tokens === 262_144 && override.source === 'user',
+        JSON.stringify(override));
+    ok('context window: the compaction ceiling is 90% of the window (900k on 1M) — never ~12k–14k',
+        cw.COMPACTION_TRIGGER_RATIO === 0.9
+        && cw.promptTokenCeiling(1_000_000, 8_192) === 900_000
+        && cw.promptTokenCeiling(1_000_000, 4_096) === 900_000
+        && cw.promptTokenCeiling(1_000_000, 0) === 900_000,
+        `1M/8192 → ${cw.promptTokenCeiling(1_000_000, 8_192)}`);
     const pb = loadModule('src/utils/promptIndexBudget.ts');
     ok('context window: the index budget treats an unstated model as 1M',
         JSON.stringify(pb.indexBudgetFor(Number.NaN)) === JSON.stringify(pb.indexBudgetFor(cw.DEFAULT_CONTEXT_WINDOW_TOKENS)));

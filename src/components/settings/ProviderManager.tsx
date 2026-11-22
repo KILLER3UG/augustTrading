@@ -908,9 +908,10 @@ const ProviderManager: React.FC<ProviderManagerProps> = ({
                     <details className="text-ui-dense text-zinc-500">
                         <summary className="cursor-pointer">Context window (optional)</summary>
                         <p className="mt-1 text-ui-sm text-zinc-500">
-                            Model context window in tokens. It scales retrieved-memory budgets and it is the
-                            ceiling a long turn is compacted to. Leave empty to use what this model reported
-                            at discovery, or the 1,000,000 default when it reported nothing.
+                            Model context window in tokens. It is the ceiling a long turn is
+                            compacted to. Leave empty for the 1,000,000 default — a number a
+                            model merely published at discovery never shrinks it; only a limit
+                            the provider itself enforced in a rejected request does.
                         </p>
                         {(() => {
                             // What the app will ACTUALLY hold this provider to,
@@ -927,7 +928,7 @@ const ProviderManager: React.FC<ProviderManagerProps> = ({
                                 <p className="mt-1 text-ui-sm text-zinc-500" data-testid="provider-context-window-resolved">
                                     In use now: {resolved.tokens.toLocaleString()} tokens ({resolved.label}).
                                     {reported && resolved.source !== 'user'
-                                        ? ` This model reported ${reported.toLocaleString()} at discovery.`
+                                        ? ` This model reported ${reported.toLocaleString()} at discovery — informational only; the ${resolved.tokens.toLocaleString()}-token default holds until a request is actually refused.`
                                         : reported && resolved.source === 'user'
                                             ? ` Your entry overrides the ${reported.toLocaleString()} it reported.`
                                             : ' This model has never reported one.'}

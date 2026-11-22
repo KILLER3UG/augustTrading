@@ -104,25 +104,22 @@ export interface ProviderConfig {
   /**
    * Override for the model context window in tokens — optional, and it wins
    * over everything else (`utils/contextWindow.resolveContextWindow` puts a
-   * user override above a measured limit, a discovered per-model window and the
-   * 1,000,000 default). It scales the retrieved-memory budget
-   * (`notebookSliceChars` → `utils/tokenEstimate.windowBudgetTokens`), the shared
-   * index budget (`utils/promptIndexBudget`) and it sets
+   * user override above a measured limit and the 1,000,000 default). It sets
    * the ceiling automatic compaction holds the outbound history to, so a small
-   * window here is how you tell the app "compact earlier", not "inject less".
-   * Set from the provider editor; absent ⇒ best available evidence.
+   * window here is how you tell the app "compact earlier". Set from the
+   * provider editor; absent ⇒ best available evidence.
    */
   contextWindowTokens?: number;
   /**
    * Context window per model id, in tokens, as reported by the provider's own
    * `/models` endpoint at discovery (`context_length`, `context_window`,
-   * `max_model_len`, `input_token_limit`, …). Read by
-   * `utils/contextWindow.resolveContextWindow` AFTER `contextWindowTokens` and
-   * a measured limit, and BEFORE the assumed default: it says what this model
-   * claims about itself, which beats an assumption but loses to an override.
-   * Absent ⇒ no per-model claim is known. Gateways that report nothing here
-   * (OpenAI, DeepSeek, Anthropic) are why the default and the measured
-   * fallback exist at all.
+   * `max_model_len`, `input_token_limit`, …). INFORMATIONAL since the
+   * 2026-11-23 compaction-thrash fix: a published number is a claim, not an
+   * enforced limit, so it never shrinks the wire below the 1M default —
+   * `utils/contextWindow.resolveContextWindow` reads only a user override, a
+   * rejection-measured limit, or the default. Displayed in Settings so the
+   * trader can see what the model published. Absent ⇒ no per-model claim is
+   * known.
    */
   modelContextWindows?: Record<string, number>;
   /**

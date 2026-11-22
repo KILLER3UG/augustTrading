@@ -35,17 +35,18 @@ import { KIND_ORDER, toolKindCount, toolKindOf, type ToolKind } from './toolKind
  * the "nothing looked up" notice and the truncation warning. They must stay
  * visible in the work card, but they are not calls — counting one as a step
  * would tell the trader the desk ran a tool it never ran, and letting one be
- * the last line would make the status say "COMPACTED FOR THE CONTEXT WINDOW"
- * where it should name the work.
+ * the last line would make the status say "Compacted…" where it should name
+ * the work.
  *
  * The prefixes are the desk's own literals. A new harness notice must be added
- * here; `tests/turnStatus.test.ts` pins the current set.
+ * here. (`Compacted ` is the calm compaction receipt — the all-caps
+ * "COMPACTED FOR THE CONTEXT WINDOW" line it replaced read as an alarm.)
  */
 const HARNESS_NOTICE_PREFIXES = [
     'desk guard',
     'thinking hit the round',
     'tool syntax',
-    'COMPACTED FOR THE CONTEXT WINDOW',
+    'Compacted ',
     'CONTEXT FULL',
     'CONTEXT WINDOW TOO SMALL',
     'OUTPUT BUDGET',

@@ -10,7 +10,7 @@
  * tool-heavy desk turn sent an ever-growing message array and the failure
  * surfaced as an error, or as an answer that never arrives.
  *
- * So this module resolves ONE window from four sources, best evidence first,
+ * So this module resolves ONE window from three sources, best evidence first,
  * and says which one won:
  *
  *   1. `user`     — the number typed in Settings → Providers. An override is an
@@ -19,10 +19,22 @@
  *                   gateway that truncates the window on purpose.
  *   2. `measured` — a limit this app read out of the provider's OWN rejection of
  *                   a previous request (see `contextLengthLimitFromError`). The
- *                   strongest evidence there is: the wire said the number.
- *   3. `model`    — what `/models` reported for this model id, captured at
- *                   discovery (`ProviderConfig.modelContextWindows`).
- *   4. `default`  — 1,000,000 (owner ruling, 2026-10-20).
+ *                   strongest evidence there is: the wire said the number, so
+ *                   the provider explicitly REPORTED and ENFORCED it.
+ *   3. `default`  — 1,000,000 (owner ruling, 2026-10-20; reaffirmed 2026-11-23
+ *                   after live compaction thrash).
+ *
+ * ## Why a `/models`-reported window does NOT shrink the window
+ *
+ * A catalog entry (`modelContextWindows`, captured at discovery) is a claim the
+ * provider PUBLISHED, not a limit it ENFORCED on this app. Trusting one bit the
+ * app into a ~16k effective window for a 1M gateway model, and the tool loop
+ * compacted the CURRENT turn's fresh tool results at ~14k estimated tokens —
+ * the seat re-fetched what it had just been handed, every round (the 2026-11-23
+ * Kilocode · Ernie thrash). So a published number is recorded for display but
+ * never sizes the wire: the 1M default holds, and a provider that actually
+ * enforces a smaller window teaches the app its real limit through the
+ * rejection path (`measured`), which self-corrects after one retried turn.
  *
  * ## Why the default may be optimistic now
  *
@@ -66,7 +78,7 @@ export const DEFAULT_OUTPUT_RESERVE_TOKENS = 4_096;
  *  reasoning over are the minimum a turn needs to stay on-topic. */
 export const MIN_KEEP_MESSAGES = 6;
 
-export type ContextWindowSource = 'user' | 'measured' | 'model' | 'default';
+export type ContextWindowSource = 'user' | 'measured' | 'default';
 
 export interface ResolvedContextWindow {
     tokens: number;
@@ -128,10 +140,13 @@ export const resetMeasuredContextWindows = (): void => { measuredWindows.clear()
 /**
  * The window to hold this call to, and the evidence that earned it.
  *
- * Order: user override → measured limit → the model's own reported window →
- * the 1M default. Each step is a strictly weaker claim about THIS model, and
- * the source is returned rather than discarded because the UI has to say which
- * one it is relying on.
+ * Order: user override → measured limit (a limit the provider itself enforced
+ * in a rejection) → the 1M default. A `/models`-published window is NOT in
+ * this ladder — see the header — because a published number the provider has
+ * not enforced against this app must never shrink the wire below the default.
+ * Each step is a strictly weaker claim about THIS model, and the source is
+ * returned rather than discarded because the UI has to say which one it is
+ * relying on.
  */
 export const resolveContextWindow = (config: ContextWindowInput): ResolvedContextWindow => {
     const override = positiveInt(config.contextWindowTokens);
@@ -146,10 +161,6 @@ export const resolveContextWindow = (config: ContextWindowInput): ResolvedContex
             label: `stated by ${config.name ?? 'the provider'} in a rejected request · ${measured.toLocaleString()} tokens`,
         };
     }
-    const reported = positiveInt(config.modelContextWindows?.[config.selectedModel]);
-    if (reported) {
-        return { tokens: reported, source: 'model', label: `reported for this model · ${reported.toLocaleString()} tokens` };
-    }
     return {
         tokens: DEFAULT_CONTEXT_WINDOW_TOKENS,
         source: 'default',
@@ -158,13 +169,29 @@ export const resolveContextWindow = (config: ContextWindowInput): ResolvedContex
 };
 
 /**
+ * How early auto-compaction fires, as a share of the effective window.
+ *
+ * 90% (owner ruling, 2026-11-23): the estimate is a heuristic, so the last
+ * 10% is margin — but a trigger far below it (the old de-facto behaviour,
+ * which compacted a 1M model at ~14k tokens) starves the turn and traps the
+ * seat in a re-fetch loop. On a 1M model this is 900,000 tokens; it is NEVER
+ * a fixed small number.
+ */
+export const COMPACTION_TRIGGER_RATIO = 0.9;
+
+/**
  * The largest prompt this call may carry.
  *
- * `window − output reserve − framing`, floored at 1,024 tokens: a call with a
- * window too small to hold a reply still has to send *something*, and a zero or
- * negative ceiling would ask the compactor to delete the turn it is answering.
- * The reserve is the request's own output budget — thinking counts inside it,
- * which is exactly why a heavy-thinking model truncates rather than overflows.
+ * Two bounds, whichever is tighter:
+ *  - the COMPACTION TRIGGER — 90% of the window (`COMPACTION_TRIGGER_RATIO`),
+ *    so a long conversation is refitted before it nears the wire's real limit;
+ *  - `window − output reserve − framing`, because the output budget and the
+ *    provider's own template ride the same window.
+ * Floored at 1,024 tokens: a call with a window too small to hold a reply
+ * still has to send *something*, and a zero or negative ceiling would ask the
+ * compactor to delete the turn it is answering. The reserve is the request's
+ * own output budget — thinking counts inside it, which is exactly why a
+ * heavy-thinking model truncates rather than overflows.
  */
 export const promptTokenCeiling = (
     windowTokens: number,
@@ -172,7 +199,9 @@ export const promptTokenCeiling = (
 ): number => {
     const w = positiveInt(windowTokens) ?? DEFAULT_CONTEXT_WINDOW_TOKENS;
     const r = positiveInt(outputReserveTokens) ?? DEFAULT_OUTPUT_RESERVE_TOKENS;
-    return Math.max(1_024, w - r - WIRE_FRAMING_SAFETY_TOKENS);
+    const wireFit = w - r - WIRE_FRAMING_SAFETY_TOKENS;
+    const trigger = Math.floor(w * COMPACTION_TRIGGER_RATIO);
+    return Math.max(1_024, Math.min(trigger, wireFit));
 };
 
 /**

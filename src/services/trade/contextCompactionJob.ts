@@ -7,7 +7,7 @@
  * FOR THE CONTEXT WINDOW" line after the fact, and the dropped turns are gone
  * with no account of what they said.
  *
- * This module is the other half. Once a conversation reaches 80% of the model's
+ * This module is the other half. Once a conversation reaches 90% of the model's
  * window it summarizes the OLDER turns in the background — off the send path,
  * during idle — into a short digest that keeps the three things a later turn
  * actually needs: which symbols were in play, what was decided, and what is
@@ -16,18 +16,24 @@
  * a system message after the standing instructions), so a turn never waits for
  * it and a failure just means the next turn compacts the old way.
  *
- * Why 80% and not 100%: the estimate is a heuristic and the provider's own
- * tokenizer is the authority, so the last 20% is the margin in which a real
+ * Why 90% and not 100%: the estimate is a heuristic and the provider's own
+ * tokenizer is the authority, so the last 10% is the margin in which a real
  * request still fits. Compacting AT the ceiling is compacting after the request
- * that needed it has already been rejected.
+ * that needed it has already been rejected. The SAME ratio governs the wire
+ * compactor's ceiling (`utils/contextWindow.COMPACTION_TRIGGER_RATIO`), so the
+ * background summarizer and the send path fire at one threshold — the
+ * live-tested 2026-11-23 thrash came from the two disagreeing with the window
+ * itself.
  */
 
 import type { ChatMessage } from '../providers/GenericProviderService';
 import { getActiveUsername } from '../../utils/activeUser';
 import { estimateMessagesTokens } from '../providers/contextCompact';
 
-/** Start summarizing at this share of the window. */
-export const COMPACTION_TRIGGER_RATIO = 0.8;
+/** Start summarizing at this share of the window — 90%, the same trigger the
+ *  wire compactor uses (`utils/contextWindow.COMPACTION_TRIGGER_RATIO`), so
+ *  both halves of compaction agree on when "getting full" begins. */
+export const COMPACTION_TRIGGER_RATIO = 0.9;
 
 /** Older turns this many messages back are never summarized away: they are what
  *  the next reply is most likely to be about. */
