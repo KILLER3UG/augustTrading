@@ -7833,6 +7833,102 @@ const checkAgentMemorySkills = async () => {
         /runSkillCurator\(\{ username \}\)/.test(loaderSrc));
 };
 
+/**
+ * Pass 2 backend fixes — source-slice pins. These are WIRING invariants that
+ * no offline unit can reach (session switches, executor dispatch, prompt and
+ * grant lists); the numeric/shape contracts stay in tests/pass2Backend.test.ts.
+ */
+const checkPass2Fixes = () => {
+    const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
+    const desk = loadModule('src/services/analysis/DeskToolsService.ts');
+    const tk = loadModule('src/utils/toolKinds.ts');
+    const deskSrc = read('src/services/analysis/DeskToolsService.ts');
+    const surfaceSrc = read('src/services/trade/chatSurfaceTurn.ts');
+    const surfaceMatch = /export const CHAT_SURFACE_TOOLS = \[([\s\S]*?)\n\];/.exec(surfaceSrc);
+    const surfaceNames = surfaceMatch
+        ? [...surfaceMatch[1].split('\n').map(l => l.split('//')[0]).join('\n').matchAll(/'([^']+)'/g)].map(x => x[1])
+        : [];
+    const curated = read('src/services/learning/curatedMemory.ts');
+    ok('pass2: a named session-boundary re-prime exists (frozen stays per-session)',
+        /reprimeCuratedMemorySnapshotForSession\s*=/.test(curated)
+        && /primeCuratedMemorySnapshot\(username\)/.test(curated));
+
+    const store = read('src/services/trade/chatStore.ts');
+    const reprimeCalls = (store.match(/reprimeSnapshotForNewSession\(\)/g) || []).length;
+    ok('pass2: New Chat, session switch and conversation bind ALL re-prime the snapshot',
+        reprimeCalls >= 5 && /import\('\.\.\/learning\/curatedMemory'\)/.test(store));
+
+    const search = read('src/services/trade/sessionSearchTool.ts');
+    ok('pass2: session_search reads both homes and tags each hit by surface',
+        /searchAllSessionsForTool\s*=/.test(search)
+        && /searchChatHistory\(query, username, limit\)/.test(search)
+        && /surface: 'chat'/.test(search) && /surface: 'desk'/.test(search)
+        && /formatUnifiedSessionSearchDigest\s*=/.test(search));
+    ok('pass2: the tool executor calls the unified search under the 3000-char budget',
+        /await searchAllSessionsForTool\(/.test(deskSrc)
+        && /formatUnifiedSessionSearchDigest\(result, TOOL_BUDGETS\.session_search \?\? 3000\)/.test(deskSrc));
+
+    const surface = surfaceSrc;
+    ok('pass2: a Chat-surface settled turn feeds BOTH learning passes off the hot path',
+        /maybeRunAgentLearningPass\(\{/.test(surface) && /maybeRunMemoryDreamIfDue\(\)/.test(surface)
+        && /!final\.interrupted && !final\.steered/.test(surface));
+    const dream = read('src/services/learning/memoryDream.ts');
+    ok('pass2: Dream eligibility counts canonical Chat conversations, deduped against dock sessions',
+        /profile\?\.conversations \?\? \[\]/.test(dream) && /boundIds\.has\(c\.id\)/.test(dream));
+
+    const skills = read('src/services/learning/skillManage.ts');
+    ok('pass2: skill undo restores the prior SKILL.md bytes AND the sidecar',
+        /undoSkillManageMutation\s*=/.test(skills)
+        && /priorFileContent: existing\?\.file\.content \?\? null/.test(skills)
+        && /updateMemoryFile\(current\.file\.id/.test(skills)
+        && /deleteSkillFile\(snapshot\.slug, username\)/.test(skills)
+        && /undoSkillMetaSnapshot\(snapshot\.priorMeta, username\)/.test(skills));
+
+    ok('pass2: a refused tool call twice consecutively ends the loop with a structured notice',
+        /detectConsecutiveToolFailures\s*=/.test(deskSrc)
+        && /kind: 'tool_stall'/.test(deskSrc) && /same_tool_failed_twice/.test(deskSrc)
+        && /callOutcomeHistory/.test(deskSrc));
+
+    const wiring = read('src/services/learning/learningPassWiring.ts');
+    ok('pass2: the background writer consults the durable rejected list before emitting',
+        /isRejectedFingerprint\(fingerprintArgs\)/.test(wiring));
+    const opt = read('src/services/selfMod/harnessOptimization.ts');
+    ok('pass2: an O-150 dismissal is recorded AND skipped on later passes',
+        /recordRejectedFingerprint\(/.test(opt) && /isRejectedFingerprint\(/.test(opt));
+
+    const plan = read('src/services/trade/turnPlan.ts');
+    const gate = read('src/services/analysis/deskToolShared.ts');
+    ok('pass2: update_plan is capped 1-12 with unique ids and a strict multi-step prompt gate',
+        /PLAN_MAX_STEPS = 12/.test(plan) && /seen\.has\(id\)/.test(plan)
+        && /PLANNING GATE/.test(gate) && /NEVER call it on a simple question/.test(gate));
+    ok('pass2: update_plan is a real tool on BOTH seats with its own budget and dispatch',
+        desk.DESK_TOOL_DEFINITIONS.some(d => d.function.name === 'update_plan')
+        && tk.DESK_TOOL_NAMES.includes('update_plan')
+        && surfaceNames.includes('update_plan')
+        && /update_plan: 800/.test(deskSrc)
+        && /case 'update_plan':/.test(deskSrc)
+        && /clearAllTurnPlans\(\)/.test(deskSrc));
+
+    const initial = deskSrc.slice(deskSrc.indexOf('INITIAL_DESK_TOOL_NAMES'), deskSrc.indexOf('LOAD_TOOLS_DEFINITION'));
+    ok('pass2: the legacy session reader is deferred, not deleted — still granted and executable',
+        !/^\s*'memory_search_sessions',/m.test(initial)
+        && tk.DESK_TOOL_NAMES.includes('memory_search_sessions')
+        && /case 'recall_chat': case 'memory_search_sessions':/.test(deskSrc));
+
+    const runner = read('src/services/trade/chatTurnRunner.ts');
+    ok('pass2: BOTH seats thread their session id into the executor — the pill cannot key on default',
+        /sessionId: turn\.sid|sessionId: sid/.test(runner)
+        && /sessionId: req\.sessionId \?\? undefined/.test(surface)
+        && /sessionId: options\?\.sessionId \?\? null/.test(deskSrc)
+        && /setTurnPlan\(context\.sessionId \?\? ''/.test(deskSrc));
+    const clearCalls = (deskSrc.match(/clearAllTurnPlans\(\)/g) || []).length;
+    ok('pass2: the plan is cleared on BOTH loop exits (clean answer and tool round)',
+        clearCalls >= 2);
+    ok('pass2: an undo records the refused NEW content in the writer\'s fingerprint shape',
+        /rejectedContent/.test(curated) && /rejectedContent/.test(skills)
+        && /content: r\.rejectedContent \?\? ''/.test(read('src/components/trade/panels/ChatWorkTimeline.tsx')));
+};
+
 const finishReport = () => {
     console.log(`contracts: ${passed} passed, ${failures.length} failed`);
     for (const f of failures) console.log(`  FAIL ${f}`);
@@ -7862,5 +7958,6 @@ checkSkillWrites()
     .then(checkThinkingTagGate)
     .then(checkWaveHardeningFixes)
     .then(checkAgentMemorySkills)
+    .then(checkPass2Fixes)
     .catch(e => { failures.push(`async runtime checks threw: ${e instanceof Error ? e.stack : String(e)}`); })
     .then(finishReport);

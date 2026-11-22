@@ -2068,7 +2068,7 @@ async function main() {
         // caught at the surface that caused it rather than at the end.
         const surfaces = [
             { label: 'Analyze', switchId: 'trade', expect: '[data-testid="trade-view"]' },
-            { label: 'Journal', switchId: 'journal', expect: null },
+            { label: 'Trade Log', switchId: 'journal', expect: null },
             // Skills IS in the rail now — the b3d830c9 v4 migration re-added it
             // as a real surface (the check at switchCount === 6 below counts
             // it). The Strategy Studio remains the Skills SETTINGS tab inside
@@ -2132,7 +2132,7 @@ async function main() {
             await sleep(120);
         };
         const navTo = async (label) => {
-            const IDS = { Analyze: 'trade', Journal: 'journal', Agents: 'agents', Learning: 'learn', Skills: 'skills', Memory: 'memory' };
+            const IDS = { Analyze: 'trade', Journal: 'journal', 'Trade Log': 'journal', Agents: 'agents', Learning: 'learn', Skills: 'skills', Memory: 'memory' };
             const id = IDS[label];
             if (!id) return 'not found';
             // The four record surfaces are SECTIONS of the Settings modal —
@@ -3097,7 +3097,7 @@ async function main() {
             skills: !!document.querySelector('[data-testid="settings-section-skills"]'),
             memory: !!document.querySelector('[data-testid="settings-section-memory"]'),
         }));
-        check('the Settings modal carries the Journal, Learning, Skills and Memory sections',
+        check('the Settings modal carries the Trade Log, Learning, Skills and Memory sections',
             railRows.journal && railRows.learn && railRows.skills && railRows.memory,
             `journal=${railRows.journal} learn=${railRows.learn} skills=${railRows.skills} memory=${railRows.memory}`);
         const customize = 'modal';
@@ -3800,11 +3800,11 @@ async function main() {
         // Precondition, checked not assumed: if the seeded journal had not
         // loaded, every filter chip would look inert and the sweep would fail
         // for the wrong reason — or worse, pass by skipping everything.
-        let journalHow = await navTo('Journal');
+        let journalHow = await navTo('Trade Log');
         if (journalHow === 'not found') {
             await openMenu();
             await sleep(400);
-            journalHow = await navTo('Journal');
+            journalHow = await navTo('Trade Log');
         }
         // The Journal is a SECTION of the Settings modal now: its lazy chunk
         // is waited for (a fixed sleep raced the chunk and read an empty pane),
@@ -3869,7 +3869,7 @@ async function main() {
         });
         // Checked, not assumed: without this a wrong selector would report
         // "no card" and read as a broken feature rather than a broken probe.
-        check('the Stats tab is reachable from the Journal', statsTabPresent === true,
+        check('the Stats tab is reachable from the Trade Log', statsTabPresent === true,
             statsTabPresent ? 'clicked' : 'no #journal-tab-analytics control');
         const dashboardsGone = await page.evaluate(() => ({
             last20: !!document.querySelector('[data-testid="journal-last-20"]'),
@@ -4017,11 +4017,11 @@ async function main() {
             if (tab) tab.click();
             return !!tab;
         });
-        check('the Signals tab is reachable from the Journal', signalsTab === true,
+        check('the Signals tab is reachable from the Trade Log', signalsTab === true,
             signalsTab ? `seeded ${signalKey}` : 'no #journal-tab-signals control');
         const signalFeed = page.locator('[data-testid="signal-feed"]');
         const feedMounted = await pollFor(async () => (await signalFeed.count()) === 1);
-        check('Journal → Signals mounts the feed', feedMounted === true, `${feedMounted}`);
+        check('Trade Log → Signals mounts the feed', feedMounted === true, `${feedMounted}`);
         if (feedMounted) {
             const card = page.locator('[data-testid="signal-card"]');
             await pollFor(async () => (await card.count()) >= 1);
@@ -4073,7 +4073,7 @@ async function main() {
         // insight controls live — the screenshot of it is not "a header and two
         // exports". Sweep both views at the generic cap; the sweep's per-view
         // budget splits it, so neither tab can hide behind the other.
-        await sweepSurface('Journal', 12, ['journal-tab-analytics']);
+        await sweepSurface('Trade Log', 12, ['journal-tab-analytics']);
 
         // ── The screener's door ───────────────────────────────────────────
         // Phase 4 (P-3, owner ruling): the full-screen panel is GONE — the
@@ -4211,7 +4211,7 @@ async function main() {
             const goSurface = async (name) => {
                 return page.evaluate((n) => {
                     // Ruling 1.2: the two desk modes are the pill's segments.
-                    const IDS = { Analyze: 'layout-pill-desk', Journal: 'journal', Agents: 'layout-pill-chat', Learning: 'learn', Skills: 'skills', Memory: 'memory' };
+                    const IDS = { Analyze: 'layout-pill-desk', Journal: 'settings-section-journal', 'Trade Log': 'settings-section-journal', Agents: 'layout-pill-chat', Learning: 'learn', Skills: 'skills', Memory: 'memory' };
                     const sw = document.querySelector(`[data-testid="${IDS[n] || ''}"]`);
                     if (sw) { sw.click(); return 'clicked'; }
                     const hit = [...document.querySelectorAll('[data-testid="surface-menu"] button')]
@@ -5008,7 +5008,7 @@ async function main() {
             arm: !!document.querySelector('[data-testid="bulk-delete-arm"]'),
             askDesk: !!document.querySelector('[data-testid="bulk-delete-ask-desk"]'),
         }));
-        check('Journal removes Clear all and gates bulk delete behind a 2-step card with Void-in-chat',
+        check('Trade Log removes Clear all and gates bulk delete behind a 2-step card with Void-in-chat',
             clearAllPresent === false && cbCount > 0 && gateControls.card && gateControls.arm && gateControls.askDesk,
             JSON.stringify({ clearAllPresent, cbCount, ...gateControls }));
         await page.screenshot({ path: path.join(evidenceDir, 'stop2-journal-bulk-gate.png') });
