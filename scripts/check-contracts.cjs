@@ -7932,6 +7932,86 @@ const checkPass2Fixes = () => {
         && /content: r\.rejectedContent \?\? ''/.test(read('src/components/trade/panels/ChatWorkTimeline.tsx')));
 };
 
+/**
+ * Pass 3 — the local paper broker, its two narrow tools, the Paper|Live split
+ * and the learning-layer provenance/pruning additions. Source-slice pins where
+ * a module would need a DOM or a live quote to load; runtime pins on the pure
+ * core where the arithmetic itself is the contract.
+ */
+const checkPaperBroker = () => {
+    const read = (rel) => readSource(rel);
+    const core = read('src/services/paper/paperCore.ts');
+    const journal = read('src/services/paper/paperJournal.ts');
+    const desk = read('src/services/analysis/DeskToolsService.ts');
+    const kinds = read('src/utils/toolKinds.ts');
+    const surface = read('src/services/trade/chatSurfaceTurn.ts');
+    const panel = read('src/components/trade/TradeChatPanel.tsx');
+    const tradeLog = read('src/components/journal/TradeLog.tsx');
+    const shared = read('src/services/analysis/deskToolShared.ts');
+    const skill = read('src/services/learning/skillManage.ts');
+    const rejected = read('src/services/learning/rejectedFingerprints.ts');
+
+    // Pure numbers and the five-action vocabulary.
+    ok('paper: fee constants are maker 0.02% / taker 0.05%',
+        /PAPER_MAKER_FEE_BPS\s*=\s*2\b/.test(core) && /PAPER_TAKER_FEE_BPS\s*=\s*5\b/.test(core));
+    ok('paper: default risk walls are 1% / 10x / 3 positions / 3% daily kill-switch',
+        /maxRiskPerTradePct:\s*1\.0/.test(core) && /maxLeverage:\s*10\b/.test(core)
+        && /maxConcurrentPositions:\s*3\b/.test(core) && /dailyDrawdownKillSwitchPct:\s*3\.0/.test(core));
+    ok('paper: the order vocabulary has exactly five actions',
+        /'open_market',\s*'open_limit',\s*'modify_sl_tp',\s*'close',\s*'cancel'/.test(core));
+    ok('paper: no equity edit / reset / closed-trade delete action exists',
+        !/resetPaper|setEquity|deleteClosed|editClosed|action:\s*'reset'/.test(desk));
+
+    // Fill mechanics — strict cross, mark-only liquidation, UTC funding.
+    ok('paper: a buy limit requires low < limit and a sell limit high > limit',
+        /low\s*<\s*order\.limitPrice/.test(core) && /high\s*>\s*order\.limitPrice/.test(core));
+    ok('paper: liquidation is gated on markPrice, never a candle wick',
+        /mark\s*<=\s*position\.liquidationPrice/.test(core)
+        && /mark\s*>=\s*position\.liquidationPrice/.test(core));
+    ok('paper: funding accrues on an 8-hour UTC boundary',
+        /FUNDING_INTERVAL_MS\s*=\s*8\s*\*\s*60\s*\*\s*60\s*\*\s*1000/.test(core));
+    ok('paper: L2 depth is walked through the shared estimator with a flagged fallback',
+        /estimateBookSlippage\(/.test(core) && /source:\s*'spread_fallback'/.test(core)
+        && /source:\s*'price_fallback'/.test(core));
+
+    // The two tools are declared, granted on BOTH seats, dispatched and budgeted.
+    ok('paper: both tool schemas are declared',
+        /name:\s*'paper_account'/.test(desk) && /name:\s*'paper_order'/.test(desk));
+    ok('paper: both names are always offered on the dock seat',
+        /'paper_account',\s*'paper_order'/.test(desk.slice(desk.indexOf('INITIAL_DESK_TOOL_NAMES'), desk.indexOf('LOAD_TOOLS_DEFINITION'))));
+    ok('paper: both names are granted to the dock seat',
+        /'paper_account',\s*'paper_order'/.test(kinds));
+    ok('paper: both names are granted to the Chat seat',
+        /'paper_account',\s*'paper_order'/.test(surface.slice(0, surface.indexOf('/** What travelled'))));
+    ok('paper: both tools have a dispatch case and a result budget',
+        /case 'paper_account':/.test(desk) && /case 'paper_order':/.test(desk)
+        && /paper_account:\s*2200/.test(desk) && /paper_order:\s*1600/.test(desk));
+    ok('paper: the write tool is NOT cacheable (a replayed fill would be a lie)',
+        !/paper_order[^\n]*,\s*/.test(desk.slice(desk.indexOf('CACHEABLE_TOOLS'), desk.indexOf('MAX_TOOL_CONTENT_CHARS'))));
+    ok('paper: the frozen tool paragraph has ONE home and both builders import it',
+        /PAPER_TRADING_PROMPT/.test(shared) && /PAPER_TRADING_PROMPT/.test(panel)
+        && /PAPER_TRADING_PROMPT/.test(surface));
+
+    // Journal split is derived from the canonical simulated axis.
+    ok('paper: legacy rows default to live and the filter never overloads TradeSource',
+        /paperSourceOf/.test(journal) && /isSimulatedTrade\(trade\)\s*\?\s*'paper'\s*:\s*'live'/.test(journal)
+        && !/'paper'\s*\|\s*'live'/.test(read('src/utils/tradeSource.ts')));
+    ok('paper: Trade Log relabels visible text but keeps all three stable testids',
+        /trade-log-sim-filter-\$\{mode\}/.test(tradeLog) && /\['all', 'real', 'simulated'\]/.test(tradeLog));
+
+    // SIM provenance + EfficientSkill pruning.
+    ok('learning: provenance is optional, recordedAt-carried and never hashed',
+        /recordedAt:\s*string/.test(rejected) && /provenance/.test(rejected)
+        && /fingerprint/.test(rejected));
+    ok('learning: efficient-skill pruning keeps a threshold and preserves all four sections',
+        /SKILL_PRUNE_MAX_CHARS\s*=\s*2800/.test(skill) && /pruneVerifiedSkill/.test(skill)
+        && /missingPlaybookSections/.test(skill));
+
+    // The parity page is linked from the reading path.
+    ok('docs: the one-screen parity checklist is linked from docs/README.md',
+        /\(PARITY\.md\)/.test(read('docs/README.md')));
+};
+
 const finishReport = () => {
     console.log(`contracts: ${passed} passed, ${failures.length} failed`);
     for (const f of failures) console.log(`  FAIL ${f}`);
@@ -7962,5 +8042,6 @@ checkSkillWrites()
     .then(checkWaveHardeningFixes)
     .then(checkAgentMemorySkills)
     .then(checkPass2Fixes)
+    .then(checkPaperBroker)
     .catch(e => { failures.push(`async runtime checks threw: ${e instanceof Error ? e.stack : String(e)}`); })
     .then(finishReport);
