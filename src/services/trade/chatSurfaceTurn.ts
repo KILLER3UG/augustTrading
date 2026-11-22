@@ -61,6 +61,7 @@ import { saveToolPayload } from './toolPayloadStore';
 import { appendToolActions } from '../../utils/toolActions';
 import { recordToolTurnUsage } from '../../utils/sessionUsage';
 import { truncationNotice, withTruncationWindow } from '../../utils/finishReason';
+import { maybeRunAgentLearningPass, maybeRunMemoryDreamIfDue } from '../learning/learningPassWiring';
 
 /** The desk tools a Chat-surface seat may call. Everything here answers from
  *  the exchange, the journal, the notebook or the web — none of it needs the
@@ -111,6 +112,9 @@ export const CHAT_SURFACE_TOOLS = [
     // memory_* family above: the system prompt names them, so the seat must
     // hold their schemas. check-contracts pins both grant lists.
     'memory', 'session_search', 'skill_manage',
+    // The turn-scoped multi-step checklist: same seat as the growth tools,
+    // no canvas and no persistence, so both homes can offer it.
+    'update_plan',
     // The one tool with a human in it: it suspends the turn until the trader
     // answers (services/analysis/askUserInput.ts).
     'ask_user_input',
@@ -472,6 +476,9 @@ export interface ChatSurfaceTurnRequest {
      *  "no tool ran" is also what a text-only model does on an ordinary chat
      *  line, and a casual turn must not be shamed for answering a question. */
     requireTools?: boolean;
+    /** Provenance id for the post-turn learning pass. The Chat surface's
+     *  conversation id; falls back to a stable label when a caller has none. */
+    sessionId?: string;
 }
 
 /** Run the turn. Transport errors propagate to the caller's catch: only it
@@ -479,9 +486,15 @@ export interface ChatSurfaceTurnRequest {
 export const runChatSurfaceTurn = async (req: ChatSurfaceTurnRequest): Promise<ToolTurnOutcome> => {
     let reasoning = '';
     let visible = '';
+    // Measured from THIS turn's own event stream, not re-derived from the
+    // settled row: the post-turn learning pass needs the same counts the dock
+    // passes from `lastAi.tools`, and both homes must score alike.
+    const toolNames: string[] = [];
+    const toolLines: string[] = [];
     const events: ToolTurnEvents = {
         setText: text => { visible = text; req.paint(text, reasoning); },
         addReasoning: chunk => { reasoning += chunk; req.paint(visible, reasoning); },
+        addToolCall: name => { toolNames.push(name); },
         // Append order, oldest first — the same order the dock's `tools` array
         // uses, because `liveEntryFromMessage` feeds these lines into it and
         // one renderer (ChatWorkTimeline) reads both homes.
@@ -491,15 +504,17 @@ export const runChatSurfaceTurn = async (req: ChatSurfaceTurnRequest): Promise<T
         // makes the rows a trader opens the rows the desk ran. `liveToolEvents`
         // is the LIVE feed: newline-joined and capped, because a bubble that
         // is still filling must not become a log.
-        addToolLine: line => req.patch(m => {
-            const feed = m.liveToolEvents?.[DESK_SPEAKER] ?? '';
+        addToolLine: line => {
+            toolLines.push(line);
+            return req.patch(m => {
+                const feed = m.liveToolEvents?.[DESK_SPEAKER] ?? '';
             const lines = feed ? `${feed}\n${line}`.split('\n') : [line];
             return {
                 ...m,
                 toolEvents: [...(m.toolEvents ?? []), line],
                 liveToolEvents: { ...m.liveToolEvents, [DESK_SPEAKER]: lines.slice(-MAX_LIVE_TOOL_LINES).join('\n') },
             };
-        }),
+        }); },
         addLiveToolLine: line => req.patch(m => {
             const feed = m.liveToolEvents?.[DESK_SPEAKER] ?? '';
             const lines = feed ? `${feed}\n${line}`.split('\n') : [line];
@@ -539,6 +554,8 @@ export const runChatSurfaceTurn = async (req: ChatSurfaceTurnRequest): Promise<T
     const planCapture: { planId: string | null; symbol: string | null; playbookId: string | null; snapshot: CaptureSnapshot | null } = { planId: null, symbol: null, playbookId: null, snapshot: null };
     const transport: ToolTurnRequest['transport'] = {
         defaultSymbol: req.symbol ?? null,
+        // The dock's session id is the key the UpdatePlanPill subscribes with.
+        sessionId: req.sessionId ?? undefined,
         // Enhancement 5: rides the transport to the desk executor, where an
         // emit_signal stamps it onto the ledger row (the attribution half).
         memoryRecipe: req.memoryRecipe,
@@ -751,20 +768,38 @@ export const runChatSurfaceTurn = async (req: ChatSurfaceTurnRequest): Promise<T
     // exempt: the loop repaired the ceiling-hit (re-ask or continuation) and
     // returned a whole answer, so warning about it would be noise.
     const cutOff = out.recoveredFromTruncation ? '' : truncationNotice(summary);
+    let final: ToolTurnOutcome = out;
     if (cutOff) {
-        return {
+        final = {
             ...out,
             notice: out.notice ? `${cutOff} ${out.notice}` : cutOff,
         };
-    }
-    if (req.requireTools && !sawMarketTool && !out.interrupted) {
+    } else if (req.requireTools && !sawMarketTool && !out.interrupted) {
         // The honest notice, on the row it belongs to: an answer that looked up
         // nothing must not read like one that looked something up. A stopped
         // turn is excluded — the trader cut it, the seat did not skip the tape.
-        return {
+        final = {
             ...out,
             notice: 'FULL ANALYSIS, NOTHING LOOKED UP: this turn called no market tool, so every number in it is the model’s own memory. Re-ask, or check the chart.',
         };
     }
-    return out;
+    // FIRE-AND-FORGET on the SETTLED turn, off the streaming critical path.
+    // The dock does this from `maybeReviewSessions` in chatTurnRunner; until
+    // this hook existed a Chat-surface turn never fed the review or the Dream,
+    // so the two homes disagreed about which sessions counted as experience.
+    // A stopped/steered turn is not a lesson: nothing settled to learn from.
+    if (!final.interrupted && !final.steered) {
+        const skillsUsed = toolLines
+            .map(line => /skill_view\D*([a-z0-9][a-z0-9-]*)/i.exec(line)?.[1] ?? '')
+            .filter(s => s.length > 0);
+        void maybeRunAgentLearningPass({
+            sid: req.sessionId ?? 'chat-surface',
+            userMessage: typeof req.prompt === 'string' ? req.prompt : '',
+            assistantMessage: final.text,
+            toolCallCount: toolNames.length || toolLines.length,
+            skillsUsed,
+        }).catch(() => { /* a learning pass never breaks a turn */ });
+        void maybeRunMemoryDreamIfDue().catch(() => { /* best-effort */ });
+    }
+    return final;
 };

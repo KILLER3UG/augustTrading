@@ -1238,6 +1238,10 @@ export function useAnalysisPipeline(params: UseAnalysisPipelineParams) {
                     trades: loggedTrades,
                     effort: options?.reasoningEffort,
                     requireTools: options?.fullAnalysis === true,
+                    // The Chat surface's conversation id is the learning
+                    // pass's provenance — the review receipt records WHERE
+                    // the lesson came from, as it does for dock turns.
+                    sessionId: requestConversationId ?? undefined,
                     signal: currentAbortController.signal,
                     startedAt: turnStartedAt,
                     patch: fn => updateMessages(

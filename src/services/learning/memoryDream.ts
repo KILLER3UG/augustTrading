@@ -364,7 +364,10 @@ export interface DreamRunOptions {
 
 let dreamInFlight: Promise<DreamRunResult> | null = null;
 
-/** The default gatherer: chat-dock sessions + the settled signal ledger. */
+/** The default gatherer: chat-dock sessions + canonical Chat conversations +
+ *  the settled signal ledger. A Chat-surface turn is as much experience as a
+ *  dock turn; counting only the dock meant five Chat sessions never unlocked
+ *  a Dream (the >= 5 gate) while every gate stayed green. */
 const defaultGather = async (username: string, sinceMs: number): Promise<{ newSessions: number; corrections: string[]; ledger: LedgerSummaryRow[] }> => {
     let newSessions = 0;
     const corrections: string[] = [];
@@ -373,11 +376,19 @@ const defaultGather = async (username: string, sinceMs: number): Promise<{ newSe
         const { loadSessions } = await import('../trade/chatSessions');
         const sessions = loadSessions();
         newSessions = sessions.filter(s => s.createdAt > sinceMs).length;
+        const boundIds = new Set(sessions.map(s => s.conversationId).filter(Boolean));
         for (const s of sessions) {
             for (const e of s.entries ?? []) {
                 if (e.role === 'user' && CORRECTION_CUE_RE.test(e.text)) corrections.push(e.text.slice(0, 200));
             }
         }
+        // The Chat surface stores its turns on the profile, not in chatSessions.
+        // Count those conversations too, excluding ones already represented by
+        // a bound dock session so one dialogue is never counted twice.
+        const { getUserProfile } = await import('../infrastructure/dbService');
+        const profile = await getUserProfile(username);
+        newSessions += (profile?.conversations ?? [])
+            .filter(c => c.timestamp > sinceMs && !boundIds.has(c.id)).length;
     } catch { /* a gather miss just weakens the pass */ }
     const ledger: LedgerSummaryRow[] = [];
     try {

@@ -770,6 +770,18 @@ export const runHarnessOptimizationPass = async (
             kindCounts[k as HarnessFailureKind] = (kindCounts[k as HarnessFailureKind] ?? 0) + (n ?? 0);
         }
     }
+    // DURABLE SKIP: a rule the trader already dismissed is not a fresh idea on
+    // the next window. Checked AFTER the evidence gates but BEFORE staging the
+    // card, so a rejection is honoured without weakening any numeric floor.
+    try {
+        const { isRejectedFingerprint } = await import('../learning/rejectedFingerprints');
+        if (await isRejectedFingerprint(
+            { kind: `o150:${spec.kind}`, target: TARGET_PROMPT_ID, content: after },
+            username,
+        )) {
+            return state;
+        }
+    } catch { /* an unavailable refusal store must not block a valid proposal */ }
     const spreadNote = cand.sessionSpread.length > 1
         ? ` across ${cand.sessionSpread.length} sessions (${cand.sessionSpread.join(', ')})`
         : ` in session ${cand.sessionSpread[0] ?? '?'}`;
@@ -851,6 +863,18 @@ export const dismissHarnessRevision = async (
     const p = state.proposal;
     if (!p || p.status !== 'pending') return { ok: false, error: 'no pending proposal to dismiss' };
     p.status = 'dismissed';
+    // DURABLE REFUSAL: the same O-150 rule must not be re-proposed in a later
+    // session just because the evidence window slid forward. The fingerprint
+    // is semantic (kind + target + rule text), not the proposal id.
+    try {
+        const { recordRejectedFingerprint } = await import('../learning/rejectedFingerprints');
+        await recordRejectedFingerprint(
+            { kind: `o150:${String(p.kind ?? 'rule')}`, target: String(p.promptId ?? ''), content: String(p.after ?? '') },
+            'proposal_reject',
+            `O-150 ${String(p.kind ?? 'rule')} revision dismissed`,
+            username,
+        );
+    } catch { /* a fingerprint write never blocks the trader's dismissal */ }
     state.history = [
         ...(state.history ?? []),
         { id: p.id, status: 'dismissed' as const, decidedAt: new Date().toISOString(), kind: p.kind },

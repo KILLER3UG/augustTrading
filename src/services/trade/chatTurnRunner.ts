@@ -1094,6 +1094,8 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
         const planCapture: { planId: string | null; symbol: string | null; playbookId: string | null; snapshot: CaptureSnapshot | null } = { planId: null, symbol: null, playbookId: null, snapshot: null };
         const transport: ToolTurnRequest['transport'] = {
             defaultSymbol: symbol,
+            // The dock's session id — the exact key the TurnPlanPill uses.
+            sessionId: sid,
             allowedTools: TRADE_TOOLS,
             goalAllowedTools: focusedGoal()?.policy.allowedTools,
             maxTokens: TASK_BUDGETS.chat,

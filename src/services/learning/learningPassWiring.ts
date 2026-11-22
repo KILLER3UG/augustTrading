@@ -46,6 +46,27 @@ const emit = async (emission: BackgroundReviewEmission): Promise<{ ok: boolean; 
     if (!BACKGROUND_REVIEW_ALLOWED_TOOLS.has(emission.tool)) {
         return { ok: false, error: `"${emission.tool}" is not a background-review tool (memory | skill_manage only).` };
     }
+    // DURABLE REFUSAL: a rule the trader already undid or rejected must not be
+    // re-derived by the next review or Dream in another session. The check is
+    // on a normalized semantic fingerprint, not on the receipt id.
+    const { isRejectedFingerprint } = await import('./rejectedFingerprints');
+    const fingerprintArgs = emission.tool === 'memory'
+        ? {
+            kind: 'memory',
+            target: String((emission.args as { target?: unknown }).target ?? ''),
+            content: (Array.isArray((emission.args as { operations?: unknown }).operations)
+                ? ((emission.args as { operations: Array<Record<string, unknown>> }).operations)
+                    .flatMap(op => [String(op?.content ?? ''), String(op?.old_text ?? '')]).join(' | ')
+                : ''),
+        }
+        : {
+            kind: 'skill_manage',
+            target: String((emission.args as { slug?: unknown }).slug ?? ''),
+            content: [String((emission.args as { body?: unknown }).body ?? ''), String((emission.args as { description?: unknown }).description ?? '')].join(' | '),
+        };
+    if (await isRejectedFingerprint(fingerprintArgs)) {
+        return { ok: false, error: 'skipped: this rule was previously rejected or undone by the trader (durable rejected list)' };
+    }
     // A NO-TRADER pass gets the SAME privacy gate as a model call. The review
     // quotes the trader's raw words into these entries, so filtering here is
     // the only place the sensitive-memory opt-out can be honoured.

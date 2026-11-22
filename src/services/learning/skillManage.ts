@@ -27,6 +27,7 @@
  */
 
 import {
+    deleteSkillFile,
     getSkill,
     isBundledName,
     listSkillFiles,
@@ -37,6 +38,7 @@ import {
     type SkillWriteInput,
     type SkillWriteReview,
 } from './SkillFileService';
+import { updateMemoryFile } from './MemoryFilesService';
 import { getPreference, setPreference } from '../infrastructure/PreferencesService';
 import { getActiveUsername } from '../../utils/activeUser';
 import { MIN_HOLDOUT_SAMPLE } from '../selfMod/harnessOptimization';
@@ -176,15 +178,37 @@ export interface SkillManageInput {
     source_session_id?: string;
 }
 
+/**
+ * Complete, reversible undo for ONE `skill_manage` mutation. The old receipt
+ * carried only the meta sidecar, so a 1-click Undo restored the status badge
+ * but left the new SKILL.md bytes (or, on a create, left the whole skill) in
+ * place. `undoSkillManageMutation` consumes this and restores BOTH halves.
+ */
+export interface SkillManageUndoSnapshot {
+    slug: string;
+    action: SkillManageAction;
+    /** True when this mutation created the skill — undo DELETES it. */
+    created: boolean;
+    /** Exact prior SKILL.md bytes; null when the skill did not exist. */
+    priorFileContent: string | null;
+    /** The whole prior sidecar map — restoring it also drops a created row. */
+    priorMeta: Record<string, SkillMeta>;
+}
+
 export interface SkillManageReceipt {
     ok: boolean;
     action: SkillManageAction;
     slug: string;
     /** Prior lifecycle metadata, for the 1-click undo (Pass 2 UI). */
     undoSnapshot?: Record<string, SkillMeta>;
+    /** Complete reversible snapshot (SKILL.md bytes + sidecar). */
+    undoSkill?: SkillManageUndoSnapshot;
     /** patch only: the body bytes before the edit, so a content revert is a
      *  plain `patch` in the other direction. */
     priorBody?: string;
+    /** The NEW rule in the exact shape learningPassWiring.emit fingerprints
+     *  (`body | description`). Undo records THIS, never the restored bytes. */
+    rejectedContent?: string;
     status?: SkillStatus;
     priorStatus?: SkillStatus;
     created?: boolean;
@@ -217,6 +241,13 @@ export const skillManage = async (
     const existing = getSkill(slug);
     const metaMap = await readMetaMap(username);
     const undoSnapshot: Record<string, SkillMeta> = JSON.parse(JSON.stringify(metaMap));
+    const undoSkill: SkillManageUndoSnapshot = {
+        slug,
+        action,
+        created: action === 'create',
+        priorFileContent: existing?.file.content ?? null,
+        priorMeta: JSON.parse(JSON.stringify(metaMap)),
+    };
 
     // ── archive / unarchive: lifecycle only, bytes untouched ────────────────
     if (action === 'archive' || action === 'unarchive') {
@@ -239,7 +270,7 @@ export const skillManage = async (
         metaMap[slug] = meta;
         await writeMetaMap(username, metaMap);
         return {
-            ok: true, action, slug, undoSnapshot,
+            ok: true, action, slug, undoSnapshot, undoSkill, rejectedContent: '',
             priorStatus, status: meta.status, created: false,
         };
     }
@@ -338,7 +369,8 @@ export const skillManage = async (
     await writeMetaMap(username, metaMap);
 
     return {
-        ok: true, action, slug, undoSnapshot, priorBody,
+        ok: true, action, slug, undoSnapshot, undoSkill, priorBody,
+        rejectedContent: `${String(writeInput.body ?? '')} | ${String(writeInput.description ?? '')}`,
         created: action === 'create', status: meta.status,
         priorStatus: priorMeta?.status,
     };
@@ -486,6 +518,61 @@ export const undoSkillMetaSnapshot = async (
     if (!undoSnapshot || typeof undoSnapshot !== 'object') return false;
     await writeMetaMap(username, JSON.parse(JSON.stringify(undoSnapshot)));
     return true;
+};
+
+export interface SkillUndoResult {
+    ok: boolean;
+    /** A patch/archive undo restored the exact prior SKILL.md bytes. */
+    restoredFile: boolean;
+    /** A create undo removed the skill (head + support files). */
+    removedCreated: boolean;
+    /** The sidecar map was restored (also drops a created skill's row). */
+    restoredMeta: boolean;
+    error?: string;
+}
+
+/**
+ * The 1-click Undo behind a `skill_manage` receipt. Restores BOTH halves of
+ * the mutation: the exact prior SKILL.md bytes (or deletes a newly created
+ * skill, head + bundled files) AND the prior `skill_meta_v1_<user>` sidecar.
+ * A meta-only undo left a patch's new procedure on disk while claiming the
+ * skill was back to its old state — the receipt said "undone", the library
+ * disagreed. Both writes go through the same one-pen/serialized paths as the
+ * mutation; a file failure leaves the meta untouched and reports honestly.
+ */
+export const undoSkillManageMutation = async (
+    snapshot: SkillManageUndoSnapshot,
+    username = getActiveUsername() || 'default',
+): Promise<SkillUndoResult> => {
+    if (!snapshot || typeof snapshot !== 'object' || typeof snapshot.slug !== 'string' || !snapshot.slug) {
+        return { ok: false, restoredFile: false, removedCreated: false, restoredMeta: false, error: 'No skill undo snapshot.' };
+    }
+    let restoredFile = false;
+    let removedCreated = false;
+    try {
+        const current = getSkill(snapshot.slug);
+        if (snapshot.created) {
+            if (current) {
+                const removed = await deleteSkillFile(snapshot.slug, username);
+                if (removed.error) {
+                    return { ok: false, restoredFile, removedCreated, restoredMeta: false, error: removed.error };
+                }
+                removedCreated = removed.removed.length > 0;
+            }
+        } else if (snapshot.priorFileContent !== null && current) {
+            if (current.file.content !== snapshot.priorFileContent) {
+                await updateMemoryFile(current.file.id, { content: snapshot.priorFileContent }, username);
+            }
+            restoredFile = true;
+        }
+        const restoredMeta = await undoSkillMetaSnapshot(snapshot.priorMeta, username);
+        return { ok: true, restoredFile, removedCreated, restoredMeta };
+    } catch (e) {
+        return {
+            ok: false, restoredFile, removedCreated, restoredMeta: false,
+            error: e instanceof Error ? e.message : String(e),
+        };
+    }
 };
 
 /** Test seeding: write exact lifecycle rows (incl. pinned / lastUsedAt states
