@@ -11,6 +11,7 @@
 
 import { ChartCandle, ChartLinePoint } from '../../types/chart';
 import { loadProviderConfigs, getReadyProviders } from '../infrastructure/ProviderConfigService';
+import { orderReadyByActiveModel } from '../infrastructure/ActiveModelConfig';
 import { sendChatRequest } from '../providers/GenericProviderService';
 import { extractAndParseJson } from '../../utils/jsonUtils';
 
@@ -222,8 +223,10 @@ RESPOND IN THIS EXACT JSON FORMAT:
         };
     };
 
-    // Try each ready provider in order until one succeeds
-    for (const config of ready) {
+    // Try each ready provider in order until one succeeds — the composer's
+    // SINGLE ACTIVE MODEL leads the order (single-active-model ruling).
+    const ordered = await orderReadyByActiveModel(ready);
+    for (const config of ordered) {
         try {
             const responseText = await sendChatRequest(
                 { ...config, selectedModel: modelName || config.selectedModel },

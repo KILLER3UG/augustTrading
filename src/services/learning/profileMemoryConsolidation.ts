@@ -19,6 +19,7 @@
 
 import { getQuickResponse } from '../providers/GenericProviderService';
 import { getReadyProviders, loadProviderConfigs } from '../infrastructure/ProviderConfigService';
+import { pickActiveModelConfig } from '../infrastructure/ActiveModelConfig';
 import {
     listProfileMemories, rememberProfileMemory, retireMergedMemory, slugify,
     PROFILE_MEMORY_MAX_BODY_CHARS,
@@ -88,7 +89,8 @@ const parseJson = (text: string): Record<string, unknown> | null => {
 
 const resolveComplete = async (): Promise<((prompt: string) => Promise<string>) | null> => {
     const configs = await loadProviderConfigs();
-    const config = getReadyProviders(configs)[0];
+    // The composer's SINGLE ACTIVE MODEL leads; first-ready is the fallback.
+    const config = await pickActiveModelConfig() ?? getReadyProviders(configs)[0];
     if (!config) return null;
     return (prompt: string) => getQuickResponse(
         config,

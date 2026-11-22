@@ -80,7 +80,6 @@ interface SettingsMenuProps {
     reviewLoading?: boolean;
     onRegenerateReview?: () => void;
     skillFormatPair?: string;
-    onSkillFormatModelChange?: (model: string) => void;
     currentRegime?: string;
     journalTab?: JournalUIState['tab'];
     journalOpenNonce?: number;
@@ -98,7 +97,6 @@ interface SettingsMenuProps {
     onUpdateTradeType?: (id: string, tradeType: 'scalp' | 'swing') => void;
     onUpdateOutcome?: (id: string, outcome: TradeOutcome) => void;
     onUpdatePnL?: (id: string, pnl: { pnlAmount?: number; pnlPercent?: number }) => void;
-    onMemoryConfigChange?: (config: ProviderConfig | null) => void;
     // Pure AI options
     // Instructions
     customInstructions: CustomInstructionsMap;
@@ -128,13 +126,9 @@ interface SettingsMenuProps {
      *  the sidebar one — the old embedded duplicate drifted). */
     loggedTrades?: LoggedTrade[];
     // Models
-    selectedOcrModel?: string;
-    onSetOcrModel?: (modelId: string) => void;
-    /** Global vision model (Settings → AI setup → Vision Model): one model
-     *  for EVERY vision feature (chart OCR, post-trade uploads, PDF OCR). */
-    visionModel?: string;
-    onSetVisionModel?: (modelId: string) => void;
-    /** Resolved vision ProviderConfig (global → conversation → first ready). */
+    /** Resolved vision ProviderConfig (composer's active model → legacy
+     *  conversation pick → first ready). No vision PICKER exists: the
+     *  composer's single active model leads (2026-11-23). */
     visionConfig?: ProviderConfig | null;
     // Dynamic Providers
     providerConfigs?: ProviderConfig[];
@@ -265,8 +259,7 @@ const NAV_GROUPS: NavGroup[] = [
 
 /** The search box's ROW index. The sidebar's keyword list finds a PAGE; these
  *  entries find the control inside it. A hit jumps to the page and then to the
- *  row whose title matches, so "vision" lands on the Vision Model card rather
- *  than merely opening AI setup. Every label here names a control that exists. */
+ *  row whose title matches. Every label here names a control that exists. */
 interface SettingsSearchHit {
     id: string;
     label: string;
@@ -278,8 +271,6 @@ const SETTINGS_SEARCH_ROWS: SettingsSearchHit[] = [
     { id: 'desk-tools', label: 'Desk Tools', tab: 'general', keywords: 'web search funding open interest order book liquidations tools' },
     { id: 'reduce-motion', label: 'Reduce motion', tab: 'general', keywords: 'animation indicators still idle motion accessibility' },
     { id: 'capture', label: 'Auto-capture', tab: 'general', keywords: 'capture prompts context injection advanced' },
-    { id: 'vision', label: 'Vision Model', tab: 'models', keywords: 'ocr chart screenshot pdf image provider' },
-    { id: 'memory-model', label: 'Memory Model', tab: 'models', keywords: 'librarian notebook skills background passes' },
     { id: 'providers', label: 'Model settings', tab: 'models', keywords: 'provider api key base url endpoint add custom' },
     { id: 'prompts', label: 'Prompt library', tab: 'prompts', keywords: 'prompts template edit override' },
     { id: 'instructions', label: 'Custom instructions', tab: 'instructions', keywords: 'system rules persona behaviour' },
@@ -612,7 +603,7 @@ const SettingsMenu: React.FC<SettingsMenuProps> = (props) => {
                                     )}
                                 </div>
                             </div>
-                            <nav className="min-h-0 flex-1 overflow-y-auto px-3 pb-4 custom-scrollbar">
+                            <nav className="min-h-0 flex-1 overflow-y-auto px-3 pb-8 custom-scrollbar">
                                 {navQ && searchHits.length > 0 && (
                                     <div className="pb-3">
                                         <p className="ui-kicker px-2.5 pb-1">Results</p>
@@ -732,11 +723,6 @@ const SettingsMenu: React.FC<SettingsMenuProps> = (props) => {
                                         providerConfigs,
                                         providerConfigsLoaded,
                                         readyConfigProviders,
-                                        memoryConfig: props.memoryConfig,
-                                        onMemoryConfigChange: props.onMemoryConfigChange,
-                                        visionModel: props.visionModel,
-                                        selectedOcrModel: props.selectedOcrModel,
-                                        onSetVisionModel: props.onSetVisionModel,
                                         onUpdateProvider: props.onUpdateProvider,
                                         onAddCustomProvider: props.onAddCustomProvider,
                                         onRemoveProvider: props.onRemoveProvider,

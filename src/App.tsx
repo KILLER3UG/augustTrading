@@ -122,6 +122,7 @@ import { useAnalysisPipeline } from './hooks/useAnalysisPipeline';
 import { useBackgroundCompaction } from './hooks/useBackgroundCompaction';
 import { resolveCompactionComplete } from './services/trade/contextCompactionJob';
 import { resolveContextWindow } from './utils/contextWindow';
+import { activeModelPair } from './services/infrastructure/ActiveModelConfig';
 import type { ChatMessage } from './services/providers/GenericProviderService';
 import { useUserProfiles } from './hooks/useUserProfiles';
 import { offlineQueue } from './services/infrastructure/OfflineQueueService';
@@ -268,28 +269,6 @@ const App: React.FC = () => {
         handleUpdateModel,
     } = useProviderConfigs();
 
-    // The model that reshapes a skill into the SKILL.md format (Skills surface).
-    // Persisted like every other model pick. It DEFAULTS to the first ready
-    // provider's selected model rather than to an empty field: the Format
-    // action is the answer to a skill that is already on screen, and a picker
-    // the trader must visit before it works is a control that changes nothing
-    // on first use. An explicit pick overrides the default.
-    const [skillFormatModel, setSkillFormatModel] = useState<string>(() => {
-        try { return localStorage.getItem('skill_format_model_v1') || ''; }
-        catch { return ''; }
-    });
-    const handleSkillFormatModelChange = useCallback((value: string) => {
-        setSkillFormatModel(value);
-        try { localStorage.setItem('skill_format_model_v1', value); } catch { /* private mode */ }
-    }, []);
-    const skillFormatPair = useMemo(() => {
-        if (skillFormatModel) return skillFormatModel;
-        const first = readyProviders[0];
-        if (!first) return '';
-        const model = first.selectedModel || first.models[0];
-        return model ? `${first.id}::${model}` : '';
-    }, [skillFormatModel, readyProviders]);
-
     // Background model-catalog refresh: every dropdown (composer, bots,
     // team seats) stays on the provider's CURRENT model list —
     // a quiet boot + 6h sweep merges freshly discovered ids per provider.
@@ -309,7 +288,6 @@ const App: React.FC = () => {
         selectedOcrModel,
         moderatorProviderId, moderatorModel,
 
-        handleSetSelectedOcrModel,
         // Revert and versions (2026-10-27): the RULE lives in the conversation
         // store. The Agents surface's revert/version affordances died with the
         // workspace merge; the store keeps the capability for the dock.
@@ -318,11 +296,16 @@ const App: React.FC = () => {
 
     // UI and other state
 
-    // AI analysis settings (memory, instructions, summarization, lens)
+    // AI analysis settings (memory, instructions, summarization, lens).
+    // The setters stay wired to the profile loader (they restore stored
+    // settings on load); the PICKERS are gone — the composer's single active
+    // model leads, the stored values are legacy fallbacks.
     const {
         globalMemory, setGlobalMemory,
-        memoryConfig, setMemoryConfig,
-        memoryModel, setMemoryModel,
+        memoryConfig,
+        setMemoryConfig,
+        memoryModel: storedMemoryModel,
+        setMemoryModel,
         isGlobalMemoryEnabled, setIsGlobalMemoryEnabled,
         isStrategiesEnabled, setIsStrategiesEnabled,
         customInstructions, setCustomInstructions,
@@ -331,10 +314,19 @@ const App: React.FC = () => {
         summaryCharLimit, setSummaryCharLimit,
         summarizationProvider, setSummarizationProvider,
         summarizationModel, setSummarizationModel,
-        visionModel, setVisionModel,
+        visionModel,
+        setVisionModel,
         useAlgorithmicSummary, setUseAlgorithmicSummary,
         useAlgorithmicInsights, setUseAlgorithmicInsights,
     } = useAppSettings();
+    // SINGLE ACTIVE MODEL: the composer's persisted pick drives the memory and
+    // learning passes too; the stored memoryModel preference is a legacy
+    // fallback for installs that had one. Read from the persisted pair so the
+    // value is correct regardless of declaration order in this component.
+    const activeModelPairValue = activeModelPair();
+    const memoryModel = activeModelPairValue
+        ? (activeModelPairValue.split('::').slice(1).join('::') || storedMemoryModel)
+        : storedMemoryModel;
 
     // The fallback provider. The global moderator picker is gone, and so is
     // the scheduled run that used to name a model of its own; this is now only
@@ -352,10 +344,17 @@ const App: React.FC = () => {
     }, [readyProviders]);
 
     // ONE vision model for EVERY vision feature (chart OCR, post-trade
-    // uploads, PDF book OCR). Resolution: the globally selected model
-    // (Settings → AI setup → Vision Model) → the per-conversation OCR model
-    // (legacy, saved conversations) → first ready provider → moderator.
+    // uploads, PDF book OCR). Resolution: the composer's SINGLE ACTIVE MODEL
+    // → the stored global vision pick (legacy) → the per-conversation OCR
+    // model (legacy, saved conversations) → first ready provider → moderator.
     const visionConfig: ProviderConfig = useMemo(() => {
+        const pair = activeModelPair();
+        if (pair) {
+            const [pid, ...rest] = pair.split('::');
+            const mid = rest.join('::');
+            const byComposer = readyProviders.find(p => p.id === pid && (!mid || p.selectedModel === mid || p.models.includes(mid)));
+            if (byComposer) return byComposer;
+        }
         if (visionModel) {
             const byGlobal = readyProviders.find(p => p.selectedModel === visionModel || p.models.includes(visionModel));
             if (byGlobal) return byGlobal;
@@ -707,6 +706,22 @@ const App: React.FC = () => {
             try { localStorage.removeItem(PREF_KEYS.CASUAL_CHAT_MODEL); } catch { /* ignore */ }
         }
     }, [selectedChatModel]);
+
+    // SINGLE ACTIVE MODEL: skill reformatting runs on the composer's pick —
+    // the one model decision in the app. A legacy stored format pick
+    // (skill_format_model_v1) survives only as an invisible fallback for
+    // installs that had one; there is no second picker in the UI.
+    const skillFormatPair = useMemo(() => {
+        if (selectedChatModel) return selectedChatModel;
+        try {
+            const legacy = localStorage.getItem('skill_format_model_v1');
+            if (legacy) return legacy;
+        } catch { /* private mode */ }
+        const first = readyProviders[0];
+        if (!first) return '';
+        const model = first.selectedModel || first.models[0];
+        return model ? `${first.id}::${model}` : '';
+    }, [selectedChatModel, readyProviders]);
 
     // The composer's model selection is provider-qualified
     // (`providerId::modelId`) so a model name offered by TWO providers
@@ -2223,7 +2238,6 @@ const App: React.FC = () => {
                                         memoryConfig={memoryConfig}
                                         providers={providerConfigs}
                                         formatModel={skillFormatPair}
-                                        onFormatModelChange={handleSkillFormatModelChange}
                                         currentRegime={(currentHybridData as { regime?: { regime?: string } } | null)?.regime?.regime ?? undefined}
                                     />
                                 </React.Suspense>
@@ -2631,7 +2645,6 @@ const App: React.FC = () => {
                 reviewLoading={isLoading}
                 onRegenerateReview={handleRegenerateFinalSummary}
                 skillFormatPair={skillFormatPair}
-                onSkillFormatModelChange={handleSkillFormatModelChange}
                 currentRegime={(currentHybridData as { regime?: { regime?: string } } | null)?.regime?.regime ?? undefined}
                 journalTab={journalTab}
                 journalOpenNonce={journalOpenNonce}
@@ -2643,18 +2656,10 @@ const App: React.FC = () => {
                 isSummarizing={isSummaryInProgress}
                 currentInsightIds={currentInsightIds}
                 memoryConfig={memoryConfig}
-                onMemoryConfigChange={(config) => {
-                    setMemoryConfig(config);
-                    setMemoryModel(config?.selectedModel || '');
-                }}
                 customInstructions={customInstructions}
                 setCustomInstructions={setCustomInstructions}
                 providerConfigs={providerConfigs}
                 providerConfigsLoaded={providerConfigsLoaded}
-                selectedOcrModel={selectedOcrModel}
-                onSetOcrModel={handleSetSelectedOcrModel}
-                visionModel={visionModel}
-                onSetVisionModel={setVisionModel}
                 visionConfig={visionConfig}
                 onUpdateProvider={handleUpdateProvider}
                 onAddCustomProvider={handleAddCustomProvider}

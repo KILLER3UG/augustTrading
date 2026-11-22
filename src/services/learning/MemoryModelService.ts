@@ -1,6 +1,7 @@
 import { ProviderConfig } from '../../types/provider';
 import { getUserProfile } from '../infrastructure/dbService';
 import { loadProviderConfigs, getReadyProviders } from '../infrastructure/ProviderConfigService';
+import { pickActiveModelConfig } from '../infrastructure/ActiveModelConfig';
 import { getFirstReadyProvider } from '../../utils/providerUtils';
 
 /**
@@ -28,5 +29,10 @@ export const resolveMemoryConfig = async (username?: string): Promise<ProviderCo
     } catch (e) {
         console.warn('[MemoryModel] profile lookup failed — using first ready provider:', e instanceof Error ? e.message : e);
     }
+    // The SINGLE ACTIVE MODEL: the composer's pick outranks the first-ready
+    // fallback (a stored profile memoryProvider remains the first lookup —
+    // legacy JSON, not a second picker).
+    const active = await pickActiveModelConfig();
+    if (active) return active;
     return getFirstReadyProvider(ready);
 };

@@ -102,8 +102,8 @@ const StrategiesManager: React.FC<StrategiesManagerProps> = ({
             let fullText = extracted.text;
             if (extracted.pagesNeedingOcr.length > 0) {
                 if (!ocrProvider) {
-                    toast.warning('Scanned pages need a vision model',
-                        'This PDF has image-only pages. Pick a Vision Model in Settings → AI setup → Vision Model, then re-upload.');
+                    toast.warning('Scanned pages need a vision-capable model',
+                        'This PDF has image-only pages, and the active model cannot read images. Switch the composer to a vision-capable model, then re-upload.');
                     return;
                 }
                 setProcessingLabel(`Reading ${extracted.pagesNeedingOcr.length} image-only page(s) with ${ocrProvider.name}…`);

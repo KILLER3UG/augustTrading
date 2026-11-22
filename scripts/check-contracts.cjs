@@ -8053,6 +8053,95 @@ const finishReport = () => {
     console.log('CONTRACT CHECK OK — risk/reward math, retry classification, harness marks, notebook pressure, tool-pair compaction, AI-boundary coercion, the import security scan, the shared index budget, both policy tables (self-modification, goal tool narrowing), the desk tool budget, the kline row PHT unit, the desk digest units, the startup call gates, the insight store pin, the signal loop (resolver order, costs, gap fills, ledger, venue data), the signal accuracy fold, the skill document (description, hash version, ledger-stripping migration, duplicate scan), the skill pen and its refusal text, the journal-rules store, the post-mortem clause, the memory page export, the raw-storage lists (no orphan, no half-migration), the tracked position (signal adoption, ledger-wins resolution, exit order, gaps, excursions, capped path, independence, diagnosis queue), journal tracking (pending registration, settlement payload, plan-preserving merge, orphan handling), the post-mortem diagnosis (authoritative outcome, packet facts/absences, refusal audit, journal-note parse), the candle shape gate, the truncated-answer continuation and the silent empty-round repair, the Phase 5 session-plan confirm/revert, exact promotion refusals, hindsight separation, candidate dedupe, rule TTL pruning, resolution record and risk-state card, authoritative stored settlement, gap-not-zero reversal, user-scoped dismissals and dateKey round-trip, and the Phase 6 AI-setting cards, paper execution fill model and real-vs-simulated stats isolation, and the Meta-RAM indexed memory (MARKET_SCHEMA shape and caps, OFFLOAD session digest and simulated isolation, the 3-step map-reduce floors, the ranked parent pool and the trader-gated rollback) all hold.');
 
 };
+// ─── 29. the SINGLE ACTIVE MODEL + the chart-studies store ─────────────────
+// One model decision — the composer's Model Selector pick — drives every
+// call in the app. The per-feature pickers (Vision Model, Memory Model,
+// Skills' Format model) are REMOVED, and the source scan keeps them out: a
+// ModelPicker import outside the shared trio is a scattered selector. The
+// studies store the ƒ Studies menu rides on round-trips per user, sanitizes
+// partial blobs, and announces every write exactly once.
+const checkSingleActiveModel = async () => {
+    const mem = new Map();
+    global.localStorage = {
+        getItem: (k) => (mem.has(k) ? mem.get(k) : null),
+        setItem: (k, v) => { mem.set(k, String(v)); },
+        removeItem: (k) => { mem.delete(k); },
+        clear: () => { mem.clear(); },
+    };
+    const am = loadModule('src/services/infrastructure/ActiveModelConfig.ts');
+    localStorage.removeItem('casual_chat_model');
+    localStorage.removeItem('provider_configs_v1');
+    ok('active model: no composer pick reads as empty', am.activeModelPair() === '');
+    localStorage.setItem('casual_chat_model', 'prov-b::model-2');
+    ok('active model: the composer pick reads back', am.activeModelPair() === 'prov-b::model-2');
+
+    const mk = (id, selectedModel, models) => ({ id, name: id.toUpperCase(), apiKey: 'k', baseUrl: 'https://x/v1', apiFormat: 'chat_completions', isEnabled: true, isBuiltIn: false, models, selectedModel });
+    const ready = [mk('prov-a', 'model-1', ['model-1', 'model-2']), mk('prov-b', 'model-2', ['model-2'])];
+    const ordered = await am.orderReadyByActiveModel(ready);
+    ok('active model: the composer pick LEADS the background candidate order',
+        ordered[0].id === 'prov-b' && ordered[1].id === 'prov-a');
+    localStorage.setItem('casual_chat_model', 'prov-a::model-2');
+    localStorage.setItem('provider_configs_v1', JSON.stringify([mk('prov-a', 'model-1', ['model-1', 'model-2'])]));
+    const picked = await am.pickActiveModelConfig();
+    ok('active model: the pick overrides the provider selectedModel',
+        !!picked && picked.id === 'prov-a' && picked.selectedModel === 'model-2');
+    localStorage.setItem('casual_chat_model', 'prov-z::nope');
+    ok('active model: a stale pick resolves to null (the caller falls back)',
+        await am.pickActiveModelConfig() === null);
+
+    // No second selector, by construction: the picker lives in the shared
+    // trio only, and the removed pickers' labels stay out of the tree.
+    const walk = (dir, out = []) => {
+        for (const f of fs.readdirSync(path.join(ROOT, dir), { withFileTypes: true })) {
+            const p = path.join(dir, f.name);
+            if (f.isDirectory()) walk(p, out);
+            else if (/\.(tsx?|cjs)$/.test(f.name)) out.push(p);
+        }
+        return out;
+    };
+    const files = walk('src/components');
+    const allowed = new Set([
+        'src/components/shared/ModelPicker.tsx',
+        'src/components/shared/ModelMenu.tsx',
+        'src/components/shared/ModelChip.tsx',
+        'src/components/shared/flyoutLayout.ts',
+        // The dock's PANEL SEAT picker constructs a multi-model panel — it is
+        // the composer's own function, not a per-feature override.
+        'src/components/trade/TradeChatPanel.tsx',
+    ]);
+    const scattered = files
+        .filter(f => !allowed.has(f.replace(/\\/g, '/')))
+        .filter(f => /ModelPicker/.test(readSource(path.relative(ROOT, f))));
+    ok('active model: no per-feature ModelPicker import outside the shared trio',
+        scattered.length === 0, scattered.join(', '));
+    const bannedLabels = files.filter(f => /Format model|Vision Model|Memory Model/.test(readSource(path.relative(ROOT, f))));
+    ok('active model: the removed picker labels never return',
+        bannedLabels.length === 0, bannedLabels.join(', '));
+
+    // The studies store: the state layer the ƒ Studies menu rides on.
+    const cis = loadModule('src/services/trade/chartIndicatorSettings.ts');
+    const user = 'Contract User';
+    localStorage.removeItem(`chart_indicators_v1_${user}`);
+    const defaults = cis.readChartIndicatorSettings(user);
+    ok('studies: the default chart is price + volume only',
+        defaults.visible.volume === true && defaults.visible.ema20 === false && defaults.visible.cvd === false);
+    const next = { visible: { ...defaults.visible, ema200: true, volume: false } };
+    let calls = 0;
+    let announced = null;
+    const unsub = cis.subscribeChartIndicatorSettings((s) => { calls += 1; announced = s; });
+    cis.writeChartIndicatorSettings(user, next);
+    unsub();
+    ok('studies: a write persists and is announced EXACTLY ONCE with the written value',
+        calls === 1 && announced === next
+        && cis.readChartIndicatorSettings(user).visible.ema200 === true
+        && cis.readChartIndicatorSettings(user).visible.volume === false);
+    localStorage.setItem(`chart_indicators_v1_${user}`, '{"visible":{"volume":true,"ema20":true,"bogus":true}}');
+    const sanitized = cis.readChartIndicatorSettings(user);
+    ok('studies: a partial or unknown blob never half-initialises the chart',
+        sanitized.visible.ema20 === true && sanitized.visible.ema200 === false
+        && sanitized.visible.bogus === undefined);
+};
+
 // The async blocks above settle in microtasks; the report waits for them so
 // their pass/fail counts land in this summary. A throw becomes a failure —
 // a crashed check must never print as a green one.
@@ -8074,5 +8163,6 @@ checkSkillWrites()
     .then(checkAgentMemorySkills)
     .then(checkPass2Fixes)
     .then(checkPaperBroker)
+    .then(checkSingleActiveModel)
     .catch(e => { failures.push(`async runtime checks threw: ${e instanceof Error ? e.stack : String(e)}`); })
     .then(finishReport);

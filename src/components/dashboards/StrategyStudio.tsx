@@ -18,11 +18,11 @@ interface StrategyStudioProps {
     currentRegime?: string;
     memoryConfig?: ProviderConfig | null;
     onClose?: () => void;
-    /** Configured providers, for the format-with-model picker. */
+    /** Configured providers, for the format-with-model resolution. */
     providers?: ProviderConfig[];
-    /** The model that reformats a skill, as `providerId::modelId`. */
+    /** The model that reformats a skill, as `providerId::modelId` — the
+     *  composer's SINGLE ACTIVE MODEL (no per-feature picker). */
     formatModel?: string;
-    onFormatModelChange?: (value: string) => void;
 }
 
 /** The slug a skill-citation chip parked, or broadcast while this surface was
@@ -30,7 +30,7 @@ interface StrategyStudioProps {
  *  listener only changes the surface, and a parked value nobody consumes is a
  *  deep link that lands on the library and stops there. */
 const StrategyStudio: React.FC<StrategyStudioProps> = ({
-    providers, formatModel, onFormatModelChange,
+    providers, formatModel,
 }) => {
     const [deepLink, setDeepLink] = useState<string | null>(() => consumePendingSkillOpen());
 
@@ -56,7 +56,6 @@ const StrategyStudio: React.FC<StrategyStudioProps> = ({
                     initialSlug={deepLink}
                     providers={providers}
                     formatModel={formatModel}
-                    onFormatModelChange={onFormatModelChange}
                 />
             </div>
         </div>

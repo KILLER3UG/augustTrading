@@ -8,6 +8,7 @@
  */
 
 import { getActiveUsername } from '../../utils/activeUser';
+import { activeModelPair } from '../../services/infrastructure/ActiveModelConfig';
 import { getPreferenceObject, setPreferenceObject } from '../infrastructure/PreferencesService';
 
 // ── Guardrail constants ──────────────────────────────────────────────────────
@@ -250,13 +251,17 @@ export const resolveBackgroundSeat = async (username: string = getActiveUsername
         const ready = getReadyProviders(configs);
         const settings = await readSettings(username);
         let config = ready[0];
-        // PER-ROLE ROUTING (dsh pattern): the role's own override wins, then
-        // the default background seat, then the first ready provider. A role
-        // entry may be '' to PIN a role to the default (e.g. force the
-        // adversary onto the frontier model while everything else routes to a
-        // local seat).
+        // SINGLE ACTIVE MODEL (2026-11-23): the composer's pick leads every
+        // background/utility call. A per-role seat written in stored JSON
+        // remains as a LEGACY fallback for installs that had one (and a role
+        // entry may be '' to pin the role to the first ready provider) — it
+        // applies only when the composer has no resolvable pick, and there is
+        // no second selector in the UI.
+        const composer = activeModelPair();
         const roleSeat = role ? settings.seats?.[role] : undefined;
-        const wanted = roleSeat !== undefined ? roleSeat : settings.seat;
+        const wanted = composer
+            ? composer
+            : roleSeat !== undefined ? roleSeat : settings.seat;
         if (wanted) {
             const [providerId, ...modelParts] = wanted.split('::');
             const modelId = modelParts.join('::');

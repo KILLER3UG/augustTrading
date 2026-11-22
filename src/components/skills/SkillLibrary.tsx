@@ -35,7 +35,7 @@ import { importSkillFiles, readSkillFiles, fetchSkillFromUrl, type SkillFileRead
 import { subscribeMemoryFilesChanged } from '../../services/learning/MemoryFilesService';
 import { rewriteSkillWithModel } from '../../services/learning/SkillFormatService';
 import { skillFormatIssues } from '../../utils/skillFrontmatter';
-import ModelPicker from '../shared/ModelPicker';
+
 import type { ProviderConfig } from '../../types/provider';
 import { ArrowLeft, CodeIcon, Download, Eye, FileText, Layers, Pencil, Plus, Search, Trash2, Upload, Wrench } from '../shared/Icons';
 import MarkdownContent from '../shared/MarkdownContent';
@@ -43,11 +43,11 @@ import MarkdownContent from '../shared/MarkdownContent';
 export interface SkillLibraryProps {
     /** Open this skill on mount (a deep link or a search result). */
     initialSlug?: string | null;
-    /** Configured providers, for the format-with-model picker. */
+    /** Configured providers, for the format-with-model resolution. */
     providers?: ProviderConfig[];
-    /** The model that reformats a skill, as `providerId::modelId`. */
+    /** The model that reformats a skill, as `providerId::modelId` — the
+     *  composer's SINGLE ACTIVE MODEL (no per-feature picker). */
     formatModel?: string;
-    onFormatModelChange?: (value: string) => void;
 }
 
 interface Draft {
@@ -81,7 +81,7 @@ const isMarkdownPath = (p: string): boolean => /\.(md|markdown)$/i.test(p);
 type DetailTab = 'overview' | 'contents';
 
 export const SkillLibrary: React.FC<SkillLibraryProps> = ({
-    initialSlug, providers = [], formatModel = '', onFormatModelChange,
+    initialSlug, providers = [], formatModel = '',
 }) => {
     const [skills, setSkills] = useState<SkillFile[]>(() => listSkillFiles());
     const [selected, setSelected] = useState<string | null>(initialSlug ?? null);
@@ -407,23 +407,9 @@ export const SkillLibrary: React.FC<SkillLibraryProps> = ({
                     {fetching ? 'Fetching…' : 'Fetch URL'}
                 </button>
             </div>
-            {/* The model that reshapes a skill. It lives HERE, beside the
-                library, because the action it drives is a library-wide repair —
-                the same picker the composer uses, so the list, the stars and
-                the keyboard model are one implementation. */}
-            <div className="flex flex-wrap items-center gap-2">
-                <span className="text-ui-dense text-zinc-500">Format model</span>
-                <ModelPicker
-                    providers={providers}
-                    value={formatModel}
-                    onChange={onFormatModelChange ?? (() => undefined)}
-                    compact
-                    placeholder="Select a model"
-                />
-                <span className="text-ui-2xs text-zinc-600">
-                    The model that rewrites a skill into the SKILL.md format.
-                </span>
-            </div>
+            {/* The reformat runs on the composer's SINGLE ACTIVE MODEL —
+                App resolves the pair; there is deliberately no picker here
+                (2026-11-23, one model decision in the app). */}
 
             <div className="flex items-center gap-2 pt-1">
                 <h3 className="text-ui-sm text-zinc-500">Your skills</h3>
