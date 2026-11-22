@@ -138,7 +138,7 @@ const SessionChip: React.FC = () => {
             </button>
 
             {isSessionModalOpen && (
-                <div id="session-details-popover" role="dialog" aria-label="Session details" className="motion-popover-down absolute top-full left-0 mt-2 w-80 max-sm:fixed max-sm:inset-x-2 max-sm:top-[calc(env(safe-area-inset-top,0px)+4.25rem)] max-sm:mt-0 max-sm:w-auto bg-zinc-900/95 border border-white/[0.08] rounded-xl shadow-elevated backdrop-blur-md overflow-hidden z-drawer">
+                <div id="session-details-popover" role="dialog" aria-label="Session details" className="motion-popover-down absolute top-full right-0 mr-2 mt-2 w-80 max-sm:fixed max-sm:inset-x-2 max-sm:top-[calc(env(safe-area-inset-top,0px)+4.25rem)] max-sm:mt-0 max-sm:w-auto bg-zinc-900/95 border border-white/[0.08] rounded-xl shadow-elevated backdrop-blur-md overflow-hidden z-drawer">
                     <div className="p-3 bg-zinc-900">
                         <div className="text-ui-xs font-bold text-zinc-500 uppercase tracking-wider mb-2">Sessions</div>
                         <div className="space-y-2">

@@ -518,17 +518,22 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
     const indicatorsOn = Object.values(indicatorSettings.visible).some(Boolean) || showSma;
     const [indicatorMenuOpen, setIndicatorMenuOpen] = useState(false);
     const toggleIndicator = (id: ChartIndicatorId) => {
-        setIndicatorSettings(prev => {
-            const next: ChartIndicatorSettings = { visible: { ...prev.visible, [id]: !prev.visible[id] } };
-            writeChartIndicatorSettings(getActiveUsername() || 'default', next);
-            // Turning the anchored VWAP off also drops its anchor: re-toggling
-            // starts a fresh read, not a silent revival of an old one.
-            if (id === 'avwap' && !next.visible.avwap) {
-                avwapAnchorRef.current = null;
-                setAvwapAnchor(null);
-            }
-            return next;
-        });
+        // The updater MUST be pure. The live-tested defect: the write + the
+        // subscriber notification ran INSIDE this updater, so the
+        // notification's own `setIndicatorSettings(next)` re-ran the queued
+        // functional update against the state it had already advanced — the
+        // second run computed the INVERSE value and wrote it back. One click
+        // produced two writes (`ema200: true` then `ema200: false`) and every
+        // study toggle read as dead. Compute, set, THEN write + notify.
+        const next: ChartIndicatorSettings = { visible: { ...indicatorSettings.visible, [id]: !indicatorSettings.visible[id] } };
+        setIndicatorSettings(next);
+        writeChartIndicatorSettings(getActiveUsername() || 'default', next);
+        // Turning the anchored VWAP off also drops its anchor: re-toggling
+        // starts a fresh read, not a silent revival of an old one.
+        if (id === 'avwap' && !next.visible.avwap) {
+            avwapAnchorRef.current = null;
+            setAvwapAnchor(null);
+        }
     };
     // A study toggled from the DESK writes the same store this state came from.
     // Without the subscription the write lands in localStorage and nothing

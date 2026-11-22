@@ -4112,8 +4112,16 @@ async function main() {
                 return chip ? { label: chip.textContent.replace(/\s+/g, ' ').trim() } : null;
             });
             const KNOWN_REGIONS = ['Asia', 'London', 'New York', 'London · NY', 'Off hours'];
+            // The off-hours chip carries a suffix ("Off hours· next Asia in
+            // 21m" — the label and the suffix are separate spans, so the
+            // joined text has no space before the dot). Normalize the dot to
+            // a space before matching, or the check passes only during the
+            // hours a session is OPEN and fails every night in between.
             const namesARegion = !!chipInfo
-                && KNOWN_REGIONS.some(r => chipInfo.label === r || chipInfo.label.startsWith(r + ' '));
+                && KNOWN_REGIONS.some(r => {
+                    const label = chipInfo.label.replace(/·/g, ' ');
+                    return label === r || label.startsWith(r + ' ');
+                });
             await page.evaluate(() => document.querySelector('[data-testid="session-chip"]')?.click());
             // The session rows are component state the header fills from
             // getAllSessionsStatus; a single sample at a fixed delay read
