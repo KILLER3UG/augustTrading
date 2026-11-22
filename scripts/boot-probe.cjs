@@ -21,6 +21,20 @@ const { chromium } = require('@playwright/test');
 const PORT = process.env.PROBE_PORT ? Number(process.env.PROBE_PORT) : 4183;
 const BASE = `http://127.0.0.1:${PORT}`;
 
+// Third-party market hosts (Binance/OKX/Deribit/Bybit) resolve to NOTFOUND at
+// the Chromium DNS layer: the UI probes never touch the live internet, and a
+// market-data call fails in milliseconds instead of stalling on a timeout.
+// Loopback (the probe's own vite/mock servers) is untouched. NOTE: Playwright's
+// page.route() is NOT usable for this — registering ANY route handler aborts
+// the probe's own loopback navigations with net::ERR_ABORTED (measured with
+// .verify-style probes, 2026-11-22) — so the block lives in launch args.
+const PROBE_CHROMIUM_ARGS = [`--host-resolver-rules=${[
+    'MAP binance.com ~NOTFOUND', 'MAP *.binance.com ~NOTFOUND',
+    'MAP okx.com ~NOTFOUND', 'MAP *.okx.com ~NOTFOUND',
+    'MAP deribit.com ~NOTFOUND', 'MAP *.deribit.com ~NOTFOUND',
+    'MAP bybit.com ~NOTFOUND', 'MAP *.bybit.com ~NOTFOUND',
+].join(', ')}`];
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function waitForServer(url, timeoutMs = 30000) {
@@ -105,7 +119,11 @@ async function main() {
         } else {
             console.log('[probe] server reachable');
 
-            const browser = await chromium.launch({ headless: true });
+            // AUGUST_PROBE_WS_ENDPOINT (set by probe:fast) reuses ONE Chromium
+            // across both probes; a bare run still launches its own.
+            const browser = process.env.AUGUST_PROBE_WS_ENDPOINT
+                ? await chromium.connect(process.env.AUGUST_PROBE_WS_ENDPOINT)
+                : await chromium.launch({ headless: true, args: PROBE_CHROMIUM_ARGS });
             console.log('[probe] browser launched');
             const page = await browser.newPage();
             const pageErrors = [];

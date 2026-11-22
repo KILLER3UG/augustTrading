@@ -92,10 +92,12 @@
  *
  * Plain node, no vitest, no jsdom, no network: each module is bundled from
  * TypeScript with esbuild (already a vite dependency) into a temp file and
- * required. Dependencies stay external, but app source is still bundled PER
- * CALL, so every block gets a fresh module instance — the localStorage/window
- * shims some blocks install before loading depend on that. Do not cache the
- * required exports to save time: it hands one block's shim to the next.
+ * required. Dependencies stay external. The compiled bundle BYTES are cached
+ * per (entry, exposes) pair so identical source is not re-bundled ~100 times
+ * per run, but every require still re-executes the module fresh — each block
+ * gets its own module instance, which the localStorage/window shims some
+ * blocks install before loading depend on. Do not cache the required exports
+ * to save time: it hands one block's shim to the next.
  * Runs in CI and in the release gate BEFORE the build, the same slot the
  * anchor gate occupies. If a contract here fails, the fix belongs in the
  * module — never in this file's expectations.
@@ -125,6 +127,22 @@ const ok = (name, cond, detail = '') => {
  *  REPLACES node_modules/esbuild/bin/esbuild with the ELF binary itself, and
  *  `node <ELF>` dies with "Invalid or unexpected token" (it worked on Windows
  *  only because there the bin path is a JS shim). */
+/** Cached read of a repo source file for read-only inspections: the same
+ *  files are re-read by several assertion blocks, and none of them may see a
+ *  stale text within one run (the tree does not change mid-run). */
+const sourceTextCache = new Map();
+const readSource = (rel) => {
+    let text = sourceTextCache.get(rel);
+    if (text === undefined) {
+        text = fs.readFileSync(path.join(ROOT, rel), 'utf8');
+        sourceTextCache.set(rel, text);
+    }
+    return text;
+};
+
+// Compiled bundle BYTES per (entry, exposes) pair — see loadModule below.
+const bundleTextCache = new Map();
+
 const loadModule = (rel, expose = {}) => {
     fs.mkdirSync(CACHE_DIR, { recursive: true });
     // A run that CRASHED left its tmp bundles behind (the cleanup below is a
@@ -144,23 +162,40 @@ const loadModule = (rel, expose = {}) => {
         } catch { /* the sweep must never gate the contracts */ }
     }
     const tmp = path.join(CACHE_DIR, `contracts-${rel.replace(/[^a-z0-9]+/gi, '-')}-${process.pid}.cjs`);
-    const esbuild = require(path.join(ROOT, 'node_modules', 'esbuild'));
-    esbuild.buildSync({
-        stdin: {
-            contents: `export * from './${rel}';\n` + Object.entries(expose)
-                .map(([name, file]) => `export * as ${name} from './${file}';`).join('\n'),
-            resolveDir: ROOT,
-            sourcefile: 'contract-entry.ts',
-            loader: 'ts',
-        },
-        bundle: true,
-        // External deps: node compiles each one once, not inside all 101 bundles.
-        packages: 'external',
-        platform: 'node',
-        format: 'cjs',
-        outfile: tmp,
-        logLevel: 'error',
-    });
+    // The compiled BYTES are deterministic per (entry, exposes) pair, so they
+    // are bundled once per process and rewritten to the per-call tmp file.
+    // This is deliberately NOT the forbidden export cache: every require
+    // still executes the module fresh (require.cache is cleared around each
+    // require), so each block keeps its own shims and module state. Only the
+    // redundant esbuild work is skipped.
+    const cacheKey = `${rel}::${Object.entries(expose).map(([k, v]) => `${k}=${v}`).join(',')}`;
+    let bundled = bundleTextCache.get(cacheKey);
+    if (bundled === undefined) {
+        const esbuild = require(path.join(ROOT, 'node_modules', 'esbuild'));
+        // Through esbuild's JS API, never the CLI bin: on Linux the npm install
+        // REPLACES node_modules/esbuild/bin/esbuild with the ELF binary itself,
+        // and `node <ELF>` dies with "Invalid or unexpected token" (it worked on
+        // Windows only because there the bin path is a JS shim).
+        const result = esbuild.buildSync({
+            stdin: {
+                contents: `export * from './${rel}';\n` + Object.entries(expose)
+                    .map(([name, file]) => `export * as ${name} from './${file}';`).join('\n'),
+                resolveDir: ROOT,
+                sourcefile: 'contract-entry.ts',
+                loader: 'ts',
+            },
+            bundle: true,
+            // External deps: node compiles each one once, not inside all 101 bundles.
+            packages: 'external',
+            platform: 'node',
+            format: 'cjs',
+            write: false,
+            logLevel: 'error',
+        });
+        bundled = result.outputFiles[0].text;
+        bundleTextCache.set(cacheKey, bundled);
+    }
+    fs.writeFileSync(tmp, bundled);
     try {
         delete require.cache[tmp];
         return require(tmp);
@@ -1268,7 +1303,7 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
 // (distilledMemory.migrateFrozenTradeInsights). The old pin asked the code to
 // keep rendering and carrying the field — inverted here to absence pins.
 (() => {
-    const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+    const read = readSource;
     ok('insight store: the analysis pipeline no longer names it',
         !/insightKnowledgeBase/.test(read('src/hooks/useAnalysisPipeline.ts')));
     ok('insight store: algorithmic memory neither creates nor assigns it',
@@ -1739,7 +1774,7 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
 (() => {
     const lf = loadModule('src/utils/learningRuleFormat.ts');
     const idx = loadModule('src/utils/learningRulesIndex.ts');
-    const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+    const read = readSource;
 
     const legacy = [{
         id: 'lr-1',
@@ -1851,7 +1886,7 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
     const me = loadModule('src/services/learning/memoryExport.ts');
     const sec = loadModule('src/services/learning/memorySections.ts');
     const mt = loadModule('src/services/learning/memoryTopics.ts');
-    const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+    const read = readSource;
     const entry = (slug, description, kind, subject, body, updatedAt) => ({
         slug, description, kind, subject, body,
         createdAt: updatedAt, updatedAt, tag: 'stated', version: 1,
@@ -3017,7 +3052,7 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
 
 // ─── 35. the approvals that are gone ───────────────────────────────────────
 (() => {
-    const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+    const read = readSource;
 
     // The approvals UI is GONE, and nothing may pretend it is still there.
     const learn = read('src/components/learn/LearnView.tsx');
@@ -3046,7 +3081,7 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
 // same". Both are SHAPE claims, and both regressed once because a second control
 // or a shared default quietly put one screen behind two entries.
 (() => {
-    const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+    const read = readSource;
     const app = read('src/App.tsx');
     const dockPanel = read('src/components/trade/TradeChatPanel.tsx');
 
@@ -3133,7 +3168,7 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
 // action chips. Each removal had to keep its feature reachable, so these pin
 // BOTH halves: gone from where the mock does not draw it, present where it does.
 (() => {
-    const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+    const read = readSource;
     const sessionChip = read('src/components/shared/SessionChip.tsx');
     const trade = read('src/components/trade/TradeView.tsx');
     const composer = read('src/components/trade/panels/ChatComposer.tsx');
@@ -3292,7 +3327,7 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
         delete global.localStorage;
     }
 
-    const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+    const read = readSource;
     const picker = read('src/components/trade/SymbolPicker.tsx');
     const trade = read('src/components/trade/TradeView.tsx');
     const rail = read('src/components/shell/ShellRail.tsx');
@@ -3347,7 +3382,7 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
 // starve into the prune, and a prompt registry whose id list could drift
 // unseen once the vitest suite was deleted.
 (() => {
-    const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+    const read = readSource;
     const ks = loadModule('src/services/analysis/KlineService.ts');
     ok('kline source: the native and unavailable reads carry NO spot-mirror note',
         ks.spotMirrorSourceNote('futures') === null && ks.spotMirrorSourceNote('unavailable') === null);
@@ -3488,7 +3523,7 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
 // against the real lists and the real restore matcher, so a rename in the
 // source cannot make this pass by moving the words out of reach.
 (() => {
-    const readSrc = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+    const readSrc = readSource;
     const exportSrc = readSrc('src/services/infrastructure/ExportService.ts');
     const listOf = (name) => {
         const m = new RegExp(`const ${name}: readonly string\\[\\] = \\[([\\s\\S]*?)\\n\\];`).exec(exportSrc);

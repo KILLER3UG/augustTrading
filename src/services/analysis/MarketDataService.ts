@@ -543,7 +543,7 @@ const noteFuturesResponse = (response: Response): void => {
         const weight = Number(response.headers?.get?.('x-mbx-used-weight-1m'));
         if (Number.isFinite(weight) && weight >= 0) {
             futuresUsedWeight1m = weight;
-            futuresWeightMinute = Math.floor(Date.now() / 60_000);
+            futuresWeightMinute = Math.floor(nowImpl() / 60_000);
         }
     } catch { /* header access is best-effort */ }
 };
@@ -557,9 +557,9 @@ class FuturesRateLimitedError extends Error {
 }
 
 const acquireFuturesSlot = async (): Promise<void> => {
-    const deadline = Date.now() + FUTURES_SLOT_MAX_WAIT_MS;
+    const deadline = nowImpl() + FUTURES_SLOT_MAX_WAIT_MS;
     for (;;) {
-        const now = Date.now();
+        const now = nowImpl();
         while (futuresRequestTimes.length > 0 && futuresRequestTimes[0] < now - 60_000) futuresRequestTimes.shift();
         // The gauge is only valid within the UTC minute it was reported in:
         // when Math.floor(Date.now() / 60000) rolls over, Binance's window
@@ -587,7 +587,7 @@ const acquireFuturesSlot = async (): Promise<void> => {
         // Re-check until a slot genuinely frees, instead of sleeping a fixed
         // 5 s and booking regardless -- which grew the window without bound
         // while making every caller pay the stall.
-        await new Promise<void>(resolve => setTimeout(resolve, Math.min(100, Math.max(1, msLeftInMinute))));
+        await delayImpl(Math.min(100, Math.max(1, msLeftInMinute)));
     }
 };
 
@@ -601,6 +601,20 @@ const globalFetch: typeof fetch = typeof fetch === 'function'
     : (() => { throw new Error('fetch is unavailable in this runtime'); })();
 let fetchImpl: typeof fetch = globalFetch;
 
+/** The production backoff wait: a real clock sleep. Tests swap this through
+ *  `__futuresRateLimitTestHooks.setDelayImpl` so the 1–2 s inline 429 backoffs
+ *  resolve instantly while still exercising the identical retry decisions and
+ *  cooldown math. Production defaults are unchanged. */
+const realDelay = (ms: number): Promise<void> => new Promise<void>((resolve) => setTimeout(resolve, ms));
+let delayImpl: (ms: number) => Promise<void> = realDelay;
+
+/** The production clock for the rate-limit math. Tests swap it through
+ *  `__futuresRateLimitTestHooks.setNowImpl` (paired with a delay that advances
+ *  the same clock) so a latched cooldown expires without waiting out real
+ *  seconds — the retry decisions still run the production path verbatim. */
+const realClockNow = (): number => Date.now();
+let nowImpl: () => number = realClockNow;
+
 /**
  * Robust fetch helper for Binance Futures API.
  * Tries the prod-only futures hosts to handle CORS/SSL issues, with two
@@ -612,10 +626,10 @@ let fetchImpl: typeof fetch = globalFetch;
  *    2,400/min ceiling (see acquireFuturesSlot).
  */
 const robustFuturesFetch = async (apiPath: string, timeoutMs: number = 15000, allowCooldownRetry: boolean = true): Promise<Response> => {
-    const cooldownRemaining = futuresCooldownUntilMs - Date.now();
+    const cooldownRemaining = futuresCooldownUntilMs - nowImpl();
     if (cooldownRemaining > 0) {
         if (allowCooldownRetry && cooldownRemaining <= FUTURES_COOLDOWN_MAX_INLINE_WAIT_MS) {
-            await new Promise<void>(resolve => setTimeout(resolve, cooldownRemaining));
+            await delayImpl(cooldownRemaining);
             return robustFuturesFetch(apiPath, timeoutMs, false);
         }
         throw new FuturesRateLimitedError(`Binance Futures unavailable: IP-level cooldown active${futuresCooldownReason ? ` (${futuresCooldownReason})` : ''} for another ${Math.ceil(cooldownRemaining / 1000)}s — failing fast instead of hammering the rate limiter`);
@@ -642,7 +656,7 @@ const robustFuturesFetch = async (apiPath: string, timeoutMs: number = 15000, al
 
             clearTimeout(timeoutId);
             noteFuturesResponse(response);
-            futuresHostLastStatus.set(baseUrl, { status: response.status, at: Date.now() });
+            futuresHostLastStatus.set(baseUrl, { status: response.status, at: nowImpl() });
 
             if (response.ok) {
                 if (FUTURES_FETCH_DEBUG) console.log(`[MarketDataService] Success with ${baseUrl}`);
@@ -653,13 +667,13 @@ const robustFuturesFetch = async (apiPath: string, timeoutMs: number = 15000, al
                 const isBan = response.status === 418;
                 const retryAfterMs = parseRetryAfterMs(response.headers?.get?.('retry-after') ?? null);
                 const backoffMs = retryAfterMs ?? (isBan ? FUTURES_418_DEFAULT_BAN_MS : FUTURES_429_DEFAULT_BACKOFF_MS);
-                futuresCooldownUntilMs = Math.max(futuresCooldownUntilMs, Date.now() + backoffMs);
+                futuresCooldownUntilMs = Math.max(futuresCooldownUntilMs, nowImpl() + backoffMs);
                 futuresCooldownReason = isBan ? '418 IP auto-ban' : '429 rate limit';
-                const remainingMs = futuresCooldownUntilMs - Date.now();
+                const remainingMs = futuresCooldownUntilMs - nowImpl();
                 // Short wait: one clean inline retry. Long wait: fail fast —
                 // NEVER cycle hosts against an IP-level gate.
                 if (allowCooldownRetry && remainingMs <= FUTURES_COOLDOWN_MAX_INLINE_WAIT_MS) {
-                    await new Promise<void>(resolve => setTimeout(resolve, remainingMs));
+                    await delayImpl(remainingMs);
                     return robustFuturesFetch(apiPath, timeoutMs, false);
                 }
                 throw new FuturesRateLimitedError(`Binance Futures ${response.status} (${futuresCooldownReason}): IP cooldown latched for ${Math.ceil(remainingMs / 1000)}s — failing fast without trying the remaining hosts`);
@@ -696,8 +710,16 @@ export const __futuresRateLimitTestHooks = {
     setFetchImpl: (fn: (url: string) => Promise<Response>): void => {
         fetchImpl = fn as unknown as typeof fetch;
     },
+    setDelayImpl: (fn: (ms: number) => Promise<void>): void => {
+        delayImpl = fn;
+    },
+    setNowImpl: (fn: () => number): void => {
+        nowImpl = fn;
+    },
     reset: (): void => {
         fetchImpl = globalFetch;
+        delayImpl = realDelay;
+        nowImpl = realClockNow;
         futuresCooldownUntilMs = 0;
         futuresCooldownReason = '';
         futuresUsedWeight1m = 0;

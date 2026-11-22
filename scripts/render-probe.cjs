@@ -27,14 +27,97 @@
 
 const { spawn } = require('child_process');
 const net = require('net');
+const os = require('os');
 const path = require('path');
-const { mkdirSync } = require('fs');
+const { mkdirSync, rmSync } = require('fs');
 const { chromium } = require('@playwright/test');
 
 const PORT = process.env.PROBE_PORT ? Number(process.env.PROBE_PORT) : 4183;
 const MOCK_PORT = process.env.MOCK_PORT ? Number(process.env.MOCK_PORT) : 8787;
 const BASE = `http://127.0.0.1:${PORT}`;
 const ROOT = path.join(__dirname, '..');
+
+// Third-party market hosts (Binance/OKX/Deribit/Bybit) resolve to NOTFOUND at
+// the Chromium DNS layer: the UI probes never touch the live internet, and a
+// market-data call fails in milliseconds instead of stalling on a timeout.
+// Loopback (the probe's own vite/mock servers) is untouched. NOTE: Playwright's
+// page.route() is NOT usable for this — registering ANY route handler aborts
+// the probe's own loopback navigations with net::ERR_ABORTED (measured with
+// .verify-style probes, 2026-11-22) — so the block lives in launch args.
+const PROBE_CHROMIUM_ARGS = [`--host-resolver-rules=${[
+    'MAP binance.com ~NOTFOUND', 'MAP *.binance.com ~NOTFOUND',
+    'MAP okx.com ~NOTFOUND', 'MAP *.okx.com ~NOTFOUND',
+    'MAP deribit.com ~NOTFOUND', 'MAP *.deribit.com ~NOTFOUND',
+    'MAP bybit.com ~NOTFOUND', 'MAP *.bybit.com ~NOTFOUND',
+].join(', ')}`];
+
+/** Deterministic in-page market-data stub for the third-party hosts.
+ *
+ *  Installed with addInitScript BEFORE the app bundle evaluates (the app's
+ *  services bind global fetch at module load, so this is the fetch they see).
+ *  It serves shape-correct fixtures for the Binance endpoints the UI reads
+ *  (depth ladder, klines, tickers, exchangeInfo, premiumIndex, openInterest)
+ *  so checks like the order-book ladder assert RENDERING against known data
+ *  instead of depending on the live internet. Any other third-party host gets
+ *  an empty 200; loopback (vite + the mock provider) is passed through
+ *  untouched. WebSockets stay DNS-blocked (see PROBE_CHROMIUM_ARGS) — the
+ *  panels fall back to the REST poll this stub answers. The stub runs in the
+ *  PAGE (a standard web context), so Response is reached via globalThis to
+ *  keep this Node-side file free of browser globals. */
+const PROBE_MARKET_FETCH_STUB = () => {
+    const originalFetch = window.fetch.bind(window);
+    const THIRD_PARTY = /(^|\.)(binance|okx|deribit|bybit)\.com$/i;
+    const num = (n) => String(n);
+    const klines = Array.from({ length: 120 }, (_, i) => {
+        const t = Date.now() - (120 - i) * 60_000;
+        const price = 100 + Math.sin(i / 6) * 2;
+        return [t, num(price - 0.5), num(price + 0.8), num(price - 0.9), num(price), num(12 + (i % 7)), t + 59_999, '0', 0, '6', '0'];
+    });
+    const ladder = (base) => Array.from({ length: 12 }, (_, i) => [num(base + i * 0.01), num(1.5 + i * 0.1)]);
+    const ticker = (symbol) => ({
+        symbol, lastPrice: '100.5', priceChangePercent: '0.42', quoteVolume: '2500000',
+        highPrice: '102', lowPrice: '98.5', volume: '20000', count: 1234,
+    });
+    window.fetch = (input, init) => {
+        let url = '';
+        try { url = typeof input === 'string' ? input : (input && input.url) || ''; } catch { url = ''; }
+        let parsed;
+        try { parsed = new URL(url, location.href); } catch { return originalFetch(input, init); }
+        if (!THIRD_PARTY.test(parsed.hostname)) return originalFetch(input, init);
+        const p = parsed.pathname;
+        const symbol = parsed.searchParams.get('symbol');
+        const json = (payload) => Promise.resolve(new globalThis.Response(JSON.stringify(payload), {
+            status: 200, headers: { 'content-type': 'application/json' },
+        }));
+        if (p.endsWith('/fapi/v1/depth')) return json({ lastUpdateId: 1, bids: ladder(99.9), asks: ladder(100.1) });
+        if (p.endsWith('/fapi/v1/klines')) return json(klines);
+        if (p.endsWith('/fapi/v1/ticker/24hr')) return json(symbol ? ticker(symbol) : [ticker('BTCUSDT'), ticker('ETHUSDT')]);
+        if (p.endsWith('/fapi/v1/exchangeInfo')) {
+            return json({
+                symbols: ['BTCUSDT', 'ETHUSDT'].map((s) => ({
+                    symbol: s, status: 'TRADING', contractType: 'PERPETUAL',
+                    baseAsset: s.slice(0, 3), quoteAsset: 'USDT', pricePrecision: 2, quantityPrecision: 3,
+                })),
+            });
+        }
+        if (p.endsWith('/fapi/v1/premiumIndex')) {
+            return json({ symbol: symbol || 'BTCUSDT', markPrice: '100.4', indexPrice: '100.35', lastFundingRate: '0.0001', nextFundingTime: Date.now() + 3_600_000, time: Date.now() });
+        }
+        if (p.endsWith('/fapi/v1/openInterest')) return json({ symbol: symbol || 'BTCUSDT', openInterest: '12345.6' });
+        if (p.endsWith('/api/v3/ticker/price')) return json([{ symbol: 'BTCUSDT', price: '100.5' }]);
+        if (p.endsWith('/api/v3/ticker/24hr')) return json([ticker('BTCUSDT'), ticker('ETHUSDT')]);
+        return json({});
+    };
+};
+
+/** Evidence shots land in the TRACKED docs/evidence/ ONLY when the run is
+ *  explicitly refreshing them (--update-evidence or UPDATE_EVIDENCE=1). By
+ *  default they go to os.tmpdir() and are deleted on a pass, so a green
+ *  `npm run render-probe` never dirties git status. */
+const UPDATE_EVIDENCE = process.argv.includes('--update-evidence') || process.env.UPDATE_EVIDENCE === '1';
+const EVIDENCE_DIR = UPDATE_EVIDENCE
+    ? path.join(ROOT, 'docs', 'evidence')
+    : path.join(os.tmpdir(), `august-render-probe-evidence-${process.pid}`);
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -1035,10 +1118,17 @@ async function main() {
             return;
         }
 
-        const browser = await chromium.launch({ headless: true });
+        // AUGUST_PROBE_WS_ENDPOINT (set by probe:fast) reuses ONE Chromium
+        // across both probes; a bare run still launches its own.
+        const browser = process.env.AUGUST_PROBE_WS_ENDPOINT
+            ? await chromium.connect(process.env.AUGUST_PROBE_WS_ENDPOINT)
+            : await chromium.launch({ headless: true, args: PROBE_CHROMIUM_ARGS });
         browserRef = browser;
         const page = await browser.newPage();
         activePage = page;
+        // Market-data stub BEFORE the first navigation: the app bundle then
+        // binds the stubbed fetch at module load (see PROBE_MARKET_FETCH_STUB).
+        await page.addInitScript(PROBE_MARKET_FETCH_STUB);
         const pageErrors = [];
         page.on('pageerror', (err) => pageErrors.push(String(err && err.stack || err)));
         // A NATIVE dialog (window.confirm/alert) is the one thing the sweep's
@@ -4688,7 +4778,7 @@ async function main() {
         // same TradeView and chatStore stay mounted. The phone-drawer checks
         // above shrank the viewport — the layout classes are lg+, so restore
         // the desktop viewport first.
-        const evidenceDir = path.join(ROOT, 'docs', 'evidence');
+        const evidenceDir = EVIDENCE_DIR;
         mkdirSync(evidenceDir, { recursive: true });
         await page.setViewportSize({ width: 1440, height: 900 });
         await page.evaluate(() => localStorage.setItem('workspace_layout_v1', 'chat'));
@@ -4979,7 +5069,13 @@ async function main() {
     if (failures.length) {
         console.error(`\nRENDER PROBE FAILED — ${failures.length} check(s):`);
         for (const f of failures) console.error(' • ' + f);
+        if (!UPDATE_EVIDENCE) console.error(`evidence PNGs kept for inspection at ${EVIDENCE_DIR}`);
         process.exit(1);
+    }
+    if (!UPDATE_EVIDENCE) {
+        // Green run: the evidence shots were written to tmpdir and are never
+        // tracked — remove them so a passing probe leaves nothing behind.
+        try { rmSync(EVIDENCE_DIR, { recursive: true, force: true }); } catch { /* best-effort */ }
     }
     console.log('\nRENDER PROBE OK — every exchange renders and keeps the earlier rows in both'
         + ' conversation surfaces, settled verdicts and malformed persisted audit data render without'

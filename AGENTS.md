@@ -53,7 +53,9 @@ npm run check:palette       # the monochrome chrome — zero forbidden hue utili
 npm run check:docs          # doc links + symbol citations + gate names
 npm run boot-probe          # the production bundle boots, zero pageerrors
 npm run render-probe        # rendered rows, inert controls, all six surfaces
+npm run probe:fast          # boot-probe + render-probe, one Chromium, build only when dist/ is stale
 npm run installer-smoke     # the packaged Windows exe (release gate)
+npm run verify:fast         # all read-only gates concurrently (tests, contracts, docs, boundaries, palette, typechecks, lint)
 npm run electron:dev        # Vite + Electron window
 npm run electron:build      # build + package the Windows installer
 npm run electron:release    # REFUSES locally by design; releases run in CI
@@ -75,6 +77,8 @@ npm run electron:release    # REFUSES locally by design; releases run in CI
 | `boot-probe` | the bundle starts and the first surface mounts | any interaction |
 | `render-probe` | rendered rows, send order, reload persistence, six surfaces, no inert controls, focus rings | a layout that breaks at 800px; a wrong number inside a counted row |
 | `installer-smoke` | the packaged exe launches and renders | anything after launch |
+| `verify:fast` | every read-only gate above runs green, concurrently | nothing new — it is the batch, not a weaker gate |
+| `probe:fast` | both probes pass with one shared Chromium against a fresh-or-explicitly-rebuilt `dist/` | the same coverage as boot-probe + render-probe; skips no check |
 
 **`render-probe` is the only gate that sees a rendered row.** A component that returns clean and
 renders nothing passes every other gate. Two rules it encodes: overlays mount outside `<main>`, and

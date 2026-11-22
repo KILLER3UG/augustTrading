@@ -159,6 +159,14 @@ describe('Wave A — F1 futures rate limiting', () => {
                 ? { status: 429, headers: { 'retry-after': '1' }, json: {} }
                 : { json: {}, headers: { 'x-mbx-used-weight-1m': '500' } };
         }, async (calls) => {
+            // The 1s inline backoff is real production logic; the WALL wait is
+            // not what this test proves. Run the same decisions on a test clock
+            // that the injected delay advances, so the latched cooldown expires
+            // without sleeping a real second (both restored by withMockedFetch's
+            // reset). Every assertion below is unchanged.
+            let fakeNow = Date.now();
+            __futuresRateLimitTestHooks.setNowImpl(() => fakeNow);
+            __futuresRateLimitTestHooks.setDelayImpl(async (ms) => { fakeNow += ms + 1; });
             const res = await __futuresRateLimitTestHooks.fetch('/fapi/v1/ping');
             assert.equal(res.ok, true);
             const pings = calls.filter(u => u.includes('/fapi/v1/ping'));
@@ -176,6 +184,12 @@ describe('Wave A — F1 futures rate limiting', () => {
             pingCalls += 1;
             return pingCalls === 1 ? { status: 429, json: {} } : { json: {} };
         }, async (calls) => {
+            // Same test-clock swap as above: the default-backoff DECISION is
+            // pinned here, not the 2s wall wait. Reset in withMockedFetch
+            // restores the real clock and the real delay.
+            let fakeNow = Date.now();
+            __futuresRateLimitTestHooks.setNowImpl(() => fakeNow);
+            __futuresRateLimitTestHooks.setDelayImpl(async (ms) => { fakeNow += ms + 1; });
             const res = await __futuresRateLimitTestHooks.fetch('/fapi/v1/ping');
             assert.equal(res.ok, true);
             assert.equal(calls.filter(u => u.includes('/fapi/v1/ping')).length, 2);
