@@ -87,6 +87,7 @@ import type { LoggedTrade } from '../../types';
 import type { ToolAction } from '../../types/message';
 import type { ChartDrawing } from '../trade/chartDrawings';
 import { computeAtr14, evaluateChartDrawings } from '../trade/chartGeometry';
+import { clearAllTurnPlans } from '../trade/turnPlan';
 import type { RuinRiskResult } from './MonteCarloService';
 import type { ChartSnapshot } from '../../components/trade/TradingChart';
 import type { DiagnosisBrief } from '../tracking/diagnosisBrief';
@@ -395,6 +396,29 @@ export const detectStalledLoop = (history: string[]): number => {
     const t = history.slice(-4);
     if (t.length === 4 && t[0] === t[2] && t[1] === t[3] && t[0] !== t[1]) return 2;
     return 0;
+};
+
+/**
+ * A refused/failing call is a different stall from a repeated SUCCESS. The
+ * generic loop detector needs three identical calls (or an A,B alternation),
+ * so a seat that retries the SAME rejected write twice burns two more rounds
+ * before the guard sees it. Normalize the tool name + canonical args, then
+ * stop on the SECOND consecutive failure of that exact call and hand the seat
+ * a structured notice instead of another identical refusal.
+ */
+export interface ToolCallOutcome {
+    name: string;
+    args: string;
+    ok: boolean;
+    refused: boolean;
+}
+
+export const detectConsecutiveToolFailures = (history: ToolCallOutcome[]): ToolCallOutcome | null => {
+    if (history.length < 2) return null;
+    const last = history[history.length - 1];
+    const prev = history[history.length - 2];
+    const failed = (r: ToolCallOutcome): boolean => !r.ok || r.refused;
+    return failed(last) && failed(prev) && last.name === prev.name && last.args === prev.args ? last : null;
 };
 
 /** Attach a harness notice to the newest message the seat is about to read,
@@ -758,6 +782,9 @@ const TOOL_BUDGETS: Record<string, number> = {
     // A skill_manage receipt names the refusal reasons (sections, unknown
     // tools, duplicates) — the agent needs all of them to fix the write.
     skill_manage: 2400,
+    // The plan receipt is a compact checklist echo — small, whole, and never
+    // a place to hide a step behind a clip.
+    update_plan: 800,
 };
 
 /**
@@ -1625,6 +1652,35 @@ export const DESK_TOOL_DEFINITIONS: DeskToolDefinition[] = [
                     if_version: { type: 'string', description: 'patch: the version skill_view showed — a mismatch refuses the write.' },
                 },
                 required: ['action', 'slug'],
+                additionalProperties: false,
+            },
+        },
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'update_plan',
+            description:
+                'OPTIONAL checklist for a genuinely MULTI-STEP task (>= 3 phases: a playbook audit, a multi-symbol scan, a post-mortem). Call it IN PARALLEL with your Round 1 tools — it must not cost an extra round. It shows the trader a collapsed "In progress X/Y" pill they can open; it does NOT persist and is not a signal or a memory. NEVER call it on a simple question or a 1–2 step task, and never as a substitute for doing the work. One call with all steps; update statuses only when they genuinely change.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    steps: {
+                        type: 'array',
+                        description: '1–12 concise steps, oldest first. Default status is pending.',
+                        items: {
+                            type: 'object',
+                            properties: {
+                                id: { type: 'string', description: 'Stable short id, unique within this plan.' },
+                                label: { type: 'string', description: 'One line, at most 80 chars.' },
+                                status: { type: 'string', enum: ['pending', 'in_progress', 'completed'] },
+                            },
+                            required: ['id', 'label'],
+                            additionalProperties: false,
+                        },
+                    },
+                },
+                required: ['steps'],
                 additionalProperties: false,
             },
         },
@@ -3082,14 +3138,20 @@ export const INITIAL_DESK_TOOL_NAMES: readonly string[] = [
     'memory_add',
     'memory_update',
     'memory_delete',
-    'memory_search_sessions',
-    // Pass-1 agent-driven memory: the curated-files editor, episodic session
-    // recall and the skill lifecycle ride every turn like the memory family
-    // above — a tool the always-on workflow names must never be a deferred
-    // name the wire hides.
+    // Schema hygiene: `memory_search_sessions` is the LEGACY session reader
+    // superseded on the always-on surface by `session_search` (one tool, both
+    // homes, surface-tagged). It stays GRANTED and executable — load_tools can
+    // still bring it back for older playbooks — it just no longer spends a
+    // schema slot on every turn beside its replacement.
+    // Pass-1 agent-driven memory: the curated-files editor and the skill
+    // lifecycle ride every turn like the memory family above; `session_search`
+    // is the one always-on episodic reader (Chat + Desk, surface-tagged).
     'memory',
     'session_search',
     'skill_manage',
+    // A turn-scoped checklist for multi-step work, offered from round 1 so
+    // it costs no extra round. Never persisted; cleared when the turn settles.
+    'update_plan',
 ];
 
 /** The schema-on-demand tool. NOT a desk capability: it is not in
@@ -4951,16 +5013,37 @@ ${body}`);
                 return { toolCallId: call.id, name: call.name, ok: receipt.ok, content: JSON.stringify(receipt) };
             }
             case 'session_search': {
-                // Episodic recall over the persisted chat-dock sessions.
-                const { searchChatSessionsForTool, formatSessionSearchDigest } = await import('../trade/sessionSearchTool');
-                const result = searchChatSessionsForTool({
+                // Unified episodic recall: canonical Chat conversations AND
+                // the dock's chat sessions, tagged by surface. Same 3000-char
+                // budget (TOOL_BUDGETS), one ranking formula, no silent cap.
+                const { searchAllSessionsForTool, formatUnifiedSessionSearchDigest } = await import('../trade/sessionSearchTool');
+                const result = await searchAllSessionsForTool({
                     query: asString(call.arguments.query),
                     ...(typeof call.arguments.limit === 'number' ? { limit: call.arguments.limit } : {}),
                     ...(typeof call.arguments.symbol === 'string' && asString(call.arguments.symbol) ? { symbol: asString(call.arguments.symbol) } : {}),
                     ...(typeof call.arguments.session_id === 'string' && asString(call.arguments.session_id) ? { session_id: asString(call.arguments.session_id) } : {}),
                     ...(typeof call.arguments.window === 'number' ? { window: call.arguments.window } : {}),
                 });
-                content = formatSessionSearchDigest(result, TOOL_BUDGETS.session_search ?? 3000);
+                content = formatUnifiedSessionSearchDigest(result, TOOL_BUDGETS.session_search ?? 3000);
+                break;
+            }
+            case 'update_plan': {
+                // Ephemeral, turn-scoped. The receipt is deliberately small:
+                // the pill renders from turnPlan's live store, not from this
+                // text, so a clipped receipt can never desync the UI.
+                const { normalizePlanSteps, setTurnPlan } = await import('../trade/turnPlan');
+                const verdict = normalizePlanSteps(call.arguments);
+                if (!verdict.ok) {
+                    return rejectedResult(call, `update_plan rejected: ${verdict.error}`);
+                }
+                const plan = setTurnPlan(context.sessionId ?? '', verdict.steps);
+                const completed = plan.steps.filter(s => s.status === 'completed').length;
+                content = JSON.stringify({
+                    ok: true,
+                    steps: plan.steps,
+                    in_progress: `${completed}/${plan.steps.length}`,
+                    note: 'Ephemeral for this turn only — nothing was persisted.',
+                });
                 break;
             }
             case 'skill_manage': {
@@ -7290,6 +7373,11 @@ export async function runDeskToolLoop(params: {
     onToolPayload?: (payload: ToolPayload) => void;
     nativeTools?: boolean;
     allowedTools?: SeatToolGrant;
+    /** The turn's session/conversation id. Threaded into the EXECUTOR so a
+     *  turn-scoped `update_plan` is stored under the SAME key the pill
+     *  subscribes to — without it the plan lands under 'default' and the
+     *  affordance is dead on both seats. */
+    sessionId?: string | null;
     /** The Settings memory switch; see `DeskToolContext.memoryEnabled`. */
     memoryEnabled?: boolean;
     /** See `DeskToolContext.lastUserMessage` (the forget guard). */
@@ -7332,6 +7420,7 @@ export async function runDeskToolLoop(params: {
         onStreamReset,
         options,
         defaultSymbol,
+        sessionId,
         chartInterval,
         chartLevels,
         chartDrawings,
@@ -7434,6 +7523,7 @@ export async function runDeskToolLoop(params: {
     // its attempts on the same lookup over and over.
     const turnStartedAt = Date.now();
     const callHistory: string[] = [];
+    const callOutcomeHistory: ToolCallOutcome[] = [];
     let wrapUpSent = false;
     /** How many times an empty round has been re-asked.
      *
@@ -7710,6 +7800,10 @@ export async function runDeskToolLoop(params: {
                 && !partialTruncated
                 && turn.finishReason === 'stop'
                 && !!finalText.trim();
+            // A clean NO-TOOL answer settles the turn here, before the loop's
+            // shared exit — clear the ephemeral plan on BOTH exits so a
+            // remount can never resurrect a stale pill.
+            clearAllTurnPlans();
             return {
                 messages,
                 finalText: strippedFinal.trim()
@@ -7973,6 +8067,10 @@ export async function runDeskToolLoop(params: {
             : builtInCalls.length > 0
             ? await executeDeskTools(builtInCalls, {
                 defaultSymbol,
+                // The SAME key the TurnPlanPill subscribes with. Without this
+                // a real update_plan call stored under 'default' and no pill
+                // ever rendered — a grant that existed only on paper.
+                sessionId,
                 signal: options?.signal,
                 trades,
                 chartInterval,
@@ -8096,8 +8194,22 @@ export async function runDeskToolLoop(params: {
         for (const c of calls) {
             const args = typeof c.arguments === 'string' ? c.arguments : JSON.stringify(c.arguments ?? {});
             callHistory.push(`${c.name}:${args}`);
+            // Outcomes are joined by the call id, never by array position:
+            // results are assembled as [replays, extra, forged, load, core].
+            const outcome = results.find(r => r.toolCallId === c.id);
+            callOutcomeHistory.push({
+                name: c.name,
+                args,
+                ok: outcome?.ok === true,
+                // STRUCTURAL refusal only: ok:false AND a leading marker.
+                // A successful lookup whose queried text merely CONTAINS the
+                // word "rejected" must not be counted as a failed call.
+                refused: outcome?.ok === false
+                    && /^\s*(?:[a-z0-9_ -]+\s+)?(?:rejected|refused):/i.test(outcome?.content ?? ''),
+            });
         }
         const stalled = detectStalledLoop(callHistory);
+        const failedTwice = detectConsecutiveToolFailures(callOutcomeHistory);
         const elapsed = Date.now() - turnStartedAt;
         if (!wrapUpSent && elapsed >= DESK_TURN_BUDGET_MS * DESK_TURN_WRAPUP_AT) {
             wrapUpSent = true;
@@ -8111,8 +8223,26 @@ export async function runDeskToolLoop(params: {
             // streams the one worded reply the notices just asked for.
             break;
         }
+        if (failedTwice) {
+            // Structured, machine-readable stall notice: the seat can see the
+            // exact (tool, args) it must stop retrying instead of guessing
+            // which of four refusals the prose refers to. Same break contract
+            // as the generic repeat guard — one worded reply, no burned rounds.
+            appendTurnNotice(messages, JSON.stringify({
+                kind: 'tool_stall',
+                reason: 'same_tool_failed_twice',
+                tool: failedTwice.name,
+                args: failedTwice.args,
+                instruction: 'Do not call this tool again this turn. Answer from what is above and name what is still unknown; ask the trader if a decision is needed.',
+            }));
+            onToolEvent?.(`desk guard · ${failedTwice.name} failed twice — structured stall notice`);
+            break;
+        }
     }
 
+    // The turn has settled (clean answer, guard break, or budget exit): the
+    // ephemeral plan must not survive into the next turn's pill.
+    clearAllTurnPlans();
     return {
         messages,
         finalText: stripTextToolCalls(finalText),
@@ -8127,6 +8257,9 @@ export async function runDeskToolLoop(params: {
 
 export interface StreamWithDeskToolsOptions extends ChatRequestOptions {
     defaultSymbol?: string | null;
+    /** The turn's session/conversation id. Flows to the executor so the
+     *  ephemeral update_plan pill keys on the SAME id the UI subscribes to. */
+    sessionId?: string | null;
     /** Trade-chart context forwarded to get_chart_view (the model sees what
      *  the user sees: the panel's interval, drawn verdict levels, order book
      *  state and the user's OWN chart drawings). */
@@ -8525,6 +8658,7 @@ export async function* streamChatWithDeskTools(
         onStreamReset: onLoopReset,
         options: chatOptions,
         defaultSymbol,
+        sessionId: options?.sessionId ?? null,
         chartInterval,
         chartLevels,
         chartDrawings,

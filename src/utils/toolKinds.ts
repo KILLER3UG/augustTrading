@@ -305,6 +305,8 @@ export const DESK_TOOL_NAMES: readonly string[] = [
     // seats — a tool the system prompt names but a seat cannot call is the
     // dead affordance this list exists to prevent (pinned by check-contracts).
     'memory', 'session_search', 'skill_manage',
+    // Turn-scoped multi-step checklist (never persisted).
+    'update_plan',
     // Goal environments: durable work state, edited mid-task.
     'list_goals', 'open_goal', 'create_goal', 'update_goal', 'restore_goal',
     // The harness change ledger: reading and moving its own self-modifications.
