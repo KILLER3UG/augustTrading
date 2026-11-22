@@ -7578,6 +7578,92 @@ const checkMetaRamMemory = async () => {
     }
 };
 
+// Every transport shares createThinkingStreamGate, so these are the two
+// failure modes that used to put raw reasoning (or a stalled `<t`) on screen:
+// a new inline dialect the live gate did not know, and a tag-prefix buffer
+// that held arbitrary `<letters` until a `>` finally arrived.
+const checkThinkingTagGate = () => {
+    const ts = loadModule('src/utils/thinkingSplit.ts');
+    const drive = (chunks) => {
+        const gate = ts.createThinkingStreamGate();
+        let visible = '';
+        let thinking = '';
+        const perChunk = [];
+        for (const chunk of chunks) {
+            const res = gate.push(chunk);
+            visible += res.visible;
+            thinking += res.thinking;
+            perChunk.push(res.visible);
+        }
+        const tail = gate.flush();
+        return { visible: visible + tail.visible, thinking: thinking + tail.thinking, perChunk };
+    };
+    for (const [name, open, close] of [
+        ['think', ['<thi', 'nk>'], ['</thi', 'nk>']],
+        ['thinking', ['<thin', 'king>'], ['</thin', 'king>']],
+        ['thought', ['<thou', 'ght>'], ['</thou', 'ght>']],
+        ['reasoning', ['<reas', 'oning>'], ['</reas', 'oning>']],
+        ['pipe-thought', ['<|tho', 'ught|>'], ['<|/tho', 'ught|>']],
+    ]) {
+        const r = drive([...open, 'hidden ' + name, ...close, 'Shown ' + name]);
+        ok(`thinking gate: ${name} split across chunks never paints a tag fragment`,
+            r.visible === 'Shown ' + name && r.thinking === 'hidden ' + name
+            && r.perChunk[0] === '' && !/<\/?think|<\|\/?(?:think|thought)/i.test(r.visible));
+    }
+    const exact = drive(['<thinking', '>hidden', '</thinking>', 'Answer']);
+    ok('thinking gate: a chunk ending exactly at a tag name is buffered until `>`',
+        exact.perChunk[0] === '' && exact.thinking === 'hidden' && exact.visible === 'Answer');
+    const math = drive(['BTC <', ' 60000 and R:R <', ' 2.0', ' and <t', 'arget done']);
+    ok('thinking gate: a non-tag `<t` releases on the next chunk, not at `>`',
+        math.visible === 'BTC < 60000 and R:R < 2.0 and <target done' && math.thinking === ''
+        && math.perChunk[3] === ' and ' && math.perChunk[4] === '<target done');
+    const settled = ts.extractAndStripThinkBlocks('<|thought|>hidden<|/thought|>Shown');
+    ok('thinking gate: the settled parser strips the same pipe-thought dialect',
+        settled.visible === 'Shown' && settled.leaked === 'hidden');
+};
+
+// Five Wave A/B hardening fixes, each reproduced before the fix: a nonsense
+// price must be REFUSED, not scored; an unmeasurable VPIN must be UNAVAILABLE,
+// not a throw; pre-EMA bars are not gaps; and the no-evalCtx fib description
+// must quote the same extension ratios the geometry table defines.
+const checkWaveHardeningFixes = () => {
+    const adv = loadModule('src/services/trade/adversaryReview.ts');
+    const prop = loadModule('src/services/trade/proposedTrade.ts');
+    const flow = loadModule('src/services/market/orderFlowCore.ts');
+    const vol = loadModule('src/services/market/volRegimeCore.ts');
+    const savedDocument = global.document;
+    global.document = { hidden: false, addEventListener() {}, removeEventListener() {} };
+    let draw, geo;
+    try {
+        draw = loadModule('src/services/trade/chartDrawings.ts');
+        geo = loadModule('src/services/trade/chartGeometry.ts');
+    } finally {
+        if (savedDocument === undefined) delete global.document; else global.document = savedDocument;
+    }
+    const badPlan = { planId: 'x', symbol: 'BTCUSDT', direction: 'Short', entry: 100, stopLoss: 102, takeProfits: [-5] };
+    ok('adversary fallback: a non-positive target is VETOed, not scored',
+        adv.fallbackAdversaryVerdict({ plan: badPlan, markPrice: null, atr: 2, candles: [] }).verdict === 'VETO');
+    const parsed = prop.parseTradeProposal(badPlan);
+    ok('present_trade parse: a non-positive target is refused before quoting a ratio',
+        !parsed.proposal && /positive/.test(parsed.error || ''));
+    const tape = Array.from({ length: 40 }, (_, i) => ({ open: 100 + i, high: 101 + i, low: 99 + i, close: 100 + i, volume: 100, takerBuyVolume: 50 }));
+    const vpinOut = flow.vpin(tape, { minBuckets: 5, targetBuckets: 10 });
+    ok('vpin: a rolling window longer than the built buckets is unavailable, not a throw',
+        vpinOut.available === false && vpinOut.vpin === null && /rolling window/.test(vpinOut.reason || ''));
+    const gap = vol.ema20GapStreak(Array.from({ length: 21 }, (_, i) => ({ open: 100 + i, high: 100.2 + i, low: 99.8 + i, close: 100 + i, volume: 10, takerBuyVolume: 5 })));
+    ok('ema20GapStreak: bars before EMA(20) exists are not gap bars',
+        gap.streak <= 2 && gap.maGapBarSetup === false);
+    const rr = loadModule('src/utils/riskReward.ts');
+    ok('shared signed R:R: a non-positive target is never quoted as a reward',
+        rr.plannedRiskRewardSigned({ direction: 'Short', entry: 100, stopLoss: 102, takeProfits: [-5] }).ratio === 0);
+    const text = draw.describeDrawingsForModel([{ id: 'f1', shortId: '#D1', kind: 'fib', color: '#fff', createdAt: 0, points: [{ t: 0, p: 100 }, { t: 1, p: 200 }] }]);
+    ok('fib drawing description: extensions come from the shared geometry table',
+        geo.FIB_EXTENSION_RATIOS.every(r => text.includes(`${(r * 100).toFixed(1).replace(/\.0$/, '')}%=`)));
+    const deep = draw.describeDrawingsForModel([{ id: 'f2', shortId: '#D2', kind: 'fib', color: '#fff', createdAt: 0, points: [{ t: 0, p: 200 }, { t: 1, p: 80 }] }]);
+    ok('fib drawing description: a deep leg omits non-positive extensions',
+        !deep.includes('200%=') && deep.includes('127.2%='));
+};
+
 const finishReport = () => {
     console.log(`contracts: ${passed} passed, ${failures.length} failed`);
     for (const f of failures) console.log(`  FAIL ${f}`);
@@ -7604,5 +7690,7 @@ checkSkillWrites()
     .then(checkDiaryRetrieval)
     .then(checkMetaRamMemory)
     .then(checkAgentHandExecutor)
+    .then(checkThinkingTagGate)
+    .then(checkWaveHardeningFixes)
     .catch(e => { failures.push(`async runtime checks threw: ${e instanceof Error ? e.stack : String(e)}`); })
     .then(finishReport);

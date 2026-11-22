@@ -140,6 +140,12 @@ interface PlanShapeVerdict {
  * cannot disagree about what "inverted" means.
  */
 const assessPlanShape = (proposal: PlanForGate, atr: number): PlanShapeVerdict => {
+    // No positive target means there is no ratio to grade at all. Refuse here
+    // as well as at parse time: prose/legacy callers reach this gate without
+    // going through parseTradeProposal.
+    if (!proposal.takeProfits.some(tp => Number.isFinite(tp) && tp > 0)) {
+        return { refusal: 'no positive target price — there is no ratio to grade.' };
+    }
     const planned = plannedRiskRewardSigned({
         entry: proposal.entry,
         stopLoss: proposal.stopLoss,

@@ -312,6 +312,9 @@ export const vpin = (
     if (probs.length < minBuckets) {
         return { available: false, reason: `only ${probs.length} volume bucket(s) built (need ≥ ${minBuckets}) — VPIN is not quotable`, vpin: null, vpinPercentile: null, buckets: probs.length, toxicityWarning: false, thresholds };
     }
+    if (rollingWindow < 1 || probs.length < rollingWindow) {
+        return { available: false, reason: `only ${probs.length} volume bucket(s) built (need ≥ ${rollingWindow} for a rolling window) — VPIN is not quotable`, vpin: null, vpinPercentile: null, buckets: probs.length, toxicityWarning: false, thresholds };
+    }
     const rolling: number[] = [];
     for (let i = rollingWindow; i <= probs.length; i++) {
         const win = probs.slice(i - rollingWindow, i);

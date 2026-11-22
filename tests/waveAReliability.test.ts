@@ -17,7 +17,12 @@ import { anchoredSlice } from '../src/services/market/vwapCore';
 import { activeSwingFib } from '../src/services/market/swingStructureCore';
 import { calculateFibonacciLevels } from '../src/services/analysis/TechnicalAnalysisService';
 import { computeTradeMath, computeFundingDrag } from '../src/services/market/tradeMathCore';
+import { plannedRiskRewardSigned } from '../src/utils/riskReward';
+import { evaluatePlanLocalSync } from '../src/services/trade/proposalGate';
 import { fallbackAdversaryVerdict } from '../src/services/trade/adversaryReview';
+import { parseTradeProposal } from '../src/services/trade/proposedTrade';
+import { describeDrawingsForModel } from '../src/services/trade/chartDrawings';
+import { FIB_EXTENSION_RATIOS } from '../src/services/trade/chartGeometry';
 import { executeDeskTool } from '../src/services/analysis/DeskToolsService';
 import type { ChartDrawing } from '../src/services/trade/chartDrawings';
 import type { EvalCandle } from '../src/services/trade/chartGeometry';
@@ -651,6 +656,61 @@ describe('Wave A/B/C audit pins — universe gate, fib OTE parity, adversary Sho
         });
         assert.equal(inverted.verdict, 'VETO');
         assert.ok(inverted.objections.some(o => o.includes('inverted')));
+    });
+
+    it('parseTradeProposal refuses non-positive targets before a ratio can be quoted', () => {
+        for (const bad of [-5, 0]) {
+            const parsed = parseTradeProposal({ direction: 'Short', entry: 100, stopLoss: 102, takeProfits: [bad] });
+            assert.equal(parsed.proposal, undefined);
+            assert.match(parsed.error ?? '', /positive/);
+        }
+        assert.equal(parseTradeProposal({ direction: 'Long', entry: 100, stopLoss: 90, takeProfits: [110] }).proposal?.takeProfits[0], 110);
+    });
+
+    it('the live proposal gate refuses a plan with no positive target', () => {
+        const local = evaluatePlanLocalSync({ symbol: 'BTCUSDT', direction: 'Short', entry: 100, stopLoss: 102, takeProfits: [-5], confidence: 'Medium' });
+        assert.match(local.refusal ?? '', /positive target/);
+    });
+
+    it('the shared signed R:R never quotes a non-positive target as a reward', () => {
+        const bad = plannedRiskRewardSigned({ direction: 'Short', entry: 100, stopLoss: 102, takeProfits: [-5] });
+        assert.equal(bad.ratio, 0);
+        assert.equal(bad.reward, 0);
+        const good = plannedRiskRewardSigned({ direction: 'Short', entry: 100, stopLoss: 102, takeProfits: [95] });
+        assert.ok(good.ratio > 0);
+    });
+
+    it('the no-evalCtx drawing description omits non-positive fib extensions like chartGeometry', () => {
+        const text = describeDrawingsForModel([
+            { id: 'f2', shortId: '#D2', kind: 'fib', color: '#fff', createdAt: 0, points: [{ t: 0, p: 200 }, { t: 1, p: 80 }] } as ChartDrawing,
+        ]);
+        assert.equal(text.includes('200%='), false, 'a 2.0 extension at -40 must never be quoted');
+        assert.ok(text.includes('127.2%='), 'the positive 1.272 extension stays');
+    });
+
+    it('the no-evalCtx drawing description quotes the SAME fib extensions as chartGeometry', () => {
+        const text = describeDrawingsForModel([
+            { id: 'f1', shortId: '#D1', kind: 'fib', color: '#fff', createdAt: 0, points: [{ t: 0, p: 100 }, { t: 1, p: 200 }] } as ChartDrawing,
+        ]);
+        for (const r of DRAW_FIB_RATIOS) assert.ok(text.includes(`${(r * 100).toFixed(1).replace(/\.0$/, '')}%=`), `missing retracement ${r}`);
+        for (const r of FIB_EXTENSION_RATIOS) assert.ok(text.includes(`${(r * 100).toFixed(1).replace(/\.0$/, '')}%=`), `missing extension ${r}`);
+    });
+
+    it('fallbackAdversaryVerdict VETOes non-positive, NaN and infinite targets and an unknown direction', () => {
+        for (const bad of [-5, 0, Number.NaN, Number.POSITIVE_INFINITY]) {
+            const v = fallbackAdversaryVerdict({
+                plan: { planId: 'bad-tp', symbol: 'BTCUSDT', direction: 'Short', entry: 100, stopLoss: 102, takeProfits: [bad] },
+                markPrice: null, atr: 2, candles: [{ close: 100 }],
+            });
+            assert.equal(v.verdict, 'VETO', `target ${String(bad)} must be refused`);
+            assert.ok(v.objections.some(o => o.includes('target')));
+        }
+        const badDir = fallbackAdversaryVerdict({
+            plan: { planId: 'bad-dir', symbol: 'BTCUSDT', direction: 'Flat' as unknown as 'Long' | 'Short', entry: 100, stopLoss: 102, takeProfits: [95] },
+            markPrice: null, atr: 2, candles: [{ close: 100 }],
+        });
+        assert.equal(badDir.verdict, 'VETO');
+        assert.ok(badDir.objections.some(o => o.includes('direction')));
     });
 
     it('get_regime exposes trendScan.byHorizon and imbalances exposes gaps[].midpoint', async () => {

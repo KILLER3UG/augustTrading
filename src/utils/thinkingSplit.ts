@@ -10,7 +10,7 @@ const PLAN_RE = /FINAL TRADE PLAN|\b(?:Direction|Stop Loss|Take Profit(?:\s*[123
 
 const SCRATCHPAD_START_RE = /(?:^|\n)\s*(?:here(?:['’]s| is)\s+(?:my\s+)?(?:a\s+)?)?thinking\s+process\s*:/i;
 const SCRATCHPAD_META_RE = /Analyze User Input\s*:|Deconstruct (?:the )?Context|Current Round\s*:|YOUR TASK\b|The user (?:is asking|wants|asked)\b/i;
-const THINK_TAG_RE = /<(?:think|thinking|thought|reasoning|REASONING_SCRATCHPAD)|<\|(?:begin_of_thought|think)\||\[(?:THINKING|REASONING)\]|◁think▷/i;
+const THINK_TAG_RE = /<(?:think|thinking|thought|reasoning|REASONING_SCRATCHPAD)|<\|(?:begin_of_thought|think|thought)\||\[(?:THINKING|REASONING)\]|◁think▷/i;
 const LET_ME_THINK_RE = /(?:^|\n)\s*(?:okay[,.]?\s+)?(?:so[,.]?\s+)?(?:let me think|let's think|thinking out loud|internal monologue|chain of thought|wait,\s+i\b)\b/i;
 const ANSWER_MARK_RE = /(?:^|\n)\s*(?:\*\*)?(?:answer|final(?:\s*output)?|response|conclusion|verdict|solution)(?:\*\*)?\s*[:.-]\s*/i;
 const META_PARA_RE = /^(?:Analyze User Input|Deconstruct|My State|Role\s*:|Current Round\s*:|YOUR TASK|Moderator's question|Here's a thinking|Let me think|The user (?:is asking|wants)|I need to (?:analyze|weigh|consider|answer|give|correct|state))/i;
@@ -33,7 +33,9 @@ const THINK_ORPHAN_RE = new RegExp(`<\\/?(?:${THINK_TAG_NAMES})\\b[^>]*>`, 'gi')
 const THINK_CLOSE_RE = new RegExp(`<\\/(?:${THINK_TAG_NAMES})\\s*>`, 'i');
 const THINK_OPEN_RE = new RegExp(`<(${THINK_TAG_NAMES})\\b[^>]*>`, 'i');
 
-const SPECIAL_THINK_RE = /<\|(?:begin_of_thought|think)\|>([\s\S]*?)<\|(?:end_of_thought|\/think)\|>/gi;
+const SPECIAL_THINK_RE = /<\|(?:begin_of_thought|think|thought)\|>([\s\S]*?)<\|(?:end_of_thought|\/think|\/thought)\|>/gi;
+/** Orphan pipe-tag tokens (prefilled templates) must never reach the answer. */
+const SPECIAL_THINK_ORPHAN_RE = /<\|(?:begin_of_thought|end_of_thought|\/?think|\/?thought)\|>/gi;
 const SPECIAL_SOLUTION_RE = /<\|begin_of_solution\|>([\s\S]*?)<\|end_of_solution\|>/gi;
 const BRACKET_THINK_RE = /\[(?:THINKING|THINK|REASONING)\]([\s\S]*?)\[\/(?:THINKING|THINK|REASONING)\]/gi;
 const FENCE_THINK_RE = /```(?:thinking|thought|reasoning|scratchpad)\s*\n([\s\S]*?)```/gi;
@@ -102,7 +104,10 @@ export const extractAndStripThinkBlocks = (text: string): { visible: string; lea
     }
 
     return {
-        visible: visible.replace(/\n{3,}/g, '\n\n').trim(),
+        visible: visible
+            .replace(SPECIAL_THINK_ORPHAN_RE, '')
+            .replace(/\n{3,}/g, '\n\n')
+            .trim(),
         leaked: leaked.filter(Boolean).join('\n\n').trim(),
     };
 };
@@ -343,10 +348,41 @@ export const splitThinkingFromOutput = (
 const THINK_OPEN_CLOSE: Array<{ open: RegExp; close: RegExp }> = [
     { open: /<(think|thinking|thought|reasoning|REASONING_SCRATCHPAD|redacted_thinking)\b[^>]*>/i, close: /<\/(?:think|thinking|thought|reasoning|REASONING_SCRATCHPAD|redacted_thinking)\s*>/i },
     { open: /<\|begin_of_thought\|>/i, close: /<\|end_of_thought\|>/i },
-    { open: /<\|think\|>/i, close: /<\|\/think\|>/i },
+    { open: /<\|think\|>/i, close: /<\|(?:\/think|end_of_thought)\|>/i },
+    { open: /<\|thought\|>/i, close: /<\|\/thought\|>/i },
     { open: /\[(?:THINKING|THINK|REASONING)\]/i, close: /\[\/(?:THINKING|THINK|REASONING)\]/i },
     { open: /◁think▷/i, close: /◁\/think▷/i },
 ];
+
+/**
+ * Literal tag tokens the live gate may be in the middle of receiving. A tail
+ * is buffered ONLY while it is a strict prefix of one of these — the old
+ * `/^<\/?[a-zA-Z|/_]*$/` held ANY `<letters` run, so `<t` followed by
+ * `arget 60000>` stalled until the `>` arrived and then dumped as one late
+ * chunk (prose inequalities like `R:R < 2.0` were delayed the same way).
+ */
+const TAG_PREFIXES: string[] = [
+    '<think', '</think', '<thinking', '</thinking', '<thought', '</thought',
+    '<reasoning', '</reasoning', '<REASONING_SCRATCHPAD', '</REASONING_SCRATCHPAD',
+    '<redacted_thinking', '</redacted_thinking',
+    '<|begin_of_thought|>', '<|end_of_thought|>', '<|think|>', '<|/think|>',
+    '<|thought|>', '<|/thought|>',
+    '[THINKING]', '[/THINKING]', '[THINK]', '[/THINK]', '[REASONING]', '[/REASONING]',
+    '◁think▷', '◁/think▷',
+];
+const holdsTagPrefix = (tail: string): boolean => {
+    const lower = tail.toLowerCase();
+    // Equality matters: a chunk may end exactly at `<thinking` / `</think`
+    // with the `>` in the NEXT push. A complete tag (with `>`) never reaches
+    // this helper because the open/close regex already consumed it.
+    if (TAG_PREFIXES.some(prefix => prefix.toLowerCase().startsWith(lower))) return true;
+    // A complete tag name plus whitespace/attributes is still an open tag
+    // until the `>` lands: `<Thinking class="x`, `<thinking `, `<think foo`.
+    // Opening tags may carry attributes; closing tags never do — letting a
+    // `</thinking` prefix fall into this branch swallowed the answer text that
+    // followed a prefilled-template close.
+    return /^<(?:think|thinking|thought|reasoning|reasoning_scratchpad|redacted_thinking)\s+[^>]{0,64}$/i.test(tail);
+};
 
 const holdIncompleteTag = (buf: string): string => {
     const lt = buf.lastIndexOf('<');
@@ -355,14 +391,7 @@ const holdIncompleteTag = (buf: string): string => {
     const start = Math.max(lt, br, uni);
     if (start < 0) return '';
     const tail = buf.slice(start);
-    if (
-        /^<\/?[a-zA-Z|/_]*$/.test(tail)
-        || /^<\/?(?:think|thinking|thought|reasoning|REASONING_SCRATCHPAD|redacted_thinking)\b[^>]{0,64}$/i.test(tail)
-        || /^\[[A-Za-z/]*$/.test(tail)
-        || /^<\|\/?[a-z_]*$/.test(tail)
-        || /^◁\/?[a-zA-Z]*$/.test(tail)
-    ) return tail;
-    return '';
+    return holdsTagPrefix(tail) ? tail : '';
 };
 
 /**

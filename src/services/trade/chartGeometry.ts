@@ -115,7 +115,9 @@ export interface Tier0ManifestInput {
 // price the same way.
 const FIB_RATIOS = [0, 0.236, 0.382, 0.5, 0.618, 0.705, 0.786, 1] as const;
 // Extensions project the leg PAST its end: start + r × range.
-const FIB_EXTENSION_RATIOS = [1.272, 1.618, 2] as const;
+/** Exported so the chart's no-evalCtx drawing description quotes the SAME
+ *  extension levels the geometry and the desk tool use. */
+export const FIB_EXTENSION_RATIOS = [1.272, 1.618, 2] as const;
 const STALE_AGE_MS = 4 * 60 * 60 * 1000;
 const STALE_FALLBACK_PCT = 1;
 const STALE_ATR_MULTIPLIER = 2.0;

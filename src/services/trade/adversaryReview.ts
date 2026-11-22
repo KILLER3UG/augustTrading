@@ -76,6 +76,18 @@ export const fallbackAdversaryVerdict = (input: AdversaryInput): AdversaryReview
     const netRr = signed.inverted ? 0 : Math.max(0, signed.ratio - (cost.known ? (cost.costR as number) : 0));
     const objections: string[] = [];
     let verdict: AdversaryVerdict = 'APPROVE';
+    // A bracket with a non-positive/NaN target or an unknown direction cannot
+    // be scored: `nearestTargetPrice` only checks finiteness, so a target of
+    // -5 turns a Short into a fictitious 52.5R and used to APPROVE it.
+    if (plan.direction !== 'Long' && plan.direction !== 'Short') {
+        objections.push(`direction ${String(plan.direction)} is not Long/Short — the bracket cannot be scored.`);
+        verdict = 'VETO';
+    }
+    const badTargets = plan.takeProfits.filter(tp => typeof tp !== 'number' || !Number.isFinite(tp) || tp <= 0);
+    if (badTargets.length > 0) {
+        objections.push(`target ${String(badTargets[0])} is non-positive or not finite — the bracket cannot be scored.`);
+        verdict = 'VETO';
+    }
     if (signed.inverted) {
         objections.push('plan levels are inverted for the stated direction.');
         verdict = 'VETO';

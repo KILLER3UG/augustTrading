@@ -292,10 +292,16 @@ export const parseTradeProposal = (args: Record<string, unknown>): { proposal?: 
     const stopLoss = num(args.stopLoss);
     if (entry === null) return { error: 'entry price is required' };
     if (stopLoss === null) return { error: 'stopLoss price is required' };
+    if (entry <= 0) return { error: 'entry price must be positive' };
+    if (stopLoss <= 0) return { error: 'stopLoss price must be positive' };
     const takeProfits = Array.isArray(args.takeProfits)
         ? args.takeProfits.map(num).filter((n): n is number => n !== null).slice(0, 5)
         : [];
     if (takeProfits.length === 0) return { error: 'at least one takeProfits price is required' };
+    // A negative/NaN price is not a target: num() filters NaN, but a finite
+    // negative used to pass the direction check for a Short and was quoted
+    // as a huge reward (e.g. -5 from entry 100 → 52.5:1).
+    if (takeProfits.some(tp => tp <= 0)) return { error: 'every takeProfits price must be positive' };
     // A long must stop below entry and target above it (and vice versa) — a
     // backwards plan is a model slip, not a trade.
     if (direction === 'Long' && (stopLoss >= entry || takeProfits.some(tp => tp <= entry))) {

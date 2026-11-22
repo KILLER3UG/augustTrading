@@ -156,6 +156,15 @@ describe('Wave B — VPIN', () => {
         assert.equal(r.toxicityWarning, false);
     });
 
+    it('refuses (never throws) when the rolling window exceeds the built buckets', () => {
+        const candles = Array.from({ length: 40 }, (_, i) => bar(i * 60, 100, 101, 99, 100, 100, 50));
+        const r = vpin(candles, { minBuckets: 5, targetBuckets: 10 });
+        assert.equal(r.available, false);
+        assert.equal(r.vpin, null);
+        assert.equal(r.toxicityWarning, false);
+        assert.match(r.reason ?? '', /rolling window/);
+    });
+
     it('refuses when taker-buy volume is missing', () => {
         const candles = [bar(0, 100, 101, 99, 100, 100), bar(60, 100, 101, 99, 100, 100)];
         const r = vpin(candles as Kline[], { minBuckets: 1 });
@@ -333,6 +342,14 @@ describe('Wave B — Brooks bar geometry', () => {
         const setup = ema20GapStreak(candles);
         assert.equal(setup.maGapBarSetup, true);
         assert.equal(setup.streak, 0);
+    });
+
+    it('ema20GapStreak does not count bars before EMA(20) exists', () => {
+        const candles: Kline[] = [];
+        for (let i = 0; i < 21; i++) candles.push(bar(i * 3600, 100 + i, 100.2 + i, 99.8 + i, 100 + i));
+        const r = ema20GapStreak(candles);
+        assert.ok(r.streak <= 2, `pre-EMA NaN bars must not be gap bars, streak=${r.streak}`);
+        assert.equal(r.maGapBarSetup, false);
     });
 
     it('climaxBar fires on a 2.5× body after a 10-bar unbroken streak', () => {

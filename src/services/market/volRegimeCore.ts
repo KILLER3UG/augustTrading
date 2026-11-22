@@ -329,7 +329,8 @@ export const reversalOverlapTrap = (candles: Kline[]): boolean => {
  */
 export const ema20GapStreak = (candles: Kline[]): { streak: number; maGapBarSetup: boolean } => {
     const closes = candles.map(c => c.close);
-    const ema = emaSeries(closes, 20);
+    const period = 20;
+    const ema = emaSeries(closes, period);
     if (ema.length === 0) return { streak: 0, maGapBarSetup: false };
     const offset = closes.length - ema.length;
     const touches = (i: number): boolean => {
@@ -339,7 +340,10 @@ export const ema20GapStreak = (candles: Kline[]): { streak: number; maGapBarSetu
     // No-touch streak over the bars BEFORE the newest one, so the newest
     // bar's own contact can flag the pullback setup.
     let streakBefore = 0;
-    for (let i = candles.length - 2; i >= offset; i--) {
+    // emaSeries pads indices 0..period-2 with NaN. Those bars never touched
+    // the EMA because it did not exist yet — counting them as gap bars let
+    // the 20-bar pullback setup fire after a single real gap bar.
+    for (let i = candles.length - 2; i >= Math.max(offset, period - 1); i--) {
         if (touches(i)) break;
         streakBefore += 1;
     }

@@ -22,6 +22,7 @@ import {
     allocateDrawingShortId,
     ensureStableShortIds,
     evaluateChartDrawings,
+    FIB_EXTENSION_RATIOS,
     type ChartEvaluationContext,
     type DrawingEvaluatedAtNow,
 } from './chartGeometry';
@@ -969,7 +970,15 @@ export const describeDrawingsForModel = (
                 const low = Math.min(a.p, b.p);
                 const concreteFibs = ev?.fibLevels
                     ? ev.fibLevels.map(f => `${(f.ratio * 100).toFixed(1).replace(/\.0$/, '')}%=${fmt(f.price)}`).join(', ')
-                    : FIB_RATIOS.map(r => `${(r * 100).toFixed(1).replace(/\.0$/, '')}%=${fmt(b.p - (b.p - a.p) * r)}`).join(', ');
+                    : [
+                        ...FIB_RATIOS.map(r => ({ r, price: b.p - (b.p - a.p) * r })),
+                        ...FIB_EXTENSION_RATIOS.map(r => ({ r, price: a.p + (b.p - a.p) * r })),
+                    ]
+                        // chartGeometry omits levels at/below zero on deep legs;
+                        // the no-evalCtx description must make the same call.
+                        .filter(x => x.price > 0)
+                        .map(x => `${(x.r * 100).toFixed(1).replace(/\.0$/, '')}%=${fmt(x.price)}`)
+                        .join(', ');
                 return `- ${handle}fibonacci retracement${tfTag}${tag} from ${fmt(low)} to ${fmt(high)}, levels [${concreteFibs}], spans ${spanName(Math.abs(b.t - a.t))}${evalTail}${suffix}`;
             }
             case 'channel': {

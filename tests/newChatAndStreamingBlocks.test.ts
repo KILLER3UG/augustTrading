@@ -2,7 +2,7 @@ import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import * as chatStore from '../src/services/trade/chatStore';
-import { createThinkingStreamGate } from '../src/utils/thinkingSplit';
+import { createThinkingStreamGate, extractAndStripThinkBlocks, splitThinkingFromOutput } from '../src/utils/thinkingSplit';
 import { splitStableMarkdownBlocks, canRenderPlainStreamingProse } from '../src/utils/streamBlocks';
 import { createBrowserSseParser } from '../src/services/providers/GenericProviderService';
 import { runDeskToolLoop } from '../src/services/analysis/DeskToolsService';
@@ -279,5 +279,132 @@ describe('runDeskToolLoop — strict Thinking -> Tool -> Output chronological ca
             'token:Final ',
             'token:Answer',
         ]);
+    });
+});
+
+describe('thinking gate — exhaustive inline dialects, split tags, math and transport parity', () => {
+    const drive = (chunks: string[]) => {
+        const gate = createThinkingStreamGate();
+        let visible = '';
+        let thinking = '';
+        let orphanClose = false;
+        const perChunk: string[] = [];
+        for (const chunk of chunks) {
+            const res = gate.push(chunk);
+            visible += res.visible;
+            thinking += res.thinking;
+            if (res.orphanClose) orphanClose = true;
+            perChunk.push(res.visible);
+        }
+        const tail = gate.flush();
+        visible += tail.visible;
+        thinking += tail.thinking;
+        return { visible, thinking, orphanClose, perChunk };
+    };
+    const noTagLeak = (text: string): boolean => !/<\/?(?:think|thinking|thought|reasoning|REASONING_SCRATCHPAD|redacted_thinking)\b|<\|(?:begin_of_thought|end_of_thought|\/?think|\/?thought)\|>/i.test(text);
+
+    it('captures every inline reasoning dialect across arbitrary mid-tag chunk splits', () => {
+        const dialects: Array<{ name: string; open: string[]; close: string[]; body: string; answer: string }> = [
+            { name: 'think', open: ['<thi', 'nk>'], close: ['</thi', 'nk>'], body: 'R1 plan', answer: 'A1 done.' },
+            { name: 'thinking', open: ['<thin', 'king>'], close: ['</thin', 'king>'], body: 'R2 plan', answer: 'A2 done.' },
+            { name: 'thought', open: ['<thou', 'ght>'], close: ['</thou', 'ght>'], body: 'R3 plan', answer: 'A3 done.' },
+            { name: 'reasoning', open: ['<reas', 'oning>'], close: ['</reas', 'oning>'], body: 'R4 plan', answer: 'A4 done.' },
+            { name: 'pipe-thought', open: ['<|tho', 'ught|>'], close: ['<|/tho', 'ught|>'], body: 'R5 plan', answer: 'A5 done.' },
+            { name: 'pipe-think', open: ['<|thi', 'nk|>'], close: ['<|/thi', 'nk|>'], body: 'R6 plan', answer: 'A6 done.' },
+            { name: 'case-and-attribute', open: ['<Thin', 'king class="x">'], close: ['</thin', 'king>'], body: 'R7 plan', answer: 'A7 done.' },
+        ];
+        for (const d of dialects) {
+            const r = drive([...d.open, d.body, ...d.close, d.answer]);
+            assert.equal(r.thinking, d.body, `${d.name}: thinking body`);
+            assert.equal(r.visible, d.answer, `${d.name}: visible answer`);
+            assert.equal(noTagLeak(r.visible), true, `${d.name}: no tag in answer`);
+            assert.equal(noTagLeak(r.thinking), true, `${d.name}: no tag in thinking`);
+            assert.equal(r.perChunk[0], '', `${d.name}: no partial tag painted live`);
+        }
+    });
+
+    it('releases non-tag < as soon as the next character rules out a tag prefix', () => {
+        const r = drive(['BTC <', ' 60000 and R:R <', ' 2.0 (p <', ' 0.05)', ' and <t', 'arget done']);
+        assert.equal(r.visible, 'BTC < 60000 and R:R < 2.0 (p < 0.05) and <target done');
+        assert.equal(r.thinking, '');
+        assert.equal(r.perChunk[4], ' and ');
+        assert.equal(r.perChunk[5], '<target done');
+        assert.equal(noTagLeak(r.visible), true);
+    });
+
+    it('holds a complete tag name whose > arrives in the next chunk, without swallowing later prose', () => {
+        for (const [open, close] of [
+            ['<thinking', '</thinking>'], ['<think', '</think>'], ['<thought', '</thought>'],
+            ['<reasoning', '</reasoning>'], ['<|thought|', '<|/thought|>'],
+        ]) {
+            const r = drive([open, '>hidden', close, 'Answer']);
+            assert.equal(r.perChunk[0], '', `${open}: a name-only chunk must stay buffered`);
+            assert.equal(r.thinking, 'hidden', `${open}: reasoning body`);
+            assert.equal(r.visible, 'Answer', `${open}: visible answer`);
+            assert.equal(noTagLeak(r.visible), true, `${open}: no raw tag in the answer`);
+        }
+        const orphan = drive(['Let me think...', '</thinking', '\nBias is bullish']);
+        assert.ok(orphan.visible.includes('Bias is bullish'), 'a name-only orphan close must not swallow the answer');
+    });
+
+    it('promotes an orphan closing tag to reasoning and keeps the answer tag-free', () => {
+        const r = drive(['Let me check support first...', '</thinking>', '\nBias is bullish']);
+        assert.equal(r.orphanClose, true);
+        assert.equal(r.visible.includes('</thinking>'), false);
+        const settled = splitThinkingFromOutput('', 'Let me check support first...</thinking>\nBias is bullish');
+        assert.equal(settled.thinking, 'Let me check support first...');
+        assert.equal(settled.output, 'Bias is bullish');
+    });
+
+    it('keeps an unclosed thinking block inside reasoning at stream end', () => {
+        const r = drive(['<thinking>', 'still thinking', ' and more']);
+        assert.equal(r.visible, '');
+        assert.equal(r.thinking, 'still thinking and more');
+        assert.equal(noTagLeak(r.visible), true);
+    });
+
+    it('preserves multi-block thinking without duplication on a tool-loop turn', () => {
+        const r = drive(['<thinking>round 1 plan</thinking>', 'Answer 1 ', '<thinking>round 2 synthesis</thinking>', 'Final answer']);
+        assert.equal(r.thinking, 'round 1 planround 2 synthesis');
+        assert.equal(r.visible, 'Answer 1 Final answer');
+    });
+
+    it('settled parser strips pipe-thought pairs and orphan pipe tokens', () => {
+        const paired = extractAndStripThinkBlocks('<|thought|>hidden<|/thought|>Shown');
+        assert.deepEqual([paired.visible, paired.leaked], ['Shown', 'hidden']);
+        const orphan = extractAndStripThinkBlocks('...hidden<|/thought|>Shown');
+        assert.equal(orphan.visible, '...hiddenShown');
+        assert.equal(noTagLeak(orphan.visible), true);
+    });
+
+    it('browser proxy and Electron bridge produce identical reasoning/answer for mid-split inline tags', () => {
+        const browser = createBrowserSseParser('chat_completions');
+        const electron = createSseParser('chat_completions');
+        const bridgeGate = createThinkingStreamGate();
+        let bText = '', bReason = '', eText = '', eReason = '';
+        const feed = (payload: string): void => {
+            const frame = `data: ${JSON.stringify({ choices: [{ delta: { content: payload } }] })}\n\n`;
+            const batch = browser.push(frame);
+            bText += batch.textDeltas.join('');
+            bReason += batch.reasoningDeltas.join('');
+            const parsed = electron.push(frame);
+            for (const ev of parsed.events) {
+                if (ev.type === 'reasoning') eReason += ev.delta ?? '';
+                else if (ev.type === 'text') {
+                    const gated = bridgeGate.push(ev.delta ?? '');
+                    eText += gated.visible;
+                    eReason += gated.thinking;
+                }
+            }
+        };
+        for (const chunk of ['<thin', 'king>R1</thin', 'king>Answer']) feed(chunk);
+        const bt = browser.flush(), ef = electron.finish(), bf = bridgeGate.flush();
+        bText += bt.textDeltas.join(''); bReason += bt.reasoningDeltas.join('');
+        eText += bf.visible; eReason += bf.thinking;
+        assert.equal(bText, 'Answer');
+        assert.equal(bReason, 'R1');
+        assert.equal(eText, bText, 'Electron visible text matches browser');
+        assert.equal(eReason, bReason, 'Electron reasoning matches browser');
+        assert.equal(ef.toolCalls.length, 0);
     });
 });

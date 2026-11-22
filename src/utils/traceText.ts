@@ -22,7 +22,7 @@ const EMPHASIS_PAIRS: Array<[RegExp, string]> = [
 export const stripTraceMarkers = (text: string): string => {
     let out = text
         .replace(/<\/?(?:think|thinking|thought|reasoning|REASONING_SCRATCHPAD|redacted_thinking)\b[^>]*>/gi, '')
-        .replace(/<\|(?:begin_of_thought|end_of_thought|\/?think)\|>/gi, '')
+        .replace(/<\|(?:begin_of_thought|end_of_thought|\/?think|\/?thought)\|>/gi, '')
         .replace(/◁\/?think▷/gi, '')
         .replace(/```[a-z]*/gi, '');
     for (const [re, to] of EMPHASIS_PAIRS) out = out.replace(re, to);

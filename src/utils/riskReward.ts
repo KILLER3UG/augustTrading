@@ -30,7 +30,7 @@ export const firstTargetDistance = (
 ): number | null => {
     const distances = takeProfits
         .map(finiteOrNull)
-        .filter((tp): tp is number => tp !== null)
+        .filter((tp): tp is number => tp !== null && tp > 0)
         .map(tp => Math.abs(tp - entry))
         .filter(d => d > 0);
     return distances.length > 0 ? Math.min(...distances) : null;
@@ -53,7 +53,9 @@ export const nearestTargetPrice = (
     let bestDistance = Infinity;
     for (const raw of takeProfits) {
         const tp = finiteOrNull(raw);
-        if (tp === null) continue;
+        // A price must be positive: a finite -5 used to read as a 105-point
+        // reward on a Short and quote a fictitious 52.5:1 to every caller.
+        if (tp === null || tp <= 0) continue;
         const distance = Math.abs(tp - entry);
         if (distance <= 0 || distance >= bestDistance) continue;
         bestDistance = distance;
@@ -176,7 +178,7 @@ export const plannedRiskRewardSigned = (input: {
 
     const usable = input.takeProfits
         .map(finiteOrNull)
-        .filter((tp): tp is number => tp !== null);
+        .filter((tp): tp is number => tp !== null && tp > 0);
     // The canonical selection: the target NEAREST the entry.
     const target = nearestTargetPrice(entry, usable);
     const isLong = input.direction === 'Long';
