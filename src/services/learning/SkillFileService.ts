@@ -316,7 +316,10 @@ export const skillSlugOf = (file: MemoryFile): string | null => {
     return slug || null;
 };
 
-const isBundledName = (file: MemoryFile): boolean => !file.path && file.name.includes('__');
+/** A bundled skill ships under a `__`-prefixed head name with no notebook
+ *  path; exported so the lifecycle store can default a never-touched bundled
+ *  skill's origin without a second copy of the predicate. */
+export const isBundledName = (file: MemoryFile): boolean => !file.path && file.name.includes('__');
 
 /** The head file of a skill. Bundled files are not skills. */
 export const isSkillFile = (file: MemoryFile): boolean => {

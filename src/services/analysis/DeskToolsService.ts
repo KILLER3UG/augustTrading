@@ -107,13 +107,17 @@ export const toolActionFromResult = (name: string, ok: boolean, content: string,
         // The canonical memory_* trio the always-on index instructs the seat
         // to call: without these rows, a model rewriting a fact left no trace
         // in the transcript ledger (the audit's top-2).
-        || name === 'memory_add' || name === 'memory_update' || name === 'memory_delete';
+        || name === 'memory_add' || name === 'memory_update' || name === 'memory_delete'
+        // Pass-1 curated-memory writes and skill lifecycle moves are
+        // persisted side-effects: without these rows the transcript would
+        // show a write that never appears as an action.
+        || name === 'memory' || name === 'skill_manage';
     const isCustom = name.startsWith('custom_');
     if (!isProposal && !isCustom) return null;
     const at = new Date().toISOString();
     const verbFor = (tool: string): string => (
         tool === 'forge_tool' || tool === 'propose_strategy' ? 'proposed'
-            : tool === 'skill_write' || tool === 'memory_add' ? 'saved'
+            : tool === 'skill_write' || tool === 'memory_add' || tool === 'memory' ? 'saved'
                     : tool === 'amend_memory' ? 'amended'
                         : tool === 'memory_update' ? 'updated'
                             : tool === 'forget' || tool === 'memory_delete' ? 'removed'
@@ -156,6 +160,14 @@ export const toolActionFromResult = (name: string, ok: boolean, content: string,
         } else if (name === 'remember' || name === 'memory_add') {
             label = `${parsed.kind ?? 'memory'}/${parsed.slug ?? 'entry'}`;
             review = 'your memory index';
+        } else if (name === 'memory') {
+            label = `${parsed.target === 'user' ? 'USER.md' : 'MEMORY.md'}`;
+            review = `curated memory (${parsed.applied ?? 0} op · undo available)`;
+            verb = 'saved';
+        } else if (name === 'skill_manage') {
+            label = String(parsed.slug ?? 'skill');
+            review = `skill ${parsed.action ?? 'manage'} · status ${parsed.status ?? 'probation'} (undo available)`;
+            verb = parsed.action === 'create' ? 'created' : parsed.action === 'archive' ? 'archived' : parsed.action === 'unarchive' ? 'restored' : 'updated';
         } else if (name === 'memory_update') {
             label = String(parsed.slug ?? 'entry');
             review = 'your memory index (previous value in the audit trail)';
@@ -178,6 +190,7 @@ const isActionableToolResult = (r: DeskToolResult): boolean =>
         || r.name === 'propose_strategy' || r.name === 'emit_signal'
     || r.name === 'remember' || r.name === 'forget'
     || r.name === 'memory_add' || r.name === 'memory_update' || r.name === 'memory_delete'
+    || r.name === 'memory' || r.name === 'skill_manage'
     || r.name.startsWith('custom_');
 
 export interface DeskToolDefinition {
@@ -735,6 +748,16 @@ const TOOL_BUDGETS: Record<string, number> = {
     project_future_price: 2400,
     get_chart_studies: 3000,
     get_setup_history_stats: 2600,
+    // The curated-memory receipt: it names the target, the applied count and
+    // the usage — a clip would hide the one number the agent consolidates on.
+    memory: 1600,
+    // A session-search digest carries whole hits (excerpt + neighbors); a
+    // clip mid-hit would read as a truncated quote, so the digest stops at a
+    // whole hit and says what was withheld.
+    session_search: 3000,
+    // A skill_manage receipt names the refusal reasons (sections, unknown
+    // tools, duplicates) — the agent needs all of them to fix the write.
+    skill_manage: 2400,
 };
 
 /**
@@ -1039,6 +1062,9 @@ const TOOL_LABELS: Record<string, string> = {
     // used — and toolKinds needs no parallel vocabulary.
     memory_read: 'read memory',
     memory_add: 'remember',
+    memory: 'curated memory',
+    session_search: 'session search',
+    skill_manage: 'skill manage',
     memory_update: 'amend memory',
     memory_delete: 'forget',
     memory_search_sessions: 'session search',
@@ -1526,6 +1552,79 @@ export const DESK_TOOL_DEFINITIONS: DeskToolDefinition[] = [
                     slug: { type: 'string', description: 'The entry slug to delete.' },
                 },
                 required: ['slug'],
+                additionalProperties: false,
+            },
+        },
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'memory',
+            description:
+                'Curate the two BOUNDED memory files: target "user" = USER.md (who the trader is: risk limits, preferred pairs/sessions, style, hard rules; cap 1,500 chars) and target "memory" = MEMORY.md (workflow corrections, post-mortem lessons, tool quirks, active market reminders; cap 2,500 chars). Each operation: "add" (content becomes a dated ## [YYYY-MM-DD] entry), "patch" (old_text is replaced by content — old_text must occur exactly once), "remove" (delete old_text exactly once). A write that would overflow the cap is REFUSED with capacity_exceeded — patch or remove stale entries first; nothing is ever silently truncated. These files are HINTS about the trader, never live market data: do not store prices, funding, positions or one-conversation details here.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    target: { type: 'string', enum: ['user', 'memory'], description: '"user" edits USER.md, "memory" edits MEMORY.md.' },
+                    operations: {
+                        type: 'array',
+                        description: '1–8 operations, applied in order and atomically: one bad operation writes nothing.',
+                        items: {
+                            type: 'object',
+                            properties: {
+                                action: { type: 'string', enum: ['add', 'patch', 'remove'] },
+                                old_text: { type: 'string', description: 'patch/remove: the exact existing text (must occur exactly once).' },
+                                content: { type: 'string', description: 'add: the entry text. patch: the replacement text.' },
+                            },
+                            required: ['action'],
+                            additionalProperties: false,
+                        },
+                    },
+                },
+                required: ['target', 'operations'],
+                additionalProperties: false,
+            },
+        },
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'session_search',
+            description:
+                'Search the trader\'s PAST CHAT SESSIONS (the dock transcripts) for what was already worked through — verbatim excerpts with the session title, ISO timestamp and the neighboring turns for context. Use when prior work on this coin, setup or question could change the answer ("what did we conclude about ETH last week?", "find where we discussed this funding spike"). You get exact quotes to cite, not a summary.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    query: { type: 'string', description: 'Free text; an exact phrase scores highest.' },
+                    limit: { type: 'number', description: 'Max hits (default 5, max 20).' },
+                    symbol: { type: 'string', description: 'Only sessions/turns about this instrument, e.g. ETHUSDT.' },
+                    session_id: { type: 'string', description: 'Search one session only.' },
+                    window: { type: 'number', description: 'Neighboring turns before/after each hit (0–3, default 1).' },
+                },
+                required: ['query'],
+                additionalProperties: false,
+            },
+        },
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'skill_manage',
+            description:
+                'Create, patch, archive or unarchive a playbook SKILL. Call skill_index and review the library in an EARLIER round, and skill_view the target before patching; a patch MUST carry the if_version that view showed. Create needs ## sections When to Use / Procedure (Steps accepted) / Pitfalls / Verification, and the body may only name desk tools that exist in the catalogue. An agent-created or agent-patched skill starts at status "probation" and is NEVER self-promoted to verified — promotion is decided by the signal ledger (nEffective >= 6). Prefer a targeted patch (old_text → new_text) over a rewrite. Every mutation returns a receipt with an undo snapshot.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    action: { type: 'string', enum: ['create', 'patch', 'archive', 'unarchive'] },
+                    slug: { type: 'string', description: 'The skill slug (lowercase letters, digits, hyphens).' },
+                    name: { type: 'string', description: 'create: display title.' },
+                    description: { type: 'string', description: 'create/patch: one line saying WHEN the skill applies.' },
+                    body: { type: 'string', description: 'create: the full markdown body with the four ## sections.' },
+                    old_text: { type: 'string', description: 'patch: the exact body text to replace (must occur exactly once).' },
+                    new_text: { type: 'string', description: 'patch: the replacement text.' },
+                    if_version: { type: 'string', description: 'patch: the version skill_view showed — a mismatch refuses the write.' },
+                },
+                required: ['action', 'slug'],
                 additionalProperties: false,
             },
         },
@@ -2984,6 +3083,13 @@ export const INITIAL_DESK_TOOL_NAMES: readonly string[] = [
     'memory_update',
     'memory_delete',
     'memory_search_sessions',
+    // Pass-1 agent-driven memory: the curated-files editor, episodic session
+    // recall and the skill lifecycle ride every turn like the memory family
+    // above — a tool the always-on workflow names must never be a deferred
+    // name the wire hides.
+    'memory',
+    'session_search',
+    'skill_manage',
 ];
 
 /** The schema-on-demand tool. NOT a desk capability: it is not in
@@ -3987,6 +4093,10 @@ export async function executeDeskTool(
         'amend_memory', 'get_notebook_map',
         'memory_read', 'memory_add', 'memory_update', 'memory_delete', 'memory_search_sessions',
         'skill_index', 'skill_write', 'skill_view',
+        // Pass-1 agent-driven memory: the curated files, episodic session
+        // recall and the skill lifecycle are memory surfaces too — with the
+        // switch off, none of them read or write.
+        'memory', 'session_search', 'skill_manage',
     ]);
     if (context.memoryEnabled === false && MEMORY_OFF_TOOLS.has(call.name)) {
         return rejectedResult(call, `${call.name} rejected: memory is OFF for this turn — nothing is read or saved.`);
@@ -4274,6 +4384,11 @@ ${hitContent}`, ...resolvedSymbolField(call, fallback) };
                 const { getSkill, skillPathOf } = await import('../learning/SkillFileService');
                 const skill = getSkill(wanted);
                 if (!skill) return rejectedResult(call, `skill_view rejected: no skill named "${wanted}" in the index`);
+                // The inactivity Curator's usage stamp: every skill_view is a
+                // USE. Fire-and-forget — a failed stamp must never fail a read.
+                void import('../learning/skillManage')
+                    .then(m => m.touchSkillUsage(skill.slug))
+                    .catch(() => { /* best-effort */ });
                 const relative = (file: typeof skill.bundled[number]): string => {
                     const path = skillPathOf(file) ?? file.name;
                     return path.startsWith(`${skill.slug}/`) ? path.slice(skill.slug.length + 1) : path;
@@ -4783,6 +4898,108 @@ ${body}`);
                     note: 'Soft-deleted — gone from every future index; restorable in Settings → Assistant memory for 30 days.',
                 });
                 break;
+            }
+            case 'memory': {
+                // The BOUNDED curated files (USER.md / MEMORY.md). Atomic
+                // batch, hard caps, receipt with an undo snapshot — the
+                // agent curates; nothing is ever silently truncated.
+                const { applyCuratedMemoryOps } = await import('../learning/curatedMemory');
+                const targetRaw = asString(call.arguments.target).toLowerCase();
+                if (targetRaw !== 'user' && targetRaw !== 'memory') {
+                    return rejectedResult(call, 'memory rejected: target must be "user" (USER.md) or "memory" (MEMORY.md).');
+                }
+                const rawOps = call.arguments.operations;
+                if (!Array.isArray(rawOps) || rawOps.length === 0) {
+                    return rejectedResult(call, 'memory rejected: operations must be a non-empty array of { action, old_text?, content? }.');
+                }
+                const operations: Array<{ action: 'add' | 'patch' | 'remove'; old_text?: string; content?: string }> = [];
+                const badOps: Array<{ index: number; action: string }> = [];
+                for (const [index, op] of rawOps.entries()) {
+                    const o = (op ?? {}) as Record<string, unknown>;
+                    const action = asString(o.action).toLowerCase();
+                    // Do NOT coerce an unknown action to 'add': a typo like
+                    // "removee" would silently append a memory entry instead
+                    // of deleting one. Refuse here AND in the core gate.
+                    if (action !== 'add' && action !== 'patch' && action !== 'remove') {
+                        badOps.push({ index, action });
+                        continue;
+                    }
+                    operations.push({
+                        action,
+                        ...(typeof o.old_text === 'string' ? { old_text: o.old_text } : {}),
+                        ...(typeof o.content === 'string' ? { content: o.content } : {}),
+                    });
+                }
+                if (badOps.length > 0) {
+                    return rejectedResult(call, `memory rejected: operations[${badOps[0].index}].action "${badOps[0].action}" is not add | patch | remove.`);
+                }
+                // The SAME privacy gate every other memory writer passes. A
+                // bounded curated file is still durable memory: secrets,
+                // safeguard overrides and (unless opted in) sensitive personal
+                // categories never land there just because the tool is new.
+                const { filterMemoryWrite } = await import('../../utils/memoryWriteFilters');
+                const { getHarnessSettings } = await import('../../utils/harnessSettings');
+                const sensitiveAllowed = getHarnessSettings().sensitiveMemoryEnabled === true;
+                for (const [index, op] of operations.entries()) {
+                    const verdict = filterMemoryWrite(`${op.old_text ?? ''}\n${op.content ?? ''}`);
+                    if (verdict.refused) return rejectedResult(call, `memory rejected: operations[${index}].content ${verdict.refused}`);
+                    if (verdict.sensitive && !sensitiveAllowed) {
+                        return rejectedResult(call, `memory rejected: operations[${index}] is a sensitive-category entry (health/finances/identity) and the sensitive-memory setting is off`);
+                    }
+                }
+                const receipt = await applyCuratedMemoryOps(targetRaw, operations);
+                return { toolCallId: call.id, name: call.name, ok: receipt.ok, content: JSON.stringify(receipt) };
+            }
+            case 'session_search': {
+                // Episodic recall over the persisted chat-dock sessions.
+                const { searchChatSessionsForTool, formatSessionSearchDigest } = await import('../trade/sessionSearchTool');
+                const result = searchChatSessionsForTool({
+                    query: asString(call.arguments.query),
+                    ...(typeof call.arguments.limit === 'number' ? { limit: call.arguments.limit } : {}),
+                    ...(typeof call.arguments.symbol === 'string' && asString(call.arguments.symbol) ? { symbol: asString(call.arguments.symbol) } : {}),
+                    ...(typeof call.arguments.session_id === 'string' && asString(call.arguments.session_id) ? { session_id: asString(call.arguments.session_id) } : {}),
+                    ...(typeof call.arguments.window === 'number' ? { window: call.arguments.window } : {}),
+                });
+                content = formatSessionSearchDigest(result, TOOL_BUDGETS.session_search ?? 3000);
+                break;
+            }
+            case 'skill_manage': {
+                // The agent's skill lifecycle. File bytes still go through
+                // the ONE pen (writeSkillFile) inside skillManage; this adds
+                // the probation gate, the registered-tool check and the
+                // reversible lifecycle metadata.
+                const { skillManage } = await import('../learning/skillManage');
+                const actionRaw = asString(call.arguments.action).toLowerCase() as import('../learning/skillManage').SkillManageAction;
+                const knownTools = new Set<string>([
+                    ...DESK_TOOL_DEFINITIONS.map(d => d.function.name),
+                    ...CHART_ACTION_TOOL_DEFS.map(d => d.function.name),
+                    'load_tools',
+                ]);
+                // A SKILL WRITE IS A SKILL WRITE, whatever verb wraps it. The
+                // one pen enforces read-before-write; this gate refuses a
+                // lifecycle call that has not reviewed the library in an
+                // EARLIER round, then passes that review to the pen so a patch
+                // still needs the exact version skill_view showed.
+                if (!context.skillReview?.indexVersion) {
+                    return rejectedResult(call, 'skill_manage rejected: call skill_index and review the whole library in an earlier round before creating or patching a skill.');
+                }
+                const manageReceipt = await skillManage({
+                    action: actionRaw,
+                    slug: asString(call.arguments.slug) || undefined,
+                    name: asString(call.arguments.name) || undefined,
+                    description: asString(call.arguments.description) || undefined,
+                    body: asString(call.arguments.body) || undefined,
+                    old_text: asString(call.arguments.old_text) || undefined,
+                    new_text: asString(call.arguments.new_text) || undefined,
+                    if_version: asString(call.arguments.if_version) || undefined,
+                    source_session_id: context.sessionId ?? undefined,
+                }, knownTools, undefined, context.skillReview);
+                return {
+                    toolCallId: call.id,
+                    name: call.name,
+                    ok: manageReceipt.ok,
+                    content: JSON.stringify(manageReceipt),
+                };
             }
             case 'repo_read': {
                 const api = window.electronAPI?.repo;

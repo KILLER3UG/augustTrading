@@ -44,6 +44,14 @@ export const SKILL_SUPPORT_ROLES = ['references', 'templates', 'scripts', 'asset
  *  from this one list. */
 export const SKILL_BODY_SECTIONS = ['When to use', 'Steps', 'Pitfalls', 'Verification'] as const;
 
+/** Headings that satisfy a canonical section. `Procedure` is the spelling the
+ *  desk tool advertises to the model; `Steps` is the repository's canonical
+ *  heading. One alias table here keeps the model-facing gate and the store's
+ *  own format check from disagreeing about the same body. */
+const SKILL_SECTION_ALIASES: Readonly<Record<string, readonly string[]>> = {
+    steps: ['steps', 'procedure'],
+};
+
 /** The suggested headings a body does not have yet, read off its `## `
  *  headings case-insensitively (closing hashes tolerated). */
 export const missingSkillSections = (body: string): string[] => {
@@ -51,7 +59,10 @@ export const missingSkillSections = (body: string): string[] => {
     for (const match of (body || '').matchAll(/^#{1,6}[ \t]+(.+?)[ \t]*#*[ \t]*$/gm)) {
         present.add(match[1].trim().toLowerCase());
     }
-    return SKILL_BODY_SECTIONS.filter(section => !present.has(section.toLowerCase()));
+    return SKILL_BODY_SECTIONS.filter(section => {
+        const key = section.toLowerCase();
+        return !(SKILL_SECTION_ALIASES[key] ?? [key]).some(heading => present.has(heading));
+    });
 };
 
 /** What a SKILL.md must carry to BE a skill, as opposed to a stray markdown

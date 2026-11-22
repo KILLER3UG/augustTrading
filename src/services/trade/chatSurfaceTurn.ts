@@ -39,6 +39,7 @@ import { TASK_BUDGETS } from '../providers/taskBudgets';
 import { resolveComposerEffort, type ReasoningEffort } from '../providers/reasoningControls';
 import { buildSkillsIndexForPrompt, usableSkillRows } from './tradeChatContext';
 import { skillIndexRows } from '../learning/SkillFileService';
+import { promptSkillRows } from '../learning/skillManage';
 import { getMemoryFiles } from '../learning/MemoryFilesService';
 import { buildNotebookTopicsIndex } from '../learning/memoryTopics';
 import { buildLearningRulesIndex } from '../../utils/learningRulesIndex';
@@ -50,6 +51,7 @@ import { DEFAULT_CONTEXT_WINDOW_TOKENS, resolveContextWindow } from '../../utils
 import { activeStrategiesBlock } from '../learning/strategyStore';
 import { recordSeatInjections } from '../learning/MemoryInjectionService';
 import { buildProfileMemoryIndex } from '../learning/profileMemory';
+import { buildCuratedMemoryPromptBlock, getCachedCuratedMemorySnapshot } from '../learning/curatedMemory';
 import { buildGoalsIndex, focusedGoal, goalMatchesMessage, listGoals } from '../goals/GoalService';
 import { runToolTurn, type CaptureSnapshot, type ToolTurnEvents, type ToolTurnOutcome, type ToolTurnRequest } from './toolTurn';
 import { isMarketReadTool } from '../analysis/deskToolShared';
@@ -104,6 +106,11 @@ export const CHAT_SURFACE_TOOLS = [
     // The memory_* family (owner ruling 2026-11-10) — the names the always-on
     // fact index actually tells the seat to call. The aliases above still work.
     'memory_read', 'memory_add', 'memory_update', 'memory_delete', 'memory_search_sessions',
+    // Pass-1 agent-driven memory — the bounded curated files, episodic recall
+    // and the skill lifecycle are granted here for the same reason as the
+    // memory_* family above: the system prompt names them, so the seat must
+    // hold their schemas. check-contracts pins both grant lists.
+    'memory', 'session_search', 'skill_manage',
     // The one tool with a human in it: it suspends the turn until the trader
     // answers (services/analysis/askUserInput.ts).
     'ask_user_input',
@@ -198,12 +205,15 @@ ${constitution}`
     let skillsBlock: string;
     let skills: string[];
     try {
-        const rows = skillIndexRows();
-        // The SAME filtered list the prompt carries (`usableSkillRows`), so the
-        // row's `injectedSkills` names exactly the skills the model was shown.
+        // The PROMPT index projection (promptSkillRows): archived skills drop
+        // out and every line opens with its lifecycle marker — the model sees
+        // [probation]/[verified]/[stale] at a glance. The SAME filtered list
+        // the prompt carries (`usableSkillRows`), so the row's
+        // `injectedSkills` names exactly the skills the model was shown.
         // Ranking it twice (here and inside the builder) is idempotent — the
         // sort is stable, and both read one filter rather than two that can
         // drift apart.
+        const rows = promptSkillRows();
         skills = usableSkillRows(rows).slice(0, budget.skills).map(r => r.slug);
         skillsBlock = buildSkillsIndexForPrompt(rows, budget.skills, where);
     } catch {
@@ -261,6 +271,13 @@ ${constitution}`
     } catch {
         memoryBlock = '';
     }
+    // The SAME frozen curated snapshot the dock seat carries. Primed once at
+    // profile load; mid-session `memory` writes persist and answer with a
+    // receipt, they never rewrite this prefix (KV-cache contract). Memory OFF
+    // suppresses it along with the rest of the memory family.
+    const curatedMemoryBlock = memoryEnabled
+        ? buildCuratedMemoryPromptBlock(getCachedCuratedMemorySnapshot())
+        : '';
     // The goal is the work environment, not memory; it rides even with memory
     // off. One compact line per goal, the focused one first.
     let goalsBlock: string;
@@ -311,7 +328,7 @@ ${constitution}`
         ? dedupeInjectionBlocks([skillsBlock, rulesBlock]).blocks
         : [skillsBlock, rulesBlock];
     return {
-        text: [mandate, riskMathBlock, goalsBlock, skillsRulesSkills, skillsRulesRules, topicsBlock, strategiesBlock, memoryBlock].filter(Boolean).join('\n\n'),
+        text: [mandate, riskMathBlock, goalsBlock, skillsRulesSkills, skillsRulesRules, topicsBlock, strategiesBlock, memoryBlock, curatedMemoryBlock].filter(Boolean).join('\n\n'),
         skills,
     };
 };

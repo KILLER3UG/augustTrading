@@ -300,6 +300,11 @@ export const DESK_TOOL_NAMES: readonly string[] = [
     // a seat that lacks them is instructed every turn to call a tool the
     // executor refuses — the dead affordance this list exists to prevent.
     'memory_read', 'memory_add', 'memory_update', 'memory_delete', 'memory_search_sessions',
+    // Pass-1 agent-driven memory: the bounded curated-files editor, the local
+    // episodic chat search and the skill lifecycle. These are granted to BOTH
+    // seats — a tool the system prompt names but a seat cannot call is the
+    // dead affordance this list exists to prevent (pinned by check-contracts).
+    'memory', 'session_search', 'skill_manage',
     // Goal environments: durable work state, edited mid-task.
     'list_goals', 'open_goal', 'create_goal', 'update_goal', 'restore_goal',
     // The harness change ledger: reading and moving its own self-modifications.
