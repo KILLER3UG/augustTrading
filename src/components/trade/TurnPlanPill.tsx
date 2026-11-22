@@ -12,7 +12,7 @@
  */
 import React, { useCallback, useEffect, useSyncExternalStore } from 'react';
 import {
-    clearTurnPlan, getTurnPlan, subscribeTurnPlan,
+    clearTurnPlan, getLatestTurnPlan, subscribeTurnPlan,
     type TurnPlanStepStatus,
 } from '../../services/trade/turnPlan';
 
@@ -37,10 +37,14 @@ export interface TurnPlanPillProps {
 
 const TurnPlanPill: React.FC<TurnPlanPillProps> = ({ sessionId }) => {
     const key = sessionId ?? '';
-    const subscribe = useCallback((onStoreChange: () => void) => subscribeTurnPlan((changedId) => {
-        if (changedId === key) onStoreChange();
-    }), [key]);
-    const getSnapshot = useCallback(() => getTurnPlan(key), [key]);
+    // Subscribe to ALL plan changes, not just this composer's key: a Chat
+    // turn is stored under the conversation id while this pill lives in the
+    // dock composer keyed by the session id. The visible plan is the latest
+    // one; clear-on-settle still targets this composer's own session.
+    const subscribe = useCallback((onStoreChange: () => void) => subscribeTurnPlan(() => {
+        onStoreChange();
+    }), []);
+    const getSnapshot = useCallback(() => getLatestTurnPlan(), []);
     const getServerSnapshot = useCallback((): null => null, []);
     const plan = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
     const [open, setOpen] = React.useState(false);

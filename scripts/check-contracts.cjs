@@ -7924,6 +7924,9 @@ const checkPass2Fixes = () => {
     const clearCalls = (deskSrc.match(/clearAllTurnPlans\(\)/g) || []).length;
     ok('pass2: the plan is cleared on BOTH loop exits (clean answer and tool round)',
         clearCalls >= 2);
+    ok('pass2: the pill renders the latest plan across Chat and Dock keys',
+        /getLatestTurnPlan\s*=/.test(plan)
+        && /getLatestTurnPlan\(\)/.test(read('src/components/trade/TurnPlanPill.tsx')));
     ok('pass2: an undo records the refused NEW content in the writer\'s fingerprint shape',
         /rejectedContent/.test(curated) && /rejectedContent/.test(skills)
         && /content: r\.rejectedContent \?\? ''/.test(read('src/components/trade/panels/ChatWorkTimeline.tsx')));

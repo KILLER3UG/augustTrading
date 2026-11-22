@@ -99,6 +99,21 @@ export const setTurnPlan = (sessionId: string, steps: TurnPlanStep[]): TurnPlan 
 
 export const getTurnPlan = (sessionId: string): TurnPlan | null => plans.get(sessionId || 'default') ?? null;
 
+/**
+ * The pill has ONE focus: the most recently updated plan across all sessions.
+ * A Chat turn is keyed by conversation id while the dock composer holds a
+ * session id, so a pill that subscribes by its own id can miss a plan that was
+ * just written under the other key. There is only ever one streaming turn in
+ * focus, so rendering the latest plan is both simpler and correct.
+ */
+export const getLatestTurnPlan = (): TurnPlan | null => {
+    let latest: TurnPlan | null = null;
+    for (const plan of plans.values()) {
+        if (!latest || plan.updatedAt >= latest.updatedAt) latest = plan;
+    }
+    return latest;
+};
+
 export const clearTurnPlan = (sessionId: string): void => {
     const key = sessionId || 'default';
     if (!plans.delete(key)) return;
