@@ -345,6 +345,45 @@ export interface LoggedTrade {
   simulated?: boolean;
   /** Explicit fee/spread/slippage/gap-open fill assumptions stamped on paper trades. */
   fillAssumptions?: import('./analysis').PaperFillAssumptions;
+  /**
+   * Paper-broker settlement detail (Pass 3). Present only on rows the local
+   * `PaperBrokerService` wrote on a position close — the broker's own ledger
+   * is the authoritative copy, this is the journal-facing receipt. The
+   * Paper|Live split itself reads through `simulated` (paper) vs absent
+   * (live) so legacy rows default to live with no migration.
+   */
+  paper?: PaperTradeRecord;
+}
+
+/** The broker facts a settled paper row carries beside the generic journal
+ *  fields — the numbers the paper ledger settled, verbatim. */
+export interface PaperTradeRecord {
+  /** The broker position this row settled. */
+  positionId: string;
+  side: 'long' | 'short';
+  qty: number;
+  entryPrice: number;
+  exitPrice: number;
+  /** Signed gross price PnL before fees and funding. */
+  grossPnlUsd: number;
+  /** Entry + exit fees on full notional. */
+  feesUsd: number;
+  /** Cumulative 8h funding paid over the holding window (positive = paid). */
+  fundingPaidUsd: number;
+  /** grossPnl − fees − funding. */
+  netPnlUsd: number;
+  /** Net PnL in R against the position's planned risk. */
+  rMultiple: number;
+  exitReason: 'sl' | 'tp' | 'manual_close' | 'liquidation';
+  /** The plan's stop on the filled position — the R denominator, kept so the
+   *  journal row and the broker receipt cannot disagree on risk. */
+  stopLoss?: number;
+  /** Resting targets as they stood at settlement (may be partially unfilled). */
+  takeProfits?: number[];
+  openedAt: number;
+  closedAt: number;
+  skillSlug?: string;
+  thesis?: string;
 }
 
 export interface StrategySearchResult {
