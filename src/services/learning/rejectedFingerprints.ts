@@ -20,13 +20,50 @@ const MAX_FINGERPRINTS = 200;
 
 export type RejectedSource = 'user_undo' | 'proposal_reject' | 'background_skip';
 
+/**
+ * Compact OPTIONAL provenance for a refusal or mutation: WHY it happened and
+ * WHICH model proposed it. Deliberately a wrapper AROUND the semantic payload:
+ *
+ *   - it is NEVER part of `rejectionFingerprint`'s hash inputs (kind + target +
+ *     normalized content only). If a rationale or model id entered the hash, a
+ *     reworded wrapper would mint a fresh fingerprint and evade the durable
+ *     refusal this store exists to enforce;
+ *   - every field is optional on write EXCEPT `recordedAt`, which the writer
+ *     defaults to now. Old rows have no provenance at all — no migration.
+ *
+ * `modelId` is always an INJECTED value. No module invents one.
+ */
+export interface Provenance {
+    rationale?: string;
+    observedOutcome?: string;
+    modelId?: string;
+    recordedAt: string;
+}
+
+/** Caller-supplied provenance: all fields optional, `recordedAt` defaulted. */
+export type ProvenanceInput = Partial<Omit<Provenance, 'recordedAt'>> & { recordedAt?: string };
+
 export interface RejectedFingerprintRow {
     fingerprint: string;
     source: RejectedSource;
     /** Human-readable label for Settings/Undo receipts — never used for matching. */
     label: string;
     at: string;
+    /** Optional WHY / WHICH MODEL. Never hashed — see `Provenance`. */
+    provenance?: Provenance;
 }
+
+/** Resolve caller provenance into a storable row, stamping a clock when the
+ *  caller did not supply one. Pure apart from the default clock. */
+export const resolveProvenance = (prov?: ProvenanceInput): Provenance | undefined => {
+    if (!prov || typeof prov !== 'object') return undefined;
+    return {
+        rationale: prov.rationale,
+        observedOutcome: prov.observedOutcome,
+        modelId: prov.modelId,
+        recordedAt: prov.recordedAt ?? new Date().toISOString(),
+    };
+};
 
 interface RejectedBlob {
     version: 1;
@@ -88,15 +125,18 @@ export const recordRejectedFingerprint = async (
     source: RejectedSource,
     label: string,
     username = getActiveUsername() || 'default',
+    options?: { provenance?: ProvenanceInput },
 ): Promise<string> => {
     const fingerprint = rejectionFingerprint(parts);
     const blob = await readBlob(username);
     const existingIndex = blob.rows.findIndex(r => r.fingerprint === fingerprint);
+    const provenance = resolveProvenance(options?.provenance);
     const row: RejectedFingerprintRow = {
         fingerprint,
         source,
         label: String(label ?? '').slice(0, 200),
         at: new Date().toISOString(),
+        ...(provenance ? { provenance } : {}),
     };
     if (existingIndex >= 0) blob.rows[existingIndex] = row;
     else blob.rows.push(row);

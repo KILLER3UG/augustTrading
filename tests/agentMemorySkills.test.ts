@@ -580,3 +580,188 @@ describe('2D — post-turn review and periodic Dream', () => {
         });
     });
 });
+
+// ─── Phase 2B: SIM provenance + EfficientSkill pruning ──────────────────────
+
+describe('2E — SIM provenance and EfficientSkill post-verification pruning', () => {
+            const known = new Set(['get_chart_view', 'setup_base_rate', 'memory', 'skill_manage']);
+
+            it('skill_manage persists provenance (5th positional arg) and Undo restores the prior provenance', async () => {
+            const U = 'sim-provenance-probe';
+            await withUser(U, async () => {
+                const { initMemoryFiles } = await import('../src/services/learning/MemoryFilesService');
+                const { skillManage, getSkillMeta, undoSkillManageMutation } =
+                    await import('../src/services/learning/skillManage');
+                await initMemoryFiles(U);
+
+                const first = { rationale: 'trader asked for a tighter stop', modelId: 'probe-model-1', recordedAt: '2026-11-20T10:00:00.000Z' };
+                const created = await skillManage({
+                    action: 'create', slug: 'sim-provenance-skill', name: 'SIM Provenance',
+                    description: 'Probe playbook for provenance persistence.',
+                    body: [
+                        '## When to Use', 'When a provenance probe runs.', '',
+                        '## Procedure', '1. Confirm the level.', '',
+                        '## Pitfalls', 'Do not chase the first touch.', '',
+                        '## Verification', 'Check the base rate before taking it.',
+                    ].join('\n'),
+                }, known, U, undefined, first);
+                assert.equal(created.ok, true, JSON.stringify(created));
+                assert.equal(created.provenance?.modelId, 'probe-model-1');
+                const stamped = await getSkillMeta('sim-provenance-skill', U);
+                assert.equal(stamped?.provenance?.modelId, 'probe-model-1');
+                assert.equal(stamped?.provenance?.rationale, first.rationale);
+                assert.equal(stamped?.provenance?.recordedAt, first.recordedAt);
+                assert.equal(created.undoSkill?.priorMeta['sim-provenance-skill']?.provenance, undefined,
+                    'the undo snapshot holds the PRIOR meta — no provenance before this mutation');
+
+                // The wrapper shape is accepted too; a patch replaces provenance.
+                const patched = await skillManage({
+                    action: 'patch', slug: 'sim-provenance-skill',
+                    if_version: (await import('../src/services/learning/SkillFileService')).getSkill('sim-provenance-skill')!.version,
+                    old_text: 'Do not chase the first touch.',
+                    new_text: 'Never chase the first touch; wait for a close.',
+                }, known, U, undefined, { provenance: { rationale: 'reworded after a correction', modelId: 'probe-model-2' } });
+                assert.equal(patched.ok, true, JSON.stringify(patched));
+                assert.equal((await getSkillMeta('sim-provenance-skill', U))?.provenance?.modelId, 'probe-model-2');
+                assert.ok((await getSkillMeta('sim-provenance-skill', U))?.provenance?.recordedAt, 'recordedAt defaulted');
+
+                const undone = await undoSkillManageMutation(patched.undoSkill!, U);
+                assert.equal(undone.ok, true, JSON.stringify(undone));
+                assert.equal((await getSkillMeta('sim-provenance-skill', U))?.provenance?.modelId, 'probe-model-1',
+                    'Undo restored the prior provenance, not the patch\'s');
+            });
+            });
+
+            it('a rejection row carries provenance but provenance NEVER enters the fingerprint hash', async () => {
+            const U = 'sim-reject-provenance-probe';
+            await withUser(U, async () => {
+                const { recordRejectedFingerprint, rejectionFingerprint, listRejectedFingerprints } =
+                    await import('../src/services/learning/rejectedFingerprints');
+                const parts = { kind: 'skill_manage', target: 'sim-provenance-skill', content: 'a rule | a description' };
+                const fp = await recordRejectedFingerprint(parts, 'user_undo', 'skill · probe', U,
+                    { provenance: { rationale: 'trader undid it', modelId: 'probe-model-3', recordedAt: '2026-11-21T00:00:00.000Z' } });
+                assert.equal(fp, rejectionFingerprint(parts));
+                let rows = (await listRejectedFingerprints(U)).filter(r => r.fingerprint === fp);
+                assert.equal(rows.length, 1);
+                assert.equal(rows[0].provenance?.modelId, 'probe-model-3');
+
+                // Same semantic payload, DIFFERENT provenance → same fingerprint,
+                // one row, refreshed provenance. A reworded wrapper cannot evade.
+                const fp2 = await recordRejectedFingerprint(parts, 'background_skip', 'skill · probe', U,
+                    { provenance: { rationale: 'a completely different reason', modelId: 'probe-model-4' } });
+                assert.equal(fp2, fp, 'provenance is not a hash input');
+                rows = (await listRejectedFingerprints(U)).filter(r => r.fingerprint === fp);
+                assert.equal(rows.length, 1);
+                assert.equal(rows[0].provenance?.modelId, 'probe-model-4');
+            });
+            });
+
+            it('O-150 dismissal threads injected provenance (modelId never invented here)', async () => {
+            const U = 'sim-o150-provenance-probe';
+            await withUser(U, async () => {
+                const { setPreferenceObject } = await import('../src/services/infrastructure/PreferencesService');
+                const { dismissHarnessRevision } = await import('../src/services/selfMod/harnessOptimization');
+                const { rejectionFingerprint, listRejectedFingerprints } =
+                    await import('../src/services/learning/rejectedFingerprints');
+                const proposal = {
+                    id: 'harness-opt-probe', status: 'pending', kind: 'entry-slippage', promptId: 'analysis.risk_rules',
+                    before: 'old', after: 'Always confirm the level before entering.', reason: 'probe reason',
+                    evidence: [], createdAt: '2026-11-22T00:00:00.000Z', baseline: { hitRate: null, samples: 0 },
+                };
+                await setPreferenceObject(`harness_optimization_v1_${U}`, { lastPassAt: '2026-11-22T00:00:00.000Z', proposal });
+                const dismissed = await dismissHarnessRevision(U, {
+                    rationale: 'trader rejected the entry-slippage revision',
+                    modelId: 'probe-model-9', recordedAt: '2026-11-22T01:00:00.000Z',
+                });
+                assert.equal(dismissed.ok, true, JSON.stringify(dismissed));
+                const fp = rejectionFingerprint({ kind: 'o150:entry-slippage', target: 'analysis.risk_rules', content: proposal.after });
+                const row = (await listRejectedFingerprints(U)).find(r => r.fingerprint === fp);
+                assert.ok(row, 'the dismissal wrote the durable refusal');
+                assert.equal(row!.source, 'proposal_reject');
+                assert.equal(row!.provenance?.modelId, 'probe-model-9');
+                assert.equal(row!.provenance?.recordedAt, '2026-11-22T01:00:00.000Z');
+            });
+            });
+
+            it('pruneVerifiedSkill dedupes bullets only, keeps both validators + tool checks, and refuses unsafely', async () => {
+            const { pruneVerifiedSkill, missingPlaybookSections, SKILL_PRUNE_MAX_CHARS } =
+                await import('../src/services/learning/skillManage');
+            const { missingSkillSections } = await import('../src/services/learning/SkillFileService');
+            const distinct = Array.from({ length: 18 }, (_, i) =>
+                `- Step ${i}: verify level ${i} against the 15m structure before deciding anything about the setup.`);
+            const check = '- Confirm the base rate via `get_chart_view` before acting.';
+            const body = [
+                '## When to Use', 'When the verified probe setup appears.', '',
+                ...distinct, ...distinct.slice(0, 12),
+                '', '## Procedure', '1. Confirm the level. 2. Wait for the retest.', '',
+                '## Pitfalls', '- Do not chase the first touch.', '- Do not chase the first touch.', '',
+                '## Verification', check, check,
+            ].join('\n');
+            assert.ok(body.length > SKILL_PRUNE_MAX_CHARS, `probe body ${body.length} chars`);
+
+            const pruned = pruneVerifiedSkill(body);
+            assert.equal(pruned.ok, true, JSON.stringify(pruned));
+            assert.ok(pruned.removed >= 11, `removed ${pruned.removed}`);
+            assert.equal(pruned.prunedBody.length < body.length, true);
+            assert.deepEqual(missingPlaybookSections(pruned.prunedBody), []);
+            assert.deepEqual(missingSkillSections(pruned.prunedBody), []);
+            assert.equal(pruned.prunedBody.split(check).length - 1, 2, 'tool-check line is never removed, even when duplicated');
+            for (const heading of ['## When to Use', '## Procedure', '## Pitfalls', '## Verification']) {
+                assert.ok(pruned.prunedBody.includes(heading), `${heading} preserved verbatim`);
+            }
+            assert.equal(pruned.undoSnapshot.priorBody, body, 'undo restores the exact original bytes');
+
+            // A prune that would fall under the floor is refused with ZERO change.
+            const refused = pruneVerifiedSkill(body, { minChars: body.length });
+            assert.equal(refused.ok, false);
+            assert.equal(refused.removed, 0);
+            assert.equal(refused.prunedBody, body);
+            assert.match(refused.reason ?? '', /floor/);
+            });
+
+            it('promotion prunes a verified playbook through the one pen and undo is reversible', async () => {
+            const U = 'sim-efficient-probe';
+            await withUser(U, async () => {
+                const { initMemoryFiles } = await import('../src/services/learning/MemoryFilesService');
+                const { getSkill, parseSkillMarkdown } = await import('../src/services/learning/SkillFileService');
+                const { skillManage, promoteSkillToVerified, undoSkillManageMutation, getSkillMeta, missingPlaybookSections } =
+                    await import('../src/services/learning/skillManage');
+                const { MIN_HOLDOUT_SAMPLE } = await import('../src/services/selfMod/harnessOptimization');
+                await initMemoryFiles(U);
+
+                const distinct = Array.from({ length: 18 }, (_, i) =>
+                    `- Step ${i}: verify level ${i} against the 15m structure before deciding anything about the setup.`);
+                const check = '- Confirm the base rate via `get_chart_view` before acting.';
+                const body = [
+                    '## When to Use', 'When the verified probe setup appears.', '',
+                    ...distinct, ...distinct.slice(0, 12),
+                    '', '## Procedure', '1. Confirm the level. 2. Wait for the retest.', '',
+                    '## Pitfalls', '- Do not chase the first touch.', '',
+                    '## Verification', check,
+                ].join('\n');
+                const created = await skillManage({
+                    action: 'create', slug: 'sim-efficient-skill', name: 'SIM Efficient',
+                    description: 'Probe playbook for post-verification pruning.', body,
+                }, known, U);
+                assert.equal(created.ok, true, JSON.stringify(created));
+
+                const verdict = await promoteSkillToVerified('sim-efficient-skill', { nEffective: MIN_HOLDOUT_SAMPLE }, U);
+                assert.equal(verdict.promoted, true, JSON.stringify(verdict));
+                assert.equal(verdict.status, 'verified');
+                assert.equal(verdict.pruned, true, JSON.stringify(verdict.notes));
+                assert.ok((verdict.prunedCount ?? 0) >= 10);
+                const after = parseSkillMarkdown(getSkill('sim-efficient-skill')!.file.content)!.body;
+                assert.ok(after.length < body.length, 'bytes actually shrank');
+                assert.deepEqual(missingPlaybookSections(after), []);
+                assert.ok(after.includes(check), 'tool check survived the one-pen rewrite');
+                assert.ok(verdict.undoSnapshot, 'a reversible snapshot came back in the verdict');
+
+                const undone = await undoSkillManageMutation(verdict.undoSnapshot!, U);
+                assert.equal(undone.ok, true, JSON.stringify(undone));
+                assert.equal(parseSkillMarkdown(getSkill('sim-efficient-skill')!.file.content)!.body, body,
+                    'undo restored the exact pre-prune body');
+                assert.equal((await getSkillMeta('sim-efficient-skill', U))?.status, 'verified',
+                    'the prune undo keeps the post-verification status');
+            });
+            });
+});

@@ -76,6 +76,7 @@ import { collectMarketSchemaFacts, learnedSchemaTraps, syncMarketSchema, MARKET_
 import { getPrompt, savePromptOverride } from '../infrastructure/PromptOverrideService';
 import { writeSelfChange, liveSelfChanges } from './SelfChangeLedger';
 import { SelfChangeSchema } from '../../schemas/selfChange';
+import type { ProvenanceInput } from '../learning/rejectedFingerprints';
 
 const KEY_PREFIX = 'harness_optimization_v1_';
 
@@ -857,6 +858,9 @@ export const approveHarnessRevision = async (
 /** Dismiss: the trader said no. The row is kept in history, not erased. */
 export const dismissHarnessRevision = async (
     username: string = getActiveUsername(),
+    /** Optional WHY / WHICH MODEL. There is NO model id available in this
+     *  module — `modelId` is only ever injected by the caller, never invented. */
+    provenance?: ProvenanceInput,
 ): Promise<{ ok: boolean; error?: string }> => {
     if (!username) return { ok: false, error: 'no active trader' };
     const state = await loadState(username);
@@ -873,6 +877,9 @@ export const dismissHarnessRevision = async (
             'proposal_reject',
             `O-150 ${String(p.kind ?? 'rule')} revision dismissed`,
             username,
+            // Provenance is a wrapper ONLY — `modelId` is injected by the
+            // caller (never inferred here) and nothing here touches the hash.
+            provenance ? { provenance } : undefined,
         );
     } catch { /* a fingerprint write never blocks the trader's dismissal */ }
     state.history = [

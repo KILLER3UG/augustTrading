@@ -42,7 +42,8 @@ import { updateMemoryFile } from './MemoryFilesService';
 import { getPreference, setPreference } from '../infrastructure/PreferencesService';
 import { getActiveUsername } from '../../utils/activeUser';
 import { MIN_HOLDOUT_SAMPLE } from '../selfMod/harnessOptimization';
-import { skillFormatIssues } from '../../utils/skillFrontmatter';
+import { skillFormatIssues, missingSkillSections } from '../../utils/skillFrontmatter';
+import { resolveProvenance, type Provenance, type ProvenanceInput } from './rejectedFingerprints';
 
 export type SkillManageAction = 'create' | 'patch' | 'archive' | 'unarchive';
 export type SkillStatus = 'probation' | 'verified' | 'stale' | 'archived';
@@ -63,6 +64,10 @@ export interface SkillMeta {
     sourceSessionId?: string;
     createdAt: string;
     updatedAt: string;
+    /** Optional WHY / WHICH MODEL for the mutation that last set this row.
+     *  Sidecar only — never a status stamp in SKILL.md. The whole prior meta
+     *  map is snapshotted into every undo, so provenance is reversible too. */
+    provenance?: Provenance;
 }
 
 const META_KEY_PREFIX = 'skill_meta_v1_';
@@ -176,6 +181,10 @@ export interface SkillManageInput {
     /** create: how this skill came to be. The desk tool fixes 'agent'. */
     created_by?: SkillOrigin;
     source_session_id?: string;
+    /** Optional WHY / WHICH MODEL for this mutation. Accepted both here and
+     *  as the optional 5th positional provenance argument, so either call
+     *  shape compiles. Persisted to the sidecar through `writeMetaMap` only. */
+    provenance?: ProvenanceInput;
 }
 
 /**
@@ -212,6 +221,8 @@ export interface SkillManageReceipt {
     status?: SkillStatus;
     priorStatus?: SkillStatus;
     created?: boolean;
+    /** The provenance stamped on this mutation's sidecar row (when supplied). */
+    provenance?: Provenance;
     error?: string;
     /** create refusals name the near-duplicates to update or merge instead. */
     duplicates?: Array<{ slug: string; reason: string }>;
@@ -231,6 +242,7 @@ export const skillManage = async (
     knownDeskTools: ReadonlySet<string>,
     username = getActiveUsername() || 'default',
     review?: SkillWriteReview,
+    provenanceArg?: ProvenanceInput | { provenance?: ProvenanceInput },
 ): Promise<SkillManageReceipt> => {
     const action = input?.action;
     if (action !== 'create' && action !== 'patch' && action !== 'archive' && action !== 'unarchive') {
@@ -248,6 +260,16 @@ export const skillManage = async (
         priorFileContent: existing?.file.content ?? null,
         priorMeta: JSON.parse(JSON.stringify(metaMap)),
     };
+    // WHY / WHICH MODEL — resolved once; `modelId` is only ever the injected
+    // value, never inferred here. The 5th argument is the provenance object
+    // itself (the Desktop tool passes rationale/modelId/recordedAt directly);
+    // an `{ provenance: … }` wrapper is also accepted for symmetry with the
+    // other stores. The undo snapshots above already captured the PRIOR meta
+    // (incl. any prior provenance), so undo stays reversible.
+    const fifth = provenanceArg && typeof provenanceArg === 'object' && 'provenance' in provenanceArg
+        ? (provenanceArg as { provenance?: ProvenanceInput }).provenance
+        : (provenanceArg as ProvenanceInput | undefined);
+    const provenance = resolveProvenance(input.provenance ?? fifth ?? undefined);
 
     // ── archive / unarchive: lifecycle only, bytes untouched ────────────────
     if (action === 'archive' || action === 'unarchive') {
@@ -267,11 +289,12 @@ export const skillManage = async (
         // round-trip is not evidence.
         meta.status = action === 'archive' ? 'archived' : 'probation';
         meta.updatedAt = new Date().toISOString();
+        if (provenance) meta.provenance = provenance;
         metaMap[slug] = meta;
         await writeMetaMap(username, metaMap);
         return {
             ok: true, action, slug, undoSnapshot, undoSkill, rejectedContent: '',
-            priorStatus, status: meta.status, created: false,
+            priorStatus, status: meta.status, created: false, provenance,
         };
     }
 
@@ -365,6 +388,7 @@ export const skillManage = async (
         : defaultMetaFor(slug, createdBy === 'bundled' ? 'bundled' : createdBy, Date.now());
     if (!priorMeta && input.source_session_id) meta.sourceSessionId = input.source_session_id;
     if (meta.createdBy === 'agent' || meta.createdBy === 'review') meta.status = 'probation';
+    if (provenance) meta.provenance = provenance;
     metaMap[slug] = meta;
     await writeMetaMap(username, metaMap);
 
@@ -372,8 +396,92 @@ export const skillManage = async (
         ok: true, action, slug, undoSnapshot, undoSkill, priorBody,
         rejectedContent: `${String(writeInput.body ?? '')} | ${String(writeInput.description ?? '')}`,
         created: action === 'create', status: meta.status,
-        priorStatus: priorMeta?.status,
+        priorStatus: priorMeta?.status, provenance,
     };
+};
+
+// ─── EfficientSkill: post-verification pruning ──────────────────────────────
+
+/** A verified playbook over this many chars is a prune candidate. Named so a
+ *  contract can pin the ceiling; never raised to make a gate green. */
+export const SKILL_PRUNE_MAX_CHARS = 2800;
+/** Refuse a prune whose result would be thinner than this — a body that small
+ *  has no redundant bulk to remove, so shrinking it further is damage. */
+export const SKILL_PRUNE_MIN_CHARS = 1600;
+
+export interface SkillPruneResult {
+    ok: boolean;
+    /** The deduplicated body, or the ORIGINAL verbatim on refusal. */
+    prunedBody: string;
+    /** Restore bytes: write `priorBody` back through `writeSkillFile`. */
+    undoSnapshot: { priorBody: string };
+    removed: number;
+    reason?: string;
+}
+
+const BULLET_LINE_RE = /^\s*(?:[-*+]|\d+[.)])\s+/;
+const HEADING_LINE_RE = /^\s*#{1,6}\s/;
+/** A line carrying a tool check or verification command is NEVER removed,
+ *  even when textually duplicated: it is the playbook's PROOF, not bulk. */
+const TOOL_CHECK_RE = /(`[a-z][a-z0-9_]{2,}`|\b(?:npm\s+run|node\s+--check|git\s+(?:status|diff)|check:[a-z-]+|--testid|curl\b|GET\s+\/|POST\s+\/|assert\s*\(|--verify|--confirm))/i;
+
+/**
+ * Deterministic, reversible, bullet-only compaction for an already-VERIFIED
+ * playbook. Removes ONLY repeated bullet lines (normalized whitespace/case)
+ * and runs of blank lines. Headings, prose that is not a duplicate, and every
+ * line that carries a tool check / verification command are preserved.
+ *
+ * Both section validators must survive — `skillManage.missingPlaybookSections`
+ * and `utils/skillFrontmatter.missingSkillSections` — or the skill drops out
+ * of the prompt index. Any guard failure is a ZERO-CHANGE refusal, not a
+ * partial rewrite. Pure: no clock, no store, no model.
+ */
+export const pruneVerifiedSkill = (
+    body: string,
+    opts: { maxChars?: number; minChars?: number } = {},
+): SkillPruneResult => {
+    const original = String(body ?? '');
+    const undoSnapshot: SkillPruneResult['undoSnapshot'] = { priorBody: original };
+    const refuse = (reason: string): SkillPruneResult => ({
+        ok: false, prunedBody: original, undoSnapshot, removed: 0, reason,
+    });
+    const max = opts.maxChars ?? SKILL_PRUNE_MAX_CHARS;
+    const min = opts.minChars ?? SKILL_PRUNE_MIN_CHARS;
+
+    const lines = original.split('\n');
+    const headings = lines.filter(l => HEADING_LINE_RE.test(l));
+    const seen = new Set<string>();
+    const kept: string[] = [];
+    let removed = 0;
+    let blankRun = 0;
+    for (const line of lines) {
+        if (!line.trim()) {
+            blankRun += 1;
+            if (blankRun > 1) { removed += 1; continue; }
+            kept.push(line);
+            continue;
+        }
+        blankRun = 0;
+        if (!BULLET_LINE_RE.test(line) || HEADING_LINE_RE.test(line) || TOOL_CHECK_RE.test(line)) {
+            kept.push(line);
+            continue;
+        }
+        const key = line.trim().replace(/\s+/g, ' ').toLowerCase();
+        if (seen.has(key)) { removed += 1; continue; }
+        seen.add(key);
+        kept.push(line);
+    }
+    const prunedBody = kept.join('\n');
+    if (removed === 0) return refuse(original.length > max
+        ? `No duplicate bullets or repeated blank lines to remove in this ${original.length}-char playbook.`
+        : 'No duplicate bullets or repeated blank lines — nothing safe to remove.');
+    if (prunedBody.length < min) return refuse(`Pruned body would be ${prunedBody.length} chars, below the ${min}-char floor.`);
+    if (missingPlaybookSections(prunedBody).length > 0 || missingSkillSections(prunedBody).length > 0) {
+        return refuse('Pruning would drop a required ## section.');
+    }
+    const survivors = new Set(prunedBody.split('\n'));
+    if (headings.some(h => !survivors.has(h))) return refuse('Pruning would alter a required heading verbatim.');
+    return { ok: true, prunedBody, undoSnapshot, removed };
 };
 
 // ─── Usage + promotion ──────────────────────────────────────────────────────
@@ -402,6 +510,13 @@ export interface SkillPromotionVerdict {
     nEffective?: number;
     required: number;
     reason: string;
+    /** Present ONLY when post-verification pruning actually rewrote bytes.
+     *  A `SkillManageUndoSnapshot` — feed it to `undoSkillManageMutation` to
+     *  restore the pre-prune SKILL.md AND the verified sidecar together. */
+    undoSnapshot?: SkillManageUndoSnapshot;
+    pruned?: boolean;
+    prunedCount?: number;
+    notes?: string[];
 }
 
 /**
@@ -415,6 +530,7 @@ export const promoteSkillToVerified = async (
     slug: string,
     evidence?: { nEffective?: number },
     username = getActiveUsername() || 'default',
+    provenance?: ProvenanceInput,
 ): Promise<SkillPromotionVerdict> => {
     const map = await readMetaMap(username);
     const meta = map[slug];
@@ -443,9 +559,49 @@ export const promoteSkillToVerified = async (
     }
     meta.status = 'verified';
     meta.updatedAt = new Date().toISOString();
+    const stamp = resolveProvenance(provenance);
+    if (stamp) meta.provenance = stamp;
     map[slug] = meta;
     await writeMetaMap(username, map);
-    return { promoted: true, slug, status: 'verified', nEffective, required: MIN_HOLDOUT_SAMPLE, reason: 'Promoted on empirical holdout evidence.' };
+
+    const verdict: SkillPromotionVerdict = {
+        promoted: true, slug, status: 'verified', nEffective, required: MIN_HOLDOUT_SAMPLE,
+        reason: 'Promoted on empirical holdout evidence.',
+    };
+    // EFFICIENT SKILL — POST-verification only. Pruning is never a gate on
+    // promotion: the skill already wears `verified`. The deterministic pass
+    // may only drop duplicate bullets / blank runs; a guard failure is a
+    // ZERO-CHANGE refusal with an honest note, and a successful rewrite goes
+    // through `writeSkillFile` (the ONE pen) with the version just read.
+    const skill = getSkill(slug);
+    const parsed = skill ? parseSkillMarkdown(skill.file.content) : null;
+    if (skill && parsed) {
+        const prune = pruneVerifiedSkill(parsed.body);
+        if (prune.ok && prune.removed > 0) {
+            const written = await writeSkillFile({
+                slug, name: skill.name, description: skill.description,
+                body: prune.prunedBody, ifVersion: skill.version,
+            }, username);
+            if (written.ok) {
+                verdict.undoSnapshot = {
+                    slug, action: 'patch', created: false,
+                    priorFileContent: skill.file.content,
+                    // Pre-prune state: already verified (the promotion itself
+                    // is not undone) — undoing the prune restores verified +
+                    // the original bytes together.
+                    priorMeta: JSON.parse(JSON.stringify(map)),
+                };
+                verdict.pruned = true;
+                verdict.prunedCount = prune.removed;
+                verdict.notes = [`Pruned ${prune.removed} duplicate line(s) after verification (reversible).`];
+            } else {
+                verdict.notes = [`Post-verification prune refused by the one pen: ${written.message} — verified bytes unchanged.`];
+            }
+        } else if (!prune.ok) {
+            verdict.notes = [`Post-verification prune skipped: ${prune.reason}`];
+        }
+    }
+    return verdict;
 };
 
 // ─── The zero-LLM inactivity Curator ────────────────────────────────────────
