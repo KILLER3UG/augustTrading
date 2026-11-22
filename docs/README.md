@@ -20,6 +20,7 @@ One reading path. Everything else is evidence, kept where it belongs.
    [architecture/learning-loop.md](architecture/learning-loop.md) is the memory loop in depth.
    [architecture/app-flow.md](architecture/app-flow.md) is the end-to-end execution graph: every
    live node, edge, guardrail and write-owner, verified against the current tree.
+8. [PARITY.md](PARITY.md) — one screen: every core capability mapped to its automated sensor, or an explicit `manual` row.
 
 ## The tree
 
@@ -30,7 +31,9 @@ One reading path. Everything else is evidence, kept where it belongs.
 | `engineering/` | gates, code conventions, the canonical modules | before writing code or claiming a change |
 | `plan/` | the working register | choosing what to build next |
 
-There is deliberately nothing else here. No roadmap, no decision log, no implementation record, no
+The reading path is deliberately short. The one extra page is
+[PARITY.md](PARITY.md), the one-screen map from each capability to the sensor that proves it (or
+an honest `manual` row). No roadmap, no decision log, no implementation record, no
 audit corpus, no research dumps: those were the same facts in four places, and each one went stale
 faster than the code it described. **What landed is in git** — `git log --stat` and the commit
 messages answer "did this already ship?", and they cannot drift, because they are the change. What
