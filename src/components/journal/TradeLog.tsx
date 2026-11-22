@@ -675,7 +675,7 @@ const TradeLogContent: React.FC<TradeLogContentProps> = ({
                                     : 'text-zinc-500 hover:text-zinc-200 hover:bg-zinc-900'
                             }`}
                         >
-                            {mode}
+                            {mode === 'real' ? 'Live' : mode === 'simulated' ? 'Paper' : 'All'}
                         </button>
                     ))}
                 </div>

@@ -25,6 +25,8 @@ import {
 } from '../../services/learning/skillManage';
 import { getActiveUsername } from '../../utils/activeUser';
 import { display } from '../../utils/symbol';
+import { getPaperAccount, subscribePaperAccount } from '../../services/paper/PaperBrokerService';
+import { paperAccountView, paperEquity, type PaperAccount } from '../../services/paper/paperCore';
 
 const emptyCounters: CuratedMemorySnapshot = {
     userMd: '', memoryMd: '', userChars: 0, memoryChars: 0,
@@ -43,12 +45,13 @@ const UtilityRail: React.FC<UtilityRailProps> = ({
     onOpenChart, onOpenTradeLog, username,
 }) => {
     const [open, setOpen] = useState(false);
-    const [section, setSection] = useState<'none' | 'memory' | 'skills'>('none');
+    const [section, setSection] = useState<'none' | 'memory' | 'skills' | 'paper'>('none');
     const [mem, setMem] = useState<CuratedMemorySnapshot>(emptyCounters);
     const [dreamUndo, setDreamUndo] = useState<{ userMd: string; memoryMd: string } | null>(null);
     const [busy, setBusy] = useState(false);
     const [note, setNote] = useState<string | null>(null);
     const [skillRows, setSkillRows] = useState<Record<string, SkillStatusRow>>({});
+    const [paperAccount, setPaperAccount] = useState<PaperAccount | null>(null);
 
     const snap = useSyncExternalStore(
         chatStore.subscribe, chatStore.getSnapshot, chatStore.getSnapshot);
@@ -73,6 +76,25 @@ const UtilityRail: React.FC<UtilityRailProps> = ({
         void skillStatusRows(user).then(rows => { if (alive) setSkillRows(rows); });
         return () => { alive = false; };
     }, [section, user]);
+
+    // The paper barometer is a view of the one authoritative account. Subscribe
+    // for fills/config writes, and take one async snapshot on mount.
+    useEffect(() => {
+        let alive = true;
+        const unsubscribe = subscribePaperAccount(account => { if (alive) setPaperAccount(account); });
+        void getPaperAccount(user)
+            .then(account => { if (alive) setPaperAccount(account); })
+            .catch(() => { /* no readable paper account yet — show the empty state */ });
+        return () => { alive = false; unsubscribe(); };
+    }, [user]);
+
+    const paperView = paperAccount ? paperAccountView(paperAccount) : null;
+    const paperEquityUsd = paperAccount ? paperEquity(paperAccount) : 0;
+    const paperStartUsd = paperView?.riskLimits.startingBalanceUsd ?? 0;
+    const paperPct = paperStartUsd > 0
+        ? ((paperEquityUsd - paperStartUsd) / paperStartUsd) * 100
+        : 0;
+    const paperStatus = `Paper · $${Math.round(paperEquityUsd).toLocaleString('en-US')} · ${paperPct >= 0 ? '+' : ''}${paperPct.toFixed(1)}% · ${paperView?.openPositions.length ?? 0} open`;
 
     const consolidate = (): void => {
         setBusy(true);
@@ -109,6 +131,7 @@ const UtilityRail: React.FC<UtilityRailProps> = ({
     const rows: Array<{ id: string; label: string; onClick: () => void; testid: string }> = [
         { id: 'chart', label: 'Chart', onClick: () => onOpenChart?.(), testid: 'utility-chart' },
         { id: 'log', label: 'Trade Log', onClick: () => onOpenTradeLog?.(), testid: 'utility-trade-log' },
+        { id: 'paper', label: 'Paper', onClick: () => setSection(s => s === 'paper' ? 'none' : 'paper'), testid: 'utility-paper' },
         { id: 'memory', label: 'Memory', onClick: () => setSection(s => s === 'memory' ? 'none' : 'memory'), testid: 'utility-memory' },
         { id: 'skills', label: 'Skills', onClick: () => setSection(s => s === 'skills' ? 'none' : 'skills'), testid: 'utility-skills' },
     ];
@@ -160,6 +183,9 @@ const UtilityRail: React.FC<UtilityRailProps> = ({
                 <p className="font-mono text-ui-xs text-zinc-300">{context}</p>
                 <p className="mt-0.5 text-ui-2xs text-zinc-600">Chart context · live</p>
             </div>
+            <div className="px-3 pb-2" data-testid="utility-paper-status">
+                <p className="font-mono text-ui-xs text-zinc-400">{paperStatus}</p>
+            </div>
             <div className="flex flex-col gap-0.5 px-2">
                 {rows.map(row => (
                     <button
@@ -174,7 +200,7 @@ const UtilityRail: React.FC<UtilityRailProps> = ({
                         }`}
                     >
                         <span className="flex-1 truncate">{row.label}</span>
-                        {(row.id === 'memory' || row.id === 'skills') && (
+                        {(row.id === 'memory' || row.id === 'skills' || row.id === 'paper') && (
                             <span aria-hidden="true" className="text-ui-2xs text-zinc-600">{section === row.id ? '−' : '+'}</span>
                         )}
                     </button>
@@ -236,6 +262,45 @@ const UtilityRail: React.FC<UtilityRailProps> = ({
                     {/* Pin/archive are intentionally not offered here: those
                         writes belong to Skills settings, which already runs the
                         one-pen review path. This rail only reads status. */}
+                </div>
+            )}
+
+            {section === 'paper' && (
+                <div className="mt-2 border-t border-white/[0.04] px-3 py-2" data-testid="utility-paper-inspector">
+                    <p className="mb-1.5 text-ui-2xs font-semibold uppercase tracking-wider text-zinc-600">Paper book</p>
+                    {!paperView || (paperView.openPositions.length === 0 && paperView.pendingOrders.length === 0) ? (
+                        <p className="text-ui-2xs text-zinc-600">No open paper positions or resting limits.</p>
+                    ) : (
+                        <div className="space-y-1 font-mono text-ui-2xs text-zinc-500">
+                            {paperView.openPositions.map(position => (
+                                <p
+                                    key={position.id}
+                                    data-testid={`utility-paper-position-${position.id}`}
+                                    className="truncate"
+                                    title={`${position.side.toUpperCase()} ${position.symbol} · ${position.qty} @ ${position.entryPrice} · SL ${position.stopLoss} · TP ${position.takeProfits.join('/') || '—'}`}
+                                >
+                                    {position.side.toUpperCase()} {display(position.symbol)} · {position.qty} @ {position.entryPrice.toFixed(2)} · SL {position.stopLoss.toFixed(2)}
+                                </p>
+                            ))}
+                            {paperView.pendingOrders.map(order => (
+                                <p
+                                    key={order.id}
+                                    data-testid={`utility-paper-order-${order.id}`}
+                                    className="truncate"
+                                    title={`LIMIT ${order.side.toUpperCase()} ${order.symbol} · ${order.qty} @ ${order.limitPrice}`}
+                                >
+                                    LIMIT {order.side.toUpperCase()} {display(order.symbol)} · {order.qty} @ {order.limitPrice.toFixed(2)}
+                                </p>
+                            ))}
+                        </div>
+                    )}
+                    {paperView && (
+                        <p className="mt-1.5 text-ui-2xs leading-4 text-zinc-600">
+                            Equity ${paperView.equity.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} · free ${paperView.freeMargin.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </p>
+                    )}
+                    {/* No undo here: an executed paper fill is final, like the
+                        write receipts in chat. This rail only reads the book. */}
                 </div>
             )}
         </aside>

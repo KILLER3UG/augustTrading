@@ -27,6 +27,7 @@ import { undoMemorySnapshot, type CuratedMemoryTarget } from '../../../services/
 import { undoSkillManageMutation, type SkillManageUndoSnapshot } from '../../../services/learning/skillManage';
 import { recordRejectedFingerprint } from '../../../services/learning/rejectedFingerprints';
 import { getActiveUsername } from '../../../utils/activeUser';
+import type { PaperReceipt } from '../../../services/paper/paperCore';
 
 /** What this turn's work actually was, named from the transcript it already
  *  produced — no model call, no new store.
@@ -85,7 +86,7 @@ export interface ChatWorkView {
 // kept we have no undoSnapshot, so the row renders View ONLY. A fabricated
 // Undo that restores nothing is worse than a missing affordance.
 
-type WriteKind = 'memory' | 'skill_manage';
+type WriteKind = 'memory' | 'skill_manage' | 'paper';
 
 interface MemoryReceipt {
     ok?: boolean;
@@ -111,12 +112,15 @@ interface WriteRow {
     key: string;
     kind: WriteKind;
     label: string;
-    receipt: MemoryReceipt | SkillReceipt | null;
+    receipt: MemoryReceipt | SkillReceipt | PaperReceipt | null;
     clipped: boolean;
     missing: boolean;
 }
 
 const canUndo = (row: WriteRow): boolean => {
+    // Executed paper trades are final — there is no undo snapshot, and a
+    // simulated fill may never be rolled back through this row.
+    if (row.kind === 'paper') return false;
     if (row.kind === 'memory') return typeof (row.receipt as MemoryReceipt | null)?.undoSnapshot === 'string';
     return !!(row.receipt as SkillReceipt | null)?.undoSkill;
 };
@@ -131,21 +135,25 @@ const WriteReceiptRows: React.FC<{ toolIds: string[] }> = ({ toolIds }) => {
         for (const id of toolIds) {
             if (!id) continue;
             const payload = readToolPayload(id);
-            if (!payload || (payload.name !== 'memory' && payload.name !== 'skill_manage')) continue;
-            const kind = payload.name as WriteKind;
-            let receipt: MemoryReceipt | SkillReceipt | null = null;
+            if (!payload) continue;
+            const isPaper = payload.name === 'paper_order' || payload.name === 'paper_account';
+            if (!isPaper && payload.name !== 'memory' && payload.name !== 'skill_manage') continue;
+            const kind: WriteKind = isPaper ? 'paper' : payload.name as 'memory' | 'skill_manage';
+            let receipt: MemoryReceipt | SkillReceipt | PaperReceipt | null = null;
             if (payload.text) {
                 try {
                     const parsed: unknown = JSON.parse(payload.text);
                     if (parsed && typeof parsed === 'object') {
-                        receipt = parsed as MemoryReceipt | SkillReceipt;
+                        receipt = parsed as MemoryReceipt | SkillReceipt | PaperReceipt;
                     }
                 } catch { /* a non-JSON result is still a View-able receipt */ }
             }
             const clipped = !payload.text && (!!payload.artifact || typeof payload.kept === 'number');
-            const label = kind === 'memory'
-                ? ((receipt as MemoryReceipt | null)?.target === 'user' ? 'USER.md' : 'MEMORY.md')
-                : String((receipt as SkillReceipt | null)?.slug ?? 'skill');
+            const label = kind === 'paper'
+                ? (payload.name === 'paper_account' ? 'Paper account' : 'Paper order')
+                : kind === 'memory'
+                    ? ((receipt as MemoryReceipt | null)?.target === 'user' ? 'USER.md' : 'MEMORY.md')
+                    : String((receipt as SkillReceipt | null)?.slug ?? 'skill');
             out.push({
                 key: id,
                 kind,
@@ -203,6 +211,64 @@ const WriteReceiptRows: React.FC<{ toolIds: string[] }> = ({ toolIds }) => {
     return (
         <div className="space-y-1" data-testid="write-receipt-rows">
             {rows.map(row => {
+                // Paper receipts are executed simulations: one flat row per
+                // PaperEvent.line (already a monochrome, single-line receipt),
+                // plus a View detail. There is deliberately NO Undo affordance.
+                if (row.kind === 'paper') {
+                    const receipt = row.receipt as PaperReceipt | null;
+                    const eventLines = (receipt?.events ?? [])
+                        .map(event => event?.line)
+                        .filter((line): line is string => typeof line === 'string' && line.length > 0);
+                    const shown = eventLines.length > 0
+                        ? eventLines
+                        : [receipt?.error ?? receipt?.reason ?? receipt?.message ?? 'Paper receipt'];
+                    const viewOpen = viewed.has(row.key);
+                    const why = row.clipped
+                        ? 'Result was clipped — view the stored excerpt.'
+                        : row.missing
+                            ? 'No stored receipt payload — view what the transcript kept.'
+                            : 'Open the full paper receipt.';
+                    return (
+                        <div key={row.key}>
+                            {shown.map((line, i) => (
+                                <div
+                                    key={`${row.key}-${i}`}
+                                    data-testid="write-receipt-row"
+                                    data-kind="paper"
+                                    className="flex items-center gap-2 rounded-control bg-white/[0.02] px-2 py-1 text-ui-dense leading-5 text-zinc-500"
+                                >
+                                    <span className="shrink-0 text-zinc-400">Paper</span>
+                                    <span className="min-w-0 flex-1 truncate" title={line}>{line}</span>
+                                </div>
+                            ))}
+                            <div className="flex justify-end">
+                                <button
+                                    type="button"
+                                    aria-label="View paper receipt"
+                                    aria-expanded={viewOpen}
+                                    title={why}
+                                    data-testid="write-receipt-view-paper"
+                                    onClick={() => setViewed(prev => {
+                                        const next = new Set(prev);
+                                        if (next.has(row.key)) next.delete(row.key); else next.add(row.key);
+                                        return next;
+                                    })}
+                                    className="shrink-0 rounded-control px-1.5 py-px text-ui-2xs uppercase tracking-wider text-zinc-500 transition-colors hover:bg-white/[0.05] hover:text-zinc-200"
+                                >
+                                    View
+                                </button>
+                            </div>
+                            {viewOpen && (
+                                <pre
+                                    data-testid="write-receipt-detail-paper"
+                                    className="max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-control bg-zinc-900/60 px-2 py-1 font-mono text-ui-2xs leading-4 text-zinc-500"
+                                >
+                                    {JSON.stringify(receipt ?? { note: why }, null, 2)}
+                                </pre>
+                            )}
+                        </div>
+                    );
+                }
                 const undoneRow = undone.has(row.key);
                 const viewOpen = viewed.has(row.key);
                 const undoable = canUndo(row) && !undoneRow;

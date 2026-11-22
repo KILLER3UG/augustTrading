@@ -25,11 +25,13 @@ import type {
     Time,
 } from 'lightweight-charts';
 import {
+    createDrawingId,
     drawWidthOf,
     FIB_RATIOS,
     type ChartDrawing,
     type DrawPoint,
 } from '../../services/trade/chartDrawings';
+import type { PaperAccount } from '../../services/paper/paperCore';
 import {
     interpolateScalePrice,
     isDrawingVisibleOnTf,
@@ -50,6 +52,9 @@ import { shapeGeometry } from './drawingGeometry';
 export interface DrawingsPrimitiveState {
     userDrawings: ReadonlyArray<ChartDrawing>;
     modelDrawings: ReadonlyArray<ChartDrawing>;
+    /** Ephemeral simulation overlay: fed from the paper broker's account,
+     *  never persisted into a user or model drawing bucket. */
+    paperDrawings: ReadonlyArray<ChartDrawing>;
     selectedId: string | null;
     hoveredId: string | null;
     hidden: boolean;
@@ -471,6 +476,7 @@ export class ChartDrawingsPrimitive implements ISeriesPrimitive<Time> {
     private state: DrawingsPrimitiveState = {
         userDrawings: [],
         modelDrawings: [],
+        paperDrawings: [],
         selectedId: null,
         hoveredId: null,
         hidden: false,
@@ -625,6 +631,10 @@ export class ChartDrawingsPrimitive implements ISeriesPrimitive<Time> {
 
         appendList(this.state.userDrawings, 'user');
         appendList(this.state.modelDrawings, 'agent');
+        // Paper lines are simulation context, not the trader's work and not a
+        // model annotation: render them as solid user-origin shapes so they
+        // never claim a model badge or enter the undoable drawing buckets.
+        appendList(this.state.paperDrawings, 'user');
 
         const priceAtCoord = (y: number): number | null => {
             const p = param.series.coordinateToPrice(y as never);
@@ -640,3 +650,45 @@ export class ChartDrawingsPrimitive implements ISeriesPrimitive<Time> {
         this.rebuildAxisViews();
     }
 }
+
+// ── Paper overlay (pure) ────────────────────────────────────────────────────
+// The broker owns the book; this helper only projects it onto chart lines.
+// No new DrawKind: a horizontal line already renders everywhere drawings do,
+// so the paper overlay rides the existing 'hline' path and its monochrome
+// palette. Nothing here writes back to the account or to either drawing list.
+
+const PAPER_ENTRY_COLOR = '#f4f1ea';
+const PAPER_TP_COLOR = '#e4e4e7';
+const PAPER_LEVEL_COLOR = '#a1a1aa';
+
+/** Build ephemeral horizontal lines for open paper positions and resting
+ *  limits. Pure: the account is read-only and the result is safe to hand to
+ *  `DrawingsPrimitiveState.paperDrawings` on every account notification. */
+export const paperDrawingsFromAccount = (
+    account: Pick<PaperAccount, 'positions' | 'pendingOrders'> | null | undefined,
+    nowMs: number = Date.now(),
+): ChartDrawing[] => {
+    if (!account) return [];
+    const out: ChartDrawing[] = [];
+    const t = nowMs / 1000;
+    const add = (price: number, label: string, color: string): void => {
+        if (!Number.isFinite(price) || price <= 0) return;
+        out.push({
+            id: createDrawingId(),
+            kind: 'hline',
+            points: [{ t, p: price }],
+            color,
+            createdAt: nowMs,
+            label,
+        });
+    };
+    for (const position of account.positions ?? []) {
+        add(position.entryPrice, `PAPER ${position.side === 'short' ? 'SHORT' : 'LONG'}`, PAPER_ENTRY_COLOR);
+        add(position.stopLoss, 'SL', PAPER_LEVEL_COLOR);
+        (position.takeProfits ?? []).forEach((tp, i) => add(tp, `TP${i + 1}`, PAPER_TP_COLOR));
+    }
+    for (const order of account.pendingOrders ?? []) {
+        add(order.limitPrice, 'LIMIT', PAPER_LEVEL_COLOR);
+    }
+    return out;
+};

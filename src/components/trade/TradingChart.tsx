@@ -96,7 +96,7 @@ import { TradeAnalysis } from '../../types';
 import { ChartToolRail, CHART_RAIL_WIDTH } from './ChartToolRail';
 import ChartFrame from '../shared/ChartFrame';
 import { shapeGeometry } from './drawingGeometry';
-import { ChartDrawingsPrimitive } from './drawingsPrimitive';
+import { ChartDrawingsPrimitive, paperDrawingsFromAccount } from './drawingsPrimitive';
 import { DrawingInspectorPopover } from './DrawingInspectorPopover';
 import {
     hitTestDrawings,
@@ -124,6 +124,7 @@ import {
 } from '../../services/trade/chartIndicators';
 import { candleDelta } from '../../services/market/orderFlowCore';
 import { buildVolumeProfile } from '../../services/market/volumeProfileCore';
+import { getPaperAccount, subscribePaperAccount } from '../../services/paper/PaperBrokerService';
 import {
     CHART_INDICATOR_LABELS,
     readChartIndicatorSettings,
@@ -702,6 +703,12 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
     drawingsRef.current = drawings;
     const modelDrawingsRef = useRef<ChartDrawing[]>([]);
     modelDrawingsRef.current = modelDrawings ?? [];
+    // Paper levels are a THIRD, ephemeral list: never merged into `drawings`
+    // or `modelDrawings`, so no paper fill can be undone or saved as a user
+    // drawing. Only the primitive reads them.
+    const [paperDrawings, setPaperDrawings] = useState<ReadonlyArray<ChartDrawing>>([]);
+    const paperDrawingsRef = useRef<ReadonlyArray<ChartDrawing>>([]);
+    paperDrawingsRef.current = paperDrawings;
     const onReplaceModelDrawingsRef = useRef(onReplaceModelDrawings);
     onReplaceModelDrawingsRef.current = onReplaceModelDrawings;
     const intervalRef = useRef<ChartInterval>(interval);
@@ -832,6 +839,20 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
         }
     }, [modelDrawings]);
 
+    // The paper overlay re-reads the one authoritative account on every fill
+    // or config write. It never calls a mutator and never touches the two
+    // persisted drawing buckets.
+    useEffect(() => {
+        let alive = true;
+        const unsubscribe = subscribePaperAccount(account => {
+            if (alive) setPaperDrawings(paperDrawingsFromAccount(account));
+        });
+        void getPaperAccount().then(account => {
+            if (alive) setPaperDrawings(paperDrawingsFromAccount(account));
+        }).catch(() => { /* no readable paper account — overlay stays empty */ });
+        return () => { alive = false; unsubscribe(); };
+    }, []);
+
     // Sync the native lightweight-charts ISeriesPrimitive with current drawings/selection/scale.
     const syncPrimitive = useCallback((overrides?: {
         userDrawings?: ReadonlyArray<ChartDrawing>;
@@ -847,6 +868,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
         prim.setState({
             userDrawings: overrides?.userDrawings ?? drawingsRef.current,
             modelDrawings: overrides?.modelDrawings ?? modelDrawingsRef.current,
+            paperDrawings: paperDrawingsRef.current,
             selectedId: overrides?.selectedId !== undefined ? overrides.selectedId : selectedDrawingIdRef.current,
             hoveredId: overrides?.hoveredId !== undefined ? overrides.hoveredId : hoveredDrawingIdRef.current,
             hidden: drawingsHiddenRef.current,
@@ -859,7 +881,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
 
     useEffect(() => {
         syncPrimitive();
-    }, [drawings, modelDrawings, selectedDrawingId, drawingsHidden, interval, priceScaleMode, syncPrimitive]);
+    }, [drawings, modelDrawings, paperDrawings, selectedDrawingId, drawingsHidden, interval, priceScaleMode, syncPrimitive]);
 
     // Apply Normal / Logarithmic mode directly to lightweight-charts' right price scale.
     useEffect(() => {

@@ -32,13 +32,14 @@ const PromptsTab = lazy(() => import('./tabs/PromptsTab'));
 const MemoryTab = lazy(() => import('./tabs/MemoryTab'));
 const StrategiesTab = lazy(() => import('./tabs/StrategiesTab'));
 const ActionsTab = lazy(() => import('./tabs/ActionsTab'));
+const PaperTab = lazy(() => import('./tabs/PaperTab'));
 
 /** Chunk-load placeholder for a tab body — mirrors LearnView's Fallback. */
 const TabFallback: React.FC = () => (
     <div className="p-6 text-ui-dense text-zinc-600">Loading…</div>
 );
 
-export type SettingsTab = 'profile' | 'general' | 'models' | 'journal' | 'instructions' | 'memory' | 'actions' | 'prompts' | 'strategies' | 'learn' | 'skills';
+export type SettingsTab = 'profile' | 'general' | 'models' | 'journal' | 'instructions' | 'memory' | 'actions' | 'prompts' | 'strategies' | 'learn' | 'skills' | 'paper';
 
 /** Tabs whose embedded manager owns the whole scroll container (their own
  *  padding, their own sticky headers) — the workspace adds none. */
@@ -256,6 +257,7 @@ const NAV_GROUPS: NavGroup[] = [
         entries: [
             { id: 'profile', label: 'Profile', icon: <User className={NAV_ICON} />, keywords: 'account trader switch export data version about' },
             { id: 'journal', label: 'Trade Log', icon: <HistoryIcon className={NAV_ICON} />, keywords: 'trades log summary insights statistics win rate' },
+            { id: 'paper', label: 'Paper Trading', icon: <FileText className={NAV_ICON} />, keywords: 'paper trading simulation broker orders positions balance risk fees' },
             { id: 'actions', label: 'Data', icon: <Database className={NAV_ICON} />, keywords: 'usage backup restore session tokens' },
         ],
     },
@@ -286,6 +288,10 @@ const SETTINGS_SEARCH_ROWS: SettingsSearchHit[] = [
     { id: 'playbooks', label: 'Playbooks', tab: 'strategies', keywords: 'strategy book pdf upload studio' },
     { id: 'profile', label: 'Profile', tab: 'profile', keywords: 'trader account switch version update' },
     { id: 'journal', label: 'Trade Log', tab: 'journal', keywords: 'trades log summary insights statistics' },
+    { id: 'paper', label: 'Paper Trading', tab: 'paper', keywords: 'paper trading simulation broker balance positions orders' },
+    { id: 'paper-mode', label: 'Paper Mode', tab: 'paper', keywords: 'paper mode enable disable simulation on off' },
+    { id: 'paper-balance', label: 'Starting balance', tab: 'paper', keywords: 'paper starting balance wallet usd' },
+    { id: 'paper-risk', label: 'Risk limits', tab: 'paper', keywords: 'paper fees leverage concurrent positions drawdown kill switch' },
     { id: 'storage', label: 'Storage location', tab: 'actions', keywords: 'sqlite indexeddb journal disk path' },
     { id: 'backup', label: 'Backups', tab: 'actions', keywords: 'backup restore export import json' },
     { id: 'usage', label: 'Session usage', tab: 'actions', keywords: 'tokens usage cost training export' },
@@ -774,6 +780,15 @@ const SettingsMenu: React.FC<SettingsMenuProps> = (props) => {
                                         onToggleAutoCapturing: props.onToggleAutoCapturing,
                                         isEntryNotHitCapturing: props.isEntryNotHitCapturing,
                                         onToggleEntryNotHitCapturing: props.onToggleEntryNotHitCapturing,
+                                    }} />
+                                </Suspense>
+                            )}
+
+                            {/* TAB: Paper Trading — the local, simulated broker. */}
+                            {activeTab === 'paper' && (
+                                <Suspense fallback={<TabFallback />}>
+                                    <PaperTab tab={{
+                                        username: props.username,
                                     }} />
                                 </Suspense>
                             )}

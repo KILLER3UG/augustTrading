@@ -40,6 +40,9 @@ import {
     clearStrategyRevertWindow, formatStrategyActivationAppliedForModel, formatStrategyActivationRevertedForModel,
     restorePendingStrategyActivation, type StrategyActivationProposal,
 } from './services/trade/strategyActivation';
+import { registerPaperJournalSink, getPaperSettlements, startPaperTickMonitor } from './services/paper/PaperBrokerService';
+import { mergePaperSettlements } from './services/paper/paperJournal';
+import type { PaperSettledTrade } from './services/paper/paperCore';
 import {
     confirmSessionPlan, dismissSessionPlan, revertSessionPlan, markSessionPlanRevertWindow, sessionPlanRevertOf,
     formatSessionPlanAppliedForModel, formatSessionPlanRevertedForModel,
@@ -2412,6 +2415,29 @@ const App: React.FC = () => {
     // only ran when the app was opened. App level because the loop belongs to
     // the session, not to whichever surface happens to be mounted.
     useLearningHeartbeat(activeUsername, loggedTrades);
+
+    // Pass 3: the paper broker's closed ledger is the AUTHORITATIVE copy; the
+    // Trade Log receives each settlement through this one bridge. Replay the
+    // ledger on mount/username change (a close that happened while no surface
+    // was mounted still lands), then merge live settlements as they settle.
+    // `mergePaperSettlements` is idempotent, so a replay can never duplicate.
+    useEffect(() => {
+        if (!activeUsername) return undefined;
+        let alive = true;
+        const merge = (settlements: PaperSettledTrade[]) => {
+            if (!alive || settlements.length === 0) return;
+            setLoggedTrades(prev => mergePaperSettlements(prev, settlements));
+        };
+        registerPaperJournalSink(merge);
+        // The monitor settles SL/TP/liquidation and accrues funding against
+        // live public marks — the mechanics the deterministic core pins are
+        // the ones the running app actually exercises.
+        const stopMonitor = startPaperTickMonitor();
+        getPaperSettlements(activeUsername)
+            .then(settlements => merge(settlements))
+            .catch(() => { /* an unreadable paper ledger must not break the journal */ });
+        return () => { alive = false; stopMonitor(); };
+    }, [activeUsername]);
 
 
     // F6: best-effort backup when the desktop app closes — the unload flush
