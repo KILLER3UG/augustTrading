@@ -26,6 +26,7 @@ import type { EffortChoice } from './effortScale';
 import { effortChoiceOf } from './effortScale';
 import type { ProviderConfig } from '../../types/provider';
 import { formatModelDisplayName, isProviderReady } from '../../utils/providerUtils';
+import { resolveContextWindow } from '../../utils/contextWindow';
 
 export interface ModelChipProps {
     providers: ProviderConfig[];
@@ -79,10 +80,21 @@ const ModelChip: React.FC<ModelChipProps> = ({
         ? formatModelDisplayName(modelId)
         : null;
     const tierLabel = showEffort && effort ? effortChoiceOf(effort).label : null;
-    // Ruling D-D: one value, one writer, and the tier is never behind a click.
-    const selectedLabel = provider && modelLabel
+    // The FULL label — provider prefix included — lives in the tooltip and the
+    // dropdown panel, beside the model's effective context window.
+    const fullLabel = provider && modelLabel
         ? `${provider.name} · ${modelLabel}${tierLabel ? ` · ${tierLabel}` : ''}`
         : [fallbackLabel, tierLabel].filter(Boolean).join(' · ') || 'Select model';
+    const windowLine = provider
+        ? `${resolveContextWindow(provider).tokens.toLocaleString()} token window`
+        : null;
+    const tooltip = [fullLabel, windowLine].filter(Boolean).join(' · ');
+    // Ruling D-D + the 2026-11-23 polish pass: the pill prints the CONCISE
+    // label — model + effort ("Ernie 5.5 Flash · Max") — never the provider
+    // prefix, which the tooltip and the menu carry.
+    const selectedLabel = provider && modelLabel
+        ? `${modelLabel}${tierLabel ? ` · ${tierLabel}` : ''}`
+        : fullLabel;
 
     const toggle = (): void => {
         if (open) { setOpen(false); return; }
@@ -97,12 +109,12 @@ const ModelChip: React.FC<ModelChipProps> = ({
             <button type="button"
                 ref={triggerRef}
                 onClick={toggle}
-                aria-label={`Model ${selectedLabel}`}
+                aria-label={`Model ${fullLabel}`}
                 aria-expanded={open} aria-haspopup="menu"
-                title={issue ? 'Model fallback active — re-pick a model' : selectedLabel}
+                title={issue ? 'Model fallback active — re-pick a model' : tooltip}
                 data-testid="composer-model-chip"
                 className={`flex items-center gap-1.5 rounded-control px-2 py-1 text-ui-dense text-zinc-400 transition-colors hover:bg-white/[0.05] hover:text-zinc-100 min-w-0 max-w-full ${compact ? 'sm:max-w-[26rem]' : 'sm:max-w-[34rem]'}`}>
-                <span className="min-w-0 truncate" title={selectedLabel}>{selectedLabel}</span>
+                <span className="min-w-0 truncate" title={fullLabel}>{selectedLabel}</span>
                 <ChevronDown className={`h-2.5 w-2.5 shrink-0 transition-transform duration-150 ease-[var(--ease-snappy)] ${open ? 'rotate-180' : ''}`} aria-hidden="true" />
             </button>
             {open && anchor && (

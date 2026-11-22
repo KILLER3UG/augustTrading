@@ -176,6 +176,10 @@ interface TradeViewProps {
     /** Pin/unpin a verdict to the Pinned list (App owns the watched flag). */
     onToggleWatch?: (messageId: string) => void;
     pinnedMessageIds?: ReadonlySet<string>;
+    /** The top-right header-bar toggle for the collapsed Utility Rail — the
+     *  rotated edge strip's replacement (2026-11-23). Forwarded to the dock. */
+    onToggleUtilityRail?: () => void;
+    utilityRailOpen?: boolean;
     /** The dock's decision-card handlers (audit P-6): confirm/dismiss a
      *  PROPOSED settlement fix or trade action, applied through App's own
      *  journal/watch writers. Forwarded to the Chart AI dock. */
@@ -360,7 +364,7 @@ export const useTickFlash = (price: number | undefined): { cls: string; seq: num
 
 
 const TradeView: React.FC<TradeViewProps> = ({
-    memoryEnabled, strategiesEnabled, providers, selectedChatModel, onSelectChatModel, onRefreshModels, verdict, bots = [], trades = [], botSessionRequest, groupSessionRequest, onRunAnalysis, onAnalysisError, onStopRun, botThreadRows, onBotTurnCommit, onSoloTurnCommit, onSyncConversation, conversationRows, activeConversationId, onNewChat, onNewGroup, getAnalysisMessage, onLogProposedTrade, onRejectProposedTrade, onUndoApproval, onConfirmRiskChange, onDismissRiskChange, onRevertRiskChange, onConfirmAiSettingChange, onDismissAiSettingChange, onRevertAiSettingChange, onConfirmStrategyActivation, onDismissStrategyActivation, onRevertStrategyActivation, onConfirmSessionPlan, onDismissSessionPlan, onRevertSessionPlan, onConfirmRuleProposal, onDismissRuleProposal, onRevertRuleProposal, renderGroupSurface, groups = [], registerScrollToMessage, modeRequest, activeUsername, onTradeModeChange,    onToggleWatch, onOpenWatchList, watchOpenCount = 0, pinnedMessageIds,
+    memoryEnabled, strategiesEnabled, providers, selectedChatModel, onSelectChatModel, onRefreshModels, verdict, bots = [], trades = [], botSessionRequest, groupSessionRequest, onRunAnalysis, onAnalysisError, onStopRun, botThreadRows, onBotTurnCommit, onSoloTurnCommit, onSyncConversation, conversationRows, activeConversationId, onNewChat, onNewGroup, getAnalysisMessage, onLogProposedTrade, onRejectProposedTrade, onUndoApproval, onConfirmRiskChange, onDismissRiskChange, onRevertRiskChange, onConfirmAiSettingChange, onDismissAiSettingChange, onRevertAiSettingChange, onConfirmStrategyActivation, onDismissStrategyActivation, onRevertStrategyActivation, onConfirmSessionPlan, onDismissSessionPlan, onRevertSessionPlan, onConfirmRuleProposal, onDismissRuleProposal, onRevertRuleProposal, renderGroupSurface, groups = [], registerScrollToMessage, modeRequest, activeUsername, onTradeModeChange,    onToggleWatch, onOpenWatchList, watchOpenCount = 0, pinnedMessageIds, onToggleUtilityRail, utilityRailOpen,
     onConfirmSettlementCorrection, onDismissSettlementCorrection, onVoidSettlementCorrection,
     onConfirmTradeAction, onDismissTradeAction, leadingChrome }) => {
     // The chart opens on the coin the SHARED chat session carries. Adopting only
@@ -988,6 +992,8 @@ const TradeView: React.FC<TradeViewProps> = ({
         groups,
         onToggleWatch,
         pinnedMessageIds,
+        onToggleUtilityRail,
+        utilityRailOpen,
         onRefreshModels,
         registerScrollToMessage,
         onConfirmSettlementCorrection,

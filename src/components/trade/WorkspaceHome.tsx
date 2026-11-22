@@ -45,7 +45,7 @@ export const WorkspaceGreeting: React.FC<{ compact?: boolean; now?: Date }> = ({
         <p className={`text-zinc-500 ${compact ? 'max-w-[17rem] text-ui-caption leading-5' : 'max-w-[29rem] text-ui-sm leading-6'}`}>
             {compact
                 ? 'It can see this chart, the order book, and your drawings.'
-                : 'Ask about a chart, map a trade plan, or think through a setup — nothing executes without you.'}
+                : 'Ask about a chart, a setup, or your journal.'}
         </p>
     </div>
 );

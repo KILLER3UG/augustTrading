@@ -1,12 +1,12 @@
 /**
  * UtilityRail — the quiet, collapsed-by-default right-side rail.
  *
- * The reference keeps the trader's working context and the systems they might
- * inspect one small click away, not permanently on screen. In Chat layout the
- * rail renders NOTHING of itself: just a single low-contrast `Available to
- * open` trigger inside a `data-open="false"` container. Opening it reveals a
- * symbol/interval context line and four utility rows; Memory and Skills expand
- * in place instead of navigating away from the conversation.
+ * In Chat layout the rail renders NOTHING while closed: the ONE trigger is a
+ * subtle panel-toggle icon button in the top-right header bar (see
+ * TradeChatPanel; the old rotated `Available to open` edge strip is gone).
+ * Opening it reveals a symbol/interval context line and four utility rows;
+ * Memory and Skills expand in place instead of navigating away from the
+ * conversation.
  *
  * All chrome is monochrome zinc. The Memory counters read the curated-memory
  * snapshot live (capture, not the frozen prompt prefix), and Consolidate Now
@@ -39,12 +39,22 @@ export interface UtilityRailProps {
     onOpenChart?: () => void;
     onOpenTradeLog?: () => void;
     username?: string | null;
+    /** Controlled open state — the top-right header-bar toggle owns it
+     *  (2026-11-23: the rotated `Available to open` edge strip is gone; the
+     *  header button is the one trigger). Omitted ⇒ internal state. */
+    open?: boolean;
+    onOpenChange?: (open: boolean) => void;
 }
 
 const UtilityRail: React.FC<UtilityRailProps> = ({
-    onOpenChart, onOpenTradeLog, username,
+    onOpenChart, onOpenTradeLog, username, open: openProp, onOpenChange,
 }) => {
-    const [open, setOpen] = useState(false);
+    const [openState, setOpenState] = useState(false);
+    const open = openProp ?? openState;
+    const setOpen = (next: boolean): void => {
+        setOpenState(next);
+        onOpenChange?.(next);
+    };
     const [section, setSection] = useState<'none' | 'memory' | 'skills' | 'paper'>('none');
     const [mem, setMem] = useState<CuratedMemorySnapshot>(emptyCounters);
     const [dreamUndo, setDreamUndo] = useState<{ userMd: string; memoryMd: string } | null>(null);
@@ -137,26 +147,10 @@ const UtilityRail: React.FC<UtilityRailProps> = ({
     ];
 
     if (!open) {
-        return (
-            <aside
-                data-testid="utility-rail"
-                data-open="false"
-                aria-label="Utility rail"
-                className="flex w-auto shrink-0 flex-col items-center justify-end border-l border-white/[0.04] bg-zinc-900/30 px-1.5 py-3"
-            >
-                <button
-                    type="button"
-                    aria-label="Available to open — show utility rail"
-                    title="Available to open"
-                    data-testid="utility-rail-open"
-                    onClick={() => setOpen(true)}
-                    className="rounded-control px-1 py-2 text-ui-2xs uppercase tracking-widest text-zinc-600 transition-colors hover:text-zinc-300"
-                    style={{ writingMode: 'vertical-rl' }}
-                >
-                    Available to open
-                </button>
-            </aside>
-        );
+        // Collapsed = NOTHING on the edge. The old rotated `Available to open`
+        // strip is gone; the ONE trigger is the header-bar icon button
+        // (data-testid="utility-rail-open", see TradeChatPanel's header).
+        return null;
     }
 
     return (

@@ -116,6 +116,10 @@ export interface SurfaceOutletProps {
     registerScrollToMessage: (fn: ((messageId: string) => void) | null) => void;
     onToggleWatch: (messageId: string) => void;
     onOpenWatchList: () => void;
+    /** The top-right header-bar toggle for the collapsed Utility Rail — the
+     *  rotated edge strip's replacement (2026-11-23). */
+    onToggleUtilityRail?: () => void;
+    utilityRailOpen?: boolean;
     /** The dock's decision-card handlers (audit P-6): confirm/dismiss a
      *  PROPOSED settlement fix or trade action. Confirm applies through the
      *  SAME journal/watch writers the Chat surface's card used. */
@@ -140,6 +144,7 @@ const SurfaceOutlet: React.FC<SurfaceOutletProps> = ({
     botSessionRequest, groupSessionRequest, onRunAnalysisFromChat, onAnalysisError,
     onCancelAnalysis, getAnalysisMessage, onLogProposedTrade, onRejectProposedTrade, onUndoApproval, onConfirmRiskChange, onDismissRiskChange, onRevertRiskChange, onConfirmAiSettingChange, onDismissAiSettingChange, onRevertAiSettingChange, onConfirmStrategyActivation, onDismissStrategyActivation, onRevertStrategyActivation, onConfirmSessionPlan, onDismissSessionPlan, onRevertSessionPlan, onConfirmRuleProposal, onDismissRuleProposal, onRevertRuleProposal, registerScrollToMessage,
     onToggleWatch, onOpenWatchList, watchOpenCount, watchOpenR, pinnedMessageIds,
+    onToggleUtilityRail, utilityRailOpen,
     onConfirmSettlementCorrection, onDismissSettlementCorrection, onVoidSettlementCorrection,
     onConfirmTradeAction, onDismissTradeAction,
     renderGroupSurface,
@@ -214,6 +219,8 @@ const SurfaceOutlet: React.FC<SurfaceOutletProps> = ({
                         registerScrollToMessage={registerScrollToMessage}
                         onToggleWatch={onToggleWatch}
                         onOpenWatchList={onOpenWatchList}
+                        onToggleUtilityRail={onToggleUtilityRail}
+                        utilityRailOpen={utilityRailOpen}
                         onConfirmSettlementCorrection={onConfirmSettlementCorrection}
                         onDismissSettlementCorrection={onDismissSettlementCorrection}
                         onVoidSettlementCorrection={onVoidSettlementCorrection}

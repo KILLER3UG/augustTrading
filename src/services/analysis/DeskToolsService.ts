@@ -1236,13 +1236,17 @@ const rawToolDigest = (name: string, content: string): string => {
             return price != null ? `price ${Number(price).toLocaleString()}` : 'ok';
         }
         if (name === 'get_indicators') {
-            // Compact Floor-chip line: timeframe + which studies ran, with the
-            // one number a reader actually scans for (RSI14) when core is in.
-            const studies = Object.keys(parsed).filter(k =>
-                k !== 'symbol' && k !== 'interval' && k !== 'bars' && k !== 'error');
-            if (studies.length === 0) return typeof parsed.error === 'string' ? String(parsed.error) : 'ok';
+            // Human trading labels, not the payload's own JSON keys: the
+            // transcript used to read "checkedAt, data_quality, regime,
+            // momentum" — metadata the trader cannot act on. Metadata keys are
+            // dropped, snake_case is spoken as words, and the symbol+interval
+            // lead so a multi-symbol scan reads at a glance.
+            const META_KEYS = new Set(['symbol', 'interval', 'bars', 'error', 'checkedAt', 'data_quality', 'available', 'unavailableReason']);
+            const studies = Object.keys(parsed).filter(k => !META_KEYS.has(k)).map(k => k.replace(/_/g, ' '));
+            const head = [asString(parsed.symbol), asString(parsed.interval)].filter(Boolean).join(' ');
+            if (studies.length === 0) return typeof parsed.error === 'string' ? String(parsed.error) : (head || 'ok');
             const rsi = (parsed.core as { rsi?: { rsi14?: number } } | undefined)?.rsi?.rsi14;
-            return `${parsed.interval ?? ''} · ${studies.join(', ')}${typeof rsi === 'number' ? ` · RSI ${Math.round(rsi)}` : ''}`;
+            return `${head ? `${head} · ` : ''}${studies.join(', ')}${typeof rsi === 'number' ? ` · RSI ${Math.round(rsi)}` : ''}`;
         }
         if (name === 'get_setup_history_stats') {
             const sample = typeof parsed.sample === 'number' ? parsed.sample : 0;
@@ -7970,7 +7974,9 @@ export async function runDeskToolLoop(params: {
                     toolCallId: call.id, name: call.name, ok: true,
                     content: repeatCallNotice(call.name, toolLabel(call.name), Date.now() - answeredAt),
                 });
-                onToolEvent?.(`${toolLabel(call.name)} · already fetched this turn`);
+                // No "already fetched this turn" event line: the replayed call
+                // still gets its own digest row below, so a second line naming
+                // the cache was status noise the transcript could not use.
                 continue;
             }
             if (call.id) gateKeyByCallId.set(call.id, key);

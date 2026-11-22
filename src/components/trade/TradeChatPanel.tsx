@@ -290,6 +290,10 @@ interface TradeChatPanelProps {
     onToggleWatch?: (messageId: string) => void;
     /** Message ids currently pinned, so the chip shows the real state. */
     pinnedMessageIds?: ReadonlySet<string>;
+    /** The top-right header-bar toggle for the collapsed Utility Rail — the
+     *  rotated `Available to open` edge strip's replacement (2026-11-23). */
+    onToggleUtilityRail?: () => void;
+    utilityRailOpen?: boolean;
     /** The dock's decision-card handlers (audit P-6): confirm/dismiss a
      *  PROPOSED settlement fix or trade action. Confirm applies through App's
      *  journal/watch writers — the same path the Chat surface's card takes. */
@@ -380,7 +384,7 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
     onNewGroup, botThreadRows, conversationRows, activeConversationId, onNewChat, onBotTurnCommit,
     onSoloTurnCommit,
     onSyncConversation,
-    onToggleWatch, pinnedMessageIds,
+    onToggleWatch, pinnedMessageIds, onToggleUtilityRail, utilityRailOpen,
     onConfirmSettlementCorrection, onDismissSettlementCorrection, onVoidSettlementCorrection,
     onConfirmTradeAction, onDismissTradeAction,
     onConfirmStrategyActivation, onDismissStrategyActivation, onRevertStrategyActivation,
@@ -1395,6 +1399,50 @@ ${riskConstitution}`
 
 
     const isChatFocus = layoutMode === 'chat';
+    /** The empty Chat canvas groups greeting + composer + starters in the
+     *  vertical center (Claude-style); the composer moves to the bottom the
+     *  moment the first message exists. */
+    const emptyCentered = isChatFocus && entries.length === 0 && !panelPickerFor;
+    /** ONE composer element, mounted in the centered group while the canvas is
+     *  empty (Chat layout) and below the transcript otherwise. */
+    const composerNode = (
+        <ChatComposer
+            layoutMode={layoutMode}
+            symbol={symbol}
+            interval={interval}
+            isPanel={isPanel}
+            ready={ready}
+            busy={busy}
+            draft={draft}
+            setDraft={setDraft}
+            send={send}
+            runFullAnalysis={runFullAnalysis}
+            onRunAnalysis={onRunAnalysis}
+            onStopRun={onStopRun}
+            effort={effort}
+            changeEffort={changeEffort}
+            modelIssue={modelIssue}
+            provider={provider}
+            selectedChatModel={selectedChatModel}
+            changeSoloModel={changeSoloModel}
+            providers={providers}
+            onRefreshModels={onRefreshModels}
+            attachments={attachments}
+            removeAttachment={removeAttachment}
+            fileInputRef={fileInputRef}
+            attachFiles={attachFiles}
+            showAttachMenu={showAttachMenu}
+            setShowAttachMenu={setShowAttachMenu}
+            captureChart={captureChart}
+            onCaptureChart={onCaptureChart}
+            composerRef={composerRef}
+            panelCount={activeSession.panelModels?.length ?? 0}
+            pickerOpen={panelPickerFor === activeId}
+            onTogglePicker={() => setPanelPickerFor(panelPickerFor === activeId ? null : activeId)}
+            botName={boundBot ? boundBot.name : null}
+            contextAt={contextAt}
+        />
+    );
 
     return (
         <div
@@ -1426,6 +1474,16 @@ ${riskConstitution}`
                     <React.Suspense fallback={null}>
                         <AutonomyControl providers={providers} />
                     </React.Suspense>
+                    {/* The Utility Rail's ONE trigger — the top-right header
+                        bar, in both Desk and Chat. The rotated edge strip this
+                        replaced never fit the dock's hairline chrome. */}
+                    <button type="button" onClick={() => onToggleUtilityRail?.()}
+                        aria-label={utilityRailOpen ? 'Close utility panel' : 'Open utility panel'}
+                        aria-expanded={!!utilityRailOpen} title={utilityRailOpen ? 'Close utility panel' : 'Open utility panel'}
+                        data-testid="utility-rail-open"
+                        className={`hit-target flex items-center justify-center rounded-control p-1.5 transition-colors hover:bg-white/[0.06] hover:text-zinc-100 ${utilityRailOpen ? 'bg-white/[0.07] text-zinc-100' : 'text-zinc-500'}`}>
+                        <PanelRightOpen className="h-3.5 w-3.5" aria-hidden="true" />
+                    </button>
                     <button type="button" onClick={() => addSession('solo')} aria-label="New chat" title="New chat"
                         className="hit-target flex items-center justify-center rounded-control p-1.5 text-zinc-500 transition-colors hover:bg-white/[0.06] hover:text-zinc-100">
                         <Plus className="h-3.5 w-3.5" aria-hidden="true" />
@@ -1642,26 +1700,35 @@ ${riskConstitution}`
                 <div
                     data-testid={isChatFocus ? 'chat-reading-column' : undefined}
                     className={isChatFocus
-                        ? 'mx-auto flex min-h-full w-full max-w-[740px] flex-col px-6 py-7'
-                        : 'flex min-h-full w-full flex-col px-4 py-5'}
+                        ? 'mx-auto flex min-h-full w-full max-w-[740px] flex-col px-6 pt-7 pb-16'
+                        : 'flex min-h-full w-full flex-col px-4 pt-5 pb-12'}
                 >
                 {entries.length === 0 && !panelPickerFor && (
                     <div className={`flex flex-1 flex-col items-center justify-center text-center ${isChatFocus ? 'gap-7 py-10' : 'gap-5 py-6'}`}>
                         <WorkspaceGreeting compact={!isChatFocus} />
+                        {/* The composer rides IN the centered group while the
+                            canvas is empty — greeting, composer and starters
+                            are one unit — and moves to the bottom as soon as
+                            the first message lands (see `emptyCentered`). */}
+                        {isChatFocus && <div className="w-full max-w-[740px] text-left">{composerNode}</div>}
                         <div
                             className={isChatFocus
-                                ? 'grid w-full max-w-[32rem] grid-cols-1 gap-2 sm:grid-cols-2'
+                                ? 'flex w-full max-w-[36rem] flex-col gap-2'
                                 : 'flex w-full max-w-[17rem] flex-col gap-1.5'}
                             data-testid="dock-quick-prompts"
                         >
                             {QUICK_PROMPTS.map(({ text, Icon }) => (
                                 <button key={text} type="button" disabled={!ready} aria-label={text} onClick={() => void send(text)}
                                     className={isChatFocus
-                                        ? 'group flex items-center gap-2.5 rounded-xl border border-white/[0.06] bg-zinc-900/65 px-3.5 py-2.5 text-left text-ui-caption text-zinc-300 transition-colors hover:border-white/[0.10] hover:bg-zinc-800/80 hover:text-zinc-100 disabled:border-white/[0.04] disabled:bg-zinc-900/40 disabled:text-zinc-500'
+                                        ? 'group flex w-full items-center gap-2.5 rounded-xl border border-white/[0.06] bg-zinc-900/65 px-3.5 py-2.5 text-left text-ui-caption text-zinc-300 transition-colors hover:border-white/[0.10] hover:bg-zinc-800/80 hover:text-zinc-100 disabled:border-white/[0.04] disabled:bg-zinc-900/40 disabled:text-zinc-500'
                                         : 'group inline-flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-ui-dense text-zinc-400 transition-colors hover:bg-white/[0.05] hover:text-zinc-100 disabled:text-zinc-600 disabled:hover:bg-transparent'}
                                 >
                                     <Icon className="h-3.5 w-3.5 shrink-0 text-zinc-500 transition-colors group-hover:text-zinc-200 group-disabled:text-zinc-600" aria-hidden="true" />
-                                    <span className="min-w-0 truncate">{text}</span>
+                                    {/* No truncate: a starter's full text is
+                                        the affordance — "Audit BTC 1h
+                                        structure & positioning" never clips
+                                        to "…" on desktop widths. */}
+                                    <span className="min-w-0 flex-1">{text}</span>
                                 </button>
                             ))}
                         </div>
@@ -1733,43 +1800,11 @@ ${riskConstitution}`
             {/* Composer — the reference's layout: a workspace-style section
                 header (symbol · panel seats · bot · packet age), then one
                 rounded-bubble card holding the input and its toolbar, then a plain
-                sentence-case disclaimer. Generous padding, no hard divider. */}
-            <ChatComposer
-                layoutMode={layoutMode}
-                symbol={symbol}
-                interval={interval}
-                isPanel={isPanel}
-                ready={ready}
-                busy={busy}
-                draft={draft}
-                setDraft={setDraft}
-                send={send}
-                runFullAnalysis={runFullAnalysis}
-                onRunAnalysis={onRunAnalysis}
-                onStopRun={onStopRun}
-                effort={effort}
-                changeEffort={changeEffort}
-                modelIssue={modelIssue}
-                provider={provider}
-                selectedChatModel={selectedChatModel}
-                changeSoloModel={changeSoloModel}
-                providers={providers}
-                onRefreshModels={onRefreshModels}
-                attachments={attachments}
-                removeAttachment={removeAttachment}
-                fileInputRef={fileInputRef}
-                attachFiles={attachFiles}
-                showAttachMenu={showAttachMenu}
-                setShowAttachMenu={setShowAttachMenu}
-                captureChart={captureChart}
-                onCaptureChart={onCaptureChart}
-                composerRef={composerRef}
-                panelCount={activeSession.panelModels?.length ?? 0}
-                pickerOpen={panelPickerFor === activeId}
-                onTogglePicker={() => setPanelPickerFor(panelPickerFor === activeId ? null : activeId)}
-                botName={boundBot ? boundBot.name : null}
-                contextAt={contextAt}
-            />
+                sentence-case disclaimer. Generous padding, no hard divider.
+                While the Chat canvas is empty the composer sits IN the centered
+                group instead of here (`emptyCentered`), so the three move as
+                one unit. */}
+            {!emptyCentered && composerNode}
             </>
             )}
             {/* New agent: the roster's create dialog, launched from this dock.

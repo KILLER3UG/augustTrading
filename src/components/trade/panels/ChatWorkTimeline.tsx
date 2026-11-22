@@ -387,14 +387,13 @@ const ChatWorkTimeline: React.FC<ChatWorkTimelineProps> = ({ entry }) => {
         () => turnActivityLabel(entry.tools, reasoning.trim().length > 0),
         [entry.tools, reasoning],
     );
-    // The reference's settled headline: "Ran 4 commands, read a file". The
-    // count is CALLS, not transcript lines — `pairToolRows` is the same pairing
-    // the rows below render, so the headline and the card can never disagree
-    // about how many commands the turn ran. A reasoning-only turn has no
-    // command to count and keeps the "Analyzed" form.
+    // The settled header's tool count — "4 tools" beside "Thought for 14s".
+    // The count is CALLS, not transcript lines: `pairToolRows` is the same
+    // pairing the rows below render, so the header and the card can never
+    // disagree about how many commands the turn ran.
     const callCount = pairedCalls.length;
     const ranSummary = callCount > 0
-        ? `Ran ${callCount} ${callCount === 1 ? 'command' : 'commands'}`
+        ? `${callCount} tool${callCount === 1 ? '' : 's'}`
         : null;
     if (!hasWork && !hasActions && !wireAlone) {
         // Nothing yet: the waiting tip covers
@@ -481,7 +480,6 @@ const ChatWorkTimeline: React.FC<ChatWorkTimelineProps> = ({ entry }) => {
                     summary={ranSummary}
                     persistedMs={entry.workedMs}
                     startedAt={startedAt}
-                    title={workSummaryLabel(entry.tools) ?? undefined}
                     activity={activity}
                 >
                     {nodes}

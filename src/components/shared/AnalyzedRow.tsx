@@ -8,22 +8,17 @@ export interface AnalyzedRowProps {
      *  timeline stays OPEN live and the duration ticks. */
     running?: boolean;
     className?: string;
-    /** What the work was, counted by KIND — "4 reads, 1 search". This is the
-     *  settled row's headline: it says what the desk DID, in the typed counts
-     *  the reference uses ("Ran 4 commands, read a file"). Omitted when the
-     *  turn called no tool. */
+    /** The settled header's tool count — "4 tools". Omitted when the turn
+     *  called no tool. */
     summary?: string | null;
     /** The turn's frozen work time in ms, persisted at settle. Used ONLY when
      *  the clock is not ticking: precedence is live tick > this > nothing.
      *  A reloaded turn has no live clock, so this is what keeps its
-     *  "Analyzed for Ns" on screen. */
+     *  duration on screen. */
     persistedMs?: number;
     /** Epoch-ms the turn started. The live clock and the frozen settle both
      *  read it, so a remount from a surface hop does not restart the count. */
     startedAt?: number;
-    /** What the work was, named from real data — "Read the chart, order book
-     *  and notebook". Rendered after the duration; omitted when unknown. */
-    title?: string;
     /** What the turn is doing RIGHT NOW — "Reading the order book". This is
      *  the RUNNING label, and it replaces the bare "Analyzing": a state says
      *  the desk is busy, an activity says what it is busy with. Derived from
@@ -34,24 +29,24 @@ export interface AnalyzedRowProps {
 }
 
 /**
- * "Analyzed for 14s" — the work line over the step list. The header says what
- * the turn did ("Ran 4 commands, read a file"); the body lists the steps, and
- * EACH STEP is its own disclosure (a Thought row, a tool round).
+ * "Thought for 14s · 4 tools" — the flat turn header over the work log. The
+ * header says how long the seat thought and how many tools it ran; the body
+ * lists the steps, and EACH STEP is its own disclosure (a Thought row, a tool
+ * round).
  *
- * The list stays visible once the answer lands. It used to fold itself shut at
- * settle, which hid every step behind one click and made a settled turn read as
- * a sentence rather than the work it was — the reference keeps the step rows on
- * screen and collapses only what is inside a row. The chevron still folds the
- * whole list for anyone who wants the transcript short, and a starting run
- * opens it again so the live steps are where the eye already is.
+ * The log is OPEN while the turn runs — the live steps are where the eye
+ * already is — and it FOLDS ITSELF SHUT the moment the answer begins to
+ * settle, so the final answer owns the reading space (2026-11-23 polish
+ * ruling; the old behaviour kept every step on screen forever). The chevron
+ * still reopens the whole log for anyone who wants the receipt.
  *
  * The clock covers the pre-answer work phase only — it starts at turn start and
  * freezes when the answer text begins.
  */
-const AnalyzedRow: React.FC<AnalyzedRowProps> = ({ running = false, className = '', summary, persistedMs, startedAt, title, activity, children }) => {
-    // Open by default so the thinking block and executed tool steps are
-    // immediately legible in the turn timeline; the user can click to fold.
-    const [open, setOpen] = useState(true);
+const AnalyzedRow: React.FC<AnalyzedRowProps> = ({ running = false, className = '', summary, persistedMs, startedAt, activity, children }) => {
+    // Open while the work is live; a row that mounts already settled (a
+    // reloaded conversation) starts folded.
+    const [open, setOpen] = useState(running);
     const turnStartMs = typeof startedAt === 'number' && Number.isFinite(startedAt) ? startedAt : null;
     const wasRunningRef = useRef(running);
     const startedAtRef = useRef<number | null>(turnStartMs ?? (running ? Date.now() : null));
@@ -70,9 +65,9 @@ const AnalyzedRow: React.FC<AnalyzedRowProps> = ({ running = false, className = 
             const start = startedAtRef.current;
             setSettledSeconds(start !== null ? Math.max(0, Math.round((Date.now() - start) / 1000)) : null);
             startedAtRef.current = null;
-            // Settling freezes the CLOCK; it no longer folds the list. The steps
-            // are the record of what the turn did, and hiding the record behind
-            // a click is what this component used to do.
+            // Settling folds the log: the answer owns the reading space now,
+            // and the steps stay one chevron away.
+            setOpen(false);
         }
         wasRunningRef.current = running;
     }, [running, turnStartMs]);
@@ -100,38 +95,22 @@ const AnalyzedRow: React.FC<AnalyzedRowProps> = ({ running = false, className = 
         ? liveSeconds
         : settledSeconds ?? (typeof persistedMs === 'number' ? Math.max(0, Math.round(persistedMs / 1000)) : null);
     // The reference's two states: running = the "••• verb-ing · 25s" status
-    // line; settled with tools = "Ran 4 commands, read a file". Duration only
-    // stands alone when there is no action count to lead with.
-    //
-    // The settled headline is the reference's command count ("Ran 4 commands"),
-    // composed by ChatWorkTimeline from the PAIRED calls; the named work follows
-    // in `title`. A count of calls, never of transcript lines — the desk writes
-    // two lines per call, and a line count would double every number the trader
-    // is told.
+    // line; settled = the FLAT turn header — "Thought for 14s · 4 tools" —
+    // under which the folded log reopens. The count is CALLS, never transcript
+    // lines (the desk writes two lines per call).
     const workSummary = (summary ?? '').trim();
     const ranTools = workSummary.length > 0;
     // The RUNNING label is the ACTIVITY, not the state: "Reading the order
     // book" says what the desk is doing, "Analyzing" only says it is busy.
-    // The separator follows the same rule as the settled form — a detail
-    // takes " · Ns", a bare state keeps " for Ns".
     const runningActivity = (activity ?? '').trim();
     const label = running
         ? (runningActivity || 'Analyzing')
-        : ranTools
-            ? workSummary
-            : 'Analyzed';
-    // A settled work turn reads like the reference's "Ran 4 commands, read a
-    // file": the count leads and the named work follows. Duration belongs to
-    // the LIVE line only — the reference's settled row carries no clock, and
-    // printing "· 0s" beside a tool count made a fast read look like it did
-    // nothing. A reasoning-only turn keeps "Analyzed for Ns", where the
-    // duration is the only thing that happened.
-    const durationTag = seconds !== null && seconds > 0 ? ` · ${formatElapsed(seconds)}` : '';
+        : seconds !== null && seconds > 0
+            ? `Thought for ${formatElapsed(seconds)}`
+            : 'Thought';
     const detail = running
         ? (seconds !== null ? (runningActivity ? ` · ${formatElapsed(seconds)}` : ` for ${formatElapsed(seconds)}`) : '')
-        : ranTools
-            ? `${title ? ` · ${title.charAt(0).toLowerCase()}${title.slice(1)}` : ''}${durationTag}`
-            : (seconds !== null ? ` for ${formatElapsed(seconds)}` : '') + (title ? ` · ${title.charAt(0).toLowerCase()}${title.slice(1)}` : '');
+        : ranTools ? ` · ${workSummary}` : '';
 
     return (
         <details

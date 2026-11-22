@@ -236,6 +236,11 @@ const App: React.FC = () => {
         isRateLimited, setIsRateLimited,
     } = useUIState();
     const [isWatchListVisible, setIsWatchListVisible] = useState(false);
+    /** The collapsed-by-default Utility Rail, opened from the header bar's
+     *  panel-toggle icon (the rotated `Available to open` edge strip's
+     *  replacement, 2026-11-23). One state, two homes: the header button and
+     *  the rail itself. */
+    const [utilityRailOpen, setUtilityRailOpen] = useState(false);
     /** Background-jobs drawer (status-stack pattern). */
     const [isJobsDrawerVisible, setIsJobsDrawerVisible] = useState(false);
     /** The rail's Search row publishes `august:open-search`; this drawer is
@@ -2871,6 +2876,8 @@ const App: React.FC = () => {
                         registerScrollToMessage={registerScrollToMessage}
                         onToggleWatch={handleToggleWatch}
                         onOpenWatchList={() => setIsWatchListVisible(true)}
+                        onToggleUtilityRail={() => setUtilityRailOpen(v => !v)}
+                        utilityRailOpen={utilityRailOpen}
                         /* The CHART AI dock's decision cards (audit P-6):
                            confirm settles the store's proposal, then applies
                            through the journal's own writers. */
@@ -2889,6 +2896,8 @@ const App: React.FC = () => {
                     inside it, so no surface's width geometry changes. It is
                     collapsed to a single quiet trigger by default. */}
                 <UtilityRail
+                    open={utilityRailOpen}
+                    onOpenChange={setUtilityRailOpen}
                     onOpenChart={() => setSurface('trade')}
                     onOpenTradeLog={() => {
                         setSettingsSection('journal');
