@@ -360,6 +360,18 @@ ${has('run_monte_carlo') ? 'run_monte_carlo simulates a concrete plan: pass dire
  *  send). Built from `deskToolsMandateFor` so the two cannot drift apart. */
 export const DESK_TOOLS_PROMPT = deskToolsMandateFor();
 
+/**
+ * Pass 3 — one frozen paragraph, imported by BOTH prompt builders. A tool
+ * wired into only one seat is a dead affordance on the other.
+ */
+export const PAPER_TRADING_PROMPT = [
+    'PAPER TRADING (local simulation, no exchange account and no keys):',
+    '`paper_account` is a read-only view of equity, margin, open positions and pending limits. Call it BEFORE sizing any simulated order.',
+    '`paper_order` accepts ONLY open_market, open_limit, modify_sl_tp, close and cancel. A limit rests until price STRICTLY crosses it — a touch is not a fill. Liquidation requires a MARK-price breach of the isolated liquidation price, never a wick.',
+    'The broker in deterministic code fills from L2 depth (or a clearly flagged fallback), charges 0.02% maker / 0.05% taker on full notional, and refuses any order over 1% risk, 10x leverage, 3 concurrent positions or a 3% daily drawdown kill-switch. Report a refusal and its reason; NEVER claim you bypassed a wall.',
+    'You have NO path to equity, risk caps, closed paper trades or a reset — only the trader can change those in Settings. Every paper fill is simulated; say so plainly. A closed paper row settles into the Trade Log under the Paper filter and never enters live statistics.',
+].join('\n');
+
 export const MARKET_TOOLS = new Set([
     'get_market_packet',
     'get_all_timeframes',

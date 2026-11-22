@@ -54,7 +54,7 @@ import { buildProfileMemoryIndex } from '../learning/profileMemory';
 import { buildCuratedMemoryPromptBlock, getCachedCuratedMemorySnapshot } from '../learning/curatedMemory';
 import { buildGoalsIndex, focusedGoal, goalMatchesMessage, listGoals } from '../goals/GoalService';
 import { runToolTurn, type CaptureSnapshot, type ToolTurnEvents, type ToolTurnOutcome, type ToolTurnRequest } from './toolTurn';
-import { isMarketReadTool } from '../analysis/deskToolShared';
+import { isMarketReadTool, PAPER_TRADING_PROMPT } from '../analysis/deskToolShared';
 import { runPresentTrade } from './presentTradeTool';
 import { userContentWithImage } from './chatTurnRunner';
 import { saveToolPayload } from './toolPayloadStore';
@@ -152,6 +152,9 @@ export const CHAT_SURFACE_TOOLS = [
     'emit_signal',
     // Anything that can be clipped must be able to be re-read.
     'read_tool_output',
+    // Pass 3: the local simulated broker. Read the account before sizing;
+    // the order tool cannot touch equity, caps or closed trades.
+    'paper_account', 'paper_order',
 ];
 
 /** What travelled in one turn's system prompt: the text, and the skill slugs it
@@ -332,7 +335,7 @@ ${constitution}`
         ? dedupeInjectionBlocks([skillsBlock, rulesBlock]).blocks
         : [skillsBlock, rulesBlock];
     return {
-        text: [mandate, riskMathBlock, goalsBlock, skillsRulesSkills, skillsRulesRules, topicsBlock, strategiesBlock, memoryBlock, curatedMemoryBlock].filter(Boolean).join('\n\n'),
+        text: [mandate, riskMathBlock, goalsBlock, skillsRulesSkills, skillsRulesRules, topicsBlock, strategiesBlock, memoryBlock, curatedMemoryBlock, PAPER_TRADING_PROMPT].filter(Boolean).join('\n\n'),
         skills,
     };
 };

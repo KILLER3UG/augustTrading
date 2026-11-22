@@ -47,6 +47,7 @@ import type { Message } from '../../types/message';
 import {
     buildSkillsIndexForPrompt, TRADE_CHAT_SYSTEM_PROMPT,
 } from '../../services/trade/tradeChatContext';
+import { PAPER_TRADING_PROMPT } from '../../services/analysis/deskToolShared';
 import { activeStrategiesBlock } from '../../services/learning/strategyStore';
 import { WorkspaceGreeting } from './WorkspaceHome';
 import { AUGUST_ASK_EVENT, consumePendingAsk, isAskDelivered, markAskDelivered } from '../settings/TellAugustBar';
@@ -665,7 +666,7 @@ ${riskConstitution}`
         const persona = [agent?.persona, roleNote].filter(Boolean).join('\n\n');
         const base = `${constitutionBlock ? `${constitutionBlock}
 
-` : ''}${TRADE_CHAT_SYSTEM_PROMPT}${skillsBlock ? `\n\n${skillsBlock}` : ''}${strategiesBlock ? `\n\n${strategiesBlock}` : ''}${memoryBlock ? `\n\n${memoryBlock}` : ''}${curatedMemoryBlock ? `\n\n${curatedMemoryBlock}` : ''}${agent?.notes ? `\n\n## Your private notes\n${agent.notes}` : ''}`;
+` : ''}${TRADE_CHAT_SYSTEM_PROMPT}${skillsBlock ? `\n\n${skillsBlock}` : ''}${strategiesBlock ? `\n\n${strategiesBlock}` : ''}${memoryBlock ? `\n\n${memoryBlock}` : ''}${curatedMemoryBlock ? `\n\n${curatedMemoryBlock}` : ''}${agent?.notes ? `\n\n## Your private notes\n${agent.notes}` : ''}${PAPER_TRADING_PROMPT ? `\n\n${PAPER_TRADING_PROMPT}` : ''}`;
         const skillRows = usableSkillRows(skillIndexRows());
         const skillSlugs = skillsBlock ? skillRows.map(r => r.slug) : [];
         const skillIndexSnapshot = Object.fromEntries(skillRows.map(r => [r.slug, r.description]));

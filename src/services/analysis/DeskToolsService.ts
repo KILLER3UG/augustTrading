@@ -39,6 +39,8 @@ import { DEFAULT_OUTPUT_RESERVE_TOKENS, outputTokenBudget } from '../../utils/co
 import { stepEffortDown, type ReasoningEffort } from '../providers/reasoningControls';
 import { calculateCorrelationRisk } from './CorrelationRiskService';
 import { filterTradesBySimulationMode, countSimulatedTrades, isSimulatedTrade, type SimulationStatsMode } from '../tracking/paperExecution';
+import { paperAccountSnapshot, submitPaperOrder } from '../paper/PaperBrokerService';
+import type { PaperOrderAction, PaperSide } from '../paper/paperCore';
 import { MARKET_TOOLS, CHART_ACTION_TOOL_DEFS, deskToolsMandateFor, TEXT_TOOL_FALLBACK_PROMPT } from './deskToolShared';
 import { PLAYBOOK_IDS } from '../../types/playbook';
 // The moved vocabulary is re-exported for the lazy consumers and the
@@ -785,6 +787,10 @@ const TOOL_BUDGETS: Record<string, number> = {
     // The plan receipt is a compact checklist echo — small, whole, and never
     // a place to hide a step behind a clip.
     update_plan: 800,
+    // Paper receipts must arrive WHOLE: a clipped refusal would hide the
+    // risk number that explains it, and a clipped fill would hide the fee.
+    paper_account: 2200,
+    paper_order: 1600,
 };
 
 /**
@@ -3074,6 +3080,43 @@ export const DESK_TOOL_DEFINITIONS: DeskToolDefinition[] = [
             parameters: { type: 'object', properties: {}, additionalProperties: false },
         },
     },
+    {
+        type: 'function',
+        function: {
+            name: 'paper_account',
+            description:
+                'READ-ONLY snapshot of the LOCAL simulated paper account: equity, cash, free margin, unrealized PnL, realized PnL today, daily drawdown %, kill-switch state, open positions, pending limits and risk limits. Nothing here is a real exchange balance — August holds no keys and places no orders. Returns zero state change.',
+            parameters: { type: 'object', properties: {}, additionalProperties: false },
+        },
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'paper_order',
+            description:
+                'Place ONE order in the LOCAL simulated paper broker. Actions: open_market, open_limit, modify_sl_tp, close, cancel — nothing else. The broker fills from public L2 depth (or a flagged conservative fallback), charges maker 0.02%/taker 0.05% on full notional, enforces a 1% risk cap, 10x leverage cap, 3 concurrent positions and a 3% daily drawdown kill-switch, and refuses any violation with a structured receipt and ZERO state change. You CANNOT edit equity, risk caps, closed trades or reset the account — only the trader can, in Settings. A mere limit touch never fills; liquidation needs a MARK-price breach. Use paper_account first to size against live equity. This is a simulation, never a real execution.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    action: { type: 'string', enum: ['open_market', 'open_limit', 'modify_sl_tp', 'close', 'cancel'], description: 'The one operation to perform.' },
+                    symbol: { type: 'string', description: 'USDT perpetual symbol, e.g. BTCUSDT. Validated against the live universe.' },
+                    side: { type: 'string', enum: ['long', 'short'], description: 'Direction for open_market / open_limit.' },
+                    risk_pct: { type: 'number', description: 'Percent of paper equity to risk at the stop. Cannot exceed the 1% cap.' },
+                    notional_usd: { type: 'number', description: 'Gross USD notional. Alternative to risk_pct; still checked against the risk cap.' },
+                    leverage: { type: 'integer', description: 'Isolated leverage, 1 to the configured cap (default 10).' },
+                    entry_price: { type: 'number', description: 'Reference entry for market orders, or the exact resting price for open_limit.' },
+                    stop_loss: { type: 'number', description: 'Required on entries. Must be below entry for long, above for short.' },
+                    take_profits: { type: 'array', items: { type: 'number' }, description: 'Optional resting maker targets, on the correct side of entry.' },
+                    position_id: { type: 'string', description: 'Required for modify_sl_tp and close.' },
+                    order_id: { type: 'string', description: 'Required for cancel.' },
+                    skill_slug: { type: 'string', description: 'Optional playbook attribution carried into the settled journal row.' },
+                    thesis: { type: 'string', description: 'Optional reason for the order, carried into the settled journal row.' },
+                },
+                required: ['action', 'symbol'],
+                additionalProperties: false,
+            },
+        },
+    },
 ];
 
 
@@ -3152,6 +3195,12 @@ export const INITIAL_DESK_TOOL_NAMES: readonly string[] = [
     // A turn-scoped checklist for multi-step work, offered from round 1 so
     // it costs no extra round. Never persisted; cleared when the turn settles.
     'update_plan',
+    // Pass 3: the local paper broker rides every turn so a trading question
+    // can be answered with a simulated position without a load_tools round.
+    // paper_account is read-only; paper_order is bounded by hard risk walls
+    // that live in deterministic code, never in the model's judgement.
+    'paper_account',
+    'paper_order',
 ];
 
 /** The schema-on-demand tool. NOT a desk capability: it is not in
@@ -5076,6 +5125,12 @@ ${body}`);
                     new_text: asString(call.arguments.new_text) || undefined,
                     if_version: asString(call.arguments.if_version) || undefined,
                     source_session_id: context.sessionId ?? undefined,
+                    // WHY / WHICH MODEL — persisted on the mutation, never inferred.
+                    provenance: {
+                        ...(typeof call.arguments.reason === 'string' ? { rationale: call.arguments.reason } : {}),
+                        ...(context.modelName ? { modelId: context.modelName } : {}),
+                        recordedAt: new Date().toISOString(),
+                    },
                 }, knownTools, undefined, context.skillReview);
                 return {
                     toolCallId: call.id,
@@ -6897,6 +6952,43 @@ ${body}`);
                         ? { note: 'No journal row matches that filter. That is not evidence of inactivity — only of no match.' }
                         : {}),
                 }, null, 2);
+                break;
+            }
+            case 'paper_account': {
+                const markPrices: Record<string, number> = {};
+                if (typeof context.defaultSymbol === 'string' && typeof context.liveMarkPrice === 'number'
+                    && Number.isFinite(context.liveMarkPrice)) {
+                    markPrices[context.defaultSymbol] = context.liveMarkPrice;
+                }
+                const view = await paperAccountSnapshot(undefined, markPrices, Date.now());
+                content = JSON.stringify({ ok: true, kind: 'paper_account', ...view }, null, 2);
+                break;
+            }
+            case 'paper_order': {
+                const a = call.arguments ?? {};
+                const side: PaperSide | undefined = a.side === 'long' || a.side === 'short' ? a.side : undefined;
+                const receipt = await submitPaperOrder({
+                    action: a.action as PaperOrderAction,
+                    ...(typeof a.symbol === 'string' ? { symbol: a.symbol } : {}),
+                    ...(side ? { side } : {}),
+                    ...(typeof a.risk_pct === 'number' ? { risk_pct: a.risk_pct } : {}),
+                    ...(typeof a.notional_usd === 'number' ? { notional_usd: a.notional_usd } : {}),
+                    ...(typeof a.leverage === 'number' ? { leverage: a.leverage } : {}),
+                    ...(typeof a.entry_price === 'number' ? { entry_price: a.entry_price } : {}),
+                    ...(typeof a.stop_loss === 'number' ? { stop_loss: a.stop_loss } : {}),
+                    ...(Array.isArray(a.take_profits)
+                        ? { take_profits: a.take_profits.filter((tp): tp is number => typeof tp === 'number') }
+                        : {}),
+                    ...(typeof a.position_id === 'string' ? { position_id: a.position_id } : {}),
+                    ...(typeof a.order_id === 'string' ? { order_id: a.order_id } : {}),
+                    ...(typeof a.skill_slug === 'string' ? { skill_slug: a.skill_slug } : {}),
+                    ...(typeof a.thesis === 'string' ? { thesis: a.thesis } : {}),
+                });
+                // The authoritative account stays in the service store; the
+                // seat receives only the receipt + a view, never the ledger.
+                const toolReceipt = { ...receipt };
+                delete toolReceipt.account;
+                content = JSON.stringify(toolReceipt, null, 2);
                 break;
             }
             default:

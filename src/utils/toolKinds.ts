@@ -337,4 +337,7 @@ export const DESK_TOOL_NAMES: readonly string[] = [
     // The journal's AI review re-runs from the current trade log on request —
     // the same synthesis every logged trade triggers.
     'refresh_journal_review',
+    // Pass 3: the local simulated broker. Both names are granted on every
+    // seat; the deterministic engine — not the model — owns every risk wall.
+    'paper_account', 'paper_order',
 ];
