@@ -8100,6 +8100,29 @@ const checkPass4Fixes = () => {
     const optimizer = read('src/services/selfMod/harnessOptimization.ts');
     ok('pass4: a degraded rejection store fails CLOSED in both background callers',
         /write withheld/.test(wiring) && /proposal withheld/.test(optimizer));
+    const pipeline = read('src/hooks/useAnalysisPipeline.ts');
+    ok('pass5: ordinary live-market Chat turns resolve grounding without the Full-analysis button',
+        /shouldRequireTools\(promptToSend, options\?\.fullAnalysis === true\)/.test(pipeline)
+        && /export const shouldRequireTools/.test(turn)
+        && /groundingNotice\(/.test(turn)
+        && /export const UNGROUNDED_CLAIM_NOTICE/.test(turn));
+    const rc = read('src/services/providers/reasoningControls.ts');
+    ok('pass5: custom chat_completions providers get a typed custom-effort wire route',
+        /genericEffort: isChat/.test(rc)
+        && /CUSTOM_EFFORT_ROUTE/.test(rc)
+        && /'custom-effort'/.test(read('src/types/provider.ts')));
+    const timeline = read('src/components/trade/panels/ChatWorkTimeline.tsx');
+    const thought = read('src/components/shared/AnalyzedRow.tsx');
+    const reason = read('src/components/shared/ReasoningRow.tsx');
+    ok('pass5: a settled 0-tool reasoning turn uses the one shared Thought-for label',
+        /export const thoughtForLabel/.test(thought)
+        && /thoughtForLabel/.test(reason)
+        && /settledLabel="thoughtFor"/.test(timeline));
+    const fab = read('src/components/shared/JumpToLatestFab.tsx');
+    const panel = read('src/components/trade/TradeChatPanel.tsx');
+    ok('pass5: the jump control sits in a reserved gutter, not over the scroller',
+        /absolute bottom-1/.test(fab)
+        && /flex min-h-0 flex-1 flex-col pb-10/.test(panel));
     const menu = read('src/components/shared/ModelMenu.tsx');
     ok('pass4: the reference selector keeps the pinned search, slider and star contracts',
         /data-testid="model-picker-search"/.test(menu)
@@ -8189,6 +8212,42 @@ const checkSingleActiveModel = async () => {
         && sanitized.visible.bogus === undefined);
 };
 
+// Pass 5 invariants — orphan </think> multi-frame promotion, zero-tool scan guard
+// across both runners, pure on-demand skill loading, 0-tool live Thinking persistence,
+// and composer Coin/Timeframe triggers.
+const checkPass5Fixes = () => {
+    const gpSrc = readSource('src/services/providers/GenericProviderService.ts');
+    ok('pass5: createBrowserSseParser promotes earlier batch.textDeltas on orphan </think>',
+        /if\s*\(gated\.orphanClose\)\s*\{[\s\S]*?batch\.textDeltas\.length\s*=\s*0/.test(gpSrc));
+    ok('pass5: reasoningPatchFor emits wire audit via onWireAudit',
+        /options\?\.onWireAudit\?\.\(audit\)/.test(gpSrc));
+
+    const tsStatus = loadModule('src/utils/turnStatus.ts');
+    ok('pass5: UNGROUNDED CLAIM is classified as a harness notice line',
+        tsStatus.isHarnessNoticeLine('UNGROUNDED CLAIM: test') === true);
+
+    const runnerSrc = readSource('src/services/trade/chatTurnRunner.ts');
+    ok('pass5: chatTurnRunner enforces shouldRequireTools and groundingNotice',
+        /shouldRequireTools/.test(runnerSrc) && /FULL_ANALYSIS_MANDATE/.test(runnerSrc) && /groundingNotice/.test(runnerSrc));
+
+    const tlSrc = readSource('src/components/trade/panels/ChatWorkTimeline.tsx');
+    ok('pass5: 0-tool ReasoningRow uses turnStreaming and activity depends on reasoning.length',
+        /reasoning\.length/.test(tlSrc) && /running=\{turnStreaming\}/.test(tlSrc));
+
+    const transcriptSrc = readSource('src/components/trade/panels/ChatTranscriptList.tsx');
+    ok('pass5: ChatTranscriptList does not mount automatic MemoryProvenanceStrip pre-loads',
+        !/<MemoryProvenanceStrip/.test(transcriptSrc));
+
+    const dockSrc = readSource('src/components/trade/TradeChatPanel.tsx');
+    ok('pass5: TradeChatPanel does not pre-record index skills via recordSeatInjections',
+        !/recordSeatInjections/.test(dockSrc));
+
+    const composerRowSrc = readSource('src/components/trade/panels/ComposerWorkspaceRow.tsx');
+    ok('pass5: ComposerWorkspaceRow exposes composer Coin & Timeframe triggers',
+        /data-testid="composer-symbol-trigger"/.test(composerRowSrc)
+        && /data-testid="composer-timeframe-trigger"/.test(composerRowSrc));
+};
+
 // The async blocks above settle in microtasks; the report waits for them so
 // their pass/fail counts land in this summary. A throw becomes a failure —
 // a crashed check must never print as a green one.
@@ -8212,5 +8271,6 @@ checkSkillWrites()
     .then(checkPaperBroker)
     .then(checkSingleActiveModel)
     .then(checkPass4Fixes)
+    .then(checkPass5Fixes)
     .catch(e => { failures.push(`async runtime checks threw: ${e instanceof Error ? e.stack : String(e)}`); })
     .then(finishReport);

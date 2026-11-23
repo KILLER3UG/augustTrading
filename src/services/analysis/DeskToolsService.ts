@@ -857,8 +857,12 @@ export const spillReceiptAllowed = (allowedTools?: SeatToolGrant): boolean =>
 export const seatIsRestricted = (grant: SeatToolGrant | undefined): grant is readonly string[] =>
     Array.isArray(grant);
 
-export const seatAllows = (grant: SeatToolGrant | undefined, name: string): boolean =>
-    grant === 'all' ? true : Array.isArray(grant) && grant.includes(name);
+export const seatAllows = (grant: SeatToolGrant | undefined, name: string): boolean => {
+    if (grant === 'all') return true;
+    if (!Array.isArray(grant)) return false;
+    if (grant.includes(name)) return true;
+    return (name === 'skill_reader' || name === 'read_skill') && grant.includes('skill_view');
+};
 
 /**
  * Cut `body` to at most `visible` characters without breaking it.
@@ -955,7 +959,7 @@ export const budgetToolContent = (
     canReadBack = true,
     artifactOwner = '',
 ): string => {
-    if (name === 'skill_index' || name === 'skill_view') return content;
+    if (name === 'skill_index' || name === 'skill_view' || name === 'skill_reader' || name === 'read_skill') return content;
     const spillable = canReadBack && !isReadBackTool(name);
     let out = content;
     if (name === 'get_order_book' || name === 'get_liquidations') {
@@ -1122,6 +1126,8 @@ const TOOL_LABELS: Record<string, string> = {
     memory_search_sessions: 'session search',
     get_notebook_map: 'notebook map',
     skill_view: 'skill reader',
+    skill_reader: 'skill reader',
+    read_skill: 'skill reader',
     skill_index: 'skills list',
     skill_write: 'skill write',
     ask_user_input: 'ask trader',
@@ -4231,7 +4237,7 @@ export async function executeDeskTool(
         'remember', 'read_memory', 'forget', 'recall', 'write_memory_note',
         'amend_memory', 'get_notebook_map',
         'memory_read', 'memory_add', 'memory_update', 'memory_delete', 'memory_search_sessions',
-        'skill_index', 'skill_write', 'skill_view',
+        'skill_index', 'skill_write', 'skill_view', 'skill_reader', 'read_skill',
         // Pass-1 agent-driven memory: the curated files, episodic session
         // recall and the skill lifecycle are memory surfaces too — with the
         // switch off, none of them read or write.
@@ -4505,6 +4511,8 @@ ${hitContent}`, ...resolvedSymbolField(call, fallback) };
                 content = buildNotebookMapMarkdown();
                 break;
             }
+            case 'skill_reader':
+            case 'read_skill':
             case 'skill_view': {
                 // L0 is the skills index the seat carries; this is L1 (the body
                 // plus the bundled-file list) and L2 (one bundled file). A skill
@@ -6702,7 +6710,6 @@ ${body}`);
                 const { calculateIndicators } = await import('./TechnicalAnalysisService');
                 const tape = await fetchFuturesOHLCV(sym, ivl, 220).catch(() => []);
                 const asofNow = Date.now();
-                const stepSec = intervalSeconds(ivl as ChartInterval) || 3600;
                 const closed = tape.length > 0 ? closedCandles(tape, ivl, asofNow) : [];
                 const measuredAtr = tape.length >= 30
                     ? calculateIndicators(tape).atr
@@ -8248,7 +8255,7 @@ export async function runDeskToolLoop(params: {
             if (r.skillRead) openedSkillVersions.set(r.skillRead.slug, r.skillRead.version);
         }
         for (const r of results) {
-            if (r.name !== 'skill_view' || !r.ok) continue;
+            if ((r.name !== 'skill_view' && r.name !== 'skill_reader' && r.name !== 'read_skill') || !r.ok) continue;
             const call = calls.find(c => c.id === r.toolCallId);
             const slug = typeof call?.arguments?.skill === 'string' ? call.arguments.skill.trim() : '';
             const filePath = typeof call?.arguments?.file_path === 'string' ? call.arguments.file_path.trim() : '';

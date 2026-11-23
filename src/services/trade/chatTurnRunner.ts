@@ -36,7 +36,8 @@ const hybridService = (): Promise<typeof import('../analysis/HybridIntelligenceS
 import { DESK_TOOL_NAMES } from '../../utils/toolKinds';
 import { settleDockEntry } from '../../utils/rowSettlement';
 import { maybeRunAgentLearningPass, maybeRunMemoryDreamIfDue } from '../learning/learningPassWiring';
-import { CHART_ACTION_TOOL_DEFS } from '../analysis/deskToolShared';
+import { CHART_ACTION_TOOL_DEFS, isMarketReadTool } from '../analysis/deskToolShared';
+import { FULL_ANALYSIS_MANDATE, groundingNotice, shouldRequireTools } from './chatSurfaceTurn';
 import { focusedGoal } from '../goals/GoalService';
 import { buildTier0UserTurnContext, buildTradeChatContext, composeUserTurnMessage, describeChartSnapshotForModel, extractTraderQuestion } from './tradeChatContext';
 import {
@@ -1064,8 +1065,10 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
         hidePass?: boolean;
         /** The trader's raw question text before context/manifest wrapping. */
         rawTraderQuestion?: string;
+        /** True when the turn carries the live-market grounding mandate. */
+        requireTools?: boolean;
     }): Promise<string> => {
-        const { sid, entryId, config, messages, mailboxSeat, mailbox, onMailSent, onAction, hidePass, rawTraderQuestion } = params;
+        const { sid, entryId, config, messages, mailboxSeat, mailbox, onMailSent, onAction, hidePass, rawTraderQuestion, requireTools } = params;
         const controller = chatStore.getController(sid);
         if (!controller) return '';
         // One snapshot per seat turn feeds BOTH stamps (live mark + forming
@@ -1128,9 +1131,11 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
             onMailSent,
         };
         // Each method here is a WRITE TO THIS ROW SHAPE, not generic turn logic.
+        let sawMarketTool = false;
         const events: ToolTurnEvents = {
             setText: text => patch(e => ({ ...e, text })),
             addReasoning: chunk => patch(e => ({ ...e, reasoning: (e.reasoning ?? '') + chunk })),
+            addToolCall: name => { if (isMarketReadTool(name)) sawMarketTool = true; },
             // Tool lines AND their ids are appended in the SAME patch. The id is
             // the only safe join key for a payload: `results` inside the desk
             // loop is assembled `[...replays, ...extra, ...forged, ...core]`, so
@@ -1234,6 +1239,15 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
         // an answer that simply finished. A RECOVERED run is exempt — the
         // loop repaired the ceiling-hit and returned a whole answer.
         const cutOff = outcome.recoveredFromTruncation ? '' : truncationNotice(summary);
+        const ungrounded = !cutOff
+            ? groundingNotice({
+                fullAnalysis: false,
+                requireTools: requireTools === true,
+                sawMarketTool,
+                interrupted: outcome.interrupted,
+                answer: outcome.text,
+            })
+            : null;
         // The Execution Trace row: measured facts only. The SYSTEM prefix hash
         // is the frozen prompt's own FNV (contentVersion), the delta is against
         // THIS session's previous settled turn in THIS runtime — CACHE WARM is
@@ -1252,33 +1266,35 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
             tokensOut: outcome.usage.completionTokens,
             gateRefusals: 0,
         };
-        patch(e => settleDockEntry({
-            ...e,
-            trace: { ...trace, gateRefusals: e.tools.filter(t => t.includes('rejected')).length, microCompactChars: outcome.microCompactChars },
-            workedMs: outcome.workedMs,
-            // The tier the turn was sent under, so the answer row can show it.
-            // It comes out of the executor rather than being resolved again
-            // here: one turn, one tier, one source.
-            effort: outcome.effort,
-            // What the wire was actually asked, for the same reason: the
-            // answer row has to be able to say WHY a turn came back with no
-            // trace, and the transport's own decision is the only honest
-            // answer to that.
-            ...(outcome.wireAudit?.length ? { wireAudit: outcome.wireAudit } : {}),
-            ...(outcome.interrupted
-                // A stopped turn keeps whatever text was already painted: a
-                // hidden-pass seat that never spoke must not reveal its partial
-                // accumulator just because the user pressed Stop.
-                ? {}
-                : {
-                    text: outcome.text,
-                    reasoning: outcome.leaked
-                        ? (outcome.reasoning || e.reasoning)
-                        : (e.reasoning || outcome.reasoning),
-                }),
-            ...(outcome.notice ? { tools: [...e.tools, outcome.notice] } : {}),
-            ...(cutOff ? { tools: [...e.tools, cutOff] } : {}),
-        }, outcome.interrupted ? 'stopped' : 'completed'));
+        patch(e => {
+            const extraNotices = [outcome.notice, ungrounded, cutOff].filter((n): n is string => Boolean(n));
+            return settleDockEntry({
+                ...e,
+                trace: { ...trace, gateRefusals: e.tools.filter(t => t.includes('rejected')).length, microCompactChars: outcome.microCompactChars },
+                workedMs: outcome.workedMs,
+                // The tier the turn was sent under, so the answer row can show it.
+                // It comes out of the executor rather than being resolved again
+                // here: one turn, one tier, one source.
+                effort: outcome.effort,
+                // What the wire was actually asked, for the same reason: the
+                // answer row has to be able to say WHY a turn came back with no
+                // trace, and the transport's own decision is the only honest
+                // answer to that.
+                ...(outcome.wireAudit?.length ? { wireAudit: outcome.wireAudit } : {}),
+                ...(outcome.interrupted
+                    // A stopped turn keeps whatever text was already painted: a
+                    // hidden-pass seat that never spoke must not reveal its partial
+                    // accumulator just because the user pressed Stop.
+                    ? {}
+                    : {
+                        text: outcome.text,
+                        reasoning: outcome.leaked
+                            ? (outcome.reasoning || e.reasoning)
+                            : (e.reasoning || outcome.reasoning),
+                    }),
+                ...(extraNotices.length > 0 ? { tools: [...e.tools, ...extraNotices] } : {}),
+            }, outcome.interrupted ? 'stopped' : 'completed');
+        });
         // Two-speed input tail: a follow-up (Alt+Enter) queued while the turn
         // ran delivers NOW as its own turn. A steering typed during a turn
         // that never polled (no tool rounds) delivers as the next turn rather
@@ -1371,10 +1387,14 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
         // trader's words and ride the turn context as a FOCUS line — the row
         // shows the cleaned question, the model gets the priorities.
         const parsedInput = retryEntry ? null : parseComposerRefs(raw);
-        const focusLine = parsedInput ? focusLineForRefs(parsedInput.refs) : '';
         const text = retryEntry
             ? (retryEntry.text === '(chart screenshot)' ? '' : retryEntry.text.trim())
             : (parsedInput?.cleaned.trim() || raw.trim());
+        const requireTools = shouldRequireTools(text, false);
+        const refFocusLine = parsedInput ? focusLineForRefs(parsedInput.refs) : '';
+        const focusLine = requireTools
+            ? [refFocusLine, FULL_ANALYSIS_MANDATE.trim()].filter(Boolean).join('\n')
+            : refFocusLine;
         const sentAttachments: Attachment[] = retryEntry
             ? (retryEntry.image ? [{ id: newId('at'), kind: 'image', name: 'chart.png', payload: retryEntry.image }] : [])
             : attachments;
@@ -1576,7 +1596,7 @@ ${focusLine}` : contextBlockRaw;
             ];
             const messages = pruneHistoryImages(rawMessages, DEFAULT_MAX_HISTORY_IMAGES).messages;
             try {
-                await runSeatTurn({ sid, entryId: aiEntry.id, config: soloProvider, messages, mailboxSeat: '', rawTraderQuestion: text });
+                await runSeatTurn({ sid, entryId: aiEntry.id, config: soloProvider, messages, mailboxSeat: '', rawTraderQuestion: text, requireTools });
             } catch (e) {
                 // An explicit Stop throws a transport AbortError — that is a
                 // user action, not a failure: the bubble keeps what streamed
@@ -1795,6 +1815,7 @@ ${focusLine}` : contextBlockRaw;
                         mailbox,
                         hidePass: true,
                         rawTraderQuestion: text,
+                        requireTools,
                         onAction: line => seatActions.push(line),
                         onMailSent: info => mutate(sid, s => ({
                             ...s,

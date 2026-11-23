@@ -55,7 +55,6 @@ import type { GuardEnforcement } from '../../../services/validation/SessionGuard
 import type { LoggedTrade } from '../../../types';
 import VerdictAudit, { verdictNeedsAudit } from '../../analysis/VerdictAudit';
 import InlineVerdict from '../../analysis/InlineVerdict';
-import MemoryProvenanceStrip from '../../chat/MemoryProvenanceStrip';
 import KeyLevelsCard from '../KeyLevelsCard';
 import SignalCard, { DeskScorecard, signalIdFromActions, signalRowById } from '../SignalCard';
 import Disclosure from '../../shared/Disclosure';
@@ -564,13 +563,6 @@ const ChatTranscriptList: React.FC<ChatTranscriptListProps> = ({
                                     working={false}
                                 />
                             </span>
-                        )}
-                        {shownText && !e.streaming && !e.notice && (
-                            <MemoryProvenanceStrip
-                                startedAt={e.at}
-                                nextAt={entries[i + 1]?.at}
-                                messageId={e.id}
-                            />
                         )}
                         {verdict?.analysis && (projected ? (
                             <InlineVerdict analysis={verdict.analysis} />

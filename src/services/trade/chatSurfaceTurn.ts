@@ -38,7 +38,6 @@ import { getPrompt } from '../infrastructure/PromptOverrideService';
 import { TASK_BUDGETS } from '../providers/taskBudgets';
 import { resolveComposerEffort, type ReasoningEffort } from '../providers/reasoningControls';
 import { buildSkillsIndexForPrompt, usableSkillRows } from './tradeChatContext';
-import { skillIndexRows } from '../learning/SkillFileService';
 import { promptSkillRows } from '../learning/skillManage';
 import { getMemoryFiles } from '../learning/MemoryFilesService';
 import { buildNotebookTopicsIndex } from '../learning/memoryTopics';
@@ -49,7 +48,6 @@ import { indexBudgetFor } from '../../utils/promptIndexBudget';
 import { getHarnessSettings } from '../../utils/harnessSettings';
 import { DEFAULT_CONTEXT_WINDOW_TOKENS, resolveContextWindow } from '../../utils/contextWindow';
 import { activeStrategiesBlock } from '../learning/strategyStore';
-import { recordSeatInjections } from '../learning/MemoryInjectionService';
 import { buildProfileMemoryIndex } from '../learning/profileMemory';
 import { buildCuratedMemoryPromptBlock, getCachedCuratedMemorySnapshot } from '../learning/curatedMemory';
 import { buildGoalsIndex, focusedGoal, goalMatchesMessage, listGoals } from '../goals/GoalService';
@@ -62,6 +60,98 @@ import { appendToolActions } from '../../utils/toolActions';
 import { recordToolTurnUsage } from '../../utils/sessionUsage';
 import { truncationNotice, withTruncationWindow } from '../../utils/finishReason';
 import { maybeRunAgentLearningPass, maybeRunMemoryDreamIfDue } from '../learning/learningPassWiring';
+
+// ─── Pass 5: market grounding on an ordinary Chat turn ──────────────────────
+// A trader can ask for a live scan on a plain Chat line. Tools ARE offered on
+// this surface (31 of them), but a model that ignores them and answers from
+// memory looks identical to one that checked the tape. Deterministic code —
+// not the model's discretion — decides when the FULL ANALYSIS mandate and the
+// post-turn notice apply. These are pure helpers so both homes and the tests
+// read the SAME decision; no regex over source files, and no loose regex over
+// a prompt that would flag ordinary conversation.
+
+/** Literal intents that mean "this is a reading of the live market, not a chat".
+ *  Kept short and explicit: a greeting, an opinion or a notebook question must
+ *  never be forced into a tool turn by a stray word. */
+const MARKET_GROUNDING_PHRASES: readonly string[] = [
+    'scan', 'screener', 'screen for', 'top setups', 'best setups', 'find setups', 'setups',
+    'current price', 'live price', 'price now', 'price of', 'how much is',
+    'rsi', 'ema', 'macd', 'indicator', 'indicators',
+    'order book', 'derivatives', 'funding rate', 'open interest', 'liquidations',
+    'key levels', 'market packet', 'market structure', 'check the tape', 'look up',
+];
+
+const escapeForMatcher = (phrase: string): string => phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const MARKET_GROUNDING_MATCHERS: readonly RegExp[] = MARKET_GROUNDING_PHRASES.map(
+    phrase => new RegExp(`(^|[^a-z0-9])${escapeForMatcher(phrase)}([^a-z0-9]|$)`),
+);
+
+/** True only when the trader's own line asks for a live-market reading. */
+export const promptNeedsMarketGrounding = (prompt: string): boolean => {
+    const text = (prompt ?? '').toLowerCase();
+    return text.trim().length > 0 && MARKET_GROUNDING_MATCHERS.some(re => re.test(text));
+};
+
+/** One decision point for the turn's `requireTools`: an explicit Full analysis
+ *  press OR a detected live-market intent. The button still wins on its own. */
+export const shouldRequireTools = (prompt: string, fullAnalysis: boolean): boolean =>
+    fullAnalysis === true || promptNeedsMarketGrounding(prompt);
+
+/** The mandate text is kept verbatim so the injected instruction is the one
+ *  the desk already knows how to answer. */
+export const FULL_ANALYSIS_MANDATE =
+    "\n\nFULL ANALYSIS REQUESTED: this turn is not a conversation, it is a reading. Call the market tools (price, book, derivatives, indicators, the trader's own log) before you state a number, and finish with present_trade if you have a plan. If you call nothing, say plainly that you did not look anything up.";
+
+export const applyGroundingMandate = (systemText: string, requireTools: boolean): string =>
+    requireTools ? `${systemText}${FULL_ANALYSIS_MANDATE}` : systemText;
+
+/** Honest wording on an explicit Full analysis turn that called no tool —
+ *  unchanged by the pass-5 strengthening. */
+export const FULL_ANALYSIS_NOTHING_LOOKED_UP_NOTICE =
+    'FULL ANALYSIS, NOTHING LOOKED UP: this turn called no market tool, so every number in it is the model’s own memory. Re-ask, or check the chart.';
+
+/** Stronger wording for the case the harness actually proved: a plain Chat
+ *  turn that ignored its tools and produced a scan-shaped fabrication. */
+export const UNGROUNDED_CLAIM_NOTICE =
+    'UNGROUNDED CLAIM: this turn called no market tool, yet it states live prices, setups or indicators. Those numbers are the model’s own memory, not the market. Re-ask with Full analysis, or check the chart.';
+
+/** Does an answer READ like a live-market result? Conservative: it takes an
+ *  explicit scan/completion phrase, a priced entry/stop/target/RSI with a
+ *  number, or a quoted symbol with a price — not mere talk about the market. */
+const UNGROUNDED_CLAIM_MATCHER =
+    /\b(scan|screener|screen)\b[^.\n]{0,40}\b(complete|done|finished|results?)\b|\b(top|best)\s+setups?\b|\b(?:entry|stop[\s-]?loss|take[\s-]?profit|rsi)\b[^.\n]{0,24}\d|\b[a-z]{2,10}(?:usdt|usdc|busd|btc|eth)\b[^.\n]{0,60}\b\d[\d,]*(?:\.\d+)?\b/;
+
+export const looksLikeUngroundedMarketClaim = (answer: string): boolean =>
+    UNGROUNDED_CLAIM_MATCHER.test((answer ?? '').replace(/\[chart manifest[^\]]*\]/gi, '').toLowerCase());
+
+export interface GroundingNoticeArgs {
+    /** The trader pressed Full analysis (stage 20f), so keep the honest wording. */
+    fullAnalysis: boolean;
+    /** The mandate was injected (button OR detected live-market intent). */
+    requireTools: boolean;
+    /** A market-read tool actually ran this turn. */
+    sawMarketTool: boolean;
+    /** The trader stopped the turn — nothing to flag. */
+    interrupted: boolean;
+    /** Settled answer text, for fabricated-claim detection. */
+    answer: string;
+}
+
+/** The post-turn honesty check, as a pure function of the settled turn.
+ *  Null means no notice — greetings, opinions and tool-backed scans are left
+ *  alone. A Full analysis turn keeps its existing wording; a grounding-detected
+ *  ordinary turn is flagged only when the answer fabricates market data. */
+export const groundingNotice = (args: GroundingNoticeArgs): string | null => {
+    if (args.interrupted || args.sawMarketTool) return null;
+    const fabricated = looksLikeUngroundedMarketClaim(args.answer);
+    if (args.fullAnalysis) {
+        return fabricated
+            ? `${FULL_ANALYSIS_NOTHING_LOOKED_UP_NOTICE} UNGROUNDED CLAIM: those numbers were never looked up — treat them as invented.`
+            : FULL_ANALYSIS_NOTHING_LOOKED_UP_NOTICE;
+    }
+    return fabricated ? UNGROUNDED_CLAIM_NOTICE : null;
+};
 
 /** The desk tools a Chat-surface seat may call. Everything here answers from
  *  the exchange, the journal, the notebook or the web — none of it needs the
@@ -317,20 +407,8 @@ ${constitution}`
             /* an unreadable goal store costs the hint, never the answer */
         }
     }
-    // Opt-in telemetry, same rule getMemoryFilesContext enforces: a record
-    // claims what a run was SHOWN, so only a caller whose prompt actually
-    // sends opts in. This is what feeds the provenance strip on ordinary
-    // sends — it used to render nothing outside the bot path.
-    if (opts.record) {
-        recordSeatInjections({
-            runId: opts.record.runId,
-            coin: opts.record.coin,
-            skills,
-            hasRules: !!rulesBlock,
-            hasMemoryIndex: !!memoryBlock,
-            hasStrategies: !!strategiesBlock,
-        });
-    }
+    // Progressive disclosure only: expose the compact 1-line skills index in the
+    // frozen system prompt, never record index slugs as pre-loaded skills.
     // O-39: the skills index and the learned-rules index are written
     // independently and can phrase the same rule twice — the seat prompt used
     // to push both copies. ONE sentence-level dedup (the notebook slice's
@@ -486,6 +564,10 @@ export interface ChatSurfaceTurnRequest {
      *  "no tool ran" is also what a text-only model does on an ordinary chat
      *  line, and a casual turn must not be shamed for answering a question. */
     requireTools?: boolean;
+    /** True ONLY when the trader explicitly pressed Full analysis. Kept apart
+     *  from `requireTools`, which is now also set for a detected live-market
+     *  intent, so the post-turn notice keeps its honest wording on that path. */
+    fullAnalysis?: boolean;
     /** Provenance id for the post-turn learning pass. The Chat surface's
      *  conversation id; falls back to a stable label when a caller has none. */
     sessionId?: string;
@@ -703,11 +785,7 @@ export const runChatSurfaceTurn = async (req: ChatSurfaceTurnRequest): Promise<T
             // `surfacePromptWith`. A caller that brought its own mandate gets
             // that mandate verbatim and no hint.
             matchText: typeof req.prompt === 'string' ? req.prompt : undefined,
-            // This prompt IS the request's system text, so the injection is
-            // recorded — the provenance strip reads it.
-            record: { coin: req.symbol ?? undefined },
         });
-    if (prompt.skills.length > 0) req.patch(m => ({ ...m, injectedSkills: prompt.skills }));
 
     // A FULL ANALYSIS (stage 20f) is an instruction, not a keyword: the trader
     // pressed the button, so the seat is told to check the tape, and the turn is
@@ -723,9 +801,7 @@ export const runChatSurfaceTurn = async (req: ChatSurfaceTurnRequest): Promise<T
             extraContext.length > EXTRA_CONTEXT_CHAR_CAP ? '\n… (retrieved context truncated)' : ''
         }`
         : '';
-    const systemText = req.requireTools
-        ? `${prompt.text}${contextBlock}\n\nFULL ANALYSIS REQUESTED: this turn is not a conversation, it is a reading. Call the market tools (price, book, derivatives, indicators, the trader's own log) before you state a number, and finish with present_trade if you have a plan. If you call nothing, say plainly that you did not look anything up.`
-        : `${prompt.text}${contextBlock}`;
+    const systemText = applyGroundingMandate(`${prompt.text}${contextBlock}`, req.requireTools === true);
     let sawMarketTool = false;
     const tracked: ToolTurnEvents = {
         ...events,
@@ -784,14 +860,21 @@ export const runChatSurfaceTurn = async (req: ChatSurfaceTurnRequest): Promise<T
             ...out,
             notice: out.notice ? `${cutOff} ${out.notice}` : cutOff,
         };
-    } else if (req.requireTools && !sawMarketTool && !out.interrupted) {
+    } else {
         // The honest notice, on the row it belongs to: an answer that looked up
         // nothing must not read like one that looked something up. A stopped
         // turn is excluded — the trader cut it, the seat did not skip the tape.
-        final = {
-            ...out,
-            notice: 'FULL ANALYSIS, NOTHING LOOKED UP: this turn called no market tool, so every number in it is the model’s own memory. Re-ask, or check the chart.',
-        };
+        // Pass 5: a plain Chat turn that ignored the injected mandate and came
+        // back with a scan-shaped fabrication is flagged as UNGROUNDED; an
+        // explicit Full analysis turn keeps its existing honest wording.
+        const grounding = groundingNotice({
+            fullAnalysis: req.fullAnalysis === true,
+            requireTools: req.requireTools === true,
+            sawMarketTool,
+            interrupted: out.interrupted,
+            answer: out.text,
+        });
+        if (grounding) final = { ...out, notice: grounding };
     }
     // FIRE-AND-FORGET on the SETTLED turn, off the streaming critical path.
     // The dock does this from `maybeReviewSessions` in chatTurnRunner; until
@@ -800,8 +883,11 @@ export const runChatSurfaceTurn = async (req: ChatSurfaceTurnRequest): Promise<T
     // A stopped/steered turn is not a lesson: nothing settled to learn from.
     if (!final.interrupted && !final.steered) {
         const skillsUsed = toolLines
-            .map(line => /skill_view\D*([a-z0-9][a-z0-9-]*)/i.exec(line)?.[1] ?? '')
+            .map(line => /(?:skill_view|skill_reader|read_skill)\D*([a-z0-9][a-z0-9-]*)/i.exec(line)?.[1] ?? '')
             .filter(s => s.length > 0);
+        if (skillsUsed.length > 0) {
+            req.patch(m => ({ ...m, injectedSkills: skillsUsed }));
+        }
         void maybeRunAgentLearningPass({
             sid: req.sessionId ?? 'chat-surface',
             userMessage: typeof req.prompt === 'string' ? req.prompt : '',

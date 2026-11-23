@@ -14,6 +14,8 @@
 import React, { useLayoutEffect } from 'react';
 import {Camera, FileText, Plus, TriangleAlert, SendIcon, StopIcon, ChartBarIcon, LayersIcon} from '../../shared/Icons';
 import type { ProviderConfig } from '../../../types/provider';
+import type { SymbolMeta } from '../../../services/analysis/MarketDataService';
+import type { ChartInterval } from '../../../utils/chartIntervals';
 import type { Attachment } from '../../../hooks/useChatAttachments';
 import type { ReasoningEffort } from '../../../services/providers/reasoningControls';
 import { formatModelDisplayName } from '../../../utils/providerUtils';
@@ -30,7 +32,10 @@ interface ChatComposerProps {
     layoutMode?: 'desk' | 'chat';
     /** The chart the chat talks about (workspace row + model picker). */
     symbol: string;
+    symbols?: SymbolMeta[];
+    onChangeSymbol?: (symbol: string) => void;
     interval: string;
+    onChangeInterval?: (interval: ChartInterval) => void;
     isPanel: boolean;
     /** A send needs a ready provider (panels: at least 2 seats). */
     ready: boolean;
@@ -103,7 +108,7 @@ export const ModelFallbackBanner: React.FC<{
 );
 
 const ChatComposer: React.FC<ChatComposerProps> = ({
-    layoutMode = 'desk', symbol, interval, isPanel, ready, busy, draft, setDraft, send, runFullAnalysis, onRunAnalysis, onStopRun,
+    layoutMode = 'desk', symbol, symbols, onChangeSymbol, interval, onChangeInterval, isPanel, ready, busy, draft, setDraft, send, runFullAnalysis, onRunAnalysis, onStopRun,
     effort, changeEffort, modelIssue, provider, selectedChatModel,
     changeSoloModel, providers, onRefreshModels, attachments, removeAttachment, fileInputRef,
     attachFiles, showAttachMenu, setShowAttachMenu, captureChart, onCaptureChart, composerRef,
@@ -162,7 +167,10 @@ const ChatComposer: React.FC<ChatComposerProps> = ({
         <ModelFallbackBanner modelIssue={modelIssue} provider={provider} />
         <ComposerWorkspaceRow
             symbol={symbol}
+            symbols={symbols}
+            onChangeSymbol={onChangeSymbol}
             interval={interval}
+            onChangeInterval={onChangeInterval}
             isPanel={isPanel}
             panelCount={panelCount}
             pickerOpen={pickerOpen}

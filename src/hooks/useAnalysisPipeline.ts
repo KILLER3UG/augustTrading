@@ -1213,7 +1213,7 @@ export function useAnalysisPipeline(params: UseAnalysisPipelineParams) {
                 // a dock entry. Ordinary conversation on this surface used
                 // to be answered from the model's training data while the
                 // dock looked the same question up.
-                const { runChatSurfaceTurn } = await import('../services/trade/chatSurfaceTurn');
+                const { runChatSurfaceTurn, shouldRequireTools } = await import('../services/trade/chatSurfaceTurn');
                 toolTurn = await runChatSurfaceTurn({
                     config: provider.config,
                     history: currentMessages,
@@ -1237,7 +1237,12 @@ export function useAnalysisPipeline(params: UseAnalysisPipelineParams) {
                     interval: options?.interval,
                     trades: loggedTrades,
                     effort: options?.reasoningEffort,
-                    requireTools: options?.fullAnalysis === true,
+                    requireTools: shouldRequireTools(promptToSend, options?.fullAnalysis === true),
+                    // Pass 5: the button is recorded SEPARATELY from the resolved
+                    // mandate so the post-turn notice keeps its honest wording
+                    // on an explicit Full analysis turn and flags only a
+                    // fabricated claim on a detected ordinary Chat turn.
+                    fullAnalysis: options?.fullAnalysis === true,
                     // The Chat surface's conversation id is the learning
                     // pass's provenance — the review receipt records WHERE
                     // the lesson came from, as it does for dock turns.

@@ -51,7 +51,6 @@ import { PAPER_TRADING_PROMPT } from '../../services/analysis/deskToolShared';
 import { activeStrategiesBlock } from '../../services/learning/strategyStore';
 import { WorkspaceGreeting } from './WorkspaceHome';
 import { AUGUST_ASK_EVENT, consumePendingAsk, isAskDelivered, markAskDelivered } from '../settings/TellAugustBar';
-import { recordSeatInjections } from '../../services/learning/MemoryInjectionService';
 import { deleteSessionDrawings, type ChartDrawing } from '../../services/trade/chartDrawings';
 import type { MessageLevelLines } from '../../services/trade/keyLevels';
 import type { TradeProposal } from '../../services/trade/proposedTrade';
@@ -72,7 +71,7 @@ import BiasChips from './BiasChips';
 import SessionChip from '../shared/SessionChip';
 import { saveBot, type AgentBot } from '../../services/agents/agentRoster';
 import { resolveAgentContext, SINGLE_AGENT_MEMORY_BUDGET, type ResolvedAgentContext } from '../../services/agents/agentContext';
-import { getFirstReadyProvider, isProviderReady, formatModelDisplayName, computeChatModelFallback } from '../../utils/providerUtils';
+import { isProviderReady, formatModelDisplayName, computeChatModelFallback } from '../../utils/providerUtils';
 import { skillIndexRows, usableSkillRows } from '../../services/learning/SkillFileService';
 import { promptSkillRows } from '../../services/learning/skillManage';
 import { getMemoryFiles } from '../../services/learning/MemoryFilesService';
@@ -121,7 +120,10 @@ interface TradeChatPanelProps {
      *  surface keeps. */
     strategiesEnabled?: boolean;
     symbol: string;
+    symbols?: import('../../services/analysis/MarketDataService').SymbolMeta[];
+    onChangeSymbol?: (symbol: string) => void;
     interval: string;
+    onChangeInterval?: (interval: ChartInterval) => void;
     providers: ProviderConfig[];
     selectedChatModel: string;
     onSelectChatModel: (modelId: string) => void;
@@ -374,7 +376,7 @@ export const ChartAiDockRail: React.FC<{
 const newId = (prefix: string): string => `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 
 const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
-    memoryEnabled, strategiesEnabled, symbol, interval, providers, selectedChatModel, onSelectChatModel,
+    memoryEnabled, strategiesEnabled, symbol, symbols, onChangeSymbol, interval, onChangeInterval, providers, selectedChatModel, onSelectChatModel,
     chartLevels, chartDrawings, modelDrawings, addModelDrawings, clearModelDrawings, clearAllDrawings,
     onCaptureChart, getChartSnapshot, bots = [], trades = [], botSessionRequest, groupSessionRequest, onRunAnalysis, onAnalysisError, onStopRun, getAnalysisMessage, onLogProposedTrade, onRejectProposedTrade, onUndoApproval, onConfirmRiskChange, onDismissRiskChange, onRevertRiskChange, onConfirmAiSettingChange, onDismissAiSettingChange, onRevertAiSettingChange, onPlanPresented,
     onChatLevelsChange,
@@ -680,13 +682,6 @@ ${riskConstitution}`
                 for (const e of listProfileMemories(undefined)) memorySnapshot[e.slug] = e.description;
             } catch { /* a snapshot miss just weakens the delta note */ }
         }
-        recordSeatInjections({
-            coin: symbol,
-            skills: skillSlugs.slice(0, 8),
-            hasRules: false,
-            hasMemoryIndex: !!memoryBlock,
-            hasStrategies: !!strategiesBlock,
-        });
         const prompt = persona ? `${base}\n\n## Your role\n${persona}` : base;
         if (sessionSystemPromptCacheRef.current.size > 32) {
             const oldest = sessionSystemPromptCacheRef.current.keys().next();
@@ -1409,7 +1404,10 @@ ${riskConstitution}`
         <ChatComposer
             layoutMode={layoutMode}
             symbol={symbol}
+            symbols={symbols}
+            onChangeSymbol={onChangeSymbol}
             interval={interval}
+            onChangeInterval={onChangeInterval}
             isPanel={isPanel}
             ready={ready}
             busy={busy}
@@ -1691,10 +1689,13 @@ ${riskConstitution}`
                 </div>
             </div>
             )}
-            {/* The transcript's own box, so the jump control floats over the
-                transcript's bottom-right corner and not over the composer. */}
-            <div className="relative min-h-0 flex-1">
-            <div ref={setScrollerRef} className="h-full overflow-y-auto overscroll-contain custom-scrollbar"
+            {/* The transcript's own box. The 40px bottom gutter is RESERVED
+                for the jump control: it is outside the scrolling viewport, so
+                a partially-scrolled last line can never sit under the button.
+                The gutter ends at the composer, which is where the control
+                belongs. */}
+            <div className="relative flex min-h-0 flex-1 flex-col pb-10">
+            <div ref={setScrollerRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain custom-scrollbar"
                 role="log" aria-live="polite" aria-busy={entries.some(e => e.streaming)}
                 aria-label="Chart AI conversation">
                 <div

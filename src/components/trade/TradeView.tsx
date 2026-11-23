@@ -947,7 +947,10 @@ const TradeView: React.FC<TradeViewProps> = ({
 
     const dockProps = {
         symbol,
+        symbols,
+        onChangeSymbol: changeSymbol,
         interval,
+        onChangeInterval: changeInterval,
         providers,
         selectedChatModel,
         onSelectChatModel,
