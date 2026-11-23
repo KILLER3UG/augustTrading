@@ -35,7 +35,7 @@ import { executeForgedTool, confirmedForgedToolDefinitions } from '../tools/tool
 import type { ChatMessage, ChatRequestOptions } from '../providers/GenericProviderService';
 import { sendChatTurn, streamChatRequest } from '../providers/GenericProviderService';
 import { carryOverSkillBodies, compactForWire } from '../providers/contextCompact';
-import { DEFAULT_OUTPUT_RESERVE_TOKENS, outputTokenBudget } from '../../utils/contextWindow';
+import { DEFAULT_OUTPUT_RESERVE_TOKENS, measuredContextWindow, outputTokenBudget } from '../../utils/contextWindow';
 import { stepEffortDown, type ReasoningEffort } from '../providers/reasoningControls';
 import { calculateCorrelationRisk } from './CorrelationRiskService';
 import { filterTradesBySimulationMode, countSimulatedTrades, isSimulatedTrade, type SimulationStatsMode } from '../tracking/paperExecution';
@@ -89,7 +89,7 @@ import type { LoggedTrade } from '../../types';
 import type { ToolAction } from '../../types/message';
 import type { ChartDrawing } from '../trade/chartDrawings';
 import { computeAtr14, evaluateChartDrawings } from '../trade/chartGeometry';
-import { clearAllTurnPlans } from '../trade/turnPlan';
+import { clearTurnPlan } from '../trade/turnPlan';
 import type { RuinRiskResult } from './MonteCarloService';
 import type { ChartSnapshot } from '../../components/trade/TradingChart';
 import type { DiagnosisBrief } from '../tracking/diagnosisBrief';
@@ -413,14 +413,25 @@ export interface ToolCallOutcome {
     args: string;
     ok: boolean;
     refused: boolean;
+    /** The loop round that produced the outcome. Two identical failures in one
+     *  round are not a retry — the model never saw the first result. */
+    round?: number;
+    /** A transient DATA_UNAVAILABLE receipt is a retryable lookup miss, not a
+     *  structural refusal; it must not trip the permanent stall exit. */
+    dataUnavailable?: boolean;
 }
 
 export const detectConsecutiveToolFailures = (history: ToolCallOutcome[]): ToolCallOutcome | null => {
     if (history.length < 2) return null;
     const last = history[history.length - 1];
     const prev = history[history.length - 2];
-    const failed = (r: ToolCallOutcome): boolean => !r.ok || r.refused;
-    return failed(last) && failed(prev) && last.name === prev.name && last.args === prev.args ? last : null;
+    const failed = (r: ToolCallOutcome): boolean => !r.dataUnavailable && (!r.ok || r.refused);
+    if (!failed(last) || !failed(prev)) return null;
+    if (last.name !== prev.name || last.args !== prev.args) return null;
+    // Legacy callers without round info keep the original semantics; within
+    // the loop, two failures in the SAME round must not register as a retry.
+    if (last.round !== undefined && prev.round !== undefined && last.round === prev.round) return null;
+    return last;
 };
 
 /** Attach a harness notice to the newest message the seat is about to read,
@@ -474,7 +485,15 @@ const compactOutbound = (
     report?: (line: string) => void,
 ): CompactedOutbound => {
     const requested = maxTokens ?? DEFAULT_OUTPUT_RESERVE_TOKENS;
-    const result = compactForWire(config, messages, { outputReserveTokens: requested });
+    // A rejection-measured hard ceiling outranks any user-entered window on
+    // the wire path: a genuine 32k model must compact to 32k even when the
+    // stored override says 1M. resolveContextWindow itself keeps override-wins
+    // semantics for prompt-budget callers (contract pinned).
+    const measured = measuredContextWindow(config.id ?? '', config.selectedModel);
+    const result = compactForWire(config, messages, {
+        outputReserveTokens: requested,
+        ...(measured ? { windowTokens: measured } : {}),
+    });
     // Report the cut OR the failure to cut. A window too small for the mandate
     // plus the current turn leaves the compactor nothing to do, and that is the
     // one case where silence reads as "the request is fine" right before the
@@ -1304,8 +1323,13 @@ const rawToolDigest = (name: string, content: string): string => {
     return 'ok';
 };
 
-const asString = (value: unknown, fallback = ''): string =>
-    typeof value === 'string' && value.trim() ? value.trim() : fallback;
+const asString = (value: unknown, fallback = ''): string => {
+    // A model emitting JSON `simulated: true` is not a missing string. Coercing
+    // it to the fallback silently reports REAL rows — normalize booleans so
+    // downstream parsers decide explicitly.
+    if (typeof value === 'boolean') return value ? 'true' : 'false';
+    return typeof value === 'string' && value.trim() ? value.trim() : fallback;
+};
 
 const asSymbol = (value: unknown, fallback: string): string => {
     const raw = asString(value, fallback) || fallback || 'BTCUSDT';
@@ -6793,7 +6817,7 @@ ${body}`);
                 const dirArg = asString(call.arguments.direction).toUpperCase();
                 const direction: 'Long' | 'Short' | undefined = dirArg === 'LONG' ? 'Long' : dirArg === 'SHORT' ? 'Short' : undefined;
                 const simArg = asString(call.arguments.simulated).toLowerCase();
-                const simMode: SimulationStatsMode = simArg === 'only' || simArg === 'simulated' ? 'simulated' : simArg === 'all' ? 'all' : 'real';
+                const simMode: SimulationStatsMode = simArg === 'only' || simArg === 'simulated' || simArg === 'true' ? 'simulated' : simArg === 'all' ? 'all' : 'real';
                 const allTrades = context.trades || [];
                 const simulatedExcluded = simMode === 'real' ? countSimulatedTrades(allTrades) : 0;
                 const buildStatsView = (mode: SimulationStatsMode) => {
@@ -6819,7 +6843,7 @@ ${body}`);
                         : { coin, direction: direction ?? 'any', sample: 0, note: `No closed trades logged for ${coin}${direction ? ` ${direction}` : ''}.` };
                 };
                 const primaryView = buildStatsView(simMode);
-                const simulatedView = buildStatsView('simulated');
+                const simulatedView = simMode === 'simulated' ? primaryView : buildStatsView('simulated');
                 content = JSON.stringify({
                     ...primaryView,
                     simulationMode: simMode,
@@ -6876,7 +6900,7 @@ ${body}`);
                     since: asString(call.arguments.since) || undefined,
                 };
                 const simArg = asString(call.arguments.simulated).toLowerCase();
-                const simMode: SimulationStatsMode = simArg === 'only' || simArg === 'simulated' ? 'simulated' : simArg === 'all' ? 'all' : 'real';
+                const simMode: SimulationStatsMode = simArg === 'only' || simArg === 'simulated' || simArg === 'true' ? 'simulated' : simArg === 'all' ? 'all' : 'real';
                 const allTrades = context.trades ?? [];
                 const simulatedExcluded = simMode === 'real' ? countSimulatedTrades(allTrades) : 0;
                 const scopedTrades = filterTradesBySimulationMode(allTrades, simMode);
@@ -6937,8 +6961,12 @@ ${body}`);
                     break;
                 }
                 const brief = buildRecentTradesBrief(rows);
-                const simRows = selectRecentTrades(filterTradesBySimulationMode(allTrades, 'simulated'), { ...filter, by: 'logged', limit });
-                const simBrief = buildRecentTradesBrief(simRows);
+                // simMode === 'simulated' already scoped `rows`; re-filtering
+                // allTrades duplicates the pass and emits the same lines twice.
+                const simRows = simMode === 'simulated'
+                    ? rows
+                    : selectRecentTrades(filterTradesBySimulationMode(allTrades, 'simulated'), { ...filter, by: 'logged', limit });
+                const simBrief = simMode === 'simulated' ? brief : buildRecentTradesBrief(simRows);
                 content = JSON.stringify({
                     ...filter,
                     limit,
@@ -7055,7 +7083,12 @@ export async function executeDeskTools(
                 context.onSlowCall,
             );
         return context.onResult
-            ? work.then(res => { context.onResult?.(res); return res; })
+            ? work.then(res => {
+                // A UI listener throwing must not reject the executor and
+                // discard every other tool result in the Promise.all.
+                try { context.onResult?.(res); } catch { /* UI failure is local */ }
+                return res;
+            })
             : work;
     }));
 }
@@ -7899,7 +7932,7 @@ export async function runDeskToolLoop(params: {
             // A clean NO-TOOL answer settles the turn here, before the loop's
             // shared exit — clear the ephemeral plan on BOTH exits so a
             // remount can never resurrect a stale pill.
-            clearAllTurnPlans();
+            clearTurnPlan(sessionId ?? '');
             return {
                 messages,
                 finalText: strippedFinal.trim()
@@ -8193,7 +8226,17 @@ export async function runDeskToolLoop(params: {
                 modelName: config.selectedModel,
                 providerId: config.id,
                 onSlowCall: label => onToolProgress?.(`${label} · still working…`),
-                onResult: r => reportToolCompletion(r),
+                // A UI listener is not part of the tool protocol. If one
+                // throws, the round must still append this result and continue
+                // — never abort a live seat because a chart/panel subscriber
+                // had a bug.
+                onResult: r => {
+                    try {
+                        reportToolCompletion(r);
+                    } catch (e) {
+                        console.warn('[DeskTools] onResult listener threw; tool round continues:', e);
+                    }
+                },
             })
             : [];
         const results = [...replays, ...extraResults, ...forgedResults, ...loadResults, ...coreResults];
@@ -8298,6 +8341,8 @@ export async function runDeskToolLoop(params: {
             callOutcomeHistory.push({
                 name: c.name,
                 args,
+                round,
+                dataUnavailable: isDataUnavailable(outcome?.content ?? ''),
                 ok: outcome?.ok === true,
                 // STRUCTURAL refusal only: ok:false AND a leading marker.
                 // A successful lookup whose queried text merely CONTAINS the
@@ -8340,7 +8385,7 @@ export async function runDeskToolLoop(params: {
 
     // The turn has settled (clean answer, guard break, or budget exit): the
     // ephemeral plan must not survive into the next turn's pill.
-    clearAllTurnPlans();
+    clearTurnPlan(sessionId ?? '');
     return {
         messages,
         finalText: stripTextToolCalls(finalText),

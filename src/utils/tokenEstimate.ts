@@ -60,12 +60,25 @@ const isWide = (code: number): boolean =>
     (code >= 0xff00 && code <= 0xffef) ||
     (code >= 0x20000 && code <= 0x323af);
 
+/** Bounded content-hash cache for repeated identical strings (tool payload
+ *  headers, skill bodies, stable prompt blocks). Estimation walks every
+ *  codepoint; a transcript reuses the same strings across turns, so a cache
+ *  pays for itself without ever changing the estimate. */
+const ESTIMATE_CACHE_MAX = 1_024;
+const ESTIMATE_CACHE_MAX_CHARS = 8_192;
+const estimateCache = new Map<string, number>();
+
+/** Test seam. */
+export const resetTokenEstimateCache = (): void => { estimateCache.clear(); };
+
 /**
  * Estimate the token count of a string. Iterates codepoints so surrogate
  * pairs count as one wide character rather than two ASCII ones.
  */
 export const estimateTokens = (text: string | null | undefined): number => {
     if (!text) return 0;
+    const cached = text.length <= ESTIMATE_CACHE_MAX_CHARS ? estimateCache.get(text) : undefined;
+    if (cached !== undefined) return cached;
     let tokens = 0;
     for (const ch of text) {
         const code = ch.codePointAt(0) ?? 0;
@@ -79,7 +92,14 @@ export const estimateTokens = (text: string | null | undefined): number => {
         }
     }
     // Per-message framing overhead, so a budget of N messages is not N*N.
-    return Math.ceil(tokens) + 4;
+    const result = Math.ceil(tokens) + 4;
+    if (text.length <= ESTIMATE_CACHE_MAX_CHARS) {
+        if (estimateCache.size >= ESTIMATE_CACHE_MAX) {
+            estimateCache.delete(estimateCache.keys().next().value as string);
+        }
+        estimateCache.set(text, result);
+    }
+    return result;
 };
 
 /**

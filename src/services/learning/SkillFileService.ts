@@ -466,24 +466,90 @@ export interface DuplicateMatch {
     reason: string;
 }
 
+/** The tokenizer seam used for LIBRARY bodies. `contentWords` is the shared
+ *  vocabulary; tests inject a counting wrapper to prove the cache reuses it. */
+export type SkillTokenizer = (text: string) => Set<string>;
+
+interface TokenizedSkill {
+    name: Set<string>;
+    description: Set<string>;
+    body: Set<string>;
+}
+
+/**
+ * Tokenized skill bodies, keyed by the CONTENT version of the library.
+ *
+ * A create, an update and a prompt assembly all scan the same library several
+ * times inside one turn. Re-tokenizing the same bodies each time is pure waste;
+ * keying by `skillLibraryVersion` means an unchanged library reuses the tokens
+ * and any content/version change mints a fresh entry. Bounded to a few versions
+ * so a long-running process cannot grow the cache without limit.
+ */
+const tokenizedLibraryCache = new Map<string, ReadonlyMap<string, TokenizedSkill>>();
+const TOKEN_CACHE_MAX_VERSIONS = 4;
+
+export const tokenizedSkillLibrary = (
+    skills: readonly SkillFile[],
+    version: string,
+    tokenize: SkillTokenizer = contentWords,
+): ReadonlyMap<string, TokenizedSkill> => {
+    const cached = tokenizedLibraryCache.get(version);
+    if (cached) return cached;
+    const rows = new Map<string, TokenizedSkill>();
+    for (const skill of skills) {
+        rows.set(skill.slug, {
+            name: tokenize(skill.name),
+            description: tokenize(skill.description),
+            body: tokenize(skill.body || ''),
+        });
+    }
+    tokenizedLibraryCache.set(version, rows);
+    while (tokenizedLibraryCache.size > TOKEN_CACHE_MAX_VERSIONS) {
+        tokenizedLibraryCache.delete(tokenizedLibraryCache.keys().next().value as string);
+    }
+    return rows;
+};
+
+/** Test seam: drop cached tokens (production never needs this). */
+export const resetSkillTokenCache = (): void => { tokenizedLibraryCache.clear(); };
+
+export interface NearDuplicateDeps {
+    /** Counting/override seam for the LIBRARY tokenization only. */
+    tokenize?: SkillTokenizer;
+    /** Library version key. Defaults to `skillLibraryVersion(existing)`. */
+    version?: string;
+}
+
 /** Score a candidate against every existing skill. Deterministic, pure over
  *  the given corpus, so a contract can pin the threshold. Description overlap
  *  carries the most weight (the description is the trigger); the name is
- *  Jaccard because a short name against a long one is not a copy. */
+ *  Jaccard because a short name against a long one is not a copy.
+ *
+ *  The library's tokenized rows are cached by version; the candidate is always
+ *  tokenized fresh (it is the new text being written). */
 export const nearDuplicates = (
     candidate: { name: string; description: string; body: string },
     existing: SkillFile[],
     excludeSlug?: string,
+    deps?: NearDuplicateDeps,
 ): DuplicateMatch[] => {
     const desc = contentWords(candidate.description);
     const name = contentWords(candidate.name);
     const body = contentWords(candidate.body || '');
+    const version = deps?.version ?? skillLibraryVersion(existing);
+    const tokens = tokenizedSkillLibrary(existing, version, deps?.tokenize ?? contentWords);
     const out: DuplicateMatch[] = [];
     for (const skill of existing) {
         if (excludeSlug && skill.slug === excludeSlug) continue;
-        const descScore = overlap(desc, contentWords(skill.description));
-        const nameScore = jaccard(name, contentWords(skill.name));
-        const bodyScore = overlap(body, contentWords(skill.body || ''));
+        const cached = tokens.get(skill.slug);
+        // A version key reused with a different corpus falls back to a fresh
+        // tokenization for that row rather than scoring against stale words.
+        const skillDesc = cached?.description ?? contentWords(skill.description);
+        const skillName = cached?.name ?? contentWords(skill.name);
+        const skillBody = cached?.body ?? contentWords(skill.body || '');
+        const descScore = overlap(desc, skillDesc);
+        const nameScore = jaccard(name, skillName);
+        const bodyScore = overlap(body, skillBody);
         const score = descScore * 0.55 + bodyScore * 0.25 + nameScore * 0.2;
         if (score < DUPLICATE_SCORE_MIN) continue;
         const reason = descScore >= 0.5

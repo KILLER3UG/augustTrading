@@ -1477,7 +1477,25 @@ export async function sendChatRequest(
  * would produce the identical error, and the caller deserves the provider's
  * message rather than a second one.
  */
-function contextRecoveryMessages(
+/**
+ * A compacted request that STILL cannot fit is not a retry candidate. Sending
+ * it again would burn a turn and return the same provider error; the caller
+ * needs a machine-readable refusal carrying the compactor's own notice.
+ */
+export class ContextFullError extends Error {
+    readonly code = 'CONTEXT_FULL' as const;
+    readonly stillOver: number;
+    readonly ceilingTokens: number;
+
+    constructor(notice: string, stillOver: number, ceilingTokens: number) {
+        super(notice);
+        this.name = 'ContextFullError';
+        this.stillOver = stillOver;
+        this.ceilingTokens = ceilingTokens;
+    }
+}
+
+export function contextRecoveryMessages(
     config: ProviderConfig,
     messages: ChatMessage[],
     options: ChatRequestOptions | undefined,
@@ -1491,6 +1509,12 @@ function contextRecoveryMessages(
         outputReserveTokens: options?.maxTokens,
         windowTokens: limit,
     });
+    // Emergency compaction ran and the protected tail alone still exceeds the
+    // ceiling. Refuse LOUDLY with the compactor's CONTEXT FULL notice instead
+    // of re-sending oversize bytes and losing the turn to an opaque 400.
+    if (compacted.stillOver > 0) {
+        throw new ContextFullError(compacted.notice, compacted.stillOver, compacted.ceilingTokens);
+    }
     if (!compacted.changed) return null;
     if (compacted.notice) options?.onContextCompact?.(compacted.notice);
     return compacted.messages;

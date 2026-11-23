@@ -16,7 +16,15 @@ import { getPreferenceObject, setPreferenceObject } from '../infrastructure/Pref
 import { getActiveUsername } from '../../utils/activeUser';
 
 const KEY_PREFIX = 'rejected_fingerprints_v1_';
+export { KEY_PREFIX as REJECTED_FINGERPRINT_KEY_PREFIX };
 const MAX_FINGERPRINTS = 200;
+/** Provenance text is a receipt line, not a transcript. A single rejection
+ *  must never be able to write an unbounded blob into a durable preference. */
+const PROVENANCE_TEXT_MAX = 500;
+const MAX_OBSERVED_OUTCOMES = 8;
+
+const capText = (value: string | undefined): string =>
+    typeof value === 'string' ? value.slice(0, PROVENANCE_TEXT_MAX) : '';
 
 export type RejectedSource = 'user_undo' | 'proposal_reject' | 'background_skip';
 
@@ -36,6 +44,9 @@ export type RejectedSource = 'user_undo' | 'proposal_reject' | 'background_skip'
 export interface Provenance {
     rationale?: string;
     observedOutcome?: string;
+    /** Every outcome observed across re-records, oldest first. A re-record
+     *  APPENDS here; it never rewrites where the refusal came from. */
+    observedOutcomes?: string[];
     modelId?: string;
     recordedAt: string;
 }
@@ -54,14 +65,44 @@ export interface RejectedFingerprintRow {
 }
 
 /** Resolve caller provenance into a storable row, stamping a clock when the
- *  caller did not supply one. Pure apart from the default clock. */
+ *  caller did not supply one, and bounding every free-text field. Pure apart
+ *  from the default clock. */
 export const resolveProvenance = (prov?: ProvenanceInput): Provenance | undefined => {
     if (!prov || typeof prov !== 'object') return undefined;
     return {
-        rationale: prov.rationale,
-        observedOutcome: prov.observedOutcome,
+        rationale: capText(prov.rationale) || undefined,
+        observedOutcome: capText(prov.observedOutcome) || undefined,
         modelId: prov.modelId,
         recordedAt: prov.recordedAt ?? new Date().toISOString(),
+    };
+};
+
+/**
+ * Merge re-recorded provenance into the row's ORIGIN.
+ *
+ * The origin — `modelId`, `recordedAt` — survives a re-record unless the new
+ * write explicitly names a replacement model; the durable refusal's age and
+ * authorship are facts about the FIRST decision, not about the latest scan.
+ * `observedOutcome` accumulates: each distinct observation is appended (once),
+ * bounded per entry and in count. `rationale` may be refreshed. The 500-char
+ * cap is applied HERE as well as on first write so legacy long text cannot
+ * survive a merge.
+ */
+const mergeProvenance = (previous: Provenance | undefined, next: Provenance | undefined): Provenance | undefined => {
+    if (!previous && !next) return undefined;
+    const outcomes = [...(previous?.observedOutcomes ?? [])];
+    if (previous?.observedOutcome) outcomes.push(previous.observedOutcome);
+    if (next?.observedOutcome && next.observedOutcome !== previous?.observedOutcome) outcomes.push(next.observedOutcome);
+    const observedOutcomes = [...new Set(outcomes.map(capText).filter(Boolean))].slice(-MAX_OBSERVED_OUTCOMES);
+    const rationale = capText(next?.rationale || previous?.rationale);
+    const observedOutcome = capText(next?.observedOutcome || previous?.observedOutcome);
+    const modelId = next?.modelId || previous?.modelId;
+    return {
+        recordedAt: previous?.recordedAt ?? next?.recordedAt ?? new Date().toISOString(),
+        ...(modelId ? { modelId } : {}),
+        ...(rationale ? { rationale } : {}),
+        ...(observedOutcome ? { observedOutcome } : {}),
+        ...(observedOutcomes.length ? { observedOutcomes } : {}),
     };
 };
 
@@ -100,17 +141,22 @@ export const rejectionFingerprint = (parts: {
     return `${kind}:${target}:${hashRejectionText(content)}`;
 };
 
+/**
+ * Read the durable blob. A missing key is an empty store; a PRESENT but
+ * unusable blob, or a backend failure, is a DEGRADED store and MUST throw.
+ * Returning an empty list here is how a corruption silently disabled every
+ * future refusal — the seat re-proposed exactly what the trader rejected.
+ */
 const readBlob = async (username: string): Promise<RejectedBlob> => {
-    try {
-        const raw = await getPreferenceObject<Partial<RejectedBlob>>(`${KEY_PREFIX}${username}`);
-        if (!raw || !Array.isArray(raw.rows)) return { version: 1, rows: [] };
-        return {
-            version: 1,
-            rows: raw.rows.filter(r => r && typeof r.fingerprint === 'string' && typeof r.at === 'string'),
-        };
-    } catch {
-        return { version: 1, rows: [] };
+    const raw = await getPreferenceObject<Partial<RejectedBlob>>(`${KEY_PREFIX}${username}`);
+    if (!raw) return { version: 1, rows: [] };
+    if (!Array.isArray(raw.rows)) {
+        throw new Error(`rejected fingerprint store for "${username}" is degraded: rows is not an array`);
     }
+    return {
+        version: 1,
+        rows: raw.rows.filter(r => r && typeof r.fingerprint === 'string' && typeof r.at === 'string'),
+    };
 };
 
 const writeBlob = async (username: string, blob: RejectedBlob): Promise<void> => {
@@ -130,7 +176,7 @@ export const recordRejectedFingerprint = async (
     const fingerprint = rejectionFingerprint(parts);
     const blob = await readBlob(username);
     const existingIndex = blob.rows.findIndex(r => r.fingerprint === fingerprint);
-    const provenance = resolveProvenance(options?.provenance);
+    const provenance = mergeProvenance(blob.rows[existingIndex]?.provenance, resolveProvenance(options?.provenance));
     const row: RejectedFingerprintRow = {
         fingerprint,
         source,
@@ -145,19 +191,42 @@ export const recordRejectedFingerprint = async (
     return fingerprint;
 };
 
-/** True when this exact suggestion was refused before. An empty/corrupt store
- *  is an honest "not rejected" — the read never throws to a writer. */
+export interface RejectionReadState {
+    rejected: boolean;
+    /** True when the durable store could not be read. Callers that enforce a
+     *  refusal must NOT treat this as "not rejected". */
+    degraded: boolean;
+    error?: string;
+}
+
+/** Read with an explicit degraded flag instead of a bare boolean. A backend
+ *  failure or a corrupt blob returns `degraded: true`; it never masquerades as
+ *  an honest "not rejected". */
+export const readRejectionState = async (
+    parts: { kind: string; target?: string; content: string },
+    username = getActiveUsername() || 'default',
+): Promise<RejectionReadState> => {
+    const fingerprint = rejectionFingerprint(parts);
+    try {
+        const blob = await readBlob(username);
+        return { rejected: blob.rows.some(r => r.fingerprint === fingerprint), degraded: false };
+    } catch (e) {
+        return { rejected: false, degraded: true, error: e instanceof Error ? e.message : String(e) };
+    }
+};
+
+/** True when this exact suggestion was refused before. A degraded store is a
+ *  LOUD error, not a false: a false would disable refusal enforcement for the
+ *  rest of the session and let the seat re-propose the trader's rejection. */
 export const isRejectedFingerprint = async (
     parts: { kind: string; target?: string; content: string },
     username = getActiveUsername() || 'default',
 ): Promise<boolean> => {
-    const fingerprint = rejectionFingerprint(parts);
-    try {
-        const blob = await readBlob(username);
-        return blob.rows.some(r => r.fingerprint === fingerprint);
-    } catch {
-        return false;
+    const state = await readRejectionState(parts, username);
+    if (state.degraded) {
+        throw new Error(`rejected fingerprint store is degraded: ${state.error ?? 'unreadable'}`);
     }
+    return state.rejected;
 };
 
 export const listRejectedFingerprints = async (

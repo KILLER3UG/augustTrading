@@ -348,7 +348,9 @@ const App: React.FC = () => {
     // → the stored global vision pick (legacy) → the per-conversation OCR
     // model (legacy, saved conversations) → first ready provider → moderator.
     const visionConfig: ProviderConfig = useMemo(() => {
-        const pair = activeModelPair();
+        // The resolved pair is a useMemo dep below, so switching the composer
+        // model re-runs this and the vision features follow the new pick.
+        const pair = activeModelPairValue;
         if (pair) {
             const [pid, ...rest] = pair.split('::');
             const mid = rest.join('::');
@@ -364,7 +366,7 @@ const App: React.FC = () => {
             if (byConversation) return byConversation;
         }
         return readyProviders[0] || moderatorConfig;
-    }, [readyProviders, visionModel, selectedOcrModel, moderatorConfig]);
+    }, [readyProviders, visionModel, selectedOcrModel, moderatorConfig, activeModelPairValue]);
 
     const memoryConfigRef = useRef(memoryConfig);
     memoryConfigRef.current = memoryConfig;

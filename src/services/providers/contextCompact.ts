@@ -149,8 +149,32 @@ const textOf = (content: ChatMessage['content']): string => {
  * Estimated tokens one wire message costs — content, tool-call arguments and
  * images. The framing constant inside `estimateTokens` is per call, so a message
  * with three tool calls pays it three times: over-estimating again.
+ *
+ * Per-message estimates live in a WeakMap keyed by the message object. The
+ * fingerprint is compared on every read so an in-place content mutation cannot
+ * serve a stale estimate, while an unchanged transcript reuses the number
+ * without walking a single codepoint.
  */
-export const estimateMessageTokens = (message: ChatMessage): number => {
+interface MessageEstimateEntry {
+    content: string;
+    calls: string;
+    tokens: number;
+}
+
+const fingerprintContent = (content: ChatMessage['content']): string => {
+    if (typeof content === 'string') return content;
+    if (!Array.isArray(content)) return '';
+    return content.map(part => (part?.type === 'text'
+        ? `t:${(part as { text?: string }).text ?? ''}`
+        : part?.type === 'image_url' ? 'i' : '?')).join('\u0000');
+};
+
+const fingerprintCalls = (calls: ChatMessage['tool_calls']): string =>
+    (calls ?? []).map(call => `${call.id}|${call.function?.name ?? ''}|${call.function?.arguments ?? ''}`).join('\u0000');
+
+const messageEstimateCache = new WeakMap<ChatMessage, MessageEstimateEntry>();
+
+const computeMessageTokens = (message: ChatMessage): number => {
     let tokens = estimateTokens(textOf(message.content));
     if (Array.isArray(message.content)) {
         tokens += message.content.filter(part => part?.type === 'image_url').length * IMAGE_TOKEN_ESTIMATE;
@@ -161,9 +185,62 @@ export const estimateMessageTokens = (message: ChatMessage): number => {
     return tokens;
 };
 
+export const estimateMessageTokens = (message: ChatMessage): number => {
+    const content = fingerprintContent(message.content);
+    const calls = fingerprintCalls(message.tool_calls);
+    const cached = messageEstimateCache.get(message);
+    if (cached && cached.content === content && cached.calls === calls) return cached.tokens;
+    const tokens = computeMessageTokens(message);
+    messageEstimateCache.set(message, { content, calls, tokens });
+    return tokens;
+};
+
 /** Estimated tokens of a whole outbound array. */
 export const estimateMessagesTokens = (messages: readonly ChatMessage[]): number =>
     messages.reduce((sum, m) => sum + estimateMessageTokens(m), 0);
+
+/**
+ * Running totals with prefix sums. Compaction asks "are we under the ceiling?"
+ * after every edit; recomputing the whole array each time is O(n²) on a long
+ * transcript. A ledger updates one message in O(1) amortised (a delta riding
+ * the prefix tail) and answers totals/segments in O(1).
+ */
+class TokenLedger {
+    private readonly tokens: number[];
+    private readonly prefix: number[];
+
+    constructor(messages: readonly ChatMessage[]) {
+        this.tokens = messages.map(m => estimateMessageTokens(m));
+        this.prefix = new Array(this.tokens.length + 1);
+        this.prefix[0] = 0;
+        for (let i = 0; i < this.tokens.length; i += 1) {
+            this.prefix[i + 1] = this.prefix[i] + this.tokens[i];
+        }
+    }
+
+    total(): number { return this.prefix[this.prefix.length - 1] ?? 0; }
+
+    segment(start: number, end: number): number { return this.prefix[end] - this.prefix[start]; }
+
+    set(index: number, message: ChatMessage): void {
+        const next = estimateMessageTokens(message);
+        const delta = next - this.tokens[index];
+        if (delta === 0) return;
+        this.tokens[index] = next;
+        for (let i = index + 1; i < this.prefix.length; i += 1) this.prefix[i] += delta;
+    }
+
+    remove(start: number, count: number): void {
+        this.tokens.splice(start, count);
+        let running = 0;
+        for (let i = 0; i < this.tokens.length; i += 1) {
+            this.prefix[i] = running;
+            running += this.tokens[i];
+        }
+        this.prefix[this.tokens.length] = running;
+        this.prefix.length = this.tokens.length + 1;
+    }
+}
 
 /**
  * Atomic drop units, oldest first.
@@ -326,6 +403,10 @@ const compactToFit = (input: CompactInput, keepAtLeast: number, protectFrom: num
         }
     }
 
+    // The running total is maintained incrementally from here on: every
+    // rewrite calls set(), every drop calls remove(), so ceiling checks stay
+    // O(1) instead of re-estimating the whole array on each pass.
+    const ledger = new TokenLedger(out);
 
     // STAGE-1 MICROCOMPACTION (zero-LLM-cost, every round): a stale bulky tool
     // output PAST the protected tail is stubbed to its head slice + a re-read
@@ -346,12 +427,13 @@ const compactToFit = (input: CompactInput, keepAtLeast: number, protectFrom: num
         if (text.length <= MICRO_STUB_CHARS) continue;
         if (text.length - MICRO_HEAD_KEEP_CHARS < 400) continue;
         out[i] = { ...m, content: stubFor(m.name || 'tool result', text, MICRO_HEAD_KEEP_CHARS) };
+        ledger.set(i, out[i]);
         microCompactChars += text.length - MICRO_HEAD_KEEP_CHARS;
         microCompactCount += 1;
         actions.push({ kind: 'tool-payload', index: i, ...(m.name ? { name: m.name } : {}), kept: MICRO_HEAD_KEEP_CHARS, total: text.length });
     }
 
-    const total = (): number => estimateMessagesTokens(out);
+    const total = (): number => ledger.total();
 
     // Pass 1 + 2: shrink the bodies, oldest first. `role === 'tool'` first
     // because a payload is bulkier and less load-bearing than prose.
@@ -371,6 +453,7 @@ const compactToFit = (input: CompactInput, keepAtLeast: number, protectFrom: num
             if (text.length - keep < 400) continue;
             const label = pass === 'tool' ? (m.name || 'tool result') : 'earlier reply';
             out[i] = { ...m, content: stubFor(label, text, keep) };
+            ledger.set(i, out[i]);
             actions.push({
                 kind: pass === 'tool' ? 'tool-payload' : 'assistant-text',
                 index: i,
@@ -405,7 +488,9 @@ const compactToFit = (input: CompactInput, keepAtLeast: number, protectFrom: num
         // ONE action per group: a group is the unit the trader lost, and
         // counting its messages would make the notice say "3 turns dropped"
         // about one tool round.
-        const droppedTokens = droppable.reduce((sum, index) => sum + estimateMessageTokens(out[index]), 0);
+        // Groups are contiguous index ranges (see `turnGroups`), so a prefix
+        // sum answers this in O(1) instead of re-estimating every dropped msg.
+        const droppedTokens = ledger.segment(droppable[0], droppable[0] + droppable.length);
         const droppedNames = droppable
             .map(index => out[index])
             .filter(m => m.role === 'tool' && m.name)
@@ -417,7 +502,10 @@ const compactToFit = (input: CompactInput, keepAtLeast: number, protectFrom: num
             kept: 0,
             total: droppedTokens,
         });
-        out.splice(droppable[0], droppable.length);
+        const dropStart = droppable[0];
+        const dropCount = droppable.length;
+        out.splice(dropStart, dropCount);
+        ledger.remove(dropStart, dropCount);
     }
 
     const afterTokens = total();
@@ -457,11 +545,72 @@ const compactToFit = (input: CompactInput, keepAtLeast: number, protectFrom: num
  *     crosses the ceiling must still send, but it must not quietly lose the
  *     results it is about to reason over while older turns could pay instead.
  */
+interface MessageFingerprint {
+    role: string;
+    id: string;
+    name: string;
+    content: string;
+    calls: string;
+}
+
+interface CompactCacheEntry {
+    fps: MessageFingerprint[];
+    ceiling: number;
+    keep: number;
+    maxImages: number;
+    result: CompactResult;
+}
+
+/**
+ * An unchanged transcript must not be re-scanned: the same array, the same
+ * ceiling and the same message bytes return the IDENTICAL result object. The
+ * fingerprint is made of cheap identity/value checks (a string content compares
+ * by reference first), so even a large transcript is validated in linear time
+ * without re-estimating a single token. Replacing or editing any message mints
+ * a different fingerprint and rebuilds the result.
+ */
+let compactResultCache = new WeakMap<ChatMessage[], CompactCacheEntry>();
+
+const messageFingerprint = (m: ChatMessage): MessageFingerprint => ({
+    role: m.role,
+    id: m.tool_call_id ?? '',
+    name: m.name ?? '',
+    content: fingerprintContent(m.content),
+    calls: fingerprintCalls(m.tool_calls),
+});
+
+const sameFingerprint = (a: MessageFingerprint, b: MessageFingerprint): boolean =>
+    a.role === b.role && a.id === b.id && a.name === b.name
+    && a.content === b.content && a.calls === b.calls;
+
+/** Test seam for the result cache. */
+export const resetCompactResultCache = (): void => { compactResultCache = new WeakMap(); };
+
 export const compactMessages = (input: CompactInput): CompactResult => {
     const keepAtLeast = Math.max(MIN_KEEP_MESSAGES, input.keepAtLeast ?? 0);
+    const maxImages = input.maxHistoryImages ?? DEFAULT_MAX_HISTORY_IMAGES;
+    const key = input.messages as ChatMessage[];
+    const fps = input.messages.map(messageFingerprint);
+    const cached = compactResultCache.get(key);
+    if (cached
+        && cached.ceiling === input.ceilingTokens
+        && cached.keep === keepAtLeast
+        && cached.maxImages === maxImages
+        && cached.fps.length === fps.length
+        && fps.every((f, i) => sameFingerprint(f, cached.fps[i]))) {
+        return cached.result;
+    }
+
     const protectedRun = compactToFit(input, keepAtLeast, activeTurnStartIndex(input.messages));
-    if (protectedRun.stillOver <= 0) return protectedRun;
-    return compactToFit(input, keepAtLeast, null);
+    const result = protectedRun.stillOver <= 0 ? protectedRun : compactToFit(input, keepAtLeast, null);
+    compactResultCache.set(key, {
+        fps,
+        ceiling: input.ceilingTokens,
+        keep: keepAtLeast,
+        maxImages,
+        result,
+    });
+    return result;
 };
 
 /** Compact token count for a human line: `912k`, `1.2M`, `640k`. */

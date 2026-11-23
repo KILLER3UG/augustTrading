@@ -252,6 +252,29 @@ const LIMIT_PATTERNS: RegExp[] = [
 const toNumber = (raw: string): number => Number(raw.replace(/,/g, ''));
 
 /**
+ * Fallback for phrasings that CLASSIFY (see `isContextLengthError`) but whose
+ * number is not captured by a named pattern above — e.g. "token count exceeds
+ * 32768" or "supports a maximum of 32768 context tokens". Take the smallest
+ * plausible integer (1 and 0 are prompt sizes, not windows), preferring one
+ * sitting next to maximum / limit / window / context when several qualify.
+ */
+const LIMIT_KEYWORD_RE = /\b(?:maximum|max|limit|window|context)\b/gi;
+const fallbackLimitFromError = (text: string): number | null => {
+    const numbers = [...text.matchAll(/\d[\d,]*/g)]
+        .map(m => ({ value: toNumber(m[0]), index: m.index ?? 0, width: m[0].length }))
+        .filter(n => Number.isFinite(n.value) && n.value >= 512 && n.value <= 100_000_000);
+    if (numbers.length === 0) return null;
+    const keywords = [...text.matchAll(LIMIT_KEYWORD_RE)].map(m => ({
+        start: m.index ?? 0,
+        end: (m.index ?? 0) + m[0].length,
+    }));
+    const adjacent = numbers.filter(n => keywords.some(k =>
+        k.end >= n.index - 32 && k.start <= n.index + n.width + 32));
+    const pool = adjacent.length > 0 ? adjacent : numbers;
+    return Math.min(...pool.map(n => Math.floor(n.value)));
+};
+
+/**
  * The window a provider's error text states, or null.
  *
  * Clamped to a plausible band: `1` and `0` show up in these messages as the
@@ -268,7 +291,7 @@ export const contextLengthLimitFromError = (message: string | null | undefined):
         const n = m ? toNumber(m[1]) : NaN;
         if (Number.isFinite(n) && n >= 512 && n <= 100_000_000) return Math.floor(n);
     }
-    return null;
+    return fallbackLimitFromError(text);
 };
 
 /** Does this provider error say "your prompt does not fit the window"?
