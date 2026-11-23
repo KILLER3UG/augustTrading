@@ -64,7 +64,18 @@ const emit = async (emission: BackgroundReviewEmission): Promise<{ ok: boolean; 
             target: String((emission.args as { slug?: unknown }).slug ?? ''),
             content: [String((emission.args as { body?: unknown }).body ?? ''), String((emission.args as { description?: unknown }).description ?? '')].join(' | '),
         };
-    if (await isRejectedFingerprint(fingerprintArgs)) {
+    // A degraded/corrupt rejection store THROWS by design: fail CLOSED. A
+    // background pass must never re-derive a rule the trader may already have
+    // rejected just because the store could not be read.
+    let alreadyRejected: boolean;
+    try {
+        alreadyRejected = await isRejectedFingerprint(fingerprintArgs);
+    } catch (e) {
+        console.warn('[LearningPass] durable rejection store unreadable — write withheld:',
+            e instanceof Error ? e.message : String(e));
+        return { ok: false, error: 'skipped: the durable rejection list could not be read; write withheld' };
+    }
+    if (alreadyRejected) {
         return { ok: false, error: 'skipped: this rule was previously rejected or undone by the trader (durable rejected list)' };
     }
     // A NO-TRADER pass gets the SAME privacy gate as a model call. The review

@@ -8092,6 +8092,14 @@ const checkPass4Fixes = () => {
     const store = read('src/services/trade/chatStore.ts');
     ok('pass4: streaming publishes are coalesced to one frame flush',
         /flushEphemeralFor\(id\)/.test(store) && /requestAnimationFrame\(\(\) => flushEphemeralFor\(id\)\)/.test(store));
+    const paperTab = read('src/components/settings/tabs/PaperTab.tsx');
+    ok('pass4: a quarantined corrupt paper account is surfaced in Settings → Paper',
+        /getPaperCorruptionWarning/.test(paperTab)
+        && /data-testid="paper-corruption-warning"/.test(paperTab));
+    const wiring = read('src/services/learning/learningPassWiring.ts');
+    const optimizer = read('src/services/selfMod/harnessOptimization.ts');
+    ok('pass4: a degraded rejection store fails CLOSED in both background callers',
+        /write withheld/.test(wiring) && /proposal withheld/.test(optimizer));
     const menu = read('src/components/shared/ModelMenu.tsx');
     ok('pass4: the reference selector keeps the pinned search, slider and star contracts',
         /data-testid="model-picker-search"/.test(menu)

@@ -782,7 +782,14 @@ export const runHarnessOptimizationPass = async (
         )) {
             return state;
         }
-    } catch { /* an unavailable refusal store must not block a valid proposal */ }
+    } catch (e) {
+        // Fail CLOSED. A corrupt rejection store cannot prove the trader has
+        // not already refused this exact revision, so staging the card would
+        // re-surface a rejected idea. Refuse loudly and withhold the proposal.
+        console.warn('[HarnessOptimization] rejection store unreadable — proposal withheld:',
+            e instanceof Error ? e.message : String(e));
+        return state;
+    }
     const spreadNote = cand.sessionSpread.length > 1
         ? ` across ${cand.sessionSpread.length} sessions (${cand.sessionSpread.join(', ')})`
         : ` in session ${cand.sessionSpread[0] ?? '?'}`;

@@ -21,9 +21,11 @@ import {
 } from '../../../services/paper/paperCore';
 import {
     getPaperAccount,
+    getPaperCorruptionWarning,
     resetPaperAccountForUser,
     subscribePaperAccount,
     updatePaperConfigForUser,
+    type PaperCorruptionWarning,
 } from '../../../services/paper/PaperBrokerService';
 import type { SettingsTabProps } from './types';
 
@@ -63,6 +65,35 @@ const NumberRow: React.FC<{
         }
     />
 );
+
+/** A corrupt stored account is quarantined, never silently reset to \$10k.
+ *  The service keeps a sticky record with no event, so — like the Health
+ *  tab's notebook-write failure — the only way to catch a failure while this
+ *  tab is open is a short poll. Renders nothing when the store is healthy. */
+const PaperCorruptionNotice: React.FC = () => {
+    const [warning, setWarning] = useState<PaperCorruptionWarning | null>(
+        () => getPaperCorruptionWarning(),
+    );
+    useEffect(() => {
+        const timer = window.setInterval(() => setWarning(getPaperCorruptionWarning()), 2000);
+        return () => window.clearInterval(timer);
+    }, []);
+    if (!warning) return null;
+    return (
+        <div className="rounded-bubble border border-rose-500/20 bg-rose-950/30 p-3" data-testid="paper-corruption-warning">
+            <p className="text-ui-sm font-semibold text-rose-300">
+                A corrupt paper account was found and quarantined.
+            </p>
+            <p className="text-ui-xs text-zinc-300">
+                The raw bytes were preserved under a backup key; a fresh account is in memory.
+                {' '}{warning.reason}.
+            </p>
+            <p className="text-ui-2xs text-zinc-500">
+                {warning.bytes} bytes · {new Date(warning.atMs).toLocaleString()}
+            </p>
+        </div>
+    );
+};
 
 const PaperTab: React.FC<{ tab: PaperTabProps }> = ({ tab }) => {
     const { confirm, ConfirmDialogComponent } = useConfirmDialog();
@@ -120,6 +151,8 @@ const PaperTab: React.FC<{ tab: PaperTabProps }> = ({ tab }) => {
                 title="Paper Trading"
                 description="A local simulation of execution — no orders leave this machine and no exchange key is involved. Positions, fills and the closed ledger are computed from public market data."
             />
+
+            <PaperCorruptionNotice />
 
             <SettingsGroup title="Account" description="Paper Mode is on by default in chat. Autonomous watch stays off until you turn it on.">
                 <SettingsRow
