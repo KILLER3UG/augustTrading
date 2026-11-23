@@ -24,6 +24,10 @@ import {
     anthropicShouldSendThinking,
     anthropicThinkingFields,
     claudeThinkingBudgetTokens,
+    extractReasoningPayload,
+    extractReasoningFields,
+    mergeReasoningParts,
+    splitChatContentPayload,
     geminiThinkingParams,
     MIN_EFFECTIVE_THINKING_TOKENS,
     requestReasoningSideChannel,
@@ -306,17 +310,7 @@ function reportUsageDirect(
  * Every variant funnels into the same onReasoning side channel.
  */
 export function extractReasoning(value: unknown): string {
-    if (typeof value === 'string') return value;
-    if (Array.isArray(value)) {
-        return value.map(extractReasoning).filter(Boolean).join('');
-    }
-    if (value && typeof value === 'object') {
-        const obj = value as Record<string, unknown>;
-        return extractReasoning(
-            obj.text ?? obj.summary ?? obj.thinking ?? obj.thought ?? obj.content ?? obj.reasoning ?? obj.reasoning_content,
-        );
-    }
-    return '';
+    return extractReasoningPayload(value);
 }
 
 /** Pull public text vs thinking out of chat-completions `content` (string or parts). */
@@ -359,12 +353,7 @@ function deltaReasoning(delta: {
     reasoning_details?: unknown;
     content?: unknown;
 }): string {
-    const fromField = extractReasoning(delta?.reasoning_content)
-        || extractReasoning(delta?.reasoning)
-        || extractReasoning(delta?.reasoning_text)
-        || extractReasoning(delta?.thinking)
-        || extractReasoning(delta?.thought)
-        || extractReasoning(delta?.reasoning_details);
+    const fromField = extractReasoningFields(delta);
     if (!Array.isArray(delta?.content)) return fromField;
     let fromParts = '';
     for (const part of delta.content) {
@@ -498,18 +487,10 @@ export const readWireBody = (
     // carry an inline think block in the string.
     const message = data.choices?.[0]?.message || {};
     const split = splitChatContent(message.content);
-    const nativeReasoning = stated
-        || extractReasoning(message.reasoning_content)
-        || extractReasoning(message.reasoning)
-        || extractReasoning(message.reasoning_text)
-        || extractReasoning(message.thinking)
-        || extractReasoning(message.thought)
-        || extractReasoning(message.reasoning_details);
+    const nativeReasoning = stated || extractReasoningFields(message);
     return {
         text: split.text,
-        reasoning: nativeReasoning
-            ? [nativeReasoning, split.reasoning].filter(Boolean).join('\n\n')
-            : split.reasoning,
+        reasoning: mergeReasoningParts([nativeReasoning, split.reasoning], '\n\n'),
     };
 };
 
@@ -822,12 +803,8 @@ async function chatCompletionsTurn(
     if (!response) throw refusal ?? new Error('Provider request failed');
     const message = response.choices[0]?.message as any;
     const splitContent = splitChatContent(message?.content);
-    const reasoning = [
-        extractReasoning(message?.reasoning_content),
-        extractReasoning(message?.reasoning),
-        extractReasoning(message?.reasoning_details),
-        splitContent.reasoning,
-    ].filter(Boolean).join('\n');
+    const nativeReasoning = extractReasoningFields(message ?? {});
+    const reasoning = mergeReasoningParts([nativeReasoning, splitContent.reasoning], '\n');
     const content = splitContent.text;
     if (!content && !reasoning && !message?.tool_calls?.length && options?.jsonMode) {
         return chatCompletionsTurn(config, messages, { ...options, jsonMode: false, jsonSchema: undefined });
@@ -918,7 +895,19 @@ async function* chatCompletionsStream(
         reportUsage(config, chunk, options, messages);
         const chunkReason = normalizeFinishReason(chunk.choices?.[0]?.finish_reason);
         if (chunk.choices?.[0]?.finish_reason) streamFinish = chunkReason;
-        const delta = chunk.choices[0]?.delta as any;
+        const choice = chunk.choices?.[0] as any;
+        const delta = choice?.delta;
+        const bufferedMessage = choice?.message;
+        if (bufferedMessage && !delta) {
+            const buffered = readWireBody('chat_completions', chunk);
+            if (buffered.reasoning) options?.onReasoning?.(buffered.reasoning);
+            toolBuf.push({ tool_calls: bufferedMessage.tool_calls });
+            const gated = gate.push(buffered.text);
+            if (gated.orphanClose) options?.onOrphanThinkClose?.();
+            if (gated.thinking.length > 0) options?.onReasoning?.(gated.thinking);
+            if (gated.visible) yield gated.visible;
+            continue;
+        }
         toolBuf.push(delta);
         const reasoning = deltaReasoning(delta);
         if (reasoning.length > 0) options?.onReasoning?.(reasoning);
@@ -1793,11 +1782,8 @@ async function sendChatTurnOnce(
                     }
                     if (effectiveConfig.apiFormat === 'chat_completions') {
                         const message = data.choices?.[0]?.message || {};
-                        const splitContent = splitChatContent(message.content as string | unknown[] | null | undefined);
-                        const reasoning = result.reasoning
-                            || extractReasoning(message.reasoning_content)
-                            || extractReasoning(message.reasoning)
-                            || splitContent.reasoning;
+                        const splitContent = readWireBody('chat_completions', data, result.reasoning);
+                        const reasoning = splitContent.reasoning;
                         if (reasoning.trim()) options?.onReasoning?.(reasoning.trim());
                         reportUsage(effectiveConfig, data, options, messages);
                         const toolCalls = (message.tool_calls || []).map((tc, i: number) => {
@@ -1884,6 +1870,15 @@ async function sendChatTurnOnce(
     }
 }
 
+/** The buffered Electron result carries the full reasoning trace. Return only
+ *  what the chunk channel did not already paint, so a provider that ignored
+ *  stream:true loses no thought and a normal stream gains no duplicate. */
+export function unstreamedReasoningTail(streamed: string, settled?: string): string {
+    const full = settled ?? '';
+    if (!full || full === streamed) return '';
+    return full.startsWith(streamed) ? full.slice(streamed.length) : full;
+}
+
 /**
  * Desktop live paint over the Electron bridge. main.cjs parses the provider's
  * SSE stream and pushes deltas on `provider:chunk`; this generator yields
@@ -1907,6 +1902,7 @@ async function* streamViaElectronBridge(
     const requestId = `provider-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const queue: string[] = [];
     let yielded = '';
+    let streamedReasoning = '';
     let wake: (() => void) | null = null;
     let settled = false;
     const notify = (): void => { wake?.(); wake = null; };
@@ -1921,6 +1917,7 @@ async function* streamViaElectronBridge(
     const unsubscribe = electronAPI.onProviderChunk?.((chunk) => {
         if (!chunk || chunk.requestId !== requestId) return;
         if (chunk.type === 'reasoning') {
+            streamedReasoning += chunk.delta;
             options?.onReasoning?.(chunk.delta);
             return;
         }
@@ -1988,6 +1985,8 @@ async function* streamViaElectronBridge(
             if (result.code !== undefined) (error as { code?: string }).code = result.code;
             throw error;
         }
+        const reasoningTail = unstreamedReasoningTail(streamedReasoning, result.reasoning);
+        if (reasoningTail) options?.onReasoning?.(reasoningTail);
         if (result.toolCalls && result.toolCalls.length > 0) options?.onStreamToolCalls?.(result.toolCalls);
         reportUsageDirect(config, result.usage, options, messages);
         reportFinishReason(config, normalizeFinishReason(result.finishReason), options);
@@ -2140,14 +2139,16 @@ class StreamToolCallBuffer {
     push(delta: unknown): void {
         const frags = (delta as { tool_calls?: unknown })?.tool_calls;
         if (!Array.isArray(frags)) return;
-        for (const f of frags as Array<{ index?: number; id?: string; function?: { name?: string; arguments?: string } }>) {
-            const idx = Number.isFinite(f?.index) ? Number(f.index) : 0;
+        frags.forEach((f: { index?: number; id?: string; function?: { name?: string; arguments?: string } }, position: number) => {
+            // Complete buffered messages omit index; array position is the only
+            // stable identity that keeps parallel calls from merging into one.
+            const idx = Number.isFinite(f?.index) ? Number(f.index) : position;
             const part = this.parts.get(idx) ?? { id: '', name: '', args: '' };
             if (typeof f?.id === 'string' && f.id) part.id = f.id;
             if (typeof f?.function?.name === 'string') part.name += f.function.name;
             if (typeof f?.function?.arguments === 'string') part.args += f.function.arguments;
             this.parts.set(idx, part);
-        }
+        });
     }
 
     pushFragment(index: number, init: { id?: string; name?: string; argsDelta?: string }): void {
@@ -2333,6 +2334,17 @@ export const createBrowserSseParser = (apiFormat: ProviderConfig['apiFormat']) =
         if (chunk?.usage) batch.usagePayload = chunk;
         const finish = chunk?.choices?.[0]?.finish_reason;
         if (finish) batch.finishReason = normalizeFinishReason(finish);
+        const bufferedMessage = chunk?.choices?.[0]?.message;
+        if (bufferedMessage && !chunk?.choices?.[0]?.delta) {
+            // Some gateways ignore stream:true and label a normal JSON body as
+            // a stream. Read its message shape instead of consuming it as an
+            // empty delta and losing both reasoning and native tool calls.
+            const buffered = readWireBody('chat_completions', chunk);
+            if (buffered.reasoning) batch.reasoningDeltas.push(buffered.reasoning);
+            routeVisible(buffered.text, batch);
+            toolBuf.push({ tool_calls: bufferedMessage.tool_calls });
+            return;
+        }
         const delta = chunk?.choices?.[0]?.delta || {};
         toolBuf.push(delta);
         const reasoning = deltaReasoning(delta);

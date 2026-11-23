@@ -1036,7 +1036,8 @@ async function sendProviderRequest(request, sender) {
             });
             streamActive = false;
         }
-        if (streamActive && response.ok && response.body && request.requestId && sender) {
+        if (streamActive && response.ok && response.body && request.requestId && sender
+            && policy.isEventStreamResponse(response)) {
             armBodyPhase();
             const streamOut = await consumeProviderStream(response, request, sender);
             if (streamOut.error) {
@@ -1096,10 +1097,11 @@ async function sendProviderRequest(request, sender) {
 
         if (response.ok && (request.jsonMode || request.jsonSchema) && body.response_format) {
             const message = data?.choices?.[0]?.message || {};
-            const content = Array.isArray(message.content)
-                ? message.content.filter(block => typeof block?.text === 'string').map(block => block.text).join('')
-                : message.content;
-            const reasoning = message.reasoning_content || message.reasoning;
+            const split = policy.splitChatContentPayload(message.content);
+            const content = split.text;
+            const reasoning = policy.mergeReasoningParts([
+                policy.extractReasoningFields(message), split.reasoning,
+            ], '\n');
             if (!content && !reasoning) {
                 const fallbackBody = { ...body };
                 delete fallbackBody.response_format;
@@ -1174,15 +1176,14 @@ async function sendProviderRequest(request, sender) {
         reasoning = parsed.reasoning;
     } else {
         const message = data.choices?.[0]?.message || {};
-        const content = message.content;
-        text = Array.isArray(content)
-            ? content.filter(block => typeof block?.text === 'string').map(block => block.text).join('\n')
-            : content || '';
-        // Qwen/Kimi-style gateways return `reasoning` as an array of strings.
-        const msgReasoning = message.reasoning_content ?? message.reasoning;
-        reasoning = Array.isArray(msgReasoning)
-            ? msgReasoning.filter(part => typeof part === 'string').join('\n')
-            : msgReasoning || '';
+        const split = policy.splitChatContentPayload(message.content);
+        text = split.text;
+        // Use the same structured reader as browser/SSE: empty aliases fall
+        // through, co-populated detail arrays survive, thinking content blocks
+        // never become visible answer text, and tool calls do not short-circuit.
+        reasoning = policy.mergeReasoningParts([
+            policy.extractReasoningFields(message), split.reasoning,
+        ], '\n');
         if (Array.isArray(message.tool_calls) && message.tool_calls.length > 0) {
             const toolCalls = message.tool_calls.map((tc, i) => {
                 let args;

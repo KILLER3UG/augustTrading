@@ -44,6 +44,7 @@
 import type { ProviderConfig, ReasoningEffort, WireAuditEntry } from '../../types/provider';
 import type { ChatMessage, ChatRequestOptions } from './GenericProviderService';
 import { getHarnessSettings } from '../../utils/harnessSettings';
+import { classifyReasoningGateway } from '../../../shared/providerRequestPolicy.cjs';
 
 /** The audit shape lives in the wire vocabulary (`types/provider.ts`) because
  *  the answer's row has to carry it — a turn that returned no trace has to be
@@ -174,19 +175,23 @@ export const detectWireCapabilities = (
     const host = `${config.baseUrl || ''}`.toLowerCase();
     const model = `${config.selectedModel || ''}`.toLowerCase();
     const isChat = config.apiFormat === 'chat_completions';
+    // A gateway owns its wire shape even when the selected model belongs to a
+    // vendor below: OpenRouter/Kilo receive the gateway knob, not the direct
+    // vendor's knob. The URL, not provider id/name, makes that decision.
+    const gateway = isChat ? classifyReasoningGateway(config.baseUrl) : null;
     // grok-4-fast rejects reasoning_effort; the rest of the family honors it.
     // Match both "xai" and the literal host "x.ai" spellings. The FAMILY
     // regex is kept separately: a fast model fails the xaiEffort check but
     // must still never fall through to the generic route.
     const xaiFamily = /x\.?ai|grok/.test(host + model);
-    const xaiEffort = isChat && xaiFamily && !/fast/.test(model);
+    const xaiEffort = !gateway && isChat && xaiFamily && !/fast/.test(model);
     // gpt-5 is OpenAI's reasoning model on this transport and takes the
     // same knob; a proxy that rejects it fails once and the harness pins
     // the route off from the wire lesson, which is the designed path.
-    const openaiEffort = isChat && (/(?:^|\b|\/)(?:o1|o3|o4)(?:-mini|-preview)?(?::|\b|$)/i.test(model)
+    const openaiEffort = !gateway && isChat && (/(?:^|\b|\/)(?:o1|o3|o4)(?:-mini|-preview)?(?::|\b|$)/i.test(model)
         || /(?:^|\/)gpt-5(?:[.-]|$)/i.test(model));
-    const glmThinking = isChat && /z-ai|zhipu|bigmodel|glm/.test(host + model);
-    const deepseekThinking = isChat && /deepseek/.test(host + model);
+    const glmThinking = !gateway && isChat && /z-ai|zhipu|bigmodel|glm/.test(host + model);
+    const deepseekThinking = !gateway && isChat && /deepseek/.test(host + model);
     return {
         xaiEffort,
         openaiEffort,
@@ -197,7 +202,9 @@ export const detectWireCapabilities = (
         // A chat_completions provider none of the vendor routes above claim
         // still gets a plain reasoning_effort — the custom/OpenAI-compatible
         // route. Known-offender exclusion is applied at translation time.
-        genericEffort: isChat && !xaiFamily && !openaiEffort && !glmThinking && !deepseekThinking,
+        genericEffort: isChat && (gateway
+            ? !(xaiFamily && /fast/.test(model))
+            : !xaiFamily && !openaiEffort && !glmThinking && !deepseekThinking),
         jsonSchema: isChat && (
             config.jsonSchemaCapable === undefined
                 // Hosts where structured-outputs json_schema is verified.
@@ -413,9 +420,14 @@ export const buildReasoningPatch = (
         }
         const value = CUSTOM_EFFORT_MAP[effort];
         if (value) {
+            const gateway = classifyReasoningGateway(config.baseUrl);
+            const patch = gateway === 'openrouter'
+                ? { reasoning: { effort: value } }
+                : { reasoning_effort: value };
+            const field = gateway === 'openrouter' ? 'reasoning.effort' : 'reasoning_effort';
             return {
-                patch: { reasoning_effort: value },
-                audit: { route: CUSTOM_EFFORT_ROUTE, effort, applied: true, reason: `reasoning_effort=${value}` },
+                patch,
+                audit: { route: CUSTOM_EFFORT_ROUTE, effort, applied: true, reason: `${field}=${value}` },
             };
         }
         return { patch: {}, audit: { route: 'none', effort, applied: false, reason: `custom route: effort=${effort} sends no knob` } };

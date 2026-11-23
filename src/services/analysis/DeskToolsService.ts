@@ -8033,9 +8033,12 @@ export async function runDeskToolLoop(params: {
         // protocol tags, never the final public answer: fold any plain preamble
         // into reasoning if needed and clear the live bubble before tools run so
         // Thinking -> Tool Execution -> Output stays strictly ordered.
-        if (streamTurn && calls.length > 0) {
+        if (streamTurn && (calls.length > 0 || replays.length > 0)) {
             const preToolProse = stripTextToolCalls(turn.text).trim();
-            if (preToolProse && !turn.reasoning.trim()) {
+            // Native reasoning and plain preamble are separate channels. Keep
+            // both when a round emits both; only skip an exact repeat that the
+            // native trace already contains.
+            if (preToolProse && !turn.reasoning.includes(preToolProse)) {
                 options?.onReasoning?.(preToolProse);
                 reasoning = [reasoning, preToolProse].filter(Boolean).join('\n');
             }

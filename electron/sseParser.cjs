@@ -24,6 +24,12 @@
  * and main.cjs falls back to its buffered extraction.
  */
 
+const {
+    extractReasoningFields,
+    mergeReasoningParts,
+    splitChatContentPayload,
+} = require('../shared/providerRequestPolicy.cjs');
+
 /**
  * @param {string} apiFormat 'chat_completions' | 'messages' | 'responses'
  */
@@ -62,18 +68,6 @@ function createSseParser(apiFormat) {
         const status = (nested && (nested.status || nested.code)) || json.status;
         return { type: 'error', message: String(message).slice(0, 400), ...(typeof status === 'number' ? { status } : {}) };
     };
-    const extractReasoningValue = (val) => {
-        if (!val) return '';
-        if (typeof val === 'string') return val;
-        if (Array.isArray(val)) return val.map(extractReasoningValue).filter(Boolean).join('');
-        if (typeof val === 'object') {
-            return extractReasoningValue(
-                val.text ?? val.summary ?? val.thinking ?? val.thought ?? val.content ?? val.reasoning ?? val.reasoning_content
-            );
-        }
-        return '';
-    };
-
     const handleChatCompletions = (data) => {
         const events = [];
         if (data === '[DONE]') return { events, done: true };
@@ -83,6 +77,23 @@ function createSseParser(apiFormat) {
         if (json.usage) usage = json.usage;
         const choice = Array.isArray(json.choices) ? json.choices[0] : null;
         if (!choice) return { events, done: false };
+        if (choice.message && !choice.delta) {
+            const message = choice.message;
+            const split = splitChatContentPayload(message.content);
+            const reasoning = mergeReasoningParts([
+                extractReasoningFields(message), split.reasoning,
+            ], '\n');
+            if (reasoning) events.push({ type: 'reasoning', delta: reasoning });
+            if (split.text) events.push({ type: 'text', delta: split.text });
+            for (const [position, tc] of (Array.isArray(message.tool_calls) ? message.tool_calls : []).entries()) {
+                const key = tc.index ?? position;
+                const slot = slotFor(key, { id: '', name: '', args: '' });
+                if (tc.id) slot.id = tc.id;
+                if (tc.function?.name) slot.name += tc.function.name;
+                if (typeof tc.function?.arguments === 'string') slot.args += tc.function.arguments;
+            }
+            return { events, done: false };
+        }
         const delta = choice.delta || {};
         if (typeof delta.content === 'string' && delta.content.length > 0) {
             events.push({ type: 'text', delta: delta.content });
@@ -104,15 +115,13 @@ function createSseParser(apiFormat) {
         }
         // Reasoning tokens ride several field spellings across OpenAI-compatible
         // servers (B.AI/vLLM/DeepSeek/OpenRouter/KiloCode); take whichever carries them.
-        const reasoning = extractReasoningValue(
-            delta.reasoning_content ?? delta.reasoning ?? delta.reasoning_text ?? delta.thinking ?? delta.thought ?? delta.reasoning_details
-        );
+        const reasoning = extractReasoningFields(delta);
         if (reasoning.length > 0) {
             events.push({ type: 'reasoning', delta: reasoning });
         }
         if (Array.isArray(delta.tool_calls)) {
-            for (const tc of delta.tool_calls) {
-                const key = tc.index ?? 0;
+            for (const [position, tc] of delta.tool_calls.entries()) {
+                const key = tc.index ?? position;
                 const slot = slotFor(key, { id: '', name: '', args: '' });
                 if (tc.id) slot.id = tc.id;
                 if (tc.function?.name) slot.name += tc.function.name;

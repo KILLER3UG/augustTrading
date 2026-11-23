@@ -694,6 +694,88 @@ async function fetchFollowingSafeRedirects(fetcher, url, init) {
     }
 }
 
+/** Classify gateway hosts by the configured URL, not the provider's id or
+ *  display name. A custom row pointing at OpenRouter/Kilo must speak that
+ *  gateway's wire shape exactly like a built-in row would. */
+function classifyReasoningGateway(baseUrl) {
+    let host;
+    try { host = new URL(String(baseUrl || '')).hostname.toLowerCase(); }
+    catch { host = String(baseUrl || '').toLowerCase(); }
+    if (/(^|\.)openrouter\.ai$/.test(host)) return 'openrouter';
+    if (/(^|\.)(?:kilocode\.ai|kilocode\.com|kilo\.ai)$/.test(host)) return 'kilocode';
+    return null;
+}
+
+/** Merge reasoning fragments without dropping a populated alias or repeating
+ *  a fragment another field already contains. */
+function mergeReasoningParts(parts, separator = '') {
+    const unique = [];
+    for (const part of parts) {
+        if (typeof part !== 'string' || part.length === 0) continue;
+        if (unique.some(existing => existing.includes(part))) continue;
+        for (let i = unique.length - 1; i >= 0; i--) {
+            if (part.includes(unique[i])) unique.splice(i, 1);
+        }
+        unique.push(part);
+    }
+    return unique.join(separator);
+}
+
+/** Normalize every structured reasoning spelling used by OpenAI-compatible
+ *  gateways. Kept in the shared policy so browser SSE, Electron SSE, buffered
+ *  JSON and the dev proxy cannot drift on empty aliases or detail arrays. */
+function extractReasoningPayload(value) {
+    if (typeof value === 'string') return value;
+    if (Array.isArray(value)) return mergeReasoningParts(value.map(extractReasoningPayload));
+    if (value && typeof value === 'object') {
+        return mergeReasoningParts([
+            value.text, value.summary, value.thinking, value.thought,
+            value.content, value.reasoning, value.reasoning_content,
+        ].map(extractReasoningPayload));
+    }
+    return '';
+}
+
+/** Read all top-level reasoning aliases together. Gateways may send a plain
+ *  alias plus reasoning_details; first-non-empty selection loses the detail. */
+function extractReasoningFields(record) {
+    if (!record || typeof record !== 'object') return '';
+    return mergeReasoningParts([
+        record.reasoning_content, record.reasoning, record.reasoning_text,
+        record.thinking, record.thought, record.reasoning_details,
+    ].map(extractReasoningPayload));
+}
+
+/** Split chat content parts without painting thinking/reasoning blocks as the
+ *  answer. Inline think tags are peeled later by the renderer's shared gate. */
+function splitChatContentPayload(content) {
+    if (typeof content === 'string') return { text: content, reasoning: '' };
+    if (!Array.isArray(content)) return { text: '', reasoning: '' };
+    const texts = [];
+    const thoughts = [];
+    for (const part of content) {
+        if (typeof part === 'string') { texts.push(part); continue; }
+        if (!part || typeof part !== 'object') continue;
+        const type = String(part.type || '');
+        if (type === 'thinking' || type === 'reason' || type === 'reasoning' || part.thought === true) {
+            const inner = typeof part.thinking === 'string' ? part.thinking : part.text;
+            if (typeof inner === 'string') thoughts.push(inner);
+        } else if (typeof part.text === 'string') {
+            texts.push(part.text);
+        }
+    }
+    return { text: texts.join('\n'), reasoning: mergeReasoningParts(thoughts) };
+}
+
+/** A provider that ignored stream:true answers with JSON. Both streaming
+ *  transports must take their buffered fallback instead of parsing that body
+ *  as an SSE frame with no delta. Missing/non-JSON content types still get the
+ *  historical SSE attempt. */
+function isEventStreamResponse(response) {
+    const type = String((response && response.headers && response.headers.get('content-type')) || '').toLowerCase();
+    return type.includes('text/event-stream') || !type.includes('application/json');
+}
+
 /**
  * Ask a host that can return a separate reasoning channel to do so.
  *
@@ -708,7 +790,8 @@ async function fetchFollowingSafeRedirects(fetcher, url, init) {
  */
 function requestReasoningSideChannel(config, params) {
     const host = `${(config && config.baseUrl) || ''} ${(config && config.selectedModel) || ''}`;
-    if (/openrouter.ai|deepseek|groq.com|together.xyz|fireworks.ai|siliconflow/i.test(host)) {
+    if (classifyReasoningGateway(config && config.baseUrl)
+        || /deepseek|groq.com|together.xyz|fireworks.ai|siliconflow/i.test(host)) {
         params.include_reasoning = true;
     }
 }
@@ -744,6 +827,12 @@ if (typeof module !== 'undefined' && module.exports) {
         ANTHROPIC_DEFAULT_TEMPERATURE,
         THINKING_BUDGET_FRACTIONS,
         GEMINI_THINKING_BUDGETS,
+        classifyReasoningGateway,
+        extractReasoningPayload,
+        extractReasoningFields,
+        mergeReasoningParts,
+        splitChatContentPayload,
+        isEventStreamResponse,
         requestReasoningSideChannel,
     };
 }

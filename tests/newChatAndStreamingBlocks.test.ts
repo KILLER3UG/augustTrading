@@ -83,6 +83,42 @@ describe('sseParser — reasoning deltas across all four wire formats', () => {
         assert.equal(out.done, true);
     });
 
+    it('keeps reasoning_details after an empty alias on the same desktop chunk as tool calls', () => {
+        const parser = createSseParser('chat_completions');
+        const out = parser.push(
+            'data: {"choices":[{"delta":{"reasoning_content":"","reasoning_details":[{"type":"reasoning.text","text":"Read. "},{"type":"reasoning.summary","summary":"Compare."}],"tool_calls":[{"index":0,"id":"call_desktop","type":"function","function":{"name":"get_trade_log","arguments":"{}"}}]}}]}\n\n'
+            + 'data: [DONE]\n\n',
+        );
+        assert.deepEqual(out.events, [{ type: 'reasoning', delta: 'Read. Compare.' }]);
+        const tail = parser.finish();
+        assert.deepEqual(tail.toolCalls.map(call => call.name), ['get_trade_log']);
+    });
+
+    it('reads a bare buffered JSON message without losing reasoning or tool calls', () => {
+        const parser = createSseParser('chat_completions');
+        const batch = parser.push(JSON.stringify({
+            choices: [{
+                message: {
+                    reasoning_content: '',
+                    reasoning_details: [{ type: 'reasoning.text', text: 'Buffered thought.' }],
+                    content: 'Buffered answer.',
+                    tool_calls: [
+                        { id: 'call_buffered_log', type: 'function', function: { name: 'get_trade_log', arguments: '{}' } },
+                        { id: 'call_buffered_context', type: 'function', function: { name: 'get_session_context', arguments: '{"coin":"BTCUSDT"}' } },
+                    ],
+                },
+                finish_reason: 'tool_calls',
+            }],
+        }));
+        const tail = parser.finish();
+        assert.deepEqual([...batch.events, ...tail.events], [
+            { type: 'reasoning', delta: 'Buffered thought.' },
+            { type: 'text', delta: 'Buffered answer.' },
+        ]);
+        assert.deepEqual(tail.toolCalls.map(call => call.name), ['get_trade_log', 'get_session_context']);
+        assert.deepEqual(tail.toolCalls[1].arguments, { coin: 'BTCUSDT' });
+    });
+
     it('extracts Anthropic messages thinking_delta events', () => {
         const parser = createSseParser('messages');
         const out = parser.push(
@@ -246,6 +282,7 @@ describe('runDeskToolLoop — strict Thinking -> Tool -> Output chronological ca
             streamTurn: async function* (_cfg, _msgs, opts) {
                 round += 1;
                 if (round === 1) {
+                    yield 'Plain pre-tool note.';
                     opts?.onReasoning?.('Think round 1');
                     opts?.onFinishReason?.('tool_calls');
                     opts?.onStreamToolCalls?.([{ id: 'c1', name: 'tool_one', arguments: {} }]);
@@ -264,8 +301,11 @@ describe('runDeskToolLoop — strict Thinking -> Tool -> Output chronological ca
             },
         });
         assert.equal(result.finalText, 'Final Answer');
+        assert.equal(result.reasoning, 'Think round 1\nPlain pre-tool note.\nThink round 2\nThink round 3');
         assert.deepEqual(timeline, [
+            'token:Plain pre-tool note.',
             'reasoning:Think round 1',
+            'reasoning:Plain pre-tool note.',
             'reset',
             'toolStart:tool_one',
             'exec:tool_one',
@@ -279,6 +319,43 @@ describe('runDeskToolLoop — strict Thinking -> Tool -> Output chronological ca
             'token:Final ',
             'token:Answer',
         ]);
+    });
+
+    it('retains preamble prose on a cache-replay tool round', async () => {
+        const cfg: ProviderConfig = {
+            id: 'test-prov', name: 'Test', apiKey: 'test-key',
+            baseUrl: 'https://example.invalid/v1', apiFormat: 'chat_completions',
+            isEnabled: true, isBuiltIn: false, models: ['test-model'], selectedModel: 'test-model',
+        };
+        let round = 0;
+        const result = await runDeskToolLoop({
+            config: cfg,
+            messages: [{ role: 'user', content: 'Check session context twice' }],
+            nativeTools: true,
+            allowedTools: 'all',
+            sendTurn: async () => {
+                throw new Error('sendTurn should not be called when streamTurn is supplied');
+            },
+            streamTurn: async function* (_cfg, _msgs, opts) {
+                round += 1;
+                if (round <= 2) {
+                    if (round === 2) yield 'Cached replay preamble.';
+                    opts?.onReasoning?.(`Think cache round ${round}`);
+                    opts?.onFinishReason?.('tool_calls');
+                    opts?.onStreamToolCalls?.([{
+                        id: `cache-${round}`, name: 'get_session_context', arguments: {},
+                    }]);
+                    return;
+                }
+                opts?.onReasoning?.('Think final round');
+                yield 'Final Answer';
+                opts?.onFinishReason?.('stop');
+            },
+        });
+        assert.equal(result.finalText, 'Final Answer');
+        assert.match(result.reasoning, /Think cache round 1/);
+        assert.match(result.reasoning, /Think cache round 2\nCached replay preamble\./);
+        assert.match(result.reasoning, /Think final round/);
     });
 });
 

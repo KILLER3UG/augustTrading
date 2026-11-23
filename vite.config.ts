@@ -18,6 +18,10 @@ import {
   isLocalBaseUrl,
   normalizeProviderUrl,
   fetchFollowingSafeRedirects,
+  extractReasoningFields,
+  mergeReasoningParts,
+  splitChatContentPayload,
+  isEventStreamResponse,
   requestReasoningSideChannel,
 } from './shared/providerRequestPolicy.cjs';
 
@@ -49,6 +53,12 @@ const SHARED_POLICY_EXPORTS = [
   'ANTHROPIC_DEFAULT_TEMPERATURE',
   'THINKING_BUDGET_FRACTIONS',
   'GEMINI_THINKING_BUDGETS',
+  'classifyReasoningGateway',
+  'extractReasoningPayload',
+  'extractReasoningFields',
+  'mergeReasoningParts',
+  'splitChatContentPayload',
+  'isEventStreamResponse',
   'requestReasoningSideChannel',
 ];
 
@@ -313,8 +323,7 @@ function devProviderProxy() {
               res.end(JSON.stringify({ ok: false, status: sse.status, body: text.slice(0, 2000), message: '', reasoning: '' }));
               return;
             }
-            const upstreamType = (sse.headers.get('content-type') || '').toLowerCase();
-            if (upstreamType.includes('application/json') && !upstreamType.includes('text/event-stream')) {
+            if (!isEventStreamResponse(sse)) {
               const jsonText = await sse.text();
               res.statusCode = 200;
               res.setHeader('Content-Type', 'application/json');
@@ -383,10 +392,11 @@ function devProviderProxy() {
             try {
               const parsed = JSON.parse(text);
               const message = parsed?.choices?.[0]?.message || {};
-              const content = Array.isArray(message.content)
-                ? message.content.filter((part: any) => typeof part?.text === 'string').map((part: any) => part.text).join('')
-                : message.content;
-              const reasoning = message.reasoning_content || message.reasoning;
+              const split = splitChatContentPayload(message.content);
+              const content = split.text;
+              const reasoning = mergeReasoningParts([
+                extractReasoningFields(message), split.reasoning,
+              ], '\n');
               if (!content && !reasoning) {
                 const fallbackBody = { ...body };
                 delete fallbackBody.response_format;
@@ -412,10 +422,11 @@ function devProviderProxy() {
             } else if (config.apiFormat === 'google') {
               reasoning = parseGeminiResponse(parsed).reasoning;
             } else {
-              const msgReasoning = parsed.choices?.[0]?.message?.reasoning_content ?? parsed.choices?.[0]?.message?.reasoning;
-              reasoning = Array.isArray(msgReasoning)
-                ? msgReasoning.filter((part: any) => typeof part === 'string').join('\n')
-                : (msgReasoning || '');
+              const message = parsed.choices?.[0]?.message || {};
+              const split = splitChatContentPayload(message.content);
+              reasoning = mergeReasoningParts([
+                extractReasoningFields(message), split.reasoning,
+              ], '\n');
             }
           } catch { /* provider returned non-JSON content */ }
           if (!message && !upstream.ok) message = text.replace(/\s+/g, ' ').trim().slice(0, 300);
