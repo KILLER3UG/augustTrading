@@ -7938,7 +7938,7 @@ const checkPass2Fixes = () => {
         && surfaceNames.includes('update_plan')
         && /update_plan: 800/.test(deskSrc)
         && /case 'update_plan':/.test(deskSrc)
-        && /clearAllTurnPlans\(\)/.test(deskSrc));
+        && /clearTurnPlan\(sessionId \?\? ''\)/.test(deskSrc));
 
     const initial = deskSrc.slice(deskSrc.indexOf('INITIAL_DESK_TOOL_NAMES'), deskSrc.indexOf('LOAD_TOOLS_DEFINITION'));
     ok('pass2: the legacy session reader is deferred, not deleted — still granted and executable',
@@ -7952,12 +7952,14 @@ const checkPass2Fixes = () => {
         && /sessionId: req\.sessionId \?\? undefined/.test(surface)
         && /sessionId: options\?\.sessionId \?\? null/.test(deskSrc)
         && /setTurnPlan\(context\.sessionId \?\? ''/.test(deskSrc));
-    const clearCalls = (deskSrc.match(/clearAllTurnPlans\(\)/g) || []).length;
-    ok('pass2: the plan is cleared on BOTH loop exits (clean answer and tool round)',
-        clearCalls >= 2);
-    ok('pass2: the pill renders the latest plan across Chat and Dock keys',
-        /getLatestTurnPlan\s*=/.test(plan)
-        && /getLatestTurnPlan\(\)/.test(read('src/components/trade/TurnPlanPill.tsx')));
+    const clearCalls = (deskSrc.match(/clearTurnPlan\(sessionId \?\? ''\)/g) || []).length;
+    ok('pass4: the plan is cleared on BOTH loop exits with the turn session key',
+        clearCalls >= 2 && !/clearAllTurnPlans\(\)/.test(deskSrc));
+    ok('pass4: the pill subscribes per resolved key — no global latest-plan cross-talk',
+        /subscribeTurnPlanKey\s*=/.test(plan)
+        && /getTurnPlan\s*=/.test(plan)
+        && /subscribeTurnPlanKey\(planKey/.test(read('src/components/trade/TurnPlanPill.tsx'))
+        && !/getLatestTurnPlan\(\)/.test(read('src/components/trade/TurnPlanPill.tsx')));
     ok('pass2: an undo records the refused NEW content in the writer\'s fingerprint shape',
         /rejectedContent/.test(curated) && /rejectedContent/.test(skills)
         && /content: r\.rejectedContent \?\? ''/.test(read('src/components/trade/panels/ChatWorkTimeline.tsx')));
@@ -8060,6 +8062,41 @@ const finishReport = () => {
 // ModelPicker import outside the shared trio is a scattered selector. The
 // studies store the ƒ Studies menu rides on round-trips per user, sanitizes
 // partial blobs, and announces every write exactly once.
+/** Pass 4 — root-cause fixes that need a source boundary to verify (the
+ *  behavioural proof lives in tests/*.test.ts under node --test). */
+const checkPass4Fixes = () => {
+    const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
+    const turn = read('src/services/trade/chatSurfaceTurn.ts');
+    ok('pass4: the per-turn goal hint is appended AFTER the static prefix',
+        /let goalTriggerHint = ''/.test(turn)
+        && /PAPER_TRADING_PROMPT, goalTriggerHint/.test(turn)
+        && !/goalsBlock = \[goalsBlock, `A goal's trigger/.test(turn));
+    const desk = read('src/services/analysis/DeskToolsService.ts');
+    ok('pass4: a throwing UI listener cannot abort a live tool round',
+        /onResult: r => \{/.test(desk) && /onResult listener threw; tool round continues/.test(desk));
+    ok('pass4: stall detection ignores transient data-unavailable and same-round repeats',
+        /!r\.dataUnavailable && \(!r\.ok \|\| r\.refused\)/.test(desk)
+        && /last\.round === prev\.round/.test(desk));
+    const sessions = read('src/services/trade/chatSessions.ts');
+    const search = read('src/services/trade/sessionSearchTool.ts');
+    ok('pass4: session search parses once per store revision and keeps a bounded top-K',
+        /parsedCacheRef/.test(sessions) && /cachedSessions\(\)/.test(sessions)
+        && /betterHit/.test(search) && /hits\.length < limit/.test(search));
+    const boot = read('src/hooks/useUserProfileLoader.ts');
+    ok('pass4: cold boot overlaps curated reads and defers maintenance off the paint path',
+        /const curatedPrime = primeCuratedMemorySnapshot/.test(boot)
+        && /await curatedPrime;/.test(boot)
+        && /deferred maintenance failed/.test(boot));
+    const store = read('src/services/trade/chatStore.ts');
+    ok('pass4: streaming publishes are coalesced to one frame flush',
+        /flushEphemeralFor\(id\)/.test(store) && /requestAnimationFrame\(\(\) => flushEphemeralFor\(id\)\)/.test(store));
+    const menu = read('src/components/shared/ModelMenu.tsx');
+    ok('pass4: the reference selector keeps the pinned search, slider and star contracts',
+        /data-testid="model-picker-search"/.test(menu)
+        && /data-testid="effort-slider"/.test(menu)
+        && /Star \$\{row\.label\}/.test(menu));
+};
+
 const checkSingleActiveModel = async () => {
     const mem = new Map();
     global.localStorage = {
@@ -8164,5 +8201,6 @@ checkSkillWrites()
     .then(checkPass2Fixes)
     .then(checkPaperBroker)
     .then(checkSingleActiveModel)
+    .then(checkPass4Fixes)
     .catch(e => { failures.push(`async runtime checks threw: ${e instanceof Error ? e.stack : String(e)}`); })
     .then(finishReport);
