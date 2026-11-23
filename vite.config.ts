@@ -598,6 +598,10 @@ export default defineConfig(() => {
             const normalized = id.replace(/\\/g, '/');
             if (normalized.includes('/src/services/analysis/') || normalized.includes('/src/services/backtesting/') || normalized.includes('/src/services/validation/')) return 'desk-engine';
             if (normalized.includes('/src/schemas/')) return 'desk-schemas';
+            // Harness optimization is reached through the desk-tool graph and
+            // belongs with that engine, not in the shell bootstrap. Keeping it
+            // in the existing engine chunk also avoids a circular service chunk.
+            if (normalized.endsWith('/src/services/selfMod/harnessOptimization.ts')) return 'desk-engine';
             if (id.includes('node_modules/technicalindicators')) return 'vendor-crypto';
             // zod is imported eagerly by the schema boundaries, but it changes
             // rarely — its own chunk keeps it out of the app-code hash so
