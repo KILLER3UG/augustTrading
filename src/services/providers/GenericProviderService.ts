@@ -50,6 +50,7 @@ import { observePromptRatio } from '../../utils/tokenEstimate';
 import type { ElectronUpdateStatus } from '../../types/electron';
 import { chatMessagesToGemini, googleGenerateUrl, parseGeminiResponse } from '../../utils/googleGeminiFormat';
 import { createThinkingStreamGate, extractAndStripThinkBlocks } from '../../utils/thinkingSplit';
+import { REASONING_CHANNEL_PROMPT } from '../../constants/prompts/chatPrompts';
 interface ElectronProviderBridge {
     isElectron?: boolean;
         providerChat?: (request: {
@@ -769,7 +770,7 @@ async function chatCompletionsTurn(
     const client = createOpenAIClient(config);
     const params: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming = {
         model: config.selectedModel,
-        messages: messages as any,
+        messages: reasoningPreambleMessages(config, messages, options) as any,
         max_tokens: options?.maxTokens ?? 4096,
         temperature: options?.temperature ?? 0.7,
     };
@@ -856,7 +857,7 @@ async function* chatCompletionsStream(
     const client = createOpenAIClient(config);
     const params: OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming = {
         model: config.selectedModel,
-        messages: messages as any,
+        messages: reasoningPreambleMessages(config, messages, options) as any,
         max_tokens: options?.maxTokens ?? 4096,
         temperature: options?.temperature ?? 0.7,
         stream: true,
@@ -1519,6 +1520,7 @@ async function sendChatRequestOnce(
         ...config,
         apiKey: config.apiKey?.trim() || 'not-needed'
     };
+    const wireMessages = reasoningPreambleMessages(effectiveConfig, messages, options);
     const startedAt = Date.now();
     try {
         // Retry transient failures (rate limit / network / 5xx) with
@@ -1547,7 +1549,7 @@ async function sendChatRequestOnce(
                     const timeout = window.setTimeout(() => cancelRequest(), REQUEST_TIMEOUT_MS);
                     return electronAPI.providerChat({
                         config: effectiveConfig,
-                        messages,
+                        messages: wireMessages,
                         requestId,
                         maxTokens: options?.maxTokens,
                         temperature: options?.temperature,
@@ -1584,7 +1586,7 @@ async function sendChatRequestOnce(
                         headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         config: effectiveConfig,
-                        messages,
+                        messages: wireMessages,
                         maxTokens: options?.maxTokens,
                         temperature: options?.temperature,
                         reasoningEffort: options?.reasoningEffort,
@@ -1630,7 +1632,7 @@ async function sendChatRequestOnce(
                         return text || '';
                     });
                 }
-                return stringTransportFor(effectiveConfig.apiFormat)(effectiveConfig, messages, options);
+                return stringTransportFor(effectiveConfig.apiFormat)(effectiveConfig, wireMessages, options);
             },
             (effectiveConfig.name as ProviderName) || 'Provider',
             3,
@@ -1674,6 +1676,7 @@ async function sendChatTurnOnce(
         ...config,
         apiKey: config.apiKey?.trim() || 'not-needed'
     };
+    const wireMessages = reasoningPreambleMessages(effectiveConfig, messages, options);
     const startedAt = Date.now();
     try {
         const result = await withRetry(
@@ -1690,7 +1693,7 @@ async function sendChatTurnOnce(
                     try {
                         const bridge = await electronAPI.providerChat({
                             config: effectiveConfig,
-                            messages,
+                            messages: wireMessages,
                             requestId,
                             maxTokens: options?.maxTokens,
                             temperature: options?.temperature,
@@ -1737,7 +1740,7 @@ async function sendChatTurnOnce(
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
                             config: effectiveConfig,
-                            messages,
+                            messages: wireMessages,
                             maxTokens: options?.maxTokens,
                             temperature: options?.temperature,
                             reasoningEffort: options?.reasoningEffort,
@@ -1846,7 +1849,7 @@ async function sendChatTurnOnce(
                 };
                 // One dispatch, shared with sendChatRequestOnce: the format →
                 // transport rule is not restated per call path.
-                const text = await stringTransportFor(effectiveConfig.apiFormat)(effectiveConfig, messages, captured);
+                const text = await stringTransportFor(effectiveConfig.apiFormat)(effectiveConfig, wireMessages, captured);
                 return {
                     text,
                     reasoning: '',
@@ -1899,6 +1902,7 @@ async function* streamViaElectronBridge(
     options: ChatRequestOptions | undefined,
     electronAPI: NonNullable<Window['electronAPI']>,
 ): AsyncGenerator<string, void, unknown> {
+    const wireMessages = reasoningPreambleMessages(config, messages, options);
     const requestId = `provider-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const queue: string[] = [];
     let yielded = '';
@@ -1943,7 +1947,7 @@ async function* streamViaElectronBridge(
     const timeout = window.setTimeout(() => cancelRequest(), STREAM_TIMEOUT_MS);
     const invoke = electronAPI.providerChat!({
         config,
-        messages,
+        messages: wireMessages,
         requestId,
         stream: true,
         maxTokens: options?.maxTokens,
@@ -2203,6 +2207,22 @@ const reasoningPatchFor = (
     return Object.keys(patch).length > 0 ? patch : undefined;
 };
 
+/** Custom gateways can silently skip the reasoning channel when a large desk
+ *  prompt goes straight to tool_calls. A separate, leading system message keeps
+ *  the instruction outside that prompt's output-format rules; the live SSE
+ *  proof for Kilo/Ernie requires reasoning to arrive before the first tool. */
+export const reasoningPreambleMessages = (
+    config: Pick<ProviderConfig, 'id' | 'baseUrl' | 'apiFormat' | 'selectedModel'>,
+    messages: ChatMessage[],
+    options?: ChatRequestOptions,
+): ChatMessage[] => {
+    if (config.apiFormat !== 'chat_completions' || !options?.tools?.length) return messages;
+    const { audit } = buildReasoningPatch(config, options.reasoningEffort ?? 'auto');
+    if (audit.route !== 'custom-effort' || !audit.applied) return messages;
+    if (messages[0]?.role === 'system' && messages[0].content === REASONING_CHANNEL_PROMPT) return messages;
+    return [{ role: 'system', content: REASONING_CHANNEL_PROMPT }, ...messages];
+};
+
 export interface BrowserSseParsedBatch {
     reasoningDeltas: string[];
     textDeltas: string[];
@@ -2445,6 +2465,7 @@ async function* streamViaProxy(
     messages: ChatMessage[],
     options?: ChatRequestOptions
 ): AsyncGenerator<string, void, unknown> {
+    const wireMessages = reasoningPreambleMessages(config, messages, options);
     // Retry the OPEN of the stream on transient failures (429 / network /
     // 5xx) with the same backoff the non-streaming path uses — without it,
     // one rate-limit blip killed a bot room turn instantly while casual
@@ -2458,7 +2479,7 @@ async function* streamViaProxy(
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 config,
-                messages,
+                messages: wireMessages,
                 maxTokens: options?.maxTokens,
                 temperature: options?.temperature,
                 reasoningEffort: options?.reasoningEffort,

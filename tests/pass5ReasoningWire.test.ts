@@ -6,8 +6,10 @@ import {
     registerWireRoutePins,
 } from '../src/services/providers/reasoningControls';
 import { createThinkingStreamGate } from '../src/utils/thinkingSplit';
-import { createBrowserSseParser, extractReasoning, readWireBody, unstreamedReasoningTail } from '../src/services/providers/GenericProviderService';
+import { createBrowserSseParser, extractReasoning, readWireBody, reasoningPreambleMessages, unstreamedReasoningTail } from '../src/services/providers/GenericProviderService';
 import { requestReasoningSideChannel, splitChatContentPayload } from '../shared/providerRequestPolicy.cjs';
+import { CHAT_SURFACE_SYSTEM_PROMPT, REASONING_CHANNEL_PROMPT } from '../src/constants/prompts/chatPrompts';
+import { TRADE_CHAT_SYSTEM_PROMPT } from '../src/services/trade/tradeChatContext';
 
 const customErnie = {
     id: 'custom-ernie',
@@ -17,11 +19,14 @@ const customErnie = {
 } as const;
 
 describe('custom-effort reasoning route', () => {
-    it('forwards a safe reasoning_effort for a custom chat_completions provider at max effort', () => {
-        const { patch, audit } = buildReasoningPatch(customErnie, 'max');
-        assert.equal(patch.reasoning_effort, 'high');
+    it('requests reasoning output with a safe reasoning_effort for a custom provider at max effort', () => {
+        const params: Record<string, unknown> = {};
+        const audit = applyReasoningToChatParams(customErnie, params, { reasoningEffort: 'max' });
+        assert.equal(params.reasoning_effort, 'high');
+        assert.equal(params.include_reasoning, true);
         assert.equal(String(audit.route), 'custom-effort');
         assert.equal(audit.applied, true);
+        assert.match(audit.reason, /include_reasoning=true/);
     });
 
     it('uses OpenRouter reasoning shape and asks for the side channel on a custom gateway URL', () => {
@@ -86,7 +91,43 @@ describe('custom-effort reasoning route', () => {
         for (const [effort, value] of [['low', 'low'], ['medium', 'medium'], ['high', 'high'], ['max', 'high']] as const) {
             const { patch } = buildReasoningPatch(customErnie, effort);
             assert.equal(patch.reasoning_effort, value, `effort ${effort}`);
+            assert.equal(patch.include_reasoning, true, `effort ${effort}`);
         }
+    });
+
+    it('puts the reasoning side-channel request in the shared patch used by the browser proxy', () => {
+        const { patch, audit } = buildReasoningPatch(customErnie, 'max');
+        assert.equal(patch.reasoning_effort, 'high');
+        assert.equal(patch.include_reasoning, true);
+        assert.equal(audit.applied, true);
+        assert.match(audit.reason, /include_reasoning=true/);
+    });
+
+    it('prepends a separate reasoning system message for custom tool turns', () => {
+        const messages = [
+            { role: 'system' as const, content: 'Desk rules and chart context.' },
+            { role: 'user' as const, content: 'Read BTC.' },
+        ];
+        const wired = reasoningPreambleMessages(customErnie, messages, {
+            reasoningEffort: 'max',
+            tools: [{ type: 'function', function: { name: 'get_chart_view', description: 'Read chart', parameters: { type: 'object', properties: {} } } }],
+        });
+        assert.equal(wired.length, 3);
+        assert.equal(wired[0].role, 'system');
+        assert.equal(wired[0].content, REASONING_CHANNEL_PROMPT);
+        assert.deepEqual(wired.slice(1), messages);
+    });
+
+    it('does not add a reasoning preamble without an applied custom tool route', () => {
+        const messages = [{ role: 'user' as const, content: 'Hello.' }];
+        const tools = [{ type: 'function' as const, function: { name: 'get_chart_view', description: 'Read chart', parameters: { type: 'object', properties: {} } } }];
+        assert.strictEqual(reasoningPreambleMessages(customErnie, messages, { reasoningEffort: 'auto', tools }), messages);
+        assert.strictEqual(reasoningPreambleMessages(customErnie, messages, { reasoningEffort: 'max' }), messages);
+        assert.strictEqual(reasoningPreambleMessages(
+            { ...customErnie, baseUrl: 'https://api.openai.com/v1', selectedModel: 'o3-mini' },
+            messages,
+            { reasoningEffort: 'max', tools },
+        ), messages);
     });
 
     it('sends no reasoning knob for auto or off on a custom provider', () => {
@@ -94,6 +135,7 @@ describe('custom-effort reasoning route', () => {
             const params: Record<string, unknown> = { temperature: 0.7 };
             const audit = applyReasoningToChatParams(customErnie, params, { reasoningEffort: effort });
             assert.equal(Object.prototype.hasOwnProperty.call(params, 'reasoning_effort'), false, `effort ${effort}`);
+            assert.equal(Object.prototype.hasOwnProperty.call(params, 'include_reasoning'), false, `effort ${effort}`);
             assert.equal(audit.applied, false, `effort ${effort}`);
             assert.equal(String(audit.route), 'none', `effort ${effort}`);
         }
@@ -213,6 +255,19 @@ describe('pass 5 — streaming reasoning parser & multi-frame SSE orphan promoti
         const tail = parser.flush();
         assert.equal([...batch.reasoningDeltas, ...tail.reasoningDeltas].join(''), 'ABCD');
         assert.equal([...batch.textDeltas, ...tail.textDeltas].join(''), 'Hello');
+    });
+});
+
+describe('reasoning-channel prompt', () => {
+    it('asks for scratch work in the reasoning channel or think tags, never the visible reply', () => {
+        assert.match(CHAT_SURFACE_SYSTEM_PROMPT, /reasoning channel/);
+        assert.match(CHAT_SURFACE_SYSTEM_PROMPT, /<think>\.\.\.<\/think>/);
+        assert.match(CHAT_SURFACE_SYSTEM_PROMPT, /Never put scratch work in the visible reply/);
+    });
+
+    it('puts the same directive in the dock prompt, including before tool calls', () => {
+        assert.ok(TRADE_CHAT_SYSTEM_PROMPT.includes(REASONING_CHANNEL_PROMPT));
+        assert.match(REASONING_CHANNEL_PROMPT, /think before calling them as well/);
     });
 });
 

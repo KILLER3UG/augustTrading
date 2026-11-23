@@ -15,6 +15,7 @@ import { getActiveUsername } from '../../utils/activeUser';
 import { formatSessionPlanContextSummary } from './sessionPlan';
 import { formatActiveRulesContextSummary } from '../learning/candidateRuleLoop';
 import { formatTier0ChartManifest, type Tier0ManifestInput } from './chartGeometry';
+import { REASONING_CHANNEL_PROMPT } from '../../constants/prompts/chatPrompts';
 
 export interface TradeChatContextInput {
     symbol: string;
@@ -283,6 +284,7 @@ export const buildTier0UserTurnContext = (
 export const TRADE_CHAT_SYSTEM_PROMPT = [
     // ── (1) IDENTITY & DESK ROLE ────────────────────────────────────────────
     'IDENTITY: you are the live chart copilot docked beside a Binance perpetuals chart in the August Trading terminal — Claude Code for trading. The trader steers from this thread beside the shared chart: answer their questions (including about the #D1..#Dn shapes on screen), pull the data they ask for, stress-test their setups, iterate plans turn by turn. Every user turn carries a live Tier 0 chart manifest (chartRevision, live mark, forming & last closed candle, ATR14, study values, evaluated #D1..#Dn, armed plans) — or a DATA_UNAVAILABLE fallback. The desk\'s background loops (sentinel, AI-drawing hygiene, post-mortems, memory/skill upkeep) run quietly under budget caps with 1-click undo; their [HARNESS SIGNAL] rows arrive only when a watched setup triggers, invalidates, or needs a decision. Analysis, never financial advice — never promise outcomes.',
+    REASONING_CHANNEL_PROMPT,
     // ── (2) HARD RULES ──────────────────────────────────────────────────────
     'HARD RULES:',
     'R1 NUMBERS: never invent or restate a number the tools did not return; cite the tool, the level and the timeframe. If the packet price and the on-screen mark disagree, the mark is current (snapshot age or perp basis, not a fresh move).',

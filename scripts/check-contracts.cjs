@@ -8221,6 +8221,10 @@ const checkPass5Fixes = () => {
         /if\s*\(gated\.orphanClose\)\s*\{[\s\S]*?batch\.textDeltas\.length\s*=\s*0/.test(gpSrc));
     ok('pass5: reasoningPatchFor emits wire audit via onWireAudit',
         /options\?\.onWireAudit\?\.\(audit\)/.test(gpSrc));
+    const proxyStreamSrc = gpSrc.slice(gpSrc.indexOf('async function* streamViaProxy'), gpSrc.indexOf('async function* streamViaProxy') + 2600);
+    ok('reasoning proxy: custom tool streams send a separate leading reasoning system message',
+        /const wireMessages = reasoningPreambleMessages\(config, messages, options\)/.test(proxyStreamSrc)
+        && /messages: wireMessages/.test(proxyStreamSrc));
 
     const tsStatus = loadModule('src/utils/turnStatus.ts');
     ok('pass5: UNGROUNDED CLAIM is classified as a harness notice line',
@@ -8234,13 +8238,26 @@ const checkPass5Fixes = () => {
     ok('pass5: 0-tool ReasoningRow uses turnStreaming and activity depends on reasoning.length',
         /reasoning\.length/.test(tlSrc) && /running=\{turnStreaming\}/.test(tlSrc));
 
+    const chatPrompts = loadModule('src/constants/prompts/chatPrompts.ts');
+    ok('thinking prompt: scratch work is routed to the reasoning channel or think tags',
+        /reasoning channel/.test(chatPrompts.CHAT_SURFACE_SYSTEM_PROMPT)
+        && /<think>\.\.\.<\/think>/.test(chatPrompts.CHAT_SURFACE_SYSTEM_PROMPT));
+
+    const tradeChatContext = loadModule('src/services/trade/tradeChatContext.ts');
+    ok('thinking prompt: the dock uses the same reasoning directive before tool calls',
+        tradeChatContext.TRADE_CHAT_SYSTEM_PROMPT.includes(chatPrompts.REASONING_CHANNEL_PROMPT)
+        && /think before calling them as well/.test(chatPrompts.REASONING_CHANNEL_PROMPT));
+
     const policy = require(path.join(ROOT, 'shared/providerRequestPolicy.cjs'));
     const rc = loadModule('src/services/providers/reasoningControls.ts');
     const generic = { id: 'custom-generic', baseUrl: 'https://custom.example/v1', apiFormat: 'chat_completions', selectedModel: 'ernie-5.5-fl' };
     const genericParams = {};
     rc.applyReasoningToChatParams(generic, genericParams, { reasoningEffort: 'max' });
-    ok('reasoning wire: generic custom Max uses portable high, never raw max',
-        genericParams.reasoning_effort === 'high' && genericParams.reasoning_effort !== 'max');
+    ok('reasoning wire: generic custom Max uses portable high and asks for reasoning output',
+        genericParams.reasoning_effort === 'high' && genericParams.reasoning_effort !== 'max'
+        && genericParams.include_reasoning === true);
+    ok('reasoning wire: the browser proxy shared patch also asks for reasoning output',
+        rc.buildReasoningPatch(generic, 'max').patch.include_reasoning === true);
 
     const openRouter = { ...generic, id: 'custom-openrouter', baseUrl: 'https://openrouter.ai/api/v1', selectedModel: 'openai/gpt-5' };
     const openRouterParams = {};

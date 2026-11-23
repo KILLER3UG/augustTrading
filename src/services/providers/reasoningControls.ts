@@ -421,13 +421,17 @@ export const buildReasoningPatch = (
         const value = CUSTOM_EFFORT_MAP[effort];
         if (value) {
             const gateway = classifyReasoningGateway(config.baseUrl);
-            const patch = gateway === 'openrouter'
+            const patch: Record<string, unknown> = gateway === 'openrouter'
                 ? { reasoning: { effort: value } }
                 : { reasoning_effort: value };
+            // Effort alone asks the model to think; this asks the gateway to
+            // return that thought. Keep it in the shared patch: the browser
+            // proxy, direct SDK and desktop paths all build their wire here.
+            patch.include_reasoning = true;
             const field = gateway === 'openrouter' ? 'reasoning.effort' : 'reasoning_effort';
             return {
                 patch,
-                audit: { route: CUSTOM_EFFORT_ROUTE, effort, applied: true, reason: `${field}=${value}` },
+                audit: { route: CUSTOM_EFFORT_ROUTE, effort, applied: true, reason: `${field}=${value}, include_reasoning=true` },
             };
         }
         return { patch: {}, audit: { route: 'none', effort, applied: false, reason: `custom route: effort=${effort} sends no knob` } };
