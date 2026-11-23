@@ -8084,8 +8084,10 @@ const checkPass4Fixes = () => {
         && /betterHit/.test(search) && /hits\.length < limit/.test(search));
     const boot = read('src/hooks/useUserProfileLoader.ts');
     ok('pass4: cold boot overlaps curated reads and defers maintenance off the paint path',
-        /const curatedPrime = primeCuratedMemorySnapshot/.test(boot)
-        && /await curatedPrime;/.test(boot)
+        /const curatedReady = \(async \(\) => \{/.test(boot)
+        && /await primeCuratedMemorySnapshot\(username\);/.test(boot)
+        && /await migrateLegacyNotebookToCuratedMemory\(username\);/.test(boot)
+        && /await curatedReady;/.test(boot)
         && /deferred maintenance failed/.test(boot));
     const store = read('src/services/trade/chatStore.ts');
     ok('pass4: streaming publishes are coalesced to one frame flush',

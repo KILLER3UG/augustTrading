@@ -350,12 +350,16 @@ export const useUserProfileLoader = (args: UseUserProfileLoaderArgs): UseUserPro
             // the one-time legacy-notebook preservation. Both are idempotent;
             // the migration never deletes the legacy notebook bytes.
             const { primeCuratedMemorySnapshot, migrateLegacyNotebookToCuratedMemory } = await import('../services/learning/curatedMemory');
-            // Overlap the two notebook reads with the profile/catalog awaits
-            // below. Both are idempotent; awaiting them at the last safe
-            // moment keeps first-paint correctness without a serial waterfall.
-            const curatedPrime = primeCuratedMemorySnapshot(username);
-            const curatedMigration = migrateLegacyNotebookToCuratedMemory(username);
-            void curatedMigration.catch(() => { /* legacy bytes are preserved for a retry */ });
+            // Overlap the notebook reads with the profile/catalog awaits below,
+            // but keep THEIR original order: prime the frozen snapshot first,
+            // then run the one-time legacy preservation. Joining the chain at
+            // the last safe moment removes the boot waterfall without making
+            // the system prefix depend on which read wins a race.
+            const curatedReady = (async () => {
+                await primeCuratedMemorySnapshot(username);
+                if (isStale()) return;
+                await migrateLegacyNotebookToCuratedMemory(username);
+            })();
             // Warm the skill-lifecycle mirror and run the zero-LLM inactivity
             // Curator once per profile load (agent skills go stale at 14d,
             // archived at 30d — reversible, never touching user/bundled/pinned).
@@ -550,7 +554,7 @@ export const useUserProfileLoader = (args: UseUserProfileLoaderArgs): UseUserPro
             // The frozen system prefix must see this profile's snapshot on
             // the FIRST send. It was read in parallel with everything above;
             // joining it here keeps correctness without a serial boot.
-            await curatedPrime;
+            await curatedReady;
             if (isStale()) return;
             setActiveUsername(username);
             sessionStorage.setItem('activeUsername', username);
