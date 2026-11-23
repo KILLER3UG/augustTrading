@@ -41,6 +41,7 @@ const ROUTE_LABEL: Record<WireAuditEntry['route'], string> = {
     'responses-effort': 'Responses effort',
     'glm-thinking': 'GLM thinking',
     'deepseek-thinking': 'DeepSeek thinking',
+    'custom-effort': 'Custom effort',
     none: 'no route',
 };
 

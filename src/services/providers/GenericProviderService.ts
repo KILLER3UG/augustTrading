@@ -580,7 +580,7 @@ export function shouldRequestExtendedThinking(config: ProviderConfig, options?: 
  * Normalizes base URLs by stripping trailing slashes and format-specific endpoint suffixes.
  * This ensures that pasting full endpoint URLs (e.g. ending in /chat/completions) works properly.
  */
-export function normalizeBaseUrl(url: string, format: string): string {
+export function normalizeBaseUrl(url: string, _format?: string): string {
     let clean = (url || '').trim().replace(/\/+$/, '');
     if (!clean) return '';
 
@@ -1589,6 +1589,7 @@ async function sendChatRequestOnce(
                     });
                 }
                 if (usesDevProviderProxy()) {
+                    const patch = reasoningPatchFor(effectiveConfig, options);
                     return fetch('/__provider_proxy', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
@@ -1602,7 +1603,9 @@ async function sendChatRequestOnce(
                         jsonSchema: resolveWireJsonSchema(effectiveConfig, options),
                         tools: options?.tools,
                         toolChoice: options?.toolChoice,
-                        reasoningPatch: reasoningPatchFor(effectiveConfig, options),
+                        ...(options?.tools?.length ? { tool_choice: options?.toolChoice ?? 'auto' } : options?.toolChoice ? { tool_choice: options.toolChoice } : {}),
+                        reasoningPatch: patch,
+                        ...(patch ?? {}),
                     }),
                     // The dev proxy is the only transport with no cap of its own:
                     // every other path in this file passes a timeout signal, and a
@@ -1615,10 +1618,10 @@ async function sendChatRequestOnce(
                         if (!response.ok || !result.ok) {
                             const providerBody = result.body ? parseProviderErrorBody(result.body) : '';
                             const error = new Error(result.message || providerBody || `Provider request failed (${result.status || response.status}).`);
-                            if (result.status !== undefined) (error as any).status = result.status;
+                            if (result.status !== undefined) (error as { status?: number }).status = result.status;
                             throw error;
                         }
-                        let data: any;
+                        let data: unknown;
                         try {
                             data = result.body ? JSON.parse(result.body) : {};
                         } catch (e) {
@@ -1739,6 +1742,7 @@ async function sendChatTurnOnce(
                     }
                 }
                 if (usesDevProviderProxy()) {
+                    const patch = reasoningPatchFor(effectiveConfig, options);
                     const response = await fetch('/__provider_proxy', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
@@ -1752,7 +1756,9 @@ async function sendChatTurnOnce(
                             jsonSchema: resolveWireJsonSchema(effectiveConfig, options),
                             tools: options?.tools,
                             toolChoice: options?.toolChoice,
-                            reasoningPatch: reasoningPatchFor(effectiveConfig, options),
+                            ...(options?.tools?.length ? { tool_choice: options?.toolChoice ?? 'auto' } : options?.toolChoice ? { tool_choice: options.toolChoice } : {}),
+                            reasoningPatch: patch,
+                            ...(patch ?? {}),
                         }),
                         // The stream's own budget, not the non-streaming one: a
                         // reasoning-heavy answer streams its chain of thought first,
@@ -1765,10 +1771,20 @@ async function sendChatTurnOnce(
                     if (!response.ok || !result.ok) {
                         const providerBody = result.body ? parseProviderErrorBody(result.body) : '';
                         const error = new Error(result.message || providerBody || `Provider request failed (${result.status || response.status}).`);
-                        if (result.status !== undefined) (error as any).status = result.status;
+                        if (result.status !== undefined) (error as { status?: number }).status = result.status;
                         throw error;
                     }
-                    let data: any;
+                    type ProxyToolCallShape = { id?: string; type?: 'function'; function?: { name?: string; arguments?: string } };
+                    let data: {
+                        choices?: Array<{
+                            message?: {
+                                content?: unknown;
+                                reasoning_content?: unknown;
+                                reasoning?: unknown;
+                                tool_calls?: ProxyToolCallShape[];
+                            };
+                        }>;
+                    };
                     try {
                         data = result.body ? JSON.parse(result.body) : {};
                     } catch (e) {
@@ -1777,14 +1793,14 @@ async function sendChatTurnOnce(
                     }
                     if (effectiveConfig.apiFormat === 'chat_completions') {
                         const message = data.choices?.[0]?.message || {};
-                        const splitContent = splitChatContent(message.content);
+                        const splitContent = splitChatContent(message.content as string | unknown[] | null | undefined);
                         const reasoning = result.reasoning
                             || extractReasoning(message.reasoning_content)
                             || extractReasoning(message.reasoning)
                             || splitContent.reasoning;
                         if (reasoning.trim()) options?.onReasoning?.(reasoning.trim());
                         reportUsage(effectiveConfig, data, options, messages);
-                        const toolCalls = (message.tool_calls || []).map((tc: any, i: number) => {
+                        const toolCalls = (message.tool_calls || []).map((tc, i: number) => {
                             let args: Record<string, unknown>;
                             try {
                                 args = tc?.function?.arguments ? JSON.parse(tc.function.arguments) : {};
@@ -1796,7 +1812,11 @@ async function sendChatTurnOnce(
                                 name: String(tc?.function?.name || ''),
                                 arguments: args && typeof args === 'object' ? args : {},
                             };
-                        }).filter((c: { name: string }) => c.name);
+                        }).filter(c => c.name);
+                        const rawToolCalls = message.tool_calls
+                            ?.filter((tc): tc is { id: string; type?: 'function'; function: { name: string; arguments: string } } =>
+                                typeof tc?.id === 'string' && typeof tc?.function?.name === 'string')
+                            .map(tc => ({ id: tc.id, type: 'function' as const, function: { name: tc.function.name, arguments: tc.function.arguments ?? '{}' } }));
                         return {
                             text: splitContent.text || '',
                             reasoning: reasoning.trim(),
@@ -1805,7 +1825,7 @@ async function sendChatTurnOnce(
                             assistantMessage: {
                                 role: 'assistant',
                                 content: splitContent.text || '',
-                                ...(message.tool_calls?.length ? { tool_calls: message.tool_calls } : {}),
+                                ...(rawToolCalls?.length ? { tool_calls: rawToolCalls } : {}),
                             },
                         } satisfies ChatTurnResult;
                     }
@@ -1906,7 +1926,10 @@ async function* streamViaElectronBridge(
         }
         const gated = gate.push(chunk.delta);
         if (gated.orphanClose) {
-            queue.length = 0;
+            if (queue.length > 0) {
+                options?.onReasoning?.(queue.join(''));
+                queue.length = 0;
+            }
             options?.onOrphanThinkClose?.();
         }
         if (gated.thinking.length > 0) options?.onReasoning?.(gated.thinking);
@@ -2174,7 +2197,8 @@ const reasoningPatchFor = (
 ): Record<string, unknown> | undefined => {
     const effort = options?.reasoningEffort;
     if (!effort || effort === 'auto') return undefined;
-    const { patch } = buildReasoningPatch(config, effort);
+    const { patch, audit } = buildReasoningPatch(config, effort);
+    options?.onWireAudit?.(audit);
     return Object.keys(patch).length > 0 ? patch : undefined;
 };
 
@@ -2221,7 +2245,13 @@ export const createBrowserSseParser = (apiFormat: ProviderConfig['apiFormat']) =
     const routeVisible = (rawText: string, batch: BrowserSseParsedBatch): void => {
         if (!rawText) return;
         const gated = gate.push(rawText);
-        if (gated.orphanClose) batch.orphanClose = true;
+        if (gated.orphanClose) {
+            batch.orphanClose = true;
+            if (batch.textDeltas.length > 0) {
+                batch.reasoningDeltas.push(...batch.textDeltas);
+                batch.textDeltas.length = 0;
+            }
+        }
         if (gated.thinking.length > 0) batch.reasoningDeltas.push(gated.thinking);
         if (gated.visible.length > 0) batch.textDeltas.push(gated.visible);
     };
@@ -2410,6 +2440,7 @@ async function* streamViaProxy(
     // request open is retried: once SSE bytes start flowing, a mid-stream
     // failure surfaces as an error instead of replaying the answer.
     const response = await withRetry(async () => {
+        const patch = reasoningPatchFor(config, options);
         const attempt = await fetch('/__provider_proxy', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -2426,9 +2457,11 @@ async function* streamViaProxy(
                 // desk tools never fire in the dev browser.
                 tools: options?.tools,
                 toolChoice: options?.toolChoice,
+                ...(options?.tools?.length ? { tool_choice: options?.toolChoice ?? 'auto' } : options?.toolChoice ? { tool_choice: options.toolChoice } : {}),
                 // Reasoning patch is translated CLIENT-side (capability classes
                 // live in reasoningControls); the middleware just merges it.
-                reasoningPatch: reasoningPatchFor(config, options),
+                reasoningPatch: patch,
+                ...(patch ?? {}),
                 stream: true,
             }),
             signal: withStreamTimeoutSignal(options?.signal),

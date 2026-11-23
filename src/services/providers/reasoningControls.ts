@@ -152,6 +152,9 @@ export interface WireCapabilities {
     anthropicThinking: boolean;
     /** OpenAI responses reasoning.effort. */
     responsesEffort: boolean;
+    /** Generic OpenAI-compatible chat_completions: no vendor route claims
+     *  this shape, but a real tier still maps to a plain `reasoning_effort`. */
+    genericEffort: boolean;
     /** chat_completions json_schema constrained decoding. Host strings are
      *  evidence provenance (which routes were verified); ProviderConfig
      *  .jsonSchemaCapable overrides either way. Downstream requests must
@@ -171,19 +174,30 @@ export const detectWireCapabilities = (
     const host = `${config.baseUrl || ''}`.toLowerCase();
     const model = `${config.selectedModel || ''}`.toLowerCase();
     const isChat = config.apiFormat === 'chat_completions';
+    // grok-4-fast rejects reasoning_effort; the rest of the family honors it.
+    // Match both "xai" and the literal host "x.ai" spellings. The FAMILY
+    // regex is kept separately: a fast model fails the xaiEffort check but
+    // must still never fall through to the generic route.
+    const xaiFamily = /x\.?ai|grok/.test(host + model);
+    const xaiEffort = isChat && xaiFamily && !/fast/.test(model);
+    // gpt-5 is OpenAI's reasoning model on this transport and takes the
+    // same knob; a proxy that rejects it fails once and the harness pins
+    // the route off from the wire lesson, which is the designed path.
+    const openaiEffort = isChat && (/(?:^|\b|\/)(?:o1|o3|o4)(?:-mini|-preview)?(?::|\b|$)/i.test(model)
+        || /(?:^|\/)gpt-5(?:[.-]|$)/i.test(model));
+    const glmThinking = isChat && /z-ai|zhipu|bigmodel|glm/.test(host + model);
+    const deepseekThinking = isChat && /deepseek/.test(host + model);
     return {
-        // grok-4-fast rejects reasoning_effort; the rest of the family honors it.
-        // Match both "xai" and the literal host "x.ai" spellings.
-        xaiEffort: isChat && /x\.?ai|grok/.test(host + model) && !/fast/.test(model),
-        // gpt-5 is OpenAI's reasoning model on this transport and takes the
-        // same knob; a proxy that rejects it fails once and the harness pins
-        // the route off from the wire lesson, which is the designed path.
-        openaiEffort: isChat && (/(?:^|\b|\/)(?:o1|o3|o4)(?:-mini|-preview)?(?::|\b|$)/i.test(model)
-            || /(?:^|\/)gpt-5(?:[.-]|$)/i.test(model)),
-        glmThinking: isChat && /z-ai|zhipu|bigmodel|glm/.test(host + model),
-        deepseekThinking: isChat && /deepseek/.test(host + model),
+        xaiEffort,
+        openaiEffort,
+        glmThinking,
+        deepseekThinking,
         anthropicThinking: config.apiFormat === 'messages',
         responsesEffort: config.apiFormat === 'responses',
+        // A chat_completions provider none of the vendor routes above claim
+        // still gets a plain reasoning_effort — the custom/OpenAI-compatible
+        // route. Known-offender exclusion is applied at translation time.
+        genericEffort: isChat && !xaiFamily && !openaiEffort && !glmThinking && !deepseekThinking,
         jsonSchema: isChat && (
             config.jsonSchemaCapable === undefined
                 // Hosts where structured-outputs json_schema is verified.
@@ -260,6 +274,24 @@ const DEEPSEEK_EFFORT_MAP: Record<ReasoningEffort, string | null> = {
     max: 'high',
     auto: null,
 };
+
+/** Generic OpenAI-compatible chat_completions gateways accept the common
+ *  3-level reasoning_effort scale. 'max' has no portable value above 'high',
+ *  so it clamps; 'off'/'auto' are deliberate no-ops (a gateway that does not
+ *  advertise a thinking switch must not be told to think less by a field it
+ *  may reject). */
+const CUSTOM_EFFORT_MAP: Record<ReasoningEffort, 'low' | 'medium' | 'high' | null> = {
+    off: null,
+    low: 'low',
+    medium: 'medium',
+    high: 'high',
+    max: 'high',
+    auto: null,
+};
+
+/** The audit label is part of the shared wire vocabulary (types/provider.ts),
+ *  so wire lessons and the `WireAuditRoute` union agree on one string. */
+const CUSTOM_EFFORT_ROUTE: WireAuditEntry['route'] = 'custom-effort';
 
 /**
  * Translate one effort tier into body fields for ONE capability class route.
@@ -374,6 +406,19 @@ export const buildReasoningPatch = (
             };
         }
         return { patch: {}, audit: { route: 'none', effort, applied: false, reason: 'responses route: effort=auto sends no knob' } };
+    }
+    if (caps.genericEffort) {
+        if (isRoutePinned(CUSTOM_EFFORT_ROUTE, config.id)) {
+            return { patch: {}, audit: { route: 'none', effort, applied: false, reason: 'custom-effort route pinned off by a harness wire lesson (re-probe to clear)' } };
+        }
+        const value = CUSTOM_EFFORT_MAP[effort];
+        if (value) {
+            return {
+                patch: { reasoning_effort: value },
+                audit: { route: CUSTOM_EFFORT_ROUTE, effort, applied: true, reason: `reasoning_effort=${value}` },
+            };
+        }
+        return { patch: {}, audit: { route: 'none', effort, applied: false, reason: `custom route: effort=${effort} sends no knob` } };
     }
     return { patch: {}, audit: { route: 'none', effort, applied: false, reason: 'no verified reasoning route for this wire shape (fail closed)' } };
 };

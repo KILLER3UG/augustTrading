@@ -40,6 +40,7 @@ export type WireAuditRoute =
     | 'openai-effort'
     | 'glm-thinking'
     | 'deepseek-thinking'
+    | 'custom-effort'
     | 'anthropic-thinking'
     | 'responses-effort'
     | 'gemini-thinking'

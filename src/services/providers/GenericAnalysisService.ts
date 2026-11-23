@@ -9,14 +9,14 @@
  */
 
 import { ProviderConfig } from '../../types/provider';
-import { Message, GroundingChunk, TradeAnalysis, GlobalMemory, TradeOutcome, LoggedTrade, StrategySearchResult, TradeSummary, MessageRole } from '../../types';
-import { extractAndParseJson, extractLastJson } from '../../utils/jsonUtils';
+import { Message, GroundingChunk, TradeAnalysis, GlobalMemory, LoggedTrade, StrategySearchResult, TradeSummary, MessageRole } from '../../types';
+import { extractAndParseJson } from '../../utils/jsonUtils';
 import { sanitizeAIResponse, sanitizeAIResponseLight, sanitizeJSONString } from '../../utils/sanitizers';
 import { sanitizeTradeAnalysis, truncateTextToTokens, formatAnalysisForDisplay, parsePrice } from '../../utils/analysisUtils';
 import { splitThinkingFromOutput, extractAndStripThinkBlocks, createThinkingStreamGate } from '../../utils/thinkingSplit';
 import { CASUAL_CHAT_SYSTEM_PROMPT } from '../../constants/prompts/chatPrompts';
 import { buildTradeInsightBrief, compactInsightForPatternMemory } from '../../utils/tradeInsightBrief';
-import { parseGlobalMemory, parseStrategySearchResults } from '../../schemas/learning';
+import { parseStrategySearchResults } from '../../schemas/learning';
 import { MASTER_ANALYSIS_PROMPT, COMPACT_ANALYSIS_PROMPT, RISK_MANAGEMENT_RULES, AI_PROVIDER_MEMORY_ENFORCEMENT_PROMPT, HARNESS_CONTRACT_PROMPT } from '../../constants/prompts';
 import { constructOptimizedContext } from '../../utils/memoryUtils';
 import { parseLiveMarketData } from '../../utils/liveMarketParser';
@@ -25,7 +25,7 @@ import {
     sendChatRequest, streamChatRequest, ChatMessage, ContentPart, ChatRequestOptions,
 } from './GenericProviderService';
 import { TASK_BUDGETS } from './taskBudgets';
-import { EFFORT_BY_TASK, effortForTask, resolveComposerEffort, WireAuditEntry, type ReasoningEffort } from './reasoningControls';
+import { effortForTask, resolveComposerEffort, WireAuditEntry, type ReasoningEffort } from './reasoningControls';
 import { getPrompt } from '../infrastructure/PromptOverrideService';
 import { composePrompt } from '../../utils/composePrompt';
 import { clipNote } from '../../utils/harnessMarks';
@@ -48,20 +48,6 @@ const fileToBase64 = (file: File): Promise<string> => new Promise((resolve, reje
 function isSmallContextModel(modelId: string): boolean {
     const m = modelId.toLowerCase();
     return m.includes('kimi') || m.includes('gpt-oss-20b') || m.includes('mistral-7b');
-}
-
-/**
- * Remove legacy XML tags and standalone label headers from text destined for
- * display, so historical/cached responses never show format scaffolding.
- */
-function stripTagArtifacts(text: string): string {
-    return text
-        .replace(/<THINKING>[\s\S]*?<\/THINKING>/gi, '')
-        .replace(/<FINAL_OUTPUT>[\s\S]*?<\/FINAL_OUTPUT>/gi, '')
-        .replace(/<\/?(?:THINKING|FINAL_OUTPUT)>/gi, '')
-        .replace(/^\s*(?:\*\*)?(?:THINKING|FINAL OUTPUT|FINAL_OUTPUT)(?:\*\*)?\s*:?\s*$/gim, '')
-        .replace(/\n{3,}/g, '\n\n')
-        .trim();
 }
 
 // ─── Analyst structured-plan extraction ─────────────────────────────────────
@@ -641,6 +627,12 @@ export async function streamQuickResponse(
             maxTokens,
             signal,
             onReasoning: noteReasoning,
+            onOrphanThinkClose: () => {
+                if (visible) {
+                    noteReasoning(visible);
+                    visible = '';
+                }
+            },
             reasoningEffort: resolveComposerEffort(effort),
             // A history this app shortened to fit the model's window is said in
             // the thinking channel, which this surface already shows. NOT routed
@@ -650,7 +642,12 @@ export async function streamQuickResponse(
         })) {
             if (!chunk) continue;
             const gated = gate.push(chunk);
+            if (gated.orphanClose && visible) {
+                noteReasoning(visible);
+                visible = '';
+            }
             if (gated.thinking) noteReasoning(gated.thinking);
+            if (!gated.visible && !gated.orphanClose) continue;
             if (gated.visible) {
                 visible += gated.visible;
                 onChunk?.(gated.visible);
