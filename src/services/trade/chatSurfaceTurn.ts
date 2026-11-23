@@ -299,14 +299,19 @@ ${constitution}`
     // names the goal and stops there. An unattended run passes no `matchText`,
     // because a web page or a tool output must never be what points the seat at
     // an environment.
+    // KV-CACHE PREFIX PURITY: this hint is rebuilt from THIS turn's trader
+    // line. Appending it to `goalsBlock` mutated a block at position 3 of the
+    // system prompt, so every new turn shifted all static bytes below it and
+    // the provider's cached prefix was discarded. Keep it in its own tail
+    // variable and append it AFTER every static block instead.
+    let goalTriggerHint = '';
     if (opts.matchText) {
         try {
             const hit = listGoals()
                 .filter(g => !g.focused && g.status === 'active' && goalMatchesMessage(g, opts.matchText as string))
                 .slice(0, 2);
             if (hit.length > 0) {
-                goalsBlock = [goalsBlock, `A goal's trigger matches this message: ${hit.map(g => `"${g.title}" (${g.slug})`).join(', ')} — read it with open_goal, and make it the environment only if the trader asks.`]
-                    .filter(Boolean).join('\n\n');
+                goalTriggerHint = `A goal's trigger matches this message: ${hit.map(g => `"${g.title}" (${g.slug})`).join(', ')} — read it with open_goal, and make it the environment only if the trader asks.`;
             }
         } catch {
             /* an unreadable goal store costs the hint, never the answer */
@@ -335,7 +340,9 @@ ${constitution}`
         ? dedupeInjectionBlocks([skillsBlock, rulesBlock]).blocks
         : [skillsBlock, rulesBlock];
     return {
-        text: [mandate, riskMathBlock, goalsBlock, skillsRulesSkills, skillsRulesRules, topicsBlock, strategiesBlock, memoryBlock, curatedMemoryBlock, PAPER_TRADING_PROMPT].filter(Boolean).join('\n\n'),
+        // Static prefix first, dynamic per-turn hint LAST. The leading order
+        // [mandate, riskMathBlock, goalsBlock, …] is contract-pinned.
+        text: [mandate, riskMathBlock, goalsBlock, skillsRulesSkills, skillsRulesRules, topicsBlock, strategiesBlock, memoryBlock, curatedMemoryBlock, PAPER_TRADING_PROMPT, goalTriggerHint].filter(Boolean).join('\n\n'),
         skills,
     };
 };

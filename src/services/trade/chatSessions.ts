@@ -348,15 +348,27 @@ export const primeChatSessions = async (username = getActiveUsername()): Promise
     }
 };
 
+/** A parsed-store cache keyed by the raw blob + user. `session_search` can be
+ *  called many times in one tool round; re-parsing and re-validating hundreds
+ *  of full transcripts on the renderer thread each time was the bottleneck.
+ *  The fingerprint is the raw string itself, so a save or a prime with new
+ *  bytes invalidates it without any manual bookkeeping. */
+interface ParsedSessionCache { raw: string; user: string; sessions: ChatSession[] }
+const parsedCacheRef: { current: ParsedSessionCache | null } = { current: null };
+const cachedSessions = (): ParsedSessionCache | null => parsedCacheRef.current as ParsedSessionCache | null;
+
 /** Read + validate + bound the stored list; any corruption yields []. */
 export const loadSessions = (): ChatSession[] => {
     try {
-        const raw = primedFor === getActiveUsername() && primedRaw !== undefined ? primedRaw : localStorage.getItem(storageKey());
+        const user = getActiveUsername();
+        const raw = primedFor === user && primedRaw !== undefined ? primedRaw : localStorage.getItem(storageKey());
         if (!raw) return [];
+        const cached = cachedSessions();
+        if (cached && cached.raw === raw && cached.user === user) return cached.sessions;
         const parsed: unknown = JSON.parse(raw);
         if (!Array.isArray(parsed)) return [];
         const now = Date.now();
-        return parsed
+        const sessions: ChatSession[] = parsed
             .filter(validSession)
             // The Coach inbox used to be a dock session (kind 'coach') holding
             // no transcript of its own. It is the Learning surface's tab now, so a
@@ -379,6 +391,8 @@ export const loadSessions = (): ChatSession[] => {
                 soloModel: typeof s.soloModel === 'string' && s.soloModel ? s.soloModel : undefined,
                 entries: s.entries.filter(validEntry).map(sanitizeEntry),
             }));
+        parsedCacheRef.current = { raw, user, sessions };
+        return sessions;
     } catch {
         return [];
     }

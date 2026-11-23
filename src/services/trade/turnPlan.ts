@@ -73,14 +73,25 @@ export const normalizePlanSteps = (raw: unknown): NormalizedPlan | RefusedPlan =
 // ─── Per-session live store ─────────────────────────────────────────────────
 
 type Listener = (sessionId: string, plan: TurnPlan | null) => void;
+/** A listener bound to ONE key — the pill's per-key `useSyncExternalStore`
+ *  subscriber. It is told only about plans written under its own key, so a
+ *  second concurrent session cannot repaint this pill. */
+type KeyedListener = (plan: TurnPlan | null) => void;
 const plans = new Map<string, TurnPlan>();
 const listeners = new Set<Listener>();
+const keyedListeners = new Map<string, Set<KeyedListener>>();
 const PLAN_MAP_CAP = 8;
 
 const notify = (sessionId: string): void => {
     const plan = plans.get(sessionId) ?? null;
     for (const listener of listeners) {
         try { listener(sessionId, plan); } catch { /* a render listener never breaks a tool call */ }
+    }
+    const keyListeners = keyedListeners.get(sessionId);
+    if (keyListeners) {
+        for (const listener of keyListeners) {
+            try { listener(plan); } catch { /* a render listener never breaks a tool call */ }
+        }
     }
 };
 
@@ -100,11 +111,10 @@ export const setTurnPlan = (sessionId: string, steps: TurnPlanStep[]): TurnPlan 
 export const getTurnPlan = (sessionId: string): TurnPlan | null => plans.get(sessionId || 'default') ?? null;
 
 /**
- * The pill has ONE focus: the most recently updated plan across all sessions.
- * A Chat turn is keyed by conversation id while the dock composer holds a
- * session id, so a pill that subscribes by its own id can miss a plan that was
- * just written under the other key. There is only ever one streaming turn in
- * focus, so rendering the latest plan is both simpler and correct.
+ * The latest plan across all sessions. Kept for callers that genuinely want a
+ * global view (and for back-compat); the pill no longer uses it — it subscribes
+ * PER KEY now, because a global "latest" let a second concurrent session's
+ * plan repaint this composer's checklist.
  */
 export const getLatestTurnPlan = (): TurnPlan | null => {
     let latest: TurnPlan | null = null;
@@ -134,4 +144,24 @@ export const clearAllTurnPlans = (): void => {
 export const subscribeTurnPlan = (listener: Listener): (() => void) => {
     listeners.add(listener);
     return () => { listeners.delete(listener); };
+};
+
+/**
+ * Subscribe to ONE key only. This is the pill's subscription: a `useCallback`
+ * closes over the resolved plan key, and `useSyncExternalStore` re-subscribes
+ * when that key changes. A write (or clear) under any OTHER key does NOT call
+ * this listener, so two concurrent sessions cannot cross-talk through the
+ * store even though they share one module-level map.
+ */
+export const subscribeTurnPlanKey = (key: string, listener: KeyedListener): (() => void) => {
+    const k = key || 'default';
+    let set = keyedListeners.get(k);
+    if (!set) { set = new Set<KeyedListener>(); keyedListeners.set(k, set); }
+    set.add(listener);
+    return () => {
+        const current = keyedListeners.get(k);
+        if (!current) return;
+        current.delete(listener);
+        if (current.size === 0) keyedListeners.delete(k);
+    };
 };

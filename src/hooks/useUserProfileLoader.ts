@@ -350,10 +350,12 @@ export const useUserProfileLoader = (args: UseUserProfileLoaderArgs): UseUserPro
             // the one-time legacy-notebook preservation. Both are idempotent;
             // the migration never deletes the legacy notebook bytes.
             const { primeCuratedMemorySnapshot, migrateLegacyNotebookToCuratedMemory } = await import('../services/learning/curatedMemory');
-            await primeCuratedMemorySnapshot(username);
-            if (isStale()) return;
-            await migrateLegacyNotebookToCuratedMemory(username);
-            if (isStale()) return;
+            // Overlap the two notebook reads with the profile/catalog awaits
+            // below. Both are idempotent; awaiting them at the last safe
+            // moment keeps first-paint correctness without a serial waterfall.
+            const curatedPrime = primeCuratedMemorySnapshot(username);
+            const curatedMigration = migrateLegacyNotebookToCuratedMemory(username);
+            void curatedMigration.catch(() => { /* legacy bytes are preserved for a retry */ });
             // Warm the skill-lifecycle mirror and run the zero-LLM inactivity
             // Curator once per profile load (agent skills go stale at 14d,
             // archived at 30d — reversible, never touching user/bundled/pinned).
@@ -507,19 +509,20 @@ export const useUserProfileLoader = (args: UseUserProfileLoaderArgs): UseUserPro
                 const lastActive = convs.find(c => c.id === profile.lastActiveConversationId) || convs[0];
                 setActiveConversationId(lastActive.id);
 
-                await runMigrations(username);
-                if (isStale()) return;
-
-                const tradeCount = (profile.tradeLog || []).length;
-                createStartupBackup(username).catch(err =>
-                    console.warn('[DataIntegrity] Startup backup failed:', err)
-                );
-
-                void import('../services/infrastructure/BackupService').then(m => m.startAutoBackup(username));
-
-                const integrityCheck = await checkDataIntegrity(username, tradeCount);
-                if (isStale()) return;
-                if (!integrityCheck.valid && integrityCheck.tradeCountChanged && integrityCheck.newLossAlert) {
+                // Cold boot: identity, profile and transcript are now loaded.
+                // Everything below is scheduled maintenance — it owns none of
+                // the pixels about to paint, so it runs off the critical path.
+                void (async () => {
+                    try {
+                        await runMigrations(username);
+                        if (isStale()) return;
+                        const tradeCount = (profile.tradeLog || []).length;
+                        createStartupBackup(username).catch(err =>
+                            console.warn('[DataIntegrity] Startup backup failed:', err)
+                        );
+                        void import('../services/infrastructure/BackupService').then(m => m.startAutoBackup(username));
+                        const integrityCheck = await checkDataIntegrity(username, tradeCount);
+                        if (isStale() || !integrityCheck.valid || !integrityCheck.tradeCountChanged || !integrityCheck.newLossAlert) return;
                     logIntegrityEvent('DATA_LOSS_DETECTED', integrityCheck);
                     // Title + body, not one blob in the TITLE slot: the title
                     // renders bold at body size, so the whole warning came out
@@ -534,13 +537,20 @@ export const useUserProfileLoader = (args: UseUserProfileLoaderArgs): UseUserPro
                     toast.warning('Data issue detected', integrityCheck.recoveryBackup
                         ? `${counts} A backup with ${integrityCheck.recoveryBackup.tradeCount} trades from ${new Date(integrityCheck.recoveryBackup.timestamp).toLocaleString()} is available — open Settings → Data to restore it.`
                         : `${counts} No backup holds more trades, so export your data regularly to prevent future loss.`, 15_000);
-                }
+                    } catch (e) {
+                        console.warn('[Boot] deferred maintenance failed:', e);
+                    }
+                })();
             } else {
                 await resetAppState(username);
             }
 
             if (isStale()) return;
             await primeChatSessions(username);
+            // The frozen system prefix must see this profile's snapshot on
+            // the FIRST send. It was read in parallel with everything above;
+            // joining it here keeps correctness without a serial boot.
+            await curatedPrime;
             if (isStale()) return;
             setActiveUsername(username);
             sessionStorage.setItem('activeUsername', username);

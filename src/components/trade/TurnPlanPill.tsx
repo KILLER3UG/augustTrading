@@ -11,10 +11,26 @@
  * ones the trader learns to ignore.
  */
 import React, { useCallback, useEffect, useSyncExternalStore } from 'react';
+import { getActiveSession } from '../../services/trade/chatStore';
 import {
-    clearTurnPlan, getLatestTurnPlan, subscribeTurnPlan,
+    clearTurnPlan, getTurnPlan, subscribeTurnPlanKey,
     type TurnPlanStepStatus,
 } from '../../services/trade/turnPlan';
+
+/**
+ * The TRUE key a plan is stored under, resolved the same way in the pill and
+ * in the settle hook. A chat-surface session is bound to a conversation and
+ * its turn runner stores the plan under the conversation id; a chart-side dock
+ * session has no conversationId and stores under its own session id. Resolving
+ * here — rather than showing the global "latest" — is what stops a second
+ * concurrent session's checklist from repainting this composer.
+ */
+const resolvePlanKey = (sessionId: string | null): string => {
+    const key = sessionId ?? '';
+    if (!key) return '';
+    const active = getActiveSession();
+    return active?.id === key && active.conversationId ? active.conversationId : key;
+};
 
 const GLYPH: Record<TurnPlanStepStatus, string> = {
     completed: '✓',
@@ -37,14 +53,14 @@ export interface TurnPlanPillProps {
 
 const TurnPlanPill: React.FC<TurnPlanPillProps> = ({ sessionId }) => {
     const key = sessionId ?? '';
-    // Subscribe to ALL plan changes, not just this composer's key: a Chat
-    // turn is stored under the conversation id while this pill lives in the
-    // dock composer keyed by the session id. The visible plan is the latest
-    // one; clear-on-settle still targets this composer's own session.
-    const subscribe = useCallback((onStoreChange: () => void) => subscribeTurnPlan(() => {
-        onStoreChange();
-    }), []);
-    const getSnapshot = useCallback(() => getLatestTurnPlan(), []);
+    const planKey = resolvePlanKey(sessionId);
+    // Subscribe to ONLY this composer's resolved key. A write under another
+    // key does not call this listener, so two concurrent sessions cannot
+    // overwrite each other's visible checklist. `getSnapshot` reads the same
+    // key and returns null when it has no plan — the pill renders nothing.
+    const subscribe = useCallback((onStoreChange: () => void) =>
+        subscribeTurnPlanKey(planKey, onStoreChange), [planKey]);
+    const getSnapshot = useCallback(() => getTurnPlan(planKey), [planKey]);
     const getServerSnapshot = useCallback((): null => null, []);
     const plan = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
     const [open, setOpen] = React.useState(false);
@@ -105,15 +121,15 @@ const TurnPlanPill: React.FC<TurnPlanPillProps> = ({ sessionId }) => {
  *  this clears a session's plan when its streaming flag flips false. Kept as a
  *  named export so the call site reads as an intent, not a bare effect. */
 export const useClearTurnPlanOnSettle = (sessionId: string | null, streaming: boolean): void => {
-    const key = sessionId ?? '';
+    const planKey = resolvePlanKey(sessionId);
     const wasStreaming = React.useRef(false);
     useEffect(() => {
         if (streaming) { wasStreaming.current = true; return; }
         if (wasStreaming.current) {
             wasStreaming.current = false;
-            clearTurnPlan(key);
+            clearTurnPlan(planKey);
         }
-    }, [streaming, key]);
+    }, [streaming, planKey]);
 };
 
 export default React.memo(TurnPlanPill);

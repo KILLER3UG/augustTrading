@@ -518,23 +518,35 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
     const indicatorsOn = Object.values(indicatorSettings.visible).some(Boolean) || showSma;
     const [indicatorMenuOpen, setIndicatorMenuOpen] = useState(false);
     const toggleIndicator = (id: ChartIndicatorId) => {
-        // The updater MUST be pure. The live-tested defect: the write + the
-        // subscriber notification ran INSIDE this updater, so the
-        // notification's own `setIndicatorSettings(next)` re-ran the queued
-        // functional update against the state it had already advanced — the
-        // second run computed the INVERSE value and wrote it back. One click
-        // produced two writes (`ema200: true` then `ema200: false`) and every
-        // study toggle read as dead. Compute, set, THEN write + notify.
-        const next: ChartIndicatorSettings = { visible: { ...indicatorSettings.visible, [id]: !indicatorSettings.visible[id] } };
-        setIndicatorSettings(next);
-        writeChartIndicatorSettings(getActiveUsername() || 'default', next);
+        // The updater MUST be pure: the store's write notifies subscribers
+        // synchronously, so a write/notify inside this function re-ran the
+        // queued functional update against state it had already advanced and
+        // the second run computed the INVERSE value — one click, two writes,
+        // a study toggle that read as dead. Compute only here; the write and
+        // the anchor reset live in the effect below.
+        setIndicatorSettings(prev => ({
+            visible: { ...prev.visible, [id]: !prev.visible[id] },
+        }));
+    };
+    // Persist exactly once per settings change. The writer notifies its
+    // subscribers synchronously, and our own subscriber (below) echoes the
+    // SAME object back into state; `lastWrittenRef` is the loop guard that
+    // makes that echo a no-op. The first run is skipped — mounting reads the
+    // stored settings, it does not write them back.
+    const lastWrittenRef = useRef<ChartIndicatorSettings | null>(null);
+    const firstSettingsEffectRef = useRef(true);
+    useEffect(() => {
+        if (firstSettingsEffectRef.current) { firstSettingsEffectRef.current = false; return; }
+        if (lastWrittenRef.current === indicatorSettings) return;
+        lastWrittenRef.current = indicatorSettings;
+        writeChartIndicatorSettings(getActiveUsername() || 'default', indicatorSettings);
         // Turning the anchored VWAP off also drops its anchor: re-toggling
         // starts a fresh read, not a silent revival of an old one.
-        if (id === 'avwap' && !next.visible.avwap) {
+        if (!indicatorSettings.visible.avwap) {
             avwapAnchorRef.current = null;
             setAvwapAnchor(null);
         }
-    };
+    }, [indicatorSettings]);
     // A study toggled from the DESK writes the same store this state came from.
     // Without the subscription the write lands in localStorage and nothing
     // repaints, which is a control that cannot fire — the exact defect

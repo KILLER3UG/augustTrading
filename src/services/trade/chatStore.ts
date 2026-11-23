@@ -220,9 +220,58 @@ const capSessions = (list: LiveSession[]): LiveSession[] => {
 };
 
 const emit = (): void => {
+    flushEphemeralFor(undefined);
     rebuild();
     for (const l of listeners) l();
     schedulePersist();
+};
+
+// ── Per-token streaming coalescing ─────────────────────────────────────────
+// A live SSE delta is an EPHEMERAL publish: it paints the growing answer but
+// is never persisted (streaming rows are filtered out of the save anyway).
+// Coalescing to one flush per animation frame stops 50-100 store emits a
+// second from re-rendering every dock subscriber, and keeping the debounce off
+// this path means a long stream can no longer starve persistence.
+const streamFrames = new Map<string, number>();
+const streamQueues = new Map<string, Array<(s: LiveSession) => LiveSession>>();
+
+const flushEphemeralFor = (id: string | undefined): void => {
+    const ids = id === undefined ? [...streamQueues.keys()] : [id];
+    for (const key of ids) {
+        const frame = streamFrames.get(key);
+        if (frame !== undefined && typeof window !== 'undefined' && typeof window.cancelAnimationFrame === 'function') {
+            window.cancelAnimationFrame(frame);
+        }
+        streamFrames.delete(key);
+        const queued = streamQueues.get(key) ?? [];
+        streamQueues.delete(key);
+        if (queued.length === 0) continue;
+        let matched = false;
+        sessions = sessions.map(s => {
+            if (s.id !== key) return s;
+            matched = true;
+            return queued.reduce((acc, fn) => fn(acc), s);
+        });
+        if (!matched) console.warn(`chatStore: ephemeral mutate on unknown session "${key}" — nothing was written`);
+        publish();
+    }
+};
+
+/** Flush an in-flight token burst immediately (tool boundary, settle, Stop). */
+export const flushEphemeral = (id: string): void => { flushEphemeralFor(id); };
+
+/** Queue an ephemeral row update and publish at most once per frame. */
+export const mutateEphemeral = (id: string, fn: (s: LiveSession) => LiveSession): void => {
+    ensureLoaded();
+    const queue = streamQueues.get(id) ?? [];
+    queue.push(fn);
+    streamQueues.set(id, queue);
+    if (streamFrames.has(id)) return;
+    if (typeof window === 'undefined' || typeof window.requestAnimationFrame !== 'function') {
+        flushEphemeralFor(id);
+        return;
+    }
+    streamFrames.set(id, window.requestAnimationFrame(() => flushEphemeralFor(id)));
 };
 
 /** Notify subscribers WITHOUT scheduling a persist. The run registries hold
@@ -500,6 +549,9 @@ export const removeSession = (id: string): string => {
  *  the reason the cap used to claim: nothing is rewritten at all. */
 export const mutate = (id: string, fn: (s: LiveSession) => LiveSession): void => {
     ensureLoaded();
+    // A structural write (tool line, payload, settle) must see every token
+    // queued before it, in order — flush first, then apply this write.
+    flushEphemeralFor(id);
     let matched = false;
     sessions = sessions.map(s => {
         if (s.id !== id) return s;

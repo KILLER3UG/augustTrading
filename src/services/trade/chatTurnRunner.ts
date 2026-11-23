@@ -1082,8 +1082,12 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
         // is the honest start (stamped when the bubble was painted), so a Stop, a
         // failure and a clean finish all report the same "Analyzed for Ns".
         const turnStartedAt: number = entryAtRef(sid, entryId) ?? Date.now();
+        // Token deltas are EPHEMERAL: coalesced to one publish per animation
+        // frame by chatStore.mutateEphemeral, and never re-arm the 400ms save
+        // debounce. Structural writes go through `mutate`, which flushes this
+        // queue first so ordering is preserved exactly.
         const patch = (fn: (e: LiveEntry) => LiveEntry): void => {
-            mutate(sid, s => ({ ...s, updatedAt: Date.now(), entries: s.entries.map(e => (e.id === entryId ? fn(e) : e)) }));
+            chatStore.mutateEphemeral(sid, s => ({ ...s, updatedAt: Date.now(), entries: s.entries.map(e => (e.id === entryId ? fn(e) : e)) }));
         };
         // The transport options stay HERE (they are this row's context); the
         // loop, the reasoning/echo/peel repair and the settle live in

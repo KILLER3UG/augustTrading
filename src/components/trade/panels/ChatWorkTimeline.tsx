@@ -29,6 +29,40 @@ import { recordRejectedFingerprint } from '../../../services/learning/rejectedFi
 import { getActiveUsername } from '../../../utils/activeUser';
 import type { PaperReceipt } from '../../../services/paper/paperCore';
 
+/**
+ * Append-only cache for the tool-mirror split. Reasoning streams by APPENDING
+ * tokens to one string, so every segment before the final one is frozen; only
+ * the tail (the last segment plus newly arrived text) can change. Re-splitting
+ * the whole string on every token was O(n²) over a turn. The length stamp is
+ * O(1), and a same-stamp render is a free cache hit. Identity is the entry id,
+ * so a surface hop that remounts the row reuses the frozen prefix.
+ */
+interface ReasoningSplitCache {
+    stamp: number;
+    reasoning: string;
+    segs: string[];
+}
+const reasoningSplits = new Map<string, ReasoningSplitCache>();
+const REASONING_SPLIT_CACHE_CAP = 64;
+
+const splitReasoningIncremental = (id: string, reasoning: string): string[] => {
+    const cached = reasoningSplits.get(id);
+    if (cached && cached.stamp === reasoning.length && cached.reasoning === reasoning) return cached.segs;
+    let prefix: string[] = [];
+    let tail = reasoning;
+    if (cached && reasoning.length >= cached.stamp && reasoning.startsWith(cached.reasoning)) {
+        prefix = cached.segs.slice(0, -1);
+        tail = (cached.segs[cached.segs.length - 1] ?? '') + reasoning.slice(cached.stamp);
+    }
+    const segs = [...prefix, ...splitReasoningAroundTools(tail)];
+    if (reasoningSplits.size >= REASONING_SPLIT_CACHE_CAP) {
+        const oldest = reasoningSplits.keys().next().value;
+        if (oldest !== undefined) reasoningSplits.delete(oldest);
+    }
+    reasoningSplits.set(id, { stamp: reasoning.length, reasoning, segs });
+    return segs;
+};
+
 /** What this turn's work actually was, named from the transcript it already
  *  produced — no model call, no new store.
  *
@@ -383,9 +417,14 @@ const ChatWorkTimeline: React.FC<ChatWorkTimelineProps> = ({ entry }) => {
     // the turn's own tool lines. It changes as the work changes, and it can
     // only ever report what the tools did. Declared before the early return
     // below, because a hook after one is a hook called conditionally.
+    // Keyed on the TOOLS (count + identity) and the streaming flag, not on the
+    // raw reasoning: reasoning grows a token at a time and re-keying on it
+    // recomputed this label and trimmed the whole string on every token. The
+    // boolean is O(1) and only flips once when thinking first appears.
+    const hasReasoning = reasoning.length > 0;
     const activity = useMemo(
-        () => turnActivityLabel(entry.tools, reasoning.trim().length > 0),
-        [entry.tools, reasoning],
+        () => turnActivityLabel(entry.tools, hasReasoning),
+        [entry.tools, entry.tools.length, turnStreaming, hasReasoning],
     );
     // The settled header's tool count — "4 tools" beside "Thought for 14s".
     // The count is CALLS, not transcript lines: `pairToolRows` is the same
@@ -415,7 +454,7 @@ const ChatWorkTimeline: React.FC<ChatWorkTimelineProps> = ({ entry }) => {
             </div>
         );
     }
-    const segs = splitReasoningAroundTools(reasoning);
+    const segs = splitReasoningIncremental(entry.id, reasoning);
     const markerCount = segs.length - 1;
     const nodes: React.ReactNode[] = [];
     let buf: string[] = [];

@@ -133,6 +133,12 @@ export const searchChatSessionsForTool = (
     const sessionIdWanted = params.session_id?.trim() || '';
 
     let scannedEntries = 0;
+    // Bounded top-K: the tool asks for at most `limit` rows, so collecting one
+    // object (plus neighbour slices) per matching entry was pure allocation
+    // churn on large stores. Compare by score then recency, exactly the final
+    // ordering below.
+    const betterHit = (a: SessionSearchHit, b: SessionSearchHit): boolean =>
+        a.score > b.score || (a.score === b.score && a.at > b.at);
     const hits: SessionSearchHit[] = [];
     for (const session of sessions) {
         if (sessionIdWanted && session.id !== sessionIdWanted) continue;
@@ -153,7 +159,7 @@ export const searchChatSessionsForTool = (
             const after = entries.slice(index + 1, index + 1 + window)
                 .map(e => trimNeighbor(entryText(e))).filter(Boolean);
             const at = entry.at ? new Date(entry.at).toISOString() : new Date(session.updatedAt).toISOString();
-            hits.push({
+            const hit: SessionSearchHit = {
                 sessionId: session.id,
                 title: session.title || 'Untitled chat',
                 at,
@@ -163,7 +169,16 @@ export const searchChatSessionsForTool = (
                 score: Math.round(score * 100) / 100,
                 before,
                 after,
-            });
+            };
+            if (hits.length < limit) {
+                hits.push(hit);
+            } else {
+                let worst = 0;
+                for (let i = 1; i < hits.length; i += 1) {
+                    if (!betterHit(hits[i], hits[worst])) worst = i;
+                }
+                if (betterHit(hit, hits[worst])) hits[worst] = hit;
+            }
         }
     }
     hits.sort((a, b) => b.score - a.score || (a.at < b.at ? 1 : -1));

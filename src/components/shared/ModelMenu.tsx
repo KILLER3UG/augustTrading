@@ -25,16 +25,13 @@
  */
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Box, Check, ChevronRight, RotateCw, StarIcon } from './Icons';
+import { Box, Check, ChevronRight, Search, StarIcon } from './Icons';
 import StatusPill from '../ui/StatusPill';
 import type { ProviderConfig } from '../../types/provider';
 import {
     formatModelDisplayName,
-    isFreeModelId,
     isProviderReady,
-    readFreeOnlyPref,
     readStarredModels,
-    writeFreeOnlyPref,
     writeStarredModels,
 } from '../../utils/providerUtils';
 import { isVisionModel } from '../../utils/modelUtils';
@@ -52,12 +49,6 @@ const MAIN_W = 320;
 const PROVIDER_W = 220;
 const GAP = 4;
 const MAX_H = 420;
-
-/** The segments' short labels — six tiers must read at a glance in a
- *  ~300px pill (`medium` → `Med`). */
-const EFFORT_SHORT_LABELS: Partial<Record<EffortChoice, string>> = {
-    off: 'Off', auto: 'Auto', low: 'Low', medium: 'Med', high: 'High', max: 'Max',
-};
 
 /** The trigger's viewport rect, read once at open time. */
 export interface ModelMenuAnchor {
@@ -130,7 +121,7 @@ const computeProviderPanel = (main: Pos): ProviderPanelPos => {
 
 interface MenuRow {
     value: string; id: string; label: string; providerName: string;
-    free: boolean; vision: boolean; starred: boolean; disabled: boolean;
+    vision: boolean; starred: boolean; disabled: boolean;
     /** The model's reported context window, compact — `1M`, `200K` — or null
      *  when the provider published nothing (never a guessed number). */
     ctx: string | null;
@@ -151,30 +142,23 @@ const compactTokens = (tokens?: number): string | null => {
 const isBareFreeEntry = (modelId: string, label: string): boolean =>
     modelId.trim().toLowerCase() === 'free' || label.trim().toLowerCase() === 'free';
 
-/** `Ernie 5.5 Flash Preview Free` + a `FREE` pill says the same thing twice.
- *  When the tag is shown, the trailing word comes off the label. */
-const stripTrailingFree = (label: string): string =>
-    label.replace(/\s+free$/i, '').trim() || label;
-
 const buildRows = (input: {
     source: ProviderConfig[];
-    q: string; searching: boolean; freeOnly: boolean;
-    starred: string[]; disabledValues?: ReadonlySet<string>; showFreeTag: boolean;
+    q: string; searching: boolean;
+    starred: string[]; disabledValues?: ReadonlySet<string>;
 }): MenuRow[] => {
     const out: MenuRow[] = [];
     for (const p of input.source) {
         for (const m of p.models) {
             const pair = `${p.id}::${m}`;
             if (input.searching && !m.toLowerCase().includes(input.q)) continue;
-            if (input.freeOnly && !isFreeModelId(m)) continue;
-            const full = formatModelDisplayName(m);
-            if (isBareFreeEntry(m, full)) continue;
+            const label = formatModelDisplayName(m);
+            if (isBareFreeEntry(m, label)) continue;
             out.push({
                 value: pair,
                 id: m,
-                label: input.showFreeTag && isFreeModelId(m) ? stripTrailingFree(full) : full,
+                label,
                 providerName: p.name,
-                free: isFreeModelId(m),
                 vision: isVisionModel(m),
                 starred: input.starred.includes(pair),
                 disabled: input.disabledValues?.has(pair) ?? false,
@@ -187,7 +171,7 @@ const buildRows = (input: {
 
 const ModelMenu: React.FC<ModelMenuProps> = ({
     providers, value, onChange, effort = 'auto', onEffortChange,
-    showEffort = true, onRefreshModels, refreshState = 'idle', disabledValues,
+    showEffort = true, disabledValues,
     onManageProviders, anchor, onClose, returnFocusTo,
 }) => {
     const readyProviders = useMemo(() => providers.filter(isProviderReady), [providers]);
@@ -196,7 +180,6 @@ const ModelMenu: React.FC<ModelMenuProps> = ({
         return readyProviders.some(p => p.id === fromValue) ? fromValue : readyProviders[0]?.id ?? '';
     });
     const [providersOpen, setProvidersOpen] = useState(false);
-    const [freeOnly, setFreeOnly] = useState(readFreeOnlyPref);
     const [query, setQuery] = useState('');
     const [starred, setStarred] = useState<string[]>(readStarredModels);
     const [pos, setPos] = useState<Pos>({ top: Math.max(FLYOUT_VIEWPORT_MARGIN, anchor.top - GAP - MAX_H), left: anchor.left, maxHeight: MAX_H, openUp: true });
@@ -218,8 +201,8 @@ const ModelMenu: React.FC<ModelMenuProps> = ({
      *  reason the two pickers could not stay two implementations. */
     const rows = useMemo(() => buildRows({
         source: searching ? readyProviders : (activeProvider ? [activeProvider] : []),
-        q, searching, freeOnly, starred, disabledValues, showFreeTag: !freeOnly,
-    }), [readyProviders, activeProvider, searching, q, freeOnly, starred, disabledValues]);
+        q, searching, starred, disabledValues,
+    }), [readyProviders, activeProvider, searching, q, starred, disabledValues]);
 
     /** Starred models from EVERY ready provider, pinned into one compact top
      *  group — a frequent model is one click away without hunting the
@@ -228,14 +211,13 @@ const ModelMenu: React.FC<ModelMenuProps> = ({
     const starredRows = useMemo<{ picked: MenuRow[]; main: MenuRow[] }>(() => {
         if (searching) return { picked: [], main: [] };
         const all = buildRows({
-            source: readyProviders, q: '', searching: false,
-            freeOnly, starred, disabledValues, showFreeTag: !freeOnly,
+            source: readyProviders, q: '', searching: false, starred, disabledValues,
         });
         const picked = all.filter(r => r.starred);
         // The pinned group must not double-render a row the main list shows.
         const main = rows.filter(r => !picked.some(p => p.value === r.value));
         return { picked, main };
-    }, [readyProviders, rows, searching, freeOnly, starred, disabledValues]);
+    }, [readyProviders, rows, searching, starred, disabledValues]);
 
     // Measure once with the panel's REAL height before the first paint, so the
     // upward flip is decided on pixels that exist, not on an estimate.
@@ -322,11 +304,6 @@ const ModelMenu: React.FC<ModelMenuProps> = ({
         });
     };
 
-    const setFree = (next: boolean): void => {
-        setFreeOnly(next);
-        writeFreeOnlyPref(next);
-    };
-
     const stepEffort = (delta: number): void => {
         if (!onEffortChange) return;
         onEffortChange(effortAtIndex(effortIndexOf(effort) + delta));
@@ -405,15 +382,14 @@ const ModelMenu: React.FC<ModelMenuProps> = ({
 
     const renderRow = (row: MenuRow): React.ReactNode => (
         <div key={row.value} data-testid={`model-row-${row.value}`}
-            className={`flex items-center gap-1 rounded-control pr-1.5 transition-colors ${row.disabled ? '' : 'hover:bg-white/[0.06]'} ${row.value === value ? 'bg-white/[0.04]' : ''}`}>
+            className={`flex items-center gap-1 rounded-control py-0.5 pl-1 pr-1.5 transition-colors ${row.disabled ? '' : 'hover:bg-white/[0.06]'}`}>
             <button type="button" role="menuitemradio" aria-checked={row.value === value}
                 data-row-value={row.value}
                 ref={el => { if (el) rowRefs.current.set(row.value, el); else rowRefs.current.delete(row.value); }}
                 disabled={row.disabled}
                 onClick={() => pick(row.value)}
                 title={searching ? `${row.label} · ${row.providerName}` : row.label}
-                className={`flex min-w-0 flex-1 items-center gap-2 rounded-control px-2 py-1.5 text-left text-ui-dense ${row.disabled ? 'cursor-not-allowed text-zinc-600' : 'text-zinc-300'}`}>
-                <Check className={`h-3 w-3 shrink-0 ${row.value === value ? 'text-zinc-100' : 'opacity-0'}`} aria-hidden="true" />
+                className={`flex min-w-0 flex-1 items-center gap-2 rounded-control px-2 py-2 text-left text-ui-dense ${row.disabled ? 'cursor-not-allowed text-zinc-600' : 'text-zinc-300'}`}>
                 <span className="min-w-0 truncate" title={row.label}>{row.label}</span>
                 {searching && (
                     <span className="shrink-0 truncate text-ui-2xs text-zinc-600" title={row.providerName}>{row.providerName}</span>
@@ -422,23 +398,24 @@ const ModelMenu: React.FC<ModelMenuProps> = ({
             {row.ctx && (
                 <span className="shrink-0 font-mono text-ui-2xs tabular-nums text-zinc-600" title={`${row.ctx} context window`}>{row.ctx}</span>
             )}
-            {row.vision && <StatusPill tone="info" kicker className="shrink-0 px-1.5 py-0 text-ui-2xs">Vision</StatusPill>}
-            {/* The Free tag shows once, subtly, and NOT while the free-only
-                filter is on (every row would wear the same badge). The label's
-                own trailing "Free" is stripped when the tag shows. */}
-            {row.free && !freeOnly && (
-                <span className="shrink-0 rounded-full border border-hairline px-1.5 py-px text-ui-2xs uppercase tracking-wider text-zinc-500">free</span>
-            )}
+            {row.vision && <StatusPill tone="info" kicker className="shrink-0 px-1 py-0 text-ui-2xs opacity-70">Vision</StatusPill>}
             <button type="button" onClick={() => toggleStar(row.value)}
                 aria-label={row.starred ? `Unstar ${row.label}` : `Star ${row.label}`}
                 aria-pressed={row.starred}
-                className={`shrink-0 rounded-full p-1 transition-colors hover:text-zinc-300 ${row.starred ? 'text-zinc-300' : 'text-zinc-600'}`}>
-                <StarIcon className="h-3 w-3" fill={row.starred ? 'currentColor' : 'none'} aria-hidden="true" />
+                className="shrink-0 rounded-full p-1 text-zinc-600 transition-colors hover:text-zinc-300">
+                <StarIcon className={`h-3 w-3 ${row.starred ? 'text-zinc-300' : ''}`} fill={row.starred ? 'currentColor' : 'none'} aria-hidden="true" />
             </button>
+            {/* ONE subtle, muted check for the active row — at the right edge,
+                no leading opacity-0 gap on every other row. */}
+            {row.value === value && (
+                <Check className="h-3.5 w-3.5 shrink-0 text-zinc-500" aria-hidden="true" />
+            )}
         </div>
     );
 
     const visibleMain = searching ? rows : starredRows.main;
+    const effortIdx = effortIndexOf(effort);
+    const effortPct = (effortIdx / (EFFORT_CHOICES.length - 1)) * 100;
     return createPortal(
         <>
             {/* Backdrop: a menu you can leave only by picking an item is a trap. */}
@@ -463,7 +440,6 @@ const ModelMenu: React.FC<ModelMenuProps> = ({
             >
                 <button type="button" role="menuitem" aria-haspopup="menu" aria-expanded={providersOpen}
                     data-testid="model-menu-provider-row"
-                    onMouseEnter={() => setProvidersOpen(true)}
                     onClick={() => setProvidersOpen(v => !v)}
                     title={`${activeProvider?.name ?? 'No provider'} — ${activeProvider?.apiFormat ?? ''}`}
                     className="flex shrink-0 items-center gap-2 border-b border-white/[0.05] px-3 py-2.5 text-left transition-colors hover:bg-white/[0.04]">
@@ -473,60 +449,39 @@ const ModelMenu: React.FC<ModelMenuProps> = ({
                     <ChevronRight className="h-3.5 w-3.5 shrink-0 text-zinc-600" aria-hidden="true" />
                 </button>
 
+                {/* ONE row: the Models label, a borderless magnifier and the
+                    inline search input. The old separate bordered search box,
+                    free-only filter and refresh button were three clones of
+                    one decision around a single list — the reference keeps the
+                    list header and the filter on the same line. */}
                 <div className="flex shrink-0 items-center gap-2 px-3 pb-1 pt-2">
-                    <span className="text-ui-2xs font-bold uppercase tracking-widest text-zinc-600">Models</span>
+                    <span className="shrink-0 text-ui-2xs font-bold uppercase tracking-widest text-zinc-600">Models</span>
                     {searching && (
-                        <span className="text-ui-2xs tabular-nums text-zinc-500" data-testid="model-menu-count">
+                        <span className="shrink-0 text-ui-2xs tabular-nums text-zinc-500" data-testid="model-menu-count">
                             {rows.length}
                         </span>
                     )}
-                    <button type="button" data-testid="model-menu-free-only" aria-pressed={freeOnly}
-                        onClick={() => setFree(!freeOnly)}
-                        title="Show only free models in every model menu"
-                        className={`ml-auto rounded-full border px-1.5 py-px text-ui-2xs uppercase tracking-wider transition-colors ${freeOnly ? 'border-white/[0.18] bg-white/[0.08] text-zinc-100' : 'border-hairline text-zinc-500 hover:text-zinc-300'}`}>
-                        free only
-                    </button>
-                    {onRefreshModels && (
-                        <button type="button" data-testid="model-menu-refresh"
-                            aria-label="Refresh models"
-                            onClick={() => { void onRefreshModels(); }}
-                            className="flex shrink-0 items-center gap-1 rounded-full p-1 text-zinc-500 transition-colors hover:bg-white/[0.06] hover:text-zinc-200">
-                            <RotateCw className={`h-3.5 w-3.5 shrink-0 ${refreshState === 'busy' ? 'animate-spin text-zinc-400' : ''}`} aria-hidden="true" />
-                            {refreshState !== 'idle' && (
-                                <span className={`text-ui-2xs font-medium ${refreshState === 'done' ? 'text-zinc-300' : ''}`}>
-                                    {refreshState === 'busy' ? 'Refreshing…' : 'Updated!'}
-                                </span>
-                            )}
-                        </button>
-                    )}
+                    <Search className="h-3.5 w-3.5 shrink-0 text-zinc-600" aria-hidden="true" />
+                    <input
+                        ref={searchRef}
+                        value={query}
+                        onChange={ev => setQuery(ev.target.value)}
+                        onKeyDown={e => {
+                            e.stopPropagation();
+                            // Escape stops searching FIRST; a bare Escape with
+                            // no query closes the panel, which is what the
+                            // trader pressed it for.
+                            if (e.key === 'Escape') {
+                                if (query) setQuery('');
+                                else close();
+                            }
+                        }}
+                        placeholder="Search models…"
+                        aria-label="Search models by name"
+                        data-testid="model-picker-search"
+                        className="min-w-0 flex-1 border-0 bg-transparent py-0.5 text-left text-ui-dense text-zinc-100 placeholder:text-zinc-600 focus:outline-none"
+                    />
                 </div>
-
-                {/* The search box appears when searching would pay for itself:
-                    more than one ready provider (a flat index can reach them all)
-                    or a long list on the selected one. */}
-                {(readyProviders.length > 1 || (activeProvider?.models.length ?? 0) > 7) && (
-                    <div className="shrink-0 px-3 pb-1">
-                        <input
-                            ref={searchRef}
-                            value={query}
-                            onChange={ev => setQuery(ev.target.value)}
-                            onKeyDown={e => {
-                                e.stopPropagation();
-                                // Escape stops searching FIRST; a bare Escape with
-                                // no query closes the panel, which is what the
-                                // trader pressed it for.
-                                if (e.key === 'Escape') {
-                                    if (query) setQuery('');
-                                    else close();
-                                }
-                            }}
-                            placeholder="Search models…"
-                            aria-label="Search models by name"
-                            data-testid="model-picker-search"
-                            className="w-full rounded-control border border-hairline bg-zinc-800/60 px-2 py-1 text-left text-ui-dense text-zinc-100 placeholder:text-zinc-600 focus:border-zinc-500 focus:outline-none"
-                        />
-                    </div>
-                )}
 
                 <div className="custom-scrollbar min-h-0 flex-1 overflow-y-auto px-1 pb-1"
                     data-testid={searching ? 'model-picker-results' : 'model-menu-rows'}>
@@ -541,24 +496,25 @@ const ModelMenu: React.FC<ModelMenuProps> = ({
                         <p className="px-2 py-3 text-ui-dense text-zinc-600">
                             {searching
                                 ? `No model matches “${query}”.`
-                                : (activeProvider ? `No model on ${activeProvider.name}${freeOnly ? ' is free' : ''}.` : 'No ready provider — add one in Settings.')}
+                                : (activeProvider ? `No model on ${activeProvider.name}.` : 'No ready provider — add one in Settings.')}
                         </p>
                     )}
                 </div>
 
                 {showEffort && (
                     <div className="shrink-0 border-t border-hairline px-3 pb-3 pt-2" data-testid="model-menu-effort">
-                        <div className="mb-1.5 flex items-center justify-between gap-2">
-                            <span className="flex items-center gap-1.5 text-ui-2xs font-bold uppercase tracking-widest text-zinc-600">
-                                Effort
-                                <kbd className="rounded-control border border-hairline px-1 text-ui-2xs font-normal tracking-normal text-zinc-500">{shortcutHint}</kbd>
+                        <div className="mb-2 flex items-center justify-between gap-2">
+                            <span className="flex items-baseline gap-1.5">
+                                <span className="text-ui-2xs font-bold uppercase tracking-widest text-zinc-600">Effort</span>
+                                <span className="text-ui-dense font-medium text-zinc-100">{effortChoiceOf(effort).label}</span>
                             </span>
-                            <span className="text-ui-dense font-medium text-zinc-200">{effortChoiceOf(effort).label}</span>
+                            <kbd className="shrink-0 rounded-full border border-white/[0.12] bg-white/[0.04] px-2 py-0.5 text-ui-2xs font-normal tracking-wide text-zinc-400">{shortcutHint}</kbd>
                         </div>
-                        {/* A compact segmented pill, not a slider: one monochrome
-                            surface, the chosen tier filled, the rest quiet. The
-                            container keeps the slider's ARIA + keyboard contract
-                            (arrows step, Home/End bound, Ctrl+Shift+E aligned). */}
+                        {/* One thick monochrome pill track: zinc-800 rail, a
+                            zinc-600 fill, six clickable stop dots and a single
+                            crisp zinc-100 thumb at effortIndexOf/5. The wrapper
+                            keeps the slider's ARIA + keyboard contract — arrows
+                            step, Home/End bind, Ctrl/Cmd+Shift+E stays aligned. */}
                         <div
                             ref={sliderRef}
                             role="slider"
@@ -566,7 +522,7 @@ const ModelMenu: React.FC<ModelMenuProps> = ({
                             aria-label={`Thinking effort (${shortcutHint})`}
                             aria-valuemin={0}
                             aria-valuemax={EFFORT_CHOICES.length - 1}
-                            aria-valuenow={effortIndexOf(effort)}
+                            aria-valuenow={effortIdx}
                             aria-valuetext={effortChoiceOf(effort).label}
                             data-testid="effort-slider"
                             onKeyDown={e => {
@@ -577,21 +533,25 @@ const ModelMenu: React.FC<ModelMenuProps> = ({
                                 else if (e.key === 'End') { e.preventDefault(); onEffortChange?.(EFFORT_CHOICES[EFFORT_CHOICES.length - 1].id); }
                                 else if (e.key === 'Escape') { setProvidersOpen(false); close(); }
                             }}
-                            className="flex w-full items-center gap-0.5 rounded-control border border-hairline bg-zinc-900/80 p-0.5 outline-none focus-visible:ring-2 focus-visible:ring-zinc-500"
+                            className="relative mx-2.5 h-6 rounded-control outline-none focus-visible:ring-2 focus-visible:ring-zinc-500"
                         >
-                            {EFFORT_CHOICES.map((c, i) => {
-                                const active = effortIndexOf(effort) === i;
+                            <div className="pointer-events-none absolute inset-x-0 top-1/2 h-2.5 -translate-y-1/2 rounded-full bg-zinc-800">
+                                <div className="h-full rounded-full bg-zinc-600" style={{ width: `${effortPct}%` }} />
+                            </div>
+                            {EFFORT_CHOICES.map((c) => {
+                                const i = effortIndexOf(c.id);
                                 return (
                                     <button key={c.id} type="button" tabIndex={-1}
-                                        aria-label={c.label} aria-pressed={active}
+                                        aria-label={c.label} aria-pressed={effortIdx === i}
                                         onClick={() => onEffortChange?.(c.id)}
-                                        className={`flex-1 rounded-[5px] px-0 py-1 text-center text-ui-2xs font-medium transition-colors ${
-                                            active ? 'bg-zinc-100 text-zinc-950' : 'text-zinc-500 hover:bg-white/[0.06] hover:text-zinc-200'
-                                        }`}>
-                                        {EFFORT_SHORT_LABELS[c.id] ?? c.label}
+                                        className="absolute top-1/2 flex h-5 w-5 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full focus:outline-none"
+                                        style={{ left: `${(i / (EFFORT_CHOICES.length - 1)) * 100}%` }}>
+                                        <span className={`h-1.5 w-1.5 rounded-full ${i <= effortIdx ? 'bg-zinc-400' : 'bg-zinc-700'}`} aria-hidden="true" />
                                     </button>
                                 );
                             })}
+                            <div className="pointer-events-none absolute top-1/2 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full bg-zinc-100 shadow-md ring-2 ring-zinc-900"
+                                style={{ left: `${effortPct}%` }} aria-hidden="true" />
                         </div>
                     </div>
                 )}
