@@ -3,6 +3,13 @@ import { ChevronRight } from './Icons';
 import { formatElapsed } from './elapsed';
 import { subscribeSharedTicker } from '../../hooks/useSharedTicker';
 
+/**
+ * The one spelling of the reference work headline — "Thought for 14s".
+ * Both the card header (`AnalyzedRow`) and the 0-tool reasoning row
+ * (`ReasoningRow`) print this exact phrase, so it lives here once.
+ */
+export const thoughtForLabel = (seconds: number): string => `Thought for ${formatElapsed(seconds)}`;
+
 export interface AnalyzedRowProps {
     /** The turn is still working (streaming, no answer text yet) — the
      *  timeline stays OPEN live and the duration ticks. */
@@ -105,8 +112,8 @@ const AnalyzedRow: React.FC<AnalyzedRowProps> = ({ running = false, className = 
     const runningActivity = (activity ?? '').trim();
     const label = running
         ? (runningActivity || 'Analyzing')
-        : seconds !== null && seconds > 0
-            ? `Thought for ${formatElapsed(seconds)}`
+        : seconds !== null
+            ? thoughtForLabel(Math.max(1, seconds))
             : 'Thought';
     const detail = running
         ? (seconds !== null ? (runningActivity ? ` · ${formatElapsed(seconds)}` : ` for ${formatElapsed(seconds)}`) : '')

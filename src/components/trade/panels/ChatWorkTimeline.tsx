@@ -424,7 +424,7 @@ const ChatWorkTimeline: React.FC<ChatWorkTimelineProps> = ({ entry }) => {
     const hasReasoning = reasoning.length > 0;
     const activity = useMemo(
         () => turnActivityLabel(entry.tools, hasReasoning),
-        [entry.tools, entry.tools.length, turnStreaming, hasReasoning],
+        [entry.tools, entry.tools.length, turnStreaming, hasReasoning, reasoning.length],
     );
     // The settled header's tool count — "4 tools" beside "Thought for 14s".
     // The count is CALLS, not transcript lines: `pairToolRows` is the same
@@ -446,11 +446,17 @@ const ChatWorkTimeline: React.FC<ChatWorkTimelineProps> = ({ entry }) => {
         ) : null;
     }
     // A reasoning-only turn IS the reference's thinking block: one quiet line
-    // over the trace, not a work card wrapped around a single thought.
-    if (reasoning.trim().length > 0 && entry.tools.length === 0 && !hasActions && !wireAlone) {
+    // over the trace, not a work card wrapped around a single thought. Keep
+    // live Thinking open for the whole stream so it never disappears once answer
+    // tokens start arriving, and render any harness notices strictly below it.
+    if (reasoning.trim().length > 0 && callCount === 0 && !hasActions && !wireAlone) {
+        const noticeLines = entry.tools.filter(line => isHarnessNoticeLine(line));
         return (
-            <div className="my-1">
-                <ReasoningRow thinking={reasoning} running={running} persistedMs={entry.workedMs} startedAt={startedAt} />
+            <div className="my-1 space-y-1.5">
+                <ReasoningRow thinking={reasoning} running={turnStreaming} persistedMs={entry.workedMs} startedAt={startedAt} settledLabel="thoughtFor" />
+                {noticeLines.length > 0 && (
+                    <ToolActivityRow lines={noticeLines} running={turnStreaming} payloadIds={noticeLines.map(() => '')} />
+                )}
             </div>
         );
     }

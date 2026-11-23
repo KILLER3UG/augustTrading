@@ -54,6 +54,9 @@ const JumpToLatestFab: React.FC<JumpToLatestFabProps> = ({ visible, running, onJ
     if (!visible) return null;
     const name = label ?? (running ? 'Working — jump to the latest' : 'Jump to the latest');
     return (
+        // The containing panel reserves a 40px gutter BELOW the scroll viewport
+        // (TradeChatPanel.tsx). bottom-1 keeps the 32px control entirely inside
+        // that gutter, so it never covers a prose line.
         <button
             type="button"
             data-testid="jump-to-latest"
@@ -61,7 +64,7 @@ const JumpToLatestFab: React.FC<JumpToLatestFabProps> = ({ visible, running, onJ
             onClick={onJump}
             aria-label={name}
             title={name}
-            className="absolute bottom-4 left-1/2 z-10 flex h-8 w-8 -translate-x-1/2 items-center justify-center rounded-full border border-white/[0.12] bg-zinc-900/95 text-zinc-300 shadow-elevated backdrop-blur-sm transition-colors duration-[120ms] ease-[var(--ease-snappy)] hover:border-white/[0.22] hover:bg-zinc-800 hover:text-zinc-100"
+            className="absolute bottom-1 left-1/2 z-10 flex h-8 w-8 -translate-x-1/2 items-center justify-center rounded-full border border-white/[0.12] bg-zinc-900/95 text-zinc-300 shadow-elevated backdrop-blur-sm transition-colors duration-[120ms] ease-[var(--ease-snappy)] hover:border-white/[0.22] hover:bg-zinc-800 hover:text-zinc-100"
         >
             {running ? (
                 // The INDETERMINATE ring: a dashed circle that turns. No

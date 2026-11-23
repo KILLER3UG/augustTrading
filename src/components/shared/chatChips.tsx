@@ -355,14 +355,16 @@ export const FadingText: React.FC<{ text: string; streaming: boolean; className?
             }
         }
 
+        const nodes: React.ReactNode[] = committed.map((block, i) => (
+            <div key={`block-${i}`} className="stream-block-fade">
+                <MarkdownContent content={block} className={mdClass} />
+            </div>
+        ));
+        if (activeNode) nodes.push(activeNode);
+
         return (
             <div ref={typingRef} className={`text-ui-base leading-relaxed text-zinc-200 ${className ?? ''}`} data-streaming="true">
-                {committed.map((block, i) => (
-                    <div key={`block-${i}`} className="stream-block-fade">
-                        <MarkdownContent content={block} className={mdClass} />
-                    </div>
-                ))}
-                {activeNode}
+                {nodes}
             </div>
         );
     }

@@ -126,13 +126,13 @@ const ToolRowGroupView: React.FC<{ group: ToolRowGroup; running: boolean }> = ({
     const kindName = toolKindLabel(kind);
 
     const line = (
-        <div className="group/tool flex items-center gap-2 text-ui-caption leading-5 text-zinc-500" data-kind={kind}>
+        <div className="group/tool flex min-w-0 items-center gap-2 text-ui-caption leading-5 text-zinc-500" data-kind={kind}>
             {anyCalling ? (
                 <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-zinc-400 animate-pulse motion-reduce:animate-none" aria-hidden="true" />
             ) : (
                 <Glyph className={`h-3.5 w-3.5 shrink-0 ${anyFailed ? 'text-zinc-400' : 'text-zinc-600'}`} aria-hidden="true" />
             )}
-            <span className={`shrink-0 transition-colors group-hover/tool:text-zinc-200 ${anyCalling ? 'text-zinc-400' : anyFailed ? 'text-zinc-300' : 'text-zinc-300'}`}>
+            <span className={`min-w-0 ${detail ? 'shrink-0 max-w-full truncate' : 'break-words'} transition-colors group-hover/tool:text-zinc-200 ${anyCalling ? 'text-zinc-400' : anyFailed ? 'text-zinc-300' : 'text-zinc-300'}`}>
                 {group.label}
             </span>
             {group.count > 1 && (

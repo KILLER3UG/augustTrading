@@ -2036,7 +2036,7 @@ async function main() {
         // ReasoningRow), so the scope is the panel.
         const thinkingLines = await page.locator(
             '[data-testid="trade-chat-panel"] [data-testid="chat-entry-ai"]')
-            .filter({ hasText: 'Thinking complete' }).count();
+            .filter({ hasText: /Thought for|Thinking complete/ }).count();
         check('a settled trace renders the bare Thinking complete line',
             thinkingLines >= 1, `${thinkingLines}`);
         const avatarRows = await page.locator(
@@ -2046,7 +2046,7 @@ async function main() {
         const expandedThinking = await page.evaluate(() => {
             const summary = [...document.querySelectorAll(
                 '[data-testid="trade-chat-panel"] summary')]
-                .find(el => /Thinking complete/.test(el.textContent || ''));
+                .find(el => /Thought for|Thinking complete/.test(el.textContent || ''));
             if (!(summary instanceof HTMLElement)) return null;
             summary.click();
             const details = summary.parentElement;

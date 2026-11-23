@@ -1,6 +1,7 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Check, ChevronRight, Copy, Lightbulb } from './Icons';
 import { formatElapsed } from './elapsed';
+import { thoughtForLabel } from './AnalyzedRow';
 import { stripTraceMarkers } from '../../utils/traceText';
 import { copyText } from '../../utils/clipboard';
 import { subscribeSharedTicker } from '../../hooks/useSharedTicker';
@@ -24,6 +25,11 @@ export interface ReasoningRowProps {
     startedAt?: number;
     /** Row label. */
     label?: string;
+    /** Settled headline. A reasoning-only turn is the turn's whole receipt,
+     *  so it uses the reference "Thought for 14s" (`thoughtForLabel`); a thought
+     *  step inside a tool card keeps "Thinking complete". Live rows are
+     *  unaffected — they always read "Thinking". */
+    settledLabel?: 'thinking' | 'thoughtFor';
     className?: string;
     tokens?: number;
 }
@@ -54,6 +60,7 @@ const ReasoningRow: React.FC<ReasoningRowProps> = ({
     persistedMs,
     startedAt,
     label = 'Thinking',
+    settledLabel = 'thinking',
     className = '',
     tokens,
 }) => {
@@ -135,11 +142,22 @@ const ReasoningRow: React.FC<ReasoningRowProps> = ({
         ? Math.max(0, Math.round(persistedMs / 1000))
         : null;
     const seconds = running ? liveSeconds : settledSeconds ?? frozenSeconds;
-    const meta = seconds !== null ? formatElapsed(seconds) : null;
-    // While running: "Thinking"; once settled: "Thinking complete" (preserving custom labels).
+    // A reasoning-only turn IS the receipt: its settled headline is the same
+    // "Thought for 14s" the card header prints. Use the ONE helper for the
+    // phrase, and drop the separate "· 14s" meta so it is not printed twice.
+    const thoughtSeconds = !running && settledLabel === 'thoughtFor' && label === 'Thinking'
+        ? Math.max(1, typeof seconds === 'number' && Number.isFinite(seconds) ? Math.round(seconds) : 1)
+        : null;
+    const meta = seconds !== null && thoughtSeconds === null ? formatElapsed(seconds) : null;
+    // While running: "Thinking"; once settled: "Thinking complete", or the
+    // reference "Thought for 14s" on a reasoning-only turn (custom labels win).
     const rowLabel = label !== 'Thinking'
         ? label
-        : running ? 'Thinking' : 'Thinking complete';
+        : running
+            ? 'Thinking'
+            : thoughtSeconds !== null
+                ? thoughtForLabel(thoughtSeconds)
+                : 'Thinking complete';
 
     const onCopy = (): void => {
         void copyText(trimmed).then(ok => {
