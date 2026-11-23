@@ -256,7 +256,7 @@ async function seedProfile(page) {
         localStorage.setItem('august_surface_v1', 'trade');
         sessionStorage.setItem('activeUsername', 'Probe User');
 
-        const db = await new Promise((resolve, reject) => {
+        const openProfileDb = () => new Promise((resolve, reject) => {
             const request = indexedDB.open('FuturesAI-DB', 1);
             request.onupgradeneeded = () => {
                 if (!request.result.objectStoreNames.contains('userProfiles')) {
@@ -266,9 +266,24 @@ async function seedProfile(page) {
             request.onsuccess = () => resolve(request.result);
             request.onerror = () => reject(request.error);
         });
+        let db = await openProfileDb();
         try {
             if (!db.objectStoreNames.contains('userProfiles')) {
-                throw new Error('FuturesAI-DB is missing the userProfiles store');
+                // Electron's IndexedDB migration can win the race and create an
+                // empty v1 database before this probe opens it. With no version
+                // change, onupgradeneeded will not fire to add the store. Close
+                // and remove that empty shell, then reopen through the upgrade.
+                db.close();
+                await new Promise((resolve, reject) => {
+                    const request = indexedDB.deleteDatabase('FuturesAI-DB');
+                    request.onsuccess = () => resolve();
+                    request.onerror = () => reject(request.error);
+                    request.onblocked = () => { /* the app's migration closes shortly */ };
+                });
+                db = await openProfileDb();
+            }
+            if (!db.objectStoreNames.contains('userProfiles')) {
+                throw new Error('FuturesAI-DB is missing the userProfiles store after repair');
             }
             const transaction = db.transaction('userProfiles', 'readwrite');
             transaction.objectStore('userProfiles').put({
