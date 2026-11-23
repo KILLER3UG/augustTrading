@@ -364,6 +364,10 @@ export interface PaperTradeRecord {
   qty: number;
   entryPrice: number;
   exitPrice: number;
+  /** Qty closed by THIS settlement. A scaled-out TP slice is < the position's
+   *  original qty; a full exit equals it. Absent on legacy rows written before
+   *  partial exits existed — readers must default it to `qty`. */
+  closedQty?: number;
   /** Signed gross price PnL before fees and funding. */
   grossPnlUsd: number;
   /** Entry + exit fees on full notional. */

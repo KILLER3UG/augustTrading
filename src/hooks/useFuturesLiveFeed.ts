@@ -24,6 +24,7 @@
 import { useEffect, useState } from 'react';
 import {
     parseMarkPrice, parseTicker, parseDepth, parseKline, unwrapCombined,
+    publishPaperMark, publishPaperKline, publishPaperTicker, registerLivePaperFeed,
     type LiveMarkIndex, type LiveTicker, type LiveDepth, type LiveKline,
 } from '../services/trade/futuresStreams';
 import { fetchMarkIndex, fetchFuturesTicker24h } from '../services/analysis/MarketDataService';
@@ -112,6 +113,10 @@ export const useFuturesLiveFeed = (symbol: string, interval: string): FuturesLiv
 
     useEffect(() => {
         const s = symbol.toLowerCase();
+        // One mounted Trade/Desk feed owns this symbol's socket. The paper
+        // broker publishes into the SAME frame cache and therefore never opens
+        // a duplicate combined socket while this feed is live.
+        const releaseFeedOwner = registerLivePaperFeed(s);
         setMarkIndex(null); setTicker(null); setDepth(null); setKline(null);
         setStatus('connecting');
         setDepthStaleSince(null);
@@ -120,7 +125,10 @@ export const useFuturesLiveFeed = (symbol: string, interval: string): FuturesLiv
 
         let closed = false;
         const sockets = new Set<WebSocket>();
-        const combinedUrl = `${FUTURE_WS}/stream?streams=${s}@markPrice@1s/${s}@depth20@100ms/${s}@ticker`;
+        // @kline_1s is the paper broker's intra-window high/low source: a 30 s
+        // REST poll synthesizes high=low=last and misses the wicks that fill
+        // stops, targets and liquidations. Same combined socket, no extra one.
+        const combinedUrl = `${FUTURE_WS}/stream?streams=${s}@markPrice@1s/${s}@depth20@100ms/${s}@ticker/${s}@kline_1s`;
         const klineUrl = `${FUTURE_WS}/ws/${s}@kline_${klineInterval(interval)}`;
 
         // Mutable handles shared between the WS path and the REST poll below.
@@ -230,6 +238,7 @@ export const useFuturesLiveFeed = (symbol: string, interval: string): FuturesLiv
 
         open(combinedUrl, true, msg => {
             const mi = parseMarkPrice(msg); if (mi) {
+                publishPaperMark(symbol, mi.markPrice, mi.fundingRate);
                 setMarkIndex(mi);
                 lastMarkOrTickerAt.current = Date.now();
                 setFeedStatus('live');
@@ -242,6 +251,7 @@ export const useFuturesLiveFeed = (symbol: string, interval: string): FuturesLiv
                 return;
             }
             const tk = parseTicker(msg); if (tk) {
+                publishPaperTicker(symbol, tk.lastPrice);
                 setTicker(tk);
                 lastMarkOrTickerAt.current = Date.now();
                 setFeedStatus('live');
@@ -264,6 +274,13 @@ export const useFuturesLiveFeed = (symbol: string, interval: string): FuturesLiv
                 setDepthStaleSince(null);
                 setDepthLive(true);
                 return;
+            }
+            // 1s klines on the SAME combined socket feed the paper broker's
+            // SL/TP/liquidation ticks with the intra-window high/low wicks.
+            // This is intentionally a separate state slot from the chart's
+            // chosen-interval kline socket below.
+            const kl = parseKline(msg); if (kl) {
+                publishPaperKline(symbol, kl);
             }
         });
         open(klineUrl, false, msg => {
@@ -384,6 +401,7 @@ export const useFuturesLiveFeed = (symbol: string, interval: string): FuturesLiv
 
         return () => {
             closed = true;
+            releaseFeedOwner();
             window.clearInterval(armTimer);
             if (pollHandle.current) {
                 window.clearInterval(pollHandle.current);

@@ -242,7 +242,11 @@ describe('deterministic exits', () => {
             symbol: SYMBOL, timestamp: Date.parse('2026-11-22T09:00:00Z'), price: 100,
             fundingRate: 0.0001,
         });
-        assert.equal(shortFunded.account.positions[0].fundingPaidUsd, 0);
+        // Signed funding: a SHORT that RECEIVES credit records a NEGATIVE
+        // `fundingPaidUsd`. A 0 here used to hide the credit from `netPnl`,
+        // which broke the `cash = start + netPnl` invariant.
+        assert.ok(shortFunded.account.positions[0].fundingPaidUsd < 0,
+            'a short RECEIVES positive funding, recorded as a signed negative payment');
         assert.ok(shortFunded.account.cashBalanceUsd > shortMade.account!.cashBalanceUsd,
             'a short RECEIVES positive funding');
     });

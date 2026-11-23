@@ -31,12 +31,25 @@ export const PAPER_TAKER_FEE_BPS = 5;    // 0.05 %
 export const PAPER_MAINTENANCE_MARGIN_RATE = 0.005;
 /** Adverse price slippage applied to a stop-market fill, in bps. */
 export const PAPER_STOP_SLIPPAGE_BPS = 5;
+/**
+ * Declared, capped liquidation slippage (10 bps). A liquidation exits at the
+ * position's OWN isolated liquidation price adjusted by at most this much,
+ * NEVER at the gapped mark print that triggered it. At 125x the worst case is
+ * ~0.4 % price loss + ~0.1 % fees < the 0.8 % isolated margin, so the trader
+ * can never realize more than the margin they isolated, however far the next
+ * print gaps through the level.
+ */
+export const PAPER_LIQUIDATION_SLIPPAGE_BPS = 10;
 /** Conservative spread+impact fallback when depth is unavailable. */
 export const PAPER_FALLBACK_SPREAD_BPS = 4;
 export const PAPER_FALLBACK_IMPACT_BPS = 3;
 /** 8-hour Binance funding cadence. */
 export const FUNDING_INTERVAL_MS = 8 * 60 * 60 * 1000;
-/** The closed ledger is bounded; the store, not the trader, owns its cap. */
+/**
+ * Legacy cap retained only as a documented constant for old readers. The
+ * authoritative closed ledger is NEVER capped: settlement 251 must survive
+ * with the same bytes as settlement 1. Any capped view belongs to the UI.
+ */
 export const PAPER_CLOSED_TRADE_CAP = 250;
 
 export interface PaperRiskLimits {
@@ -115,10 +128,14 @@ export interface PaperPosition {
     riskUsd: number;
     entryFeeUsd: number;
     openedAt: number;
-    /** Cumulative 8h funding PAID (positive = paid by the position). */
+    /** Cumulative 8h funding PAID, SIGNED: positive = paid by the position,
+     *  negative = received by a short. Migration-safe: readers must treat a
+     *  missing value as 0. */
     fundingPaidUsd: number;
     /** Last UTC funding slot already settled for this position (exclusive boundary). */
     lastFundingSlotMs: number;
+    /** Qty already closed by partial TP scale-outs. Migration-safe: default 0. */
+    closedQty: number;
     skillSlug?: string;
     thesis?: string;
 }
@@ -512,6 +529,9 @@ export const settlePosition = (
         symbol: position.symbol,
         side: position.side,
         qty: round6(position.qty),
+        /** A full exit closes the whole remaining qty; a partial TP slice
+         *  settles only its pro-rata share. */
+        closedQty: round6(position.qty),
         entryPrice: position.entryPrice,
         exitPrice,
         grossPnlUsd: round2(grossPnlUsd),
@@ -543,7 +563,79 @@ export interface PaperTick {
     markPrice?: number;
     /** Live/cached funding rate for this settlement. Null/undefined = no accrual. */
     fundingRate?: number | null;
+    /**
+     * One observed funding frame per crossed 8h slot, captured from the live
+     * markPrice WS stream while the slot was open. When present, each slot is
+     * settled with ITS OWN rate and mark notional; absent frames fall back to
+     * `fundingRate` + the tick mark (or entry as a last resort).
+     */
+    fundingFrames?: ReadonlyArray<PaperFundingFrame>;
 }
+
+/** One funding observation bucketed to its UTC 8h settlement slot. */
+export interface PaperFundingFrame {
+    slotMs: number;
+    rate: number;
+    /** Mark observed in that slot; the notional is qty × mark. */
+    markPrice?: number;
+}
+
+/**
+ * Settle every crossed 8h funding slot for EVERY open position, in place.
+ * Shared by the tick sweep AND the manual-close path: a close before the first
+ * sweep must not silently skip a slot the trader already crossed.
+ */
+export const accruePaperFunding = (
+    account: PaperAccount,
+    nowMs: number,
+    rate: number | null | undefined,
+    frames: ReadonlyArray<PaperFundingFrame> | undefined,
+    referenceMark: number | undefined,
+    events: PaperEvent[],
+): void => {
+    if (account.positions.length === 0) return;
+    const bySlot = new Map<number, PaperFundingFrame>();
+    if (frames) for (const f of frames) {
+        if (Number.isFinite(f?.slotMs) && Number.isFinite(f?.rate)) bySlot.set(f.slotMs, f);
+    }
+    const hasFrame = bySlot.size > 0;
+    const fallbackRate = Number.isFinite(rate) ? (rate as number) : null;
+    if (!hasFrame && fallbackRate === null) return;
+    for (const position of account.positions) {
+        const slots = utcFundingSlotsBetween(position.lastFundingSlotMs, nowMs);
+        if (slots.length === 0) continue;
+        let payment = 0;
+        let settledAny = false;
+        for (const slot of slots) {
+            const frame = bySlot.get(slot);
+            const slotRate = frame ? frame.rate : fallbackRate;
+            if (slotRate === null) continue;
+            settledAny = true;
+            const notionalMark = frame?.markPrice && finitePositive(frame.markPrice)
+                ? frame.markPrice
+                : (finitePositive(referenceMark) ? referenceMark as number : position.entryPrice);
+            const slotPayment = position.qty * notionalMark * slotRate * (position.side === 'long' ? 1 : -1);
+            payment += slotPayment;
+            // One event PER SLOT: a two-slot crossing is two auditable lines,
+            // not one aggregated line that hides the per-slot rate/mark.
+            events.push({
+                type: 'funding',
+                symbol: position.symbol,
+                positionId: position.id,
+                amountUsd: slotPayment,
+                at: slot,
+                line: `Paper funding ${position.symbol} · ${(slotRate * 100).toFixed(4)}% @ ${roundPrice(notionalMark)} · ${signedUsd(slotPayment)}`,
+            });
+        }
+        if (!settledAny) continue;
+        // SIGNED: a short receiving positive funding gets a NEGATIVE
+        // fundingPaidUsd, so netPnl = gross − fees − funding matches the cash
+        // credit already applied to the wallet. Never Math.max(0, payment).
+        position.fundingPaidUsd = round6(position.fundingPaidUsd + payment);
+        position.lastFundingSlotMs = slots[slots.length - 1];
+        account.cashBalanceUsd -= payment; // negative payment CREDITS the wallet
+    }
+};
 
 export interface PaperTickOutcome {
     account: PaperAccount;
@@ -595,7 +687,9 @@ const applyExit = (
     // entry fee and the funding a second time.
     account.cashBalanceUsd += settled.grossPnlUsd - exitFeeUsd;
     account.positions = account.positions.filter(p => p.id !== position.id);
-    account.closedTrades = [settled, ...account.closedTrades].slice(0, PAPER_CLOSED_TRADE_CAP);
+    // Authoritative ledger: NEVER cap. Settlement 251 is as real as #1; a
+    // capped VIEW belongs to the UI, not to the settlement path.
+    account.closedTrades = [settled, ...account.closedTrades];
     settlements.push(settled);
     events.push({
         type: reason,
@@ -610,6 +704,76 @@ const applyExit = (
 
 const roundPrice = (n: number): number => Math.round(n * 100) / 100;
 const signedUsd = (n: number): string => `${n >= 0 ? '+' : '-'}$${Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+/**
+ * Scale out at ONE resting target. The nearest crossed target is filled first
+ * (see `nearestCrossedTp`); when targets remain the position stays open with a
+ * reduced qty, an incremented `closedQty` and the filled level removed. A
+ * pro-rata copy is settled so entry fee, funding and planned risk are all
+ * apportioned to the slice — the wallet is debited exactly once per slice.
+ */
+const applyPartialTp = (
+    account: PaperAccount,
+    position: PaperPosition,
+    hitTp: number,
+    nowMs: number,
+    events: PaperEvent[],
+    settlements: PaperSettledTrade[],
+): void => {
+    const remainingTps = position.takeProfits.filter(tp => tp !== hitTp);
+    if (remainingTps.length === 0 || position.qty <= 0) {
+        applyExit(account, position, hitTp, account.config.makerFeeBps, 'tp', nowMs,
+            events, settlements, 'Paper TP');
+        return;
+    }
+    const sliceQty = position.qty / (remainingTps.length + 1);
+    const fraction = sliceQty / position.qty;
+    const slice: PaperPosition = {
+        ...position,
+        qty: sliceQty,
+        closedQty: sliceQty,
+        entryFeeUsd: position.entryFeeUsd * fraction,
+        fundingPaidUsd: position.fundingPaidUsd * fraction,
+        riskUsd: position.riskUsd * fraction,
+        marginUsd: position.marginUsd * fraction,
+        takeProfits: [hitTp],
+    };
+    const exitFeeUsd = sliceQty * hitTp * (account.config.makerFeeBps / 10_000);
+    const settled = settlePosition(slice, hitTp, exitFeeUsd, 'tp', nowMs);
+    account.cashBalanceUsd += settled.grossPnlUsd - exitFeeUsd;
+    account.closedTrades = [settled, ...account.closedTrades];
+    settlements.push(settled);
+    events.push({
+        type: 'tp', symbol: position.symbol, positionId: position.id, price: hitTp,
+        amountUsd: settled.netPnlUsd, at: nowMs,
+        line: `Paper TP ${position.symbol} · ${round6(sliceQty)} @ ${roundPrice(hitTp)} · net ${signedUsd(settled.netPnlUsd)} · partial`,
+    });
+    const rest: PaperPosition = {
+        ...position,
+        qty: position.qty - sliceQty,
+        closedQty: round6(position.closedQty + sliceQty),
+        entryFeeUsd: position.entryFeeUsd - slice.entryFeeUsd,
+        fundingPaidUsd: position.fundingPaidUsd - slice.fundingPaidUsd,
+        riskUsd: position.riskUsd - slice.riskUsd,
+        marginUsd: position.marginUsd - slice.marginUsd,
+        takeProfits: remainingTps,
+    };
+    account.positions = account.positions.map(p => p.id === position.id ? rest : p);
+};
+
+/** Nearest crossed target by distance from entry, NOT first array element.
+ *  A wick through [104, 101, 102] settles 101 first. */
+const nearestCrossedTp = (position: PaperPosition, low: number, high: number): number | undefined => {
+    let best: number | undefined;
+    let bestDistance = Infinity;
+    for (const tp of position.takeProfits) {
+        const crossed = position.side === 'long' ? high > tp : low < tp;
+        if (!crossed) continue;
+        const distance = Math.abs(tp - position.entryPrice);
+        if (distance < bestDistance) { best = tp; bestDistance = distance; }
+    }
+    return best;
+};
 
 /**
  * Evaluate one mark/tick against the account. Pure: returns a NEW account.
@@ -666,6 +830,7 @@ export const evaluatePaperTick = (
             openedAt: nowMs,
             fundingPaidUsd: 0,
             lastFundingSlotMs: nowMs,
+            closedQty: 0,
             ...(order.skillSlug ? { skillSlug: order.skillSlug } : {}),
             ...(order.thesis ? { thesis: order.thesis } : {}),
         };
@@ -684,31 +849,12 @@ export const evaluatePaperTick = (
         });
     }
 
-    // 2. Funding accrual — UTC slots crossed, before exits so the settled
-    //    receipt includes every payment owed up to the close. Accrual needs
-    //    OPEN exposure: with no positions there is nothing to settle and no
-    //    slot list to walk. The notional is the position's ENTRY notional —
-    //    the "full notional" this harness pins, not a funding-time mark.
-    if (next.positions.length > 0 && Number.isFinite(tick.fundingRate)) {
-        const rate = tick.fundingRate as number;
-        for (const position of [...next.positions]) {
-            const slots = utcFundingSlotsBetween(position.lastFundingSlotMs, nowMs);
-            if (slots.length === 0) continue;
-            const payment = position.qty * position.entryPrice * rate * slots.length
-                * (position.side === 'long' ? 1 : -1);
-            position.fundingPaidUsd = round6(position.fundingPaidUsd + Math.max(0, payment));
-            position.lastFundingSlotMs = slots[slots.length - 1];
-            next.cashBalanceUsd -= payment; // a negative payment (short paid) CREDITS the wallet
-            events.push({
-                type: 'funding',
-                symbol: position.symbol,
-                positionId: position.id,
-                amountUsd: payment,
-                at: nowMs,
-                line: `Paper funding ${position.symbol} · ${slots.length} × ${(rate * 100).toFixed(4)}% · ${signedUsd(payment)}`,
-            });
-        }
-    }
+    // 2. Funding accrual — every crossed 00:00/08:00/16:00 UTC slot, before
+    //    exits so the settled receipt includes every payment owed up to the
+    //    close. Per-slot WS frames win over the single current rate; the mark
+    //    notional is live whenever a mark is available.
+    accruePaperFunding(next, nowMs, tick.fundingRate, tick.fundingFrames,
+        finitePositive(tick.markPrice) ? tick.markPrice as number : undefined, events);
 
     // 3. Open position exits. Liquidation is checked on MARK only, never a wick.
     for (const position of [...next.positions]) {
@@ -718,7 +864,15 @@ export const evaluatePaperTick = (
             position.side === 'long' ? mark <= position.liquidationPrice : mark >= position.liquidationPrice
         );
         if (liquidated && mark !== undefined) {
-            applyExit(next, position, mark, next.config.takerFeeBps, 'liquidation', nowMs,
+            // Exit at the position's OWN liquidation level with only a DECLARED
+            // capped slippage — NEVER at the gapped mark print. A 10x long
+            // liquidating at ~90.5 that next prints 80k must not realize 2×
+            // margin; max loss stays inside the isolated margin.
+            const slip = PAPER_LIQUIDATION_SLIPPAGE_BPS / 10_000;
+            const exitPrice = position.side === 'long'
+                ? position.liquidationPrice * (1 - slip)
+                : position.liquidationPrice * (1 + slip);
+            applyExit(next, position, exitPrice, next.config.takerFeeBps, 'liquidation', nowMs,
                 events, settlements, 'Paper LIQUIDATION');
             continue;
         }
@@ -753,12 +907,11 @@ export const evaluatePaperTick = (
             continue;
         }
 
-        // Resting TP limits: maker fee, strict cross only.
-        const hitTp = position.takeProfits.find(tp =>
-            position.side === 'long' ? high > tp : low < tp);
+        // Resting TP limits: maker fee, strict cross only. The NEAREST crossed
+        // target fills first, and later targets scale out the remaining qty.
+        const hitTp = nearestCrossedTp(position, low, high);
         if (hitTp !== undefined) {
-            applyExit(next, position, hitTp, next.config.makerFeeBps, 'tp', nowMs,
-                events, settlements, 'Paper TP');
+            applyPartialTp(next, position, hitTp, nowMs, events, settlements);
         }
     }
 
@@ -784,6 +937,14 @@ export interface PlaceOrderEnv {
     nextId?: (prefix: string) => string;
     /** Optional deterministic plan/adversary gate; injected in tests. */
     planAllowed?: (input: PaperOrderInput) => { ok: boolean; reason?: string };
+    /** Live funding rate from the quote provider / WS cache. Applied to a
+     *  manual close BEFORE pricing so crossed 8h slots are never skipped. */
+    fundingRate?: number | null;
+    /** Per-slot funding frames, injected from the shared WS frame cache. */
+    fundingFrames?: ReadonlyArray<PaperFundingFrame>;
+    /** Live marks for EVERY held symbol — sizing must value open positions at
+     *  the mark, never at their entry. */
+    markPrices?: Readonly<Record<string, number>>;
 }
 
 const makeId = (prefix: string): string => `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -875,6 +1036,13 @@ export const placePaperOrder = (env: PlaceOrderEnv): PaperReceipt => {
         if (last === undefined) {
             return refuse('quote_unavailable', 'no live mark/last price — refusing to price a manual close');
         }
+        // A manual close before the first tick sweep must still settle every
+        // crossed 8h slot — accrue FIRST, then price the exit, so the receipt
+        // carries the funding and the wallet invariant (cash = start + netPnl)
+        // holds. The quote's last is the mark reference when no WS frame exists.
+        const closeEvents: PaperEvent[] = [];
+        accruePaperFunding(next, nowMs, env.fundingRate, env.fundingFrames, last, closeEvents);
+        events.push(...closeEvents);
         applyExit(next, position, last, next.config.takerFeeBps, 'manual_close', nowMs,
             events, [], 'Paper CLOSE');
         const settled = next.closedTrades[0];
@@ -898,7 +1066,16 @@ export const placePaperOrder = (env: PlaceOrderEnv): PaperReceipt => {
         return refuse('kill_switch_active',
             'daily drawdown kill-switch active — new entries halt until 00:00 UTC; closing/reducing is allowed');
     }
-    const equity = paperEquity(next);
+    // Value EVERY held position at a live mark, never at its entry: a 10 %
+    // winner already in the book must enlarge the risk budget, and a loser
+    // must shrink it. The traded symbol's quote fills the remaining gap.
+    const quoteMark = finitePositive(quote.last) ? quote.last
+        : (finitePositive(quote.bestAsk) ? quote.bestAsk : undefined);
+    const marks: Record<string, number> = {
+        ...(quoteMark !== undefined ? { [symbol]: quoteMark } : {}),
+        ...(env.markPrices ?? {}),
+    };
+    const equity = paperEquity(next, marks);
     const size = resolvePaperSizing({
         entryPrice: input.entry_price ?? 0,
         stopLoss: input.stop_loss ?? 0,
@@ -969,6 +1146,7 @@ export const placePaperOrder = (env: PlaceOrderEnv): PaperReceipt => {
         openedAt: nowMs,
         fundingPaidUsd: 0,
         lastFundingSlotMs: nowMs,
+        closedQty: 0,
         ...(input.skill_slug ? { skillSlug: input.skill_slug } : {}),
         ...(input.thesis ? { thesis: input.thesis } : {}),
     };
