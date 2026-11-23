@@ -8234,6 +8234,66 @@ const checkPass5Fixes = () => {
     ok('pass5: 0-tool ReasoningRow uses turnStreaming and activity depends on reasoning.length',
         /reasoning\.length/.test(tlSrc) && /running=\{turnStreaming\}/.test(tlSrc));
 
+    const policy = require(path.join(ROOT, 'shared/providerRequestPolicy.cjs'));
+    const rc = loadModule('src/services/providers/reasoningControls.ts');
+    const generic = { id: 'custom-generic', baseUrl: 'https://custom.example/v1', apiFormat: 'chat_completions', selectedModel: 'ernie-5.5-fl' };
+    const genericParams = {};
+    rc.applyReasoningToChatParams(generic, genericParams, { reasoningEffort: 'max' });
+    ok('reasoning wire: generic custom Max uses portable high, never raw max',
+        genericParams.reasoning_effort === 'high' && genericParams.reasoning_effort !== 'max');
+
+    const openRouter = { ...generic, id: 'custom-openrouter', baseUrl: 'https://openrouter.ai/api/v1', selectedModel: 'openai/gpt-5' };
+    const openRouterParams = {};
+    policy.requestReasoningSideChannel(openRouter, openRouterParams);
+    rc.applyReasoningToChatParams(openRouter, openRouterParams, { reasoningEffort: 'max' });
+    ok('reasoning wire: custom OpenRouter asks for reasoning and uses reasoning.effort',
+        openRouterParams.include_reasoning === true
+        && openRouterParams.reasoning && openRouterParams.reasoning.effort === 'high'
+        && openRouterParams.reasoning_effort === undefined);
+
+    const kilo = { ...generic, id: 'custom-kilo', baseUrl: 'https://ai-gateway.kilo.ai/api/v1' };
+    const kiloParams = {};
+    policy.requestReasoningSideChannel(kilo, kiloParams);
+    rc.applyReasoningToChatParams(kilo, kiloParams, { reasoningEffort: 'max' });
+    ok('reasoning wire: custom Kilocode asks for the separate reasoning channel',
+        kiloParams.include_reasoning === true && kiloParams.reasoning_effort === 'high');
+
+    const desktopParser = require(path.join(ROOT, 'electron/sseParser.cjs')).createSseParser('chat_completions');
+    const desktopBatch = desktopParser.push('data: {"choices":[{"delta":{"reasoning_content":"","reasoning_details":[{"type":"reasoning.text","text":"Read. "},{"type":"reasoning.summary","summary":"Compare."}],"tool_calls":[{"index":0,"id":"call_contract","type":"function","function":{"name":"get_trade_log","arguments":"{}"}}]}}]}\n\n');
+    const desktopTail = desktopParser.finish();
+    ok('reasoning SSE: desktop detail arrays survive an empty alias and co-travel with tool calls',
+        desktopBatch.events.length === 1 && desktopBatch.events[0].type === 'reasoning'
+        && desktopBatch.events[0].delta === 'Read. Compare.'
+        && desktopTail.toolCalls.length === 1 && desktopTail.toolCalls[0].name === 'get_trade_log');
+
+    const coPopulated = policy.extractReasoningFields({
+        reasoning: 'Shared.',
+        reasoning_details: [{ text: 'Shared.' }, { text: 'Detail.' }, { summary: 'Summary.' }],
+    });
+    const splitContent = policy.splitChatContentPayload([
+        { type: 'thinking', thinking: 'Hidden.' },
+        { type: 'text', text: 'Visible.' },
+    ]);
+    ok('reasoning fallback: co-populated aliases merge and thinking blocks never become answer text',
+        coPopulated === 'Shared.Detail.Summary.'
+        && splitContent.text === 'Visible.' && splitContent.reasoning === 'Hidden.');
+
+    const mainSrc = readSource('electron/main.cjs');
+    ok('reasoning bridge: JSON fallback selection and buffered-tail forwarding stay wired',
+        /policy\.isEventStreamResponse\(response\)/.test(mainSrc)
+        && /unstreamedReasoningTail\(streamedReasoning, result\.reasoning\)/.test(gpSrc));
+
+    ok('reasoning SDK: a complete message yielded by a non-streaming gateway is not treated as an empty delta',
+        /const bufferedMessage = choice\?\.message;/.test(gpSrc)
+        && /toolBuf\.push\(\{ tool_calls: bufferedMessage\.tool_calls \}\)/.test(gpSrc));
+
+    const traceText = loadModule('src/utils/traceText.ts');
+    const segments = traceText.splitReasoningAroundTools('R1\n[Desk tools] calling trade log…\n[Desk tools] trade log · 2 rows\nR2\n[Desk tools] calling market pulse…\n[Desk tools] market pulse · ready\nR3');
+    const reasoningRowSrc = readSource('src/components/shared/ReasoningRow.tsx');
+    ok('reasoning timeline: every received tool-round segment is revealed inside the work card',
+        segments.length === 5 && segments[0] === 'R1' && segments[2] === 'R2' && segments[4] === 'R3'
+        && /defaultOpen/.test(tlSrc) && /if\s*\(!defaultOpen\)\s*setOpen\(false\)/.test(reasoningRowSrc));
+
     const transcriptSrc = readSource('src/components/trade/panels/ChatTranscriptList.tsx');
     ok('pass5: ChatTranscriptList does not mount automatic MemoryProvenanceStrip pre-loads',
         !/<MemoryProvenanceStrip/.test(transcriptSrc));

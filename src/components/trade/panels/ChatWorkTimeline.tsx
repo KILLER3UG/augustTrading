@@ -464,27 +464,38 @@ const ChatWorkTimeline: React.FC<ChatWorkTimelineProps> = ({ entry }) => {
     const markerCount = segs.length - 1;
     const nodes: React.ReactNode[] = [];
     let buf: string[] = [];
+    let toolCursor = 0;
+    let bufStart = 0;
     // Payload ids in the SAME order the lines are pushed below, so `flush` can
     // hand each `ToolActivityRow` the ids for exactly the lines it is given.
     const idBuf: string[] = [...(entry.toolIds ?? [])];
-    const flush = (key: string): void => {
+    const pushTool = (line: string): void => {
+        if (buf.length === 0) bufStart = toolCursor;
+        buf.push(line);
+        toolCursor += 1;
+    };
+    const flush = (): void => {
         if (buf.length > 0) {
             // The ids ride WITH their lines: pairing inside `pairToolLines` is
             // FIFO by label, so a payload is attached by position in the buffer
             // it was rendered from, never by a lookup that could drift.
             const ids = buf.map(() => idBuf.shift() ?? '');
-            nodes.push(<ToolActivityRow key={key} lines={buf} running={turnStreaming} payloadIds={ids} />);
+            // Key by the first source line, not by the reasoning segment that
+            // eventually closes this buffer. A later thought must not remount
+            // a tool output the trader already expanded.
+            nodes.push(<ToolActivityRow key={`tools-${bufStart}`} lines={buf} running={turnStreaming} payloadIds={ids} />);
             buf = [];
         }
     };
     for (let s = 0; s < segs.length; s++) {
-        if (s > 0 && s - 1 < entry.tools.length) buf.push(entry.tools[s - 1]);
+        if (s > 0 && s - 1 < entry.tools.length) pushTool(entry.tools[s - 1]);
         if (segs[s]?.trim()) {
-            flush(`tools-${s}`);
+            flush();
             nodes.push(
                 <ReasoningRow
                     key={`thought-${s}`}
                     thinking={segs[s]}
+                    defaultOpen
                     running={turnStreaming && s === segs.length - 1 && !hasCallingTool && !hasAnswerText}
                     persistedMs={s === 0 ? entry.workedMs : undefined}
                     startedAt={startedAt}
@@ -494,8 +505,8 @@ const ChatWorkTimeline: React.FC<ChatWorkTimelineProps> = ({ entry }) => {
     }
     // Mirrors can lag the tools array (tool lines pushed
     // outside the desk loop) — leftovers render at the end.
-    buf.push(...entry.tools.slice(markerCount));
-    flush('tools-tail');
+    for (const line of entry.tools.slice(markerCount)) pushTool(line);
+    flush();
 
     // 2.11 — the sticky payload write failure needs a READER, or the record the
     // store keeps is invisible. A row that opens onto "full result not kept"

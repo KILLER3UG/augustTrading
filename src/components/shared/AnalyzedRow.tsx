@@ -125,7 +125,12 @@ const AnalyzedRow: React.FC<AnalyzedRowProps> = ({ running = false, className = 
             data-state={running ? 'running' : 'ok'}
             data-testid="analyzed-row"
             open={open}
-            onToggle={e => setOpen((e.target as HTMLDetailsElement).open)}
+            onToggle={e => {
+                // Nested Thinking/tool disclosures must not toggle the work
+                // card that contains them. Only this summary owns its state.
+                if (e.target !== e.currentTarget) return;
+                setOpen((e.target as HTMLDetailsElement).open);
+            }}
         >
             <summary className="reasoning-row-summary" aria-label={`${label}${detail} — ${open ? 'collapse' : 'expand'}`}>
                 {running && (

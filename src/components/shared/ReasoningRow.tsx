@@ -14,7 +14,9 @@ export interface ReasoningRowProps {
     thinking: string;
     /** Live stream in progress — shows the live duration. */
     running?: boolean;
-    /** Kept for API compatibility — rows ALWAYS start collapsed. */
+    /** Reveal the trace whenever its containing work card is visible. Tool
+     *  rounds use this so opening "Thought for Xs · N tools" shows the prose
+     *  beside each tool, not another layer of collapsed labels. */
     defaultOpen?: boolean;
     /** A frozen work duration from the persisted run — what a reloaded row
      *  shows after the live clock is gone. */
@@ -56,7 +58,7 @@ export interface ReasoningRowProps {
 const ReasoningRow: React.FC<ReasoningRowProps> = ({
     thinking,
     running = false,
-    defaultOpen: _defaultOpen = false,
+    defaultOpen = false,
     persistedMs,
     startedAt,
     label = 'Thinking',
@@ -64,7 +66,7 @@ const ReasoningRow: React.FC<ReasoningRowProps> = ({
     className = '',
     tokens,
 }) => {
-    const [open, setOpen] = useState(running);
+    const [open, setOpen] = useState(running || defaultOpen);
     const [copied, setCopied] = useState(false);
     const bodyRef = useRef<HTMLDivElement>(null);
     const turnStartMs = typeof startedAt === 'number' && Number.isFinite(startedAt) ? startedAt : null;
@@ -90,19 +92,19 @@ const ReasoningRow: React.FC<ReasoningRowProps> = ({
         if (running && !wasRunningRef.current) {
             startedAtRef.current = turnStartMs ?? Date.now();
             bodyPinnedRef.current = true;
-            setOpen(true);
+            if (!defaultOpen) setOpen(true);
         }
         if (wasRunningRef.current && !running) {
             const start = startedAtRef.current;
             setSettledSeconds(start !== null ? Math.max(0, Math.round((Date.now() - start) / 1000)) : null);
             startedAtRef.current = null;
-            /* The trace folds itself away the moment it settles, matching the
-               reference timeline where settled thoughts stay collapsed above
-               tool calls while live thoughts stay visible. */
-            setOpen(false);
+            /* Standalone thoughts fold on settle. A thought inside a tool
+               card stays revealed: the trader opened that card to read the
+               work, and every received round belongs beside its tool. */
+            if (!defaultOpen) setOpen(false);
         }
         wasRunningRef.current = running;
-    }, [running, turnStartMs]);
+    }, [running, turnStartMs, defaultOpen]);
 
     useEffect(() => {
         if (!running) {
