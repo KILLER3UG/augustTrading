@@ -9,6 +9,8 @@
  * to the exact `owner/repo` over HTTPS + SHA-512 integrity (`latest.yml`).
  */
 
+const PINNED_UPDATE_REPO = Object.freeze({ owner: 'KILLER3UG', repo: 'augustTrading' });
+
 const SEMVER_RE = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/;
 
 function parseSemver(raw) {
@@ -64,6 +66,11 @@ function compareSemver(a, b) {
 /** True iff both versions parse as semver and `candidate > current`. */
 function isStrictlyNewerVersion(candidate, current) {
     return compareSemver(candidate, current) === 1;
+}
+
+function resolveExpectedUpdateRepo(configured) {
+    if (configured?.owner && configured?.repo) return configured;
+    return PINNED_UPDATE_REPO;
 }
 
 function normalizePublisherNames(raw) {
@@ -151,6 +158,8 @@ function evaluateUpdateChannelPolicy(cfg, expectedRepo) {
 }
 
 module.exports = {
+    PINNED_UPDATE_REPO,
+    resolveExpectedUpdateRepo,
     compareSemver,
     isStrictlyNewerVersion,
     evaluateUpdateChannelPolicy,

@@ -11,6 +11,8 @@ import {
 
 const require = createRequire(import.meta.url);
 const policy = require('../shared/updateVerificationPolicy.cjs') as {
+    PINNED_UPDATE_REPO: { owner: string; repo: string };
+    resolveExpectedUpdateRepo: (configured?: { owner?: string; repo?: string } | null) => { owner: string; repo: string };
     compareSemver: (a: string, b: string) => number | null;
     isStrictlyNewerVersion: (candidate: string, current: string) => boolean;
     evaluateUpdateChannelPolicy: (
@@ -79,6 +81,19 @@ describe('Updater verification policy — Authenticode signed vs pinned unsigned
         assert.equal(res.allowed, true);
         assert.equal(res.mode, 'pinned-github-sha512');
         assert.equal(res.verifySignature, false);
+    });
+
+    it('keeps the pinned repo identity available when the packaged package.json omits build.publish', () => {
+        assert.deepEqual(policy.PINNED_UPDATE_REPO, pinnedRepo);
+        assert.deepEqual(policy.resolveExpectedUpdateRepo(undefined), pinnedRepo);
+        assert.deepEqual(policy.resolveExpectedUpdateRepo({}), pinnedRepo);
+        assert.deepEqual(policy.resolveExpectedUpdateRepo({ owner: 'other', repo: 'other' }), { owner: 'other', repo: 'other' });
+        const res = policy.evaluateUpdateChannelPolicy(
+            { provider: 'github', owner: 'killer3ug', repo: 'augusttrading' },
+            policy.PINNED_UPDATE_REPO,
+        );
+        assert.equal(res.allowed, true);
+        assert.equal(res.mode, 'pinned-github-sha512');
     });
 
     it('refuses unsigned builds pointing to a mismatched repo, non-GitHub feed, plain HTTP, or missing config', () => {

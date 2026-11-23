@@ -5,14 +5,15 @@ const { pathToFileURL } = require('url');
 const { autoUpdater } = require('electron-updater');
 const { spawn } = require('child_process');
 const { resolveRepoPath } = require('../shared/repoSandbox.cjs');
-const { evaluateUpdateChannelPolicy, isStrictlyNewerVersion } = require('../shared/updateVerificationPolicy.cjs');
+const { resolveExpectedUpdateRepo, evaluateUpdateChannelPolicy, isStrictlyNewerVersion } = require('../shared/updateVerificationPolicy.cjs');
 const { createSseParser } = require('./sseParser.cjs');
 const pkgPublish = (() => {
     try {
-        const pkg = require('../package.json');
-        return pkg?.build?.publish ?? {};
+        // electron-builder strips build.publish from the packaged package.json;
+        // the shared resolver keeps the owner's pinned identity in that case.
+        return resolveExpectedUpdateRepo(require('../package.json')?.build?.publish);
     } catch {
-        return {};
+        return resolveExpectedUpdateRepo(null);
     }
 })();
 

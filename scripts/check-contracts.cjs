@@ -8296,6 +8296,12 @@ const checkPass5Fixes = () => {
         && splitContent.text === 'Visible.' && splitContent.reasoning === 'Hidden.');
 
     const mainSrc = readSource('electron/main.cjs');
+    const updatePolicy = require(path.join(ROOT, 'shared/updateVerificationPolicy.cjs'));
+    ok('updater: packaged package.json fallback keeps the pinned GitHub identity',
+        updatePolicy.PINNED_UPDATE_REPO.owner === 'KILLER3UG'
+        && updatePolicy.PINNED_UPDATE_REPO.repo === 'augustTrading'
+        && updatePolicy.resolveExpectedUpdateRepo(undefined).repo === 'augustTrading'
+        && /resolveExpectedUpdateRepo\(require\('\.\.\/package\.json'\)\?\.build\?\.publish\)/.test(mainSrc));
     ok('reasoning bridge: JSON fallback selection and buffered-tail forwarding stay wired',
         /policy\.isEventStreamResponse\(response\)/.test(mainSrc)
         && /unstreamedReasoningTail\(streamedReasoning, result\.reasoning\)/.test(gpSrc));
