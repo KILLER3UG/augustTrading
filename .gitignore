@@ -41,7 +41,7 @@ tsc_errors.txt
 android/build_log*.txt
 
 # Local MCP / tool configs (machine-specific)
-config/
+/config/
 
 # APK / binary artifacts
 *.apk

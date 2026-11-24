@@ -8331,9 +8331,83 @@ const checkPass5Fixes = () => {
         && /data-testid="composer-timeframe-trigger"/.test(composerRowSrc));
 };
 
+function checkTrackedRelativeImports() {
+    if (!fs.existsSync(path.join(ROOT, '.git'))) {
+        ok('git: relative source import check skipped without .git directory', true);
+        return;
+    }
+    const { execFileSync } = require('child_process');
+    const rawList = execFileSync('git', ['ls-files', '-z'], {
+        cwd: ROOT,
+        encoding: 'utf8',
+        maxBuffer: 32 * 1024 * 1024,
+    });
+    const trackedList = rawList.split('\0').filter(Boolean).map(p => p.replace(/\\/g, '/'));
+    const trackedSet = new Set(trackedList);
+    const sourceFiles = trackedList.filter(p => /^(?:src|electron|shared|tests|scripts)\/.*\.(?:[cm]?[tj]sx?)$/.test(p));
+
+    const EXTS = ['.ts', '.tsx', '.js', '.jsx', '.cjs', '.mjs', '.json'];
+    const isFile = (abs) => {
+        try { return fs.statSync(abs).isFile(); } catch { return false; }
+    };
+    const toRel = (abs) => path.relative(ROOT, abs).replace(/\\/g, '/');
+    const resolveTarget = (fromRel, spec) => {
+        const clean = spec.split(/[?#]/)[0];
+        if (!clean || !clean.startsWith('.')) return null;
+        const base = path.resolve(path.dirname(path.join(ROOT, fromRel)), clean);
+        const relBase = toRel(base);
+        if (relBase.startsWith('..') || path.isAbsolute(relBase)) return null;
+        if (isFile(base)) return relBase;
+        for (const ext of EXTS) {
+            if (isFile(base + ext)) return toRel(base + ext);
+        }
+        const stripped = base.replace(/\.(?:[cm]?[tj]sx?)$/, '');
+        if (stripped !== base) {
+            for (const ext of ['.ts', '.tsx', '.mts', '.cts', '.d.ts', '.js', '.jsx']) {
+                if (isFile(stripped + ext)) return toRel(stripped + ext);
+            }
+        }
+        for (const ext of EXTS) {
+            const idx = path.join(base, `index${ext}`);
+            if (isFile(idx)) return toRel(idx);
+        }
+        return null;
+    };
+
+    const SPEC_PATTERNS = [
+        /(?:^|[;\n])\s*(?:import|export)\s+(?:type\s+)?(?:[\s\S]*?\s+from\s+)?['"](\.[^'"]+)['"]/g,
+        /\bimport\s*\(\s*['"](\.[^'"]+)['"]\s*\)/g,
+        /\brequire\s*\(\s*['"](\.[^'"]+)['"]\s*\)/g,
+    ];
+    const broken = [];
+    for (const fileRel of sourceFiles) {
+        const src = fs.readFileSync(path.join(ROOT, fileRel), 'utf8')
+            .replace(/\/\*[\s\S]*?\*\//g, '')
+            .replace(/^\s*\/\/.*$/gm, '');
+        const seenSpecs = new Set();
+        for (const re of SPEC_PATTERNS) {
+            re.lastIndex = 0;
+            let m;
+            while ((m = re.exec(src)) !== null) {
+                const spec = m[1];
+                if (seenSpecs.has(spec)) continue;
+                seenSpecs.add(spec);
+                const resolved = resolveTarget(fileRel, spec);
+                if (resolved && !trackedSet.has(resolved)) {
+                    broken.push(`${fileRel} imports ${spec} -> ${resolved} (NOT git-tracked)`);
+                }
+            }
+        }
+    }
+    ok('git: every relative source import resolves to a git-tracked file',
+        broken.length === 0,
+        broken.slice(0, 10).join('; '));
+}
+
 // The async blocks above settle in microtasks; the report waits for them so
 // their pass/fail counts land in this summary. A throw becomes a failure —
 // a crashed check must never print as a green one.
+checkTrackedRelativeImports();
 checkSkillWrites()
     .then(runCaptureChecks)
     .then(checkDrawingFlushFailure)
