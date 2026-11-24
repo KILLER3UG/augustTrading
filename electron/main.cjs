@@ -5,7 +5,15 @@ const { pathToFileURL } = require('url');
 const { autoUpdater } = require('electron-updater');
 const { spawn } = require('child_process');
 const { resolveRepoPath } = require('../shared/repoSandbox.cjs');
-const { resolveExpectedUpdateRepo, evaluateUpdateChannelPolicy, isStrictlyNewerVersion } = require('../shared/updateVerificationPolicy.cjs');
+const { resolveExpectedUpdateRepo, evaluateUpdateChannelPolicy } = require('../shared/updateVerificationPolicy.cjs');
+const {
+    UPDATE_STARTUP_DELAY_MS,
+    UPDATE_CHECK_INTERVAL_MS,
+    createUpdateInfo,
+    shouldRunBackgroundCheck,
+    reduceUpdateInfo,
+    toPublicUpdateInfo,
+} = require('../shared/updaterStateMachine.cjs');
 const { createSseParser } = require('./sseParser.cjs');
 const pkgPublish = (() => {
     try {
@@ -1473,43 +1481,30 @@ async function createWindow() {
 // AUTO-UPDATE LOGIC
 // =============================================================================
 
-let updateInfo = {
-    status: 'idle',           // idle | checking | available | downloading | downloaded | installing | error
-    progress: 0,
-    version: null,
-    error: null,
-    // Download telemetry (downloading phase): electron-updater's
-    // download-progress carries bytes/second so the overlay can show speed+ETA.
-    bytesPerSecond: 0,
-    transferred: 0,
-    total: 0,
-    // Release body from GitHub (available/downloaded phases) — "What's new".
-    releaseNotes: null,
-};
+// All state TRANSITIONS live in shared/updaterStateMachine.cjs (pure, tested
+// offline). This file only performs the side effects around them.
+let updateInfo = createUpdateInfo();
 
 // Set while an update:install is waiting for the renderer's restart animation
 // to finish (the overlay sends update:quit-now, with a timeout fallback).
 let pendingInstallerQuit = null;
 
-/** GitHub's releaseNotes is a raw markdown string; other providers can hand
- *  back an array of per-language notes. Normalize to plain text (capped) so
- *  the renderer never has to branch on the shape. */
-function normalizeReleaseNotes(notes) {
-    if (typeof notes === 'string') return notes.slice(0, 4000);
-    if (Array.isArray(notes)) {
-        return notes
-            .map(n => (n && (n.note ?? n.text ?? n.value) ? String(n.note ?? n.text ?? n.value) : ''))
-            .filter(Boolean)
-            .join('\n\n')
-            .slice(0, 4000) || null;
-    }
-    return null;
-}
+// True only for the one check the trader started by hand (Settings button):
+// a failure there is shown, a background check's failure is silent.
+let nextCheckIsManual = false;
 
 function sendUpdateStatus() {
     if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('update-status', updateInfo);
+        mainWindow.webContents.send('update-status', toPublicUpdateInfo(updateInfo));
     }
+}
+
+/** Apply one event to the updater state and tell the renderer if it changed. */
+function dispatchUpdate(event) {
+    const next = reduceUpdateInfo(updateInfo, event);
+    if (next === updateInfo) return;
+    updateInfo = next;
+    sendUpdateStatus();
 }
 
 function setupAutoUpdater() {
@@ -1518,76 +1513,65 @@ function setupAutoUpdater() {
     // only refused when the trader clicks the button — while the boot probe
     // has already fetched from it.
     const updateGateRef = { isVerifiable: async () => false };
-    // Disable auto-download — we let the user decide via the Update button
+    // The download is started by OUR handler below (after the verifiability
+    // gate), not by electron-updater's autoDownload, so an unverifiable
+    // channel can never pull bytes.
     autoUpdater.autoDownload = false;
-    // User-decides flow: the update installs only when update:install fires.
-    // autoInstallOnAppQuit would install silently on window close instead.
+    // The update installs only when update:install fires. autoInstallOnAppQuit
+    // would run NSIS during quit — and on a Windows session-end (shutdown /
+    // logoff) that kills the installer mid-write and corrupts the install.
     autoUpdater.autoInstallOnAppQuit = false;
+    autoUpdater.autoRunAppAfterInstall = true;
+    // A web installer stub can skip the signature/hash check; never load one.
+    autoUpdater.disableWebInstaller = true;
 
     autoUpdater.on('checking-for-update', () => {
-        updateInfo = { ...updateInfo, status: 'checking', error: null };
-        sendUpdateStatus();
+        const manual = nextCheckIsManual;
+        nextCheckIsManual = false;
+        dispatchUpdate({ type: 'check-start', manual });
     });
 
     autoUpdater.on('update-available', (info) => {
-        if (!isStrictlyNewerVersion(info?.version, app.getVersion())) {
-            updateInfo = {
-                ...updateInfo,
-                status: 'upToDate',
-                version: null,
-                releaseNotes: null,
-                error: null,
-            };
-            sendUpdateStatus();
-            return;
+        dispatchUpdate({
+            type: 'available',
+            version: info?.version,
+            currentVersion: app.getVersion(),
+            releaseNotes: info?.releaseNotes,
+        });
+        // Seamless: a strictly newer, verified release downloads in the
+        // background; the trader only ever sees the quiet header pill.
+        if (updateInfo.status === 'available' && !isInstallerSmoke) {
+            void (async () => {
+                if (!(await updateGateRef.isVerifiable())) return;
+                try {
+                    await autoUpdater.downloadUpdate();
+                } catch {
+                    // The 'error' event already reduced this into visible state.
+                }
+            })();
         }
-        updateInfo = {
-            ...updateInfo,
-            status: 'available',
-            version: info.version,
-            releaseNotes: normalizeReleaseNotes(info.releaseNotes),
-            error: null,
-        };
-        sendUpdateStatus();
     });
 
     autoUpdater.on('update-not-available', () => {
-        // 'upToDate', NOT 'idle' — idle is also the never-checked state, so
-        // collapsing the two made "no update exists" indistinguishable from
-        // "the check never ran", and no surface could report a manual check.
-        updateInfo = { ...updateInfo, status: 'upToDate', version: null };
-        sendUpdateStatus();
+        dispatchUpdate({ type: 'not-available' });
     });
 
     autoUpdater.on('download-progress', (progressObj) => {
-        updateInfo = {
-            ...updateInfo,
-            status: 'downloading',
-            progress: Math.round(progressObj.percent),
-            bytesPerSecond: Math.max(0, Math.round(progressObj.bytesPerSecond || 0)),
-            transferred: Math.max(0, Math.round(progressObj.transferred || 0)),
-            total: Math.max(0, Math.round(progressObj.total || 0)),
-        };
-        sendUpdateStatus();
+        dispatchUpdate({
+            type: 'progress',
+            percent: progressObj.percent,
+            bytesPerSecond: progressObj.bytesPerSecond,
+            transferred: progressObj.transferred,
+            total: progressObj.total,
+        });
     });
 
     autoUpdater.on('update-downloaded', () => {
-        updateInfo = {
-            ...updateInfo,
-            status: 'downloaded',
-            progress: 100,
-            bytesPerSecond: 0,
-        };
-        sendUpdateStatus();
+        dispatchUpdate({ type: 'downloaded' });
     });
 
     autoUpdater.on('error', (err) => {
-        updateInfo = {
-            ...updateInfo,
-            status: 'error',
-            error: err ? err.message : 'Unknown update error',
-        };
-        sendUpdateStatus();
+        dispatchUpdate({ type: 'error', message: err ? err.message : 'Unknown update error' });
     });
 
     // IPC handlers — called from the renderer via the preload bridge.
@@ -1620,41 +1604,57 @@ function setupAutoUpdater() {
         return verdict.reason;
     };
 
-    trustedHandle('update:check', async () => {
-        if (isInstallerSmoke) return updateInfo; // smoke runs must never contact the update service
-        const verdict = await checkUpdateChannelPolicy();
-        if (!verdict.allowed) {
-            updateInfo = { ...updateInfo, status: 'error', error: verdict.reason };
-            sendUpdateStatus();
-            return updateInfo;
-        }
+    /** One check, from either source. `manual` decides whether a failure is
+     *  shown (the trader asked) or swallowed (a background poll). */
+    const runUpdateCheck = async (manual) => {
+        nextCheckIsManual = manual === true;
         try {
             await autoUpdater.checkForUpdates();
-            return updateInfo;
         } catch (err) {
-            updateInfo = { ...updateInfo, status: 'error', error: err.message };
-            sendUpdateStatus();
-            return updateInfo;
+            // electron-updater emits 'error' too, which the reducer already
+            // handled (silent for background, visible for manual). Only fall
+            // back to dispatching here if that event never arrived.
+            if (updateInfo.status === 'checking') {
+                dispatchUpdate({ type: 'error', message: err && err.message });
+            }
+        } finally {
+            nextCheckIsManual = false;
         }
-    }, () => ({ ...updateInfo, status: 'error', ...refused }));
+    };
+    updateGateRef.runBackgroundCheck = async () => {
+        if (isInstallerSmoke || !shouldRunBackgroundCheck(updateInfo)) return;
+        if (!(await updateChannelIsVerifiable())) return;
+        await runUpdateCheck(false);
+    };
 
-    trustedHandle('update:download', async () => {
-        if (isInstallerSmoke) return updateInfo; // smoke runs must never download an update
+    trustedHandle('update:check', async () => {
+        if (isInstallerSmoke) return toPublicUpdateInfo(updateInfo); // smoke runs must never contact the update service
         const verdict = await checkUpdateChannelPolicy();
         if (!verdict.allowed) {
-            updateInfo = { ...updateInfo, status: 'error', error: verdict.reason };
+            updateInfo = { ...updateInfo, status: 'error', error: verdict.reason, origin: null, resumeStatus: null };
             sendUpdateStatus();
-            return updateInfo;
+            return toPublicUpdateInfo(updateInfo);
+        }
+        // A check while a download/restart is in flight would fight it.
+        if (shouldRunBackgroundCheck(updateInfo)) await runUpdateCheck(true);
+        return toPublicUpdateInfo(updateInfo);
+    }, () => ({ ...toPublicUpdateInfo(updateInfo), status: 'error', ...refused }));
+
+    trustedHandle('update:download', async () => {
+        if (isInstallerSmoke) return toPublicUpdateInfo(updateInfo); // smoke runs must never download an update
+        const verdict = await checkUpdateChannelPolicy();
+        if (!verdict.allowed) {
+            updateInfo = { ...updateInfo, status: 'error', error: verdict.reason, origin: null, resumeStatus: null };
+            sendUpdateStatus();
+            return toPublicUpdateInfo(updateInfo);
         }
         try {
             await autoUpdater.downloadUpdate();
-            return updateInfo;
-        } catch (err) {
-            updateInfo = { ...updateInfo, status: 'error', error: err.message };
-            sendUpdateStatus();
-            return updateInfo;
+        } catch {
+            // 'error' event already reduced into visible state.
         }
-    }, () => ({ ...updateInfo, status: 'error', ...refused }));
+        return toPublicUpdateInfo(updateInfo);
+    }, () => ({ ...toPublicUpdateInfo(updateInfo), status: 'error', ...refused }));
 
     trustedHandle('update:install', async () => {
         if (isInstallerSmoke) return false; // smoke runs must never launch an installer
@@ -1668,14 +1668,13 @@ function setupAutoUpdater() {
         if (!(await updateChannelIsVerifiable())) {
             const message = await unverifiableUpdateMessage();
             console.error('[AutoUpdater] update:install refused —', message);
-            updateInfo = { ...updateInfo, status: 'error', error: message };
+            updateInfo = { ...updateInfo, status: 'error', error: message, origin: null, resumeStatus: null };
             sendUpdateStatus();
             return false;
         }
         // Push an 'installing' status so the renderer overlay can show a
         // "Restarting…" message before the app quits.
-        updateInfo = { ...updateInfo, status: 'installing' };
-        sendUpdateStatus();
+        dispatchUpdate({ type: 'install-start' });
         // The overlay plays the restart animation, then sends
         // update:quit-now. The 5s fallback guarantees the update still
         // installs if the renderer is stuck (or hides the overlay entirely);
@@ -1686,12 +1685,13 @@ function setupAutoUpdater() {
             fired = true;
             pendingInstallerQuit = null;
             try {
-                // Silent + force-run: the NSIS installer runs invisibly with
-                // no generic Windows dialog (/S is safe for the per-user
-                // oneClick install — no elevation needed), then relaunches
-                // August (--force-run). The only visuals around the update
-                // are ours: the Restarting… overlay, then the boot splash.
-                autoUpdater.quitAndInstall(true, true);
+                // Explicit trader action ("Restart to update"), never a
+                // quit-time side effect: isSilent=false lets the one-click
+                // NSIS installer show its own progress, isForceRunAfter=true
+                // relaunches August when it finishes. The main process holds
+                // no listening servers or sockets of its own to drain; the
+                // window-all-closed backstop is skipped while this is pending.
+                autoUpdater.quitAndInstall(false, true);
             } catch (err) {
                 console.error('[AutoUpdater] quitAndInstall failed, plain quit:', err);
                 app.quit();
@@ -1711,7 +1711,7 @@ function setupAutoUpdater() {
         if (pendingInstallerQuit) pendingInstallerQuit();
     });
 
-    trustedHandle('update:get-status', () => updateInfo, () => updateInfo);
+    trustedHandle('update:get-status', () => toPublicUpdateInfo(updateInfo), () => toPublicUpdateInfo(updateInfo));
 
     trustedHandle('app:get-version', () => app.getVersion(), () => '');
 
@@ -1864,15 +1864,17 @@ app.whenReady().then(() => {
     // this too: an unsigned channel is not refused only at the button while
     // the boot probe has already asked GitHub for the artifact.
     if (!isDev && !isInstallerSmoke) {
-        // Delay the check so the app loads first
+        // Startup check after a short delay so cold boot stays instant, then
+        // a quiet re-check every few hours while the app stays open. Both go
+        // through the same verifiability gate and the same silent-on-failure
+        // background path (offline never surfaces an error or an unhandled
+        // rejection); a manual check from Settings is the only visible one.
         setTimeout(() => {
-            void (async () => {
-                if (!(await updateGate.isVerifiable())) return;
-                await autoUpdater.checkForUpdates().catch(() => {
-                    // Silently fail on startup — user can manually check
-                });
-            })();
-        }, 3000);
+            void updateGate.runBackgroundCheck().catch(() => { /* never surfaces */ });
+        }, UPDATE_STARTUP_DELAY_MS);
+        setInterval(() => {
+            void updateGate.runBackgroundCheck().catch(() => { /* never surfaces */ });
+        }, UPDATE_CHECK_INTERVAL_MS).unref();
     }
 
     app.on('activate', () => {

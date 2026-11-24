@@ -85,7 +85,7 @@ export const UpdateButton: React.FC<{ className?: string }> = ({ className = '' 
                 title={`Downloading update${version ? ` v${version}` : ''}`}
             >
                 <Download className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-                <span>{Number.isFinite(progress) && progress > 0 ? `${progress}%` : 'Downloading…'}</span>
+                <span>{Number.isFinite(progress) && progress > 0 ? `↓ ${progress}%` : 'Downloading…'}</span>
             </div>
         );
     }
@@ -97,12 +97,12 @@ export const UpdateButton: React.FC<{ className?: string }> = ({ className = '' 
                 data-testid="update-button"
                 data-update-status="downloaded"
                 onClick={installUpdate}
-                className={`${baseClasses} bg-zinc-100 text-zinc-950 hover:bg-white ${className}`}
-                aria-label={`Restart to install version ${version ?? ''}`}
-                title={`Restart to install v${version ?? ''}`}
+                className={`${baseClasses} border border-line bg-zinc-100 text-zinc-950 hover:bg-white ${className}`}
+                aria-label={`Restart to update to version ${version ?? ''}`}
+                title={`Restart to update to v${version ?? ''}`}
             >
                 <Download className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-                <span>Restart to install</span>
+                <span>{version ? `Update v${version} · Restart` : 'Update · Restart'}</span>
             </button>
         );
     }

@@ -112,3 +112,83 @@ describe('Updater verification policy — Authenticode signed vs pinned unsigned
         );
     });
 });
+
+describe('Updater state machine & packaged main/build pins (offline)', () => {
+    const sm = require('../shared/updaterStateMachine.cjs') as {
+        UPDATE_STARTUP_DELAY_MS: number;
+        UPDATE_CHECK_INTERVAL_MS: number;
+        createUpdateInfo: () => Record<string, unknown>;
+        shouldRunBackgroundCheck: (info: Record<string, unknown>) => boolean;
+        reduceUpdateInfo: (info: Record<string, unknown>, event: Record<string, unknown>, now?: number) => Record<string, unknown>;
+        toPublicUpdateInfo: (info: Record<string, unknown>) => Record<string, unknown>;
+    };
+
+    it('transitions cleanly through checking → available → downloading → downloaded → installing and strips internal fields', () => {
+        let s = sm.createUpdateInfo();
+        assert.equal(s.status, 'idle');
+        assert.equal(sm.shouldRunBackgroundCheck(s), true);
+
+        s = sm.reduceUpdateInfo(s, { type: 'check-start', manual: false }, 1000);
+        assert.equal(s.status, 'checking');
+        assert.equal(sm.shouldRunBackgroundCheck(s), false);
+
+        s = sm.reduceUpdateInfo(s, { type: 'available', version: '1.6.4', currentVersion: '1.6.3', releaseNotes: '## Fixed\n- Bug' }, 2000);
+        assert.equal(s.status, 'available');
+        assert.equal(s.version, '1.6.4');
+        assert.equal(s.lastCheckedAt, 2000);
+
+        s = sm.reduceUpdateInfo(s, { type: 'progress', percent: 42.4, bytesPerSecond: 1024000, transferred: 4240, total: 10000 });
+        assert.equal(s.status, 'downloading');
+        assert.equal(s.progress, 42);
+        assert.equal(sm.shouldRunBackgroundCheck(s), false);
+
+        // install-start is ignored before downloaded
+        assert.strictEqual(sm.reduceUpdateInfo(s, { type: 'install-start' }), s);
+
+        s = sm.reduceUpdateInfo(s, { type: 'downloaded' });
+        assert.equal(s.status, 'downloaded');
+        assert.equal(s.progress, 100);
+        assert.equal(sm.shouldRunBackgroundCheck(s), false);
+
+        s = sm.reduceUpdateInfo(s, { type: 'install-start' });
+        assert.equal(s.status, 'installing');
+
+        const pub = sm.toPublicUpdateInfo(s);
+        assert.equal(Object.prototype.hasOwnProperty.call(pub, 'origin'), false);
+        assert.equal(Object.prototype.hasOwnProperty.call(pub, 'resumeStatus'), false);
+        assert.equal(pub.status, 'installing');
+    });
+
+    it('swallows background offline errors silently while surfacing manual check errors visibly', () => {
+        const upToDate = sm.reduceUpdateInfo(sm.createUpdateInfo(), { type: 'not-available' }, 1500);
+        assert.equal(upToDate.status, 'upToDate');
+        assert.equal(upToDate.lastCheckedAt, 1500);
+
+        const bgChecking = sm.reduceUpdateInfo(upToDate, { type: 'check-start', manual: false });
+        const afterBgErr = sm.reduceUpdateInfo(bgChecking, { type: 'error', message: 'net::ERR_INTERNET_DISCONNECTED' });
+        assert.equal(afterBgErr.status, 'upToDate');
+        assert.equal(afterBgErr.error, null);
+
+        const manualChecking = sm.reduceUpdateInfo(upToDate, { type: 'check-start', manual: true });
+        const afterManualErr = sm.reduceUpdateInfo(manualChecking, { type: 'error', message: 'net::ERR_INTERNET_DISCONNECTED' });
+        assert.equal(afterManualErr.status, 'error');
+        assert.equal(afterManualErr.error, 'net::ERR_INTERNET_DISCONNECTED');
+    });
+
+    it('pins safe updater flags in electron/main.cjs and unsigned SHA-512 GitHub feed in package.json', () => {
+        const mainSrc = fs.readFileSync(path.resolve('electron/main.cjs'), 'utf8');
+        assert.match(mainSrc, /autoUpdater\.autoInstallOnAppQuit\s*=\s*false/);
+        assert.match(mainSrc, /autoUpdater\.disableWebInstaller\s*=\s*true/);
+        assert.match(mainSrc, /autoUpdater\.quitAndInstall\(false,\s*true\)/);
+
+        const pkg = JSON.parse(fs.readFileSync(path.resolve('package.json'), 'utf8')) as {
+            build?: { win?: { verifyUpdateCodeSignature?: boolean }; publish?: { provider?: string; owner?: string; repo?: string } };
+        };
+        assert.equal(pkg.build?.win?.verifyUpdateCodeSignature, false);
+        assert.equal(pkg.build?.publish?.provider, 'github');
+        assert.equal(pkg.build?.publish?.owner, 'KILLER3UG');
+        assert.equal(pkg.build?.publish?.repo, 'augustTrading');
+        assert.ok(sm.UPDATE_STARTUP_DELAY_MS >= 3000 && sm.UPDATE_STARTUP_DELAY_MS <= 15000);
+        assert.ok(sm.UPDATE_CHECK_INTERVAL_MS >= 3600_000);
+    });
+});

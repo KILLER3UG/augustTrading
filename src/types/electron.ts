@@ -26,4 +26,6 @@ export interface ElectronUpdateStatus {
     total?: number;
     /** GitHub release body (available/downloaded phases) — "What's new". */
     releaseNotes?: string | null;
+    /** Epoch-ms of the last check that reached the release feed. */
+    lastCheckedAt?: number | null;
 }

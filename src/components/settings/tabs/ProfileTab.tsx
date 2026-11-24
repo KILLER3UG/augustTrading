@@ -40,23 +40,109 @@ export const updateCheckStatusLabel = (status: string | undefined): string => {
     }
 };
 
-/** The Settings-side updater entry: a quiet text button beside the version. */
-const CheckForUpdatesRow: React.FC = () => {
-    const { isElectron, updateStatus, checkForUpdates } = useAutoUpdate();
+const formatLastChecked = (lastCheckedAt: number | null | undefined): string => {
+    if (!lastCheckedAt || !Number.isFinite(lastCheckedAt)) return 'Not checked yet';
+    const elapsedMs = Math.max(0, Date.now() - lastCheckedAt);
+    if (elapsedMs < 60_000) return 'Checked just now';
+    const mins = Math.floor(elapsedMs / 60_000);
+    if (mins < 60) return `Checked ${mins}m ago`;
+    try {
+        return `Checked ${new Date(lastCheckedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+    } catch {
+        return 'Checked recently';
+    }
+};
+
+const describeUpdatePhase = (
+    status: string | undefined,
+    version: string | null | undefined,
+    progress: number | undefined,
+    error: string | null | undefined,
+): string => {
+    switch (status) {
+        case 'checking': return 'Checking GitHub Releases…';
+        case 'available': return version ? `Update v${version} found — starting download` : 'Update found';
+        case 'downloading': {
+            const pct = Number.isFinite(progress) && (progress ?? 0) > 0 ? ` ${progress}%` : '…';
+            return `Downloading${version ? ` v${version}` : ''}${pct}`;
+        }
+        case 'downloaded': return version ? `Ready to install v${version}` : 'Ready to install';
+        case 'installing': return `Restarting to install${version ? ` v${version}` : ''}…`;
+        case 'upToDate': return 'Up to date';
+        case 'error': return error || 'Update check failed';
+        default: return 'Automatic background checks active';
+    }
+};
+
+const stripNoteFormatting = (raw: string): string[] => raw
+    .replace(/```[\s\S]*?```/g, '')
+    .split(/\r?\n/)
+    .map(l => l.replace(/^#{1,6}\s+/, '').replace(/\*\*|__|`/g, '').trim())
+    .filter(Boolean)
+    .slice(0, 12);
+
+/** Settings → Profile Updates group (Electron only; browser hides cleanly). */
+const UpdatesGroup: React.FC = () => {
+    const { isElectron, appVersion, updateStatus, checkForUpdates, installUpdate } = useAutoUpdate();
     const [busy, setBusy] = React.useState(false);
     if (!isElectron) return null;
+
     const phase = updateStatus?.status ?? 'idle';
-    const label = updateCheckStatusLabel(phase);
+    const buttonLabel = updateCheckStatusLabel(phase);
+    const liveSummary = describeUpdatePhase(phase, updateStatus.version, updateStatus.progress, updateStatus.error);
+    const lastCheckedLabel = formatLastChecked(updateStatus.lastCheckedAt);
+    const notes = updateStatus.releaseNotes ? stripNoteFormatting(updateStatus.releaseNotes) : [];
+
     return (
-        <button
-            type="button"
-            data-testid="profile-check-updates"
-            disabled={busy || phase === 'checking' || phase === 'downloading' || phase === 'installing'}
-            onClick={() => { setBusy(true); void checkForUpdates().finally(() => setBusy(false)); }}
-            className="motion-press rounded-control border border-hairline px-1.5 py-0.5 text-ui-2xs text-zinc-400 transition-colors hover:border-line hover:text-zinc-200 disabled:opacity-50"
-        >
-            {label}
-        </button>
+        <div className="mt-6">
+            <SettingsGroup title="Updates">
+                <SettingsRow
+                    icon={<Database className="h-4 w-4" aria-hidden="true" />}
+                    title={`August Trading v${appVersion || APP_VERSION}`}
+                    description={
+                        <div className="space-y-1">
+                            <div className="flex flex-wrap items-center gap-2 text-ui-sm text-zinc-400" data-testid="profile-update-status">
+                                <span>{liveSummary}</span>
+                                <span className="text-zinc-600">·</span>
+                                <span className="text-ui-xs text-zinc-500">{lastCheckedLabel}</span>
+                            </div>
+                            {notes.length > 0 && (
+                                <details className="mt-1.5 text-ui-xs text-zinc-500" data-testid="profile-update-notes">
+                                    <summary className="cursor-pointer select-none text-zinc-400 hover:text-zinc-200">
+                                        Release notes {updateStatus.version ? `(v${updateStatus.version})` : ''}
+                                    </summary>
+                                    <div className="mt-1.5 space-y-1 rounded-control border border-hairline bg-zinc-950/60 p-2.5 text-zinc-400">
+                                        {notes.map((line, i) => <p key={i}>{line}</p>)}
+                                    </div>
+                                </details>
+                            )}
+                        </div>
+                    }
+                    control={
+                        <div className="flex shrink-0 items-center gap-2">
+                            {phase === 'downloaded' && (
+                                <SettingsButton
+                                    testId="profile-install-update"
+                                    onClick={() => void installUpdate()}
+                                    ariaLabel={`Restart to update to v${updateStatus.version ?? ''}`}
+                                >
+                                    Restart to update
+                                </SettingsButton>
+                            )}
+                            <button
+                                type="button"
+                                data-testid="profile-check-updates"
+                                disabled={busy || phase === 'checking' || phase === 'downloading' || phase === 'installing'}
+                                onClick={() => { setBusy(true); void checkForUpdates().finally(() => setBusy(false)); }}
+                                className="motion-press rounded-control border border-hairline bg-zinc-900 px-2.5 py-1 text-ui-dense text-zinc-300 transition-colors hover:border-line hover:text-zinc-100 disabled:opacity-50"
+                            >
+                                {buttonLabel}
+                            </button>
+                        </div>
+                    }
+                />
+            </SettingsGroup>
+        </div>
     );
 };
 
@@ -99,11 +185,8 @@ const ProfileTab: React.FC<{ tab: ProfileTabProps }> = ({ tab: props }) => {
                         title={username || 'Trader'}
                         description={`${APP_NAME} ${APP_VERSION} · local-first · no account or subscription`}
                         control={
-                            <span className="flex shrink-0 items-center gap-2">
-                                <span aria-hidden="true" className="flex h-9 w-9 items-center justify-center rounded-full border border-hairline bg-zinc-800 text-ui-base font-semibold text-zinc-100">
-                                    {initial}
-                                </span>
-                                <CheckForUpdatesRow />
+                            <span aria-hidden="true" className="flex h-9 w-9 items-center justify-center rounded-full border border-hairline bg-zinc-800 text-ui-base font-semibold text-zinc-100">
+                                {initial}
                             </span>
                         }
                     />
@@ -137,6 +220,7 @@ const ProfileTab: React.FC<{ tab: ProfileTabProps }> = ({ tab: props }) => {
                     />
                 </SettingsGroup>
             </div>
+            <UpdatesGroup />
         </div>
     );
 };

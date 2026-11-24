@@ -27,7 +27,7 @@
     "lint:loose": "eslint .",
     "typecheck": "tsc --noEmit --incremental --tsBuildInfoFile node_modules/.cache/typecheck.tsbuildinfo",
     "typecheck:scripts": "tsc --noEmit --incremental --tsBuildInfoFile node_modules/.cache/typecheck-scripts.tsbuildinfo -p tsconfig.scripts.json",
-    "typecheck:electron": "node --check electron/main.cjs && node --check electron/preload.cjs && node --check electron/sseParser.cjs",
+    "typecheck:electron": "node --check electron/main.cjs && node --check electron/preload.cjs && node --check electron/sseParser.cjs && node --check shared/updaterStateMachine.cjs",
     "electron": "wait-on tcp:3000 && electron .",
     "electron:dev": "concurrently -k \"cross-env BROWSER=none npm run dev\" \"npm run electron\"",
     "electron:build": "npm run build && electron-builder",
