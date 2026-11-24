@@ -6,9 +6,15 @@
 // Using fetch directly instead of ccxt for better browser/mobile compatibility
 import { coerceCandles } from '../../utils/candleShape';
 import { yangZhangVol } from '../market/volRegimeCore';
+import {
+    BINANCE_FUTURES_REST_BASES,
+    BINANCE_SPOT_REST_BASES,
+    DERIBIT_API_BASE,
+} from '../../config/exchangeEndpoints';
 
-const BINANCE_API_BASE = 'https://api.binance.com';
-const BINANCE_FUTURES_API = 'https://fapi.binance.com';
+
+const BINANCE_API_BASE = BINANCE_SPOT_REST_BASES[0];
+const BINANCE_FUTURES_API = BINANCE_FUTURES_REST_BASES[0];
 
 // Simple in-memory cache with eviction
 const cache: Map<string, { data: any; timestamp: number }> = new Map();
@@ -401,14 +407,9 @@ const containsNonFinite = (value: unknown): boolean => {
     return false;
 };
 
-// List of available Binance API endpoints to try
-const BINANCE_ENDPOINTS = [
-    'https://api.binance.com',
-    'https://api1.binance.com',
-    'https://api2.binance.com',
-    'https://api3.binance.com',
-    'https://data-api.binance.vision' // Fallback data API (usually works when others fail)
-];
+// Failover chains live in the ONE endpoint registry (config/exchangeEndpoints);
+// primary first, Vision data mirror last (usually works when others fail).
+const BINANCE_ENDPOINTS = BINANCE_SPOT_REST_BASES;
 
 // List of available Binance Futures API endpoints to try.
 // NO testnet here: testnet.binancefuture.com used to sit at the end of this
@@ -417,11 +418,7 @@ const BINANCE_ENDPOINTS = [
 // 30s and served to the model and the desk as "live" mark/funding/OI. A wrong
 // price labeled live is worse than a failed fetch, so the prod path must only
 // ever talk to the real futures hosts.
-const BINANCE_FUTURES_ENDPOINTS = [
-    'https://fapi.binance.com',
-    'https://fapi1.binance.com',
-    'https://fapi2.binance.com',
-];
+const BINANCE_FUTURES_ENDPOINTS = BINANCE_FUTURES_REST_BASES;
 
 /**
  * Robust fetch helper that tries multiple Binance endpoints
@@ -1263,7 +1260,7 @@ export const fetchDeribitOptionsContext = async (symbol: string): Promise<Option
         // param names answer HTTP 400.
         const endTs = Date.now();
         const startTs = endTs - 24 * 3_600_000;
-        const res = await deribitFetch(`https://www.deribit.com/api/v2/public/get_volatility_index_data?currency=${base}&resolution=3600&start_timestamp=${startTs}&end_timestamp=${endTs}`);
+        const res = await deribitFetch(`${DERIBIT_API_BASE}/api/v2/public/get_volatility_index_data?currency=${base}&resolution=3600&start_timestamp=${startTs}&end_timestamp=${endTs}`);
         if (!res.ok) {
             return { available: false, reason: `Deribit returned HTTP ${res.status}` };
         }
