@@ -220,7 +220,7 @@ const capSessions = (list: LiveSession[]): LiveSession[] => {
 };
 
 const emit = (): void => {
-    flushEphemeralFor(undefined);
+    flushEphemeralFor(undefined, false);
     rebuild();
     for (const l of listeners) l();
     schedulePersist();
@@ -232,15 +232,20 @@ const emit = (): void => {
 // Coalescing to one flush per animation frame stops 50-100 store emits a
 // second from re-rendering every dock subscriber, and keeping the debounce off
 // this path means a long stream can no longer starve persistence.
-const streamFrames = new Map<string, number>();
+const streamFrames = new Map<string, { kind: 'raf' | 'timer'; handle: number }>();
 const streamQueues = new Map<string, Array<(s: LiveSession) => LiveSession>>();
 
-const flushEphemeralFor = (id: string | undefined): void => {
+const flushEphemeralFor = (id: string | undefined, notifyListeners = true): void => {
     const ids = id === undefined ? [...streamQueues.keys()] : [id];
+    let flushedAny = false;
     for (const key of ids) {
-        const frame = streamFrames.get(key);
-        if (frame !== undefined && typeof window !== 'undefined' && typeof window.cancelAnimationFrame === 'function') {
-            window.cancelAnimationFrame(frame);
+        const scheduled = streamFrames.get(key);
+        if (scheduled !== undefined && typeof window !== 'undefined') {
+            if (scheduled.kind === 'raf' && typeof window.cancelAnimationFrame === 'function') {
+                window.cancelAnimationFrame(scheduled.handle);
+            } else if (scheduled.kind === 'timer') {
+                window.clearTimeout(scheduled.handle);
+            }
         }
         streamFrames.delete(key);
         const queued = streamQueues.get(key) ?? [];
@@ -253,8 +258,9 @@ const flushEphemeralFor = (id: string | undefined): void => {
             return queued.reduce((acc, fn) => fn(acc), s);
         });
         if (!matched) console.warn(`chatStore: ephemeral mutate on unknown session "${key}" — nothing was written`);
-        publish();
+        flushedAny = true;
     }
+    if (flushedAny && notifyListeners) publish();
 };
 
 /** Flush an in-flight token burst immediately (tool boundary, settle, Stop). */
@@ -271,7 +277,13 @@ export const mutateEphemeral = (id: string, fn: (s: LiveSession) => LiveSession)
         flushEphemeralFor(id);
         return;
     }
-    streamFrames.set(id, window.requestAnimationFrame(() => flushEphemeralFor(id)));
+    // Hidden tabs pause requestAnimationFrame; fall back to a 24ms timer so
+    // background Desk turns continue streaming and mirroring cleanly.
+    if (typeof document !== 'undefined' && document.hidden) {
+        streamFrames.set(id, { kind: 'timer', handle: window.setTimeout(() => flushEphemeralFor(id), 24) });
+        return;
+    }
+    streamFrames.set(id, { kind: 'raf', handle: window.requestAnimationFrame(() => flushEphemeralFor(id)) });
 };
 
 /** Notify subscribers WITHOUT scheduling a persist. The run registries hold
@@ -347,6 +359,7 @@ const rehydrate = (): void => {
 export const persistInterrupted = (): void => {
     try {
         if (!loaded || getActiveUsername() !== loadedFor) return;
+        flushEphemeralFor(undefined, false);
         const stored: ChatSession[] = sessions.map(s => ({
             ...s,
             entries: s.entries.map(({ streaming, proposal: _proposal, settlementCorrection: _correction, tradeAction: _action, riskChange: _riskChange, aiSettingChange: _aiSetting, strategyActivation: _strategy, sessionPlan: _sessionPlan, ruleProposal: _ruleProposal, statsCard: _stats, liveProgress: _liveProgress, ...rest }) => (streaming ? { ...rest, interrupted: true } : rest)),

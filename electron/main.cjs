@@ -472,7 +472,7 @@ function getDiscoveryCandidateUrls(baseUrl, isGemini, apiKey) {
         urls.push(`${baseUrl}/v1/models`);
     }
     if (policy.isLocalBaseUrl(baseUrl)) {
-        urls.push(`${baseUrl.replace(/\/v1$/, '')}/api/tags`);
+        urls.push(`${baseUrl.replace(/\/v1$/, '')}${policy.OLLAMA_TAGS_PATH}`);
     }
     return [...new Set(urls)];
 }
@@ -486,7 +486,7 @@ function discoverProviderDetails(config) {
     if (!apiKey && !policy.isLocalBaseUrl(config?.baseUrl)) {
         throw new Error('API key is required to discover models.');
     }
-    const isGemini = config?.apiFormat === 'google' || /generativelanguage/i.test(baseUrl);
+    const isGemini = config?.apiFormat === 'google' || policy.isGoogleGeminiBaseUrl(baseUrl);
     const isAnthropic = config?.apiFormat === 'messages' && !isGemini;
     const urls = getDiscoveryCandidateUrls(baseUrl, isGemini, apiKey);
     const headers = {
@@ -494,7 +494,7 @@ function discoverProviderDetails(config) {
     };
     if (isAnthropic) {
         headers['x-api-key'] = apiKey;
-        headers['anthropic-version'] = '2023-06-01';
+        headers['anthropic-version'] = policy.ANTHROPIC_API_VERSION;
     } else if (!isGemini && apiKey && apiKey !== 'not-needed') {
         headers.Authorization = `Bearer ${apiKey}`;
     }
@@ -503,7 +503,7 @@ function discoverProviderDetails(config) {
 
 // Wall-clock budget for one main-process provider request (headers OR body
 // phase), matching the browser's stream budget (STREAM_TIMEOUT_MS 300s).
-const PROVIDER_REQUEST_TIMEOUT_MS = 300000;
+const PROVIDER_REQUEST_TIMEOUT_MS = policy.PROVIDER_STREAM_TIMEOUT_MS;
 
 /**
  * net.fetch wrapper: redirect:'manual' + re-validation of EVERY Location hop
@@ -529,7 +529,7 @@ async function sendDiscoverRequest(config) {
 
     for (const url of urls) {
         const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 15000);
+        const timeout = setTimeout(() => controller.abort(), policy.PROVIDER_DISCOVERY_TIMEOUT_MS);
         try {
             const response = await fetchUpstream(url, {
                 method: 'GET',
@@ -594,7 +594,7 @@ function providerRequestDetails(request) {
         // THIS process to build the provider request, so the same seat
         // returned its thinking on the web and not on the desktop — the
         // Thinking row simply stayed empty, with no error to explain it.
-        policy.requestReasoningSideChannel(config, body);
+        policy.requestReasoningSideChannel(config, body, request.reasoningEffort);
         if (request.jsonSchema && request.jsonSchema.schema) {
             // Pre-resolved by the renderer's jsonSchema capability class —
             // apply as-is; the degrade below is the safety net either way.
@@ -614,7 +614,7 @@ function providerRequestDetails(request) {
     } else if (format === 'messages') {
         url = `${baseUrl}/messages`;
         if (apiKey) headers['x-api-key'] = apiKey;
-        headers['anthropic-version'] = '2023-06-01';
+        headers['anthropic-version'] = policy.ANTHROPIC_API_VERSION;
         headers['anthropic-dangerous-direct-browser-access'] = 'true';
         const system = messages.find(message => message?.role === 'system');
         body = {
@@ -662,7 +662,7 @@ function providerRequestDetails(request) {
                 instructions: contentToText(messages.find(message => message?.role === 'system').content)
             } : {}),
             max_output_tokens: request.maxTokens ?? 4096,
-            temperature: request.temperature ?? 0.7,
+            ...(request.reasoningPatch?.reasoning ? {} : { temperature: request.temperature ?? 0.7 }),
         };
     } else if (format === 'google') {
         const geminiModel = model.replace(/^models\//, '');
@@ -1023,11 +1023,56 @@ async function sendProviderRequest(request, sender) {
             }
         }
         if (streamActive && !response.ok && (response.status === 400 || response.status === 422)) {
-            // Some OpenAI-compatible gateways reject stream/stream_options —
-            // retry once buffered so the chat still answers (no live paint).
+            let activeBody = { ...body };
+            if (activeBody.stream_options) {
+                delete activeBody.stream_options;
+                armBodyPhase();
+                response = await fetchUpstream(url, {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify(activeBody),
+                    signal: controller.signal,
+                });
+            }
+            if (!response.ok && (response.status === 400 || response.status === 422) && activeBody.include_reasoning !== undefined) {
+                delete activeBody.include_reasoning;
+                armBodyPhase();
+                response = await fetchUpstream(url, {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify(activeBody),
+                    signal: controller.signal,
+                });
+            }
+            if (!response.ok && (response.status === 400 || response.status === 422) && activeBody.temperature !== undefined && (activeBody.reasoning || activeBody.thinking || activeBody.reasoning_effort)) {
+                delete activeBody.temperature;
+                armBodyPhase();
+                response = await fetchUpstream(url, {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify(activeBody),
+                    signal: controller.signal,
+                });
+            }
+            if (!response.ok && (response.status === 400 || response.status === 422)) {
+                // Some OpenAI-compatible gateways reject stream —
+                // retry once buffered so the chat still answers (no live paint).
+                const retryBody = { ...activeBody };
+                delete retryBody.stream;
+                delete retryBody.stream_options;
+                armBodyPhase();
+                response = await fetchUpstream(url, {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify(retryBody),
+                    signal: controller.signal,
+                });
+                streamActive = false;
+            }
+        }
+        if (!streamActive && !response.ok && (response.status === 400 || response.status === 422) && body.include_reasoning !== undefined) {
             const retryBody = { ...body };
-            delete retryBody.stream;
-            delete retryBody.stream_options;
+            delete retryBody.include_reasoning;
             armBodyPhase();
             response = await fetchUpstream(url, {
                 method: 'POST',
@@ -1035,7 +1080,17 @@ async function sendProviderRequest(request, sender) {
                 body: JSON.stringify(retryBody),
                 signal: controller.signal,
             });
-            streamActive = false;
+        }
+        if (!streamActive && !response.ok && (response.status === 400 || response.status === 422) && body.temperature !== undefined && (body.reasoning || body.thinking || body.reasoning_effort)) {
+            const retryBody = { ...body };
+            delete retryBody.temperature;
+            armBodyPhase();
+            response = await fetchUpstream(url, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify(retryBody),
+                signal: controller.signal,
+            });
         }
         if (streamActive && response.ok && response.body && request.requestId && sender
             && policy.isEventStreamResponse(response)) {

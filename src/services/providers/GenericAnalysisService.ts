@@ -599,7 +599,8 @@ export async function streamQuickResponse(
     signal?: AbortSignal,
     onReasoning?: (reasoning: string) => void,
     onChunk?: (visibleDelta: string) => void,
-    effort?: ReasoningEffort
+    effort?: ReasoningEffort,
+    onStreamReset?: () => void
 ): Promise<string> {
     const messages: ChatMessage[] = (history || []).map(m => ({
         role: m.role === MessageRole.AI ? 'assistant' : m.role === MessageRole.SYSTEM ? 'system' : 'user',
@@ -631,6 +632,7 @@ export async function streamQuickResponse(
                 if (visible) {
                     noteReasoning(visible);
                     visible = '';
+                    onStreamReset?.();
                 }
             },
             reasoningEffort: resolveComposerEffort(effort),
@@ -645,6 +647,7 @@ export async function streamQuickResponse(
             if (gated.orphanClose && visible) {
                 noteReasoning(visible);
                 visible = '';
+                onStreamReset?.();
             }
             if (gated.thinking) noteReasoning(gated.thinking);
             if (!gated.visible && !gated.orphanClose) continue;

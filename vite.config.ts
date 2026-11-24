@@ -23,6 +23,12 @@ import {
   splitChatContentPayload,
   isEventStreamResponse,
   requestReasoningSideChannel,
+  ANTHROPIC_API_VERSION,
+  DEV_PROVIDER_PROXY_PATH,
+  OLLAMA_TAGS_PATH,
+  PROVIDER_REQUEST_TIMEOUT_MS,
+  PROVIDER_STREAM_TIMEOUT_MS,
+  PROVIDER_DISCOVERY_TIMEOUT_MS,
 } from './shared/providerRequestPolicy.cjs';
 
 // shared/providerRequestPolicy.cjs is the single wire-policy source for the
@@ -60,6 +66,14 @@ const SHARED_POLICY_EXPORTS = [
   'splitChatContentPayload',
   'isEventStreamResponse',
   'requestReasoningSideChannel',
+  'ANTHROPIC_API_VERSION',
+  'DEV_PROVIDER_PROXY_PATH',
+  'OLLAMA_TAGS_PATH',
+  'GOOGLE_GEMINI_DEFAULT_BASE',
+  'isGoogleGeminiBaseUrl',
+  'PROVIDER_REQUEST_TIMEOUT_MS',
+  'PROVIDER_STREAM_TIMEOUT_MS',
+  'PROVIDER_DISCOVERY_TIMEOUT_MS',
 ];
 
 function sharedProviderPolicyEsmInterop(): any {
@@ -85,7 +99,7 @@ function devProviderProxy() {
         if (rf?.type === 'json_schema' && jsonMode) b.response_format = { type: 'json_object' };
         else delete b.response_format;
       };
-      server.middlewares.use('/__provider_proxy', async (req: any, res: any, next: any) => {
+      server.middlewares.use(DEV_PROVIDER_PROXY_PATH, async (req: any, res: any, next: any) => {
         if (req.method !== 'POST') return next();
         try {
           const chunks: Buffer[] = [];
@@ -108,7 +122,7 @@ function devProviderProxy() {
             };
             if (isAnthropic) {
               discoverHeaders['x-api-key'] = apiKey;
-              discoverHeaders['anthropic-version'] = '2023-06-01';
+              discoverHeaders['anthropic-version'] = ANTHROPIC_API_VERSION;
             } else if (!isGemini && apiKey && apiKey !== 'not-needed') {
               discoverHeaders.Authorization = `Bearer ${apiKey}`;
             }
@@ -125,7 +139,7 @@ function devProviderProxy() {
                 candidateUrls.push(`${baseUrl}/v1/models`);
               }
               if (isLocalBaseUrl(baseUrl)) {
-                candidateUrls.push(`${baseUrl.replace(/\/v1$/, '')}/api/tags`);
+                candidateUrls.push(`${baseUrl.replace(/\/v1$/, '')}${OLLAMA_TAGS_PATH}`);
               }
             }
 
@@ -138,7 +152,7 @@ function devProviderProxy() {
                 const upstream = await fetchFollowingSafeRedirects(fetch, discoverUrl, {
                   method: 'GET',
                   headers: discoverHeaders,
-                  signal: AbortSignal.timeout(15000),
+                  signal: AbortSignal.timeout(PROVIDER_DISCOVERY_TIMEOUT_MS),
                 });
                 const text = await upstream.text();
                 lastStatus = upstream.status;
@@ -182,11 +196,11 @@ function devProviderProxy() {
               body.tools = request.tools;
               body.tool_choice = request.toolChoice || 'auto';
             }
-            requestReasoningSideChannel(config, body);
+            requestReasoningSideChannel(config, body, request.reasoningEffort);
           } else if (config.apiFormat === 'messages') {
             url = `${baseUrl}/messages`;
             if (apiKey) headers['x-api-key'] = apiKey;
-            headers['anthropic-version'] = '2023-06-01';
+            headers['anthropic-version'] = ANTHROPIC_API_VERSION;
             const system = messages.find((message: any) => message?.role === 'system');
             body = { model: config.selectedModel, max_tokens: request.maxTokens ?? 4096, messages: messages.filter((message: any) => message?.role !== 'system').map((message: any) => ({ role: message.role, content: toAnthropicContent(message.content) })) };
             // Cache breakpoint on the stable system block (shared policy, O-58).
@@ -289,7 +303,7 @@ function devProviderProxy() {
               if (!res.writableEnded) clientAbort.abort();
             };
             res.on('close', onClientClose);
-            const upstreamSignal = AbortSignal.any([clientAbort.signal, AbortSignal.timeout(300000)]);
+            const upstreamSignal = AbortSignal.any([clientAbort.signal, AbortSignal.timeout(PROVIDER_STREAM_TIMEOUT_MS)]);
             let activeStreamBody: Record<string, unknown> = streamBody;
             let sse = await fetchFollowingSafeRedirects(fetch, url, { method: 'POST', headers: streamHeaders, body: JSON.stringify(activeStreamBody), signal: upstreamSignal });
             if (!sse.ok && (request.jsonMode || request.jsonSchema) && (sse.status === 400 || sse.status === 422) && activeStreamBody.response_format) {
@@ -308,6 +322,12 @@ function devProviderProxy() {
               const noStreamOpts = { ...activeStreamBody };
               delete noStreamOpts.stream_options;
               activeStreamBody = noStreamOpts;
+              sse = await fetchFollowingSafeRedirects(fetch, url, { method: 'POST', headers: streamHeaders, body: JSON.stringify(activeStreamBody), signal: upstreamSignal });
+            }
+            if (!sse.ok && (sse.status === 400 || sse.status === 422) && activeStreamBody.include_reasoning !== undefined) {
+              const noSideChannel = { ...activeStreamBody };
+              delete noSideChannel.include_reasoning;
+              activeStreamBody = noSideChannel;
               sse = await fetchFollowingSafeRedirects(fetch, url, { method: 'POST', headers: streamHeaders, body: JSON.stringify(activeStreamBody), signal: upstreamSignal });
             }
             if (!sse.ok && (sse.status === 400 || sse.status === 422) && activeStreamBody.temperature !== undefined && (activeStreamBody.reasoning || activeStreamBody.thinking || activeStreamBody.reasoning_effort)) {
@@ -377,18 +397,34 @@ function devProviderProxy() {
             if (!res.writableEnded) res.end();
             return;
           }
-          let upstream = await fetchFollowingSafeRedirects(fetch, url, { method: 'POST', headers, body: JSON.stringify(body), signal: AbortSignal.timeout(120000) });
-          if (!upstream.ok && (request.jsonMode || request.jsonSchema) && (upstream.status === 400 || upstream.status === 422) && body.response_format) {
-            const fallbackBody = { ...body };
+          let activeBody: Record<string, unknown> = { ...body };
+          let upstream = await fetchFollowingSafeRedirects(fetch, url, { method: 'POST', headers, body: JSON.stringify(activeBody), signal: AbortSignal.timeout(PROVIDER_REQUEST_TIMEOUT_MS) });
+          if (!upstream.ok && (request.jsonMode || request.jsonSchema) && (upstream.status === 400 || upstream.status === 422) && activeBody.response_format) {
+            const fallbackBody = { ...activeBody };
             stepDownResponseFormat(fallbackBody, request.jsonMode);
-            upstream = await fetchFollowingSafeRedirects(fetch, url, { method: 'POST', headers, body: JSON.stringify(fallbackBody), signal: AbortSignal.timeout(120000) });
-            if (!upstream.ok && (upstream.status === 400 || upstream.status === 422) && fallbackBody.response_format) {
-              delete fallbackBody.response_format;
-              upstream = await fetchFollowingSafeRedirects(fetch, url, { method: 'POST', headers, body: JSON.stringify(fallbackBody), signal: AbortSignal.timeout(120000) });
+            activeBody = fallbackBody;
+            upstream = await fetchFollowingSafeRedirects(fetch, url, { method: 'POST', headers, body: JSON.stringify(activeBody), signal: AbortSignal.timeout(PROVIDER_REQUEST_TIMEOUT_MS) });
+            if (!upstream.ok && (upstream.status === 400 || upstream.status === 422) && activeBody.response_format) {
+              const noRf = { ...activeBody };
+              delete noRf.response_format;
+              activeBody = noRf;
+              upstream = await fetchFollowingSafeRedirects(fetch, url, { method: 'POST', headers, body: JSON.stringify(activeBody), signal: AbortSignal.timeout(PROVIDER_REQUEST_TIMEOUT_MS) });
             }
           }
+          if (!upstream.ok && (upstream.status === 400 || upstream.status === 422) && activeBody.include_reasoning !== undefined) {
+            const noSide = { ...activeBody };
+            delete noSide.include_reasoning;
+            activeBody = noSide;
+            upstream = await fetchFollowingSafeRedirects(fetch, url, { method: 'POST', headers, body: JSON.stringify(activeBody), signal: AbortSignal.timeout(PROVIDER_REQUEST_TIMEOUT_MS) });
+          }
+          if (!upstream.ok && (upstream.status === 400 || upstream.status === 422) && activeBody.temperature !== undefined && (activeBody.reasoning || activeBody.thinking || activeBody.reasoning_effort)) {
+            const noTemp = { ...activeBody };
+            delete noTemp.temperature;
+            activeBody = noTemp;
+            upstream = await fetchFollowingSafeRedirects(fetch, url, { method: 'POST', headers, body: JSON.stringify(activeBody), signal: AbortSignal.timeout(PROVIDER_REQUEST_TIMEOUT_MS) });
+          }
           let text = await upstream.text();
-          if (upstream.ok && (request.jsonMode || request.jsonSchema) && body.response_format) {
+          if (upstream.ok && (request.jsonMode || request.jsonSchema) && activeBody.response_format) {
             try {
               const parsed = JSON.parse(text);
               const message = parsed?.choices?.[0]?.message || {};
@@ -398,9 +434,9 @@ function devProviderProxy() {
                 extractReasoningFields(message), split.reasoning,
               ], '\n');
               if (!content && !reasoning) {
-                const fallbackBody = { ...body };
+                const fallbackBody = { ...activeBody };
                 delete fallbackBody.response_format;
-                upstream = await fetchFollowingSafeRedirects(fetch, url, { method: 'POST', headers, body: JSON.stringify(fallbackBody), signal: AbortSignal.timeout(120000) });
+                upstream = await fetchFollowingSafeRedirects(fetch, url, { method: 'POST', headers, body: JSON.stringify(fallbackBody), signal: AbortSignal.timeout(PROVIDER_REQUEST_TIMEOUT_MS) });
                 text = await upstream.text();
               }
             } catch { /* non-JSON output is handled by the client parser */ }
@@ -531,6 +567,7 @@ export default defineConfig(() => {
     base: './', // Crucial: relative paths for Electron
     define: {
       'import.meta.env.PACKAGE_VERSION': JSON.stringify(pkgVersion),
+      '__APP_VERSION__': JSON.stringify(pkgVersion),
       '__AUGUST_BUNDLED_SKILLS__': JSON.stringify(bundledSkills),
     },
     plugins: [sharedProviderPolicyEsmInterop(), react(), tailwindcss(), devProviderProxy()],
@@ -541,7 +578,7 @@ export default defineConfig(() => {
     },
     server: {
       host: '0.0.0.0',
-      port: 3000,
+      port: Number(process.env.PORT) || 3000,
       allowedHosts: true,
       hmr: process.env.DISABLE_HMR !== 'true',
       watch: {

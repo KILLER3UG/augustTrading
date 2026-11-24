@@ -722,11 +722,12 @@ function mergeReasoningParts(parts, separator = '') {
 }
 
 /** Normalize every structured reasoning spelling used by OpenAI-compatible
- *  gateways. Kept in the shared policy so browser SSE, Electron SSE, buffered
- *  JSON and the dev proxy cannot drift on empty aliases or detail arrays. */
+ *  gateways. Sequential array items (e.g. reasoning_details deltas) are joined
+ *  verbatim so short numeric/whitespace tokens are never dropped by sibling-alias
+ *  substring deduplication. */
 function extractReasoningPayload(value) {
     if (typeof value === 'string') return value;
-    if (Array.isArray(value)) return mergeReasoningParts(value.map(extractReasoningPayload));
+    if (Array.isArray(value)) return value.map(extractReasoningPayload).join('');
     if (value && typeof value === 'object') {
         return mergeReasoningParts([
             value.text, value.summary, value.thinking, value.thought,
@@ -764,7 +765,7 @@ function splitChatContentPayload(content) {
             texts.push(part.text);
         }
     }
-    return { text: texts.join('\n'), reasoning: mergeReasoningParts(thoughts) };
+    return { text: texts.join('\n'), reasoning: thoughts.join('') };
 }
 
 /** A provider that ignored stream:true answers with JSON. Both streaming
@@ -788,13 +789,23 @@ function isEventStreamResponse(response) {
  * It belongs HERE because this is the one module the renderer, the vite dev
  * proxy and electron/main.cjs all import; that is the whole point of it.
  */
-function requestReasoningSideChannel(config, params) {
+function requestReasoningSideChannel(config, params, reasoningEffort) {
+    if (reasoningEffort === 'off') return;
     const host = `${(config && config.baseUrl) || ''} ${(config && config.selectedModel) || ''}`;
     if (classifyReasoningGateway(config && config.baseUrl)
         || /deepseek|groq.com|together.xyz|fireworks.ai|siliconflow/i.test(host)) {
         params.include_reasoning = true;
     }
 }
+
+const ANTHROPIC_API_VERSION = '2023-06-01';
+const DEV_PROVIDER_PROXY_PATH = '/__provider_proxy';
+const OLLAMA_TAGS_PATH = '/api/tags';
+const GOOGLE_GEMINI_DEFAULT_BASE = 'https://generativelanguage.googleapis.com/v1beta';
+const isGoogleGeminiBaseUrl = (baseUrl) => /generativelanguage/i.test(String(baseUrl || ''));
+const PROVIDER_REQUEST_TIMEOUT_MS = 120_000;
+const PROVIDER_STREAM_TIMEOUT_MS = 300_000;
+const PROVIDER_DISCOVERY_TIMEOUT_MS = 15_000;
 
 // CommonJS export guarded so the SAME file also loads in the browser once
 // vite.config.ts's interop plugin appends the ESM re-export (the guard keeps
@@ -834,5 +845,13 @@ if (typeof module !== 'undefined' && module.exports) {
         splitChatContentPayload,
         isEventStreamResponse,
         requestReasoningSideChannel,
+        ANTHROPIC_API_VERSION,
+        DEV_PROVIDER_PROXY_PATH,
+        OLLAMA_TAGS_PATH,
+        GOOGLE_GEMINI_DEFAULT_BASE,
+        isGoogleGeminiBaseUrl,
+        PROVIDER_REQUEST_TIMEOUT_MS,
+        PROVIDER_STREAM_TIMEOUT_MS,
+        PROVIDER_DISCOVERY_TIMEOUT_MS,
     };
 }

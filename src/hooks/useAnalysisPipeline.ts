@@ -1206,6 +1206,10 @@ export function useAnalysisPipeline(params: UseAnalysisPipelineParams) {
                     // chip that displayed a tier while the request sent `'low'`
                     // is the dead affordance this argument exists to remove.
                     options?.reasoningEffort,
+                    () => {
+                        visibleContent = '';
+                        paint(visibleContent, reasoningContent);
+                    },
                 );
             } else {
                 // THE DESK ANSWERS WITH ITS TOOLS — the one executor the

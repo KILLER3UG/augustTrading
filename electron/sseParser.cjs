@@ -95,6 +95,11 @@ function createSseParser(apiFormat) {
             return { events, done: false };
         }
         const delta = choice.delta || {};
+        // Emit reasoning before visible text whenever both co-travel in the same SSE chunk.
+        const reasoning = extractReasoningFields(delta);
+        if (reasoning.length > 0) {
+            events.push({ type: 'reasoning', delta: reasoning });
+        }
         if (typeof delta.content === 'string' && delta.content.length > 0) {
             events.push({ type: 'text', delta: delta.content });
         } else if (Array.isArray(delta.content)) {
@@ -112,12 +117,6 @@ function createSseParser(apiFormat) {
                     events.push({ type: 'text', delta: part.text });
                 }
             }
-        }
-        // Reasoning tokens ride several field spellings across OpenAI-compatible
-        // servers (B.AI/vLLM/DeepSeek/OpenRouter/KiloCode); take whichever carries them.
-        const reasoning = extractReasoningFields(delta);
-        if (reasoning.length > 0) {
-            events.push({ type: 'reasoning', delta: reasoning });
         }
         if (Array.isArray(delta.tool_calls)) {
             for (const [position, tc] of delta.tool_calls.entries()) {

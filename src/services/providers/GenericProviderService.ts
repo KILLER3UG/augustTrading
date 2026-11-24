@@ -31,6 +31,10 @@ import {
     geminiThinkingParams,
     MIN_EFFECTIVE_THINKING_TOKENS,
     requestReasoningSideChannel,
+    ANTHROPIC_API_VERSION,
+    DEV_PROVIDER_PROXY_PATH,
+    PROVIDER_REQUEST_TIMEOUT_MS,
+    PROVIDER_STREAM_TIMEOUT_MS,
 } from '../../../shared/providerRequestPolicy.cjs';
 
 import { recordProviderSuccess, recordProviderError } from '../infrastructure/ProviderHealthService';
@@ -720,6 +724,18 @@ const buildDegradeLadder = (
         }
     }
 
+    const withoutSideChannel = { ...tail() };
+    if (withoutSideChannel.include_reasoning !== undefined) {
+        delete withoutSideChannel.include_reasoning;
+        pushIfDifferent(withoutSideChannel);
+    }
+
+    const withoutTemp = { ...tail() };
+    if (withoutTemp.temperature !== undefined && (withoutTemp.reasoning || withoutTemp.thinking || withoutTemp.reasoning_effort)) {
+        delete withoutTemp.temperature;
+        pushIfDifferent(withoutTemp);
+    }
+
     // Finally the tools. Every desk-tool seat reaches this line, and it is the
     // rung a nested try/catch strands exactly where it is needed — the
     // jsonMode+tools body has already lost its `response_format` above, so a
@@ -737,12 +753,12 @@ const buildDegradeLadder = (
 // ─── Timeout & Retry Helpers ────────────────────────────────────────────────
 
 /** Abort a request if it exceeds this wall-clock duration (per attempt). */
-const REQUEST_TIMEOUT_MS = 120_000;
+const REQUEST_TIMEOUT_MS = PROVIDER_REQUEST_TIMEOUT_MS;
 
 // Streaming analysis calls (reasoning-heavy models + large prompts) regularly
 // exceed the non-streaming budget — the chain of thought streams first, then
 // the answer. Give streams 5 minutes before declaring a timeout.
-const STREAM_TIMEOUT_MS = 300_000;
+const STREAM_TIMEOUT_MS = PROVIDER_STREAM_TIMEOUT_MS;
 
 /**
  * Combine the caller's AbortSignal with a strict timeout. A fresh combined
@@ -780,7 +796,7 @@ async function chatCompletionsTurn(
         (params as any).tools = options.tools;
         (params as any).tool_choice = options.toolChoice ?? 'auto';
     }
-    requestReasoningSideChannel(config, params);
+    requestReasoningSideChannel(config, params, options?.reasoningEffort);
     applyReasoningToChatParams(config, params as unknown as Record<string, unknown>, options);
     // A gateway may refuse the constrained response_format, the tools, or both.
     // Walk the ladder of progressively less ambitious bodies instead of nesting
@@ -869,22 +885,53 @@ async function* chatCompletionsStream(
         (params as any).tools = options.tools;
         (params as any).tool_choice = options.toolChoice ?? 'auto';
     }
-    requestReasoningSideChannel(config, params);
+    requestReasoningSideChannel(config, params, options?.reasoningEffort);
     applyReasoningToChatParams(config, params as unknown as Record<string, unknown>, options);
     let stream: AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>;
     try {
         stream = await client.chat.completions.create(params, { signal: withStreamTimeoutSignal(options?.signal) });
     } catch (error: any) {
-        // Same degrade chain as the non-streaming turn — previously the
-        // stream path had NO json fallback, so a gateway that rejected
-        // response_format failed the whole stream at creation time.
-        if ((options?.jsonMode || options?.jsonSchema) && (error?.status === 400 || error?.status === 422)) {
-            const fallbackParams = { ...params } as Record<string, unknown>;
-            degradeResponseFormatOnce(fallbackParams, options?.jsonMode);
-            stream = await client.chat.completions.create(fallbackParams as any, { signal: withStreamTimeoutSignal(options?.signal) }) as unknown as AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>;
-        } else {
-            throw error;
+        if (error?.status !== 400 && error?.status !== 422) throw error;
+        let activeParams: Record<string, unknown> = { ...params };
+        let opened: AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk> | undefined;
+        let lastErr: unknown = error;
+        const tryParams = async (candidate: Record<string, unknown>): Promise<boolean> => {
+            try {
+                opened = await client.chat.completions.create(candidate as any, { signal: withStreamTimeoutSignal(options?.signal) }) as unknown as AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>;
+                activeParams = candidate;
+                return true;
+            } catch (err: any) {
+                lastErr = err;
+                if (err?.status !== 400 && err?.status !== 422) throw err;
+                return false;
+            }
+        };
+        if ((options?.jsonMode || options?.jsonSchema) && activeParams.response_format) {
+            const softened = { ...activeParams };
+            degradeResponseFormatOnce(softened, options?.jsonMode);
+            if (!(await tryParams(softened)) && softened.response_format !== undefined) {
+                const noRf = { ...softened };
+                delete noRf.response_format;
+                await tryParams(noRf);
+            }
         }
+        if (!opened && activeParams.stream_options) {
+            const noStreamOpts = { ...activeParams };
+            delete noStreamOpts.stream_options;
+            await tryParams(noStreamOpts);
+        }
+        if (!opened && activeParams.include_reasoning !== undefined) {
+            const noSide = { ...activeParams };
+            delete noSide.include_reasoning;
+            await tryParams(noSide);
+        }
+        if (!opened && activeParams.temperature !== undefined && (activeParams.reasoning || activeParams.thinking || activeParams.reasoning_effort)) {
+            const noTemp = { ...activeParams };
+            delete noTemp.temperature;
+            await tryParams(noTemp);
+        }
+        if (!opened) throw lastErr;
+        stream = opened;
     }
     const gate = createThinkingStreamGate();
     const toolBuf = new StreamToolCallBuffer();
@@ -1013,7 +1060,7 @@ async function messagesCall(
         headers: {
             'Content-Type': 'application/json',
             'x-api-key': config.apiKey,
-            'anthropic-version': '2023-06-01',
+            'anthropic-version': ANTHROPIC_API_VERSION,
             'anthropic-dangerous-direct-browser-access': 'true',
         },
         body: JSON.stringify(body),
@@ -1092,7 +1139,7 @@ async function responsesCall(
             input: toResponsesInput(messages),
             ...(instructions ? { instructions } : {}),
             max_output_tokens: options?.maxTokens ?? 4096,
-            temperature: options?.temperature ?? 0.7,
+            ...(reasoningPatch.patch.reasoning ? {} : { temperature: options?.temperature ?? 0.7 }),
             ...reasoningPatch.patch,
         }),
         signal: options?.signal,
@@ -1566,14 +1613,16 @@ async function sendChatRequestOnce(
                             if (result.code !== undefined) (error as any).code = result.code;
                             throw error;
                         }
-                        if (result.reasoning) options?.onReasoning?.(result.reasoning);
+                        const stripped = extractAndStripThinkBlocks(result.text || '');
+                        const combinedReasoning = mergeReasoningParts([result.reasoning || '', stripped.leaked], '\n\n');
+                        if (combinedReasoning) options?.onReasoning?.(combinedReasoning);
                         reportUsageDirect(effectiveConfig, result.usage, options, messages);
                         reportFinishReason(
                             effectiveConfig,
                             normalizeFinishReason(result.finishReason),
                             options,
                         );
-                        return result.text || '';
+                        return stripped.visible;
                     }).finally(() => {
                         window.clearTimeout(timeout);
                         options?.signal?.removeEventListener('abort', cancelRequest);
@@ -1581,7 +1630,7 @@ async function sendChatRequestOnce(
                 }
                 if (usesDevProviderProxy()) {
                     const patch = reasoningPatchFor(effectiveConfig, options);
-                    return fetch('/__provider_proxy', {
+                    return fetch(DEV_PROVIDER_PROXY_PATH, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -1710,7 +1759,9 @@ async function sendChatTurnOnce(
                             if (bridge.code !== undefined) (error as any).code = bridge.code;
                             throw error;
                         }
-                        if (bridge.reasoning) options?.onReasoning?.(bridge.reasoning);
+                        const stripped = extractAndStripThinkBlocks(bridge.text || '');
+                        const combinedReasoning = mergeReasoningParts([bridge.reasoning || '', stripped.leaked], '\n\n');
+                        if (combinedReasoning) options?.onReasoning?.(combinedReasoning);
                         reportUsageDirect(effectiveConfig, bridge.usage, options, messages);
                         // The bridge already flattened the provider body, so
                         // this is a raw stop token rather than a response shape
@@ -1718,15 +1769,17 @@ async function sendChatTurnOnce(
                         const bridgeFinish = normalizeFinishReason(bridge.finishReason);
                         reportFinishReason(effectiveConfig, bridgeFinish, options);
                         return {
-                            text: bridge.text || '',
-                            reasoning: bridge.reasoning || '',
+                            text: stripped.visible,
+                            reasoning: combinedReasoning,
                             toolCalls: bridge.toolCalls || [],
                             finishReason: bridgeFinish,
                             truncated: truncatesOutput(bridgeFinish),
-                            assistantMessage: bridge.assistantMessage || {
-                                role: 'assistant',
-                                content: bridge.text || '',
-                            },
+                            assistantMessage: bridge.assistantMessage
+                                ? { ...bridge.assistantMessage, content: stripped.visible }
+                                : {
+                                    role: 'assistant',
+                                    content: stripped.visible,
+                                },
                         } satisfies ChatTurnResult;
                     } finally {
                         window.clearTimeout(timeout);
@@ -1735,7 +1788,7 @@ async function sendChatTurnOnce(
                 }
                 if (usesDevProviderProxy()) {
                     const patch = reasoningPatchFor(effectiveConfig, options);
-                    const response = await fetch('/__provider_proxy', {
+                    const response = await fetch(DEV_PROVIDER_PROXY_PATH, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
@@ -1906,6 +1959,7 @@ async function* streamViaElectronBridge(
     const requestId = `provider-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const queue: string[] = [];
     let yielded = '';
+    let sawTextChunk = false;
     let streamedReasoning = '';
     let wake: (() => void) | null = null;
     let settled = false;
@@ -1925,13 +1979,16 @@ async function* streamViaElectronBridge(
             options?.onReasoning?.(chunk.delta);
             return;
         }
+        sawTextChunk = true;
         const gated = gate.push(chunk.delta);
         if (gated.orphanClose) {
+            // Notify caller FIRST so already-yielded pre-</think> text moves
+            // to reasoning before later queued chunks are flushed.
+            options?.onOrphanThinkClose?.();
             if (queue.length > 0) {
                 options?.onReasoning?.(queue.join(''));
                 queue.length = 0;
             }
-            options?.onOrphanThinkClose?.();
         }
         if (gated.thinking.length > 0) options?.onReasoning?.(gated.thinking);
         if (gated.visible) queue.push(gated.visible);
@@ -2001,7 +2058,7 @@ async function* streamViaElectronBridge(
         // character count re-emits stripped markup or duplicates text whenever the
         // two differ (the 2026-10-27 audit L-5). When nothing streamed at all,
         // peel inline `<think>` blocks first so raw markup never enters answer prose.
-        if (!yielded && result.text) {
+        if (!sawTextChunk && !yielded && result.text) {
             const stripped = extractAndStripThinkBlocks(result.text);
             if (stripped.leaked) options?.onReasoning?.(stripped.leaked);
             if (stripped.visible) yield stripped.visible;
@@ -2200,9 +2257,58 @@ const reasoningPatchFor = (
     config: ProviderConfig,
     options?: ChatRequestOptions,
 ): Record<string, unknown> | undefined => {
-    const effort = options?.reasoningEffort;
-    if (!effort || effort === 'auto') return undefined;
-    const { patch, audit } = buildReasoningPatch(config, effort);
+    const effort = options?.reasoningEffort ?? 'auto';
+    if (config.apiFormat === 'messages') {
+        const fields = anthropicThinkingFields({
+            modelId: config.selectedModel || '',
+            displayName: config.name,
+            capabilityOverride: config.thinkingCapable,
+            maxTokens: options?.maxTokens ?? 4096,
+            temperature: options?.temperature,
+            jsonMode: options?.jsonMode,
+            reasoningEffort: effort,
+        });
+        const thinkingSent = !!fields.thinking;
+        const audit: ReturnType<typeof buildReasoningPatch>['audit'] = {
+            route: thinkingSent ? 'anthropic-thinking' : 'none',
+            effort,
+            applied: thinkingSent,
+            reason: thinkingSent
+                ? `thinking budget_tokens=${fields.thinking!.budget_tokens} (effort ${effort})`
+                : `no thinking block (effort ${effort})`,
+        };
+        options?.onWireAudit?.(audit);
+        return undefined;
+    }
+    if (config.apiFormat === 'google') {
+        const geminiThinking = geminiThinkingParams(
+            options?.jsonMode,
+            config.selectedModel || '',
+            effort,
+            options?.maxTokens ?? 4096,
+        );
+        const audit: ReturnType<typeof buildReasoningPatch>['audit'] = geminiThinking
+            ? {
+                route: 'gemini-thinking',
+                effort,
+                applied: true,
+                reason: `thinkingConfig.thinkingBudget=${geminiThinking.thinkingBudget}`,
+            }
+            : {
+                route: 'none',
+                effort,
+                applied: false,
+                reason: options?.jsonMode
+                    ? 'google generateContent: JSON mode sends no thinkingConfig'
+                    : (effort === 'off'
+                        ? 'google generateContent: effort=off suppresses thinkingConfig'
+                        : 'google generateContent: no thinkingConfig for this model'),
+            };
+        options?.onWireAudit?.(audit);
+        return undefined;
+    }
+    if (!options?.reasoningEffort || options.reasoningEffort === 'auto') return undefined;
+    const { patch, audit } = buildReasoningPatch(config, options.reasoningEffort);
     options?.onWireAudit?.(audit);
     return Object.keys(patch).length > 0 ? patch : undefined;
 };
@@ -2474,7 +2580,7 @@ async function* streamViaProxy(
     // failure surfaces as an error instead of replaying the answer.
     const response = await withRetry(async () => {
         const patch = reasoningPatchFor(config, options);
-        const attempt = await fetch('/__provider_proxy', {
+        const attempt = await fetch(DEV_PROVIDER_PROXY_PATH, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({

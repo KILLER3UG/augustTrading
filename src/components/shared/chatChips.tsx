@@ -270,12 +270,16 @@ export const FadingText: React.FC<{ text: string; streaming: boolean; className?
         segs: Array<{ id: number; text: string }>;
         seq: number;
     }>({ blockIdx: -1, totalLen: 0, settledPrefix: '', segs: [], seq: 0 });
+    const mountedBlocksRef = useRef<Set<number>>(new Set());
+    const prevVisibleLenRef = useRef(0);
 
     // Keep the transcript pinned while letters grow the answer. The check is a
     // live distance, not a flag: a reader who scrolled up stays where they are.
     useLayoutEffect(() => {
         if (!streaming) {
             scrollerRef.current = null;
+            mountedBlocksRef.current.clear();
+            prevVisibleLenRef.current = 0;
             return;
         }
         if (!scrollerRef.current) {
@@ -297,6 +301,10 @@ export const FadingText: React.FC<{ text: string; streaming: boolean; className?
     }, [visible, streaming]);
 
     if (streaming && motionEnabled) {
+        if (visible.length < prevVisibleLenRef.current) {
+            mountedBlocksRef.current.clear();
+        }
+        prevVisibleLenRef.current = visible.length;
         const { committed, active } = splitStableMarkdownBlocks(visible);
         const activeIdx = committed.length;
         const mdClass = `!text-ui-base [&_p]:my-1 [&_li]:text-ui-base ${className ?? ''}`;
@@ -304,6 +312,7 @@ export const FadingText: React.FC<{ text: string; streaming: boolean; className?
         let activeNode: React.ReactNode = null;
         if (active) {
             if (canRenderPlainStreamingProse(active)) {
+                mountedBlocksRef.current.add(activeIdx);
                 const track = proseTrackRef.current;
                 const priorJoined = track.settledPrefix + track.segs.map(s => s.text).join('');
                 if (track.blockIdx !== activeIdx || !active.startsWith(priorJoined)) {
@@ -332,6 +341,8 @@ export const FadingText: React.FC<{ text: string; streaming: boolean; className?
                     </div>
                 );
             } else {
+                const isFirstMount = !mountedBlocksRef.current.has(activeIdx);
+                mountedBlocksRef.current.add(activeIdx);
                 const last = parsedRef.current;
                 const now = Date.now();
                 if (
@@ -348,18 +359,22 @@ export const FadingText: React.FC<{ text: string; streaming: boolean; className?
                     };
                 }
                 activeNode = (
-                    <div key={`block-${activeIdx}`} className="stream-block-fade">
+                    <div key={`block-${activeIdx}`} className={isFirstMount ? 'stream-block-fade' : undefined}>
                         {parsedRef.current.node}
                     </div>
                 );
             }
         }
 
-        const nodes: React.ReactNode[] = committed.map((block, i) => (
-            <div key={`block-${i}`} className="stream-block-fade">
-                <MarkdownContent content={block} className={mdClass} />
-            </div>
-        ));
+        const nodes: React.ReactNode[] = committed.map((block, i) => {
+            const isFirstMount = !mountedBlocksRef.current.has(i);
+            mountedBlocksRef.current.add(i);
+            return (
+                <div key={`block-${i}`} className={isFirstMount ? 'stream-block-fade' : undefined}>
+                    <MarkdownContent content={block} className={mdClass} />
+                </div>
+            );
+        });
         if (activeNode) nodes.push(activeNode);
 
         return (

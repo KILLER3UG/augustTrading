@@ -1266,35 +1266,40 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
             tokensOut: outcome.usage.completionTokens,
             gateRefusals: 0,
         };
-        patch(e => {
-            const extraNotices = [outcome.notice, ungrounded, cutOff].filter((n): n is string => Boolean(n));
-            return settleDockEntry({
-                ...e,
-                trace: { ...trace, gateRefusals: e.tools.filter(t => t.includes('rejected')).length, microCompactChars: outcome.microCompactChars },
-                workedMs: outcome.workedMs,
-                // The tier the turn was sent under, so the answer row can show it.
-                // It comes out of the executor rather than being resolved again
-                // here: one turn, one tier, one source.
-                effort: outcome.effort,
-                // What the wire was actually asked, for the same reason: the
-                // answer row has to be able to say WHY a turn came back with no
-                // trace, and the transport's own decision is the only honest
-                // answer to that.
-                ...(outcome.wireAudit?.length ? { wireAudit: outcome.wireAudit } : {}),
-                ...(outcome.interrupted
-                    // A stopped turn keeps whatever text was already painted: a
-                    // hidden-pass seat that never spoke must not reveal its partial
-                    // accumulator just because the user pressed Stop.
-                    ? {}
-                    : {
-                        text: outcome.text,
-                        reasoning: outcome.leaked
-                            ? (outcome.reasoning || e.reasoning)
-                            : (e.reasoning || outcome.reasoning),
-                    }),
-                ...(extraNotices.length > 0 ? { tools: [...e.tools, ...extraNotices] } : {}),
-            }, outcome.interrupted ? 'stopped' : 'completed');
-        });
+        chatStore.mutate(sid, s => ({
+            ...s,
+            updatedAt: Date.now(),
+            entries: s.entries.map(e => {
+                if (e.id !== entryId) return e;
+                const extraNotices = [outcome.notice, ungrounded, cutOff].filter((n): n is string => Boolean(n));
+                return settleDockEntry({
+                    ...e,
+                    trace: { ...trace, gateRefusals: e.tools.filter(t => t.includes('rejected')).length, microCompactChars: outcome.microCompactChars },
+                    workedMs: outcome.workedMs,
+                    // The tier the turn was sent under, so the answer row can show it.
+                    // It comes out of the executor rather than being resolved again
+                    // here: one turn, one tier, one source.
+                    effort: outcome.effort,
+                    // What the wire was actually asked, for the same reason: the
+                    // answer row has to be able to say WHY a turn came back with no
+                    // trace, and the transport's own decision is the only honest
+                    // answer to that.
+                    ...(outcome.wireAudit?.length ? { wireAudit: outcome.wireAudit } : {}),
+                    ...(outcome.interrupted
+                        // A stopped turn keeps whatever text was already painted: a
+                        // hidden-pass seat that never spoke must not reveal its partial
+                        // accumulator just because the user pressed Stop.
+                        ? {}
+                        : {
+                            text: outcome.text,
+                            reasoning: outcome.leaked
+                                ? (outcome.reasoning || e.reasoning)
+                                : (e.reasoning || outcome.reasoning),
+                        }),
+                    ...(extraNotices.length > 0 ? { tools: [...e.tools, ...extraNotices] } : {}),
+                }, outcome.interrupted ? 'stopped' : 'completed');
+            }),
+        }));
         // Two-speed input tail: a follow-up (Alt+Enter) queued while the turn
         // ran delivers NOW as its own turn. A steering typed during a turn
         // that never polled (no tool rounds) delivers as the next turn rather
