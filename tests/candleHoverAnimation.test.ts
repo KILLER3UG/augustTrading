@@ -11,7 +11,7 @@ import {
     optimalCandleWidth,
     parseRgbColor,
     stepCandleHoverMap,
-} from './candleHoverAnimation';
+} from '../src/components/trade/candleHoverAnimation';
 
 test('optimalCandleWidth matches lightweight-charts resting widths across zoom levels', () => {
     assert.equal(optimalCandleWidth(0), 1);

@@ -25,7 +25,7 @@ assertion count). Do not copy those numbers into prose — name the file that ow
 | Signature | `npm run verify:signature` | the installer is signed (or the unsigned release variable is deliberately set) | — |
 | Update manifest | `scripts/check-update-manifest.cjs` | the updater manifest names an installer that exists | the bytes behind it |
 
-`probe:chip`, `probe:census`, `probe:surfaces`, `trade-shot` and `ui-inspect` are dev instruments,
+`probe:chip`, `probe:census`, `probe:surfaces` and `ui-inspect` are dev instruments,
 not gates. `replay:plans` is a read-only drift harness.
 
 ## What has no gate

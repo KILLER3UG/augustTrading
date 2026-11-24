@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { formatToolPayload, parseCodeFenceLanguage } from './toolPayloadFormat.ts';
+import { formatToolPayload, parseCodeFenceLanguage } from '../src/utils/toolPayloadFormat.ts';
 
 describe('formatToolPayload', () => {
     it('pretty-prints valid JSON objects and marks language as JSON', () => {
