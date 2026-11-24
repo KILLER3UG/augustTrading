@@ -50,7 +50,7 @@ export default tseslint.config(
   },
   {
     // Node CommonJS modules under shared/ loaded by Electron main and tests.
-    files: ['shared/repoSandbox.cjs', 'shared/updateVerificationPolicy.cjs'],
+    files: ['shared/repoSandbox.cjs', 'shared/updateVerificationPolicy.cjs', 'shared/updaterStateMachine.cjs'],
     languageOptions: {
       sourceType: 'commonjs',
       globals: {

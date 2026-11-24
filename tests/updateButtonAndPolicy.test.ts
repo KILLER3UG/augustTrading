@@ -9,8 +9,8 @@ import {
     shouldShowUpdateButton,
 } from '../src/utils/updateAvailability';
 
-const require = createRequire(import.meta.url);
-const policy = require('../shared/updateVerificationPolicy.cjs') as {
+const loadCjs = createRequire(import.meta.url);
+const policy = loadCjs('../shared/updateVerificationPolicy.cjs') as {
     PINNED_UPDATE_REPO: { owner: string; repo: string };
     resolveExpectedUpdateRepo: (configured?: { owner?: string; repo?: string } | null) => { owner: string; repo: string };
     compareSemver: (a: string, b: string) => number | null;
@@ -114,7 +114,7 @@ describe('Updater verification policy — Authenticode signed vs pinned unsigned
 });
 
 describe('Updater state machine & packaged main/build pins (offline)', () => {
-    const sm = require('../shared/updaterStateMachine.cjs') as {
+    const sm = loadCjs('../shared/updaterStateMachine.cjs') as {
         UPDATE_STARTUP_DELAY_MS: number;
         UPDATE_CHECK_INTERVAL_MS: number;
         createUpdateInfo: () => Record<string, unknown>;

@@ -144,8 +144,17 @@ function reduceUpdateInfo(info, event, now = Date.now()) {
 
 /** What the renderer receives: the public fields only (no internal bookkeeping). */
 function toPublicUpdateInfo(info) {
-    const { origin: _origin, resumeStatus: _resume, ...pub } = info;
-    return pub;
+    return {
+        status: info.status,
+        progress: info.progress,
+        version: info.version,
+        error: info.error,
+        bytesPerSecond: info.bytesPerSecond,
+        transferred: info.transferred,
+        total: info.total,
+        releaseNotes: info.releaseNotes,
+        lastCheckedAt: info.lastCheckedAt,
+    };
 }
 
 module.exports = {
