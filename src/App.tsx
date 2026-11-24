@@ -101,7 +101,7 @@ import SurfaceOutlet, { SurfaceSkeleton } from './components/shell/SurfaceOutlet
 import { effortDialUp } from './components/shared/effortDial';
 import { nextEffortTier } from './components/shared/effortScale';
 import { DEFAULT_FRAMEWORKS } from './constants/models';
-import { isProviderReady } from './utils/providerUtils';
+import { chatModelIdOf, isProviderReady } from './utils/providerUtils';
 import { defaultLeverage, createNewConversation, findReusableThrowawayConversation, isEmptyConversation } from './utils/conversationUtils';
 import { type ThreadSelection, threadForProvider } from './utils/agentThreads';
 import {
@@ -343,6 +343,26 @@ const App: React.FC = () => {
         };
     }, [readyProviders]);
 
+    // Single active brain for memory/review/insights: follow the active composer
+    // model dynamically and fall back to legacy stored `memoryConfig` only when
+    // no composer model resolves.
+    const effectiveMemoryConfig: ProviderConfig | null = useMemo(() => {
+        const pair = activeModelPairValue;
+        if (pair) {
+            const [pid, ...rest] = pair.split('::');
+            const mid = rest.join('::');
+            const byComposer = readyProviders.find(p => p.id === pid && (!mid || p.selectedModel === mid || p.models.includes(mid)))
+                ?? (mid ? readyProviders.find(p => p.selectedModel === pair || p.models.includes(pair)) : undefined);
+            if (byComposer) {
+                const resolvedModel = mid || pair;
+                return resolvedModel && byComposer.selectedModel !== resolvedModel
+                    ? { ...byComposer, selectedModel: resolvedModel }
+                    : byComposer;
+            }
+        }
+        return memoryConfig;
+    }, [activeModelPairValue, readyProviders, memoryConfig]);
+
     // ONE vision model for EVERY vision feature (chart OCR, post-trade
     // uploads, PDF book OCR). Resolution: the composer's SINGLE ACTIVE MODEL
     // → the stored global vision pick (legacy) → the per-conversation OCR
@@ -355,21 +375,21 @@ const App: React.FC = () => {
             const [pid, ...rest] = pair.split('::');
             const mid = rest.join('::');
             const byComposer = readyProviders.find(p => p.id === pid && (!mid || p.selectedModel === mid || p.models.includes(mid)));
-            if (byComposer) return byComposer;
+            if (byComposer) return mid ? { ...byComposer, selectedModel: mid } : byComposer;
         }
         if (visionModel) {
             const byGlobal = readyProviders.find(p => p.selectedModel === visionModel || p.models.includes(visionModel));
-            if (byGlobal) return byGlobal;
+            if (byGlobal) return byGlobal.selectedModel === visionModel ? byGlobal : { ...byGlobal, selectedModel: visionModel };
         }
         if (selectedOcrModel) {
             const byConversation = readyProviders.find(p => p.selectedModel === selectedOcrModel || p.models.includes(selectedOcrModel));
-            if (byConversation) return byConversation;
+            if (byConversation) return byConversation.selectedModel === selectedOcrModel ? byConversation : { ...byConversation, selectedModel: selectedOcrModel };
         }
         return readyProviders[0] || moderatorConfig;
     }, [readyProviders, visionModel, selectedOcrModel, moderatorConfig, activeModelPairValue]);
 
-    const memoryConfigRef = useRef(memoryConfig);
-    memoryConfigRef.current = memoryConfig;
+    const memoryConfigRef = useRef(effectiveMemoryConfig);
+    memoryConfigRef.current = effectiveMemoryConfig;
     const readyProvidersRef = useRef(readyProviders);
     readyProvidersRef.current = readyProviders;
 
@@ -564,7 +584,7 @@ const App: React.FC = () => {
         moderatorProviderId,
         moderatorModel,
         memoryModel,
-        memoryConfig: memoryConfig || moderatorConfig,
+        memoryConfig: effectiveMemoryConfig || moderatorConfig,
         useAlgorithmicInsights,
         setIsAutoCaptureBusy,
         setIsHybridLoading,
@@ -797,7 +817,7 @@ const App: React.FC = () => {
         selectedOcrModel,
         moderatorConfig,
         moderatorModel: moderatorConfig.selectedModel || '',
-        memoryConfig,
+        memoryConfig: effectiveMemoryConfig,
         finalTradeSummary, loggedTrades, tradeSummaries,
         globalMemory,
         currentHybridData, setCurrentHybridData,
@@ -823,11 +843,10 @@ const App: React.FC = () => {
     // never wrote a digest for a trader who only used the dock. The window is
     // the selected model's resolved window, so a 128k model compacts at 80% of
     // 128k — not 80% of the 1M default.
-    const [compactionComplete, setCompactionComplete] = useState<((prompt: string) => Promise<string>) | null>(null);
-    useEffect(() => {
-        let alive = true;
-        void resolveCompactionComplete().then(fn => { if (alive) setCompactionComplete(() => fn); });
-        return () => { alive = false; };
+    const compactionComplete = useCallback(async (prompt: string): Promise<string> => {
+        const fn = await resolveCompactionComplete();
+        if (!fn) throw new Error('No ready provider for background compaction.');
+        return fn(prompt);
     }, []);
     const compactionMessages = useMemo<ChatMessage[]>(
         () => messages.map(m => ({
@@ -836,17 +855,23 @@ const App: React.FC = () => {
         })),
         [messages],
     );
-    const compactionOwner = useMemo(
-        () => readyProviders.find(p => p.selectedModel === selectedChatModel)
+    const compactionOwner = useMemo(() => {
+        const pair = activeModelPairValue || selectedChatModel;
+        if (pair && pair.includes('::')) {
+            const [pid, ...rest] = pair.split('::');
+            const mid = rest.join('::');
+            const match = readyProviders.find(p => p.id === pid && (!mid || p.selectedModel === mid || p.models.includes(mid)));
+            if (match) return mid ? { ...match, selectedModel: mid } : match;
+        }
+        return readyProviders.find(p => p.selectedModel === selectedChatModel)
             ?? readyProviders.find(p => p.models.includes(selectedChatModel))
-            ?? readyProviders[0],
-        [readyProviders, selectedChatModel],
-    );
+            ?? readyProviders[0];
+    }, [readyProviders, selectedChatModel, activeModelPairValue]);
     const compactionWindowTokens = useMemo(
         () => resolveContextWindow({
             id: compactionOwner?.id,
             name: compactionOwner?.name,
-            selectedModel: selectedChatModel,
+            selectedModel: compactionOwner?.selectedModel || chatModelIdOf(selectedChatModel),
             contextWindowTokens: compactionOwner?.contextWindowTokens,
             modelContextWindows: compactionOwner?.modelContextWindows,
         }).tokens,
@@ -1276,7 +1301,7 @@ const App: React.FC = () => {
         activeUsername, activeConversationId, setSaveStatus, toast, profileReadyRef,
         conversationHistory, loggedTrades, tradeSummaries,
         finalTradeSummary, globalMemory,
-        memoryConfig, memoryModel,
+        memoryConfig: effectiveMemoryConfig, memoryModel,
         isAnalysisInProgress,
         activeFrameworks, summaryCharLimit, summarizationProvider, summarizationModel,
         visionModel, isGlobalMemoryEnabled, isStrategiesEnabled,
@@ -1364,7 +1389,7 @@ const App: React.FC = () => {
         handleJournalAutoRefresh, regenerateFinalSummaryRef,
         isSummaryInProgress, setIsSummaryInProgress,
         setInsightProgress, setNewlyAddedInsightIds,
-        memoryConfig, moderatorConfig, readyProviders,
+        memoryConfig: effectiveMemoryConfig, moderatorConfig, readyProviders,
         useAlgorithmicInsights, summaryCharLimit,
     });
 
@@ -2215,7 +2240,7 @@ const App: React.FC = () => {
                     <LearnView
                         username={activeUsername || 'default'}
                         trades={loggedTrades}
-                        memoryConfig={memoryConfig}
+                        memoryConfig={effectiveMemoryConfig}
                         isGlobalMemoryEnabled={isGlobalMemoryEnabled}
                         setIsGlobalMemoryEnabled={setIsGlobalMemoryEnabled}
                         tab={learnViewTab}
@@ -2229,7 +2254,7 @@ const App: React.FC = () => {
                     <LearnView
                         username={activeUsername || 'default'}
                         trades={loggedTrades}
-                        memoryConfig={memoryConfig}
+                        memoryConfig={effectiveMemoryConfig}
                         tab="skills"
                         renderSkills={() => (
                             <SkillsLibrary studio={(
@@ -2237,7 +2262,7 @@ const App: React.FC = () => {
                                     <StrategyStudio
                                         trades={loggedTrades}
                                         username={activeUsername || undefined}
-                                        memoryConfig={memoryConfig}
+                                        memoryConfig={effectiveMemoryConfig}
                                         providers={providerConfigs}
                                         formatModel={skillFormatPair}
                                         currentRegime={(currentHybridData as { regime?: { regime?: string } } | null)?.regime?.regime ?? undefined}

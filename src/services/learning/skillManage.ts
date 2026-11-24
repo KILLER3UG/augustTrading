@@ -545,7 +545,7 @@ export const promoteSkillToVerified = async (
         try {
             const { readSignals } = await import('../signals/signalLedger');
             const { computeNEffective } = await import('../analysis/journalTools');
-            const rows = readSignals(username).filter(r => r.resolution);
+            const rows = readSignals(username).filter(r => r.resolution && r.signal.source === 'signal');
             nEffective = computeNEffective(rows.map(r => ({ emittedAt: r.signal.emittedAt, resolvedAt: r.resolution!.at }))).nEffective;
         } catch {
             nEffective = 0;

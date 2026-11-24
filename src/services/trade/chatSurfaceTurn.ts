@@ -259,141 +259,37 @@ export interface ChatSurfacePrompt {
 /** The window the index prints, and the list recorded, are the same window: a
  *  slug truncated out of the prompt is not a skill this turn had. */
 
+const chatSurfaceStaticCache = new Map<string, { staticText: string; skills: string[] }>();
+
+export const clearChatSurfacePromptCache = (sessionKey?: string): void => {
+    if (sessionKey) {
+        for (const key of chatSurfaceStaticCache.keys()) {
+            if (key.startsWith(`${sessionKey}::`)) chatSurfaceStaticCache.delete(key);
+        }
+        return;
+    }
+    chatSurfaceStaticCache.clear();
+};
+
 /**
- * Assemble a surface mandate with the trader's notebook under it: surface
- * mandate + skills index + active strategy plans + the profile memory index, each
- * read FRESH per turn so a `remember` or a skill the model just wrote lands in
- * the NEXT turn's prompt instead of waiting for a reload.
- *
- * `where` phrases the skills heading, because the surfaces ask the same question
- * about different subjects: the Agents surface matches a skill to "what the
- * trader asks about", the chart dock to "this chart".
- *
- * Every block is guarded separately. An unreadable notebook must not cost the
- * trader their answer: the prompt simply carries less, the same way the dock's
- * `skillsIndexForPrompt` swallows and returns ''.
+ * Assemble a surface mandate with the trader's notebook under it. When
+ * `sessionKey` is supplied, the static prefix is frozen per session for KV-cache
+ * stability while per-turn `goalTriggerHint` rides strictly at the tail.
  */
-export const surfacePromptWith = (mandate: string, where: string, opts: { memoryEnabled?: boolean; strategiesEnabled?: boolean; windowTokens?: number; matchText?: string; record?: { runId?: string; coin?: string } } = {}): ChatSurfacePrompt => {
+export const surfacePromptWith = (mandate: string, where: string, opts: { sessionKey?: string; memoryEnabled?: boolean; strategiesEnabled?: boolean; windowTokens?: number; matchText?: string; record?: { runId?: string; coin?: string } } = {}): ChatSurfacePrompt => {
     const memoryEnabled = opts.memoryEnabled !== false;
     // The trader's Risk Constitution rides the Agents-surface prefix too —
     // same source, same cap, same immutability contract as the dock.
     let constitutionBlock = '';
+    let constitutionRaw = '';
     try {
-        const constitution = (getHarnessSettings().riskConstitution ?? '').slice(0, 1200);
-        constitutionBlock = constitution
+        constitutionRaw = (getHarnessSettings().riskConstitution ?? '').slice(0, 1200);
+        constitutionBlock = constitutionRaw
             ? `[TRADER RISK CONSTITUTION — written by the trader; immutable to you and to every autonomous writer. These rules override any plan you would otherwise endorse; a plan that violates them is refused, not negotiated.]
-${constitution}`
+${constitutionRaw}`
             : '';
     } catch { /* absent settings = no block */ }
-    const budget = indexBudgetFor(opts.windowTokens ?? DEFAULT_CONTEXT_WINDOW_TOKENS);
-    // The harness's risk-math block — the ONE registered prompt the
-    // harness-optimization pass may revise (O-150). Resolved through the
-    // override store so an APPROVED revision reaches the live seat instead
-    // of a wrapper nobody calls (the E-57 §3 gap, closed for this block).
-    // Harness contract, not memory: it rides even with memory off, and it
-    // is composed once per turn so the cache prefix stays byte-invariant
-    // within the turn (O-58).
-    let riskMathBlock: string;
-    try {
-        riskMathBlock = getPrompt('analysis.risk_rules', RISK_MANAGEMENT_RULES).trim();
-    } catch {
-        riskMathBlock = RISK_MANAGEMENT_RULES.trim();
-    }
-    let skillsBlock: string;
-    let skills: string[];
-    try {
-        // The PROMPT index projection (promptSkillRows): archived skills drop
-        // out and every line opens with its lifecycle marker — the model sees
-        // [probation]/[verified]/[stale] at a glance. The SAME filtered list
-        // the prompt carries (`usableSkillRows`), so the row's
-        // `injectedSkills` names exactly the skills the model was shown.
-        // Ranking it twice (here and inside the builder) is idempotent — the
-        // sort is stable, and both read one filter rather than two that can
-        // drift apart.
-        const rows = promptSkillRows();
-        skills = usableSkillRows(rows).slice(0, budget.skills).map(r => r.slug);
-        skillsBlock = buildSkillsIndexForPrompt(rows, budget.skills, where);
-    } catch {
-        skills = [];
-        skillsBlock = '';
-    }
-    // Listing-first notebook recall: one line per topic, bodies on demand.
-    // Same failure posture as the skills block — a read that cannot happen
-    // costs the block, never the turn.
-    let topicsBlock: string;
-    try {
-        const store = getMemoryFiles();
-        topicsBlock = memoryEnabled ? buildNotebookTopicsIndex(store.files, store.folders, budget.topics) : '';
-    } catch {
-        topicsBlock = '';
-    }
-    let strategiesBlock: string;
-    try {
-        // Plans AND uploaded books, behind the trader's one switch — see
-        // `activeStrategiesBlock`. Opt-out, so a caller that never threads the
-        // flag keeps the section exactly as it does today.
-        strategiesBlock = activeStrategiesBlock(3, { enabled: opts.strategiesEnabled });
-    } catch {
-        strategiesBlock = '';
-    }
-    let rulesBlock: string;
-    try {
-        // The learned rules finally have a reader: they were written at boot,
-        // mirrored into the profile and swept by backups while no prompt ever
-        // saw them (the 2026-10-27 audit M-5). Memory content, so the toggle gates it.
-        if (memoryEnabled) {
-            // Synchronous read: this prompt builder is sync, and the store is
-            // localStorage-backed.
-            rulesBlock = buildLearningRulesIndex(storageService.loadLearningRules().rules, Math.min(6, budget.skills));
-        } else {
-            rulesBlock = '';
-        }
-    } catch {
-        rulesBlock = '';
-    }
-    let memoryBlock: string;
-    try {
-        // The Settings toggle is a PROMISE: memory off means no memory block —
-        // profile, topics, all of it. The analysis pipeline honoured this; the
-        // chat path read the store anyway until 2026-10-24.
-        //
-        // THIS is the ONE carrier of the profile memory index. The analysis
-        // pipeline's notebook slice (`assemblePipelineMemoryContext`) used to
-        // build a second copy into `extraContext`, so every analysis prompt
-        // carried these same lines twice. It is gone; the slice carries the
-        // setup-matched notebook material only, and this block keeps the whole
-        // always-on index — the seat prompt is on every path, memory-on and
-        // memory-off alike.
-        memoryBlock = memoryEnabled ? buildProfileMemoryIndex(undefined, budget.memory) : '';
-    } catch {
-        memoryBlock = '';
-    }
-    // The SAME frozen curated snapshot the dock seat carries. Primed once at
-    // profile load; mid-session `memory` writes persist and answer with a
-    // receipt, they never rewrite this prefix (KV-cache contract). Memory OFF
-    // suppresses it along with the rest of the memory family.
-    const curatedMemoryBlock = memoryEnabled
-        ? buildCuratedMemoryPromptBlock(getCachedCuratedMemorySnapshot())
-        : '';
-    // The goal is the work environment, not memory; it rides even with memory
-    // off. One compact line per goal, the focused one first.
-    let goalsBlock: string;
-    try {
-        goalsBlock = buildGoalsIndex(budget.goals);
-    } catch {
-        goalsBlock = '';
-    }
-    // A goal's `message` trigger is something the seat RESPONDS TO, not a label
-    // it reads. Deterministic substring match against the trader's own line —
-    // no extra call, no model judgement — and it changes NOTHING by itself: it
-    // names the goal and stops there. An unattended run passes no `matchText`,
-    // because a web page or a tool output must never be what points the seat at
-    // an environment.
-    // KV-CACHE PREFIX PURITY: this hint is rebuilt from THIS turn's trader
-    // line. Appending it to `goalsBlock` mutated a block at position 3 of the
-    // system prompt, so every new turn shifted all static bytes below it and
-    // the provider's cached prefix was discarded. Keep it in its own tail
-    // variable and append it AFTER every static block instead.
+    const windowTokens = opts.windowTokens ?? DEFAULT_CONTEXT_WINDOW_TOKENS;
     let goalTriggerHint = '';
     if (opts.matchText) {
         try {
@@ -407,20 +303,82 @@ ${constitution}`
             /* an unreadable goal store costs the hint, never the answer */
         }
     }
-    // Progressive disclosure only: expose the compact 1-line skills index in the
-    // frozen system prompt, never record index slugs as pre-loaded skills.
-    // O-39: the skills index and the learned-rules index are written
-    // independently and can phrase the same rule twice — the seat prompt used
-    // to push both copies. ONE sentence-level dedup (the notebook slice's
-    // seam reads the same module) drops the second phrasing across the pair;
-    // headers and short lines always survive.
+    const cacheKey = opts.sessionKey
+        ? `${opts.sessionKey}::${memoryEnabled ? 1 : 0}::${opts.strategiesEnabled !== false ? 1 : 0}::${windowTokens}::${mandate.length}::${where}::${constitutionRaw}`
+        : null;
+    const cachedStatic = cacheKey ? chatSurfaceStaticCache.get(cacheKey) : undefined;
+    if (cachedStatic) {
+        return {
+            text: [cachedStatic.staticText, goalTriggerHint].filter(Boolean).join('\n\n'),
+            skills: cachedStatic.skills,
+        };
+    }
+    const budget = indexBudgetFor(windowTokens);
+    let riskMathBlock: string;
+    try {
+        riskMathBlock = getPrompt('analysis.risk_rules', RISK_MANAGEMENT_RULES).trim();
+    } catch {
+        riskMathBlock = RISK_MANAGEMENT_RULES.trim();
+    }
+    let skillsBlock: string;
+    let skills: string[];
+    try {
+        const rows = promptSkillRows();
+        skills = usableSkillRows(rows).slice(0, budget.skills).map(r => r.slug);
+        skillsBlock = buildSkillsIndexForPrompt(rows, budget.skills, where);
+    } catch {
+        skills = [];
+        skillsBlock = '';
+    }
+    let topicsBlock: string;
+    try {
+        const store = getMemoryFiles();
+        topicsBlock = memoryEnabled ? buildNotebookTopicsIndex(store.files, store.folders, budget.topics) : '';
+    } catch {
+        topicsBlock = '';
+    }
+    let strategiesBlock: string;
+    try {
+        strategiesBlock = activeStrategiesBlock(3, { enabled: opts.strategiesEnabled });
+    } catch {
+        strategiesBlock = '';
+    }
+    let rulesBlock: string;
+    try {
+        if (memoryEnabled) {
+            rulesBlock = buildLearningRulesIndex(storageService.loadLearningRules().rules, Math.min(6, budget.skills));
+        } else {
+            rulesBlock = '';
+        }
+    } catch {
+        rulesBlock = '';
+    }
+    let memoryBlock: string;
+    try {
+        memoryBlock = memoryEnabled ? buildProfileMemoryIndex(undefined, budget.memory) : '';
+    } catch {
+        memoryBlock = '';
+    }
+    const curatedMemoryBlock = memoryEnabled
+        ? buildCuratedMemoryPromptBlock(getCachedCuratedMemorySnapshot())
+        : '';
+    let goalsBlock: string;
+    try {
+        goalsBlock = buildGoalsIndex(budget.goals);
+    } catch {
+        goalsBlock = '';
+    }
     const [skillsRulesSkills, skillsRulesRules] = skillsBlock && rulesBlock
         ? dedupeInjectionBlocks([skillsBlock, rulesBlock]).blocks
         : [skillsBlock, rulesBlock];
+    const staticText = [mandate, riskMathBlock, goalsBlock, constitutionBlock, skillsRulesSkills, skillsRulesRules, topicsBlock, strategiesBlock, memoryBlock, curatedMemoryBlock, PAPER_TRADING_PROMPT].filter(Boolean).join('\n\n');
+    if (cacheKey) {
+        chatSurfaceStaticCache.set(cacheKey, { staticText, skills });
+    }
     return {
         // Static prefix first, dynamic per-turn hint LAST. The leading order
         // [mandate, riskMathBlock, goalsBlock, …] is contract-pinned.
-        text: [mandate, riskMathBlock, goalsBlock, skillsRulesSkills, skillsRulesRules, topicsBlock, strategiesBlock, memoryBlock, curatedMemoryBlock, PAPER_TRADING_PROMPT, goalTriggerHint].filter(Boolean).join('\n\n'),
+        text: [mandate, riskMathBlock, goalsBlock, constitutionBlock, skillsRulesSkills, skillsRulesRules, topicsBlock, strategiesBlock, memoryBlock, curatedMemoryBlock, PAPER_TRADING_PROMPT, goalTriggerHint].filter(Boolean).join('\n\n'),
         skills,
     };
 };
@@ -431,7 +389,7 @@ ${constitution}`
  * skills heading says "what the trader asks about", because there is no chart
  * here to match against, and the mandate forbids the tool calls the canvas owns.
  */
-export const chatSurfaceSystemPrompt = (opts: { memoryEnabled?: boolean; strategiesEnabled?: boolean; windowTokens?: number; matchText?: string; record?: { runId?: string; coin?: string } } = {}): ChatSurfacePrompt =>
+export const chatSurfaceSystemPrompt = (opts: { sessionKey?: string; memoryEnabled?: boolean; strategiesEnabled?: boolean; windowTokens?: number; matchText?: string; record?: { runId?: string; coin?: string } } = {}): ChatSurfacePrompt =>
     surfacePromptWith(CHAT_SURFACE_SYSTEM_PROMPT, 'what the trader asks about', opts);
 
 /** The speaker key for this surface's live tool feed — `chatRowFrom` flattens
@@ -778,6 +736,7 @@ export const runChatSurfaceTurn = async (req: ChatSurfaceTurnRequest): Promise<T
     const prompt = req.systemPrompt
         ? { text: req.systemPrompt, skills: [] as string[] }
         : chatSurfaceSystemPrompt({
+            sessionKey: req.sessionId,
             memoryEnabled: req.memoryEnabled !== false,
             strategiesEnabled: req.strategiesEnabled !== false,
             windowTokens: req.config ? resolveContextWindow(req.config).tokens : undefined,

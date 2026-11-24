@@ -13,6 +13,7 @@ import { purgeDeletedProfileMemories } from './profileMemory';
 
 import { getPreferenceObject, setPreferenceObject } from '../infrastructure/PreferencesService';
 import { loadProviderConfigs } from '../infrastructure/ProviderConfigService';
+import { pickActiveModelConfig } from '../infrastructure/ActiveModelConfig';
 import { getFirstReadyProvider } from '../../utils/providerUtils';
 import type { ProviderConfig } from '../../types/provider';
 import { runNotebookReview } from './MemoryReviewService';
@@ -80,7 +81,7 @@ export const runMemoryHygiene = async (
     };
     try {
         const configs = opts.providerConfigs ?? await loadProviderConfigs();
-        const provider = getFirstReadyProvider(configs);
+        const provider = (await pickActiveModelConfig()) ?? getFirstReadyProvider(configs);
         if (provider) {
             result.reviewWritten = await runNotebookReview(username, provider);
             lines.push(result.reviewWritten

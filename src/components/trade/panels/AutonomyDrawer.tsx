@@ -25,10 +25,9 @@ import {
     getAutonomySnapshot,
     subscribeAutonomy,
     setAutonomyMode,
-    setAutonomySeat,
-    setAutonomyRoleSeat,
     MAX_BACKGROUND_CALLS_PER_HOUR,
 } from '../../../services/trade/autonomySettings';
+import { activeModelPair } from '../../../services/infrastructure/ActiveModelConfig';
 
 const timeAgo = (at: number): string => {
     const s = Math.max(1, Math.floor((Date.now() - at) / 1000));
@@ -71,7 +70,12 @@ export const AutonomyDrawer: React.FC<{
     useEscapeClose(open, onClose);
 
     if (!open) return null;
-    const seatValue = snap.seat ?? '';
+    const activePair = activeModelPair();
+    const [activePid, ...activeRest] = activePair ? activePair.split('::') : [''];
+    const activeMid = activeRest.join('::');
+    const activeProvider = (activePid ? providers.find(p => p.id === activePid && p.isEnabled) : undefined)
+        ?? providers.find(p => p.isEnabled);
+    const activeModelLabel = activeMid || activeProvider?.selectedModel || 'none configured';
 
     return (
         <>
@@ -80,7 +84,7 @@ export const AutonomyDrawer: React.FC<{
                 data-testid="autonomy-drawer"
                 role="dialog"
                 aria-label="Autonomy activity"
-                className="motion-popover-down absolute right-0 top-9 z-shield w-80 overflow-hidden rounded-xl border border-white/[0.08] bg-zinc-900/95 shadow-elevated backdrop-blur-md"
+                className="motion-popover-down absolute right-0 top-9 z-shield w-80 overflow-hidden rounded-xl border border-white/[0.08] bg-zinc-900 shadow-elevated"
             >
                 <div className="flex items-center justify-between border-b border-white/[0.05] px-3 py-2">
                     <span className="text-ui-dense font-medium text-zinc-200">Desk autonomy</span>
@@ -95,43 +99,12 @@ export const AutonomyDrawer: React.FC<{
                 </div>
 
                 <div className="space-y-2 px-3 py-2 text-ui-dense text-zinc-400">
-                    <label className="block">
-                        <span className="mb-0.5 block text-ui-2xs text-zinc-600">Background seat</span>
-                        <select
-                            data-testid="autonomy-seat-select"
-                            value={seatValue}
-                            onChange={ev => void setAutonomySeat(ev.target.value || undefined)}
-                            className="w-full rounded-control border border-hairline bg-zinc-950 px-2 py-1 text-ui-dense text-zinc-200 focus:outline-none"
-                        >
-                            <option value="">Active model (default)</option>
-                            {providers.filter(p => p.isEnabled).flatMap(p => p.models.map(m => (
-                                <option key={`${p.id}::${m}`} value={`${p.id}::${m}`}>
-                                    {p.name} · {m}
-                                </option>
-                            )))}
-                        </select>
-                    </label>
-                    <details className="rounded-control border border-hairline bg-zinc-950/60 px-2 py-1" data-testid="autonomy-role-seats">
-                        <summary className="cursor-pointer select-none text-ui-2xs text-zinc-500">Per-role overrides</summary>
-                        <div className="mt-1 space-y-1">
-                            {(['adversary', 'sentinel', 'maintenance', 'compaction'] as const).map(role => (
-                                <label key={role} className="flex items-center justify-between gap-2 text-ui-2xs text-zinc-500">
-                                    <span className="shrink-0">{role}</span>
-                                    <select
-                                        data-testid={`autonomy-role-${role}`}
-                                        value={snap.roleSeats[role] ?? ''}
-                                        onChange={ev => void setAutonomyRoleSeat(role, ev.target.value || undefined)}
-                                        className="min-w-0 flex-1 rounded-control border border-hairline bg-zinc-950 px-1 py-0.5 text-ui-2xs text-zinc-200 focus:outline-none"
-                                    >
-                                        <option value="">default</option>
-                                        {providers.filter(p => p.isEnabled).flatMap(p => p.models.map(m => (
-                                            <option key={`${p.id}::${m}`} value={`${p.id}::${m}`}>{p.name} · {m}</option>
-                                        )))}
-                                    </select>
-                                </label>
-                            ))}
-                        </div>
-                    </details>
+                    <div className="flex items-center justify-between gap-2 rounded-control border border-hairline bg-zinc-950/60 px-2 py-1 text-ui-2xs" data-testid="autonomy-active-model">
+                        <span className="text-zinc-500">Active model</span>
+                        <span className="truncate font-mono text-zinc-300">
+                            {activeProvider ? `${activeProvider.name} · ${activeModelLabel}` : activeModelLabel}
+                        </span>
+                    </div>
                     <p className="text-ui-2xs text-zinc-500" data-testid="autonomy-budget-line">
                         {snap.callsLastHour}/{MAX_BACKGROUND_CALLS_PER_HOUR} background calls this hour
                         {snap.backoffUntil ? ` · backing off ${Math.ceil((snap.backoffUntil - Date.now()) / 1000)}s` : ''}

@@ -17,7 +17,8 @@ import { ensureKnownSymbol, fetchMarkIndex, fetchOrderBookDepth, fetchFuturesTic
 import { evaluatePlanLocalSync } from '../trade/proposalGate';
 import { fallbackAdversaryVerdict } from '../trade/adversaryReview';
 import {
-    getPaperLiveFrame, getAllPaperFundingFrames, registerLivePaperFeed as registerLiveFeedOwner,
+    getPaperLiveFrame, consumePaperLiveFrame, getAllPaperFundingFrames,
+    subscribePaperLiveTicks, registerLivePaperFeed as registerLiveFeedOwner,
     shouldOpenPaperWs, unwrapCombined, publishPaperMark, publishPaperKline, publishPaperTicker,
     parseMarkPrice, parseKline, parseTicker,
     PAPER_FRAME_FRESH_MS,
@@ -495,13 +496,13 @@ export const submitPaperOrder = async (
             markPrices,
         });
         if (!receipt.ok || !receipt.account) {
-            return { ...receipt, view: paperAccountView(account, {}, nowMs) };
+            return { ...receipt, view: paperAccountView(account, markPrices, nowMs) };
         }
         await persistAccount(receipt.account, username);
         if (receipt.settlements?.length) publishSettlements(receipt.settlements);
         return {
             ...receipt,
-            view: paperAccountView(receipt.account, {}, nowMs),
+            view: paperAccountView(receipt.account, markPrices, nowMs),
             ...(gate.warnings.length ? { message: [...gate.warnings, receipt.message ?? ''].filter(Boolean).join(' · ') } : {}),
         };
     });
@@ -524,9 +525,17 @@ export const evaluatePaperTick = async (
     username?: string,
 ): Promise<PaperTickOutcome> => {
     const user = username ?? getActiveUsername() ?? 'default';
-    const fullTick: PaperTick = { ...tick, symbol };
     return withPaperWriteLock(async () => {
-        const account = await getPaperAccount(user, fullTick.timestamp);
+        const account = await getPaperAccount(user, tick.timestamp);
+        const heldMarks = livePaperMarks([
+            ...account.positions.map(p => p.symbol),
+            ...account.pendingOrders.map(o => o.symbol),
+        ], symbol.trim().toUpperCase(), tick.markPrice ?? tick.price ?? null);
+        const fullTick: PaperTick = {
+            ...tick,
+            symbol,
+            markPrices: { ...heldMarks, ...(tick.markPrices ?? {}) },
+        };
         const outcome = evaluateTickCore(account, fullTick);
         if (outcome.events.length === 0) return outcome;
         await persistAccount(outcome.account, user);
@@ -538,7 +547,10 @@ export const evaluatePaperTick = async (
 // ── live tick monitor ───────────────────────────────────────────────────────
 
 let monitorTimer: ReturnType<typeof setInterval> | null = null;
+let monitorUnsubscribeTicks: (() => void) | null = null;
 let monitorBusy = false;
+const pendingLiveSymbols = new Set<string>();
+let wsDrainTimer: ReturnType<typeof setTimeout> | null = null;
 
 /**
  * Build the tick for ONE sweep. A frame published by the Trade surface (or by
@@ -549,8 +561,11 @@ let monitorBusy = false;
 export const livePaperTick = async (
     symbol: string,
     nowMs: number = Date.now(),
+    consumeWicks = false,
 ): Promise<PaperTick | null> => {
-    const frame: PaperLiveFrame | null = getPaperLiveFrame(symbol, PAPER_FRAME_FRESH_MS, nowMs);
+    const frame: PaperLiveFrame | null = consumeWicks
+        ? consumePaperLiveFrame(symbol, PAPER_FRAME_FRESH_MS, nowMs)
+        : getPaperLiveFrame(symbol, PAPER_FRAME_FRESH_MS, nowMs);
     if (frame) {
         return {
             symbol, timestamp: nowMs,
@@ -622,6 +637,35 @@ const syncPaperWs = (exposure: ReadonlySet<string>): void => {
     }
 };
 
+const drainPendingWsTicks = async (): Promise<void> => {
+    wsDrainTimer = null;
+    if (pendingLiveSymbols.size === 0) return;
+    const symbolsToCheck = Array.from(pendingLiveSymbols);
+    pendingLiveSymbols.clear();
+    try {
+        const account = await getPaperAccount();
+        if (!account.config.enabled) return;
+        const exposed = new Set<string>([
+            ...account.positions.map(p => p.symbol.trim().toUpperCase()),
+            ...account.pendingOrders.map(o => o.symbol.trim().toUpperCase()),
+        ]);
+        for (const sym of symbolsToCheck) {
+            if (!exposed.has(sym)) continue;
+            const frame = consumePaperLiveFrame(sym, PAPER_FRAME_FRESH_MS, Date.now());
+            if (!frame) continue;
+            await evaluatePaperTick(sym, {
+                timestamp: Date.now(),
+                ...(frame.mark !== null ? { markPrice: frame.mark } : {}),
+                ...(frame.high !== null ? { high: frame.high } : {}),
+                ...(frame.low !== null ? { low: frame.low } : {}),
+                ...(frame.last !== null ? { price: frame.last } : {}),
+                fundingRate: frame.fundingRate,
+                fundingFrames: getAllPaperFundingFrames(sym),
+            });
+        }
+    } catch { /* live WS errors recover on next tick or 30s REST fallback */ }
+};
+
 /** One sweep: settle SL/TP/liquidation and accrue funding for every symbol
  *  that actually has paper exposure, from fresh WS frames when available and
  *  REST only as a stale-frame fallback. Never opens an order. */
@@ -637,7 +681,7 @@ const runPaperTickSweep = async (): Promise<void> => {
         ]);
         syncPaperWs(symbols);
         for (const symbol of symbols) {
-            const tick = await livePaperTick(symbol, Date.now());
+            const tick = await livePaperTick(symbol, Date.now(), true);
             if (!tick) continue;
             const { symbol: _ignored, ...fields } = tick;
             await evaluatePaperTick(symbol, fields);
@@ -647,14 +691,23 @@ const runPaperTickSweep = async (): Promise<void> => {
 };
 
 /**
- * Start the deterministic monitor against live public marks. Returns a stop
- * function; idempotent, so several surfaces can call it safely.
+ * Start the deterministic monitor against live public marks + real-time WS
+ * ticks. Returns a stop function; idempotent, so several surfaces can call it.
  */
 export const startPaperTickMonitor = (intervalMs: number = 30_000): (() => void) => {
     if (monitorTimer !== null) return () => { /* already running */ };
+    monitorUnsubscribeTicks = subscribePaperLiveTicks(sym => {
+        pendingLiveSymbols.add(sym);
+        if (wsDrainTimer === null) {
+            wsDrainTimer = setTimeout(() => { void drainPendingWsTicks(); }, 150);
+        }
+    });
     monitorTimer = setInterval(() => { void runPaperTickSweep(); }, Math.max(5_000, intervalMs));
     void runPaperTickSweep();
     return () => {
+        if (monitorUnsubscribeTicks) { monitorUnsubscribeTicks(); monitorUnsubscribeTicks = null; }
+        if (wsDrainTimer !== null) { clearTimeout(wsDrainTimer); wsDrainTimer = null; }
+        pendingLiveSymbols.clear();
         if (monitorTimer !== null) { clearInterval(monitorTimer); monitorTimer = null; }
         for (const ws of paperWsSockets.values()) { try { ws.close(); } catch { /* already gone */ } }
         paperWsSockets.clear();

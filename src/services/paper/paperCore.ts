@@ -570,6 +570,9 @@ export interface PaperTick {
      * `fundingRate` + the tick mark (or entry as a last resort).
      */
     fundingFrames?: ReadonlyArray<PaperFundingFrame>;
+    /** Optional live marks for all held symbols so rollover & drawdown equity
+     *  value every open position at live mark rather than entry. */
+    markPrices?: Readonly<Record<string, number>>;
 }
 
 /** One funding observation bucketed to its UTC 8h settlement slot. */
@@ -592,8 +595,10 @@ export const accruePaperFunding = (
     frames: ReadonlyArray<PaperFundingFrame> | undefined,
     referenceMark: number | undefined,
     events: PaperEvent[],
+    symbol?: string,
 ): void => {
     if (account.positions.length === 0) return;
+    const targetSymbol = typeof symbol === 'string' && symbol.trim() ? symbol.trim().toUpperCase() : null;
     const bySlot = new Map<number, PaperFundingFrame>();
     if (frames) for (const f of frames) {
         if (Number.isFinite(f?.slotMs) && Number.isFinite(f?.rate)) bySlot.set(f.slotMs, f);
@@ -602,6 +607,7 @@ export const accruePaperFunding = (
     const fallbackRate = Number.isFinite(rate) ? (rate as number) : null;
     if (!hasFrame && fallbackRate === null) return;
     for (const position of account.positions) {
+        if (targetSymbol && position.symbol.toUpperCase() !== targetSymbol) continue;
         const slots = utcFundingSlotsBetween(position.lastFundingSlotMs, nowMs);
         if (slots.length === 0) continue;
         let payment = 0;
@@ -794,6 +800,7 @@ export const evaluatePaperTick = (
     const nowMs = tick.timestamp;
     if (!Number.isFinite(nowMs)) return { account: next, events, settlements };
     const tickMarks: Record<string, number> = {
+        ...(tick.markPrices ?? {}),
         [tick.symbol]: (finitePositive(tick.markPrice) ? tick.markPrice : tick.price) ?? 0,
     };
     dayRollover(next, nowMs, tickMarks);
@@ -854,7 +861,7 @@ export const evaluatePaperTick = (
     //    close. Per-slot WS frames win over the single current rate; the mark
     //    notional is live whenever a mark is available.
     accruePaperFunding(next, nowMs, tick.fundingRate, tick.fundingFrames,
-        finitePositive(tick.markPrice) ? tick.markPrice as number : undefined, events);
+        finitePositive(tick.markPrice) ? tick.markPrice as number : undefined, events, tick.symbol);
 
     // 3. Open position exits. Liquidation is checked on MARK only, never a wick.
     for (const position of [...next.positions]) {
@@ -916,7 +923,7 @@ export const evaluatePaperTick = (
     }
 
     // 4. Daily drawdown kill-switch — halts ENTRIES only, never an exit.
-    const equity = paperEquity(next, { [tick.symbol]: tick.markPrice ?? tick.price ?? 0 });
+    const equity = paperEquity(next, tickMarks);
     const dayStart = next.dayStartEquityUsd;
     const drawdownPct = dayStart > 0 ? ((dayStart - equity) / dayStart) * 100 : 0;
     if (drawdownPct >= next.config.dailyDrawdownKillSwitchPct) next.killSwitchActive = true;
@@ -1041,7 +1048,7 @@ export const placePaperOrder = (env: PlaceOrderEnv): PaperReceipt => {
         // carries the funding and the wallet invariant (cash = start + netPnl)
         // holds. The quote's last is the mark reference when no WS frame exists.
         const closeEvents: PaperEvent[] = [];
-        accruePaperFunding(next, nowMs, env.fundingRate, env.fundingFrames, last, closeEvents);
+        accruePaperFunding(next, nowMs, env.fundingRate, env.fundingFrames, last, closeEvents, position.symbol);
         events.push(...closeEvents);
         applyExit(next, position, last, next.config.takerFeeBps, 'manual_close', nowMs,
             events, [], 'Paper CLOSE');

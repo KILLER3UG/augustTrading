@@ -809,6 +809,25 @@ ${riskConstitution}`
         const template = slashTemplateOf(raw);
         if (!template) return runnerSend(raw, retryOf);
         const rest = raw.trim().slice(('/' + template).length);
+        if (template === 'dream') {
+            setDraft('');
+            const { runMemoryDream, formatDreamResultSummary } = await import('../../services/learning/memoryDream');
+            const { getActiveUsername } = await import('../../utils/activeUser');
+            const user = getActiveUsername() || 'default';
+            const result = await runMemoryDream({ manual: true, username: user });
+            const summary = formatDreamResultSummary(result);
+            const sid = activeSession.id;
+            chatStore.mutate(sid, st => ({
+                ...st,
+                updatedAt: Date.now(),
+                entries: [
+                    ...st.entries,
+                    { id: newId('u'), role: 'user' as const, text: '/dream', tools: [], at: Date.now() },
+                    { id: newId('a'), role: 'ai' as const, text: summary, tools: [`Compacted · ${summary}`], at: Date.now() },
+                ],
+            }));
+            return;
+        }
         if (template === 'handoff') {
             const snap = getChartSnapshot?.();
             const plans = levelWatch.getArmedPlans().filter(pl => pl.symbol === symbol);

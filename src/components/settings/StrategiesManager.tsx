@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { ProviderConfig } from '../../types/provider';
 import { getFirstReadyProvider, isProviderReady } from '../../utils/providerUtils';
+import { activeModelPair } from '../../services/infrastructure/ActiveModelConfig';
 import { extractPdfText } from '../../services/infrastructure/pdfTextExtractor';
 import { summarizeStrategiesPdf } from '../../services/learning/strategySummarizer';
 import { ocrPdfPages } from '../../services/learning/pdfOcrService';
@@ -63,7 +64,16 @@ const StrategiesManager: React.FC<StrategiesManagerProps> = ({
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     const activeUser = username || 'default';
-    const readyProvider = getFirstReadyProvider(providerConfigs);
+    const readyProvider = React.useMemo(() => {
+        const pair = activeModelPair();
+        if (pair) {
+            const [pid, ...rest] = pair.split('::');
+            const mid = rest.join('::');
+            const match = providerConfigs.find(c => c.id === pid && isProviderReady(c) && (!mid || c.selectedModel === mid || c.models.includes(mid)));
+            if (match) return mid && match.selectedModel !== mid ? { ...match, selectedModel: mid } : match;
+        }
+        return getFirstReadyProvider(providerConfigs);
+    }, [providerConfigs]);
     // Scanned pages are transcribed by the global vision model; fall back to
     // any ready provider when no vision model resolves.
     const ocrProvider = visionConfig && isProviderReady(visionConfig) ? visionConfig : readyProvider;

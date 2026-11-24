@@ -265,8 +265,8 @@ export const resolveBackgroundSeat = async (username: string = getActiveUsername
         if (wanted) {
             const [providerId, ...modelParts] = wanted.split('::');
             const modelId = modelParts.join('::');
-            const found = ready.find(c => c.id === providerId && (!modelId || c.selectedModel === modelId));
-            if (found) config = found;
+            const found = ready.find(c => c.id === providerId && (!modelId || c.selectedModel === modelId || c.models.includes(modelId)));
+            if (found) config = modelId && found.selectedModel !== modelId ? { ...found, selectedModel: modelId } : found;
         }
         if (!config) return null;
         return {

@@ -65,17 +65,17 @@ export const focusLineForRefs = (refs: ComposerRefs): string => {
     return parts.length > 0 ? `[TRADER FOCUS — prioritize: ${parts.join(' · ')}]` : '';
 };
 
-export const SLASH_TEMPLATES = ['brief', 'audit', 'scan', 'handoff'] as const;
+export const SLASH_TEMPLATES = ['brief', 'audit', 'scan', 'handoff', 'dream'] as const;
 export type SlashTemplate = (typeof SLASH_TEMPLATES)[number];
 
 /** The draft's slash template, or null. Matches only at position 0. */
 export const slashTemplateOf = (text: string): SlashTemplate | null => {
-    const m = /^\/(brief|audit|scan|handoff)\b/.exec(text.trim());
+    const m = /^\/(brief|audit|scan|handoff|dream)\b/.exec(text.trim());
     return m ? (m[1] as SlashTemplate) : null;
 };
 
 /** Expand a NON-special slash template into its desk instruction. `/handoff`
- *  is handled by the caller (it mints a session, it does not send). */
+ *  and `/dream` are handled by the caller directly. */
 export const expandSlashTemplate = (
     template: SlashTemplate,
     ctx: { symbol: string; interval: string },
@@ -90,6 +90,7 @@ export const expandSlashTemplate = (
         case 'scan':
             return `Scan for confluence on my watchlist: run scan_confluence across the symbols I trade and rank what agrees across timeframes.${tail ? ` Symbols: ${tail}` : ''}`;
         case 'handoff':
+        case 'dream':
             return tail || '';
     }
 };

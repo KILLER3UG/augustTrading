@@ -14,6 +14,7 @@ import { getPreferenceObject, setPreferenceObject } from '../infrastructure/Pref
 import { buildDisciplineAnalytics, effectiveRMultiple } from '../../utils/disciplineAnalytics';
 import { sendChatRequest } from '../providers/GenericProviderService';
 import { getFirstReadyProvider } from '../../utils/providerUtils';
+import { pickActiveModelConfig } from '../infrastructure/ActiveModelConfig';
 import { loadProviderConfigs } from '../infrastructure/ProviderConfigService';
 import { ProviderConfig } from '../../types/provider';
 
@@ -158,7 +159,7 @@ export const runWeeklyReview = async (
 ): Promise<WeeklyReviewDigest | null> => {
     const stats = buildWeekStats(trades, now);
     if (stats.closed < MIN_CLOSED_TRADES_FOR_REVIEW) return null;
-    const provider = getFirstReadyProvider(providerConfigs);
+    const provider = (await pickActiveModelConfig()) ?? getFirstReadyProvider(providerConfigs);
     if (!provider) return null;
     try {
         const impulse = (await sendChatRequest(

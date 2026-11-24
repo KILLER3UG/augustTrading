@@ -703,6 +703,28 @@ export function useAnalysisPipeline(params: UseAnalysisPipelineParams) {
             return { ok: false };
         }
 
+        if (/^\/dream\b/i.test(effectiveInput.trim())) {
+            const { runMemoryDream, formatDreamResultSummary } = await import('../services/learning/memoryDream');
+            const { getActiveUsername } = await import('../utils/activeUser');
+            const user = getActiveUsername() || 'default';
+            const result = await runMemoryDream({ manual: true, username: user });
+            const summary = formatDreamResultSummary(result);
+            setInput('');
+            updateMessages(prev => [...prev, {
+                id: `user-${Date.now()}`,
+                role: MessageRole.USER,
+                text: '/dream',
+                createdAt: new Date().toISOString(),
+            }, {
+                id: `dream-${Date.now() + 1}`,
+                role: MessageRole.AI,
+                text: summary,
+                toolEvents: [`Compacted · ${summary}`],
+                createdAt: new Date().toISOString(),
+            }], activeConversationId);
+            return { ok: true };
+        }
+
         // ─── TRADER NOTEBOOK QUICK-SAVE ────────────────────────────────
         // "Save this to the notebook" short-circuits the ensemble: no chart
         // analysis, just the notebook write + a confirmation message. The

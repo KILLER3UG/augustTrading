@@ -1690,6 +1690,7 @@ export const DESK_TOOL_DEFINITIONS: DeskToolDefinition[] = [
                     old_text: { type: 'string', description: 'patch: the exact body text to replace (must occur exactly once).' },
                     new_text: { type: 'string', description: 'patch: the replacement text.' },
                     if_version: { type: 'string', description: 'patch: the version skill_view showed — a mismatch refuses the write.' },
+                    reason: { type: 'string', description: 'Concise rationale for creating, patching, archiving, or unarchiving this skill.' },
                 },
                 required: ['action', 'slug'],
                 additionalProperties: false,
@@ -7071,13 +7072,25 @@ ${body}`);
     }
 }
 
+const STATEFUL_DESK_TOOLS = new Set([
+    'ask_user_input',
+    'paper_order',
+    'memory',
+    'skill_manage',
+    'skill_write',
+    'amend_memory',
+    'remember',
+    'forget',
+    'update_trade',
+    'close_trade',
+    'update_plan',
+]);
+
 export async function executeDeskTools(
     calls: DeskToolCall[],
     context: DeskToolContext = {},
 ): Promise<DeskToolResult[]> {
-    // Every call gets its own deadline and hears the seat's Stop, so one hung
-    // lookup can no longer hold the round (and the bubble) open.
-    return Promise.all(calls.map(call => {
+    const runOne = async (call: DeskToolCall): Promise<DeskToolResult> => {
         // One tool asks a HUMAN, and a human is not a 20-second lookup: the
         // question carries its own window and rides the turn's stop signal.
         const work = call.name === 'ask_user_input'
@@ -7097,7 +7110,27 @@ export async function executeDeskTools(
                 return res;
             })
             : work;
-    }));
+    };
+
+    const indexed = calls.map((call, index) => ({ call, index }));
+    const parallelBatch = indexed.filter(item => !STATEFUL_DESK_TOOLS.has(item.call.name));
+    const sequentialBatch = indexed.filter(item => STATEFUL_DESK_TOOLS.has(item.call.name));
+    const results = new Array<DeskToolResult>(calls.length);
+
+    const parallelPromise = Promise.all(
+        parallelBatch.map(async ({ call, index }) => {
+            results[index] = await runOne(call);
+        }),
+    );
+
+    const sequentialPromise = (async () => {
+        for (const { call, index } of sequentialBatch) {
+            results[index] = await runOne(call);
+        }
+    })();
+
+    await Promise.all([parallelPromise, sequentialPromise]);
+    return results;
 }
 
 /** Parse OpenAI-style tool_calls from a chat message. */

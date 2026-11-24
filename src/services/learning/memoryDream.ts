@@ -466,6 +466,22 @@ const runMemoryDreamUnlocked = async (options: DreamRunOptions): Promise<DreamRu
     };
 };
 
+export const formatDreamResultSummary = (result: DreamRunResult): string => {
+    if (!result.ran) {
+        return result.error ? `Memory consolidation skipped (${result.error}).` : 'Memory consolidation skipped.';
+    }
+    const core = result.core;
+    if (!core) return 'Memory consolidated.';
+    const parts: string[] = [];
+    if (core.resolvedDates.length > 0) parts.push(`${core.resolvedDates.length} date(s) resolved`);
+    if (core.duplicatesRemoved > 0) parts.push(`${core.duplicatesRemoved} duplicate(s) removed`);
+    if (core.entriesRemoved.length > 0) parts.push(`${core.entriesRemoved.length} contradicted entry removed`);
+    if (core.capDropped.length > 0) parts.push(`${core.capDropped.length} tail entry trimmed to cap`);
+    return parts.length > 0
+        ? `Memory consolidated — ${parts.join(', ')}.`
+        : 'Memory consolidated — clean (no duplicates or contradictions).';
+};
+
 /** Undo a dream: restore both files from the run's before-snapshot. */
 export const undoMemoryDream = async (
     beforeSnapshot: { userMd: string; memoryMd: string },

@@ -136,6 +136,19 @@ interface PaperFrameEntry {
 const paperFrameCache = new Map<string, PaperFrameEntry>();
 /** Refcount: how many mounted Trade/Desk feeds own a live symbol socket. */
 const liveFeedOwners = new Map<string, number>();
+const liveTickListeners = new Set<(symbol: string) => void>();
+
+const notifyLiveTick = (symbol: string): void => {
+    const upper = symbol.trim().toUpperCase();
+    for (const listener of liveTickListeners) {
+        try { listener(upper); } catch { /* listener errors stay isolated */ }
+    }
+};
+
+export const subscribePaperLiveTicks = (listener: (symbol: string) => void): (() => void) => {
+    liveTickListeners.add(listener);
+    return () => { liveTickListeners.delete(listener); };
+};
 
 const entryFor = (symbol: string): PaperFrameEntry => {
     const key = keyOf(symbol);
@@ -168,9 +181,11 @@ export const publishPaperMark = (
         });
     }
     entry.frame.at = at;
+    notifyLiveTick(symbol);
 };
 
-/** kline_1s frame: the high/low wicks a 30 s poll would never observe. */
+/** kline_1s frame: accumulate intra-window high/low envelope so wicks between
+ *  ticks are never overwritten and lost. */
 export const publishPaperKline = (
     symbol: string,
     kline: LiveKline,
@@ -178,10 +193,11 @@ export const publishPaperKline = (
 ): void => {
     if (!kline || !Number.isFinite(kline.high) || !Number.isFinite(kline.low)) return;
     const entry = entryFor(symbol);
-    entry.frame.high = kline.high;
-    entry.frame.low = kline.low;
+    entry.frame.high = entry.frame.high === null ? kline.high : Math.max(entry.frame.high, kline.high);
+    entry.frame.low = entry.frame.low === null ? kline.low : Math.min(entry.frame.low, kline.low);
     entry.frame.last = kline.close;
     entry.frame.at = at;
+    notifyLiveTick(symbol);
 };
 
 /** 24hrTicker frame: last traded price. */
@@ -194,6 +210,7 @@ export const publishPaperTicker = (
     const entry = entryFor(symbol);
     entry.frame.last = lastPrice;
     entry.frame.at = at;
+    notifyLiveTick(symbol);
 };
 
 /** A copy of the newest frame, or null once it is older than `maxAgeMs`. */
@@ -207,6 +224,24 @@ export const getPaperLiveFrame = (
     const age = nowMs - frame.at;
     if (!Number.isFinite(age) || age < -1000 || age > maxAgeMs) return null;
     return { ...frame };
+};
+
+/** Consume the accumulated high/low wick envelope for one tick evaluation,
+ *  leaving the latest mark/last/funding intact while resetting pending wicks. */
+export const consumePaperLiveFrame = (
+    symbol: string,
+    maxAgeMs: number = PAPER_FRAME_FRESH_MS,
+    nowMs: number = Date.now(),
+): PaperLiveFrame | null => {
+    const entry = paperFrameCache.get(keyOf(symbol));
+    const frame = entry?.frame;
+    if (!entry || !frame || frame.at <= 0) return null;
+    const age = nowMs - frame.at;
+    if (!Number.isFinite(age) || age < -1000 || age > maxAgeMs) return null;
+    const snapshot: PaperLiveFrame = { ...frame };
+    frame.high = null;
+    frame.low = null;
+    return snapshot;
 };
 
 /** Funding observations for the crossed slots, one per slot when available. */
