@@ -12,6 +12,7 @@
 import { CorrelationRiskResult } from '../../types';
 import { fetchOHLCV, fetchMarketData, Kline } from './MarketDataService';
 import { calculateKeyLevels } from './TechnicalAnalysisService';
+import { COINGECKO_API_BASE } from '../../config/exchangeEndpoints';
 
 // Cache for BTC dominance data
 let btcDominanceCache: { value: number; timestamp: number } | null = null;
@@ -35,7 +36,7 @@ export const fetchBTCDominance = async (): Promise<number> => {
     }
 
     try {
-        const response = await fetch('https://api.coingecko.com/api/v3/global', {
+        const response = await fetch(`${COINGECKO_API_BASE}/global`, {
             method: 'GET',
             headers: { 'Accept': 'application/json' },
             // Caller runs this inside the per-analysis fetch fan-out, so an
@@ -144,7 +145,7 @@ export const detectBTCMajorLevels = async (): Promise<{
  */
 export const getBTCDominanceTrend = async (): Promise<'rising' | 'falling' | 'stable'> => {
     try {
-        const response = await fetch('https://api.coingecko.com/api/v3/global', {
+        const response = await fetch(`${COINGECKO_API_BASE}/global`, {
             signal: AbortSignal.timeout(COINGECKO_TIMEOUT_MS),
         });
         if (!response.ok) return 'stable';

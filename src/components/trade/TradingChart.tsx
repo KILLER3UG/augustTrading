@@ -862,13 +862,13 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
     useEffect(() => {
         let alive = true;
         const unsubscribe = subscribePaperAccount(account => {
-            if (alive) setPaperDrawings(paperDrawingsFromAccount(account));
+            if (alive) setPaperDrawings(paperDrawingsFromAccount(account, symbol));
         });
         void getPaperAccount().then(account => {
-            if (alive) setPaperDrawings(paperDrawingsFromAccount(account));
+            if (alive) setPaperDrawings(paperDrawingsFromAccount(account, symbol));
         }).catch(() => { /* no readable paper account — overlay stays empty */ });
         return () => { alive = false; unsubscribe(); };
-    }, []);
+    }, [symbol]);
 
     // Sync the native lightweight-charts ISeriesPrimitive with current drawings/selection/scale.
     const syncPrimitive = useCallback((overrides?: {
@@ -898,7 +898,8 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
 
     useEffect(() => {
         syncPrimitive();
-    }, [drawings, modelDrawings, paperDrawings, selectedDrawingId, drawingsHidden, interval, priceScaleMode, syncPrimitive]);
+        scheduleRepaint();
+    }, [drawings, modelDrawings, paperDrawings, selectedDrawingId, drawingsHidden, interval, priceScaleMode, syncPrimitive, scheduleRepaint]);
 
     // Apply Normal / Logarithmic mode directly to lightweight-charts' right price scale.
     useEffect(() => {
@@ -2425,7 +2426,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                 repaintFrameRef.current = null;
             }
         };
-    }, [drawings, modelDrawings, status, interval, updateLastTag, scheduleRepaint]);
+    }, [drawings, modelDrawings, paperDrawings, status, interval, updateLastTag, scheduleRepaint]);
 
     useEffect(() => {
         repaint();

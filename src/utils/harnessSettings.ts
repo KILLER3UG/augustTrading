@@ -7,6 +7,8 @@ import {
 import type { OutcomeSettlement } from './outcomeSettlement';
 import type { SelfModMode } from '../schemas/selfChange';
 
+export const RISK_CONSTITUTION_MAX_CHARS = 1200;
+
 export interface HarnessSettings {
     equityUsd: number;
     riskPercent: number;

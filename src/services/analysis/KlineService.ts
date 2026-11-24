@@ -25,6 +25,14 @@
 import { Kline } from '../../types';
 import { coerceCandles } from '../../utils/candleShape';
 import { candleAlignedTtlMs } from '../../utils/candleTtl';
+import {
+    BINANCE_FUTURES_REST_BASES,
+    BINANCE_SPOT_DATA_BASE,
+    BINANCE_SPOT_REST_BASES,
+    CORS_PROXY_ALLORIGINS,
+    CORS_PROXY_CODETABS,
+    CORS_PROXY_CORSPROXY,
+} from '../../config/exchangeEndpoints';
 
 // --- Short-TTL cache + in-flight coalescing ---
 // Chart mounts/polls re-race up to 4 proxy sources per fetch; a short TTL and
@@ -183,11 +191,7 @@ const fetchKlinesFromSources = async (
 
 // --- PRIMARY: Binance futures klines (fapi, browser-direct) ---
 
-const FUTURES_HOSTS = [
-    'https://fapi.binance.com',
-    'https://fapi1.binance.com',
-    'https://fapi2.binance.com',
-];
+const FUTURES_HOSTS = BINANCE_FUTURES_REST_BASES;
 
 const buildFuturesSources = (symbol: string, interval: string, limit: number): FetchSource[] => {
     const binanceInterval = mapBinanceInterval(interval);
@@ -201,15 +205,15 @@ const buildFuturesSources = (symbol: string, interval: string, limit: number): F
 
 const buildBinanceSources = (symbol: string, interval: string, limit: number): FetchSource[] => {
     const binanceInterval = mapBinanceInterval(interval);
-    const publicUrl = `https://data-api.binance.vision/api/v3/klines?symbol=${symbol}&interval=${binanceInterval}&limit=${limit}`;
-    const targetUrl = `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${binanceInterval}&limit=${limit}`;
+    const publicUrl = `${BINANCE_SPOT_DATA_BASE}/api/v3/klines?symbol=${symbol}&interval=${binanceInterval}&limit=${limit}`;
+    const targetUrl = `${BINANCE_SPOT_REST_BASES[0]}/api/v3/klines?symbol=${symbol}&interval=${binanceInterval}&limit=${limit}`;
 
     return [
         // Binance Vision often allows CORS directly - try it first with a short timeout.
         { url: publicUrl, timeout: 3000 },
-        { url: `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}&t=${Date.now()}`, timeout: 8000 },
-        { url: `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`, timeout: 8000 },
-        { url: `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(targetUrl)}`, timeout: 8000 },
+        { url: `${CORS_PROXY_ALLORIGINS}?url=${encodeURIComponent(targetUrl)}&t=${Date.now()}`, timeout: 8000 },
+        { url: `${CORS_PROXY_CORSPROXY}?${encodeURIComponent(targetUrl)}`, timeout: 8000 },
+        { url: `${CORS_PROXY_CODETABS}?quest=${encodeURIComponent(targetUrl)}`, timeout: 8000 },
     ];
 };
 

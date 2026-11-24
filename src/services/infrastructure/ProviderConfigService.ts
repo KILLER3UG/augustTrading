@@ -7,7 +7,14 @@ import { ProviderConfig, ApiFormat, parseApiFormat } from '../../types/provider'
 import { getPreferenceObject, setPreferenceObject } from './PreferencesService';
 import { assertValidProviderUrl } from '../../utils/providerUrlValidation';
 import { usesGoogleGeminiDiscovery, googleModelsUrl } from '../../utils/googleGeminiFormat';
-import { isLocalBaseUrl, normalizeProviderUrl } from '../../../shared/providerRequestPolicy.cjs';
+import {
+    ANTHROPIC_API_VERSION,
+    DEV_PROVIDER_PROXY_PATH,
+    isLocalBaseUrl,
+    normalizeProviderUrl,
+    OLLAMA_TAGS_PATH,
+    PROVIDER_DISCOVERY_TIMEOUT_MS,
+} from '../../../shared/providerRequestPolicy.cjs';
 import { isProviderReady } from '../../utils/providerUtils';
 
 const STORAGE_KEY = 'provider_configs_v1';
@@ -518,7 +525,7 @@ export function getDiscoveryCandidateUrls(baseUrl: string, isGemini: boolean, ap
     }
     if (isLocalBaseUrl(baseUrl)) {
         const root = baseUrl.replace(/\/v1$/, '');
-        urls.push(`${root}/api/tags`);
+        urls.push(`${root}${OLLAMA_TAGS_PATH}`);
     }
     return [...new Set(urls)];
 }
@@ -548,7 +555,7 @@ async function fetchDiscoverPayload(config: {
         && typeof window !== 'undefined'
         && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
     if (useDevProxy) {
-        const response = await fetch('/__provider_proxy', {
+        const response = await fetch(DEV_PROVIDER_PROXY_PATH, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ discover: true, config }),
@@ -569,7 +576,7 @@ async function fetchDiscoverPayload(config: {
     };
     if (isAnthropic) {
         headers['x-api-key'] = key;
-        headers['anthropic-version'] = '2023-06-01';
+        headers['anthropic-version'] = ANTHROPIC_API_VERSION;
     } else if (!isGemini && key && key !== 'not-needed') {
         headers.Authorization = `Bearer ${key}`;
     }
@@ -580,7 +587,7 @@ async function fetchDiscoverPayload(config: {
 
     for (const candidateUrl of candidateUrls) {
         const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 15000);
+        const timer = setTimeout(() => controller.abort(), PROVIDER_DISCOVERY_TIMEOUT_MS);
         try {
             const res = await fetch(candidateUrl, { headers, signal: controller.signal });
             const body = await res.text();

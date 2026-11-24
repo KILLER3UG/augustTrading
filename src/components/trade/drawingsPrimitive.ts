@@ -666,9 +666,11 @@ const PAPER_LEVEL_COLOR = '#a1a1aa';
  *  `DrawingsPrimitiveState.paperDrawings` on every account notification. */
 export const paperDrawingsFromAccount = (
     account: Pick<PaperAccount, 'positions' | 'pendingOrders'> | null | undefined,
+    symbol?: string,
     nowMs: number = Date.now(),
 ): ChartDrawing[] => {
     if (!account) return [];
+    const targetSymbol = typeof symbol === 'string' && symbol.trim() ? symbol.trim().toUpperCase() : null;
     const out: ChartDrawing[] = [];
     const t = nowMs / 1000;
     const add = (price: number, label: string, color: string): void => {
@@ -683,11 +685,13 @@ export const paperDrawingsFromAccount = (
         });
     };
     for (const position of account.positions ?? []) {
+        if (targetSymbol && position.symbol.toUpperCase() !== targetSymbol) continue;
         add(position.entryPrice, `PAPER ${position.side === 'short' ? 'SHORT' : 'LONG'}`, PAPER_ENTRY_COLOR);
         add(position.stopLoss, 'SL', PAPER_LEVEL_COLOR);
         (position.takeProfits ?? []).forEach((tp, i) => add(tp, `TP${i + 1}`, PAPER_TP_COLOR));
     }
     for (const order of account.pendingOrders ?? []) {
+        if (targetSymbol && order.symbol.toUpperCase() !== targetSymbol) continue;
         add(order.limitPrice, 'LIMIT', PAPER_LEVEL_COLOR);
     }
     return out;

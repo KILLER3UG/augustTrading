@@ -45,7 +45,7 @@ import { buildLearningRulesIndex } from '../../utils/learningRulesIndex';
 import { dedupeInjectionBlocks } from '../../utils/memoryInjectionDedup';
 import { storageService } from '../infrastructure/StorageService';
 import { indexBudgetFor } from '../../utils/promptIndexBudget';
-import { getHarnessSettings } from '../../utils/harnessSettings';
+import { getHarnessSettings, RISK_CONSTITUTION_MAX_CHARS } from '../../utils/harnessSettings';
 import { DEFAULT_CONTEXT_WINDOW_TOKENS, resolveContextWindow } from '../../utils/contextWindow';
 import { activeStrategiesBlock } from '../learning/strategyStore';
 import { buildProfileMemoryIndex } from '../learning/profileMemory';
@@ -217,6 +217,8 @@ export const CHAT_SURFACE_TOOLS = [
     // A risk-limit / guard-preset change is proposed, never applied: the card
     // is the only writer, through the settings path the trader owns.
     'propose_risk_change',
+    'propose_strategy_activation',
+    'refresh_journal_review',
     // The session plan and the promoted rule are proposals too: the cards are
     // the only writers, and both gates run in the service before a card exists.
     'propose_session_plan', 'propose_rule_change',
@@ -283,7 +285,7 @@ export const surfacePromptWith = (mandate: string, where: string, opts: { sessio
     let constitutionBlock = '';
     let constitutionRaw = '';
     try {
-        constitutionRaw = (getHarnessSettings().riskConstitution ?? '').slice(0, 1200);
+        constitutionRaw = (getHarnessSettings().riskConstitution ?? '').slice(0, RISK_CONSTITUTION_MAX_CHARS);
         constitutionBlock = constitutionRaw
             ? `[TRADER RISK CONSTITUTION — written by the trader; immutable to you and to every autonomous writer. These rules override any plan you would otherwise endorse; a plan that violates them is refused, not negotiated.]
 ${constitutionRaw}`

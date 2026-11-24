@@ -6,9 +6,13 @@
  */
 
 import { TokenUsage } from './tokenUsage';
-import { geminiThinkingParams } from '../../shared/providerRequestPolicy.cjs';
+import {
+    geminiThinkingParams,
+    GOOGLE_GEMINI_DEFAULT_BASE,
+    isGoogleGeminiBaseUrl,
+} from '../../shared/providerRequestPolicy.cjs';
 
-export const GOOGLE_GEMINI_DEFAULT_BASE = 'https://generativelanguage.googleapis.com/v1beta';
+export { GOOGLE_GEMINI_DEFAULT_BASE };
 
 export type GeminiRole = 'user' | 'model';
 
@@ -37,7 +41,7 @@ export interface GeminiGenerateBody {
 export const isGoogleApiFormat = (format?: string): boolean => format === 'google';
 
 export const usesGoogleGeminiDiscovery = (baseUrl: string, format?: string): boolean =>
-    isGoogleApiFormat(format) || /generativelanguage/i.test(baseUrl || '');
+    isGoogleApiFormat(format) || isGoogleGeminiBaseUrl(baseUrl);
 
 export const geminiModelId = (model: string): string =>
     (model || '').trim().replace(/^models\//, '');

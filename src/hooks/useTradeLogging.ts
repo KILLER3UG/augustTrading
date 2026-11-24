@@ -663,7 +663,7 @@ export const useTradeLogging = (params: UseTradeLoggingParams) => {
                     outcome: outcome === TradeOutcome.WIN ? 'WIN' : 'LOSS',
                     coin: coin?.toUpperCase(),
                     pattern: typeof pattern === 'string' ? pattern : undefined,
-                    timeframe: '4h',
+                    timeframe: chatStore.getActiveSession()?.interval || '4h',
                     // Use the regime captured at analysis time (was derived
                     // from the pattern family — wrong dimension).
                     regime: marketRegime,

@@ -652,7 +652,7 @@ const SettingsMenu: React.FC<SettingsMenuProps> = (props) => {
                                     />
                                 )}
                             </nav>
-                            <div className="border-t border-zinc-800/80 px-3 py-3">
+                            <div className="shrink-0 border-t border-zinc-800/80 px-3 py-3">
                                 <details className="group">
                                     <summary className="flex cursor-pointer select-none list-none items-center justify-between font-mono text-ui-xs text-zinc-600 hover:text-zinc-400">
                                         <span>Developer</span>

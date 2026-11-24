@@ -16,6 +16,7 @@
 import { getHarnessSettings } from '../../utils/harnessSettings';
 import { PLAYBOOK_IDS } from '../../types/playbook';
 import { CHART_INTERVALS } from '../../utils/chartIntervals';
+import { MARKET_TOOL_NAMES, MARKET_READ_TOOL_NAMES } from '../../utils/toolKinds';
 import { CHART_INDICATOR_IDS, CHART_INDICATOR_LABELS } from '../trade/chartIndicatorSettings';
 import { extractSymbolFromPrompt } from './MarketDataService';
 import type { DeskToolDefinition } from './DeskToolsService';
@@ -372,38 +373,12 @@ export const PAPER_TRADING_PROMPT = [
     'You have NO path to equity, risk caps, closed paper trades or a reset — only the trader can change those in Settings. Every paper fill is simulated; say so plainly. A closed paper row settles into the Trade Log under the Paper filter and never enters live statistics.',
 ].join('\n');
 
-export const MARKET_TOOLS = new Set([
-    'get_market_packet',
-    'get_all_timeframes',
-    'get_chart_view',
-    'get_order_book',
-    'get_derivatives',
-    'get_liquidations',
-    'get_price_snapshot',
-    'get_indicators',
-    'get_btc_context',
-    'scan_setups',
-    'project_future_price',
-    'get_setup_history_stats',
-    'run_monte_carlo',
-]);
+export const MARKET_TOOLS = new Set<string>(MARKET_TOOL_NAMES);
 
 /**
  * The tools whose call READ the market (or the trader's own market record).
- *
- * `MARKET_TOOLS` answers a different question — "does this result need the coin
- * named?" — so it does not include `get_trade_log` or `run_screener`. This set
- * is the one the Full-analysis / scheduled-run check asks: a memory read, a
- * skill edit, `decline_trade`, or `present_trade` is NOT looking at the tape,
- * and must not silence "nothing was looked up".
  */
-export const MARKET_READ_TOOLS = new Set([
-    ...MARKET_TOOLS,
-    'get_session_context',
-    'get_trade_log',
-    'run_screener',
-    'find_best_setups',
-]);
+export const MARKET_READ_TOOLS = new Set<string>(MARKET_READ_TOOL_NAMES);
 
 export const isMarketReadTool = (name: string): boolean => MARKET_READ_TOOLS.has(name);
 

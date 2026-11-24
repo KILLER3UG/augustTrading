@@ -9,6 +9,30 @@ import type { ProviderConfig } from '../../types/provider';
 import type { SkillWriteReview } from '../learning/SkillFileService';
 import type { Kline } from '../../types/message';
 import { getHarnessSettings } from '../../utils/harnessSettings';
+import {
+    DUCKDUCKGO_API_BASE,
+    DUCKDUCKGO_HTML_BASE,
+    DEFAULT_SYMBOL,
+} from '../../config/exchangeEndpoints';
+import {
+    KLINE_INTERVALS_5M_TO_1H,
+    KLINE_INTERVALS_15M_TO_4H,
+    KLINE_INTERVALS_15M_TO_1D,
+    KLINE_INTERVALS_5M_TO_4H,
+    KLINE_INTERVALS_5M_TO_1D,
+    KLINE_INTERVALS_ALL_INTRADAY_1D,
+} from '../../utils/chartIntervals';
+import {
+    ACTIONABLE_TOOL_META,
+    ACTIONABLE_TOOLS,
+    CACHEABLE_TOOLS,
+    MEMORY_OFF_TOOLS,
+    STAMPED_TOOLS,
+    STATEFUL_DESK_TOOLS,
+    TOOL_LABELS,
+    toolLabel,
+    UNTRUSTED_RESULT_TOOLS,
+} from '../../utils/toolKinds';
 import { skillFormatIssues, SKILL_BODY_SECTIONS } from '../../utils/skillFrontmatter';
 import { baseOf } from '../../utils/symbol';
 import { phtStamp } from '../../utils/timezone';
@@ -105,27 +129,11 @@ import { intersectGoalPolicy, type SeatToolGrant } from '../../utils/toolKinds';
  * `<tool> rejected:`.
  */
 export const toolActionFromResult = (name: string, ok: boolean, content: string, speaker: string): ToolAction | null => {
-    const isProposal = name === 'forge_tool' || name === 'amend_memory' || name === 'skill_write' || name === 'write_memory_note'
-        || name === 'remember' || name === 'forget' || name === 'propose_strategy' || name === 'emit_signal'
-        // The canonical memory_* trio the always-on index instructs the seat
-        // to call: without these rows, a model rewriting a fact left no trace
-        // in the transcript ledger (the audit's top-2).
-        || name === 'memory_add' || name === 'memory_update' || name === 'memory_delete'
-        // Pass-1 curated-memory writes and skill lifecycle moves are
-        // persisted side-effects: without these rows the transcript would
-        // show a write that never appears as an action.
-        || name === 'memory' || name === 'skill_manage';
+    const isProposal = ACTIONABLE_TOOLS.has(name);
     const isCustom = name.startsWith('custom_');
     if (!isProposal && !isCustom) return null;
     const at = new Date().toISOString();
-    const verbFor = (tool: string): string => (
-        tool === 'forge_tool' || tool === 'propose_strategy' ? 'proposed'
-            : tool === 'skill_write' || tool === 'memory_add' || tool === 'memory' ? 'saved'
-                    : tool === 'amend_memory' ? 'amended'
-                        : tool === 'memory_update' ? 'updated'
-                            : tool === 'forget' || tool === 'memory_delete' ? 'removed'
-                                : tool === 'emit_signal' ? 'emitted'
-                                    : tool === 'remember' ? 'saved' : 'created');
+    const verbFor = (tool: string): string => ACTIONABLE_TOOL_META[tool]?.verb ?? 'created';
     if (!ok) {
         return { at, speaker, tool: name, ok: false, verb: verbFor(name), label: 'rejected', review: '' };
     }
@@ -189,12 +197,7 @@ export const toolActionFromResult = (name: string, ok: boolean, content: string,
 
 /** Proposals + custom tools, for the loop's per-result classification. */
 const isActionableToolResult = (r: DeskToolResult): boolean =>
-    r.name === 'forge_tool' || r.name === 'amend_memory' || r.name === 'skill_write' || r.name === 'write_memory_note'
-        || r.name === 'propose_strategy' || r.name === 'emit_signal'
-    || r.name === 'remember' || r.name === 'forget'
-    || r.name === 'memory_add' || r.name === 'memory_update' || r.name === 'memory_delete'
-    || r.name === 'memory' || r.name === 'skill_manage'
-    || r.name.startsWith('custom_');
+    ACTIONABLE_TOOLS.has(r.name) || r.name.startsWith('custom_');
 
 export interface DeskToolDefinition {
     type: 'function';
@@ -601,57 +604,6 @@ const repeatCallNotice = (name: string, label: string, ageMs: number): string =>
 /** \`\${SESSION_ID}\` fallback when a caller passes no sessionId: stable for
  *  this boot, never a fabricated cross-session identity. */
 const DESK_BOOT_SESSION_ID = `desk-${new Date().toISOString().slice(0, 10)}`;
-const CACHEABLE_TOOLS = new Set([
-    'get_market_packet',
-    'get_all_timeframes',
-    'get_derivatives',
-    'get_order_book',
-    'get_liquidations',
-    // get_price_snapshot deliberately does NOT cache: its whole job is the
-    // "did price actually move?" check the chat prompt asks the model to run
-    // before narrating one, so replaying a 30s-old read would make the
-    // verification step actively misleading. One cheap ticker call per ask.
-    'get_session_context',
-    'get_setup_history_stats',
-    'project_future_price',
-    'run_screener',
-    'find_best_setups',
-    // `switch_chart_symbol` is deliberately NOT here: it is a WRITE to the
-    // shared session. A cached "switched" receipt would claim a UI change
-    // that never happened on the repeat call.
-    'scan_setups',
-    'web_search',
-    // The market-structure tools are pure reads over closed candles: a result
-    // computed inside the current bar stays valid until that bar closes, which
-    // is exactly what the candle-aligned cache TTL models. Never STAMPED —
-    // they carry no live mark, by design (as-of correctness is the point).
-    'volume_profile',
-    'naked_pocs',
-    'vwap',
-    'order_flow',
-    'effort_vs_result',
-    'auction_state',
-    'get_regime',
-    // The P1 structure family: same closed-candle reads, same honesty.
-    'swing_structure',
-    'liquidity',
-    'imbalances',
-    'sr_zones',
-    'wyckoff_events',
-    // The P2 composites: cached like the other market reads (the underlying
-    // series are cached at the fetch layer anyway).
-    'derivatives_state',
-    'btc_relative',
-    // Family H: same closed-candle reads composed into named detectors.
-    'scan_playbooks',
-    // The journal readers are deliberately NOT here: their source (the
-    // trader's rows) changes on every log write, and both are cheap — a
-    // cached base rate after a new trade would be exactly the stale number
-    // this tool family exists to end.
-]);
-/** Tools whose cached body is stored PRE-STAMP and re-stamped on every call,
- *  so a hit replays the numbers but never a previous call's "this is now". */
-const STAMPED_TOOLS = new Set(['get_market_packet', 'get_all_timeframes']);
 
 /** Candle-aligned freshness for the KLINE-BACKED cache entries (the two
  *  STAMPED tools — both carry 5m→1d series). The flat 30s window was honest
@@ -1073,97 +1025,7 @@ export const budgetToolContent = (
     return out;
 };
 
-/** Human-friendly tool labels for the live Floor chips. */
-const TOOL_LABELS: Record<string, string> = {
-    web_search: 'web search',
-    get_derivatives: 'derivatives',
-    get_order_book: 'order book',
-    get_liquidations: 'liquidations',
-    get_btc_context: 'BTC context',
-    get_session_context: 'session',
-    get_price_snapshot: 'price snapshot',
-    get_indicators: 'indicators',
-    read_tool_output: 'stored result',
-    get_market_packet: 'hybrid packet',
-    get_all_timeframes: 'all-timeframe compendium',
-    get_chart_view: 'chart view',
-    get_key_levels: 'key levels',
-    volume_profile: 'volume profile',
-    naked_pocs: 'naked POCs',
-    vwap: 'anchored VWAP',
-    order_flow: 'order flow',
-    effort_vs_result: 'effort vs result',
-    auction_state: 'auction state',
-    get_regime: 'regime',
-    trade_math: 'trade math',
-    swing_structure: 'swing structure',
-    liquidity: 'liquidity',
-    imbalances: 'imbalances',
-    sr_zones: 'S/R zones',
-    wyckoff_events: 'Wyckoff events',
-    setup_base_rate: 'setup base rate',
-    playbook_attribution: 'playbook attribution',
-    risk_state: 'risk state',
-    derivatives_state: 'derivatives state',
-    btc_relative: 'BTC relative',
-    scan_playbooks: 'playbook scan',
-    meta_label: 'meta label',
-    draw_tool_levels: 'tool levels',
-    draw_on_chart: 'chart draw',
-    mark_trade_levels: 'level marks',
-    clear_chart_drawings: 'chart clear',
-    write_memory_note: 'memory note',
-    // The memory_* names reuse the labels their older aliases already had, so
-    // the transcript reads the same act the same way whichever name the model
-    // used — and toolKinds needs no parallel vocabulary.
-    memory_read: 'read memory',
-    memory_add: 'remember',
-    memory: 'curated memory',
-    session_search: 'session search',
-    skill_manage: 'skill manage',
-    memory_update: 'amend memory',
-    memory_delete: 'forget',
-    memory_search_sessions: 'session search',
-    get_notebook_map: 'notebook map',
-    skill_view: 'skill reader',
-    skill_reader: 'skill reader',
-    read_skill: 'skill reader',
-    skill_index: 'skills list',
-    skill_write: 'skill write',
-    ask_user_input: 'ask trader',
-    propose_strategy: 'strategy plan',
-    recall: 'notebook recall',
-    load_tools: 'tool catalogue',
-    get_setup_history_stats: 'setup history',
-    get_trade_log: 'trade log',
-    run_screener: 'screener',
-    find_best_setups: 'best setups',
-    switch_chart_symbol: 'chart switch',
-    set_chart_timeframe: 'chart timeframe',
-    toggle_chart_study: 'chart study',
-    correct_trade_outcome: 'settlement correction',
-    run_monte_carlo: 'monte carlo',
-    recall_chat: 'session search',
-    project_future_price: 'price projection',
-    emit_signal: 'signal',
-    send_message: 'direct message',
-    read_message: 'read inbox',
-    list_goals: 'goal list',
-    open_goal: 'goal reader',
-    create_goal: 'goal creation',
-    update_goal: 'goal update',
-    restore_goal: 'goal restore',
-    list_self_changes: 'change ledger',
-    propose_self_change: 'self-change',
-    revert_self_change: 'self-change undo',
-    propose_ai_setting_change: 'ai setting',
-    propose_risk_change: 'risk limit change',
-    propose_strategy_activation: 'strategy state change',
-    propose_session_plan: 'session plan',
-    propose_rule_change: 'rule proposal',
-};
-
-export const toolLabel = (name: string): string => TOOL_LABELS[name] ?? name.replace(/_/g, ' ');
+export { TOOL_LABELS, toolLabel };
 
 /** One-line digest of a tool result for the transcript's tool rows — always
  *  self-labeled ("order book · buy wall …") so a row reads without context.
@@ -2126,7 +1988,7 @@ export const DESK_TOOL_DEFINITIONS: DeskToolDefinition[] = [
                     symbol: { type: 'string', description: 'Any perp symbol, e.g. ETHUSDT (default: the current chart symbol).' },
                     interval: {
                         type: 'string',
-                        enum: ['5m', '15m', '1h', '4h', '1d'],
+                        enum: KLINE_INTERVALS_5M_TO_1D,
                         description: 'Timeframe the levels are computed from. Defaults to the chart interval, else 1h.',
                     },
                 },
@@ -2204,7 +2066,7 @@ export const DESK_TOOL_DEFINITIONS: DeskToolDefinition[] = [
                 type: 'object',
                 properties: {
                     symbol: { type: 'string', description: 'Any perp symbol (default: the chart\'s current symbol).' },
-                    interval: { type: 'string', enum: ['5m', '15m', '1h'], description: 'Candle interval. Default 15m.' },
+                    interval: { type: 'string', enum: KLINE_INTERVALS_5M_TO_1H, description: 'Candle interval. Default 15m.' },
                     window: { type: 'integer', description: 'Bars in the divergence/delta window (default 20, max 60).' },
                 },
                 additionalProperties: false,
@@ -2221,7 +2083,7 @@ export const DESK_TOOL_DEFINITIONS: DeskToolDefinition[] = [
                 type: 'object',
                 properties: {
                     symbol: { type: 'string', description: 'Any perp symbol (default: the chart\'s current symbol).' },
-                    interval: { type: 'string', enum: ['15m', '1h', '4h'], description: 'Bar interval. Default 1h.' },
+                    interval: { type: 'string', enum: KLINE_INTERVALS_15M_TO_4H, description: 'Bar interval. Default 1h.' },
                 },
                 additionalProperties: false,
             },
@@ -2252,7 +2114,7 @@ export const DESK_TOOL_DEFINITIONS: DeskToolDefinition[] = [
                 type: 'object',
                 properties: {
                     symbol: { type: 'string', description: 'Any perp symbol (default: the chart\'s current symbol).' },
-                    interval: { type: 'string', enum: ['15m', '1h', '4h', '1d'], description: 'Timeframe. Default 1h.' },
+                    interval: { type: 'string', enum: KLINE_INTERVALS_15M_TO_1D, description: 'Timeframe. Default 1h.' },
                 },
                 additionalProperties: false,
             },
@@ -2294,7 +2156,7 @@ export const DESK_TOOL_DEFINITIONS: DeskToolDefinition[] = [
                 type: 'object',
                 properties: {
                     symbol: { type: 'string', description: 'Any perp symbol (default: the chart\'s current symbol).' },
-                    interval: { type: 'string', enum: ['5m', '15m', '1h', '4h'], description: 'Timeframe. Default 1h.' },
+                    interval: { type: 'string', enum: KLINE_INTERVALS_5M_TO_4H, description: 'Timeframe. Default 1h.' },
                 },
                 additionalProperties: false,
             },
@@ -2310,7 +2172,7 @@ export const DESK_TOOL_DEFINITIONS: DeskToolDefinition[] = [
                 type: 'object',
                 properties: {
                     symbol: { type: 'string', description: 'Any perp symbol (default: the chart\'s current symbol).' },
-                    interval: { type: 'string', enum: ['5m', '15m', '1h', '4h'], description: 'Timeframe. Default 1h.' },
+                    interval: { type: 'string', enum: KLINE_INTERVALS_5M_TO_4H, description: 'Timeframe. Default 1h.' },
                 },
                 additionalProperties: false,
             },
@@ -2326,7 +2188,7 @@ export const DESK_TOOL_DEFINITIONS: DeskToolDefinition[] = [
                 type: 'object',
                 properties: {
                     symbol: { type: 'string', description: 'Any perp symbol (default: the chart\'s current symbol).' },
-                    interval: { type: 'string', enum: ['5m', '15m', '1h', '4h'], description: 'Timeframe. Default 1h.' },
+                    interval: { type: 'string', enum: KLINE_INTERVALS_5M_TO_4H, description: 'Timeframe. Default 1h.' },
                 },
                 additionalProperties: false,
             },
@@ -2342,7 +2204,7 @@ export const DESK_TOOL_DEFINITIONS: DeskToolDefinition[] = [
                 type: 'object',
                 properties: {
                     symbol: { type: 'string', description: 'Any perp symbol (default: the chart\'s current symbol).' },
-                    interval: { type: 'string', enum: ['15m', '1h', '4h'], description: 'Timeframe. Default 1h.' },
+                    interval: { type: 'string', enum: KLINE_INTERVALS_15M_TO_4H, description: 'Timeframe. Default 1h.' },
                 },
                 additionalProperties: false,
             },
@@ -2358,7 +2220,7 @@ export const DESK_TOOL_DEFINITIONS: DeskToolDefinition[] = [
                 type: 'object',
                 properties: {
                     symbol: { type: 'string', description: 'Any perp symbol (default: the chart\'s current symbol).' },
-                    interval: { type: 'string', enum: ['15m', '1h', '4h'], description: 'Timeframe. Default 1h.' },
+                    interval: { type: 'string', enum: KLINE_INTERVALS_15M_TO_4H, description: 'Timeframe. Default 1h.' },
                 },
                 additionalProperties: false,
             },
@@ -2450,7 +2312,7 @@ export const DESK_TOOL_DEFINITIONS: DeskToolDefinition[] = [
                 type: 'object',
                 properties: {
                     symbol: { type: 'string', description: 'Any perp symbol (default: the chart\'s current symbol).' },
-                    interval: { type: 'string', enum: ['15m', '1h', '4h'], description: 'Timeframe for the structure reads. Default 1h.' },
+                    interval: { type: 'string', enum: KLINE_INTERVALS_15M_TO_4H, description: 'Timeframe for the structure reads. Default 1h.' },
                 },
                 additionalProperties: false,
             },
@@ -2502,7 +2364,7 @@ export const DESK_TOOL_DEFINITIONS: DeskToolDefinition[] = [
                     symbol: { type: 'string', description: 'Any perp symbol, e.g. ETHUSDT (default: the current chart symbol).' },
                     interval: {
                         type: 'string',
-                        enum: ['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '6h', '12h', '1d'],
+                        enum: KLINE_INTERVALS_ALL_INTRADAY_1D,
                         description: 'Candle interval. Default 1h. Unsupported intervals are rejected explicitly.',
                     },
                 },
@@ -2522,7 +2384,7 @@ export const DESK_TOOL_DEFINITIONS: DeskToolDefinition[] = [
                     symbol: { type: 'string', description: 'Any perp symbol, e.g. ETHUSDT (default: the current chart symbol).' },
                     interval: {
                         type: 'string',
-                        enum: ['5m', '15m', '1h', '4h', '1d'],
+                        enum: KLINE_INTERVALS_5M_TO_1D,
                         description: 'Candle interval. Default 1h.',
                     },
                     studies: {
@@ -3372,7 +3234,7 @@ async function runWebSearch(query: string, signal?: AbortSignal): Promise<string
 
     // Instant Answer API (keyless) — Abstract / RelatedTopics when present.
     try {
-        const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(q)}&format=json&no_html=1&skip_disambig=1`;
+        const url = `${DUCKDUCKGO_API_BASE}/?q=${encodeURIComponent(q)}&format=json&no_html=1&skip_disambig=1`;
         const res = await fetch(url, { signal, headers: { Accept: 'application/json' } });
         if (res.ok) {
             const data = await res.json() as {
@@ -3414,7 +3276,7 @@ async function runWebSearch(query: string, signal?: AbortSignal): Promise<string
     // HTML lite scrape for headline-style results when Instant Answer is thin.
     if (lines.length < 3) {
         try {
-            const htmlUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(q)}`;
+            const htmlUrl = `${DUCKDUCKGO_HTML_BASE}/html/?q=${encodeURIComponent(q)}`;
             const res = await fetch(htmlUrl, {
                 signal,
                 headers: { Accept: 'text/html', 'User-Agent': 'AugustDesk/1.0' },
@@ -4108,18 +3970,6 @@ export interface DeskToolContext {
     skillSlugsRead?: string[];
 }
 
-/** Tools whose RESULT is text this app did not write and the trader did not
- *  type. The `remember` provenance gate asks which of these ran earlier in the
- *  turn; a forged HTTPS tool is in the same class and is detected by its own
- *  executor (`forgedResults`), because its name is dynamic. */
-const UNTRUSTED_RESULT_TOOLS = new Set([
-    'web_search',
-]);
-
-/** Market-data tools whose result may need the coin named in the transcript —
- *  the model can fetch ANY symbol while the chart shows another, so the emit
- *  site inserts the coin into the digest only when it differs from the chart. */
-
 const resolvedSymbolField = (call: DeskToolCall, fallback: string): { symbol?: string } => {
     if (!MARKET_TOOLS.has(call.name)) return {};
     return { symbol: asSymbol(call.arguments?.symbol, fallback) };
@@ -4194,7 +4044,7 @@ const liveFormingCandleOf = (context: DeskToolContext): FormingCandle | null =>
  *  not, carries ITS OWN freshness marks instead of replaying a previous
  *  call's "now". */
 const packetStamps = (call: DeskToolCall, context: DeskToolContext): string => {
-    const fallback = context.defaultSymbol || 'BTCUSDT';
+    const fallback = context.defaultSymbol || DEFAULT_SYMBOL;
     const sym = asSymbol(call.arguments?.symbol, fallback);
     let stamps = '';
     const mark = liveMarkOf(context);
@@ -4215,7 +4065,7 @@ export async function executeDeskTool(
     call: DeskToolCall,
     context: DeskToolContext = {},
 ): Promise<DeskToolResult> {
-    const fallback = context.defaultSymbol || 'BTCUSDT';
+    const fallback = context.defaultSymbol || DEFAULT_SYMBOL;
     // TRANSPORT-AGNATIVE ALLOW-LIST (deep-dive 2026-09-15): the offer-time
     // filter in the loop only shapes what a NATIVE-format provider sees.
     // On text-protocol transports the model can emit a tag for ANY desk
@@ -4227,23 +4077,6 @@ export async function executeDeskTool(
         return rejectedResult(call, `${call.name} rejected: this tool is not available on this seat.`
             + ` The catalogue in your system prompt lists what THIS seat may load — call load_tools from it instead of retrying this name.`);
     }
-    // The Settings switch is a PROMISE at the tool layer too, not just in the
-    // prompt: with memory off, a seat that still has these tools offered must
-    // not be able to read or write the trader's notebook. BOTH tool families
-    // are gated — the legacy verbs (`remember`/`read_memory`/`forget`) AND the
-    // `memory_*` family (memory_add / memory_update / memory_delete /
-    // memory_search_sessions): gating only the legacy names was how the new
-    // family kept writing with the switch off.
-    const MEMORY_OFF_TOOLS: ReadonlySet<string> = new Set([
-        'remember', 'read_memory', 'forget', 'recall', 'write_memory_note',
-        'amend_memory', 'get_notebook_map',
-        'memory_read', 'memory_add', 'memory_update', 'memory_delete', 'memory_search_sessions',
-        'skill_index', 'skill_write', 'skill_view', 'skill_reader', 'read_skill',
-        // Pass-1 agent-driven memory: the curated files, episodic session
-        // recall and the skill lifecycle are memory surfaces too — with the
-        // switch off, none of them read or write.
-        'memory', 'session_search', 'skill_manage',
-    ]);
     if (context.memoryEnabled === false && MEMORY_OFF_TOOLS.has(call.name)) {
         return rejectedResult(call, `${call.name} rejected: memory is OFF for this turn — nothing is read or saved.`);
     }
@@ -7071,20 +6904,6 @@ ${body}`);
         };
     }
 }
-
-const STATEFUL_DESK_TOOLS = new Set([
-    'ask_user_input',
-    'paper_order',
-    'memory',
-    'skill_manage',
-    'skill_write',
-    'amend_memory',
-    'remember',
-    'forget',
-    'update_trade',
-    'close_trade',
-    'update_plan',
-]);
 
 export async function executeDeskTools(
     calls: DeskToolCall[],

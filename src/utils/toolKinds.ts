@@ -1,30 +1,15 @@
 /**
- * toolKinds — what each desk tool IS, in the words the transcript already
- * uses.
+ * toolKinds — the ONE authoritative declarative Tool Registry for August Trading.
  *
- * WHY THIS EXISTS. The transcript never carries a tool NAME. The desk loop
- * writes a digest line built from the tool's HUMAN label
- * (`services/analysis/DeskToolsService.ts` — `digestToolResult` → `toolLabel`),
- * so the row the trader reads says "order book", never "get_order_book". A
- * map keyed by tool name would therefore never match anything the transcript
- * shows, and a second map keyed by label would drift from the first.
+ * Every desk/chat tool's canonical name, human transcript label, coarse kind,
+ * live activity phrase, cache/stamp/memory/stateful/action/market flags, and
+ * aliases live here in ONE table (`TOOL_REGISTRY`).
  *
- * So there is ONE map, keyed by the LABEL — the string the transcript
- * actually carries. A tool's kind is a property of the tool, but the only
- * handle the UI has is its label, so the label is the key. The name→label
- * relation already lives in one place (`TOOL_LABELS` in the desk service, via
- * the exported `toolLabel`), so nothing is duplicated here.
- *
- * `kind` is the coarse bucket the step rows will group by (Phase 3).
- * `activity` is the gerund the turn's status line shows while that tool
- * works — "Reading the order book", not "order book". It is the one thing
- * that turns a bare state ("Analyzing") into a claim about what the desk is
- * doing right now.
- *
- * A tool August does not know — a FORGED tool, or one added after this file
- * was written — has no entry. It is not guessed at: `toolKindOf` returns
- * `other` with an empty activity, and the caller falls back to the raw label.
- * A wrong gerund is a lie about the model's work; the bare label is not.
+ * `DESK_TOOL_NAMES`, `TOOL_LABELS`, `BY_LABEL`, `CACHEABLE_TOOLS`,
+ * `STAMPED_TOOLS`, `MEMORY_OFF_TOOLS`, `UNTRUSTED_RESULT_TOOLS`,
+ * `STATEFUL_DESK_TOOLS`, `ACTIONABLE_TOOLS`, `MARKET_TOOL_NAMES`, and
+ * `MARKET_READ_TOOL_NAMES` are all derived from `TOOL_REGISTRY` so adding or
+ * renaming a tool can never silently drift across 10 separate files.
  */
 
 /** The coarse bucket a tool falls into. */
@@ -73,110 +58,476 @@ export interface ToolKindInfo {
     activity: string;
 }
 
-/** Keyed by the transcript's human label, lower-cased. */
-const BY_LABEL: Record<string, ToolKindInfo> = {
-    // ── reads: the desk is looking something up ──────────────────────────
-    'btc context': { kind: 'read', activity: 'Reading BTC context' },
-    'all-timeframe compendium': { kind: 'read', activity: 'Reading every timeframe' },
-    'chart view': { kind: 'read', activity: 'Reading the chart' },
-    'derivatives': { kind: 'read', activity: 'Reading derivatives' },
-    'hybrid packet': { kind: 'read', activity: 'Reading the market' },
-    'indicators': { kind: 'read', activity: 'Reading indicators' },
-    'key levels': { kind: 'read', activity: 'Reading key levels' },
-    'liquidations': { kind: 'read', activity: 'Reading liquidations' },
-    'notebook map': { kind: 'read', activity: 'Reading the notebook map' },
-    'order book': { kind: 'read', activity: 'Reading the order book' },
-    'price snapshot': { kind: 'read', activity: 'Reading the price' },
-    'read memory': { kind: 'read', activity: 'Reading a memory' },
-    'read inbox': { kind: 'read', activity: 'Reading the inbox' },
-    'session': { kind: 'read', activity: 'Reading the session' },
-    'setup history': { kind: 'read', activity: 'Reading setup history' },
-    'stored result': { kind: 'read', activity: 'Reading a stored result' },
-    'trade log': { kind: 'read', activity: 'Reading the trade log' },
+export interface ToolRegistryEntry {
+    name: string;
+    label: string;
+    kind: ToolKind;
+    activity: string;
+    /** Included in `DESK_TOOL_NAMES` (the dock seat grant / skill tool check). */
+    deskGrant?: boolean;
+    /** Alternative tool names mapped to the same label. */
+    aliases?: readonly string[];
+    /** Alternative transcript labels (legacy/compatibility) mapped to same kind/activity. */
+    labelAliases?: readonly string[];
+    cacheable?: boolean;
+    stamped?: boolean;
+    memoryGated?: boolean;
+    untrusted?: boolean;
+    stateful?: boolean;
+    actionable?: { verb: string; failNoun?: string };
+    marketTool?: boolean;
+    marketRead?: boolean;
+}
 
-    // ── searches: the desk is looking for something ──────────────────────
-    'notebook recall': { kind: 'search', activity: 'Recalling the notebook' },
-    'tool catalogue': { kind: 'read', activity: 'Loading tools' },
-    'skill reader': { kind: 'read', activity: 'Reading a skill' },
-    'scan chart skills': { kind: 'search', activity: 'Scanning the chart for skills' },
-    'scan setups': { kind: 'search', activity: 'Scanning for setups' },
-    'session search': { kind: 'search', activity: 'Searching the session' },
-    'web search': { kind: 'search', activity: 'Searching the web' },
+/**
+ * Single-source tool registry. Order of `deskGrant: true` entries preserves the
+ * canonical `DESK_TOOL_NAMES` allow-list order.
+ */
+export const TOOL_REGISTRY: readonly ToolRegistryEntry[] = [
+    // ── Market & Chart Reads ────────────────────────────────────────────────
+    {
+        name: 'get_price_snapshot', label: 'price snapshot', kind: 'read', activity: 'Reading the price',
+        deskGrant: true, marketTool: true, marketRead: true,
+    },
+    {
+        name: 'get_order_book', label: 'order book', kind: 'read', activity: 'Reading the order book',
+        deskGrant: true, cacheable: true, marketTool: true, marketRead: true,
+    },
+    {
+        name: 'get_derivatives', label: 'derivatives', kind: 'read', activity: 'Reading derivatives',
+        deskGrant: true, cacheable: true, marketTool: true, marketRead: true,
+    },
+    {
+        name: 'get_liquidations', label: 'liquidations', kind: 'read', activity: 'Reading liquidations',
+        deskGrant: true, cacheable: true, marketTool: true, marketRead: true,
+    },
+    {
+        name: 'get_session_context', label: 'session', kind: 'read', activity: 'Reading the session',
+        deskGrant: true, cacheable: true, marketRead: true,
+    },
+    {
+        name: 'get_market_packet', label: 'hybrid packet', kind: 'read', activity: 'Reading the market',
+        deskGrant: true, cacheable: true, stamped: true, marketTool: true, marketRead: true,
+    },
+    {
+        name: 'get_all_timeframes', label: 'all-timeframe compendium', kind: 'read', activity: 'Reading every timeframe',
+        deskGrant: true, cacheable: true, stamped: true, marketTool: true, marketRead: true,
+    },
+    {
+        name: 'get_chart_view', label: 'chart view', kind: 'read', activity: 'Reading the chart',
+        deskGrant: true, marketTool: true, marketRead: true,
+    },
+    {
+        name: 'get_chart_studies', label: 'chart studies', kind: 'read', activity: 'Reading chart studies',
+        deskGrant: true,
+    },
+    {
+        name: 'get_key_levels', label: 'key levels', kind: 'read', activity: 'Reading key levels',
+        deskGrant: true,
+    },
 
-    // ── computes: the desk is working something out ───────────────────────
-    'monte carlo': { kind: 'compute', activity: 'Running Monte Carlo' },
-    'price projection': { kind: 'compute', activity: 'Projecting prices' },
-    'screener': { kind: 'compute', activity: 'Running the screener' },
-    'best setups': { kind: 'compute', activity: 'Ranking the best setups' },
-    'volume profile': { kind: 'compute', activity: 'Building the volume profile' },
-    'naked pocs': { kind: 'compute', activity: 'Scanning for naked POCs' },
-    'anchored VWAP': { kind: 'compute', activity: 'Computing anchored VWAP' },
-    'order flow': { kind: 'compute', activity: 'Reading order flow' },
-    'effort vs result': { kind: 'compute', activity: 'Weighing effort against result' },
-    'auction state': { kind: 'compute', activity: 'Reading the auction state' },
-    'regime': { kind: 'compute', activity: 'Classifying the regime' },
-    'trade math': { kind: 'compute', activity: 'Computing the trade math' },
-    'swing structure': { kind: 'compute', activity: 'Reading swing structure' },
-    'liquidity': { kind: 'compute', activity: 'Mapping resting liquidity' },
-    'imbalances': { kind: 'compute', activity: 'Scanning fair value gaps' },
-    's/r zones': { kind: 'compute', activity: 'Clustering S/R zones' },
-    'wyckoff events': { kind: 'compute', activity: 'Detecting Wyckoff events' },
-    'setup base rate': { kind: 'read', activity: 'Measuring the setup base rate' },
-    'playbook attribution': { kind: 'read', activity: 'Measuring playbook attribution' },
-    'risk state': { kind: 'read', activity: 'Reading the risk state' },
-    'derivatives state': { kind: 'read', activity: 'Reading the derivatives state' },
-    'btc relative': { kind: 'compute', activity: 'Comparing against BTC' },
-    'playbook scan': { kind: 'compute', activity: 'Scanning the playbooks' },
-    'meta label': { kind: 'compute', activity: 'Reading the meta label' },
-    'tool levels': { kind: 'draw', activity: 'Drawing the tool levels' },
+    // ── P0/P1/P2/P3 Structure & Quant Computes ──────────────────────────────
+    {
+        name: 'volume_profile', label: 'volume profile', kind: 'compute', activity: 'Building the volume profile',
+        deskGrant: true, cacheable: true,
+    },
+    {
+        name: 'naked_pocs', label: 'naked POCs', kind: 'compute', activity: 'Scanning for naked POCs',
+        deskGrant: true, cacheable: true,
+    },
+    {
+        name: 'vwap', label: 'anchored VWAP', kind: 'compute', activity: 'Computing anchored VWAP',
+        deskGrant: true, cacheable: true,
+    },
+    {
+        name: 'order_flow', label: 'order flow', kind: 'compute', activity: 'Reading order flow',
+        deskGrant: true, cacheable: true,
+    },
+    {
+        name: 'effort_vs_result', label: 'effort vs result', kind: 'compute', activity: 'Weighing effort against result',
+        deskGrant: true, cacheable: true,
+    },
+    {
+        name: 'auction_state', label: 'auction state', kind: 'compute', activity: 'Reading the auction state',
+        deskGrant: true, cacheable: true,
+    },
+    {
+        name: 'get_regime', label: 'regime', kind: 'compute', activity: 'Classifying the regime',
+        deskGrant: true, cacheable: true,
+    },
+    {
+        name: 'trade_math', label: 'trade math', kind: 'compute', activity: 'Computing the trade math',
+        deskGrant: true,
+    },
+    {
+        name: 'swing_structure', label: 'swing structure', kind: 'compute', activity: 'Reading swing structure',
+        deskGrant: true, cacheable: true,
+    },
+    {
+        name: 'liquidity', label: 'liquidity', kind: 'compute', activity: 'Mapping resting liquidity',
+        deskGrant: true, cacheable: true,
+    },
+    {
+        name: 'imbalances', label: 'imbalances', kind: 'compute', activity: 'Scanning fair value gaps',
+        deskGrant: true, cacheable: true,
+    },
+    {
+        name: 'sr_zones', label: 'S/R zones', kind: 'compute', activity: 'Clustering S/R zones',
+        deskGrant: true, cacheable: true,
+    },
+    {
+        name: 'wyckoff_events', label: 'Wyckoff events', kind: 'compute', activity: 'Detecting Wyckoff events',
+        deskGrant: true, cacheable: true,
+    },
+    {
+        name: 'setup_base_rate', label: 'setup base rate', kind: 'read', activity: 'Measuring the setup base rate',
+        deskGrant: true,
+    },
+    {
+        name: 'playbook_attribution', label: 'playbook attribution', kind: 'read', activity: 'Measuring playbook attribution',
+        deskGrant: true,
+    },
+    {
+        name: 'risk_state', label: 'risk state', kind: 'read', activity: 'Reading the risk state',
+        deskGrant: true,
+    },
+    {
+        name: 'derivatives_state', label: 'derivatives state', kind: 'read', activity: 'Reading the derivatives state',
+        deskGrant: true, cacheable: true,
+    },
+    {
+        name: 'btc_relative', label: 'BTC relative', kind: 'compute', activity: 'Comparing against BTC',
+        deskGrant: true, cacheable: true,
+    },
+    {
+        name: 'scan_playbooks', label: 'playbook scan', kind: 'compute', activity: 'Scanning the playbooks',
+        deskGrant: true, cacheable: true,
+    },
+    {
+        name: 'meta_label', label: 'meta label', kind: 'compute', activity: 'Reading the meta label',
+        deskGrant: true,
+    },
+    {
+        name: 'get_btc_context', label: 'BTC context', kind: 'read', activity: 'Reading BTC context',
+        deskGrant: true, marketTool: true, marketRead: true,
+    },
+    {
+        name: 'recall', label: 'notebook recall', kind: 'search', activity: 'Recalling the notebook',
+        deskGrant: true, memoryGated: true,
+    },
+    {
+        name: 'get_setup_history_stats', label: 'setup history', kind: 'read', activity: 'Reading setup history',
+        deskGrant: true, cacheable: true, marketTool: true, marketRead: true,
+    },
+    {
+        name: 'web_search', label: 'web search', kind: 'search', activity: 'Searching the web',
+        deskGrant: true, cacheable: true, untrusted: true,
+    },
+    {
+        name: 'scan_setups', label: 'scan setups', kind: 'search', activity: 'Scanning for setups',
+        deskGrant: true, cacheable: true, marketTool: true, marketRead: true,
+        labelAliases: ['scan chart skills'],
+    },
+    {
+        name: 'scan_confluence', label: 'confluence scan', kind: 'compute', activity: 'Scanning multi-TF confluence',
+        cacheable: true, marketTool: true, marketRead: true,
+    },
+    {
+        name: 'get_trade_log', label: 'trade log', kind: 'read', activity: 'Reading the trade log',
+        deskGrant: true, marketRead: true,
+    },
+    {
+        name: 'project_future_price', label: 'price projection', kind: 'compute', activity: 'Projecting prices',
+        deskGrant: true, cacheable: true, marketTool: true, marketRead: true,
+    },
+    {
+        name: 'emit_signal', label: 'signal', kind: 'present', activity: 'Emitting signal',
+        deskGrant: true, stateful: true, actionable: { verb: 'emitted', failNoun: 'signal' },
+    },
+    {
+        name: 'get_indicators', label: 'indicators', kind: 'read', activity: 'Reading indicators',
+        deskGrant: true, marketTool: true, marketRead: true,
+    },
+    {
+        name: 'recall_chat', label: 'session search', kind: 'search', activity: 'Searching the session',
+        deskGrant: true,
+    },
+    {
+        name: 'run_screener', label: 'screener', kind: 'compute', activity: 'Running the screener',
+        deskGrant: true, cacheable: true, marketRead: true,
+    },
+    {
+        name: 'run_monte_carlo', label: 'monte carlo', kind: 'compute', activity: 'Running Monte Carlo',
+        deskGrant: true, marketTool: true, marketRead: true,
+    },
+    {
+        name: 'find_best_setups', label: 'best setups', kind: 'compute', activity: 'Ranking the best setups',
+        deskGrant: true, cacheable: true, marketRead: true,
+    },
+    {
+        name: 'switch_chart_symbol', label: 'chart switch', kind: 'draw', activity: 'Switching the chart symbol',
+        deskGrant: true, stateful: true,
+    },
 
-    // ── draws: the desk is changing the chart ────────────────────────────
-    'chart clear': { kind: 'draw', activity: 'Clearing the chart' },
-    'chart draw': { kind: 'draw', activity: 'Drawing on the chart' },
-    'chart switch': { kind: 'draw', activity: 'Switching the chart symbol' },
-    'chart timeframe': { kind: 'draw', activity: 'Changing the timeframe' },
-    'chart study': { kind: 'draw', activity: 'Toggling a chart study' },
-    'settlement correction': { kind: 'write', activity: 'Proposing a settlement correction' },
-    'trade level change': { kind: 'write', activity: 'Proposing a level change' },
-    'trade close': { kind: 'write', activity: 'Proposing a close' },
-    'review': { kind: 'read', activity: 'Running a review' },
-    'draw detected': { kind: 'draw', activity: 'Drawing the detected setup' },
-    'level marks': { kind: 'draw', activity: 'Marking levels' },
+    // ── Notebook, Memory & Skills ───────────────────────────────────────────
+    {
+        name: 'write_memory_note', label: 'memory note', kind: 'write', activity: 'Writing a memory note',
+        deskGrant: true, memoryGated: true, stateful: true,
+        actionable: { verb: 'saved', failNoun: 'memory note' },
+    },
+    {
+        name: 'get_notebook_map', label: 'notebook map', kind: 'read', activity: 'Reading the notebook map',
+        deskGrant: true, memoryGated: true,
+    },
+    {
+        name: 'skill_index', label: 'skills list', kind: 'read', activity: 'Listing skills',
+        deskGrant: true, memoryGated: true,
+    },
+    {
+        name: 'skill_write', label: 'skill write', kind: 'write', activity: 'Writing a skill',
+        deskGrant: true, memoryGated: true, stateful: true,
+        actionable: { verb: 'saved', failNoun: 'skill write' },
+        labelAliases: ['skill proposal', 'skill revision'],
+    },
+    {
+        name: 'propose_strategy', label: 'strategy plan', kind: 'present', activity: 'Proposing a plan',
+        deskGrant: true, stateful: true, actionable: { verb: 'proposed', failNoun: 'strategy plan' },
+    },
+    {
+        name: 'amend_memory', label: 'amend memory', kind: 'write', activity: 'Amending memory',
+        deskGrant: true, memoryGated: true, stateful: true,
+        actionable: { verb: 'amended', failNoun: 'memory amendment' },
+    },
+    {
+        name: 'forge_tool', label: 'forge tool', kind: 'write', activity: 'Forging a tool',
+        deskGrant: true, stateful: true, actionable: { verb: 'proposed', failNoun: 'desk tool' },
+    },
+    {
+        name: 'skill_view', label: 'skill reader', kind: 'read', activity: 'Reading a skill',
+        deskGrant: true, memoryGated: true, aliases: ['skill_reader', 'read_skill'],
+    },
+    {
+        name: 'remember', label: 'remember', kind: 'write', activity: 'Remembering something',
+        deskGrant: true, memoryGated: true, stateful: true, actionable: { verb: 'saved', failNoun: 'memory' },
+    },
+    {
+        name: 'read_memory', label: 'read memory', kind: 'read', activity: 'Reading a memory',
+        deskGrant: true, memoryGated: true,
+    },
+    {
+        name: 'forget', label: 'forget', kind: 'write', activity: 'Forgetting a memory',
+        deskGrant: true, memoryGated: true, stateful: true, actionable: { verb: 'removed', failNoun: 'memory removal' },
+    },
+    {
+        name: 'memory_read', label: 'read memory', kind: 'read', activity: 'Reading a memory',
+        deskGrant: true, memoryGated: true,
+    },
+    {
+        name: 'memory_add', label: 'remember', kind: 'write', activity: 'Remembering something',
+        deskGrant: true, memoryGated: true, stateful: true, actionable: { verb: 'saved', failNoun: 'memory' },
+    },
+    {
+        name: 'memory_update', label: 'amend memory', kind: 'write', activity: 'Amending memory',
+        deskGrant: true, memoryGated: true, stateful: true, actionable: { verb: 'updated', failNoun: 'memory update' },
+    },
+    {
+        name: 'memory_delete', label: 'forget', kind: 'write', activity: 'Forgetting a memory',
+        deskGrant: true, memoryGated: true, stateful: true, actionable: { verb: 'removed', failNoun: 'memory removal' },
+    },
+    {
+        name: 'memory_search_sessions', label: 'session search', kind: 'search', activity: 'Searching the session',
+        deskGrant: true, memoryGated: true,
+    },
+    {
+        name: 'memory', label: 'curated memory', kind: 'write', activity: 'Updating curated memory',
+        deskGrant: true, memoryGated: true, stateful: true, actionable: { verb: 'saved', failNoun: 'curated memory write' },
+    },
+    {
+        name: 'session_search', label: 'session search', kind: 'search', activity: 'Searching the session',
+        deskGrant: true, memoryGated: true,
+    },
+    {
+        name: 'skill_manage', label: 'skill manage', kind: 'write', activity: 'Managing skill lifecycle',
+        deskGrant: true, memoryGated: true, stateful: true, actionable: { verb: 'updated', failNoun: 'skill manage' },
+    },
 
-    // ── writes: the desk is changing the notebook ────────────────────────
-    'amend memory': { kind: 'write', activity: 'Amending memory' },
-    'ask trader': { kind: 'other', activity: 'Asking the trader' },
-    'cancel watch': { kind: 'write', activity: 'Cancelling the price watch' },
-    'direct message': { kind: 'write', activity: 'Messaging an agent' },
-    'forge tool': { kind: 'write', activity: 'Forging a tool' },
-    'forget': { kind: 'write', activity: 'Forgetting a memory' },
-    'memory note': { kind: 'write', activity: 'Writing a memory note' },
-    'remember': { kind: 'write', activity: 'Remembering something' },
-    'goal list': { kind: 'read', activity: 'Reading the goals' },
-    'goal reader': { kind: 'read', activity: 'Opening a goal' },
-    'goal creation': { kind: 'write', activity: 'Creating a goal' },
-    'goal update': { kind: 'write', activity: 'Updating a goal' },
-    'goal restore': { kind: 'write', activity: 'Restoring a goal version' },
-    'change ledger': { kind: 'read', activity: 'Reading the change ledger' },
-    'self-change': { kind: 'write', activity: 'Changing its own harness' },
-    'self-change undo': { kind: 'write', activity: 'Reverting a self-change' },
-    'skill proposal': { kind: 'write', activity: 'Proposing a skill' },
-    'propose ai setting change': { kind: 'write', activity: 'Proposing an AI setting change' },
-    'risk limit change': { kind: 'write', activity: 'Proposing a risk limit change' },
-    'strategy state change': { kind: 'write', activity: 'Proposing a strategy state change' },
-    'session plan': { kind: 'write', activity: 'Proposing the session plan' },
-    'rule proposal': { kind: 'write', activity: 'Proposing a trading rule' },
-    'skill revision': { kind: 'write', activity: 'Revising a skill' },
-    'watch price': { kind: 'write', activity: 'Setting a price watch' },
+    // ── Plans, Goals, Self-Mod & Proposals ──────────────────────────────────
+    {
+        name: 'update_plan', label: 'update plan', kind: 'write', activity: 'Updating turn plan',
+        deskGrant: true, stateful: true,
+    },
+    {
+        name: 'list_goals', label: 'goal list', kind: 'read', activity: 'Reading the goals',
+        deskGrant: true,
+    },
+    {
+        name: 'open_goal', label: 'goal reader', kind: 'read', activity: 'Opening a goal',
+        deskGrant: true,
+    },
+    {
+        name: 'create_goal', label: 'goal creation', kind: 'write', activity: 'Creating a goal',
+        deskGrant: true, stateful: true,
+    },
+    {
+        name: 'update_goal', label: 'goal update', kind: 'write', activity: 'Updating a goal',
+        deskGrant: true, stateful: true,
+    },
+    {
+        name: 'restore_goal', label: 'goal restore', kind: 'write', activity: 'Restoring a goal version',
+        deskGrant: true, stateful: true,
+    },
+    {
+        name: 'list_self_changes', label: 'change ledger', kind: 'read', activity: 'Reading the change ledger',
+        deskGrant: true,
+    },
+    {
+        name: 'propose_self_change', label: 'self-change', kind: 'write', activity: 'Changing its own harness',
+        deskGrant: true, stateful: true,
+    },
+    {
+        name: 'revert_self_change', label: 'self-change undo', kind: 'write', activity: 'Reverting a self-change',
+        deskGrant: true, stateful: true,
+    },
+    {
+        name: 'ask_user_input', label: 'ask trader', kind: 'other', activity: 'Asking the trader',
+        deskGrant: true, stateful: true,
+    },
+    {
+        name: 'correct_trade_outcome', label: 'settlement correction', kind: 'write', activity: 'Proposing a settlement correction',
+        deskGrant: true, stateful: true,
+    },
+    {
+        name: 'update_trade', label: 'update trade', kind: 'write', activity: 'Proposing a level change',
+        deskGrant: true, stateful: true, labelAliases: ['trade level change'],
+    },
+    {
+        name: 'close_trade', label: 'close trade', kind: 'write', activity: 'Proposing a close',
+        deskGrant: true, stateful: true, labelAliases: ['trade close'],
+    },
+    {
+        name: 'run_review', label: 'run review', kind: 'read', activity: 'Running a review',
+        deskGrant: true, labelAliases: ['review'],
+    },
+    {
+        name: 'propose_risk_change', label: 'risk limit change', kind: 'write', activity: 'Proposing a risk limit change',
+        deskGrant: true, stateful: true,
+    },
+    {
+        name: 'propose_strategy_activation', label: 'strategy state change', kind: 'write', activity: 'Proposing a strategy state change',
+        deskGrant: true, stateful: true,
+    },
+    {
+        name: 'propose_session_plan', label: 'session plan', kind: 'write', activity: 'Proposing the session plan',
+        deskGrant: true, stateful: true,
+    },
+    {
+        name: 'propose_rule_change', label: 'rule proposal', kind: 'write', activity: 'Proposing a trading rule',
+        deskGrant: true, stateful: true,
+    },
+    {
+        name: 'propose_ai_setting_change', label: 'ai setting', kind: 'write', activity: 'Proposing an AI setting change',
+        deskGrant: true, stateful: true, labelAliases: ['propose ai setting change'],
+    },
+    {
+        name: 'refresh_journal_review', label: 'refresh journal review', kind: 'read', activity: 'Refreshing journal review',
+        deskGrant: true, stateful: true,
+    },
 
-    // ── presents: the desk is putting a trade in front of the trader ─────
-    'decline trade': { kind: 'present', activity: 'Declining the trade' },
-    'present trade': { kind: 'present', activity: 'Presenting the trade' },
-    'strategy plan': { kind: 'present', activity: 'Proposing a plan' },
+    // ── Paper Trading Engine ────────────────────────────────────────────────
+    {
+        name: 'paper_account', label: 'paper account', kind: 'read', activity: 'Reading paper account',
+        deskGrant: true,
+    },
+    {
+        name: 'paper_order', label: 'paper order', kind: 'write', activity: 'Placing paper order',
+        deskGrant: true, stateful: true,
+    },
 
-    // ── other: the desk is doing something we have no phrase for ─────────
-    'wake me': { kind: 'other', activity: 'Waking you' },
+    // ── Chart Actions, Panel Mail, Catalogue & Surface Presentation ─────────
+    {
+        name: 'draw_on_chart', label: 'chart draw', kind: 'draw', activity: 'Drawing on the chart',
+        stateful: true,
+    },
+    {
+        name: 'draw_detected', label: 'draw detected', kind: 'draw', activity: 'Drawing the detected setup',
+        stateful: true,
+    },
+    {
+        name: 'draw_tool_levels', label: 'tool levels', kind: 'draw', activity: 'Drawing the tool levels',
+        stateful: true,
+    },
+    {
+        name: 'mark_trade_levels', label: 'level marks', kind: 'draw', activity: 'Marking levels',
+        stateful: true,
+    },
+    {
+        name: 'clear_chart_drawings', label: 'chart clear', kind: 'draw', activity: 'Clearing the chart',
+        stateful: true,
+    },
+    {
+        name: 'set_chart_timeframe', label: 'chart timeframe', kind: 'draw', activity: 'Changing the timeframe',
+        stateful: true,
+    },
+    {
+        name: 'toggle_chart_study', label: 'chart study', kind: 'draw', activity: 'Toggling a chart study',
+        stateful: true,
+    },
+    {
+        name: 'send_message', label: 'direct message', kind: 'write', activity: 'Messaging an agent',
+        stateful: true,
+    },
+    {
+        name: 'read_message', label: 'read inbox', kind: 'read', activity: 'Reading the inbox',
+    },
+    {
+        name: 'load_tools', label: 'tool catalogue', kind: 'read', activity: 'Loading tools',
+    },
+    {
+        name: 'read_tool_output', label: 'stored result', kind: 'read', activity: 'Reading a stored result',
+    },
+    {
+        name: 'present_trade', label: 'present trade', kind: 'present', activity: 'Presenting the trade',
+        stateful: true,
+    },
+    {
+        name: 'decline_trade', label: 'decline trade', kind: 'present', activity: 'Declining the trade',
+        stateful: true,
+    },
+    {
+        name: 'repo_read', label: 'repo read', kind: 'read', activity: 'Reading workspace file',
+    },
+    {
+        name: 'repo_edit', label: 'repo edit', kind: 'write', activity: 'Editing workspace file',
+        stateful: true,
+    },
+    {
+        name: 'repo_apply', label: 'repo apply', kind: 'write', activity: 'Applying workspace check',
+        stateful: true,
+    },
+    {
+        name: 'repo_setup', label: 'repo setup', kind: 'read', activity: 'Checking workspace setup',
+    },
+    {
+        name: 'wake_me', label: 'wake me', kind: 'other', activity: 'Waking you',
+    },
+];
+
+const buildByLabel = (): Record<string, ToolKindInfo> => {
+    const out: Record<string, ToolKindInfo> = {};
+    for (const entry of TOOL_REGISTRY) {
+        const info: ToolKindInfo = { kind: entry.kind, activity: entry.activity };
+        out[entry.label.toLowerCase()] = info;
+        if (entry.labelAliases) {
+            for (const alias of entry.labelAliases) {
+                out[alias.toLowerCase()] = info;
+            }
+        }
+    }
+    return out;
 };
+
+/** Keyed by the transcript's human label, lower-cased. */
+const BY_LABEL: Record<string, ToolKindInfo> = buildByLabel();
 
 /** The kind + activity phrase for a transcript label. Never throws, and never
  *  guesses: an unknown label is `other` with an EMPTY activity, so the caller
@@ -186,158 +537,79 @@ export const toolKindOf = (label: string): ToolKindInfo => {
     return BY_LABEL[key] ?? { kind: 'other', activity: '' };
 };
 
-/**
- * The desk's tool NAMES, one list — the same names `chatTurnRunner`'s
- * TRADE_TOOLS allow-list carries and the skill `compatibility.requiresTools`
- * gate checks against. A skill may only require a tool the desk can actually
- * call, and both readers must agree on the spelling, so the list lives here
- * in the vocabulary module where neither imports the other.
- */
-/**
- * The allow-list that means "this seat is offered NOTHING".
- *
- * An empty array cannot mean that: every gate here reads a missing or empty
- * allow-list as "unrestricted", so a narrowed-to-nothing seat passed as `[]`
- * gets the whole desk back. The one name no tool can ever carry is the value
- * that does mean nothing — the definition filter matches no tool against it
- * and the executor refuses every call. Transport-only: never written into a
- * goal, never shown to the trader.
- */
 export const NO_TOOLS_ALLOWED: string[] = [''];
 
-/**
- * What a seat may call.
- *
- *   - a LIST of names: exactly those.
- *   - 'all': the full toolset, said out loud.
- *   - undefined, or an empty list: NOTHING.
- *
- * WHY IT IS NOT "undefined means everything" ANY MORE. It was. The trouble was
- * that a caller who FORGOT to pass a list got the whole desk - every market
- * read, the memory writers, `skill_write`, `repo_edit`, `propose_self_change`
- * and the trader's forged tools - and nobody had decided that. "Nobody decided"
- * and "the owner decided yes" are different things, and only one of them is a
- * decision. So the full toolset is now something a seat SAYS it has, and a
- * missing grant is a missing grant.
- *
- * The 'all' marker exists so that saying it is cheap and so that the forged
- * tools - whose names are minted at runtime and cannot be listed - keep
- * working for a seat that holds it.
- */
 export type SeatToolGrant = readonly string[] | 'all';
 
-/**
- * The ONE rule for how a goal's tool policy meets a seat's allow-list.
- *
- * A goal may only NARROW, so the answer is the intersection with what this
- * seat can actually call — and only with names that have a definition, so a
- * goal cannot resurrect a tool this build does not ship.
- *
- * The interesting case is the empty one. A goal authored on a wider seat (the
- * Agents surface's list is not the trade seat's `TRADE_TOOLS`) can name tools
- * this seat never had; returning `[]` there would NOT mean "nothing", because
- * `[]` reads as unrestricted. So an empty intersection returns
- * `NO_TOOLS_ALLOWED`. Pure and exported because the never-widen invariant
- * fires only for a mis-shaped goal, which no render probe can produce —
- * `check:contracts` pins it.
- */
 export const intersectGoalPolicy = (
     seat: SeatToolGrant | undefined,
     policy: readonly string[],
     realToolNames: readonly string[],
 ): string[] => {
-    // A goal may only narrow. A seat with no grant has nothing to narrow, so
-    // the intersection is empty and the sentinel answers it - the same shape
-    // as a goal naming only tools this seat lacks.
     const keep = policy.filter(t => realToolNames.includes(t) && (
         seat === 'all' ? true : Array.isArray(seat) && seat.includes(t)
     ));
     return keep.length > 0 ? keep : [...NO_TOOLS_ALLOWED];
 };
 
-export const DESK_TOOL_NAMES: readonly string[] = [
-    'get_price_snapshot', 'get_order_book', 'get_derivatives',
-    'get_liquidations', 'get_session_context', 'get_market_packet', 'get_all_timeframes', 'get_chart_view',
-    // The values on the chart's own lines — the chart and the seat read the
-    // same cores, so a study on screen is a study the model can quote.
-    'get_chart_studies',
-    'get_key_levels',
-    // The P0 market-structure family (docs/plans/tools-upgrade.md): volume,
-    // auction and regime reads computed from closed candles, plus the plan's
-    // own arithmetic. The seat reads these numbers instead of inventing them.
-    'volume_profile', 'naked_pocs', 'vwap', 'order_flow', 'effort_vs_result',
-    'auction_state', 'get_regime', 'trade_math',
-    // The P1 family: structure/liquidity/imbalance/zone/wyckoff reads, and
-    // the journal's own measured base rate and risk state.
-    'swing_structure', 'liquidity', 'imbalances', 'sr_zones', 'wyckoff_events',
-    'setup_base_rate', 'playbook_attribution', 'risk_state',
-    // The P2 composites: derivatives positioning and the cross-market read
-    // (the answer for assets without derivatives data), plus the family-H
-    // playbook layer — named detectors over the same reads.
-    'derivatives_state', 'btc_relative', 'scan_playbooks',
-    // The advisory meta-label read (the P3 candidate the owner asked for).
-    'meta_label',
-    'get_btc_context', 'recall', 'get_setup_history_stats', 'web_search', 'scan_setups',
-    'get_trade_log',
-    'project_future_price',
-    'emit_signal',
-    'get_indicators',
-    'recall_chat',
-    'run_screener', 'run_monte_carlo',
-    // The screener's ranked shortlist, and the one actuation that puts a
-    // discovered coin on the live chart. Neither needs a canvas: both write
-    // or read through the shared chat session / the market services.
-    'find_best_setups', 'switch_chart_symbol',
-    'write_memory_note', 'get_notebook_map', 'skill_index', 'skill_write', 'propose_strategy',
-    'amend_memory', 'forge_tool',
-    'skill_view',
-    // The collaboration-memory trio the dock's own mandate already asks for.
-    // They were refused at the executor because this list did not name them;
-    // the chart copilot can now save/recall/forget like the Agents surface.
-    'remember', 'read_memory', 'forget',
-    // Owner ruling 2026-11-10: the family is memory_*, with the trio above kept
-    // as working aliases. The always-on fact index names these five BY NAME, so
-    // a seat that lacks them is instructed every turn to call a tool the
-    // executor refuses — the dead affordance this list exists to prevent.
-    'memory_read', 'memory_add', 'memory_update', 'memory_delete', 'memory_search_sessions',
-    // Pass-1 agent-driven memory: the bounded curated-files editor, the local
-    // episodic chat search and the skill lifecycle. These are granted to BOTH
-    // seats — a tool the system prompt names but a seat cannot call is the
-    // dead affordance this list exists to prevent (pinned by check-contracts).
-    'memory', 'session_search', 'skill_manage',
-    // Turn-scoped multi-step checklist (never persisted).
-    'update_plan',
-    // Goal environments: durable work state, edited mid-task.
-    'list_goals', 'open_goal', 'create_goal', 'update_goal', 'restore_goal',
-    // The harness change ledger: reading and moving its own self-modifications.
-    'list_self_changes', 'propose_self_change', 'revert_self_change',
-    // A human answer is a tool, not a broadcast: the dock's seat can ask too.
-    'ask_user_input',
-    // The agent's proposed settlement fix (audit P-6). Records a proposal the
-    // trader confirms on a card; it never writes the row itself.
-    'correct_trade_outcome',
-    // The two AUTHORITY changes over an armed plan, and the read-only review.
-    // All three record a proposal (or read) and never act on the call.
-    'update_trade', 'close_trade', 'run_review',
-    // A risk-limit / guard-preset change is proposed, never applied: the card
-    // is the only writer, through the settings path the trader owns.
-    'propose_risk_change',
-    // A strategy plan's activation/retirement is proposed, never applied: the
-    // card is the only writer, through the store writer the trader owns.
-    'propose_strategy_activation',
-    // A session plan is PROPOSED for the day, never activated by the call.
-    'propose_session_plan',
-    // A trading rule is PROPOSED from a candidate lesson only after the
-    // N >= 2 and anti-hindsight gates pass; the card is the only applier.
-    'propose_rule_change',
-    // An AI-behavior setting (Hybrid Intelligence / Desk Tools) is proposed,
-    // never applied: the monochrome card is the only writer, through the
-    // settings path the trader owns.
-    'propose_ai_setting_change',
-    // The journal's AI review re-runs from the current trade log on request —
-    // the same synthesis every logged trade triggers.
-    'refresh_journal_review',
-    // Pass 3: the local simulated broker. Both names are granted on every
-    // seat; the deterministic engine — not the model — owns every risk wall.
-    'paper_account', 'paper_order',
-];
+/** Derived desk tool allow-list (every entry with `deskGrant: true`). */
+export const DESK_TOOL_NAMES: readonly string[] = TOOL_REGISTRY
+    .filter(t => t.deskGrant)
+    .map(t => t.name);
+
+/** Canonical paper-broker tool names granted to both Desk and Chat seats. */
+export const PAPER_TOOL_NAMES = ['paper_account', 'paper_order'] as const;
+
+/** Derived human-friendly tool labels (canonical name + aliases). */
+export const TOOL_LABELS: Record<string, string> = (() => {
+    const map: Record<string, string> = {};
+    for (const entry of TOOL_REGISTRY) {
+        map[entry.name] = entry.label;
+        if (entry.aliases) {
+            for (const alias of entry.aliases) map[alias] = entry.label;
+        }
+    }
+    return map;
+})();
+
+export const toolLabel = (name: string): string => TOOL_LABELS[name] ?? name.replace(/_/g, ' ');
+
+export const CACHEABLE_TOOLS: ReadonlySet<string> = new Set(
+    TOOL_REGISTRY.filter(t => t.cacheable).map(t => t.name),
+);
+
+export const STAMPED_TOOLS: ReadonlySet<string> = new Set(
+    TOOL_REGISTRY.filter(t => t.stamped).map(t => t.name),
+);
+
+export const MEMORY_OFF_TOOLS: ReadonlySet<string> = new Set(
+    TOOL_REGISTRY.filter(t => t.memoryGated).flatMap(t => [t.name, ...(t.aliases ?? [])]),
+);
+
+export const UNTRUSTED_RESULT_TOOLS: ReadonlySet<string> = new Set(
+    TOOL_REGISTRY.filter(t => t.untrusted).map(t => t.name),
+);
+
+export const STATEFUL_DESK_TOOLS: ReadonlySet<string> = new Set(
+    TOOL_REGISTRY.filter(t => t.stateful).map(t => t.name),
+);
+
+export const ACTIONABLE_TOOLS: ReadonlySet<string> = new Set(
+    TOOL_REGISTRY.filter(t => t.actionable).map(t => t.name),
+);
+
+export const ACTIONABLE_TOOL_META: Readonly<Record<string, { verb: string; failNoun?: string }>> = (() => {
+    const map: Record<string, { verb: string; failNoun?: string }> = {};
+    for (const entry of TOOL_REGISTRY) {
+        if (entry.actionable) map[entry.name] = entry.actionable;
+    }
+    return map;
+})();
+
+export const MARKET_TOOL_NAMES: readonly string[] = TOOL_REGISTRY
+    .filter(t => t.marketTool)
+    .map(t => t.name);
+
+export const MARKET_READ_TOOL_NAMES: readonly string[] = TOOL_REGISTRY
+    .filter(t => t.marketTool || t.marketRead)
+    .map(t => t.name);

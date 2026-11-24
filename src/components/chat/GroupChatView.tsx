@@ -20,6 +20,8 @@ import { MessageRole } from '../../types/enums';
 import { Message } from '../../types/message';
 import MarkdownContent from '../shared/MarkdownContent';
 import { formatModelDisplayName } from '../../utils/providerUtils';
+import { baseOf } from '../../utils/symbol';
+import * as chatStore from '../../services/trade/chatStore';
 import { faceForName, type BotFaceSpec } from './BotFace';
 
 /** The card tint IS the bot's identity: face-kind bots wear their own
@@ -299,7 +301,10 @@ const GroupChatViewImpl: React.FC<GroupChatViewProps> = ({
                             ))}
                         </div>
                         <div className="flex flex-wrap justify-center gap-2">
-                            {['Introduce yourselves', 'Check the current BTC setup', 'What is the biggest risk right now?'].map(starter => (
+                            {(() => {
+                                const activeBase = baseOf(chatStore.getActiveSession()?.symbol || '') || 'BTC';
+                                return ['Introduce yourselves', `Check the current ${activeBase} setup`, 'What is the biggest risk right now?'];
+                            })().map(starter => (
                                 <button
                                     key={starter}
                                     type="button"

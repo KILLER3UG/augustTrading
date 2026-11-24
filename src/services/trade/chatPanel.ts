@@ -12,7 +12,7 @@
  * it a run callback so tests drive it with a fake transport.
  */
 
-import type { ChatSession } from './chatSessions';
+import { PANEL_MAX_MODELS, type ChatSession } from './chatSessions';
 import { isPassReply } from '../agents/groupRounds';
 import { escapeRegExp } from '../../utils/escapeRegExp';
 
@@ -54,7 +54,7 @@ export const panelSeats = (
 ): PanelSeat[] => {
     const out: PanelSeat[] = [];
     const seen = new Set<string>();
-    for (const raw of (session.panelModels ?? []).slice(0, 5)) {
+    for (const raw of (session.panelModels ?? []).slice(0, PANEL_MAX_MODELS)) {
         const botName = raw.botId ? botNameFor?.(raw.botId) : undefined;
         // An unresolvable botId is a deleted agent: drop the claim and keep the
         // model, so the seat still answers under a real name.

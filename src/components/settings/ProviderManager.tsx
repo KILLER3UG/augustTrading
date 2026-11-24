@@ -69,13 +69,21 @@ const selectTriggerBase =
     'focus:outline-none focus:border-zinc-600 transition-colors duration-[150ms] ease-[var(--ease-snappy)] ' +
     'cursor-pointer hover:bg-zinc-900';
 
-function getContextBadge(modelId: string): string {
-    const m = modelId.toLowerCase();
-    if (m.includes('1m') || m.includes('flash-free') || m.includes('deepseek-v4') || m.includes('nemotron') || m.includes('laguna')) return '1M';
-    if (m.includes('262k') || m.includes('hy3') || m.includes('ling-3')) return '262K';
-    if (m.includes('128k') || m.includes('glm-4') || m.includes('llama-4')) return '128K';
-    if (m.includes('32k') || m.includes('qwen3-32b')) return '32K';
-    return '1M';
+const DEFAULT_OPENAI_COMPAT_BASE = 'https://opencode.ai/zen/v1';
+
+function getContextBadge(
+    modelId: string,
+    modelContextWindows?: Readonly<Record<string, number>>,
+    fallbackTokens?: number,
+): string | null {
+    const tokens = modelContextWindows?.[modelId] ?? fallbackTokens;
+    if (!tokens || !Number.isFinite(tokens) || tokens <= 0) return null;
+    if (tokens >= 1_000_000) {
+        const m = tokens / 1_000_000;
+        return Number.isInteger(m) ? `${m}M` : `${m.toFixed(1)}M`;
+    }
+    if (tokens >= 1_000) return `${Math.round(tokens / 1_000)}K`;
+    return `${tokens}`;
 }
 
 /**
@@ -644,7 +652,7 @@ const ProviderManager: React.FC<ProviderManagerProps> = ({
                             </div>
                             <div>
                                 <FieldLabel>Base URI</FieldLabel>
-                                <input type="text" value={newUrl} onChange={(e) => setNewUrl(e.target.value)} placeholder={newFormat === 'google' ? GOOGLE_GEMINI_DEFAULT_BASE : 'https://opencode.ai/zen/v1'} className={inputBase} />
+                                <input type="text" value={newUrl} onChange={(e) => setNewUrl(e.target.value)} placeholder={newFormat === 'google' ? GOOGLE_GEMINI_DEFAULT_BASE : DEFAULT_OPENAI_COMPAT_BASE} className={inputBase} />
                                 {!newUrlValidation.valid && newUrl.trim() && <p className="mt-1 text-ui-sm text-rose-300">{newUrlValidation.message}</p>}
                             </div>
                             <div>
@@ -732,7 +740,7 @@ const ProviderManager: React.FC<ProviderManagerProps> = ({
 
                             <div>
                                 <FieldLabel>Base URI</FieldLabel>
-                                <input type="text" value={draftUrl} onChange={(e) => setDraftUrl(e.target.value)} placeholder={draftFormat === 'google' ? GOOGLE_GEMINI_DEFAULT_BASE : 'https://opencode.ai/zen/v1'} className={inputBase} />
+                                <input type="text" value={draftUrl} onChange={(e) => setDraftUrl(e.target.value)} placeholder={draftFormat === 'google' ? GOOGLE_GEMINI_DEFAULT_BASE : DEFAULT_OPENAI_COMPAT_BASE} className={inputBase} />
                                 {!draftUrlValidation.valid && draftUrl.trim() && <p className="mt-1 text-ui-sm text-rose-300">{draftUrlValidation.message}</p>}
                             </div>
                             <div>
@@ -791,7 +799,7 @@ const ProviderManager: React.FC<ProviderManagerProps> = ({
                                     {listedModels.map((m) => {
                                         const isSelectedModel = draftModel === m;
                                         const isEditingThis = editingModelId === m;
-                                        const badgeText = getContextBadge(m);
+                                        const badgeText = getContextBadge(m, selected.modelContextWindows, selected.contextWindowTokens);
                                         const modelTest = modelTests[m];
                                         const isTestingThis = testingModelId === m;
                                         return (
@@ -811,7 +819,9 @@ const ProviderManager: React.FC<ProviderManagerProps> = ({
                                                     <span className="min-w-0 flex-1 truncate font-mono text-ui-caption" title={m}>{m}</span>
                                                 )}
                                                 <div className="ml-4 flex shrink-0 items-center gap-2.5" onClick={e => e.stopPropagation()}>
-                                                    <span className="font-mono text-ui-xs font-medium text-zinc-500">{badgeText}</span>
+                                                    {badgeText && (
+                                                        <span className="font-mono text-ui-xs font-medium text-zinc-500">{badgeText}</span>
+                                                    )}
                                                     <ToggleSwitch
                                                         checked={isSelectedModel}
                                                         onChange={() => setDraftModel(m)}

@@ -18,6 +18,7 @@
 import React, { useState } from 'react';
 import { AlertTriangle, Brain, Wrench, FilePlus2, NotebookPen } from '../shared/Icons';
 import type { ToolAction } from '../../types/message';
+import { ACTIONABLE_TOOL_META } from '../../utils/toolKinds';
 
 export interface ToolActionsRowProps {
     actions: ToolAction[];
@@ -73,25 +74,14 @@ const actionLabel = (tool: string, items: ToolAction[]): string => {
 /** The noun a refusal counts ("2 skill drafts, 1 memory note rejected"). */
 const failNoun = (tool: string, n: number): string => {
     const plural = n === 1 ? '' : 's';
-    switch (tool) {
-        case 'skill_write':
-            return `skill write${plural}`;
-        case 'skill_draft':
-            return `skill draft${plural}`;
-        case 'skill_ingest':
-            return `skill${plural}`;
-        case 'propose_strategy':
-            return `strategy plan${plural}`;
-        case 'write_memory_note':
-        case 'notebook_note':
-            return `memory note${plural}`;
-        case 'amend_memory':
-            return `memory amendment${plural}`;
-        case 'forge_tool':
-            return `desk tool${plural}`;
-        default:
-            return `${tool} call${plural}`;
+    if (tool === 'skill_draft') return `skill draft${plural}`;
+    if (tool === 'skill_ingest') return `skill${plural}`;
+    if (tool === 'notebook_note') return `memory note${plural}`;
+    const base = ACTIONABLE_TOOL_META[tool]?.failNoun ?? `${tool} call`;
+    if (base.endsWith('y') && !base.endsWith('ay') && !base.endsWith('ey')) {
+        return plural ? `${base.slice(0, -1)}ies` : base;
     }
+    return `${base}${plural}`;
 };
 
 interface Group {

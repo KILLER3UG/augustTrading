@@ -30,6 +30,8 @@ import { parseComposerRefs } from '../../../utils/composerRefs';
 interface ChatComposerProps {
     /** Desk dock vs centered Chat focus view. */
     layoutMode?: 'desk' | 'chat';
+    /** True when embedded inside `chat-reading-column` (already padded). */
+    embedded?: boolean;
     /** The chart the chat talks about (workspace row + model picker). */
     symbol: string;
     symbols?: SymbolMeta[];
@@ -108,7 +110,7 @@ export const ModelFallbackBanner: React.FC<{
 );
 
 const ChatComposer: React.FC<ChatComposerProps> = ({
-    layoutMode = 'desk', symbol, symbols, onChangeSymbol, interval, onChangeInterval, isPanel, ready, busy, draft, setDraft, send, runFullAnalysis, onRunAnalysis, onStopRun,
+    layoutMode = 'desk', embedded = false, symbol, symbols, onChangeSymbol, interval, onChangeInterval, isPanel, ready, busy, draft, setDraft, send, runFullAnalysis, onRunAnalysis, onStopRun,
     effort, changeEffort, modelIssue, provider, selectedChatModel,
     changeSoloModel, providers, onRefreshModels, attachments, removeAttachment, fileInputRef,
     attachFiles, showAttachMenu, setShowAttachMenu, captureChart, onCaptureChart, composerRef,
@@ -163,7 +165,7 @@ const ChatComposer: React.FC<ChatComposerProps> = ({
     useEscapeClose(showAttachMenu, () => setShowAttachMenu(false));
 
     return (
-    <div className={isChatFocus ? 'mx-auto w-full max-w-[740px] shrink-0 px-6 pb-5 pt-2' : 'shrink-0 px-4 pb-3.5 pt-2'}>
+    <div className={isChatFocus ? (embedded ? 'mx-auto w-full max-w-[740px] shrink-0 pb-5 pt-2' : 'mx-auto w-full max-w-[740px] shrink-0 px-6 pb-5 pt-2') : 'shrink-0 px-4 pb-3.5 pt-2'}>
         <ModelFallbackBanner modelIssue={modelIssue} provider={provider} />
         <ComposerWorkspaceRow
             symbol={symbol}

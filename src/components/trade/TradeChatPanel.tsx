@@ -67,6 +67,7 @@ import { createChatTurnRunner } from '../../services/trade/chatTurnRunner';
 import type { ChatTurnRunnerDeps, PanelTurnContext } from '../../services/trade/chatTurnRunner';
 import type { ChartSnapshot } from './TradingChart';
 import type { ChartInterval } from '../../utils/chartIntervals';
+import { baseOf } from '../../utils/symbol';
 import BiasChips from './BiasChips';
 import SessionChip from '../shared/SessionChip';
 import { saveBot, type AgentBot } from '../../services/agents/agentRoster';
@@ -98,7 +99,7 @@ import ChatComposer from './panels/ChatComposer';
 import { consumePendingSkillTry } from '../chat/skillDeepLink';
 import { contentVersion } from '../../services/learning/SkillFileService';
 import { listProfileMemories } from '../../services/learning/profileMemory';
-import { getHarnessSettings } from '../../utils/harnessSettings';
+import { getHarnessSettings, RISK_CONSTITUTION_MAX_CHARS } from '../../utils/harnessSettings';
 import ModelPicker from '../shared/ModelPicker';
 import NewBotDialog from '../chat/NewBotDialog';
 import TurnPlanPill, { useClearTurnPlanOnSettle } from './TurnPlanPill';
@@ -326,13 +327,20 @@ interface TradeChatPanelProps {
     leadingChrome?: React.ReactNode;
 }
 
-/** The three trading starters of the calm empty state. The chip's text is
- *  what gets sent, byte-for-byte unchanged — no hidden rewrite, no URL. */
-const QUICK_PROMPTS: { text: string; Icon: React.FC<{ className?: string }> }[] = [
-    { text: 'Scan top USDT futures setups', Icon: Activity },
-    { text: 'Audit BTC 1h structure & positioning', Icon: Crosshair },
-    { text: 'Review my recent Trade Log edge', Icon: History },
-];
+/** Build symbol/timeframe-aware starters for the calm empty state. The chip's
+ *  text is what gets sent, byte-for-byte unchanged — no hidden rewrite. */
+export const buildQuickPrompts = (
+    symbol: string,
+    interval: string,
+): { text: string; Icon: React.FC<{ className?: string }> }[] => {
+    const base = baseOf(symbol) || 'BTC';
+    const tf = interval || '1h';
+    return [
+        { text: `Scan top USDT futures setups around ${base}`, Icon: Activity },
+        { text: `Audit ${base} ${tf} structure & positioning`, Icon: Crosshair },
+        { text: 'Review my recent Trade Log edge', Icon: History },
+    ];
+};
 
 /**
  * The collapsed Chart AI dock — a 10px column carrying only an expand
@@ -618,7 +626,7 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
     // explicit edit in Settings starts a NEW prefix (never a mid-session
     // mutation by the harness), and no autonomous writer can touch harness
     // settings, so the block is immutable to the model and every loop.
-    const riskConstitution = (getHarnessSettings().riskConstitution ?? '').slice(0, 1200);
+    const riskConstitution = (getHarnessSettings().riskConstitution ?? '').slice(0, RISK_CONSTITUTION_MAX_CHARS);
     const constitutionBlock = riskConstitution
         ? `[TRADER RISK CONSTITUTION — written by the trader; immutable to you and to every autonomous writer. These rules override any plan you would otherwise endorse; a plan that violates them is refused, not negotiated.]
 ${riskConstitution}`
@@ -1417,11 +1425,13 @@ ${riskConstitution}`
      *  vertical center (Claude-style); the composer moves to the bottom the
      *  moment the first message exists. */
     const emptyCentered = isChatFocus && entries.length === 0 && !panelPickerFor;
+    const quickPrompts = useMemo(() => buildQuickPrompts(symbol, interval), [symbol, interval]);
     /** ONE composer element, mounted in the centered group while the canvas is
      *  empty (Chat layout) and below the transcript otherwise. */
     const composerNode = (
         <ChatComposer
             layoutMode={layoutMode}
+            embedded={emptyCentered}
             symbol={symbol}
             symbols={symbols}
             onChangeSymbol={onChangeSymbol}
@@ -1680,7 +1690,7 @@ ${riskConstitution}`
                 <div className="min-h-0 flex-1 overflow-y-auto custom-scrollbar" data-testid="chat-group-surface">
                     <div
                         data-testid={isChatFocus ? 'chat-reading-column' : undefined}
-                        className={isChatFocus ? 'mx-auto flex min-h-full w-full max-w-[740px] flex-col' : 'flex min-h-full flex-col'}
+                        className={isChatFocus ? 'mx-auto flex min-h-full w-full min-w-0 max-w-[740px] flex-col' : 'flex min-h-full min-w-0 flex-col'}
                     >
                         {renderGroupSurface?.(activeSession.groupId ?? '')}
                     </div>
@@ -1720,8 +1730,8 @@ ${riskConstitution}`
                 <div
                     data-testid={isChatFocus ? 'chat-reading-column' : undefined}
                     className={isChatFocus
-                        ? 'mx-auto flex min-h-full w-full max-w-[740px] flex-col px-6 pt-7 pb-16'
-                        : 'flex min-h-full w-full flex-col px-4 pt-5 pb-12'}
+                        ? 'mx-auto flex min-h-full w-full min-w-0 max-w-[740px] flex-col px-6 pt-7 pb-16'
+                        : 'flex min-h-full w-full min-w-0 flex-col px-4 pt-5 pb-12'}
                 >
                 {entries.length === 0 && !panelPickerFor && (
                     <div className={`flex flex-1 flex-col items-center justify-center text-center ${isChatFocus ? 'gap-7 py-10' : 'gap-5 py-6'}`}>
@@ -1737,7 +1747,7 @@ ${riskConstitution}`
                                 : 'flex w-full max-w-[17rem] flex-col gap-1.5'}
                             data-testid="dock-quick-prompts"
                         >
-                            {QUICK_PROMPTS.map(({ text, Icon }) => (
+                            {quickPrompts.map(({ text, Icon }) => (
                                 <button key={text} type="button" disabled={!ready} aria-label={text} onClick={() => void send(text)}
                                     className={isChatFocus
                                         ? 'group flex w-full items-center gap-2.5 rounded-xl border border-white/[0.06] bg-zinc-900/65 px-3.5 py-2.5 text-left text-ui-caption text-zinc-300 transition-colors hover:border-white/[0.10] hover:bg-zinc-800/80 hover:text-zinc-100 disabled:border-white/[0.04] disabled:bg-zinc-900/40 disabled:text-zinc-500'

@@ -13,6 +13,7 @@
 
 import { getPreference, setPreference, getAllKeys, removePreference } from '../infrastructure/PreferencesService';
 import { getActiveUsername } from '../../utils/activeUser';
+import { BINANCE_FUTURES_WS } from '../../config/exchangeEndpoints';
 import { ensureKnownSymbol, fetchMarkIndex, fetchOrderBookDepth, fetchFuturesTicker24h } from '../analysis/MarketDataService';
 import { evaluatePlanLocalSync } from '../trade/proposalGate';
 import { fallbackAdversaryVerdict } from '../trade/adversaryReview';
@@ -611,7 +612,7 @@ const syncPaperWs = (exposure: ReadonlySet<string>): void => {
             continue;
         }
         if (paperWsSockets.has(s)) continue; // idempotent — zero duplicate sockets
-        const url = `wss://fstream.binance.com/stream?streams=${s}@markPrice@1s/${s}@kline_1s/${s}@ticker`;
+        const url = `${BINANCE_FUTURES_WS}/stream?streams=${s}@markPrice@1s/${s}@kline_1s/${s}@ticker`;
         let ws: WebSocket;
         try { ws = new WebSocket(url); } catch { continue; }
         paperWsSockets.set(s, ws);

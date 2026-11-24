@@ -22,8 +22,9 @@
 import type { SignalCandle } from './signalResolver';
 import { fetchOHLCV, type Kline } from '../analysis/MarketDataService';
 import { coerceCandles } from '../../utils/candleShape';
+import { OKX_API_BASE } from '../../config/exchangeEndpoints';
 
-const OKX_BASE = 'https://www.okx.com';
+const OKX_BASE = OKX_API_BASE;
 const OKX_TIMEOUT_MS = 8000;
 /** 10 bps. Two venues aggregate different trades; a wider tolerance would hide
  *  a real mismatch, a tighter one would flag every thin bar. */

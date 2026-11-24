@@ -17,6 +17,17 @@ export type ChartInterval = (typeof CHART_INTERVALS)[number];
  *  became customizable (TradingView-style: pick which intervals appear). */
 export const DEFAULT_CHART_INTERVALS: readonly ChartInterval[] = ['1m', '5m', '15m', '1h', '4h', '1D'];
 
+/** Canonical composer timeframe ladder derived from CHART_INTERVALS. */
+export const COMPOSER_TIMEFRAMES: readonly ChartInterval[] = ['1m', '5m', '15m', '30m', '1h', '4h', '1D'];
+
+/** Canonical kline-API interval subsets for desk tool JSON schemas. */
+export const KLINE_INTERVALS_5M_TO_1H: readonly string[] = ['5m', '15m', '1h'];
+export const KLINE_INTERVALS_15M_TO_4H: readonly string[] = ['15m', '1h', '4h'];
+export const KLINE_INTERVALS_15M_TO_1D: readonly string[] = ['15m', '1h', '4h', '1d'];
+export const KLINE_INTERVALS_5M_TO_4H: readonly string[] = ['5m', '15m', '1h', '4h'];
+export const KLINE_INTERVALS_5M_TO_1D: readonly string[] = ['5m', '15m', '1h', '4h', '1d'];
+export const KLINE_INTERVALS_ALL_INTRADAY_1D: readonly string[] = ['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '6h', '12h', '1d'];
+
 /** KlineService/Binance interval strings for each supported timeframe. */
 const KLINE_OF: Partial<Record<ChartInterval, string>> = { '1D': '1d', '3D': '3d', '1W': '1w' };
 

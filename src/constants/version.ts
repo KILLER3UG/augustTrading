@@ -1,7 +1,10 @@
-// App version — Vite injects the real package.json version at build time
-// (see `define` in vite.config.ts); the literal is the dev/test fallback and
-// kept synced with package.json so non-Vite importers never show a stale one.
-// In Electron, the runtime version is also available via window.electronAPI.getVersion().
+declare const __APP_VERSION__: string | undefined;
+
+// App version — Vite injects `__APP_VERSION__` and `import.meta.env.PACKAGE_VERSION`
+// from `package.json` at build/dev time; the fallback keeps non-Vite test runners
+// aligned without an obsolete version literal.
 export const APP_VERSION: string =
-    (import.meta as { env?: { PACKAGE_VERSION?: string } }).env?.PACKAGE_VERSION || '1.0.28';
+    (typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '')
+    || (import.meta as { env?: { PACKAGE_VERSION?: string } }).env?.PACKAGE_VERSION
+    || '1.6.1';
 export const APP_NAME = 'August Trading';

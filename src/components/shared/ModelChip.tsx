@@ -55,7 +55,7 @@ export interface ModelChipProps {
 }
 
 const ModelChip: React.FC<ModelChipProps> = ({
-    providers, value, onChange, onRefreshModels, onManageProviders, issue, fallbackLabel,
+    providers, value, onChange, onManageProviders, issue, fallbackLabel,
     effort, onEffortChange, showEffort = true, compact = false,
 }) => {
     const [open, setOpen] = useState(false);
@@ -125,7 +125,6 @@ const ModelChip: React.FC<ModelChipProps> = ({
                     effort={effort}
                     onEffortChange={onEffortChange}
                     showEffort={showEffort}
-                    onRefreshModels={onRefreshModels}
                     onManageProviders={onManageProviders}
                     anchor={anchor}
                     onClose={() => setOpen(false)}

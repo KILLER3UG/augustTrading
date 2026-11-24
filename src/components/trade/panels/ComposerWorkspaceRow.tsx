@@ -14,9 +14,9 @@ import { FALLBACK_SYMBOLS } from '../../../hooks/useSymbolUniverse';
 import { useEscapeClose } from '../../../hooks/useEscapeClose';
 import { display as symbolDisplay } from '../../../utils/symbol';
 import { shouldOpenUpward } from '../../../utils/popoverPlacement';
-import type { ChartInterval } from '../../../utils/chartIntervals';
+import { COMPOSER_TIMEFRAMES, type ChartInterval } from '../../../utils/chartIntervals';
 
-export const COMPOSER_TIMEFRAMES: readonly ChartInterval[] = ['1m', '5m', '15m', '30m', '1h', '4h', '1D'];
+export { COMPOSER_TIMEFRAMES };
 
 export interface ComposerWorkspaceRowProps {
     symbol: string;
@@ -44,11 +44,13 @@ const ComposerWorkspaceRow: React.FC<ComposerWorkspaceRowProps> = ({
     const [tfOpen, setTfOpen] = useState(false);
     const [query, setQuery] = useState('');
     const [cursor, setCursor] = useState(0);
+    const [tfCursor, setTfCursor] = useState(0);
     const [symbolAnchor, setSymbolAnchor] = useState<{ left: number; top?: number; bottom?: number }>({ left: 0 });
     const [tfAnchor, setTfAnchor] = useState<{ left: number; top?: number; bottom?: number }>({ left: 0 });
     const symbolBtnRef = useRef<HTMLButtonElement>(null);
     const tfBtnRef = useRef<HTMLButtonElement>(null);
     const searchInputRef = useRef<HTMLInputElement>(null);
+    const tfMenuRef = useRef<HTMLDivElement>(null);
     const listRef = useRef<HTMLDivElement>(null);
 
     useEscapeClose(symbolOpen, () => setSymbolOpen(false));
@@ -75,6 +77,14 @@ const ComposerWorkspaceRow: React.FC<ComposerWorkspaceRowProps> = ({
             window.setTimeout(() => searchInputRef.current?.focus(), 0);
         }
     }, [symbolOpen]);
+
+    useEffect(() => {
+        if (tfOpen) {
+            const idx = COMPOSER_TIMEFRAMES.indexOf(interval as ChartInterval);
+            setTfCursor(idx >= 0 ? idx : 0);
+            window.setTimeout(() => tfMenuRef.current?.focus(), 0);
+        }
+    }, [tfOpen, interval]);
 
     useEffect(() => {
         if (!symbolOpen) return;
@@ -172,7 +182,7 @@ const ComposerWorkspaceRow: React.FC<ComposerWorkspaceRowProps> = ({
                     <div className="fixed inset-0 z-shield" aria-hidden="true" onClick={() => setSymbolOpen(false)} />
                     <div
                         data-testid="composer-symbol-menu"
-                        className={`fixed z-flyout w-64 overflow-hidden rounded-xl border border-white/[0.08] bg-zinc-900/95 shadow-elevated backdrop-blur-md ${symbolAnchor.bottom !== undefined ? 'motion-popover-in' : 'motion-popover-down'}`}
+                        className={`fixed z-flyout w-64 overflow-hidden rounded-xl border border-white/[0.08] bg-zinc-900 shadow-elevated ${symbolAnchor.bottom !== undefined ? 'motion-popover-in' : 'motion-popover-down'}`}
                         style={symbolAnchor}
                     >
                         <div className="flex items-center gap-2 border-b border-white/[0.06] px-2.5 py-1.5">
@@ -221,17 +231,30 @@ const ComposerWorkspaceRow: React.FC<ComposerWorkspaceRowProps> = ({
                 <>
                     <div className="fixed inset-0 z-shield" aria-hidden="true" onClick={() => setTfOpen(false)} />
                     <div
+                        ref={tfMenuRef}
+                        tabIndex={-1}
+                        role="listbox"
+                        aria-label="Select timeframe"
                         data-testid="composer-timeframe-menu"
-                        className={`fixed z-flyout w-28 overflow-hidden rounded-xl border border-white/[0.08] bg-zinc-900/95 p-1 shadow-elevated backdrop-blur-md ${tfAnchor.bottom !== undefined ? 'motion-popover-in' : 'motion-popover-down'}`}
+                        onKeyDown={e => {
+                            if (e.key === 'ArrowDown') { e.preventDefault(); setTfCursor(c => (c + 1) % COMPOSER_TIMEFRAMES.length); }
+                            else if (e.key === 'ArrowUp') { e.preventDefault(); setTfCursor(c => (c - 1 + COMPOSER_TIMEFRAMES.length) % COMPOSER_TIMEFRAMES.length); }
+                            else if (e.key === 'Enter') { e.preventDefault(); const chosen = COMPOSER_TIMEFRAMES[tfCursor]; if (chosen) commitInterval(chosen); }
+                            else if (e.key === 'Escape') { e.preventDefault(); setTfOpen(false); tfBtnRef.current?.focus(); }
+                        }}
+                        className={`fixed z-flyout w-28 overflow-hidden rounded-xl border border-white/[0.08] bg-zinc-900 p-1 shadow-elevated focus:outline-none ${tfAnchor.bottom !== undefined ? 'motion-popover-in' : 'motion-popover-down'}`}
                         style={tfAnchor}
                     >
-                        {COMPOSER_TIMEFRAMES.map(tf => (
+                        {COMPOSER_TIMEFRAMES.map((tf, i) => (
                             <button
                                 key={tf}
                                 type="button"
+                                role="option"
+                                aria-selected={tf === interval}
                                 data-testid={`composer-timeframe-row-${tf}`}
+                                onMouseEnter={() => setTfCursor(i)}
                                 onClick={() => commitInterval(tf)}
-                                className={`flex w-full items-center justify-between rounded-control px-2 py-1 text-left font-mono text-ui-dense transition-colors ${tf === interval ? 'bg-white/[0.08] font-semibold text-zinc-100' : 'text-zinc-300 hover:bg-white/[0.05] hover:text-zinc-100'}`}
+                                className={`flex w-full items-center justify-between rounded-control px-2 py-1 text-left font-mono text-ui-dense transition-colors ${tf === interval ? 'bg-white/[0.08] font-semibold text-zinc-100' : i === tfCursor ? 'bg-white/[0.05] text-zinc-100' : 'text-zinc-300 hover:bg-white/[0.05] hover:text-zinc-100'}`}
                             >
                                 <span>{tf}</span>
                                 {tf === interval && <span className="text-ui-2xs text-zinc-400">active</span>}

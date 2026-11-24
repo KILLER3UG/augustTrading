@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { clearSessionUsage, loadSessionUsage, SessionUsageEntry, summarizeModelUsage, summarizeUsagePeriod } from '../../utils/sessionUsage';
-import { getHarnessSettings, saveHarnessSettings } from '../../utils/harnessSettings';
+import { getHarnessSettings, RISK_CONSTITUTION_MAX_CHARS, saveHarnessSettings } from '../../utils/harnessSettings';
 import type { SelfModMode } from '../../schemas/selfChange';
 import { loadChecklistConfig, saveChecklistConfig } from '../../utils/checklist';
 import { formatChars } from '../../utils/runUsage';
@@ -192,14 +192,14 @@ export const HarnessControls: React.FC = () => {
                 </span>
                 <textarea
                     data-testid="risk-constitution"
-                    maxLength={1200}
+                    maxLength={RISK_CONSTITUTION_MAX_CHARS}
                     rows={4}
                     value={settings.riskConstitution ?? ''}
                     placeholder="e.g. Never more than 2 concurrent positions. No entries 30min before red-folder news. Max 1% total heat."
-                    onChange={e => persist({ riskConstitution: e.target.value.slice(0, 1200) })}
+                    onChange={e => persist({ riskConstitution: e.target.value.slice(0, RISK_CONSTITUTION_MAX_CHARS) })}
                     className="mt-1 w-full rounded-control border border-zinc-700 bg-zinc-950 px-2 py-1 text-zinc-100"
                 />
-                <span className="text-ui-2xs text-zinc-600">{(settings.riskConstitution ?? '').length}/1200</span>
+                <span className="text-ui-2xs text-zinc-600">{(settings.riskConstitution ?? '').length}/{RISK_CONSTITUTION_MAX_CHARS}</span>
             </label>
             <label className="block text-ui-dense text-zinc-400">
                 Minimum net edge (R)

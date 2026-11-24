@@ -69,11 +69,6 @@ export interface ModelMenuProps {
     effort?: EffortChoice;
     onEffortChange?: (id: EffortChoice) => void;
     showEffort?: boolean;
-    onRefreshModels?: () => void | Promise<void>;
-    /** The discovery state, when the host tracks it. `ModelPicker` owns the
-     *  refresh events, so the panel only prints the word — 'Refreshing…' /
-     *  'Updated!' — while a host that does not pass this gets the quiet icon. */
-    refreshState?: 'idle' | 'busy' | 'done';
     /** Values already taken elsewhere, greyed and un-clickable. The panel seat
      *  picker uses it so one model cannot be added to the compare twice. */
     disabledValues?: ReadonlySet<string>;

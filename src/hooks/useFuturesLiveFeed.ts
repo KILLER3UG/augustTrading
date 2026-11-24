@@ -29,6 +29,7 @@ import {
 } from '../services/trade/futuresStreams';
 import { fetchMarkIndex, fetchFuturesTicker24h } from '../services/analysis/MarketDataService';
 import { mapBinanceInterval } from '../services/analysis/KlineService';
+import { BINANCE_FUTURES_WS } from '../config/exchangeEndpoints';
 
 export type FeedStatus = 'connecting' | 'live' | 'polling';
 
@@ -38,7 +39,7 @@ export type FeedStatus = 'connecting' | 'live' | 'polling';
  *  healthy". The public `status` field stays the 3-value FeedStatus. */
 export type PollSource = 'ws' | 'rest' | 'live';
 
-const FUTURE_WS = 'wss://fstream.binance.com';
+const FUTURE_WS = BINANCE_FUTURES_WS;
 const CONNECT_TIMEOUT_MS = 5000;
 const MAX_BACKOFF_MS = 10000;
 

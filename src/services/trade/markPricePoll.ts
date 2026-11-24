@@ -11,13 +11,15 @@
  * throttle (and from hanging test workers). Returns null on any failure
  * (geo-block/offline); callers retry after their throttle.
  */
+import { BINANCE_FUTURES_REST_BASES } from '../../config/exchangeEndpoints';
+
 export const fetchMarkPrice = async (symbol: string): Promise<number | null> => {
     try {
         const signal = typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function'
             ? AbortSignal.timeout(4000)
             : undefined;
         const response = await fetch(
-            `https://fapi.binance.com/fapi/v1/premiumIndex?symbol=${encodeURIComponent(symbol)}`,
+            `${BINANCE_FUTURES_REST_BASES[0]}/fapi/v1/premiumIndex?symbol=${encodeURIComponent(symbol)}`,
             signal ? { signal } : undefined,
         );
         if (!response.ok) return null;

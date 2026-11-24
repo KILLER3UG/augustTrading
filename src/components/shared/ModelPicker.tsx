@@ -23,7 +23,7 @@
  * containing block for `fixed` and misaligns the panel from its trigger.
  */
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { ProviderConfig } from '../../types/provider';
 import { formatModelDisplayName, isProviderReady } from '../../utils/providerUtils';
 import { ChevronDownIcon } from './Icons';
@@ -70,65 +70,14 @@ const ModelPicker: React.FC<ModelPickerProps> = ({
     mode = 'provider-model',
     disabledValues,
     onManageModels,
-    onRefreshModels,
     placeholder = 'Select model',
     className = '',
     compact = false,
 }) => {
     const [isOpen, setIsOpen] = useState(false);
     const [anchor, setAnchor] = useState<ModelMenuAnchor | null>(null);
-    const [isRefreshing, setIsRefreshing] = useState(false);
-    const [justRefreshed, setJustRefreshed] = useState(false);
     const triggerRef = useRef<HTMLButtonElement>(null);
     const readyProviders = useMemo(() => providers.filter(isProviderReady), [providers]);
-
-    // Discovery is fired from several places (the roster's own refresh row, the
-    // Settings tab, this panel), so the state is read off window events rather
-    // than only off this button's click. The timer is cleared on unmount: the
-    // old copy returned its cleanup from the event handler, where nothing read
-    // it, so a late 'Updated!' flip landed on an unmounted tree.
-    useEffect(() => {
-        let timer: number | undefined;
-        const handleStart = () => {
-            setIsRefreshing(true);
-            setJustRefreshed(false);
-            if (timer) window.clearTimeout(timer);
-        };
-        const handleEnd = () => {
-            setIsRefreshing(false);
-            setJustRefreshed(true);
-            timer = window.setTimeout(() => setJustRefreshed(false), 2000);
-        };
-        window.addEventListener('august:model-refresh-start', handleStart);
-        window.addEventListener('august:model-refresh-end', handleEnd);
-        return () => {
-            if (timer) window.clearTimeout(timer);
-            window.removeEventListener('august:model-refresh-start', handleStart);
-            window.removeEventListener('august:model-refresh-end', handleEnd);
-        };
-    }, []);
-
-    const handleRefresh = useCallback(async (): Promise<void> => {
-        if (isRefreshing) return;
-        if (!onRefreshModels) {
-            // No handler on this host: the app-level owner listens for this, and
-            // the start/end events above drive the state.
-            window.dispatchEvent(new CustomEvent('august:refresh-models'));
-            return;
-        }
-        setIsRefreshing(true);
-        setJustRefreshed(false);
-        try {
-            await onRefreshModels();
-            setIsRefreshing(false);
-            setJustRefreshed(true);
-            window.setTimeout(() => setJustRefreshed(false), 2000);
-        } catch {
-            setIsRefreshing(false);
-        }
-    }, [isRefreshing, onRefreshModels]);
-
-    const refreshState: 'idle' | 'busy' | 'done' = isRefreshing ? 'busy' : justRefreshed ? 'done' : 'idle';
 
     /** The pair the panel highlights and opens on. `model-only` stores a bare
      *  model id, so the owning provider is looked up: the panel is
@@ -199,8 +148,6 @@ const ModelPicker: React.FC<ModelPickerProps> = ({
                     // The thinking tier belongs to a chat session, and a form
                     // field that picks a vision or memory model has no such row.
                     showEffort={false}
-                    onRefreshModels={() => void handleRefresh()}
-                    refreshState={refreshState}
                     disabledValues={disabledValues}
                     onManageProviders={onManageModels}
                     anchor={anchor}

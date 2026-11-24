@@ -17,6 +17,7 @@
  */
 
 import { Capacitor } from '@capacitor/core';
+import { BINANCE_SPOT_REST_BASES, BINANCE_SPOT_WS } from '../../config/exchangeEndpoints';
 
 class PriceAlertServiceClass {
     private ws: WebSocket | null = null;
@@ -323,7 +324,7 @@ class PriceAlertServiceClass {
             this.closeSocketQuietly();
 
             const streams = symbols.map(s => `${s}@ticker`).join('/');
-            const url = `wss://stream.binance.com:9443/stream?streams=${streams}`;
+            const url = `${BINANCE_SPOT_WS}/stream?streams=${streams}`;
 
             this.ws = new WebSocket(url);
             this.streamSymbols = new Set(symbols);
@@ -421,7 +422,7 @@ class PriceAlertServiceClass {
                 const query = symbols.map(s => `"${s}"`).join(',');
                 // Timed below the 10s cadence so a stalled exchange cannot
                 // outlive the tick that is waiting on it.
-                const response = await fetch(`https://api.binance.com/api/v3/ticker/price?symbols=[${query}]`, {
+                const response = await fetch(`${BINANCE_SPOT_REST_BASES[0]}/api/v3/ticker/price?symbols=[${query}]`, {
                     signal: AbortSignal.timeout(9000),
                 });
                 if (!response.ok) return;
