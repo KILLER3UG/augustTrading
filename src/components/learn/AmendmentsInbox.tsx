@@ -103,7 +103,7 @@ export const AmendmentsInbox: React.FC = () => {
             )}
             {amendments.length === 0 && (
                 <p className="rounded-control border border-hairline bg-zinc-900/50 px-3 py-4 text-center text-ui-sm text-zinc-600">
-                    No amendment proposals. Models can propose corrections to your notebook via <code className="text-zinc-400">amend_memory</code>.
+                    No memory corrections yet. August logs automatic updates to your notes here so any edit can be undone.
                 </p>
             )}
             {pending.map(a => (

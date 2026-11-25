@@ -133,7 +133,7 @@ const MemoryTab: React.FC<{ tab: MemoryTabProps }> = ({ tab: props }) => {
             {!detailOpen && (
                 <SettingsPageHeader
                     title="Memory"
-                    description="View and manage the long-term memories the desk stores on this device."
+                    description="View and manage the long-term memories August stores on this device."
                 />
             )}
 

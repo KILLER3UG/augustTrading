@@ -320,7 +320,7 @@ const ProfileMemoryCard: React.FC<ProfileMemoryCardProps> = ({ memoryModel, onOp
                         <div className="min-w-0">
                             <div className="text-ui-sm font-medium text-zinc-100">Notebook files</div>
                             <p className="mt-1 text-ui-sm leading-relaxed text-zinc-500">
-                                The markdown the desk reads on every analysis.
+                                The notes August reads on every analysis.
                             </p>
                         </div>
                         <button
