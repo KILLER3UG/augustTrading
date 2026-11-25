@@ -3828,7 +3828,7 @@ async function main() {
             const pane = document.querySelector('[data-testid="settings-content-pane"]');
             if (!pane) return false;
             return [...pane.querySelectorAll('button')]
-                .some(el => (el.textContent || '').trim() === 'OPEN');
+                .some(el => /^open$/i.test((el.textContent || '').trim()));
         });
         check('the journal offers an OPEN filter', openFilterPresent === true);
         // The list is virtualized, so the oldest row is not in the DOM until
@@ -3837,7 +3837,7 @@ async function main() {
         const openFilterClicked = await page.evaluate(() => {
             const pane = document.querySelector('[data-testid="settings-content-pane"]');
             const button = [...(pane?.querySelectorAll('button') ?? [])]
-                .find(el => (el.textContent || '').trim() === 'OPEN');
+                .find(el => /^open$/i.test((el.textContent || '').trim()));
             if (!(button instanceof HTMLElement)) return false;
             button.click();
             return true;
