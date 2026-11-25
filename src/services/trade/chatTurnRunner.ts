@@ -33,7 +33,8 @@ import type { DeskToolCall, DeskToolResult } from '../analysis/DeskToolsService'
 // loads on first use, not at boot (O-146). Type-only import stays free.
 import type { HybridDataPacket } from '../analysis/HybridIntelligenceService';
 const hybridService = (): Promise<typeof import('../analysis/HybridIntelligenceService')> => import('../analysis/HybridIntelligenceService');
-import { DESK_TOOL_NAMES } from '../../utils/toolKinds';
+import { DESK_TOOL_NAMES, isBlockedInPlanMode, PLAN_MODE_MANDATE } from '../../utils/toolKinds';
+import { collectScopedRulesForSymbol } from './scopedRulesRuntime';
 import { settleDockEntry } from '../../utils/rowSettlement';
 import { maybeRunAgentLearningPass, maybeRunMemoryDreamIfDue } from '../learning/learningPassWiring';
 import { CHART_ACTION_TOOL_DEFS, isMarketReadTool } from '../analysis/deskToolShared';
@@ -451,6 +452,19 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
      *  join key, from the structured path). */
     const executePanelTool = async (call: DeskToolCall, turn: PanelTurnContext, planCapture?: { planId: string | null; symbol: string | null; playbookId: string | null; snapshot: CaptureSnapshot | null }): Promise<DeskToolResult | null> => {
         const name = call.name;
+        if (chatStore.getPlanMode(turn.sid) && isBlockedInPlanMode(name)) {
+            return {
+                toolCallId: call.id,
+                name,
+                ok: false,
+                content: JSON.stringify({
+                    ok: false,
+                    error: 'plan_mode_locked',
+                    tool: name,
+                    reason: `${name} is locked while Plan Mode (read-only) is active. Exit Plan Mode (/plan off or Shift+Tab) to execute or write.`,
+                }),
+            };
+        }
         if (name !== 'draw_on_chart' && name !== 'draw_detected' && name !== 'draw_tool_levels' && name !== 'mark_trade_levels' && name !== 'clear_chart_drawings'
             && name !== 'present_trade' && name !== 'watch_price' && name !== 'wake_me' && name !== 'cancel_watch'
             && name !== 'inspect_chart_image'
@@ -682,10 +696,11 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
         // writes onto the running entry, plus the canvas and the watch only this
         // surface owns.
         if (name === 'present_trade') {
+            const planModeActive = chatStore.getPlanMode(turn.sid);
             let mintedPlanId = '';
             const mintedRef: { proposal: import('./proposedTrade').TradeProposal | null } = { proposal: null };
             const result = await runPresentTrade(
-                { call, symbol: turn.symbol, trades, drawnPrice, crossCanvas, canvasNote, watchable: true },
+                { call, symbol: turn.symbol, trades, drawnPrice, crossCanvas, canvasNote, watchable: !planModeActive, planMode: planModeActive },
                 {
                     setProposal: p => {
                         mintedPlanId = p.planId ?? '';
@@ -707,7 +722,7 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
                         }));
                     },
                     ...(addModelDrawings ? { addDrawings: (list: ChartDrawing[]) => addModelDrawings(list, turn) } : {}),
-                    ...(onPlanPresented ? { armPlan: (plan: WatchPlan) => onPlanPresented(plan, turn) } : {}),
+                    ...(!planModeActive && onPlanPresented ? { armPlan: (plan: WatchPlan) => onPlanPresented(plan, turn) } : {}),
                     // A Stop on this run kills the scan too: an answer that arrives for a
                     // turn the user already cancelled must not resurrect its card.
                     onAbort: fn => { chatStore.getController(turn.sid)?.signal.addEventListener('abort', fn, { once: true }); },
@@ -762,7 +777,7 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
                             takeProfits: reviewedProposal.takeProfits,
                         },
                     };
-                    if (review.verdict !== 'VETO' && onPlanPresented) {
+                    if (review.verdict !== 'VETO' && onPlanPresented && !chatStore.getPlanMode(turn.sid)) {
                         onPlanPresented({
                             planId: reviewedProposal.planId!,
                             symbol: reviewedProposal.symbol,
@@ -1114,6 +1129,7 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
             mailboxSeat,
             mailboxRound: 0,
             onMailSent,
+            planMode: chatStore.getPlanMode(sid),
         };
         // Each method here is a WRITE TO THIS ROW SHAPE, not generic turn logic.
         let sawMarketTool = false;
@@ -1242,6 +1258,7 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
         const prevHash = chatStore.getTraceHash(sid);
         const cacheWarm = prevHash === null ? null : prevHash === prefixHash;
         chatStore.setTraceHash(sid, prefixHash);
+        const scoped = collectScopedRulesForSymbol(symbol, { evalCandles: sendSnap?.evalCandles ?? sendSnap?.candles ?? null });
         const trace: import('./chatStore').TurnTrace = {
             prefixHash,
             cacheWarm,
@@ -1250,6 +1267,8 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
             tokensIn: outcome.usage.promptTokens,
             tokensOut: outcome.usage.completionTokens,
             gateRefusals: 0,
+            ...(chatStore.getPlanMode(sid) ? { planMode: true } : {}),
+            ...(scoped.activeRules.length > 0 ? { activeScopedRuleIds: scoped.activeRules.map(r => r.id) } : {}),
         };
         chatStore.mutate(sid, s => ({
             ...s,
@@ -1382,9 +1401,17 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
             : (parsedInput?.cleaned.trim() || raw.trim());
         const requireTools = shouldRequireTools(text, false);
         const refFocusLine = parsedInput ? focusLineForRefs(parsedInput.refs) : '';
-        const focusLine = requireTools
-            ? [refFocusLine, FULL_ANALYSIS_MANDATE.trim()].filter(Boolean).join('\n')
-            : refFocusLine;
+        const planModeTail = chatStore.getPlanMode(sid) ? PLAN_MODE_MANDATE : '';
+        const snapForRules = getChartSnapshot?.() ?? null;
+        const scopedTail = collectScopedRulesForSymbol(symbol, {
+            evalCandles: snapForRules?.evalCandles ?? snapForRules?.candles ?? null,
+        }).promptTailBlock;
+        const focusLine = [
+            refFocusLine,
+            requireTools ? FULL_ANALYSIS_MANDATE.trim() : '',
+            planModeTail,
+            scopedTail,
+        ].filter(Boolean).join('\n');
         const sentAttachments: Attachment[] = retryEntry
             ? (retryEntry.image ? [{ id: newId('at'), kind: 'image', name: 'chart.png', payload: retryEntry.image }] : [])
             : attachments;

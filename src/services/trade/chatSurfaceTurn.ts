@@ -54,6 +54,8 @@ import { buildGoalsIndex, focusedGoal, goalMatchesMessage, listGoals } from '../
 import { runToolTurn, type CaptureSnapshot, type ToolTurnEvents, type ToolTurnOutcome, type ToolTurnRequest } from './toolTurn';
 import * as chatStore from './chatStore';
 import { isMarketReadTool, PAPER_TRADING_PROMPT } from '../analysis/deskToolShared';
+import { isBlockedInPlanMode, PLAN_MODE_MANDATE } from '../../utils/toolKinds';
+import { collectScopedRulesForSymbol } from './scopedRulesRuntime';
 import type { DeskToolCall, DeskToolResult } from '../analysis/DeskToolsService';
 import { runPresentTrade } from './presentTradeTool';
 import { drawingsControl } from './drawingsControl';
@@ -180,7 +182,7 @@ export const CHAT_SURFACE_TOOLS = [
     'setup_base_rate', 'playbook_attribution', 'risk_state',
     // The P2 composites: derivatives positioning + cross-market, plus the
     // family-H playbook scan and the advisory meta-label read.
-    'derivatives_state', 'btc_relative', 'scan_playbooks', 'meta_label',
+    'derivatives_state', 'btc_relative', 'scan_playbooks', 'setup_replay', 'divergences', 'meta_label',
     // The trader's own history, as rows and as past sessions.
     'get_trade_log', 'recall', 'get_setup_history_stats', 'recall_chat',
     // Market-wide discovery and simulation.
@@ -389,7 +391,7 @@ export const clearChatSurfacePromptCache = (sessionKey?: string): void => {
  * `sessionKey` is supplied, the static prefix is frozen per session for KV-cache
  * stability while per-turn `goalTriggerHint` rides strictly at the tail.
  */
-export const surfacePromptWith = (mandate: string, where: string, opts: { sessionKey?: string; memoryEnabled?: boolean; strategiesEnabled?: boolean; windowTokens?: number; matchText?: string; record?: { runId?: string; coin?: string } } = {}): ChatSurfacePrompt => {
+export const surfacePromptWith = (mandate: string, where: string, opts: { sessionKey?: string; memoryEnabled?: boolean; strategiesEnabled?: boolean; windowTokens?: number; matchText?: string; dynamicTailBlocks?: string[]; record?: { runId?: string; coin?: string } } = {}): ChatSurfacePrompt => {
     const memoryEnabled = opts.memoryEnabled !== false;
     // The trader's Risk Constitution rides the Agents-surface prefix too —
     // same source, same cap, same immutability contract as the dock.
@@ -416,13 +418,14 @@ ${constitutionRaw}`
             /* an unreadable goal store costs the hint, never the answer */
         }
     }
+    const dynamicTail = (opts.dynamicTailBlocks ?? []).map(b => b.trim()).filter(Boolean);
     const cacheKey = opts.sessionKey
         ? `${opts.sessionKey}::${memoryEnabled ? 1 : 0}::${opts.strategiesEnabled !== false ? 1 : 0}::${windowTokens}::${mandate.length}::${where}::${constitutionRaw}`
         : null;
     const cachedStatic = cacheKey ? chatSurfaceStaticCache.get(cacheKey) : undefined;
     if (cachedStatic) {
         return {
-            text: [cachedStatic.staticText, goalTriggerHint].filter(Boolean).join('\n\n'),
+            text: [cachedStatic.staticText, goalTriggerHint, ...dynamicTail].filter(Boolean).join('\n\n'),
             skills: cachedStatic.skills,
         };
     }
@@ -491,7 +494,7 @@ ${constitutionRaw}`
     return {
         // Static prefix first, dynamic per-turn hint LAST. The leading order
         // [mandate, riskMathBlock, goalsBlock, …] is contract-pinned.
-        text: [mandate, riskMathBlock, goalsBlock, constitutionBlock, skillsRulesSkills, skillsRulesRules, topicsBlock, strategiesBlock, memoryBlock, curatedMemoryBlock, PAPER_TRADING_PROMPT, goalTriggerHint].filter(Boolean).join('\n\n'),
+        text: [mandate, riskMathBlock, goalsBlock, constitutionBlock, skillsRulesSkills, skillsRulesRules, topicsBlock, strategiesBlock, memoryBlock, curatedMemoryBlock, PAPER_TRADING_PROMPT, goalTriggerHint, ...dynamicTail].filter(Boolean).join('\n\n'),
         skills,
     };
 };
@@ -502,7 +505,7 @@ ${constitutionRaw}`
  * skills heading says "what the trader asks about", because there is no chart
  * here to match against, and the mandate forbids the tool calls the canvas owns.
  */
-export const chatSurfaceSystemPrompt = (opts: { sessionKey?: string; memoryEnabled?: boolean; strategiesEnabled?: boolean; windowTokens?: number; matchText?: string; record?: { runId?: string; coin?: string } } = {}): ChatSurfacePrompt =>
+export const chatSurfaceSystemPrompt = (opts: { sessionKey?: string; memoryEnabled?: boolean; strategiesEnabled?: boolean; windowTokens?: number; matchText?: string; dynamicTailBlocks?: string[]; record?: { runId?: string; coin?: string } } = {}): ChatSurfacePrompt =>
     surfacePromptWith(CHAT_SURFACE_SYSTEM_PROMPT, 'what the trader asks about', opts);
 
 /** The speaker key for this surface's live tool feed — `chatRowFrom` flattens
@@ -642,6 +645,8 @@ export interface ChatSurfaceTurnRequest {
     /** Provenance id for the post-turn learning pass. The Chat surface's
      *  conversation id; falls back to a stable label when a caller has none. */
     sessionId?: string;
+    /** Explicit Plan Mode override; defaults to active session's `chatStore.getPlanMode()`. */
+    planMode?: boolean;
 }
 
 /** Run the turn. Transport errors propagate to the caller's catch: only it
@@ -714,6 +719,7 @@ export const runChatSurfaceTurn = async (req: ChatSurfaceTurnRequest): Promise<T
 
     // The training recorder's plan tee: filled by the structured present_trade
     // sink (in the transport below), read by runToolTurn at turn end.
+    const planMode = req.planMode ?? chatStore.getPlanMode(req.sessionId);
     const planCapture: { planId: string | null; symbol: string | null; playbookId: string | null; snapshot: CaptureSnapshot | null } = { planId: null, symbol: null, playbookId: null, snapshot: null };
     const transport: ToolTurnRequest['transport'] = {
         defaultSymbol: req.symbol ?? null,
@@ -729,6 +735,7 @@ export const runChatSurfaceTurn = async (req: ChatSurfaceTurnRequest): Promise<T
         reasoningEffort: resolveComposerEffort(req.effort, 'tradingDecision'),
         chartInterval: req.interval,
         trades: req.trades,
+        planMode,
         // The desk CAN present a plan here, and this is the only chart-action
         // tool it may do: anything else returns null and falls through to the
         // core executor, whose allow-list refuses it. The sink writes the
@@ -736,6 +743,19 @@ export const runChatSurfaceTurn = async (req: ChatSurfaceTurnRequest): Promise<T
         // receipt the model reads says exactly that instead of promising a
         // [HARNESS SIGNAL] that would never arrive.
         executePanelTool: async (call: Parameters<NonNullable<ToolTurnRequest['transport']['executePanelTool']>>[0]) => {
+            if (planMode && isBlockedInPlanMode(call.name)) {
+                return {
+                    toolCallId: call.id,
+                    name: call.name,
+                    ok: false,
+                    content: JSON.stringify({
+                        ok: false,
+                        error: 'plan_mode_locked',
+                        tool: call.name,
+                        reason: `${call.name} is locked while Plan Mode (read-only) is active. Exit Plan Mode (/plan off or Shift+Tab) to execute or write.`,
+                    }),
+                };
+            }
             // Store-backed chart drawing: no canvas here — the shapes persist
             // into the session/coin bucket the dock's chart renders, so they
             // are on the chart the moment the trader switches back.
@@ -833,6 +853,7 @@ export const runChatSurfaceTurn = async (req: ChatSurfaceTurnRequest): Promise<T
                     // a [HARNESS SIGNAL]. Explicit, not inferred from a missing
                     // callback: the watch is unavailable HERE, not unwired.
                     watchable: false,
+                    planMode,
                 },
                 {
                     setProposal: proposal => req.patch(m => ({ ...m, proposal })),
@@ -857,8 +878,16 @@ export const runChatSurfaceTurn = async (req: ChatSurfaceTurnRequest): Promise<T
     // A caller that brings its own mandate (a persona, a room note) gets it
     // verbatim and NO skill record: nothing was injected that it did not ask
     // for, and a row claiming skills it never saw is worse than a silent row.
+    const scopedTail = req.symbol ? collectScopedRulesForSymbol(req.symbol).promptTailBlock : '';
+    const dynamicTailBlocks = [
+        planMode ? PLAN_MODE_MANDATE : '',
+        scopedTail,
+    ].filter(Boolean);
     const prompt = req.systemPrompt
-        ? { text: req.systemPrompt, skills: [] as string[] }
+        ? {
+            text: [req.systemPrompt, ...dynamicTailBlocks].filter(Boolean).join('\n\n'),
+            skills: [] as string[],
+        }
         : chatSurfaceSystemPrompt({
             sessionKey: req.sessionId,
             memoryEnabled: req.memoryEnabled !== false,
@@ -868,6 +897,7 @@ export const runChatSurfaceTurn = async (req: ChatSurfaceTurnRequest): Promise<T
             // `surfacePromptWith`. A caller that brought its own mandate gets
             // that mandate verbatim and no hint.
             matchText: typeof req.prompt === 'string' ? req.prompt : undefined,
+            dynamicTailBlocks,
         });
 
     // A FULL ANALYSIS (stage 20f) is an instruction, not a keyword: the trader

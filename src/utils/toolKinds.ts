@@ -204,6 +204,14 @@ export const TOOL_REGISTRY: readonly ToolRegistryEntry[] = [
         deskGrant: true, cacheable: true,
     },
     {
+        name: 'setup_replay', label: 'setup replay', kind: 'compute', activity: 'Replaying historical setups',
+        deskGrant: true, cacheable: true,
+    },
+    {
+        name: 'divergences', label: 'divergences', kind: 'compute', activity: 'Scanning RSI/MACD/CVD divergences',
+        deskGrant: true, cacheable: true,
+    },
+    {
         name: 'meta_label', label: 'meta label', kind: 'compute', activity: 'Reading the meta label',
         deskGrant: true,
     },
@@ -619,3 +627,50 @@ export const MARKET_TOOL_NAMES: readonly string[] = TOOL_REGISTRY
 export const MARKET_READ_TOOL_NAMES: readonly string[] = TOOL_REGISTRY
     .filter(t => t.marketTool || t.marketRead)
     .map(t => t.name);
+
+/**
+ * Execution, watch-arming, and mutating write tools locked out while Plan Mode
+ * (read-only thesis verification) is active. Enforced at three seams:
+ *   1. Initial outbound `tools[]` wire filter
+ *   2. `load_tools` catalogue filtering
+ *   3. Hard dispatch refusal (`plan_mode_locked`)
+ */
+export const PLAN_MODE_BLOCKED_TOOLS: ReadonlySet<string> = new Set([
+    'paper_order',
+    'emit_signal',
+    'watch_price',
+    'wake_me',
+    'cancel_watch',
+    'remember',
+    'forget',
+    'memory',
+    'memory_add',
+    'memory_update',
+    'memory_delete',
+    'write_memory_note',
+    'amend_memory',
+    'skill_manage',
+    'skill_write',
+    'propose_self_change',
+    'revert_self_change',
+    'repo_edit',
+    'repo_apply',
+    'forge_tool',
+    'create_goal',
+    'update_goal',
+    'restore_goal',
+]);
+
+/** True when `name` is blocked in read-only Plan Mode. */
+export const isBlockedInPlanMode = (name: string): boolean => PLAN_MODE_BLOCKED_TOOLS.has(name);
+
+/** Filter a tool name list when Plan Mode is active; returns a copy unchanged otherwise. */
+export const filterToolsForPlanMode = (names: readonly string[], planMode: boolean): string[] =>
+    planMode ? names.filter(name => !PLAN_MODE_BLOCKED_TOOLS.has(name)) : [...names];
+
+/** Dynamic prompt-tail mandate injected ONLY when Plan Mode is active (never in the static prefix). */
+export const PLAN_MODE_MANDATE =
+    '[PLAN MODE — READ-ONLY] Execution, watch-arming, and memory/skill writes are LOCKED for this turn. '
+    + 'Verify geometry and costs deterministically with `trade_math`, run `setup_replay` / `divergences` / `scan_confluence` as needed, '
+    + 'plot levels on the chart (`mark_trade_levels` / `draw_on_chart` / `draw_tool_levels`), and emit a reviewable Trade Plan Card with `present_trade` (or decline with `decline_trade`). '
+    + 'Do NOT attempt `paper_order`, `emit_signal`, `watch_price`, `wake_me`, or memory/skill writes until the trader unlocks execution.';

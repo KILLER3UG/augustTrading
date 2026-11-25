@@ -176,6 +176,8 @@ export interface PresentTradeContext {
      *  claim about the harness, so it must be driven by the surface's intent —
      *  an absent callback means "not wired", never "impossible". */
     watchable: boolean;
+    /** True when read-only Plan Mode is active — suppresses background watch auto-arming. */
+    planMode?: boolean;
     /** The note appended to the receipt when `crossCanvas` is true. */
     canvasNote: string;
 }
@@ -330,7 +332,7 @@ export const runPresentTrade = async (
     // coin's live price, so arm() gets a null anchor (plain first-tick touch
     // test, never a stale-refuse) — and the receipt must evaluate the gate with
     // the SAME null, or it lies about a REFUSED watch that arms fine.
-    const watching = ctx.watchable;
+    const watching = ctx.watchable && !ctx.planMode;
     // GRAPH EDGE: present_trade does NOT arm. The plan enters `pending_review`
     // and the CALLER routes it through the isolated adversaryReview node —
     // APPROVE / CAUTION / UNAVAILABLE arm the watch (the trader's explicit
@@ -354,7 +356,9 @@ export const runPresentTrade = async (
         ...proposal.takeProfits.map((_, i) => `${proposal.planId}:TP${i + 1}`)];
     // Only reachable on the VIEWED canvas (crossCanvas ⇒ armPrice is null ⇒
     // stale is empty), so the price named here is genuinely the coin's live mark.
-    const watchLine = !watching
+    const watchLine = ctx.planMode
+        ? 'Plan Mode is active (read-only) — NO background price watch was armed. The trader can review the card and click "Unlock execution" to exit Plan Mode.'
+        : !watching
         ? 'NO level-watch applies — this surface has no chart. The trader still sees the plan and can log it from the card.'
         : `The plan is PENDING REVIEW: the isolated adversary review clears it next — APPROVE/CAUTION/UNAVAILABLE arm the harness watch on ids ${levelIds.join(', ')} (a [HARNESS SIGNAL] names the level id when one is reached); a VETO holds the watch for the trader's explicit override on the card. Refer to levels by those ids and never re-announce one that already fired.`;
     // The receipt never states a probability the scan has not yet bounded.

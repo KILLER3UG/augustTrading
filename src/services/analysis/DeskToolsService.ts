@@ -26,6 +26,7 @@ import {
     ACTIONABLE_TOOL_META,
     ACTIONABLE_TOOLS,
     CACHEABLE_TOOLS,
+    isBlockedInPlanMode,
     MEMORY_OFF_TOOLS,
     STAMPED_TOOLS,
     STATEFUL_DESK_TOOLS,
@@ -66,7 +67,7 @@ import { filterTradesBySimulationMode, countSimulatedTrades, isSimulatedTrade, t
 import { paperAccountSnapshot, submitPaperOrder } from '../paper/PaperBrokerService';
 import type { PaperOrderAction, PaperSide } from '../paper/paperCore';
 import { MARKET_TOOLS, CHART_ACTION_TOOL_DEFS, deskToolsMandateFor, TEXT_TOOL_FALLBACK_PROMPT, shouldOfferChartImageTool } from './deskToolShared';
-import { PLAYBOOK_IDS } from '../../types/playbook';
+import { PLAYBOOK_IDS, REPLAY_SUPPORTED_SETUPS } from '../../types/playbook';
 // The moved vocabulary is re-exported for the lazy consumers and the
 // contract suite: one definition, two addresses.
 export { deskToolsMandateFor, DESK_TOOLS_PROMPT, TEXT_TOOL_FALLBACK_PROMPT, resolveDefaultSymbol, isMarketReadTool } from './deskToolShared';
@@ -734,6 +735,8 @@ const TOOL_BUDGETS: Record<string, number> = {
     // A playbook scan carries per-match evidence lists — the tail a clip
     // would drop is exactly the receipts the seat is told to quote.
     scan_playbooks: 3200,
+    setup_replay: 3200,
+    divergences: 3200,
     // The meta-label read: a verdict with its reasons — the reasons ARE the
     // payload; a clip that cut them would leave a naked verdict.
     meta_label: 2800,
@@ -2325,6 +2328,52 @@ export const DESK_TOOL_DEFINITIONS: DeskToolDefinition[] = [
     {
         type: 'function',
         function: {
+            name: 'setup_replay',
+            description:
+                'Historical pattern micro-backtester ("npm test for Setups"): zero-lookahead OHLCV replay of a named playbook over closed candles with next-bar-open entries, conservative stop-before-target intrabar fills, non-overlapping trades, taker fee drag in R, Wilson 95% CI, and MFE/MAE medians. Refuses empirical claims when sampleCount < 5.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    symbol: { type: 'string', description: 'Any perp symbol (default: the chart\'s current symbol).' },
+                    interval: { type: 'string', enum: KLINE_INTERVALS_5M_TO_1D, description: 'Candle interval to replay (default: active chart interval or 1h).' },
+                    setup: { type: 'string', enum: [...REPLAY_SUPPORTED_SETUPS], description: 'Named deterministic setup detector to replay.' },
+                    direction: { type: 'string', enum: ['Long', 'Short', 'both'], description: 'Filter simulated entries by side (default: both).' },
+                    lookbackBars: { type: 'number', description: 'Historical closed candles to scan (clamped 200..1000, default 500).' },
+                    stopAtrMult: { type: 'number', description: 'Initial stop distance in ATR(14) multiples (clamped 0.5..5.0, default 1.5).' },
+                    targetR: { type: 'number', description: 'Target multiple in R (clamped 0.5..10.0, default 2.0).' },
+                    maxHoldBars: { type: 'number', description: 'Timeout hold bars (clamped 5..200, default 48).' },
+                },
+                required: ['setup'],
+                additionalProperties: false,
+            },
+        },
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'divergences',
+            description:
+                'Deterministic, non-repainting regular and hidden bullish/bearish divergence detector across RSI(14), MACD(12,26,9) histogram, and CVD proxy. Uses strictly confirmed pivots (forming candle + trailing pivotRight bars excluded) and emits Unix-second pivotA/pivotB coordinates for draw_tool_levels.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    symbol: { type: 'string', description: 'Any perp symbol (default: the chart\'s current symbol).' },
+                    interval: { type: 'string', enum: KLINE_INTERVALS_5M_TO_1D, description: 'Candle interval to scan (default: active chart interval or 1h).' },
+                    pivotLeft: { type: 'number', description: 'Left-shoulder confirmation bars (clamped 2..10, default 3).' },
+                    pivotRight: { type: 'number', description: 'Right-shoulder confirmation bars (clamped 2..10, default 3).' },
+                    indicators: {
+                        type: 'array',
+                        items: { type: 'string', enum: ['rsi', 'macd', 'cvd'] },
+                        description: 'Subset of indicators to scan (default: all three).',
+                    },
+                },
+                additionalProperties: false,
+            },
+        },
+    },
+    {
+        type: 'function',
+        function: {
             name: 'meta_label',
             description:
                 'The advisory meta-label read for a concrete plan: TAKE / REDUCE (half size) / SKIP / NO_DATA with reasons — composed from the trader\'s own base rate for the setup type (with its Wilson interval vs the plan\'s break-even after costs), the drawdown traffic light, open-plan heat and correlated exposure, and the half-Kelly ceiling. Call it AFTER trade_math and BEFORE presenting a trade, and quote its verdict WITH its reasons — it informs the trader, it never refuses a card and never sizes by itself.',
@@ -3162,10 +3211,13 @@ const catalogueLine = (def: DeskToolDefinition): string => {
 export const loadableDeskToolNamesFor = (
     nativeTools: boolean,
     allowedTools?: SeatToolGrant,
+    planMode = false,
 ): string[] => nativeTools
     ? DESK_TOOL_DEFINITIONS
         .map(d => d.function.name)
-        .filter(name => !INITIAL_DESK_TOOL_NAMES.includes(name) && seatAllows(allowedTools, name))
+        .filter(name => !INITIAL_DESK_TOOL_NAMES.includes(name)
+            && seatAllows(allowedTools, name)
+            && (!planMode || !isBlockedInPlanMode(name)))
     : [];
 
 /** Build the catalogue for the deferred names THIS turn can load. Pure and
@@ -3972,6 +4024,8 @@ export interface DeskToolContext {
      *  `emit_signal` stamps the first onto the ledger row so calibration can
      *  ask "does the anchored procedure improve hit rate?". */
     skillSlugsRead?: string[];
+    /** True when read-only Plan Mode is active — blocks execution and write tools. */
+    planMode?: boolean;
 }
 
 const resolvedSymbolField = (call: DeskToolCall, fallback: string): { symbol?: string } => {
@@ -4070,6 +4124,21 @@ export async function executeDeskTool(
     context: DeskToolContext = {},
 ): Promise<DeskToolResult> {
     const fallback = context.defaultSymbol || DEFAULT_SYMBOL;
+    // PLAN MODE (read-only lock, Seam 3): hard-refuse any execution, watch-arming,
+    // or mutating write tool at dispatch time regardless of how the call arrived.
+    if (context.planMode === true && isBlockedInPlanMode(call.name)) {
+        return {
+            toolCallId: call.id,
+            name: call.name,
+            ok: false,
+            content: JSON.stringify({
+                ok: false,
+                error: 'plan_mode_locked',
+                tool: call.name,
+                reason: `${call.name} is locked while Plan Mode (read-only) is active. Exit Plan Mode (/plan off or Shift+Tab) to execute or write.`,
+            }),
+        };
+    }
     // TRANSPORT-AGNATIVE ALLOW-LIST (deep-dive 2026-09-15): the offer-time
     // filter in the loop only shapes what a NATIVE-format provider sees.
     // On text-protocol transports the model can emit a tag for ANY desk
@@ -5751,6 +5820,44 @@ ${body}`);
                     (['15m', '1h', '4h'].includes(String(call.arguments.interval)) ? String(call.arguments.interval) : '1h'),
                 );
                 break;
+            case 'setup_replay': {
+                const tfArg = asString(call.arguments.interval) || context.chartInterval || '1h';
+                const dirRaw = asString(call.arguments.direction);
+                const dirArg = dirRaw === 'Long' || dirRaw === 'Short' || dirRaw === 'both' ? dirRaw : 'both';
+                const res = await (await importMarketTools()).runSetupReplayTool(
+                    asSymbol(call.arguments.symbol, fallback),
+                    KLINE_INTERVALS_5M_TO_1D.includes(tfArg as never) ? tfArg : '1h',
+                    {
+                        setup: asString(call.arguments.setup),
+                        direction: dirArg,
+                        ...(typeof call.arguments.lookbackBars === 'number' ? { lookbackBars: call.arguments.lookbackBars } : {}),
+                        ...(typeof call.arguments.stopAtrMult === 'number' ? { stopAtrMult: call.arguments.stopAtrMult } : {}),
+                        ...(typeof call.arguments.targetR === 'number' ? { targetR: call.arguments.targetR } : {}),
+                        ...(typeof call.arguments.maxHoldBars === 'number' ? { maxHoldBars: call.arguments.maxHoldBars } : {}),
+                    },
+                );
+                if (!res.ok) {
+                    return { toolCallId: call.id, name: call.name, ok: false, content: res.content, ...resolvedSymbolField(call, fallback) };
+                }
+                content = res.content;
+                break;
+            }
+            case 'divergences': {
+                const tfArg = asString(call.arguments.interval) || context.chartInterval || '1h';
+                const inds = Array.isArray(call.arguments.indicators)
+                    ? call.arguments.indicators.filter((x): x is 'rsi' | 'macd' | 'cvd' => x === 'rsi' || x === 'macd' || x === 'cvd')
+                    : undefined;
+                content = await (await importMarketTools()).runDivergencesTool(
+                    asSymbol(call.arguments.symbol, fallback),
+                    KLINE_INTERVALS_5M_TO_1D.includes(tfArg as never) ? tfArg : '1h',
+                    {
+                        ...(typeof call.arguments.pivotLeft === 'number' ? { pivotLeft: call.arguments.pivotLeft } : {}),
+                        ...(typeof call.arguments.pivotRight === 'number' ? { pivotRight: call.arguments.pivotRight } : {}),
+                        ...(inds && inds.length > 0 ? { indicators: inds } : {}),
+                    },
+                );
+                break;
+            }
             case 'setup_base_rate':
             case 'risk_state':
             case 'meta_label':
@@ -7402,6 +7509,8 @@ export async function runDeskToolLoop(params: {
     /** Speaker label stamped on emitted ToolActions when the caller does
      *  not override (moderator path). Empty default — callers stamp. */
     speaker?: string;
+    /** True when read-only Plan Mode is active — strips blocked tools & enforces hard dispatch lock. */
+    planMode?: boolean;
 }): Promise<DeskToolLoopResult> {
     const {
         config,
@@ -7442,6 +7551,7 @@ export async function runDeskToolLoop(params: {
         takeSteering,
         onSteered,
         requireFirstToolRound = false,
+        planMode = false,
     } = params;
     let steeredThisTurn = false;
     let microCompactCharsTotal = 0;
@@ -7501,11 +7611,13 @@ export async function runDeskToolLoop(params: {
     const seeded = skillReviewFromTranscript(messages);
     let skillIndexVersion: string | undefined = seeded.indexVersion;
     const openedSkillVersions = new Map(seeded.opened);
-    const initialDeskDefs = DESK_TOOL_DEFINITIONS.filter(d => INITIAL_DESK_TOOL_NAMES.includes(d.function.name));
+    const initialDeskDefs = DESK_TOOL_DEFINITIONS.filter(
+        d => INITIAL_DESK_TOOL_NAMES.includes(d.function.name) && (!planMode || !isBlockedInPlanMode(d.function.name)),
+    );
     /** Deferred names THIS seat may call. A restricted seat with a narrow list
      *  can have nothing to defer, and then no catalogue/loader is offered at
      *  all — every definition fits, and a load round would be pure cost. */
-    const loadableDeskToolNames = loadableDeskToolNamesFor(nativeTools, allowedTools);
+    const loadableDeskToolNames = loadableDeskToolNamesFor(nativeTools, allowedTools, planMode);
     const canLoadTools = loadableDeskToolNames.length > 0;
     let finalText = '';
     let reasoning = '';
@@ -7559,21 +7671,24 @@ export async function runDeskToolLoop(params: {
     let continuationPrefix = '';
     let continuationRoundIndex = -1;
     for (let round = 0; round < MAX_DESK_TOOL_ROUNDS; round++) {
-        const forgedDefs = confirmedForgedToolDefinitions();
+        const forgedDefs = confirmedForgedToolDefinitions().filter(d => !planMode || !isBlockedInPlanMode(d.function.name));
         const deskDefs = canLoadTools
             ? [
                 ...initialDeskDefs,
-                ...DESK_TOOL_DEFINITIONS.filter(d => loadedToolNames.has(d.function.name)),
+                ...DESK_TOOL_DEFINITIONS.filter(
+                    d => loadedToolNames.has(d.function.name) && (!planMode || !isBlockedInPlanMode(d.function.name)),
+                ),
                 LOAD_TOOLS_DEFINITION,
             ]
-            : DESK_TOOL_DEFINITIONS;
+            : DESK_TOOL_DEFINITIONS.filter(d => !planMode || !isBlockedInPlanMode(d.function.name));
         const allDefs = forgedDefs.length > 0
             ? (extraToolDefs.length > 0 ? [...deskDefs, ...forgedDefs, ...extraToolDefs] : [...deskDefs, ...forgedDefs])
             : (extraToolDefs.length > 0 ? [...deskDefs, ...extraToolDefs] : deskDefs);
         const effectiveTools = nativeTools
             // `load_tools` is the one name the seat's allow-list must not filter
             // out: it is the mechanism by which the rest of the list arrives.
-            ? allDefs.filter(d => d.function.name === 'load_tools' || seatAllows(allowedTools, d.function.name))
+            ? allDefs.filter(d => (d.function.name === 'load_tools' || seatAllows(allowedTools, d.function.name))
+                && (!planMode || !isBlockedInPlanMode(d.function.name)))
             : undefined;
         // A stop click must end the loop BETWEEN rounds — never fire one
         // more request on an already-dead signal.
@@ -7950,6 +8065,22 @@ export async function runDeskToolLoop(params: {
             ),
         });
         for (const call of calls) {
+            if (planMode && isBlockedInPlanMode(call.name)) {
+                const locked: DeskToolResult = {
+                    toolCallId: call.id,
+                    name: call.name,
+                    ok: false,
+                    content: JSON.stringify({
+                        ok: false,
+                        error: 'plan_mode_locked',
+                        tool: call.name,
+                        reason: `${call.name} is locked while Plan Mode (read-only) is active. Exit Plan Mode (/plan off or Shift+Tab) to execute or write.`,
+                    }),
+                };
+                extraResults.push(locked);
+                reportToolCompletion(locked);
+                continue;
+            }
             if (executeExtraTool) {
                 // A Stop must abort the extra lane too: a chart write or a
                 // mailbox send queued behind the signal must not run after the
@@ -8004,7 +8135,12 @@ export async function runDeskToolLoop(params: {
                 const requested = Array.isArray(raw) ? raw.filter((n): n is string => typeof n === 'string') : [];
                 const loaded: string[] = [];
                 const unknown: string[] = [];
+                const blockedInPlanMode: string[] = [];
                 for (const name of requested) {
+                    if (planMode && isBlockedInPlanMode(name)) {
+                        if (!blockedInPlanMode.includes(name)) blockedInPlanMode.push(name);
+                        continue;
+                    }
                     // Only a catalogued name THIS seat can call is loadable — the
                     // catalogue is the offer, and the seat allow-list still owns
                     // the permission.
@@ -8018,6 +8154,9 @@ export async function runDeskToolLoop(params: {
                     ok: true,
                     content: JSON.stringify({
                         loaded,
+                        ...(blockedInPlanMode.length > 0
+                            ? { blockedInPlanMode, planModeNote: 'Blocked while Plan Mode (read-only) is active.' }
+                            : {}),
                         ...(unknown.length > 0
                             ? { unknown, note: 'Names must come from the TOOL CATALOGUE block.' }
                             : {}),
@@ -8091,6 +8230,7 @@ export async function runDeskToolLoop(params: {
                 untrustedSeen,
                 modelName: config.selectedModel,
                 providerId: config.id,
+                planMode,
                 onSlowCall: label => onToolProgress?.(`${label} · still working…`),
                 // A UI listener is not part of the tool protocol. If one
                 // throws, the round must still append this result and continue
@@ -8378,6 +8518,8 @@ export interface StreamWithDeskToolsOptions extends ChatRequestOptions {
      *  streamed-so-far text was NOT the answer. Streaming callers (Chart AI
      *  panel) clear their accumulator so the corrected turn paints alone. */
     onStreamReset?: () => void;
+    /** True when read-only Plan Mode is active — blocks execution and write tools. */
+    planMode?: boolean;
 }
 
 /**
@@ -8552,6 +8694,7 @@ export async function* streamChatWithDeskTools(
         requireFirstToolRound,
         executePanelTool,
         captureChartPng,
+        planMode = false,
         ...chatOptions
     } = options || {};
 
@@ -8571,6 +8714,7 @@ export async function* streamChatWithDeskTools(
     const chartDefs = executePanelTool
         ? CHART_ACTION_TOOL_DEFS
             .filter(d => seatAllows(allowedTools, d.function.name))
+            .filter(d => !planMode || !isBlockedInPlanMode(d.function.name))
             // `inspect_chart_image` rides the chart-action lane but is offered
             // ONLY when the active model can actually see images AND a live
             // canvas capture is wired — zero schema noise otherwise.
@@ -8606,13 +8750,20 @@ export async function* streamChatWithDeskTools(
         ...DESK_TOOL_DEFINITIONS.map(d => d.function.name),
         ...confirmedForgedToolDefinitions().map(d => d.function.name),
         ...extraDefs.map(d => d.function.name),
-    ];
+    ].filter(n => !planMode || !isBlockedInPlanMode(n));
     const goalList = goalAllowedTools && goalAllowedTools.length > 0 ? goalAllowedTools : null;
     // A goal narrows; it never widens. `intersectGoalPolicy` owns that rule —
     // including why an empty intersection must NOT travel on as `[]`, which
     // every gate in this file reads as "nothing".
     const narrowed = goalList ? intersectGoalPolicy(allowedTools, goalList, allToolNames) : [];
-    const effectiveAllowed = goalList ? narrowed : mergedAllowed;
+    const rawEffectiveAllowed = goalList ? narrowed : mergedAllowed;
+    const effectiveAllowed: SeatToolGrant | undefined = planMode
+        ? (rawEffectiveAllowed === 'all'
+            ? allToolNames
+            : Array.isArray(rawEffectiveAllowed)
+                ? rawEffectiveAllowed.filter(n => !isBlockedInPlanMode(n))
+                : rawEffectiveAllowed)
+        : rawEffectiveAllowed;
     // What the seat is TOLD it may call, which must be exactly what the
     // executor will grant: 'all' means the whole set, a list means that list,
     // and no grant means NOTHING is offered - the prompt must not advertise a
@@ -8624,7 +8775,7 @@ export async function* streamChatWithDeskTools(
             : Array.isArray(effectiveAllowed)
                 ? effectiveAllowed.filter(n => allToolNames.includes(n))
                 : [];
-    const loadableDeskToolNames = loadableDeskToolNamesFor(nativeTools, effectiveAllowed);
+    const loadableDeskToolNames = loadableDeskToolNamesFor(nativeTools, effectiveAllowed, planMode);
     const toolCatalogue = loadableDeskToolNames.length > 0 ? buildDeskToolCatalogue(loadableDeskToolNames) : undefined;
     const enriched = withDeskToolsSystemPrompt(outbound, nativeTools, offeredToolNames, toolCatalogue);
     // Discoverability: the capability block rides EVERY seat turn so models
@@ -8711,6 +8862,7 @@ export async function* streamChatWithDeskTools(
         takeSteering: options?.takeSteering,
         onSteered: options?.onSteered,
         requireFirstToolRound,
+        planMode,
         extraToolDefs: extraDefs,
         executeExtraTool: async call => {
             // Panel-owned chart actions first (draw/levels/clear) — they

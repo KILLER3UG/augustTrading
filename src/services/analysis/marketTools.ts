@@ -50,6 +50,9 @@ import { readWyckoff } from '../market/wyckoffCore';
 import { computeFundingDrag, computeTradeMath, type TradeMathRead } from '../market/tradeMathCore';
 import { buildVolumeProfile, nakedPocs, pricePositionVsValue, sessionPocs } from '../market/volumeProfileCore';
 import { anchoredSlice, computeVwap, vwapPosition } from '../market/vwapCore';
+import { isSupportedReplaySetup, REPLAY_SUPPORTED_SETUPS, runSetupReplay, type SetupReplayInput } from '../market/setupReplayCore';
+import { detectDivergences, type DivergenceIndicator } from '../market/divergenceCore';
+import { recordCachedRegime } from '../trade/scopedRulesRuntime';
 
 export type EvidenceLevel = 'structural' | 'documented' | 'folklore';
 
@@ -763,6 +766,7 @@ export const runRegimeTool = async (
                 summary: '', reason: `need ≥80 closed candles on ${tf} (got ${candles.length})`,
             }));
         }
+        recordCachedRegime(symbol, read.direction, asofMs);
         // Wave B quant pack: Yang-Zhang vol + percentiles (90-bar floor),
         // compression flags, expected move, Hurst/VR/trend-scan (100-bar
         // floor) and the Al Brooks bar-geometry flags. Every floor refusal
@@ -1224,6 +1228,92 @@ export const runPlaybooksTool = async (
     }
 };
 
+// ─── setup_replay (historical micro-backtester) ─────────────────────────
+
+export const runSetupReplayTool = async (
+    symbolInput: string,
+    tf: string = '1h',
+    params: {
+        setup: string;
+        direction?: 'Long' | 'Short' | 'both';
+        lookbackBars?: number;
+        stopAtrMult?: number;
+        targetR?: number;
+        maxHoldBars?: number;
+    },
+    asofMs: number = Date.now(),
+): Promise<{ ok: boolean; content: string }> => {
+    const symbol = normalizeSymbol(symbolInput);
+    const setupName = (params.setup ?? '').trim().toLowerCase();
+    if (!isSupportedReplaySetup(setupName)) {
+        return {
+            ok: false,
+            content: JSON.stringify({
+                ok: false,
+                error: 'unknown_setup',
+                message: `Unknown setup "${params.setup}".`,
+                supportedSetups: REPLAY_SUPPORTED_SETUPS,
+            }),
+        };
+    }
+    const lookbackBars = Math.min(1000, Math.max(200, Math.round(params.lookbackBars ?? 500)));
+    const notes: string[] = [
+        'venue: binance-usdtm-futures',
+        'zero-lookahead causal replay; next-bar open entry; stop-first intrabar resolution; taker fee drag subtracted from netR',
+    ];
+    try {
+        const candles = await fetchRecent(symbol, tf, lookbackBars, asofMs);
+        const replayInput: SetupReplayInput = {
+            symbol,
+            interval: tf,
+            setup: setupName,
+            direction: params.direction ?? 'both',
+            lookbackBars,
+            stopAtrMult: params.stopAtrMult,
+            targetR: params.targetR,
+            maxHoldBars: params.maxHoldBars,
+        };
+        const result = runSetupReplay(candles, replayInput);
+        if (!result.ok) {
+            return {
+                ok: false,
+                content: JSON.stringify(envelope({
+                    tool: 'setup_replay', asof: asofMs, symbol, tf,
+                    params: replayInput as unknown as Record<string, unknown>,
+                    barsUsed: candles.length, notes, values: result, distancesAtr: {},
+                    evidence: 'documented', summary: '', reason: result.message,
+                })),
+            };
+        }
+        const wrPct = result.winRate !== null ? `${Math.round(result.winRate * 100)}%` : 'n/a';
+        const netExp = result.netExpectancyR !== null ? `${result.netExpectancyR >= 0 ? '+' : ''}${result.netExpectancyR}R` : 'n/a';
+        return {
+            ok: true,
+            content: JSON.stringify(envelope({
+                tool: 'setup_replay', asof: asofMs, symbol, tf,
+                params: replayInput as unknown as Record<string, unknown>,
+                barsUsed: result.barsScanned,
+                notes,
+                values: result,
+                distancesAtr: {},
+                evidence: 'documented',
+                summary: `${result.setup} on ${symbol} ${tf} (${result.barsScanned} bars): N=${result.sampleCount}, WR ${wrPct}, net expectancy ${netExp}${result.sufficientSample ? '' : ' [THIN SAMPLE < 5]'}`,
+            })),
+        };
+    } catch (error) {
+        return {
+            ok: false,
+            content: JSON.stringify(envelope({
+                tool: 'setup_replay', asof: asofMs, symbol, tf,
+                params: { setup: setupName, lookbackBars }, barsUsed: 0,
+                notes: [`fetch failed: ${(error as Error).message}`],
+                values: null, distancesAtr: {}, evidence: 'documented', summary: '',
+                reason: 'candle fetch failed — retry once; if it fails again the feed is down',
+            })),
+        };
+    }
+};
+
 export const runBtcRelativeTool = async (
     symbolInput: string,
     window: number = 30,
@@ -1604,6 +1694,62 @@ export const runWyckoffTool = async (
     }
 };
 
+// ─── divergences (non-repainting RSI / MACD / CVD divergences) ──────────
+
+export const runDivergencesTool = async (
+    symbolInput: string,
+    tf: string = '1h',
+    options: { pivotLeft?: number; pivotRight?: number; indicators?: DivergenceIndicator[] } = {},
+    asofMs: number = Date.now(),
+): Promise<string> => {
+    const symbol = normalizeSymbol(symbolInput);
+    const notes: string[] = [
+        'venue: binance-usdtm-futures',
+        'non-repainting confirmed pivots only (forming candle and trailing pivotRight bars excluded); pivot times in Unix seconds for chartDrawings',
+    ];
+    try {
+        const candles = await fetchRecent(symbol, tf, 240, asofMs);
+        if (candles.length < 30) {
+            return JSON.stringify(envelope({
+                tool: 'divergences', asof: asofMs, symbol, tf,
+                params: { ...options }, barsUsed: candles.length, notes,
+                values: null, distancesAtr: {}, evidence: 'structural',
+                summary: '', reason: `need ≥30 closed candles on ${tf} (got ${candles.length})`,
+            }));
+        }
+        // `fetchRecent` already ran `closedCandles`, so `candles` contains strictly closed bars.
+        const read = detectDivergences(candles, {
+            symbol,
+            interval: tf,
+            pivotLeft: options.pivotLeft,
+            pivotRight: options.pivotRight,
+            indicators: options.indicators,
+            excludeFormingCandle: false,
+        });
+        const top = read.divergences[0];
+        return JSON.stringify(envelope({
+            tool: 'divergences', asof: asofMs, symbol, tf,
+            params: { pivotLeft: read.pivotLeft, pivotRight: read.pivotRight },
+            barsUsed: read.barsAnalyzed,
+            notes,
+            values: read,
+            distancesAtr: {},
+            evidence: 'structural',
+            summary: read.divergences.length > 0
+                ? `${read.divergences.length} confirmed divergence(s) on ${tf}; freshest: ${top.indicator.toUpperCase()} ${top.kind.replace(/_/g, ' ')} (${top.barsAgo} bars ago)`
+                : `no confirmed divergences on ${tf} (${read.barsAnalyzed} closed bars scanned)`,
+        }));
+    } catch (error) {
+        return JSON.stringify(envelope({
+            tool: 'divergences', asof: asofMs, symbol, tf,
+            params: { ...options }, barsUsed: 0,
+            notes: [`fetch failed: ${(error as Error).message}`],
+            values: null, distancesAtr: {}, evidence: 'structural', summary: '',
+            reason: 'candle fetch failed — retry once; if it fails again the feed is down',
+        }));
+    }
+};
+
 // ─── drawable levels — the chart half of the tools ──────────────────────
 // The model NAMES a tool; the app re-runs it and draws at the app's own
 // computed prices. This is the draw_detected rule applied to the market
@@ -1667,15 +1813,26 @@ export interface DrawableZone {
     color: DrawingColor;
 }
 
+export interface DrawableTrend {
+    label: string;
+    t0: number;
+    p0: number;
+    t1: number;
+    p1: number;
+    color: DrawingColor;
+}
+
 export interface DrawableSet {
     hlines: DrawableHline[];
     zones: DrawableZone[];
+    trends?: DrawableTrend[];
 }
 
 /** The tools whose result has a standard drawing, and what to re-run. */
 export const DRAWABLE_TOOLS: readonly string[] = [
     'volume_profile', 'naked_pocs', 'vwap', 'auction_state', 'get_key_levels',
     'swing_structure', 'liquidity', 'imbalances', 'sr_zones', 'wyckoff_events',
+    'divergences',
 ];
 
 /**
@@ -1695,6 +1852,7 @@ export const drawableLevelsFor = (
         !filter || filter.length === 0 || filter.some(f => label.toLowerCase().includes(f.toLowerCase()));
     const hlines: DrawableHline[] = [];
     const zones: DrawableZone[] = [];
+    const trends: DrawableTrend[] = [];
     const num = (v: unknown): number | null =>
         typeof v === 'number' && Number.isFinite(v) ? v : null;
 
@@ -1796,10 +1954,49 @@ export const drawableLevelsFor = (
             if (!keep(kind)) continue;
             hlines.push({ label: `${kind} (${String(e.confidence ?? '')})`, price: level, color: kind === 'spring' ? 'emerald' : 'rose' });
         }
+    } else if (tool === 'divergences') {
+        const divs = values.divergences as Array<{
+            indicator?: unknown;
+            kind?: unknown;
+            pivotA?: { time?: unknown; price?: unknown };
+            pivotB?: { time?: unknown; price?: unknown };
+        }> | undefined;
+        const kindLabel = (k: string): string => {
+            switch (k) {
+                case 'regular_bullish': return 'Reg Bull Div';
+                case 'regular_bearish': return 'Reg Bear Div';
+                case 'hidden_bullish': return 'Hid Bull Div';
+                case 'hidden_bearish': return 'Hid Bear Div';
+                default: return k;
+            }
+        };
+        for (const d of (divs ?? []).slice(0, 6)) {
+            const t0 = num(d.pivotA?.time);
+            const p0 = num(d.pivotA?.price);
+            const t1 = num(d.pivotB?.time);
+            const p1 = num(d.pivotB?.price);
+            if (t0 === null || p0 === null || t1 === null || p1 === null || p0 <= 0 || p1 <= 0) continue;
+            const ind = String(d.indicator ?? 'rsi').toUpperCase();
+            const kind = String(d.kind ?? '');
+            const label = `${ind} ${kindLabel(kind)}`;
+            if (!keep(label)) continue;
+            trends.push({
+                label,
+                t0,
+                p0,
+                t1,
+                p1,
+                color: kind.includes('bullish') ? 'emerald' : 'rose',
+            });
+        }
     } else {
         return null;
     }
-    return { hlines: hlines.filter(h => h.price > 0), zones: zones.filter(z => z.top > 0 && z.bottom > 0) };
+    return {
+        hlines: hlines.filter(h => h.price > 0),
+        zones: zones.filter(z => z.top > 0 && z.bottom > 0),
+        ...(trends.length > 0 ? { trends } : {}),
+    };
 };
 
 // ─── the O-46 decision snapshot ─────────────────────────────────────────
@@ -1825,6 +2022,7 @@ export const buildDecisionSnapshot = async (symbolInput: string, asofMs: number 
         const atr = atr14(candles);
         if (candles.length < 30 || !(atr > 0)) return null;
         const reg = regimeRead(candles);
+        if (reg) recordCachedRegime(symbol, reg.direction, asofMs);
         const day = utcDayStart(asofMs);
         const prevDay = candles.filter(c => c.time >= day - UTC_DAY_MS && c.time < day);
         const prevHigh = prevDay.length >= 4 ? Math.max(...prevDay.map(c => c.high)) : null;

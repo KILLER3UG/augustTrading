@@ -78,6 +78,12 @@ export const drawToolLevelsFromCall = async (
             case 'get_key_levels':
                 content = await mt.runKeyLevelsEnvelope(sym);
                 break;
+            case 'divergences':
+                content = await mt.runDivergencesTool(
+                    sym,
+                    (['5m', '15m', '1h', '4h', '1d'].includes(String(args.interval)) ? String(args.interval) : (ctx.interval || '1h')),
+                );
+                break;
             default:
                 content = await mt.runStructureTool(wanted, sym, (['5m', '15m', '1h', '4h'].includes(String(args.interval)) ? String(args.interval) : '1h'));
                 break;
@@ -95,7 +101,7 @@ export const drawToolLevelsFromCall = async (
     // get_key_levels' shape is its own (session_levels at the root, no
     // envelope) — wrap it so the extractor sees one shape.
     const set = mt.drawableLevelsFor(wanted, wanted === 'get_key_levels' ? { values: parsed } : parsed, items);
-    if (!set || (set.hlines.length === 0 && set.zones.length === 0)) {
+    if (!set || (set.hlines.length === 0 && set.zones.length === 0 && (set.trends?.length ?? 0) === 0)) {
         const reason = parsed.data_quality?.reason ?? 'no drawable levels in the fresh result (nothing qualified)';
         return { drawings: [], error: `${wanted} produced nothing drawable — ${reason}. Nothing was drawn.`, tool: wanted };
     }
@@ -124,9 +130,18 @@ export const drawToolLevelsFromCall = async (
             kind: 'rect', points: [{ t: t0, p: top }, { t: t1, p: bottom }], color, createdAt: Date.now(), label, drawnPrice,
         };
     };
+    const mkTrend = (label: string, trT0: number, trP0: number, trT1: number, trP1: number, color: string): ChartDrawing => {
+        const shortId = allocateDrawingShortId(ctx.symbol, seen);
+        seen.push({ shortId });
+        return {
+            id: createDrawingId(), shortId, origin: 'agent', createdOnTf: ctx.interval, version: 1,
+            kind: 'trend', points: [{ t: trT0, p: trP0 }, { t: trT1, p: trP1 }], color, createdAt: Date.now(), label, drawnPrice,
+        };
+    };
     const drawings: ChartDrawing[] = [
         ...set.hlines.map(h => mk(h.price, h.label, MODEL_COLOR_NAMES[h.color])),
         ...set.zones.map(z => mkZone(z.label, z.top, z.bottom, MODEL_COLOR_NAMES[z.color])),
+        ...(set.trends ?? []).map(tr => mkTrend(tr.label, tr.t0, tr.p0, tr.t1, tr.p1, MODEL_COLOR_NAMES[tr.color])),
     ].slice(0, 20); // the model-drawing cap is 40 per symbol; one call stays half of it
     return { drawings, tool: wanted };
 };

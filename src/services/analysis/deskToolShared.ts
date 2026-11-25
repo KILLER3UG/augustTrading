@@ -70,8 +70,8 @@ export const CHART_ACTION_TOOL_DEFS: DeskToolDefinition[] = [
                 properties: {
                     tool: {
                         type: 'string',
-                        enum: ['volume_profile', 'naked_pocs', 'vwap', 'auction_state', 'get_key_levels', 'swing_structure', 'liquidity', 'imbalances', 'sr_zones', 'wyckoff_events'],
-                        description: 'Which tool\'s levels to draw. The tool is re-run fresh at draw time.',
+                        enum: ['volume_profile', 'naked_pocs', 'vwap', 'auction_state', 'get_key_levels', 'swing_structure', 'liquidity', 'imbalances', 'sr_zones', 'wyckoff_events', 'divergences'],
+                        description: 'Which tool\'s levels or divergence trendlines to draw. The tool is re-run fresh at draw time.',
                     },
                     symbol: { type: 'string', description: 'Any perp symbol (default: the chart\'s current symbol).' },
                     anchor: { type: 'string', description: 'volume_profile: session|day|week|visible|swing|custom. vwap: session_open|swing_high|swing_low|custom. Default: session / session_open.' },
