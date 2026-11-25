@@ -52,6 +52,7 @@ import { buildProfileMemoryIndex } from '../learning/profileMemory';
 import { buildCuratedMemoryPromptBlock, getCachedCuratedMemorySnapshot } from '../learning/curatedMemory';
 import { buildGoalsIndex, focusedGoal, goalMatchesMessage, listGoals } from '../goals/GoalService';
 import { runToolTurn, type CaptureSnapshot, type ToolTurnEvents, type ToolTurnOutcome, type ToolTurnRequest } from './toolTurn';
+import * as chatStore from './chatStore';
 import { isMarketReadTool, PAPER_TRADING_PROMPT } from '../analysis/deskToolShared';
 import type { DeskToolCall, DeskToolResult } from '../analysis/DeskToolsService';
 import { runPresentTrade } from './presentTradeTool';
@@ -740,7 +741,11 @@ export const runChatSurfaceTurn = async (req: ChatSurfaceTurnRequest): Promise<T
             // are on the chart the moment the trader switches back.
             if (call.name === 'draw_on_chart' || call.name === 'mark_trade_levels'
                 || call.name === 'draw_tool_levels' || call.name === 'clear_chart_drawings') {
-                return executeChatSurfaceChartTool(call, { sessionId: req.sessionId, symbol: req.symbol, interval: req.interval });
+                // The bucket key is the DOCK's active session — the id the
+                // chart's TradeView loads — so a shape drawn on Chat is on the
+                // canvas the moment the trader switches back (no refresh).
+                const dockSid = chatStore.getActiveId() || req.sessionId || 'chat-surface';
+                return executeChatSurfaceChartTool(call, { sessionId: dockSid, symbol: req.symbol, interval: req.interval });
             }
             // A proposed settlement fix. The shared executor validates and
             // RECORDS the proposal; this sink then attaches it to THIS
