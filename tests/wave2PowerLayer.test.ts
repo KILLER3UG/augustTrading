@@ -153,10 +153,12 @@ describe('Wave 2 Power Layer', () => {
         }
         assert.equal(PLAN_MODE_BLOCKED_TOOLS.has('paper_order'), true);
 
-        // Seam 2: loadableDeskToolNamesFor excludes blocked tools in Plan Mode
+        // Seam 2: loadableDeskToolNamesFor excludes blocked tools in Plan Mode & hides silent legacy aliases
         const loadableNormal = loadableDeskToolNamesFor(true, 'all', false);
         const loadablePlan = loadableDeskToolNamesFor(true, 'all', true);
-        assert.equal(loadableNormal.includes('skill_write'), true);
+        assert.equal(loadableNormal.includes('skill_write'), false, 'skill_write is a silent legacy alias');
+        assert.equal(loadableNormal.includes('memory_delete'), true);
+        assert.equal(loadablePlan.includes('memory_delete'), false);
         assert.equal(loadablePlan.includes('skill_write'), false);
         assert.equal(loadablePlan.includes('setup_replay'), true);
         assert.equal(loadablePlan.includes('divergences'), true);

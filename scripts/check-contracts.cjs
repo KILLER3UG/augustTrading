@@ -834,6 +834,7 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
     const desk = loadModule('src/services/analysis/DeskToolsService.ts');
     const defs = desk.DESK_TOOL_DEFINITIONS.map(d => d.function.name);
     const initial = [...desk.INITIAL_DESK_TOOL_NAMES];
+    const aliases = [...(desk.SILENT_LEGACY_TOOL_ALIASES ?? [])];
     const loadable = desk.loadableDeskToolNamesFor(true, 'all');
     const narrow = desk.loadableDeskToolNamesFor(true, ['get_market_packet']);
     const text = desk.loadableDeskToolNamesFor(false, 'all');
@@ -846,9 +847,14 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
 
     ok('desk budget: every initial name is a real desk tool', initial.every(n => defs.includes(n)));
     ok('desk budget: the initial set carries no duplicate', new Set(initial).size === initial.length);
+    ok('desk budget: lean turn-1 initial core set stays <= 20 tools', initial.length <= 20, `${initial.length}`);
+    ok('desk budget: silent legacy aliases stay dispatchable but hidden from initial and catalogue',
+        aliases.length >= 6 && aliases.every(n => defs.includes(n) && !initial.includes(n) && !loadable.includes(n)),
+        JSON.stringify(aliases));
     ok('desk budget: the loader is not itself a desk tool', !defs.includes('load_tools'));
-    ok('desk budget: a native turn that HOLDS the full toolset defers exactly the rest',
-        loadable.length === defs.length - initial.length, `${loadable.length} vs ${defs.length - initial.length}`);
+    ok('desk budget: a native turn that HOLDS the full toolset defers exactly the non-alias rest',
+        loadable.length === defs.length - initial.length - aliases.length,
+        `${loadable.length} vs ${defs.length - initial.length - aliases.length}`);
     ok('desk budget: a seat with no grant defers nothing - the default is closed',
         ungranted.length === 0, JSON.stringify(ungranted));
     // The allow-list polarity itself - the ONE place it is decided. It used to

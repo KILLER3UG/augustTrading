@@ -3085,70 +3085,54 @@ export const DESK_TOOL_DEFINITIONS: DeskToolDefinition[] = [
  * A tool added here is paid for on EVERY round; a tool left out costs one round
  * only when a turn needs it. `check:contracts` pins that every name is real.
  */
+/**
+ * Legacy overlapping memory / search / skill tool names kept strictly as silent
+ * backward-compatible dispatch aliases. Never offered on Turn 1 or advertised in
+ * `TOOL CATALOGUE` so the model sees a single canonical surface per concern.
+ */
+export const SILENT_LEGACY_TOOL_ALIASES: ReadonlySet<string> = new Set([
+    'remember',
+    'read_memory',
+    'forget',
+    'recall',
+    'recall_chat',
+    'memory_search_sessions',
+    'skill_write',
+]);
+
+/**
+ * Chart-action tools kept immediately available on Turn 1 when canvas/surface
+ * actions are wired. Secondary chart utilities (`draw_detected`, `wake_me`,
+ * `cancel_watch`, `set_chart_timeframe`, `toggle_chart_study`) defer behind
+ * `load_tools` alongside the extended market structure suite.
+ */
+export const INITIAL_CHART_ACTION_NAMES: ReadonlySet<string> = new Set([
+    'draw_on_chart',
+    'draw_tool_levels',
+    'mark_trade_levels',
+    'clear_chart_drawings',
+    'present_trade',
+    'decline_trade',
+    'watch_price',
+    'inspect_chart_image',
+]);
+
 export const INITIAL_DESK_TOOL_NAMES: readonly string[] = [
     'get_market_packet',
     'get_chart_view',
-    'get_all_timeframes',
-    'get_indicators',
-    'get_derivatives',
-    'get_order_book',
-    'get_price_snapshot',
     'get_key_levels',
-    'get_session_context',
     'read_tool_output',
-    // `recall` (the legacy alias of memory_search_sessions) is DEFERRED: the
-    // canonical name is always loaded, and loading both cost ~1.2kB of schema
-    // for two names for one handler. It stays reachable via load_tools and
-    // the executor keeps accepting it for old transcripts.
-    // The reader the skills index orders the seat to open BEFORE acting. A
-    // deferred reader made that instructed call an unloaded name on native
-    // seats, and a schema-free guess on text transports.
     'skill_view',
-    'web_search',
     'emit_signal',
     'ask_user_input',
-    // Discovery and its one actuation: a trader asking "find the best setups
-    // and show me the winner" must not spend a round on `load_tools` first.
-    // Both are small schemas; neither is a market read on every turn.
     'find_best_setups',
     'switch_chart_symbol',
-    // The two market-structure tools a decision cannot go without: the
-    // regime its read will be judged in, and the plan's own arithmetic
-    // (every presented entry/stop/target should be priced through
-    // trade_math, not through the model's head). The volume/auction family
-    // stays loadable-on-demand to bound the schema tax (O-59) — the mandate
-    // tells the seat when to load what.
-    'get_regime',
     'trade_math',
-    // The advisory meta-label read: the seat should know what the trader's
-    // own numbers say about a plan before presenting it.
-    'meta_label',
-    // The memory tools. The always-on index TELLS the seat to call these by
-    // name; a deferred tool the prompt instructs is a capability the wire
-    // hides, and the model answers "I cannot remember that" — which is a lie
-    // about the harness. The four schemas are small and ride every turn.
-    'memory_read',
     'memory_add',
-    'memory_update',
-    'memory_delete',
-    // Schema hygiene: `memory_search_sessions` is the LEGACY session reader
-    // superseded on the always-on surface by `session_search` (one tool, both
-    // homes, surface-tagged). It stays GRANTED and executable — load_tools can
-    // still bring it back for older playbooks — it just no longer spends a
-    // schema slot on every turn beside its replacement.
-    // Pass-1 agent-driven memory: the curated-files editor and the skill
-    // lifecycle ride every turn like the memory family above; `session_search`
-    // is the one always-on episodic reader (Chat + Desk, surface-tagged).
     'memory',
     'session_search',
     'skill_manage',
-    // A turn-scoped checklist for multi-step work, offered from round 1 so
-    // it costs no extra round. Never persisted; cleared when the turn settles.
     'update_plan',
-    // Pass 3: the local paper broker rides every turn so a trading question
-    // can be answered with a simulated position without a load_tools round.
-    // paper_account is read-only; paper_order is bounded by hard risk walls
-    // that live in deterministic code, never in the model's judgement.
     'paper_account',
     'paper_order',
 ];
@@ -3207,7 +3191,7 @@ const catalogueLine = (def: DeskToolDefinition): string => {
 };
 
 /** The deferred names a turn may load, gated by the seat's own allow-list.
- *  ONE rule, read by the prompt composer and the loop's executor. */
+ *  Silent legacy aliases stay executable but never bloat the catalogue. */
 export const loadableDeskToolNamesFor = (
     nativeTools: boolean,
     allowedTools?: SeatToolGrant,
@@ -3216,6 +3200,7 @@ export const loadableDeskToolNamesFor = (
     ? DESK_TOOL_DEFINITIONS
         .map(d => d.function.name)
         .filter(name => !INITIAL_DESK_TOOL_NAMES.includes(name)
+            && !SILENT_LEGACY_TOOL_ALIASES.has(name)
             && seatAllows(allowedTools, name)
             && (!planMode || !isBlockedInPlanMode(name)))
     : [];
@@ -3223,7 +3208,10 @@ export const loadableDeskToolNamesFor = (
 /** Build the catalogue for the deferred names THIS turn can load. Pure and
  *  exported: the loop and the contract check read the same function. */
 export const buildDeskToolCatalogue = (names: readonly string[]): string => {
-    const byName = new Map(DESK_TOOL_DEFINITIONS.map(d => [d.function.name, d]));
+    const byName = new Map([
+        ...CHART_ACTION_TOOL_DEFS.map(d => [d.function.name, d] as const),
+        ...DESK_TOOL_DEFINITIONS.map(d => [d.function.name, d] as const),
+    ]);
     return names
         .map(name => byName.get(name))
         .filter((def): def is DeskToolDefinition => Boolean(def))
@@ -7670,6 +7658,24 @@ export async function runDeskToolLoop(params: {
      *  immediately after it was sent. */
     let continuationPrefix = '';
     let continuationRoundIndex = -1;
+    const isDeferredChartExtra = (name: string): boolean =>
+        canLoadTools
+        && CHART_ACTION_TOOL_DEFS.some(d => d.function.name === name)
+        && !INITIAL_CHART_ACTION_NAMES.has(name);
+    const loadableExtraNames = extraToolDefs
+        .map(d => d.function.name)
+        .filter(name => isDeferredChartExtra(name)
+            && seatAllows(allowedTools, name)
+            && (!planMode || !isBlockedInPlanMode(name)));
+    const allExplicitLegacyLoadables = nativeTools
+        ? DESK_TOOL_DEFINITIONS
+            .map(d => d.function.name)
+            .filter(name => SILENT_LEGACY_TOOL_ALIASES.has(name)
+                && seatAllows(allowedTools, name)
+                && (!planMode || !isBlockedInPlanMode(name)))
+        : [];
+    const loadableAnySet = new Set([...loadableDeskToolNames, ...loadableExtraNames, ...allExplicitLegacyLoadables]);
+
     for (let round = 0; round < MAX_DESK_TOOL_ROUNDS; round++) {
         const forgedDefs = confirmedForgedToolDefinitions().filter(d => !planMode || !isBlockedInPlanMode(d.function.name));
         const deskDefs = canLoadTools
@@ -7681,9 +7687,14 @@ export async function runDeskToolLoop(params: {
                 LOAD_TOOLS_DEFINITION,
             ]
             : DESK_TOOL_DEFINITIONS.filter(d => !planMode || !isBlockedInPlanMode(d.function.name));
+        const activeExtraDefs = canLoadTools
+            ? extraToolDefs.filter(
+                d => !isDeferredChartExtra(d.function.name) || loadedToolNames.has(d.function.name),
+            )
+            : extraToolDefs;
         const allDefs = forgedDefs.length > 0
-            ? (extraToolDefs.length > 0 ? [...deskDefs, ...forgedDefs, ...extraToolDefs] : [...deskDefs, ...forgedDefs])
-            : (extraToolDefs.length > 0 ? [...deskDefs, ...extraToolDefs] : deskDefs);
+            ? (activeExtraDefs.length > 0 ? [...deskDefs, ...forgedDefs, ...activeExtraDefs] : [...deskDefs, ...forgedDefs])
+            : (activeExtraDefs.length > 0 ? [...deskDefs, ...activeExtraDefs] : deskDefs);
         const effectiveTools = nativeTools
             // `load_tools` is the one name the seat's allow-list must not filter
             // out: it is the mechanism by which the rest of the list arrives.
@@ -8144,7 +8155,7 @@ export async function runDeskToolLoop(params: {
                     // Only a catalogued name THIS seat can call is loadable — the
                     // catalogue is the offer, and the seat allow-list still owns
                     // the permission.
-                    if (!loadableDeskToolNames.includes(name)) { unknown.push(name); continue; }
+                    if (!loadableAnySet.has(name)) { unknown.push(name); continue; }
                     loadedToolNames.add(name);
                     if (!loaded.includes(name)) loaded.push(name);
                 }
@@ -8776,7 +8787,15 @@ export async function* streamChatWithDeskTools(
                 ? effectiveAllowed.filter(n => allToolNames.includes(n))
                 : [];
     const loadableDeskToolNames = loadableDeskToolNamesFor(nativeTools, effectiveAllowed, planMode);
-    const toolCatalogue = loadableDeskToolNames.length > 0 ? buildDeskToolCatalogue(loadableDeskToolNames) : undefined;
+    const loadableChartNames = loadableDeskToolNames.length > 0 && nativeTools
+        ? extraDefs
+            .map(d => d.function.name)
+            .filter(name => CHART_ACTION_TOOL_DEFS.some(c => c.function.name === name)
+                && !INITIAL_CHART_ACTION_NAMES.has(name)
+                && (!planMode || !isBlockedInPlanMode(name)))
+        : [];
+    const catalogueNames = [...loadableDeskToolNames, ...loadableChartNames];
+    const toolCatalogue = catalogueNames.length > 0 ? buildDeskToolCatalogue(catalogueNames) : undefined;
     const enriched = withDeskToolsSystemPrompt(outbound, nativeTools, offeredToolNames, toolCatalogue);
     // Discoverability: the capability block rides EVERY seat turn so models
     // learn they can DM; the inbox notice (unread count + read first)
