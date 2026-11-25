@@ -6,11 +6,15 @@
  */
 
 import type { ProviderConfig } from '../../types/provider';
+import { DEFAULT_SYMBOL } from '../../config/exchangeEndpoints';
 import { resolveContextWindow } from '../../utils/contextWindow';
 import { getHarnessSettings } from '../../utils/harnessSettings';
 import { getActiveUsername } from '../../utils/activeUser';
 import { isVisionModel } from '../../utils/modelUtils';
+import { pickActiveModelConfig } from '../infrastructure/ActiveModelConfig';
+import { loadProviderConfigs } from '../infrastructure/ProviderConfigService';
 import { detectWireCapabilities } from '../providers/reasoningControls';
+import * as chatStore from './chatStore';
 import { APP_VERSION } from '../../constants/version';
 import {
     buildCuratedMemoryPromptBlock,
@@ -276,16 +280,36 @@ const readRecentRuntimeErrors = (): RedactedErrorSummary[] => {
 export const collectRedactedDiagnosticBundle = async (
     opts: Partial<CollectDoctorOpts> = {},
 ): Promise<RedactedDiagnosticBundle> => {
-    const resolvedProvider = opts.provider ?? null;
+    let resolvedProvider: ProviderConfig | null = opts.provider ?? null;
+    if (!resolvedProvider) {
+        resolvedProvider = await pickActiveModelConfig().catch(() => null);
+    }
+    if (!resolvedProvider) {
+        try {
+            const configs = await loadProviderConfigs();
+            resolvedProvider = configs.find(c => c.isEnabled && c.selectedModel)
+                ?? configs.find(c => c.isEnabled)
+                ?? null;
+        } catch {
+            resolvedProvider = null;
+        }
+    }
+
+    const activeSession = chatStore.getActiveSession();
+    const sessionId = opts.sessionId ?? activeSession?.id ?? '';
+    const symbol = opts.symbol ?? activeSession?.symbol ?? DEFAULT_SYMBOL;
+    const interval = opts.interval ?? activeSession?.interval ?? '15m';
+    const planMode = opts.planMode ?? (sessionId ? chatStore.getPlanMode(sessionId) : false);
+
     const settings = getHarnessSettings();
-    const effort = opts.effort ?? settings.responseEffort ?? 'quality';
+    const effort = opts.effort ?? activeSession?.effort ?? settings.responseEffort ?? 'quality';
     const doctor = await collectDoctorDiagnostic({
         provider: resolvedProvider,
         effort,
-        symbol: opts.symbol ?? 'BTCUSDT',
-        interval: opts.interval ?? '15m',
-        sessionId: opts.sessionId ?? '',
-        planMode: Boolean(opts.planMode),
+        symbol,
+        interval,
+        sessionId,
+        planMode,
         markPrice: opts.markPrice ?? null,
         modelDrawings: opts.modelDrawings ?? [],
     });

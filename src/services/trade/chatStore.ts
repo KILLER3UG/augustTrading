@@ -942,7 +942,23 @@ export const resetForUserSwitch = (): void => {
     loaded = false;
     loadedFor = '';
     pendingSignals = [];
+    pendingSlashCommand = null;
     ensureLoaded();
+};
+
+let pendingSlashCommand: string | null = null;
+
+/** Queue a local slash command (e.g. `/doctor`) so a surface switch mounts before executing it. */
+export const queuePendingSlashCommand = (command: string): void => {
+    const clean = command.trim();
+    pendingSlashCommand = clean || null;
+};
+
+/** Consume the queued slash command, if any, once the chat panel is mounted. */
+export const consumePendingSlashCommand = (): string | null => {
+    const next = pendingSlashCommand;
+    pendingSlashCommand = null;
+    return next;
 };
 
 /** Read session-scoped Plan Mode state (defaults to false). */
@@ -985,5 +1001,6 @@ export const __resetForTests = (): void => {
     loaded = false;
     loadedFor = '';
     pendingSignals = [];
+    pendingSlashCommand = null;
     snapshot = { sessions, activeId, running: {}, conversationRunning: {}, signals: [], planMode: {} };
 };

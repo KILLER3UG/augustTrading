@@ -251,12 +251,14 @@ const SENSITIVE_KEY_RE =
 
 const redactStringSecrets = (text: string): string =>
     text
+        .replace(/([?&](?:key|api_key|apikey|token|access_token)=)[^&\s"']+/gi, '$1[REDACTED]')
         .replace(
             /\b(x-api-key|api[_-]?key|authorization|secret|password|access[_-]?token|refresh[_-]?token)\s*([:=])\s*(?:Bearer\s+)?["']?(?!\[REDACTED\])([^\s"',;}{]+)["']?/gi,
             (_m, k: string, sep: string) => `${k}${sep} [REDACTED]`,
         )
         .replace(/\bBearer\s+(?!\[REDACTED\])[A-Za-z0-9._~+/-]{6,}=*/gi, 'Bearer [REDACTED]')
-        .replace(/\bsk-[A-Za-z0-9_-]{8,}\b/g, '[REDACTED]');
+        .replace(/\bsk-[A-Za-z0-9_-]{8,}\b/g, '[REDACTED]')
+        .replace(/\bAIza[0-9A-Za-z_-]{20,}\b/g, '[REDACTED]');
 
 /** Recursively strip API keys, bearer tokens, passwords, and secrets from diagnostic payloads. */
 export const redactSensitiveFields = <T>(value: T, seen = new WeakSet<object>()): T => {

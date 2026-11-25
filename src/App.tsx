@@ -2838,10 +2838,9 @@ const App: React.FC = () => {
                         }}
                         onOpenActivity={() => setIsJobsDrawerVisible(true)}
                         onRunDoctor={() => {
+                            chatStore.queuePendingSlashCommand('/doctor');
                             if (surface !== 'trade' && surface !== 'agents') selectSurface('trade');
-                            window.setTimeout(() => {
-                                window.dispatchEvent(new CustomEvent('august:run-slash', { detail: { command: '/doctor' } }));
-                            }, 0);
+                            window.dispatchEvent(new CustomEvent('august:run-slash', { detail: { command: '/doctor' } }));
                         }}
                         onSwitchProfile={() => {
                             setSettingsSection('profile');

@@ -20,8 +20,18 @@ const storageShim: Storage = {
 };
 const g = globalThis as unknown as Record<string, unknown>;
 if (!g.localStorage) g.localStorage = storageShim;
+if (!g.window) {
+    g.window = {
+        localStorage: storageShim,
+        setTimeout, clearTimeout, setInterval, clearInterval,
+        addEventListener: () => {}, removeEventListener: () => {}, dispatchEvent: () => true,
+    };
+}
 
 import { buildRedactedDiagnosticBundle, redactSensitiveFields } from '../src/services/trade/diagnosticsCore';
+import { collectRedactedDiagnosticBundle } from '../src/services/trade/diagnosticsRuntime';
+import { saveProviderConfigs } from '../src/services/infrastructure/ProviderConfigService';
+import * as chatStore from '../src/services/trade/chatStore';
 import { computeContextRingUsage, summarizeCollapsiblePrompt } from '../src/utils/uiFormatting';
 import { getHarnessSettings, saveHarnessSettings } from '../src/utils/harnessSettings';
 
@@ -75,7 +85,7 @@ describe('Wave 4.2 Ergonomics & Redacted Diagnostics', () => {
             recentErrors: [{
                 source: 'lastPromiseError',
                 timestamp: '2026-11-25T13:00:00.000Z',
-                message: 'Request failed with api_key=sk-secret-key-987654321 and Bearer abcdefghij123456',
+                message: 'Request failed with api_key=sk-secret-key-987654321 and Bearer abcdefghij123456 at https://example.com/v1?key=AIzaSyDummyGoogleKey1234567890&token=secretTok#frag and AIzaSyAnotherRawGoogleKey987654321',
             }],
         });
         const dumped = JSON.stringify(bundle);
@@ -83,6 +93,11 @@ describe('Wave 4.2 Ergonomics & Redacted Diagnostics', () => {
         assert.equal(dumped.includes('sk-testsecret123456'), false);
         assert.equal(dumped.includes('sk-secret-key-987654321'), false);
         assert.equal(dumped.includes('abcdefghij123456'), false);
+        assert.equal(dumped.includes('AIzaSyDummyGoogleKey1234567890'), false);
+        assert.equal(dumped.includes('AIzaSyAnotherRawGoogleKey987654321'), false);
+        assert.equal(dumped.includes('secretTok'), false);
+        assert.ok(dumped.includes('?key=[REDACTED]'));
+        assert.ok(dumped.includes('&token=[REDACTED]'));
         assert.ok(dumped.includes('[REDACTED]'));
     });
 
@@ -146,6 +161,58 @@ describe('Wave 4.2 Ergonomics & Redacted Diagnostics', () => {
         } finally {
             if (prev === null) ls.removeItem('harness_settings_v1');
             else ls.setItem('harness_settings_v1', prev);
+        }
+    });
+
+    it('5. collectRedactedDiagnosticBundle resolves active model and active chatStore session when opts omitted', async () => {
+        const ls = g.localStorage as Storage;
+        const prevUser = ls.getItem('last_active_user');
+        const prevPair = ls.getItem('casual_chat_model');
+        const prevProviders = ls.getItem('pref_ai_providers_v2');
+        try {
+            ls.setItem('last_active_user', 'wave42-diag-user');
+            chatStore.__resetForTests();
+
+            await saveProviderConfigs([{
+                id: 'openrouter',
+                name: 'OpenRouter',
+                apiFormat: 'chat_completions',
+                baseUrl: 'https://openrouter.ai/api/v1',
+                apiKey: 'sk-or-secret-diag-999999',
+                selectedModel: 'ernie-5.5-flash',
+                models: ['ernie-5.5-flash'],
+                isEnabled: true,
+                isBuiltIn: false,
+            }]);
+            ls.setItem('casual_chat_model', 'openrouter::ernie-5.5-flash');
+
+            const sid = chatStore.addSession({
+                kind: 'solo',
+                symbol: 'SOLUSDT',
+                interval: '4h',
+                effort: 'max',
+            });
+            chatStore.setPlanMode(true, sid);
+
+            const bundle = await collectRedactedDiagnosticBundle();
+            assert.equal(bundle.activeModel.providerName, 'OpenRouter');
+            assert.equal(bundle.activeModel.modelId, 'ernie-5.5-flash');
+
+            const modelCheck = bundle.doctor.checks.find(c => c.id === 'model');
+            const marketCheck = bundle.doctor.checks.find(c => c.id === 'market_ws');
+            const chartCheck = bundle.doctor.checks.find(c => c.id === 'chart_drawings');
+            assert.ok(modelCheck && modelCheck.status !== 'FAIL', `Expected active model check != FAIL, got ${modelCheck?.status}`);
+            assert.ok(marketCheck && marketCheck.summary.includes('SOLUSDT · 4h'), `Expected SOLUSDT · 4h in market_ws, got ${marketCheck?.summary}`);
+            assert.ok(chartCheck && chartCheck.summary.includes('Plan Mode=ON (read-only)'), `Expected Plan Mode=ON in chart_drawings, got ${chartCheck?.summary}`);
+            assert.equal(JSON.stringify(bundle).includes('sk-or-secret-diag-999999'), false);
+        } finally {
+            chatStore.__resetForTests();
+            if (prevUser === null) ls.removeItem('last_active_user');
+            else ls.setItem('last_active_user', prevUser);
+            if (prevPair === null) ls.removeItem('casual_chat_model');
+            else ls.setItem('casual_chat_model', prevPair);
+            if (prevProviders === null) ls.removeItem('pref_ai_providers_v2');
+            else ls.setItem('pref_ai_providers_v2', prevProviders);
         }
     });
 });

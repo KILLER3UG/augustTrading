@@ -79,7 +79,7 @@ import { getMemoryFiles } from '../../services/learning/MemoryFilesService';
 import { buildNotebookTopicsIndex } from '../../services/learning/memoryTopics';
 import { indexBudgetFor } from '../../utils/promptIndexBudget';
 import { DEFAULT_CONTEXT_WINDOW_TOKENS, resolveContextWindow } from '../../utils/contextWindow';
-import { estimateTokens } from '../../utils/tokenEstimate';
+import { collectContextDiagnostic } from '../../services/trade/diagnosticsRuntime';
 import { computeContextRingUsage } from '../../utils/uiFormatting';
 import { buildLearningRulesIndex } from '../../utils/learningRulesIndex';
 import { storageService } from '../../services/infrastructure/StorageService';
@@ -855,7 +855,6 @@ ${riskConstitution}`
         }
         if (template === 'context') {
             setDraft('');
-            const { collectContextDiagnostic } = await import('../../services/trade/diagnosticsRuntime');
             const sid = activeSession.id;
             const snapshot = collectContextDiagnostic({
                 systemPromptText: systemPromptFor(boundBot),
@@ -1537,8 +1536,11 @@ ${riskConstitution}`
     }, [send]);
 
     useEffect(() => {
+        const queued = chatStore.consumePendingSlashCommand();
+        if (queued) void send(queued);
         const onRunSlash = (ev: Event): void => {
-            const cmd = (ev as CustomEvent<{ command?: string }>).detail?.command;
+            const cmd = chatStore.consumePendingSlashCommand()
+                ?? (ev as CustomEvent<{ command?: string }>).detail?.command;
             if (cmd) void send(cmd);
         };
         window.addEventListener('august:run-slash', onRunSlash);
@@ -1546,21 +1548,13 @@ ${riskConstitution}`
     }, [send]);
 
     const contextRing = useMemo(() => {
-        const snapMem = getCachedCuratedMemorySnapshot();
-        const memTokens = estimateTokens([snapMem.userMd, snapMem.memoryMd].filter(Boolean).join('\n'));
-        let turnTokens = 0;
-        for (const e of entries) {
-            if (e.text) turnTokens += estimateTokens(e.text);
-            if (Array.isArray(e.tools)) {
-                for (const line of e.tools) {
-                    if (line) turnTokens += estimateTokens(line);
-                }
-            }
-        }
-        const totalTokens = 1539 + memTokens + turnTokens;
-        const resolved = resolveContextWindow(provider ?? { selectedModel: '' });
-        return computeContextRingUsage({ totalTokens, windowTokens: resolved.tokens });
-    }, [entries, provider]);
+        const diag = collectContextDiagnostic({
+            systemPromptText: systemPromptFor(boundBot),
+            entries,
+            provider,
+        });
+        return computeContextRingUsage({ totalTokens: diag.totalTokens, windowTokens: diag.windowTokens });
+    }, [entries, provider, boundBot, systemPromptFor]);
 
     const composerNode = (
         <ChatComposer

@@ -14,8 +14,7 @@ import React, { useCallback, useEffect, useSyncExternalStore } from 'react';
 import { Check, ChevronDown, ListChecks } from '../shared/Icons';
 import { getActiveSession } from '../../services/trade/chatStore';
 import {
-    clearTurnPlan, getTurnPlan, setTurnPlan, subscribeTurnPlanKey,
-    type TurnPlanStep,
+    clearTurnPlan, getTurnPlan, subscribeTurnPlanKey,
 } from '../../services/trade/turnPlan';
 
 /**
@@ -56,18 +55,6 @@ const TurnPlanPill: React.FC<TurnPlanPillProps> = ({ sessionId }) => {
     // A new plan (or a new session) starts collapsed. Escape closes the
     // checklist without touching the plan itself — dismissal is presentation.
     useEffect(() => { setOpen(false); }, [key]);
-    useEffect(() => {
-        const onSeed = (ev: Event): void => {
-            const detail = (ev as CustomEvent<{ sessionId?: string; steps?: TurnPlanStep[]; open?: boolean }>).detail;
-            if (!detail || !Array.isArray(detail.steps)) return;
-            const targetKey = detail.sessionId || planKey;
-            if (detail.steps.length === 0) clearTurnPlan(targetKey);
-            else setTurnPlan(targetKey, detail.steps);
-            if (typeof detail.open === 'boolean') setOpen(detail.open);
-        };
-        window.addEventListener('august:seed-turn-plan', onSeed);
-        return () => { window.removeEventListener('august:seed-turn-plan', onSeed); };
-    }, [planKey]);
     useEffect(() => {
         if (!open) return;
         const onKey = (e: KeyboardEvent): void => {
