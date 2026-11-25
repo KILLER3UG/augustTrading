@@ -19,6 +19,7 @@ import { CHART_INTERVALS } from '../../utils/chartIntervals';
 import { MARKET_TOOL_NAMES, MARKET_READ_TOOL_NAMES } from '../../utils/toolKinds';
 import { CHART_INDICATOR_IDS, CHART_INDICATOR_LABELS } from '../trade/chartIndicatorSettings';
 import { extractSymbolFromPrompt } from './MarketDataService';
+import { isVisionModel } from '../../utils/modelUtils';
 import type { DeskToolDefinition } from './DeskToolsService';
 export const CHART_ACTION_TOOL_DEFS: DeskToolDefinition[] = [
     {
@@ -262,7 +263,24 @@ export const CHART_ACTION_TOOL_DEFS: DeskToolDefinition[] = [
             },
         },
     },
+    {
+        type: 'function',
+        function: {
+            name: 'inspect_chart_image',
+            description:
+                'Capture the trader\'s LIVE chart as an image — candles, studies and every committed drawing (yours included) — and receive it as a PICTURE on your next turn. Use it to visually verify structure, your own plotted levels, or a pattern before you commit to a read, alongside the deterministic OHLCV tools. Read-only: it changes nothing on the chart. Offered only when you can actually see images and a live chart is mounted.',
+            parameters: { type: 'object', properties: {}, additionalProperties: false },
+        },
+    },
 ];
+
+/**
+ * Whether `inspect_chart_image` may be OFFERED this turn: the active model
+ * must be vision-capable AND a live canvas capture must be wired. A pure
+ * predicate so the offer filter, the tests and the catalogue cannot drift.
+ */
+export const shouldOfferChartImageTool = (modelId: string, captureWired: boolean): boolean =>
+    captureWired && isVisionModel(modelId);
 
 export const deskToolsMandateFor = (offered?: readonly string[], deferred = false): string => {
     const has = (name: string): boolean => offered === undefined || offered.includes(name);

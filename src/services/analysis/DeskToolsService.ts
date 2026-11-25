@@ -65,7 +65,7 @@ import { calculateCorrelationRisk } from './CorrelationRiskService';
 import { filterTradesBySimulationMode, countSimulatedTrades, isSimulatedTrade, type SimulationStatsMode } from '../tracking/paperExecution';
 import { paperAccountSnapshot, submitPaperOrder } from '../paper/PaperBrokerService';
 import type { PaperOrderAction, PaperSide } from '../paper/paperCore';
-import { MARKET_TOOLS, CHART_ACTION_TOOL_DEFS, deskToolsMandateFor, TEXT_TOOL_FALLBACK_PROMPT } from './deskToolShared';
+import { MARKET_TOOLS, CHART_ACTION_TOOL_DEFS, deskToolsMandateFor, TEXT_TOOL_FALLBACK_PROMPT, shouldOfferChartImageTool } from './deskToolShared';
 import { PLAYBOOK_IDS } from '../../types/playbook';
 // The moved vocabulary is re-exported for the lazy consumers and the
 // contract suite: one definition, two addresses.
@@ -229,6 +229,10 @@ export interface DeskToolResult {
     /** Resolved coin for market-data tools — the transcript names it when a
      *  call targeted a symbol OTHER than the chart's. */
     symbol?: string;
+    /** A captured chart image (`inspect_chart_image`): appended to the
+     *  follow-up turn as a real image part so a vision-capable seat can look
+     *  at the canvas, not only at the text digests. */
+    imagePart?: { type: 'image_url'; image_url: { url: string } };
 }
 
 /** One tool call's REAL output, handed to `onToolPayload` so the transcript can
@@ -8174,6 +8178,21 @@ export async function runDeskToolLoop(params: {
                         content: fencedToolResult(result),
                     });
                 }
+                // A captured chart image (`inspect_chart_image`) rides AFTER
+                // the tool results as its own user-role note, so every
+                // tool_call_id keeps its paired tool message AND a
+                // vision-capable seat receives the pixels. Text-protocol
+                // seats keep the text receipt only.
+                const imageResult = results.find(r => r.ok && r.imagePart?.image_url?.url);
+                if (imageResult?.imagePart) {
+                    messages.push({
+                        role: 'user',
+                        content: [
+                            { type: 'text', text: `[${imageResult.name}] The chart image below was captured from the live canvas — visually inspect it alongside the tool data above.` },
+                            imageResult.imagePart,
+                        ],
+                    });
+                }
             }
         } else {
             // Text protocol: keep the assistant text (minus tags) and inject results as user context.
@@ -8337,6 +8356,10 @@ export interface StreamWithDeskToolsOptions extends ChatRequestOptions {
      *  to the model and its calls are dispatched here — the Chart AI panel
      *  routes them onto the live canvas. Return null to fall through. */
     executePanelTool?: (call: DeskToolCall) => Promise<DeskToolResult | null>;
+    /** The live chart's PNG capture (candles + committed drawings). When wired
+     *  AND the active model is vision-capable, `inspect_chart_image` is
+     *  offered; otherwise the tool stays out of the wire entirely. */
+    captureChartPng?: () => string | null;
     /** Debate mailbox: when present, the seat can send_message /
      *  read_message to other seats. The loop injects an inbox notice and
      *  reports deliveries back through `onMailSent`. */
@@ -8528,6 +8551,7 @@ export async function* streamChatWithDeskTools(
         onMailSent,
         requireFirstToolRound,
         executePanelTool,
+        captureChartPng,
         ...chatOptions
     } = options || {};
 
@@ -8545,7 +8569,13 @@ export async function* streamChatWithDeskTools(
     // executor would have to refuse is the dead-affordance bug moved one layer
     // down into the prompt, where no test can see it.
     const chartDefs = executePanelTool
-        ? CHART_ACTION_TOOL_DEFS.filter(d => seatAllows(allowedTools, d.function.name))
+        ? CHART_ACTION_TOOL_DEFS
+            .filter(d => seatAllows(allowedTools, d.function.name))
+            // `inspect_chart_image` rides the chart-action lane but is offered
+            // ONLY when the active model can actually see images AND a live
+            // canvas capture is wired — zero schema noise otherwise.
+            .filter(d => d.function.name !== 'inspect_chart_image'
+                || shouldOfferChartImageTool(config.selectedModel, typeof captureChartPng === 'function'))
         : [];
     const extraDefs = [
         ...chartDefs,

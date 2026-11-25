@@ -8404,6 +8404,45 @@ function checkTrackedRelativeImports() {
         broken.slice(0, 10).join('; '));
 }
 
+// ── Auto-updater major-version contract pin ─────────────────────────────────
+// v1.6.3 ships electron-updater 6.8.9 with a publisherName-less app-update.yml,
+// which verifies releases by SHA-512 only (NsisUpdater.verifySignature returns
+// null when no publisherName is configured). electron-updater 7 tightens the
+// unsigned-NSIS contract, so a silent major bump could break every future
+// update with ERR_UPDATER_INVALID_SIGNATURE. The bump is allowed ONLY when the
+// repo explicitly configures v7 compatibility (verifyUpdateCodeSignature: false
+// in package.json's build config or in a shipped app-update.yml).
+const checkUpdaterMajorPin = async () => {
+    let version = '';
+    try {
+        const lock = JSON.parse(fs.readFileSync(path.join(ROOT, 'package-lock.json'), 'utf8'));
+        version = String(lock.packages?.['node_modules/electron-updater']?.version ?? '');
+    } catch { /* reported below when unparseable */ }
+    const major = Number.parseInt(version.split('.')[0] ?? '', 10);
+    if (Number.isFinite(major) && major < 7) {
+        ok('updater: electron-updater stays on the SHA-512 unsigned contract (major < 7)', true, `electron-updater ${version}`);
+        return;
+    }
+    let configured = false;
+    let where = '';
+    try {
+        const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
+        const sig = pkg.build?.win?.verifyUpdateCodeSignature ?? pkg.updater?.verifyUpdateCodeSignature;
+        if (sig === false) { configured = true; where = 'package.json'; }
+    } catch { /* fall through to the yml candidates */ }
+    if (!configured) {
+        for (const rel of ['app-update.yml', 'build/app-update.yml', 'config/app-update.yml']) {
+            try {
+                const text = fs.readFileSync(path.join(ROOT, rel), 'utf8');
+                if (/verifyUpdateCodeSignature:\s*false/.test(text)) { configured = true; where = rel; break; }
+            } catch { /* no such file */ }
+        }
+    }
+    ok('updater: major >= 7 requires explicit unsigned-NSIS compatibility (verifyUpdateCodeSignature: false)',
+        configured,
+        configured ? `configured in ${where}` : `electron-updater ${version || 'unknown'} — add verifyUpdateCodeSignature: false to package.json build.win (or app-update.yml) before bumping`);
+};
+
 // The async blocks above settle in microtasks; the report waits for them so
 // their pass/fail counts land in this summary. A throw becomes a failure —
 // a crashed check must never print as a green one.
@@ -8429,5 +8468,6 @@ checkSkillWrites()
     .then(checkSingleActiveModel)
     .then(checkPass4Fixes)
     .then(checkPass5Fixes)
+    .then(checkUpdaterMajorPin)
     .catch(e => { failures.push(`async runtime checks threw: ${e instanceof Error ? e.stack : String(e)}`); })
     .then(finishReport);

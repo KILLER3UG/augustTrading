@@ -107,6 +107,24 @@ export const ToolActionsRow: React.FC<ToolActionsRowProps> = ({ actions }) => {
     const okGroups = [...groups.values()].filter(g => g.ok);
     const failGroups = [...groups.values()].filter(g => !g.ok);
     const failItems = failGroups.flatMap(g => g.items);
+    // The ONE undo the chip style carries: a memory the model just saved can
+    // be taken back right here, without going to Settings. Shared by the
+    // hoisted summary-row chip and the per-item detail rows.
+    const undoMemory = (slug: string): void => {
+        void (async () => {
+            try {
+                const { forgetProfileMemory, flushProfileMemoryWrites } = await import('../../services/learning/profileMemory');
+                const { getActiveUsername } = await import('../../utils/activeUser');
+                const removed = forgetProfileMemory(slug, getActiveUsername()).gone;
+                if (removed && (await flushProfileMemoryWrites()).ok) {
+                    window.dispatchEvent(new Event('august-profile-memory'));
+                    setUndoneSlugs(prev => new Set(prev).add(slug));
+                }
+            } catch (err) {
+                console.warn('[ToolActions] memory undo failed:', err instanceof Error ? err.message : String(err));
+            }
+        })();
+    };
 
     return (
         <div className="mb-2 space-y-1" data-testid="tool-actions-row">
@@ -143,6 +161,28 @@ export const ToolActionsRow: React.FC<ToolActionsRowProps> = ({ actions }) => {
                                     {n}
                                 </span>
                             )}
+                            {g.tool === 'remember' && n === 1 && (() => {
+                                const slug = (g.items[0].label || '').split('/')[1] ?? '';
+                                if (!slug) return null;
+                                const undone = undoneSlugs.has(slug);
+                                return (
+                                    <button
+                                        type="button"
+                                        disabled={undone}
+                                        data-testid={`memory-undo-${slug}`}
+                                        onClick={(e) => {
+                                            // The chip sits ON the collapsed row: a click
+                                            // must UNDO, never toggle the <details> open.
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                            undoMemory(slug);
+                                        }}
+                                        className="shrink-0 rounded-control border border-hairline px-1.5 py-px text-ui-2xs font-bold uppercase tracking-wider text-zinc-400 transition-colors duration-[120ms] ease-[var(--ease-snappy)] hover:bg-zinc-800 hover:text-zinc-200 disabled:cursor-not-allowed disabled:opacity-40"
+                                    >
+                                        {undone ? 'Undone' : 'Undo'}
+                                    </button>
+                                );
+                            })()}
                         </summary>
                         <div className="mb-1 mt-1 space-y-0.5 border-l border-hairline pl-4">
                             {g.items.map((a, i) => {
@@ -161,21 +201,7 @@ export const ToolActionsRow: React.FC<ToolActionsRowProps> = ({ actions }) => {
                                                 type="button"
                                                 disabled={undone}
                                                 data-testid={`memory-undo-${slug}`}
-                                                onClick={() => {
-                                                    void (async () => {
-                                                        try {
-                                                            const { forgetProfileMemory, flushProfileMemoryWrites } = await import('../../services/learning/profileMemory');
-                                                            const { getActiveUsername } = await import('../../utils/activeUser');
-                                                            const removed = forgetProfileMemory(slug, getActiveUsername()).gone;
-                                                            if (removed && (await flushProfileMemoryWrites()).ok) {
-                                                                window.dispatchEvent(new Event('august-profile-memory'));
-                                                                setUndoneSlugs(prev => new Set(prev).add(slug));
-                                                            }
-                                                        } catch (err) {
-                                                            console.warn('[ToolActions] memory undo failed:', err instanceof Error ? err.message : String(err));
-                                                        }
-                                                    })();
-                                                }}
+                                                onClick={() => undoMemory(slug)}
                                                 className="shrink-0 rounded-control border border-hairline px-1.5 py-px text-ui-2xs font-bold uppercase tracking-wider text-zinc-400 transition-colors duration-[120ms] ease-[var(--ease-snappy)] hover:bg-zinc-800 hover:text-zinc-200 disabled:cursor-not-allowed disabled:opacity-40"
                                             >
                                                 {undone ? 'Undone' : 'Undo'}

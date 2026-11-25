@@ -783,6 +783,7 @@ ${riskConstitution}`
         allDrawings,
         trades,
         getChartSnapshot,
+        captureChartPng: onCaptureChart,
         provider,
         configForSeat,
         systemPromptFor,
@@ -808,7 +809,7 @@ ${riskConstitution}`
         onSyncConversation,
         onRunAnalysis,
         onAnalysisError,
-    }), [symbol, interval, memoryEnabled, effort, selectedChatModel, chartLevels, allDrawings, trades, getChartSnapshot, provider, configForSeat, systemPromptFor, getIndexDeltaNote, bots, activeId, draft, sessions, botThreadRows, conversationRows, activeConversationId, attachments, attachedImages, clearAttachments, setDraft, setContextAt, addModelDrawings, clearModelDrawings, clearAllDrawings, onPlanPresented, onBotTurnCommit, onSoloTurnCommit, onSyncConversation, onRunAnalysis, onAnalysisError]);
+    }), [symbol, interval, memoryEnabled, effort, selectedChatModel, chartLevels, allDrawings, trades, getChartSnapshot, onCaptureChart, provider, configForSeat, systemPromptFor, getIndexDeltaNote, bots, activeId, draft, sessions, botThreadRows, conversationRows, activeConversationId, attachments, attachedImages, clearAttachments, setDraft, setContextAt, addModelDrawings, clearModelDrawings, clearAllDrawings, onPlanPresented, onBotTurnCommit, onSoloTurnCommit, onSyncConversation, onRunAnalysis, onAnalysisError]);
     const { send: runnerSend, runFullAnalysis, runHarnessTurn } = runner;
     // Slash templates ride HERE, in front of the runner: `/brief /audit /scan`
     // expand to their desk instructions; `/handoff` does NOT send — it mints a
