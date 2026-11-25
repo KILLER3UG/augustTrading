@@ -72,7 +72,7 @@ export const HarnessSection: React.FC<HarnessSectionProps> = ({ closedWindowed, 
         for (const t of ordered) {
             equity += typeof t.pnlPercent === 'number' ? t.pnlPercent : (t.outcome === TradeOutcome.WIN ? 2 : -1);
             if (equity > peak) peak = equity;
-            open = Math.min(open, equity - peak);
+            open = equity - peak;
             max = Math.min(max, equity - peak);
         }
         return { open, max };
@@ -162,9 +162,9 @@ export const HarnessSection: React.FC<HarnessSectionProps> = ({ closedWindowed, 
                     <p className="text-ui-2xs text-zinc-500 uppercase tracking-wider mb-1">Drawdown</p>
                     <p
                         data-testid="learning-drawdown-value"
-                        className={`text-xl font-bold ${drawdown.open < 0 ? 'text-rose-400' : 'text-zinc-100'}`}
+                        className={`text-xl font-bold ${Math.abs(drawdown.open) >= 0.05 ? 'text-rose-400' : 'text-zinc-100'}`}
                     >
-                        {drawdown.open.toFixed(1)}%
+                        {(Math.abs(drawdown.open) < 0.05 ? 0 : drawdown.open).toFixed(1)}%
                     </p>
                     <p className="text-ui-2xs text-zinc-600">open · historical max {drawdown.max.toFixed(1)}%</p>
                 </div>

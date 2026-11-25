@@ -36,8 +36,8 @@ export const HarnessLessonsBrowser: React.FC = () => {
             </div>
             {note && <p className="mt-1 text-right text-ui-xs text-zinc-600" role="status">{note}</p>}
             <p className="mt-1 text-ui-xs leading-relaxed text-zinc-600">
-                What the harness learned about provider wires (P7). Clearing a wire lesson
-                un-pins thinking-off for that class until the next probe re-learns it.
+                Automatic notes about how your AI providers respond to reasoning and formatting
+                requests. Clearing a note lets August re-test that provider on the next request.
             </p>
             {lessons.length === 0 ? (
                 <p className="mt-2 text-ui-dense text-zinc-600">No lessons recorded yet.</p>

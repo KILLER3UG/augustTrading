@@ -118,3 +118,27 @@ export const formatThreadBadge = (symbol?: string | null, interval?: string | nu
     const coin = baseOf(sym);
     return tf ? `${coin} · ${tf}` : coin;
 };
+
+const hasLevelPrice = (v: string | number | null | undefined): boolean => {
+    if (v === null || v === undefined) return false;
+    const s = String(v).trim().toLowerCase();
+    return s !== '' && s !== '—' && s !== '-' && s !== 'n/a' && s !== 'na';
+};
+
+/**
+ * Suppress the 3-level Entry/Stop/Target UNCITED grid when a stand-aside verdict
+ * (`WAIT`, `NO_TRADE`, `Neutral`, `No trade`, `Hold`, `Avoid`, etc.) has all
+ * three level prices empty so beginners do not read an intentional pass as an error.
+ */
+export const shouldSuppressStandAsideLevels = (analysis: {
+    direction?: string;
+    entryPoints?: Array<{ price?: string | number | null }>;
+    stopLoss?: string | number | null;
+    takeProfit?: Array<{ price?: string | number | null }>;
+}): boolean => {
+    const dir = (analysis.direction ?? '').trim().toLowerCase();
+    if (dir === 'long' || dir === 'short') return false;
+    return !hasLevelPrice(analysis.entryPoints?.[0]?.price)
+        && !hasLevelPrice(analysis.stopLoss)
+        && !hasLevelPrice(analysis.takeProfit?.[0]?.price);
+};

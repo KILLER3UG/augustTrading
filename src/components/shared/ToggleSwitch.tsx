@@ -24,11 +24,11 @@ export const ToggleSwitch: React.FC<ToggleSwitchProps> = ({ checked, onChange, l
         data-testid={testId}
         className={`w-11 h-6 flex items-center rounded-full p-1 transition-colors duration-[150ms] ease-[var(--ease-snappy)] ${
             disabled ? 'opacity-50 cursor-not-allowed' : ''
-        } ${checked ? 'bg-accent' : 'bg-zinc-700'}`}
+        } ${checked ? 'bg-zinc-100' : 'bg-zinc-700'}`}
     >
         <div
-            className={`bg-white w-4 h-4 rounded-full transform transition-transform duration-[150ms] ease-[var(--ease-snappy)] ${
-                checked ? 'translate-x-5' : 'translate-x-0'
+            className={`w-4 h-4 rounded-full transform transition-transform duration-[150ms] ease-[var(--ease-snappy)] ${
+                checked ? 'translate-x-5 bg-zinc-950' : 'translate-x-0 bg-zinc-300'
             }`}
         />
     </button>

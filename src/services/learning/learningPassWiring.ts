@@ -143,16 +143,40 @@ export const maybeRunAgentLearningPass = async (
     let autopsy: Awaited<ReturnType<typeof import('./executionAutopsyCore').buildExecutionAutopsy>> | undefined;
     try {
         const username = getActiveUsername() || 'default';
-        const [{ readSignals }, { getPaperAccount }, { buildExecutionAutopsy }] = await Promise.all([
+        const [{ readSignals }, { getPaperAccount }, { buildExecutionAutopsy, formatAutopsyForPrompt }, { getCachedCuratedMemorySnapshot, getCuratedMemoryText }, { isRejectedFingerprint }] = await Promise.all([
             import('../signals/signalLedger'),
             import('../paper/PaperBrokerService'),
             import('./executionAutopsyCore'),
+            import('./curatedMemory'),
+            import('./rejectedFingerprints'),
         ]);
         const signals = readSignals(username).filter(r => r.resolution && r.resolution.status !== 'never_triggered');
         const paper = await getPaperAccount(username);
         const paperTrades = Array.isArray(paper?.closedTrades) ? paper.closedTrades : [];
         if (signals.length + paperTrades.length > 0) {
-            autopsy = buildExecutionAutopsy({ signals, paperTrades });
+            const report = buildExecutionAutopsy({ signals, paperTrades });
+            if (report.sufficientSample && report.findings.length > 0) {
+                const candidate = formatAutopsyForPrompt(report);
+                const cachedMemory = getCachedCuratedMemorySnapshot(username).memoryMd;
+                const liveMemory = await getCuratedMemoryText('memory', username);
+                const alreadyInMemory = Boolean(
+                    candidate
+                    && (cachedMemory.includes(candidate) || liveMemory.includes(candidate)),
+                );
+                if (!alreadyInMemory && candidate) {
+                    let rejected = false;
+                    try {
+                        rejected = await isRejectedFingerprint(
+                            { kind: 'memory', target: 'memory', content: candidate },
+                            username,
+                        );
+                    } catch {
+                        // Fail-closed: if the rejection store throws, withhold autopsy emission.
+                        rejected = true;
+                    }
+                    if (!rejected) autopsy = report;
+                }
+            }
         }
     } catch { /* autopsy stays optional when local stores are unavailable */ }
     return runBackgroundReview({

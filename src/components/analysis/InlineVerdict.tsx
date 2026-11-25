@@ -23,6 +23,7 @@ import {
 } from '../../services/trade/levelCitations';
 import { fmtPercent } from '../../utils/formatters';
 import { fmtRiskReward } from '../../utils/riskReward';
+import { shouldSuppressStandAsideLevels } from '../../utils/uiFormatting';
 import { ChevronDown } from '../shared/Icons';
 import StatusPill, { VerdictReviewPill } from '../ui/StatusPill';
 import VerdictAudit, { verdictNeedsAudit } from './VerdictAudit';
@@ -69,6 +70,7 @@ const InlineVerdict: React.FC<{
     if (!a) return null;
     const up = a.direction === 'Long';
     const down = a.direction === 'Short';
+    const hideEmptyStandAsideGrid = shouldSuppressStandAsideLevels(a);
     // One call grades the plan, so the three tags and the count cannot disagree.
     const citations = summarizeLevelCitations(
         [
@@ -110,22 +112,38 @@ const InlineVerdict: React.FC<{
                     </span>
                 )}
             </div>
-            <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 rounded-control border border-hairline bg-white/[0.02] p-2.5">
-                <VerdictLine label="entry" value={a.entryPoints?.[0]?.price ?? '—'} mark={citations.byKind.entry} />
-                <VerdictLine label="stop" value={a.stopLoss ?? '—'} mark={citations.byKind.stop} />
-                <VerdictLine label="target" value={a.takeProfit?.[0]?.price ?? '—'} mark={citations.byKind.target} />
-                {typeof a.probability === 'number' && <VerdictLine label="probability" value={fmtPercent(a.probability, 0)} />}
-            </div>
-            {/* The rate, not just the rows: three tags say this plan is unsourced,
-                the count says HOW OFTEN that happens. Rendered only when the model
-                declared at least one citation — with none declared, the three tags
-                already carry the whole message, and a second "0 of 3" would be
-                the same measurement drawn twice. */}
-            {citations.declared > 0 && (
-                <p className="mt-1 font-mono text-ui-2xs text-zinc-600" data-testid="level-citation-count">
-                    sources named for {citations.cited} of {citations.total} levels
-                    {citations.uncited > 0 ? ` · ${citations.uncited} uncited` : ''}
-                </p>
+            {hideEmptyStandAsideGrid ? (
+                <div
+                    data-testid="verdict-stand-aside"
+                    className="flex items-center justify-between gap-3 rounded-control border border-hairline bg-white/[0.02] px-2.5 py-2 text-ui-dense text-zinc-400"
+                >
+                    <span>Standing aside — no entry levels set</span>
+                    {typeof a.probability === 'number' && (
+                        <span className="shrink-0 font-mono text-ui-xs tabular-nums text-zinc-500">
+                            {fmtPercent(a.probability, 0)}
+                        </span>
+                    )}
+                </div>
+            ) : (
+                <>
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 rounded-control border border-hairline bg-white/[0.02] p-2.5">
+                        <VerdictLine label="entry" value={a.entryPoints?.[0]?.price ?? '—'} mark={citations.byKind.entry} />
+                        <VerdictLine label="stop" value={a.stopLoss ?? '—'} mark={citations.byKind.stop} />
+                        <VerdictLine label="target" value={a.takeProfit?.[0]?.price ?? '—'} mark={citations.byKind.target} />
+                        {typeof a.probability === 'number' && <VerdictLine label="probability" value={fmtPercent(a.probability, 0)} />}
+                    </div>
+                    {/* The rate, not just the rows: three tags say this plan is unsourced,
+                        the count says HOW OFTEN that happens. Rendered only when the model
+                        declared at least one citation — with none declared, the three tags
+                        already carry the whole message, and a second "0 of 3" would be
+                        the same measurement drawn twice. */}
+                    {citations.declared > 0 && (
+                        <p className="mt-1 font-mono text-ui-2xs text-zinc-600" data-testid="level-citation-count">
+                            sources named for {citations.cited} of {citations.total} levels
+                            {citations.uncited > 0 ? ` · ${citations.uncited} uncited` : ''}
+                        </p>
+                    )}
+                </>
             )}
             {/* Progressive disclosure for the audit — rendered ONLY when the
                 verdict actually needs explaining (a decline or a watch). An

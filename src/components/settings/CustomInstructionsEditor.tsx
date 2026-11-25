@@ -183,7 +183,7 @@ const CustomInstructionsEditor: React.FC<CustomInstructionsEditorProps> = ({
                 {currentInstructions.length === 0 ? (
                     <div className="flex flex-col items-center justify-center py-10 text-center border border-dashed border-hairline rounded-bubble">
                         <span className="text-3xl mb-3"></span>
-                        <p className="text-ui-sm text-zinc-600 italic">No custom instructions for this mode yet.</p>
+                        <p className="text-ui-sm text-zinc-600 italic">No custom instructions yet.</p>
                     </div>
                 ) : (
                     currentInstructions.map(inst => (

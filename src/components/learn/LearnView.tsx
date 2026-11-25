@@ -28,10 +28,12 @@
  */
 
 import React, { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
-import type { LoggedTrade } from '../../types';
+import { TradeOutcome, type LoggedTrade } from '../../types';
 import type { ProviderConfig } from '../../types/provider';
+import { listHarnessLessons } from '../../services/learning/harnessLessons';
 import PatternMemoryCard from './PatternMemoryCard';
 import MemoryTopicsCard from './MemoryTopicsCard';
+import Disclosure from '../shared/Disclosure';
 import RightPanel from '../shell/RightPanel';
 import { useRightPanel } from '../../hooks/useRightPanel';
 import MemoryTopicPanel from './MemoryTopicPanel';
@@ -118,6 +120,13 @@ const LearnView: React.FC<LearnViewProps> = ({
         rightPanel.close(id);
     }, [rightPanel]);
 
+    const closedTradeCount = useMemo(
+        () => trades.filter(t => t.outcome === TradeOutcome.WIN || t.outcome === TradeOutcome.LOSS).length,
+        [trades],
+    );
+    const lessonCount = useMemo(() => listHarnessLessons().length, []);
+    const isZeroDataHealth = closedTradeCount === 0 && lessonCount === 0;
+
     return (
         <div className="flex h-full min-h-0 flex-col bg-surface-page" data-testid="learn-view">
             {/* `relative` anchors the panel's hidden (out-of-flow) state, which
@@ -168,21 +177,55 @@ const LearnView: React.FC<LearnViewProps> = ({
                                 <LearningDashboard trades={trades} username={username} />
                             </Suspense>
                         </div>
-                        <Suspense fallback={<Fallback />}>
-                            <HarnessLessonsBrowser />
-                        </Suspense>
 
-                        {/* Runtime telemetry — the old System tab. */}
+                        {/* Runtime telemetry & provider notes — tucked behind a collapsed disclosure until trades or lessons exist. */}
                         <div className="flex flex-col gap-3" data-testid="learn-system">
-                            <Suspense fallback={<Fallback />}>
-                                <VersionHistoryDashboardLazy />
-                            </Suspense>
-                            <Suspense fallback={<Fallback />}>
-                                <SessionUsagePanel />
-                            </Suspense>
-                            <Suspense fallback={<Fallback />}>
-                                <DiagnosticsPanel />
-                            </Suspense>
+                            {isZeroDataHealth ? (
+                                <Disclosure
+                                    testId="learning-diagnostics-disclosure"
+                                    label="Diagnostics & wire notes"
+                                    summary={(
+                                        <span className="flex items-center justify-between gap-4">
+                                            <span className="min-w-0">
+                                                <span className="block text-ui-caption font-semibold text-zinc-200">Diagnostics &amp; wire notes</span>
+                                                <span className="mt-0.5 block text-ui-dense text-zinc-500">
+                                                    System intelligence, session usage, and provider notes
+                                                </span>
+                                            </span>
+                                        </span>
+                                    )}
+                                    summaryClassName="flex w-full items-center justify-between gap-4 rounded-bubble border border-hairline bg-zinc-900/50 px-4 py-3 text-left transition-colors hover:bg-zinc-800/40"
+                                    bodyClassName="mt-3 space-y-3 animate-fade-in"
+                                >
+                                    <Suspense fallback={<Fallback />}>
+                                        <HarnessLessonsBrowser />
+                                    </Suspense>
+                                    <Suspense fallback={<Fallback />}>
+                                        <VersionHistoryDashboardLazy />
+                                    </Suspense>
+                                    <Suspense fallback={<Fallback />}>
+                                        <SessionUsagePanel />
+                                    </Suspense>
+                                    <Suspense fallback={<Fallback />}>
+                                        <DiagnosticsPanel />
+                                    </Suspense>
+                                </Disclosure>
+                            ) : (
+                                <>
+                                    <Suspense fallback={<Fallback />}>
+                                        <HarnessLessonsBrowser />
+                                    </Suspense>
+                                    <Suspense fallback={<Fallback />}>
+                                        <VersionHistoryDashboardLazy />
+                                    </Suspense>
+                                    <Suspense fallback={<Fallback />}>
+                                        <SessionUsagePanel />
+                                    </Suspense>
+                                    <Suspense fallback={<Fallback />}>
+                                        <DiagnosticsPanel />
+                                    </Suspense>
+                                </>
+                            )}
                             {/* The sticky memory write failure — the one signal
                                 that says the notebook is NOT on disk. Renders
                                 nothing while writes are reaching disk. */}

@@ -16,7 +16,7 @@
  * the app does not keep. The catalogue says what the switch turns on.
  */
 import React, { useMemo } from 'react';
-import { DESK_TOOL_DEFINITIONS, toolLabel } from '../../../services/analysis/DeskToolsService';
+import { DESK_TOOL_DEFINITIONS, SILENT_LEGACY_TOOL_ALIASES, toolLabel } from '../../../services/analysis/DeskToolsService';
 import { KIND_ORDER, toolKindLabel, toolKindOf, type ToolKind } from '../../../utils/toolKinds';
 import { KIND_GLYPH } from '../../shared/toolKindIcons';
 import Disclosure from '../../shared/Disclosure';
@@ -38,17 +38,19 @@ const firstSentence = (text: string): string => {
 };
 
 const DeskToolCatalogue: React.FC = () => {
-    const entries = useMemo<CatalogueEntry[]>(() => DESK_TOOL_DEFINITIONS.map(def => {
-        const name = def.function.name;
-        const label = toolLabel(name);
-        return {
-            name,
-            label,
-            kind: toolKindOf(label).kind,
-            summary: firstSentence(def.function.description ?? ''),
-            description: def.function.description ?? '',
-        };
-    }), []);
+    const entries = useMemo<CatalogueEntry[]>(() => DESK_TOOL_DEFINITIONS
+        .filter(def => !SILENT_LEGACY_TOOL_ALIASES.has(def.function.name))
+        .map(def => {
+            const name = def.function.name;
+            const label = toolLabel(name);
+            return {
+                name,
+                label,
+                kind: toolKindOf(label).kind,
+                summary: firstSentence(def.function.description ?? ''),
+                description: def.function.description ?? '',
+            };
+        }), []);
 
     const byKind = useMemo(() => {
         const groups = new Map<ToolKind, CatalogueEntry[]>();

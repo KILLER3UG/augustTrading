@@ -49,8 +49,11 @@ import {
 } from '../src/services/learning/memoryDream';
 import { buildWeeklyImpulsePrompt } from '../src/services/learning/weeklyReview';
 import { runBackgroundReview } from '../src/services/learning/backgroundReview';
+import { maybeRunAgentLearningPass } from '../src/services/learning/learningPassWiring';
+import { appendSignalEvent, signalLedgerKey } from '../src/services/signals/signalLedger';
+import { saveHarnessSettings } from '../src/utils/harnessSettings';
 import { recordRejectedFingerprint } from '../src/services/learning/rejectedFingerprints';
-import { MEMORY_MD_MAX_CHARS, getCachedCuratedMemorySnapshot, setCuratedMemoryTexts } from '../src/services/learning/curatedMemory';
+import { MEMORY_MD_MAX_CHARS, getCachedCuratedMemorySnapshot, getCuratedMemoryText, setCuratedMemoryTexts } from '../src/services/learning/curatedMemory';
 import {
     executeDeskTool,
     INITIAL_DESK_TOOL_NAMES,
@@ -316,5 +319,88 @@ describe('Wave 3 Execution Autopsy & Compounding Loop', () => {
         );
         // Should reach real skill lookup (not unknown_tool)
         assert.ok(!skillReaderRes.content.includes('unknown tool'), `Expected skill_reader dispatch, got: ${skillReaderRes.content}`);
+    });
+
+    it('5. maybeRunAgentLearningPass deduplicates identical autopsy across turns and honors rejectedFingerprints fail-closed', async () => {
+        const ls = g.localStorage as Storage;
+        const user = 'wave4-autopsy-dedupe-user';
+        const prevUser = ls.getItem('last_active_user');
+        const prevSettings = ls.getItem('harness_settings_v1');
+        try {
+            ls.setItem('last_active_user', user);
+            ls.removeItem(signalLedgerKey(user));
+            saveHarnessSettings({ backgroundReviewEnabled: true });
+
+            const seedRows: SignalRow[] = [
+                makeSignalRow(20, { coin: 'BTCUSDT', outcomeR: -1.0, mfeR: 0.1, openOffsetMin: 0, closeOffsetMin: 10 }),
+                makeSignalRow(21, { coin: 'BTCUSDT', outcomeR: -1.0, mfeR: 0.1, openOffsetMin: 15, closeOffsetMin: 25 }),
+                makeSignalRow(22, { coin: 'BTCUSDT', outcomeR: 0.05, mfeR: 1.9, status: 'expired', openOffsetMin: 35, closeOffsetMin: 65 }),
+                makeSignalRow(23, { coin: 'ETHUSDT', outcomeR: 0.1, mfeR: 1.7, status: 'expired', openOffsetMin: 120, closeOffsetMin: 150 }),
+                makeSignalRow(24, { coin: 'ETHUSDT', outcomeR: -1.0, mfeR: 0.1, openOffsetMin: 220, closeOffsetMin: 230 }),
+            ];
+            for (const row of seedRows) {
+                appendSignalEvent({ v: 1, id: row.signal.id, at: row.signal.emittedAt, type: 'emit', signal: row.signal }, user);
+                if (row.resolution) {
+                    appendSignalEvent({ v: 1, id: row.signal.id, at: row.resolution.at, type: 'resolve', resolution: row.resolution }, user);
+                }
+            }
+
+            const expectedCandidate = formatAutopsyForPrompt(buildExecutionAutopsy({ signals: seedRows }));
+            assert.ok(expectedCandidate.includes('MFE giveback leak'));
+
+            await setCuratedMemoryTexts([{ target: 'memory', text: '## [2026-10-01]\nInitial note.' }], user);
+
+            // Turn 1: writes autopsy once to MEMORY.md
+            const r1 = await maybeRunAgentLearningPass({
+                sid: 'conv-dedupe-1',
+                userMessage: 'Scan BTCUSDT',
+                assistantMessage: 'Scanned.',
+                toolCallCount: 4,
+                skillsUsed: [],
+            });
+            assert.equal(r1?.ran, true);
+            assert.equal(r1?.emissions.length, 1);
+            const afterT1 = await getCuratedMemoryText('memory', user);
+            assert.equal(afterT1.split(expectedCandidate).length - 1, 1);
+
+            // Turn 2: identical state -> deduped, zero new emissions, no duplicate in MEMORY.md
+            const r2 = await maybeRunAgentLearningPass({
+                sid: 'conv-dedupe-2',
+                userMessage: 'Check ETHUSDT next',
+                assistantMessage: 'Checked.',
+                toolCallCount: 4,
+                skillsUsed: [],
+            });
+            assert.equal(r2?.ran, true);
+            assert.equal(r2?.emissions.length, 0);
+            const afterT2 = await getCuratedMemoryText('memory', user);
+            assert.equal(afterT2.split(expectedCandidate).length - 1, 1);
+
+            // Turn 3: cleared from MEMORY.md + fingerprint recorded -> withheld by rejectedFingerprints check
+            await setCuratedMemoryTexts([{ target: 'memory', text: '## [2026-10-01]\nCleared note.' }], user);
+            await recordRejectedFingerprint(
+                { kind: 'memory', target: 'memory', content: expectedCandidate },
+                'user_undo',
+                'Rejected autopsy leak',
+                user,
+            );
+            const r3 = await maybeRunAgentLearningPass({
+                sid: 'conv-dedupe-3',
+                userMessage: 'Scan SOLUSDT',
+                assistantMessage: 'Scanned.',
+                toolCallCount: 4,
+                skillsUsed: [],
+            });
+            assert.equal(r3?.ran, true);
+            assert.equal(r3?.emissions.length, 0);
+            const afterT3 = await getCuratedMemoryText('memory', user);
+            assert.equal(afterT3.includes(expectedCandidate), false);
+        } finally {
+            ls.removeItem(signalLedgerKey(user));
+            if (prevUser === null) ls.removeItem('last_active_user');
+            else ls.setItem('last_active_user', prevUser);
+            if (prevSettings === null) ls.removeItem('harness_settings_v1');
+            else ls.setItem('harness_settings_v1', prevSettings);
+        }
     });
 });

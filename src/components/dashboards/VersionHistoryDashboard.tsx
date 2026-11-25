@@ -105,50 +105,41 @@ export const VersionHistoryDashboard: React.FC = () => {
     const highConfidenceWinRate = calibration ? getCalibrationSummary(calibration).high.winRate : null;
 
     // -- Modern Card Component --
-    const ModernCard = ({ title, value, subtitle, icon, accent = "blue", large = false, children }: any) => {
-        const accentColors: any = {
-            blue: "from-zinc-800/50 to-zinc-900/50 border-zinc-700/50 text-zinc-300",
-            purple: "from-zinc-800/50 to-zinc-900/50 border-zinc-700/50 text-zinc-300",
-            emerald: "from-emerald-500/20 to-emerald-500/5 border-emerald-500/20 text-emerald-400",
-            amber: "from-zinc-800/50 to-zinc-900/50 border-zinc-700/50 text-zinc-300",
-            yellow: "from-zinc-800/50 to-zinc-900/50 border-zinc-700/50 text-zinc-300",
-            rose: "from-rose-500/20 to-rose-500/5 border-rose-500/20 text-rose-400",
-            zinc: "from-zinc-800/50 to-zinc-900/50 border-zinc-700/50 text-zinc-400"
+    const ModernCard = ({ title, value, subtitle, icon, accent = "zinc", large = false, children }: any) => {
+        const iconTones: Record<string, string> = {
+            rose: "text-rose-400",
+            zinc: "text-zinc-300",
         };
-
-        const config = accentColors[accent] || accentColors.blue;
+        const iconTone = iconTones[accent] || iconTones.zinc;
 
         return (
             <div className={`
         relative overflow-hidden
-        bg-gradient-to-br ${config.split(' ')[0]} ${config.split(' ')[1]}
+        bg-zinc-900/60
         rounded-bubble border border-hairline
-        transition-[border-color,box-shadow,transform] duration-[150ms] ease-[var(--ease-snappy)] hover:border-line hover:-translate-y-1
+        transition-[border-color,transform] duration-[150ms] ease-[var(--ease-snappy)] hover:border-line hover:-translate-y-1
         ${large ? 'col-span-1 md:col-span-2 row-span-2' : 'col-span-1'}
         flex flex-col group
       `}>
                 <div className="p-6 flex-1 flex flex-col relative z-10">
                     <div className="flex items-center justify-between mb-4">
-                        <div className={`p-2 rounded-control bg-zinc-800 ${config.split(' ').pop()} group-hover:scale-110 transition-transform duration-[150ms] ease-[var(--ease-snappy)]`}>
+                        <div className={`p-2 rounded-control bg-zinc-800 ${iconTone} group-hover:scale-110 transition-transform duration-[150ms] ease-[var(--ease-snappy)]`}>
                             {icon}
                         </div>
-                        {large && <div className="text-ui-sm font-mono text-white/30 uppercase tracking-widest">Live Monitor</div>}
+                        {large && <div className="text-ui-sm font-mono text-zinc-500 uppercase tracking-widest">Live Monitor</div>}
                     </div>
 
-                    <h3 className="text-ui-base font-medium text-white/60 mb-1">{title}</h3>
+                    <h3 className="text-ui-base font-medium text-zinc-400 mb-1">{title}</h3>
 
                     {children ? (
                         <div className="mt-2 flex-1 flex flex-col min-w-0">{children}</div>
                     ) : (
                         <>
                             <div className="text-3xl font-light text-white tracking-tight">{value}</div>
-                            <div className="text-ui-sm text-white/40 mt-2 font-light">{subtitle}</div>
+                            <div className="text-ui-sm text-zinc-500 mt-2 font-light">{subtitle}</div>
                         </>
                     )}
                 </div>
-
-                {/* Decorative Glow */}
-                <div className={`absolute -right-10 -bottom-10 w-40 h-40 bg-gradient-to-br rounded-full blur-[60px] opacity-0 group-hover:opacity-20 transition-opacity duration-[150ms] ${config.split(' ')[0]}`} />
             </div>
         );
     };
@@ -161,7 +152,7 @@ export const VersionHistoryDashboard: React.FC = () => {
                 return (
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4 h-full animate-fade-in">
                         {/* 1.1 RL - Large Card */}
-                        <ModernCard title="Reinforcement Loop" accent="emerald" icon={<Icons.Chart className="w-5 h-5" />} large>
+                        <ModernCard title="Reinforcement Loop" accent="zinc" icon={<Icons.Chart className="w-5 h-5" />} large>
                             {signals.length > 0 ? (
                                 <ChartFrame variant="plain" state="ready" bodyClassName="h-48 -ml-2" testId="version-history-reward-chart">
                                     <ResponsiveContainer width="100%" height="100%" minWidth={100}>
@@ -181,19 +172,19 @@ export const VersionHistoryDashboard: React.FC = () => {
                                     </ResponsiveContainer>
                                 </ChartFrame>
                             ) : (
-                                <div className="h-48 w-full min-w-0 flex flex-col items-center justify-center gap-2 rounded-bubble border border-dashed border-emerald-500/20 bg-emerald-500/5 text-center">
-                                    <Icons.Chart className="h-6 w-6 text-emerald-500/60" />
+                                <div className="h-48 w-full min-w-0 flex flex-col items-center justify-center gap-2 rounded-bubble border border-dashed border-hairline bg-zinc-900/50 text-center">
+                                    <Icons.Chart className="h-6 w-6 text-zinc-500" />
                                     <p className="text-ui-base font-medium text-zinc-200">No feedback yet</p>
                                     <p className="max-w-[240px] text-ui-dense leading-relaxed text-zinc-500">Resolved trades will create the first reinforcement signal.</p>
                                 </div>
                             )}
                             <div className="flex justify-between items-end mt-4">
-                                <div className="text-2xl font-light text-emerald-400">
+                                <div className="text-2xl font-light text-zinc-100">
                                     {signals.length > 0 ? (signals.reduce((a, b) => a + b.rewardScore, 0) / signals.length).toFixed(2) : '—'}
-                                    <span className="text-ui-base text-emerald-500/50 ml-2">Avg Reward</span>
+                                    <span className="text-ui-base text-zinc-500 ml-2">Avg Reward</span>
                                 </div>
                                 <div className="flex flex-col items-end">
-                                    <div className="text-ui-sm text-emerald-500/40 font-mono">Real-time Feedback</div>
+                                    <div className="text-ui-sm text-zinc-500 font-mono">Real-time Feedback</div>
                                     <div className="text-ui-xs text-zinc-500">{signals.length > 0 ? `Last: ${phtClockSeconds(signals[signals.length - 1].timestamp)}` : 'Awaiting first resolved trade'}</div>
                                 </div>
                             </div>

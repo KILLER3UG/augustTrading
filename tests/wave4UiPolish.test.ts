@@ -10,6 +10,7 @@ import {
     formatThreadBadge,
     humanizeSkillTitle,
     partitionMemoryFolders,
+    shouldSuppressStandAsideLevels,
 } from '../src/utils/uiFormatting';
 
 describe('Wave 4 Minimalist & Beginner-Clear UI Helpers', () => {
@@ -68,5 +69,19 @@ describe('Wave 4 Minimalist & Beginner-Clear UI Helpers', () => {
         assert.equal(formatThreadBadge('SOLUSDT', '4h'), 'SOL · 4h');
         assert.equal(formatThreadBadge('USDCUSDT', '1h'), 'USDC · 1h');
         assert.equal(formatThreadBadge('', ''), null);
+    });
+
+    it('shouldSuppressStandAsideLevels suppresses empty stand-aside grids while keeping numeric or active verdicts', () => {
+        assert.equal(shouldSuppressStandAsideLevels({ direction: 'WAIT' }), true);
+        assert.equal(shouldSuppressStandAsideLevels({ direction: 'NO_TRADE', entryPoints: [{ price: '—' }], stopLoss: null }), true);
+        assert.equal(shouldSuppressStandAsideLevels({ direction: 'Neutral' }), true);
+        assert.equal(shouldSuppressStandAsideLevels({
+            direction: 'Neutral',
+            entryPoints: [{ price: '84210.5' }],
+            stopLoss: '83100',
+            takeProfit: [{ price: '87900' }],
+        }), false);
+        assert.equal(shouldSuppressStandAsideLevels({ direction: 'Long' }), false);
+        assert.equal(shouldSuppressStandAsideLevels({ direction: 'Short' }), false);
     });
 });
