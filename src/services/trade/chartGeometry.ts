@@ -639,6 +639,118 @@ export const evaluateChartDrawings = (
 
 // ─── Deterministic chart revision hash (FNV-1a) ─────────────────────────────
 
+// ── Horizontal label deconfliction ──────────────────────────────────────────
+// Two horizontal levels a few dollars apart (an AI plan's `AI · SL 59,660` and
+// `AI · Entry 59,380` on a 4h chart are ~18px apart) put their left-anchored
+// pills on top of each other, and neither reads. The renderer must keep each
+// pill attached to its own price LINE while the pills themselves stop
+// overlapping — so the answer is a placement per pill, not a hidden pill.
+//
+// Deterministic on purpose: the same inputs always give the same pixels, in
+// price order (top-to-bottom Y), with ties broken by the caller's own order.
+// Pure — no canvas, no DOM, no chart library — so the rule is unit-tested.
+
+export interface HorizontalLabelRequest {
+    /** Stable identity (the drawing id), so a caller maps the answer back. */
+    id: string;
+    /** The pill's PREFERRED top edge in CSS px — the label's own y request
+     *  (the renderer asks for the price line's y minus the pill's usual
+     *  offset). Never mutated: `labelY` is where the pill actually lands. */
+    anchorY: number;
+}
+
+export interface HorizontalLabelPlacement {
+    id: string;
+    /** The pill's preferred top edge, echoed back — never moved. */
+    anchorY: number;
+    /** Resolved top edge of the pill in CSS px. */
+    labelY: number;
+    /** `labelY - anchorY`; 0 when the pill sits where it wanted to. Non-zero
+     *  means the renderer owes a connector back to its price line. */
+    offsetY: number;
+}
+
+export interface HorizontalLabelLayout {
+    /** Pill height in CSS px. */
+    pillHeight: number;
+    /** Minimum vertical space between two pills in CSS px. */
+    minGap: number;
+    /** Top of the drawable pane in CSS px. */
+    minY: number;
+    /** Bottom of the drawable pane in CSS px. */
+    maxY: number;
+}
+
+/**
+ * Push colliding horizontal pills apart.
+ *
+ *  · sorted top-to-bottom (price order preserved; equal anchors keep input
+ *    order), so the first pill keeps its place and later ones move down;
+ *  · a forward pass enforces `pillHeight + minGap` between neighbours;
+ *  · a backward pass pulls the stack back inside `maxY` when it runs off the
+ *    bottom, which nudges pills UP rather than clipping them;
+ *  · a final forward clamp keeps the top inside `minY`.
+ *
+ * When the pane cannot physically hold the stack (`needed > maxY - minY`) the
+ * pills are spread evenly across the pane instead: order and bounds survive,
+ * and the caller still gets a connector for every moved pill.
+ */
+export const resolveHorizontalLabelOffsets = (
+    labels: ReadonlyArray<HorizontalLabelRequest>,
+    layout: HorizontalLabelLayout,
+): HorizontalLabelPlacement[] => {
+    const pillHeight = Number.isFinite(layout.pillHeight) ? Math.max(0, layout.pillHeight) : 0;
+    const minGap = Number.isFinite(layout.minGap) ? Math.max(0, layout.minGap) : 0;
+    const minY = Number.isFinite(layout.minY) ? layout.minY : 0;
+    const maxY = Number.isFinite(layout.maxY) ? Math.max(minY, layout.maxY) : minY;
+    const step = pillHeight + minGap;
+
+    const items = labels
+        .map((label, index) => ({ ...label, index }))
+        .filter(item => Number.isFinite(item.anchorY))
+        .sort((a, b) => (a.anchorY - b.anchorY) || (a.index - b.index));
+    if (items.length === 0) return [];
+
+    const top = minY;
+    const bottom = Math.max(minY, maxY - pillHeight);
+    const needed = (items.length - 1) * step + pillHeight;
+    const resolved: number[] = new Array(items.length);
+
+    if (items.length === 1 || needed <= (maxY - minY)) {
+        // Forward: never above the bill's own anchor, never closer than step.
+        resolved[0] = Math.min(bottom, Math.max(top, items[0].anchorY));
+        for (let i = 1; i < items.length; i += 1) {
+            resolved[i] = Math.max(items[i].anchorY, resolved[i - 1] + step);
+        }
+        // Backward: the last pill (and anything it shoves) comes back inside.
+        if (resolved[items.length - 1] > bottom) {
+            resolved[items.length - 1] = bottom;
+            for (let i = items.length - 2; i >= 0; i -= 1) {
+                resolved[i] = Math.min(resolved[i], resolved[i + 1] - step);
+            }
+        }
+        // Forward again, in case the backward pass pushed the top out.
+        if (resolved[0] < top) {
+            resolved[0] = top;
+            for (let i = 1; i < items.length; i += 1) {
+                resolved[i] = Math.max(resolved[i], resolved[i - 1] + step);
+            }
+        }
+    } else {
+        const span = bottom - top;
+        for (let i = 0; i < items.length; i += 1) {
+            resolved[i] = top + (span * i) / (items.length - 1);
+        }
+    }
+
+    return items.map((item, i) => ({
+        id: item.id,
+        anchorY: item.anchorY,
+        labelY: resolved[i],
+        offsetY: resolved[i] - item.anchorY,
+    }));
+};
+
 export const computeChartRevision = (input: {
     symbol: string;
     interval: string;

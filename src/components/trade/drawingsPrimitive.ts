@@ -35,6 +35,7 @@ import type { PaperAccount } from '../../services/paper/paperCore';
 import {
     interpolateScalePrice,
     isDrawingVisibleOnTf,
+    resolveHorizontalLabelOffsets,
     type EvalCandle,
     type PriceScaleMode,
 } from '../../services/trade/chartGeometry';
@@ -81,6 +82,25 @@ const fmtPriceCompact = (p: number): string => {
     if (Math.abs(p) >= 1) return p.toFixed(2);
     return p.toFixed(5);
 };
+
+/** One horizontal pill's geometry: `drawTagChip` draws a 14px (CSS) chip whose
+ *  top edge is the `y` it is handed, and the pill's preferred seat is 17px
+ *  above its price line (the same offset every other anchor label uses). */
+const HLINE_PILL_HEIGHT = 14;
+const HLINE_PILL_GAP = 3;
+const HLINE_PILL_OFFSET = 17;
+
+interface HlinePill {
+    text: string;
+    fg: string;
+    bg: string;
+    dashed: boolean;
+    /** The price line's y in CSS px — the connector's far end. */
+    anchorY: number;
+    /** Resolved pill top; differs from `anchorY - HLINE_PILL_OFFSET` when the
+     *  pill had to move clear of a neighbour. */
+    labelY: number;
+}
 
 class CommittedDrawingsRenderer implements IPrimitivePaneRenderer {
     private shapes: ProjectedShape[] = [];
@@ -166,6 +186,52 @@ class CommittedDrawingsRenderer implements IPrimitivePaneRenderer {
                 ctx.fillText(text, bx + padX, by + h / 2 + 0.5);
                 ctx.textBaseline = 'alphabetic';
             };
+
+            // Horizontal pills are laid out TOGETHER, before anything is
+            // painted: an AI plan's `AI · SL 59,660` and `AI · Entry 59,380` are
+            // ~12-18px apart on a 4h chart, so their left-anchored bags stack
+            // into one unreadable blob. `resolveHorizontalLabelOffsets` keeps
+            // each pill attached to its own line while pushing the pills clear
+            // of one another; a pill that moved gets a hairline connector back
+            // to its true price. One pill per horizontal line — the price rides
+            // inside it — so a level can never collide with its own tag.
+            const hlinePills = new Map<string, HlinePill>();
+            {
+                const draft = new Map<string, Omit<HlinePill, 'labelY'>>();
+                for (const item of this.shapes) {
+                    const { drawing, origin, pts } = item;
+                    if (drawing.kind !== 'hline' || pts.length === 0) continue;
+                    const isAgent = origin === 'agent';
+                    const price = drawing.points[0]?.p;
+                    const head: string[] = [];
+                    if (isAgent) head.push('AI');
+                    if (drawing.label) head.push(drawing.label);
+                    const priceText = Number.isFinite(price) ? fmtPriceCompact(price as number) : '';
+                    const text = [head.join(' · '), priceText].filter(Boolean).join(' ');
+                    if (!text) continue;
+                    const anchor = pts[0];
+                    draft.set(drawing.id, {
+                        text,
+                        fg: isAgent ? '#d4d4d8' : (drawing.color || '#f4f4f5'),
+                        bg: isAgent ? 'rgba(24, 24, 27, 0.88)' : 'rgba(9, 9, 11, 0.78)',
+                        dashed: isAgent || drawing.dash === true,
+                        anchorY: anchor.y,
+                    });
+                }
+                const placements = resolveHorizontalLabelOffsets(
+                    [...draft.entries()].map(([id, pill]) => ({ id, anchorY: pill.anchorY - HLINE_PILL_OFFSET })),
+                    {
+                        pillHeight: HLINE_PILL_HEIGHT,
+                        minGap: HLINE_PILL_GAP,
+                        minY: 2,
+                        maxY: Math.max(2, plotH - 2),
+                    },
+                );
+                for (const placement of placements) {
+                    const pill = draft.get(placement.id);
+                    if (pill) hlinePills.set(placement.id, { ...pill, labelY: placement.labelY });
+                }
+            }
 
             for (const item of this.shapes) {
                 const { drawing, origin, pts, isHovered } = item;
@@ -358,29 +424,52 @@ class CommittedDrawingsRenderer implements IPrimitivePaneRenderer {
                 // Label / AI badge + anchor price tag (except position boxes / text / fib which render their own)
                 if (drawing.kind !== 'text' && drawing.kind !== 'fib' && !isPositionBoxKind(drawing.kind)) {
                     const anchor = pts[0];
-                    const labelParts: string[] = [];
-                    if (isAgent) labelParts.push('AI');
-                    if (drawing.label) labelParts.push(drawing.label);
-                    if (labelParts.length > 0) {
-                        drawTagChip(
-                            anchor.x + 4,
-                            anchor.y - 17,
-                            labelParts.join(' · '),
-                            isAgent ? '#d4d4d8' : stroke,
-                            isAgent ? 'rgba(24, 24, 27, 0.88)' : 'rgba(9, 9, 11, 0.78)',
-                            isAgent,
-                        );
-                    }
-                    const dp = drawing.points[0]?.p;
-                    if (Number.isFinite(dp)) {
-                        drawTagChip(
-                            anchor.x + 2,
-                            anchor.y + 3,
-                            fmtPriceCompact(dp),
-                            stroke,
-                            'rgba(9, 9, 11, 0.65)',
-                            false,
-                        );
+                    if (drawing.kind === 'hline') {
+                        // ONE pill carrying label + price, placed by the
+                        // deconfliction pass above. When it had to move clear of
+                        // a neighbour, a hairline connector keeps it honest about
+                        // which line it belongs to (monochrome — a connector is a
+                        // relation, not a signal).
+                        const pill = hlinePills.get(drawing.id);
+                        if (pill) {
+                            const moved = pill.labelY - (pill.anchorY - HLINE_PILL_OFFSET);
+                            if (Math.abs(moved) > 1) {
+                                const cx = sx(anchor.x + 7);
+                                const nearEdge = moved > 0 ? pill.labelY : pill.labelY + HLINE_PILL_HEIGHT;
+                                ctx.strokeStyle = 'rgba(161, 161, 170, 0.45)';
+                                ctx.lineWidth = Math.max(1, 0.9 * fontScale);
+                                ctx.beginPath();
+                                ctx.moveTo(cx, sy(nearEdge));
+                                ctx.lineTo(cx, sy(pill.anchorY));
+                                ctx.stroke();
+                            }
+                            drawTagChip(anchor.x + 4, pill.labelY, pill.text, pill.fg, pill.bg, pill.dashed);
+                        }
+                    } else {
+                        const labelParts: string[] = [];
+                        if (isAgent) labelParts.push('AI');
+                        if (drawing.label) labelParts.push(drawing.label);
+                        if (labelParts.length > 0) {
+                            drawTagChip(
+                                anchor.x + 4,
+                                anchor.y - 17,
+                                labelParts.join(' · '),
+                                isAgent ? '#d4d4d8' : stroke,
+                                isAgent ? 'rgba(24, 24, 27, 0.88)' : 'rgba(9, 9, 11, 0.78)',
+                                isAgent,
+                            );
+                        }
+                        const dp = drawing.points[0]?.p;
+                        if (Number.isFinite(dp)) {
+                            drawTagChip(
+                                anchor.x + 2,
+                                anchor.y + 3,
+                                fmtPriceCompact(dp),
+                                stroke,
+                                'rgba(9, 9, 11, 0.65)',
+                                false,
+                            );
+                        }
                     }
                 }
             }
@@ -566,7 +655,30 @@ export class ChartDrawingsPrimitive implements ISeriesPrimitive<Time> {
         this.axisViewsCache = views;
     }
 
+    /** Nothing changed → nothing to repaint. `requestUpdate()` is a FULL chart
+     *  invalidation (every pane redrawn), so a caller that re-publishes the same
+     *  state — a per-frame hover tick, a redraw that only moved the crosshair —
+     *  must not be able to drive the library into a repaint loop. Reference
+     *  equality is exact here: `syncPrimitive` hands through the same arrays
+     *  unless a drawing list, the candle window or a scale really changed. */
+    private sameState(next: DrawingsPrimitiveState): boolean {
+        const prev = this.state;
+        return prev === next
+            || (prev.userDrawings === next.userDrawings
+                && prev.modelDrawings === next.modelDrawings
+                && prev.paperDrawings === next.paperDrawings
+                && prev.selectedId === next.selectedId
+                && prev.hoveredId === next.hoveredId
+                && prev.hidden === next.hidden
+                && prev.includeLowerTf === next.includeLowerTf
+                && prev.activeTf === next.activeTf
+                && prev.barSeconds === next.barSeconds
+                && prev.priceScaleMode === next.priceScaleMode
+                && prev.candles === next.candles);
+    }
+
     setState(next: DrawingsPrimitiveState): void {
+        if (this.sameState(next)) return;
         this.state = next;
         this.updateAllViews();
         this.rebuildAxisViews();

@@ -38,7 +38,7 @@ import {
     type UTCTimestamp,
 } from 'lightweight-charts';
 import { fetchKlines } from '../../services/analysis/KlineService';
-import { ChevronDown, Lock, Pencil, Target, Trash2, X } from '../shared/Icons';
+import { Lock, Pencil, Target, Trash2 } from '../shared/Icons';
 import type { Kline } from '../../services/analysis/MarketDataService';
 import { sessionLevelRows, type LevelRow } from '../../services/market/levelsCore';
 import { readStructure, type StructureRead } from '../../services/market/swingStructureCore';
@@ -112,6 +112,13 @@ import {
     findCandleIndexByTime,
     stepCandleHoverMap,
 } from './candleHoverAnimation';
+import {
+    createHoverReadout,
+    HoverLegend,
+    HoverCrossTag,
+    type HoverBar,
+    type HoverReadout,
+} from './ChartHoverReadouts';
 import {
     atrSeries,
     bollingerSeries,
@@ -365,14 +372,7 @@ const BarCountdown = ({ barTime, interval }: { barTime: number; interval: ChartI
 const SUB_PANE_ORDER = ['rsi', 'macd', 'tsi', 'cvd'] as const satisfies readonly ChartIndicatorId[];
 
 /** One bar as the legend describes it: OHLC plus the study values at that bar. */
-interface LegendBar {
-    time: number;
-    open: number;
-    high: number;
-    low: number;
-    close: number;
-    values: Record<string, number | null>;
-}
+type LegendBar = HoverBar;
 
 const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onIntervalChange, sessionId, verdict, showSma = false, live = false, liveKline, lastPrice, markPrice, chartHandle, onDrawingsChange, modelDrawings, onRemoveModelShape, onReplaceModelDrawings, chatLevels, ohlcvRow }) => {
     const hostRef = useRef<HTMLDivElement | null>(null);
@@ -382,14 +382,30 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
     // tape and nothing else.
     /** Mirror of `overPlot`, so the per-tick refresh (which runs outside any
      *  hover handler) can tell whether the legend belongs to the crosshair or
-     *  to the last bar. */
+     *  to the last bar. Written SYNCHRONOUSLY by the crosshair handler, so a
+     *  tick that lands between the pointer event and the next render cannot
+     *  steal a legend the pointer is holding. */
     const overPlotRef = useRef(false);
     const [overPlot, setOverPlot] = useState(false);
     overPlotRef.current = overPlot;
-    /** The bar the legend describes: the crosshair's bar while the pointer is
-     *  over the plot, otherwise the last bar. The values come from the same
-     *  computed series the lines are drawn from. */
-    const [legendBar, setLegendBar] = useState<LegendBar | null>(null);
+    /** The two hot readouts live in their own store + leaves
+     *  (`ChartHoverReadouts`): the crosshair fires on every pointer pixel, and
+     *  routing those numbers through this component's state re-rendered the
+     *  entire chart — every study row, tag, rail and toolbar — per crossing.
+     *  The leaves subscribe to one slice each, so a sweep renders two small
+     *  components and never this one. */
+    const hoverReadout = useMemo<HoverReadout>(() => createHoverReadout(), []);
+    useEffect(() => () => hoverReadout.dispose(), [hoverReadout]);
+    /** The chart's root `<div>`: `data-hovered-candle` is a data attribute the
+     *  snapshot/e2e surface reads, so it is written imperatively (one string
+     *  per bar crossed) instead of carrying a legend bar through React. */
+    const rootRef = useRef<HTMLDivElement | null>(null);
+    const setHoveredCandleAttr = useCallback((time: number | null): void => {
+        const el = rootRef.current;
+        if (!el) return;
+        const next = time === null ? '' : String(time);
+        if (el.getAttribute('data-hovered-candle') !== next) el.setAttribute('data-hovered-candle', next);
+    }, []);
     /** The study readouts sit behind the legend's expand toggle (owner 1.4.1):
      *  one compact OHLCV line at rest, the wall only when asked for. Session
      *  state — a chart preference re-chosen per session, not persisted data. */
@@ -398,9 +414,6 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
     /** The last-price tag on the axis: price, its screen Y, the bar's open time
      *  (for the countdown) and the bar's direction (for the colour). */
     const [lastTag, setLastTag] = useState<{ y: number; price: number; up: boolean; barTime: number } | null>(null);
-    /** The price under the crosshair, with its % from the last price — OKX's
-     *  crosshair label. Main pane only; a sub-pane has its own scale. */
-    const [crossPrice, setCrossPrice] = useState<{ y: number; price: number; pct: number } | null>(null);
     const lastTagRef = useRef<{ y: number; price: number } | null>(null);
     /** The right price-axis gutter, MEASURED, not assumed. The axis is
      *  content-sized (`autoSize`, labels vary — a titled 'mark' label is wider
@@ -1117,48 +1130,76 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
         chartRef.current = chart;
         candlesRef.current = candles;
         volumeRef.current = volume;
+        // ── Crosshair readouts: coalesced to one frame ─────────────────────
+        // The library fires this handler per pointer event. The two readouts
+        // are committed at most once per frame, and the legend only rebuilds
+        // when the BAR under the pointer changes — sweeps inside one bar cost
+        // nothing at all.
+        let crossFrame: number | null = null;
+        let pendingCrossTime: number | null = null;
+        let pendingCrossY: number | null = null;
+        let pendingCrossPane = 1;
+        const flushCrosshair = (): void => {
+            crossFrame = null;
+            const t = pendingCrossTime;
+            const y = pendingCrossY;
+            const pane = pendingCrossPane;
+            const data = legendRef.current;
+            if (typeof t === 'number' && data && t !== legendTimeRef.current) {
+                legendTimeRef.current = t;
+                const idx = data.times.indexOf(t);
+                const bar = idx >= 0 ? data.bars[idx] : undefined;
+                if (bar) {
+                    const values: Record<string, number | null> = {};
+                    for (const [k, s] of Object.entries(data.series)) values[k] = s[idx] ?? null;
+                    hoverReadout.setBar({ time: t, ...bar, values });
+                }
+            }
+            setHoveredCandleAttr(typeof t === 'number' ? t : null);
+            // The price under the crosshair, with its % from the last price —
+            // OKX's crosshair label. Main pane only; a sub-pane has its own
+            // scale (and its own readout).
+            const cs = candlesRef.current;
+            if (typeof y !== 'number' || pane !== 0 || !cs || typeof cs.coordinateToPrice !== 'function') {
+                hoverReadout.setCross(null);
+                return;
+            }
+            const price = cs.coordinateToPrice(y as never);
+            const rows = chartRowsRef.current;
+            const lastClose = rows.length > 0 ? rows[rows.length - 1].close : undefined;
+            if (price === null || price === undefined || !Number.isFinite(Number(price)) || !lastClose) {
+                hoverReadout.setCross(null);
+                return;
+            }
+            const p = Number(price);
+            hoverReadout.setCross({ y, price: p, pct: ((p - lastClose) / lastClose) * 100 });
+        };
         const onCrosshair = (param: Parameters<Parameters<IChartApi['subscribeCrosshairMove']>[0]>[0]) => {
-            setOverPlot(!!param?.time);
+            // Entering/leaving the plot is the ONLY thing that re-renders this
+            // component on hover (the 24h row mounts with the pointer). The
+            // numbers themselves go to the readout leaves on the next frame.
+            const over = !!param?.time;
+            if (over !== overPlotRef.current) {
+                overPlotRef.current = over;
+                setOverPlot(over);
+            }
             measureAxis();
             const t = param?.time;
             setHoveredCandle(typeof t === 'number' && param?.point ? t : null);
-            const data = legendRef.current;
-            // The legend follows the crosshair's BAR, so it only re-renders when
-            // the bar changes — not on every pixel of pointer movement.
-            const point = param?.point;
-            const cs = candlesRef.current;
-            if (!point || param?.paneIndex !== 0 || !cs || typeof cs.coordinateToPrice !== 'function') {
-                setCrossPrice(null);
-            } else {
-                const price = cs.coordinateToPrice(point.y as never);
-                const bars = (cs.data?.() ?? []) as readonly { close: number }[];
-                const lastClose = bars[bars.length - 1]?.close;
-                if (price === null || price === undefined || !Number.isFinite(Number(price)) || !lastClose) {
-                    setCrossPrice(null);
-                } else {
-                    const p = Number(price);
-                    const pct = ((p - lastClose) / lastClose) * 100;
-                    setCrossPrice(prev => (prev && Math.abs(prev.y - point.y) < 1 && prev.price === p ? prev : { y: point.y, price: p, pct }));
-                }
-            }
-            if (typeof t !== 'number' || !data) {
-                if (legendTimeRef.current !== null) { legendTimeRef.current = null; setLegendBar(null); }
-                return;
-            }
-            if (t === legendTimeRef.current) return;
-            legendTimeRef.current = t;
-            const idx = data.times.indexOf(t);
-            const bar = idx >= 0 ? data.bars[idx] : undefined;
-            if (!bar) { setLegendBar(null); return; }
-            const values: Record<string, number | null> = {};
-            for (const [k, s] of Object.entries(data.series)) values[k] = s[idx] ?? null;
-            setLegendBar({ time: t, ...bar, values });
+            pendingCrossTime = typeof t === 'number' ? t : null;
+            pendingCrossY = param?.point && Number.isFinite(Number(param.point.y)) ? Number(param.point.y) : null;
+            pendingCrossPane = typeof param?.paneIndex === 'number' ? param.paneIndex : 0;
+            if (crossFrame === null) crossFrame = window.requestAnimationFrame(flushCrosshair);
         };
         chart.subscribeCrosshairMove(onCrosshair);
         return () => {
             stopHoverAnimation();
             hoverAnimsRef.current.clear();
             hoveredCandleTimeRef.current = null;
+            if (crossFrame !== null) {
+                window.cancelAnimationFrame(crossFrame);
+                crossFrame = null;
+            }
             chart.unsubscribeCrosshairMove(onCrosshair);
             if (primitiveRef.current) {
                 try { candles.detachPrimitive(primitiveRef.current); } catch { /* chart removed */ }
@@ -1177,7 +1218,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
             // next mount's diff recreates instead of applyOptions-ing ghosts.
             chatLevelLinesRef.current = new Map();
         };
-    }, [measureAxis, setHoveredCandle, stopHoverAnimation]);
+    }, [measureAxis, setHoveredCandle, stopHoverAnimation, hoverReadout, setHoveredCandleAttr]);
 
     // Data lifecycle: the history load always runs (the stream only pushes
     // the CURRENT bar). Refresh cadence after that: while live the websocket
@@ -1245,6 +1286,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
             candlesRef.current?.setData([]);
             volumeRef.current?.setData([]);
             chartRowsRef.current = [];
+            syncPrimitive();
             lastTickRef.current = Date.now();
         }
         let cancelled = false;
@@ -1272,6 +1314,9 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                 vs.setData(toVolumes(klines).map(v => ({ ...v, time: v.time as UTCTimestamp })));
                 setStatus('live');
                 lastTickRef.current = Date.now();
+                // The primitive projects the drawings through THIS row array —
+                // the load replaces it, so re-publish before the repaint below.
+                syncPrimitive();
                 // Repaint the (already-reloaded) drawings against the fresh
                 // bars NOW — a switch back sets `status` to 'live' when it is
                 // already 'live', so the state-change repaint effect won't fire
@@ -1317,7 +1362,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
             }, 5000);
         }
         return () => { cancelled = true; retryLoadRef.current = null; window.clearTimeout(timer); window.clearInterval(watchdog); };
-    }, [symbol, interval, live]);
+    }, [symbol, interval, live, syncPrimitive]);
 
     // Live kline stream: patch the last bar in place (sub-second ticks).
     useEffect(() => {
@@ -1626,18 +1671,17 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
             // space the trader is about to see.
             scheduleRepaint();
             // too. Without this the legend froze at the last effect run: the
-            // refresh mutated the mirror but never told React, and no dep of the
-            // at-rest effect changes on a tick. Guarded on (time, close) so a
-            // tick that did not move the bar does not re-render.
+            // refresh mutated the mirror but never told anyone, and no dep of
+            // the at-rest effect changes on a tick. The readout store drops a
+            // write that would not change a character, so a tick that did not
+            // move the bar costs nothing — and the crosshair always wins while
+            // the pointer is over the plot.
             if (!overPlotRef.current && cs.length > 0) {
                 const lastIdx = cs.length - 1;
                 const row = cs[lastIdx];
                 const values: Record<string, number | null> = {};
                 for (const [k, s] of Object.entries(legendSeries)) values[k] = s[lastIdx] ?? null;
-                setLegendBar(prev => (prev && prev.time === row.time && prev.close === row.close
-                    && JSON.stringify(prev.values) === JSON.stringify(values)
-                    ? prev
-                    : { time: row.time, open: row.open, high: row.high, low: row.low, close: row.close, values }));
+                hoverReadout.setBar({ time: row.time, open: row.open, high: row.high, low: row.low, close: row.close, values });
             }
         };
         refreshIndicatorsRef.current(true);
@@ -1662,8 +1706,19 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
         if (!bar) return;
         const values: Record<string, number | null> = {};
         for (const [k, s] of Object.entries(data.series)) values[k] = s[idx] ?? null;
-        setLegendBar({ time: data.times[idx], ...bar, values });
-    }, [overPlot, indicatorSettings, symbol, interval, status]);
+        hoverReadout.setBar({ time: data.times[idx], ...bar, values });
+        // Re-arm the "same bar" gate on the bar the legend now shows: leaving a
+        // bar and hovering it again must update, not be mistaken for a repeat.
+        legendTimeRef.current = data.times[idx];
+        setHoveredCandleAttr(null);
+    }, [overPlot, indicatorSettings, symbol, interval, status, hoverReadout, setHoveredCandleAttr]);
+
+    /** The legend's volume column: contracts at the bar, from the chart's own
+     *  mirror (the same rows the study values come from). */
+    const volumeFor = useCallback((time: number): number | null => {
+        const v = legendRef.current?.volumes.get(time);
+        return typeof v === 'number' && Number.isFinite(v) ? v : null;
+    }, []);
 
     // ─── Chat key-level lines (the message card's chart toggle) ────────────
     // The dock owns the whole interaction model (master show-all switch,
@@ -2170,8 +2225,15 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
             }
         }
 
-        // Sync native primitive candle window whenever repaint runs (after history loads/live bars).
-        syncPrimitive();
+        // The committed drawings are painted by the native primitive on its own
+        // schedule. Do NOT re-publish its state here: `repaint()` runs on every
+        // hover-animation frame, and `setState` → `requestUpdate()` is a FULL
+        // chart invalidation — syncing from this loop re-rasterised every pane
+        // 60 times a second while the pointer swept the candles (measured: 333
+        // pane repaints across a 2.3s sweep vs 3 at rest), which is the flicker.
+        // The primitive is synced where its INPUTS change instead: drawing
+        // lists, selection/hover, scale mode, and the candle window (history
+        // load / symbol switch / live bar).
 
         // Visible-range high/low markers, OKX's "← 76,216.8" tags. They track the
         // visible bars only, so a marker is a statement about what is on screen
@@ -2483,6 +2545,9 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
             latestDrawing: ChartDrawing;
         }
         let activeDrag: ActiveDrag | null = null;
+        /** Pending passive-hover frame + where the pointer actually is. */
+        let hoverFrame: number | null = null;
+        let hoverPoint: ScreenXY | null = null;
 
         const hostLocal = (ev: MouseEvent | PointerEvent): ScreenXY => {
             const rect = host.getBoundingClientRect();
@@ -2682,29 +2747,60 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
             }
 
             // Passive hover hit-test in cursor mode for cursor feedback & highlight.
+            // COALESCED to one test per frame: `pointermove` fires far faster
+            // than the pointer can be drawn, and every pass projects every
+            // drawing's anchors through two coordinate conversions. A sweep over
+            // the candles used to run that work per device event (and repaint
+            // via `syncPrimitive` whenever the hover changed), which competed
+            // with the library's own crosshair frame.
+            hoverPoint = rawPt;
+            if (hoverFrame === null) {
+                hoverFrame = window.requestAnimationFrame(() => {
+                    hoverFrame = null;
+                    const pt = hoverPoint;
+                    hoverPoint = null;
+                    if (!pt || activeDrag) return;
+                    runPassiveHover(pt);
+                });
+            }
+        };
+
+        /** One passive hover pass: cursor affordance + the hovered shape's
+         *  handles. Only a CHANGE of the hovered id repaints the primitive. */
+        const runPassiveHover = (pt: ScreenXY): void => {
             const { plotW, plotH } = plotBounds();
-            if (rawPt.x > plotW || rawPt.y > plotH) {
-                if (hoveredDrawingIdRef.current !== null) {
-                    hoveredDrawingIdRef.current = null;
-                    host.style.cursor = '';
-                    syncPrimitive({ hoveredId: null });
-                }
+            if (pt.x > plotW || pt.y > plotH) {
+                clearHover();
+                return;
+            }
+            const drawings = getAllDrawings();
+            if (drawings.length === 0) {
+                clearHover();
                 return;
             }
             const hit = hitTestDrawings(
-                rawPt.x,
-                rawPt.y,
-                getAllDrawings(),
+                pt.x,
+                pt.y,
+                drawings,
                 selectedDrawingIdRef.current,
                 toScreen,
                 plotW,
                 plotH,
             );
             const nextHover = hit ? hit.drawing.id : null;
-            host.style.cursor = hit ? hit.cursor : '';
+            const cursor = hit ? hit.cursor : '';
+            if (host.style.cursor !== cursor) host.style.cursor = cursor;
             if (nextHover !== hoveredDrawingIdRef.current) {
                 hoveredDrawingIdRef.current = nextHover;
                 syncPrimitive({ hoveredId: nextHover });
+            }
+        };
+
+        const clearHover = (): void => {
+            if (host.style.cursor) host.style.cursor = '';
+            if (hoveredDrawingIdRef.current !== null) {
+                hoveredDrawingIdRef.current = null;
+                syncPrimitive({ hoveredId: null });
             }
         };
 
@@ -2731,11 +2827,12 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
         // after the cursor is gone — and ride into every capturePng snapshot.
         const onPointerLeave = (): void => {
             if (activeDrag) return;
-            if (hoveredDrawingIdRef.current !== null) {
-                hoveredDrawingIdRef.current = null;
-                syncPrimitive({ hoveredId: null });
+            if (hoverFrame !== null) {
+                window.cancelAnimationFrame(hoverFrame);
+                hoverFrame = null;
             }
-            host.style.cursor = '';
+            hoverPoint = null;
+            clearHover();
         };
 
         const onCaptureDblClick = (ev: MouseEvent): void => {
@@ -2773,6 +2870,10 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
             host.removeEventListener('pointerleave', onPointerLeave);
             host.removeEventListener('dblclick', onCaptureDblClick, true);
             window.removeEventListener('blur', onWindowBlur);
+            if (hoverFrame !== null) {
+                window.cancelAnimationFrame(hoverFrame);
+                hoverFrame = null;
+            }
             unlockChart();
             host.style.cursor = '';
         };
@@ -3159,10 +3260,13 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
 
     return (
         <div
+            ref={rootRef}
             className="flex h-full min-h-0 flex-col bg-zinc-950"
             data-testid="trading-chart"
             data-symbol={symbol}
-            data-hovered-candle={overPlot && legendBar ? String(legendBar.time) : ''}
+            /* Written imperatively by the crosshair frame (one string per bar),
+               so the hovered bar never costs this component a render. */
+            data-hovered-candle=""
         >
             {/* The timeframe bar is shared with the Agents surface, so the customizable
                 set and its persisted selection are one thing rather than two. The chart
@@ -3255,72 +3359,17 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                     then VOL as contracts and USDT, then one row per visible
                     study. It follows the crosshair's bar and rests on the last
                     bar, so the numbers under the pointer ARE the numbers on the
-                    lines — both come from `chartIndicators`. */}
-                {legendBar && (
-                    <div
-                        data-testid="chart-legend"
-                        /* The drawing rail owns the plot's left 40px (w-10, z-20,
-                           rendered unconditionally), so the legend starts right of
-                           it — left-2 sat underneath the rail's icon column and
-                           the first characters of every row were unreadable. When
-                           the verdict-overlay chip is up, its ~190px at the right
-                           edge are reserved too: a wide OHLCV line that ran under
-                           the chip collided with it (the UI audit's bug 6), so
-                           the chip's presence narrows the legend instead. */
-                        className={`pointer-events-none absolute left-12 top-1.5 z-10 overflow-hidden rounded-control bg-zinc-950/80 px-2 py-1 font-mono text-ui-dense text-zinc-500 ${levels.length > 0 ? 'max-w-[calc(100%-248px)]' : 'max-w-[calc(100%-56px)]'}`}
-                    >
-                        {/* ONE compact OHLCV line (owner 1.4.1): time, the four
-                            prices and the volume. Everything else this legend
-                            knows — change, range, per-study readouts — sits
-                            behind the expand toggle, so a clean chart reads as
-                            one quiet line and a study-heavy one can still be
-                            interrogated. whitespace-nowrap keeps the tokens
-                            whole: a narrowed legend CLIPS at its edge (under
-                            the verdict chip's reserved room) rather than
-                            breaking "Nov 19," across two lines. */}
-                        <div className="flex items-center gap-x-2 whitespace-nowrap">
-                            <span>{phtAxisTick(legendBar.time, 'full')}</span>
-                            {(['open', 'high', 'low', 'close'] as const).map(k => (
-                                <span key={k}>{k[0].toUpperCase()} <span className="text-zinc-300">{fmtPriceForChart(legendBar[k])}</span></span>
-                            ))}
-                            {(() => {
-                                const vol = legendRef.current?.volumes.get(legendBar.time);
-                                return vol === undefined ? null : (
-                                    <span>VOL <span className="text-zinc-300">{fmtUsdForChart(vol * legendBar.close)}</span></span>
-                                );
-                            })()}
-                            <button
-                                type="button"
-                                data-testid="legend-expand"
-                                aria-expanded={legendExpanded}
-                                title={legendExpanded ? 'Hide study readouts' : 'Show change, range and study readouts'}
-                                onClick={() => setLegendExpanded(v => !v)}
-                                /* 24px: the control floor every clickable target
-                                    is held to; the chevron stays 12px inside it. */
-                                className="pointer-events-auto ml-1 -mr-1.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-[4px] text-zinc-500 transition-colors hover:text-zinc-200"
-                            >
-                                <ChevronDown className={`h-3 w-3 transition-transform ${legendExpanded ? 'rotate-180' : ''}`} aria-hidden="true" />
-                            </button>
-                        </div>
-                        {legendExpanded && (
-                            <>
-                                <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                                    <span>Change <span className={legendBar.close >= legendBar.open ? 'text-emerald-400' : 'text-rose-400'}>
-                                        {fmtPriceForChart(legendBar.close - legendBar.open)} ({(((legendBar.close - legendBar.open) / legendBar.open) * 100).toFixed(2)}%)
-                                    </span></span>
-                                    <span>Range <span className="text-zinc-300">{(((legendBar.high - legendBar.low) / legendBar.open) * 100).toFixed(2)}%</span></span>
-                                    {(() => {
-                                        const vol = legendRef.current?.volumes.get(legendBar.time);
-                                        return vol === undefined ? null : (
-                                            <span>VOL(Contracts) <span className="text-zinc-300">{vol >= 1000 ? `${(vol / 1000).toFixed(3)}K` : vol.toFixed(3)}</span></span>
-                                        );
-                                    })()}
-                                </div>
-                                {legendSettingsRows(legendBar)}
-                            </>
-                        )}
-                    </div>
-                )}
+                    lines — both come from `chartIndicators`. It is a LEAF over
+                    the crosshair readout store: sweeping the candles re-renders
+                    this box, never the chart around it. */}
+                <HoverLegend
+                    store={hoverReadout}
+                    expanded={legendExpanded}
+                    onToggleExpanded={() => setLegendExpanded(v => !v)}
+                    narrow={levels.length > 0}
+                    renderRows={legendSettingsRows}
+                    volumeFor={volumeFor}
+                />
                 {/* The last-price tag on the axis: price, coloured by the last
                     candle's direction, with the countdown to that bar's close
                     beneath it — the two things the library's own tag cannot
@@ -3328,8 +3377,11 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                 {lastTag && (
                     <div
                         data-testid="last-price-tag"
-                        className="pointer-events-none absolute z-10 flex flex-col items-end gap-1"
-                        style={{ top: Math.max(6, lastTag.y - 10), right: 2 }}
+                        className="pointer-events-none absolute right-0.5 top-0 z-10 flex flex-col items-end gap-1 [will-change:transform]"
+                        /* Transform, not `top`: the last-price tag rides the live
+                           tick, and a moving layout box is a layout shift on
+                           every print. */
+                        style={{ transform: `translate3d(0, ${Math.max(6, lastTag.y - 10)}px, 0)` }}
                     >
                         <span
                             data-testid="last-price-pill"
@@ -3342,29 +3394,15 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                     </div>
                 )}
                 {/* The price under the crosshair, with its distance from the last
-                    price — OKX's crosshair label. Main pane only. */}
-                {crossPrice && (
-                    <div
-                        data-testid="crosshair-price-tag"
-                        className="pointer-events-none absolute z-10 flex flex-col items-end gap-1"
-                        style={{ top: Math.max(6, crossPrice.y - 10), right: 2 }}
-                    >
-                        <span
-                            style={{ minWidth: Math.max(48, axisW - 4) }}
-                            className="rounded-[3px] bg-zinc-700 px-1.5 py-0.5 text-right font-mono text-[11px] leading-none tabular-nums text-zinc-100"
-                        >
-                            {fmtPriceForChart(crossPrice.price)}
-                        </span>
-                        <span className={`rounded-[3px] border border-hairline bg-zinc-900/95 px-1.5 py-0.5 font-mono text-[10px] leading-none tabular-nums ${crossPrice.pct >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                            {`${crossPrice.pct >= 0 ? '+' : ''}${crossPrice.pct.toFixed(2)}%`}
-                        </span>
-                    </div>
-                )}
+                    price — OKX's crosshair label. Main pane only. A leaf over
+                    the same store: it follows the pointer without re-rendering
+                    the chart. */}
+                <HoverCrossTag store={hoverReadout} axisW={axisW} />
                 {ohlcvRow && overPlot && (
                     <div
                         data-testid="ohlcv-row"
-                        className={`pointer-events-none absolute left-12 z-10 flex items-center gap-3 overflow-hidden rounded-control bg-zinc-950/80 px-2 py-0.5 text-ui-dense text-zinc-500 ${levels.length > 0 ? 'max-w-[calc(100%-248px)]' : 'max-w-[calc(100%-56px)]'}`}
-                        style={{ top: legendBar ? '5.5rem' : '0.375rem' }}
+                        className={`pointer-events-none absolute left-12 z-10 flex items-center gap-3 overflow-hidden whitespace-nowrap rounded-control bg-zinc-950/80 px-2 py-0.5 text-ui-dense tabular-nums text-zinc-500 ${levels.length > 0 ? 'max-w-[calc(100%-248px)]' : 'max-w-[calc(100%-56px)]'}`}
+                        style={{ top: status === 'live' ? '5.5rem' : '0.375rem' }}
                     >
                         <span className="font-mono tabular-nums">H <span className="text-zinc-300">{ohlcvRow.high24h ? fmtPriceForChart(ohlcvRow.high24h) : '—'}</span></span>
                         <span className="font-mono tabular-nums">L <span className="text-zinc-300">{ohlcvRow.low24h ? fmtPriceForChart(ohlcvRow.low24h) : '—'}</span></span>
