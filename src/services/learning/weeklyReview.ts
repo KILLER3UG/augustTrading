@@ -17,6 +17,12 @@ import { getFirstReadyProvider } from '../../utils/providerUtils';
 import { pickActiveModelConfig } from '../infrastructure/ActiveModelConfig';
 import { loadProviderConfigs } from '../infrastructure/ProviderConfigService';
 import { ProviderConfig } from '../../types/provider';
+import { readSignals } from '../signals/signalLedger';
+import {
+    buildExecutionAutopsy,
+    formatAutopsyForPrompt,
+    type ExecutionAutopsyReport,
+} from './executionAutopsyCore';
 
 const KEY_PREFIX = 'weekly_review_v1_';
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
@@ -125,15 +131,22 @@ const statsLines = (s: WeeklyReviewDigest['stats']): string =>
     (s.givebackDays > 0 ? `Giveback days (green turned red): ${s.givebackDays}\n` : '');
 
 /** The single-call prompt: cite the computed facts, emit ONE impulse. */
-export const buildWeeklyImpulsePrompt = (s: WeeklyReviewDigest['stats']): string =>
-    `You are the trader's review coach. Here is this week's deterministic journal summary:\n\n` +
-    `${statsLines(s)}\n` +
-    `Write EXACTLY ONE improvement impulse for next week — one concrete, ` +
-    `falsifiable behavior change (max 2 sentences), grounded in the numbers ` +
-    `above. Lead with process over outcome: if adherence is the weak number, ` +
-    `the impulse is about adherence, not P&L. No lecture, no lists, no ` +
-    `hedging, no urgency words (never "urgent", "easy", "guaranteed"). ` +
-    `If the numbers are too thin to learn from, say so in one line.`;
+export const buildWeeklyImpulsePrompt = (
+    s: WeeklyReviewDigest['stats'],
+    autopsy?: ExecutionAutopsyReport | null,
+): string => {
+    const autopsyBlock = autopsy?.sufficientSample && autopsy.findings.length > 0
+        ? `\nExecution autopsy findings (settled signal ledger):\n${formatAutopsyForPrompt(autopsy)}\n`
+        : '';
+    return `You are the trader's review coach. Here is this week's deterministic journal summary:\n\n` +
+        `${statsLines(s)}${autopsyBlock}\n` +
+        `Write EXACTLY ONE improvement impulse for next week — one concrete, ` +
+        `falsifiable behavior change (max 2 sentences), grounded in the numbers ` +
+        `above. Lead with process over outcome: if adherence or an autopsy leak is the weak number, ` +
+        `the impulse addresses that leak, not P&L. No lecture, no lists, no ` +
+        `hedging, no urgency words (never "urgent", "easy", "guaranteed"). ` +
+        `If the numbers are too thin to learn from, say so in one line.`;
+};
 
 /** True when a digest has never been generated or is >=7 days old. */
 export const isWeeklyReviewDue = async (username: string, now = Date.now()): Promise<boolean> => {
@@ -161,10 +174,16 @@ export const runWeeklyReview = async (
     if (stats.closed < MIN_CLOSED_TRADES_FOR_REVIEW) return null;
     const provider = (await pickActiveModelConfig()) ?? getFirstReadyProvider(providerConfigs);
     if (!provider) return null;
+    let autopsy: ExecutionAutopsyReport | null;
+    try {
+        autopsy = buildExecutionAutopsy({ signals: readSignals(username) });
+    } catch {
+        autopsy = null;
+    }
     try {
         const impulse = (await sendChatRequest(
             provider,
-            [{ role: 'user', content: buildWeeklyImpulsePrompt(stats) }],
+            [{ role: 'user', content: buildWeeklyImpulsePrompt(stats, autopsy) }],
             { maxTokens: 400, temperature: 0.4 },
         ) || '').trim().slice(0, 600);
         if (!impulse) return null;

@@ -29,6 +29,13 @@ import {
     type CuratedMemoryTarget,
 } from './curatedMemory';
 import { CORRECTION_CUE_RE } from './backgroundReview';
+import {
+    buildExecutionAutopsy,
+    formatAutopsyForPrompt,
+    type ExecutionAutopsyReport,
+} from './executionAutopsyCore';
+import type { SignalRow } from '../../types/signal';
+import { isRejectedFingerprint } from './rejectedFingerprints';
 
 export const DREAM_MIN_HOURS = 24;
 export const DREAM_MIN_NEW_SESSIONS = 5;
@@ -56,6 +63,8 @@ export interface DreamCoreResult {
     contradictionFlags: string[];
     /** Entries dropped tail-first to satisfy the caps, with the file they came from. */
     capDropped: Array<{ target: CuratedMemoryTarget; day: string; excerpt: string }>;
+    /** Deterministic MFE/MAE execution autopsy attached when settled signal rows exist. */
+    autopsy?: ExecutionAutopsyReport;
     notes: string[];
 }
 
@@ -247,7 +256,14 @@ export const enforceCuratedCap = (
 // ─── The pure core (phases 3–4 over two strings) ────────────────────────────
 
 export const consolidateMemoryCore = (
-    input: { userMd: string; memoryMd: string; nowMs: number; ledger: LedgerSummaryRow[] },
+    input: {
+        userMd: string;
+        memoryMd: string;
+        nowMs: number;
+        ledger: LedgerSummaryRow[];
+        autopsy?: ExecutionAutopsyReport;
+        extraMemoryEntry?: string;
+    },
 ): DreamCoreResult => {
     const notes: string[] = [];
     const resolvedDates: DreamResolvedDate[] = [];
@@ -274,13 +290,30 @@ export const consolidateMemoryCore = (
     };
 
     const userMd = process(input.userMd, 'user');
-    const memoryMd = process(input.memoryMd, 'memory');
+    const extra = input.extraMemoryEntry?.trim();
+    const rawMemoryWithAutopsy = extra
+        ? [input.memoryMd.trim(), `## [${isoDay(input.nowMs)}]\n${extra}`].filter(Boolean).join('\n\n')
+        : input.memoryMd;
+    const memoryMd = process(rawMemoryWithAutopsy, 'memory');
     if (resolvedDates.length > 0) notes.push(`Resolved ${resolvedDates.length} relative date(s) to ISO days.`);
     if (duplicatesRemoved > 0) notes.push(`Merged ${duplicatesRemoved} duplicate entr(y/ies).`);
     if (entriesRemoved.length > 0) notes.push(`Removed ${entriesRemoved.length} ledger-contradicted entr(y/ies).`);
     if (contradictionFlags.length > 0) notes.push(`Flagged ${contradictionFlags.length} qualitative claim(s) the ledger cannot support.`);
     if (capDropped.length > 0) notes.push(`Dropped ${capDropped.length} oldest entr(y/ies) to satisfy the caps.`);
-    return { userMd, memoryMd, resolvedDates, duplicatesRemoved, entriesRemoved, contradictionFlags, capDropped, notes };
+    if (input.autopsy?.sufficientSample && input.autopsy.findings.length > 0) {
+        notes.push(...input.autopsy.findings);
+    }
+    return {
+        userMd,
+        memoryMd,
+        resolvedDates,
+        duplicatesRemoved,
+        entriesRemoved,
+        contradictionFlags,
+        capDropped,
+        ...(input.autopsy ? { autopsy: input.autopsy } : {}),
+        notes,
+    };
 };
 
 // ─── Eligibility + state ────────────────────────────────────────────────────
@@ -359,7 +392,7 @@ export interface DreamRunOptions {
     nowMs?: number;
     /** Injected gatherers — the real ones read chatSessions + signalLedger;
      *  tests pass fixtures. */
-    gather?: () => { newSessions: number; corrections: string[]; ledger: LedgerSummaryRow[] };
+    gather?: () => { newSessions: number; corrections: string[]; ledger: LedgerSummaryRow[]; signalRows?: SignalRow[] };
 }
 
 let dreamInFlight: Promise<DreamRunResult> | null = null;
@@ -368,7 +401,7 @@ let dreamInFlight: Promise<DreamRunResult> | null = null;
  *  the settled signal ledger. A Chat-surface turn is as much experience as a
  *  dock turn; counting only the dock meant five Chat sessions never unlocked
  *  a Dream (the >= 5 gate) while every gate stayed green. */
-const defaultGather = async (username: string, sinceMs: number): Promise<{ newSessions: number; corrections: string[]; ledger: LedgerSummaryRow[] }> => {
+const defaultGather = async (username: string, sinceMs: number): Promise<{ newSessions: number; corrections: string[]; ledger: LedgerSummaryRow[]; signalRows: SignalRow[] }> => {
     let newSessions = 0;
     const corrections: string[] = [];
     try {
@@ -391,9 +424,11 @@ const defaultGather = async (username: string, sinceMs: number): Promise<{ newSe
             .filter(c => c.timestamp > sinceMs && !boundIds.has(c.id)).length;
     } catch { /* a gather miss just weakens the pass */ }
     const ledger: LedgerSummaryRow[] = [];
+    let signalRows: SignalRow[] = [];
     try {
         const { readSignals } = await import('../signals/signalLedger');
-        const rows = readSignals(username).filter(r => r.resolution && (r.resolution.status === 'won' || r.resolution.status === 'lost'));
+        signalRows = readSignals(username).filter(r => r.resolution && r.resolution.status !== 'never_triggered');
+        const rows = signalRows.filter(r => r.resolution && (r.resolution.status === 'won' || r.resolution.status === 'lost'));
         const byKey = new Map<string, LedgerSummaryRow>();
         for (const r of rows) {
             const label = `${r.signal.coin} ${r.signal.direction}`.trim();
@@ -405,7 +440,7 @@ const defaultGather = async (username: string, sinceMs: number): Promise<{ newSe
         }
         ledger.push(...byKey.values());
     } catch { /* ledger unavailable — the dream still consolidates */ }
-    return { newSessions, corrections, ledger };
+    return { newSessions, corrections, ledger, signalRows };
 };
 
 /**
@@ -425,7 +460,7 @@ const runMemoryDreamUnlocked = async (options: DreamRunOptions): Promise<DreamRu
     const state = await readDreamState(username);
     const sinceMs = state.lastRunAt ? Date.parse(state.lastRunAt) || 0 : 0;
     const gather = options.gather ?? (() => defaultGather(username, sinceMs));
-    const { newSessions, corrections, ledger } = await gather();
+    const { newSessions, corrections, ledger, signalRows } = await gather();
     const eligibility = dreamEligibility(state, newSessions, nowMs);
     if (!options.manual && !eligibility.eligible) {
         return { ran: false, manual: false, eligibility, error: eligibility.reasons.join('; ') };
@@ -433,10 +468,29 @@ const runMemoryDreamUnlocked = async (options: DreamRunOptions): Promise<DreamRu
     // Phase 1: load + reversible before-snapshot.
     const snap = await captureCuratedMemorySnapshot(username);
     const beforeSnapshot = { userMd: snap.userMd, memoryMd: snap.memoryMd };
+    // Deterministic execution autopsy (N >= 5 settled rows only). Fail-closed
+    // against `rejectedFingerprints`: if rejected previously or store unreadable, withhold entry.
+    const autopsy = signalRows && signalRows.length > 0 ? buildExecutionAutopsy({ signals: signalRows }) : undefined;
+    let extraMemoryEntry: string | undefined;
+    let rejectedNote: string | undefined;
+    if (autopsy?.sufficientSample && autopsy.findings.length > 0) {
+        const candidate = formatAutopsyForPrompt(autopsy);
+        try {
+            const rejected = await isRejectedFingerprint({ kind: 'memory', target: 'memory', content: candidate }, username);
+            if (!rejected) {
+                extraMemoryEntry = candidate;
+            } else {
+                rejectedNote = 'Autopsy finding withheld: previously rejected by trader (rejectedFingerprints).';
+            }
+        } catch {
+            rejectedNote = 'Autopsy finding withheld: durable rejection store unreadable (fail-closed).';
+        }
+    }
     // Phase 2 is `gather` (already run). Corrections ride the notes so the
     // receipt says what the pass was looking at.
     // Phase 3 + 4: the pure core.
-    const core = consolidateMemoryCore({ userMd: snap.userMd, memoryMd: snap.memoryMd, nowMs, ledger });
+    const core = consolidateMemoryCore({ userMd: snap.userMd, memoryMd: snap.memoryMd, nowMs, ledger, autopsy, extraMemoryEntry });
+    if (rejectedNote) core.notes.push(rejectedNote);
     if (corrections.length > 0) core.notes.push(`Reviewed ${corrections.length} correction-cue turn(s) since the last run.`);
     // Persist through the SAME capped, receipted write path the desk tool
     // uses — but as ONE atomic pair. Both files are fields of one JSON blob,

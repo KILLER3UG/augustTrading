@@ -13,6 +13,8 @@
  * enforced against an injected emitter whose allowed tool set is pinned here.
  */
 
+import { formatAutopsyForPrompt, type ExecutionAutopsyReport } from './executionAutopsyCore';
+
 export const BACKGROUND_REVIEW_MIN_TOOL_CALLS = 4;
 
 /**
@@ -45,6 +47,8 @@ export interface BackgroundReviewInput {
     sourceSessionId?: string;
     /** Injectable clock for date stamps (defaults to now). */
     nowMs?: number;
+    /** Optional deterministic MFE/MAE autopsy report — emits a bounded memory leak note when sufficientSample & findings exist. */
+    autopsy?: ExecutionAutopsyReport;
 }
 
 export interface DetectedSignal {
@@ -170,12 +174,28 @@ export const runBackgroundReview = async (
         return { ran: false, trigger, signals: [], emissions: [], refused: [], notes: [] };
     }
     const signals = detectLearningSignals(input);
-    if (signals.length === 0) {
+    const hasAutopsy = Boolean(input.autopsy?.sufficientSample && input.autopsy.findings.length > 0);
+    if (signals.length === 0 && !hasAutopsy) {
         return { ran: true, trigger, signals: [], emissions: [], refused: [], notes: ['No learning signal in this turn — nothing written.'] };
     }
     const emissions: BackgroundReviewEmission[] = [];
     const refused: BackgroundReviewReceipt['refused'] = [];
     const notes: string[] = [];
+    if (hasAutopsy && input.autopsy) {
+        const verdict = await applyEmission(
+            {
+                tool: 'memory',
+                args: {
+                    target: 'memory',
+                    operations: [{ action: 'add', content: formatAutopsyForPrompt(input.autopsy) }],
+                },
+            },
+            deps,
+            emissions,
+            refused,
+        );
+        if (verdict) notes.push('Recorded execution autopsy finding to MEMORY.md.');
+    }
     for (const signal of signals) {
         if (signal.signal === 'reusable_setup') {
             // A reusable setup becomes a PROBATION skill, never a memory rule.
