@@ -53,7 +53,12 @@ import { buildCuratedMemoryPromptBlock, getCachedCuratedMemorySnapshot } from '.
 import { buildGoalsIndex, focusedGoal, goalMatchesMessage, listGoals } from '../goals/GoalService';
 import { runToolTurn, type CaptureSnapshot, type ToolTurnEvents, type ToolTurnOutcome, type ToolTurnRequest } from './toolTurn';
 import { isMarketReadTool, PAPER_TRADING_PROMPT } from '../analysis/deskToolShared';
+import type { DeskToolCall, DeskToolResult } from '../analysis/DeskToolsService';
 import { runPresentTrade } from './presentTradeTool';
+import { drawingsControl } from './drawingsControl';
+import { drawingFromChartTool, drawingsFromLevelTool } from './chartDrawings';
+import { drawToolLevelsFromCall } from './drawToolLevels';
+import { intervalSeconds } from '../../utils/chartIntervals';
 import { userContentWithImage } from './chatTurnRunner';
 import { saveToolPayload } from './toolPayloadStore';
 import { appendToolActions } from '../../utils/toolActions';
@@ -244,10 +249,115 @@ export const CHAT_SURFACE_TOOLS = [
     'emit_signal',
     // Anything that can be clipped must be able to be re-read.
     'read_tool_output',
+    // Multi-timeframe confluence — catalogue-loadable on the desk (never a
+    // turn-1 schema), and a plain compute here: no canvas needed.
+    'scan_confluence',
+    // Store-backed chart drawing: the Agents surface has no live canvas, but
+    // the model's shapes persist into the SAME per-session/per-coin store the
+    // dock renders — so a plan drawn here is on the chart the moment the
+    // trader flips back. `draw_tool_levels` re-runs the named market tool and
+    // stores its computed levels; nothing is restated by the model.
+    'draw_on_chart', 'mark_trade_levels', 'draw_tool_levels', 'clear_chart_drawings',
     // Pass 3: the local simulated broker. Read the account before sizing;
     // the order tool cannot touch equity, caps or closed trades.
     'paper_account', 'paper_order',
 ];
+
+/** Where a Chat-surface drawing lands: the turn's session + the ACTIVE
+ *  composer symbol/interval. The bucket is the SAME one the dock's chart
+ *  renders, so a shape drawn here appears on the canvas without a refresh. */
+export interface ChatChartToolContext {
+    sessionId?: string;
+    symbol?: string | null;
+    interval?: string;
+}
+
+/**
+ * The Chat surface's STORE-BACKED chart-drawing executor — `draw_on_chart`,
+ * `mark_trade_levels`, `draw_tool_levels`, `clear_chart_drawings`.
+ *
+ * This surface has no live canvas, so the executor writes straight into
+ * `drawingsControl('model', sessionId, activeSymbol)` — the persisted
+ * per-session/per-coin bucket the dock's chart loads on mount AND re-reads on
+ * the `august:agent-drawings-changed` event. A plan drawn here is therefore on
+ * the trader's chart the moment they switch back, without a refresh. The live
+ * mark is fetched best-effort for the staleness stamp; a miss is handled by
+ * the converters ("live mark unavailable"), never by percentage math on zero.
+ */
+export const executeChatSurfaceChartTool = async (
+    call: DeskToolCall,
+    ctx: ChatChartToolContext,
+): Promise<DeskToolResult> => {
+    const sid = (ctx.sessionId ?? '').trim() || 'chat-surface';
+    const symbol = String(ctx.symbol ?? 'BTCUSDT').trim().toUpperCase() || 'BTCUSDT';
+    const interval = ctx.interval ?? '15m';
+    const args = call.arguments ?? {};
+    const receipt = (ok: boolean, content: string): DeskToolResult =>
+        ({ toolCallId: call.id, name: call.name, ok, content });
+    const bucket = drawingsControl('model', sid, symbol);
+    const repaint = (): void => {
+        // The dock's TradeView listens for this and re-reads the bucket, so a
+        // shape drawn here reaches the canvas without a reload.
+        if (typeof window !== 'undefined') window.dispatchEvent(new Event('august:agent-drawings-changed'));
+    };
+    if (call.name === 'clear_chart_drawings') {
+        const scope = args.scope === 'all' ? 'all' : 'model';
+        bucket.clear();
+        if (scope === 'all') drawingsControl('user', sid, symbol).clear();
+        repaint();
+        return receipt(true, scope === 'all'
+            ? `Cleared ALL stored drawings for ${symbol} in this session (the model's marks and the user's own shapes).`
+            : `Cleared the model's own stored drawings for ${symbol} in this session (the user's shapes were kept).`);
+    }
+    const existing = bucket.list();
+    // Live mark when the feed can answer — a miss is honest, never arithmetic
+    // on zero (the converters emit "live mark unavailable").
+    let drawnPrice: number | null = null;
+    try {
+        const { fetchMarkIndex } = await import('../analysis/MarketDataService');
+        // Time-boxed: a slow/offline feed must never stall a drawing turn.
+        const mark = await Promise.race([
+            fetchMarkIndex(symbol),
+            new Promise<null>(resolve => { setTimeout(() => resolve(null), 1_500); }),
+        ]);
+        const p = Number((mark as unknown as { markPrice?: unknown } | null)?.markPrice);
+        if (Number.isFinite(p) && p > 0) drawnPrice = p;
+    } catch { /* offline: the receipt says the mark is unavailable */ }
+    const lastBarTime = Math.floor(Date.now() / 1000);
+    if (call.name === 'mark_trade_levels') {
+        const { drawings, error } = drawingsFromLevelTool(args, { drawnPrice, symbol, interval, existing });
+        if (error) return receipt(false, `mark_trade_levels rejected: ${error}`);
+        bucket.add(drawings);
+        repaint();
+        const listed = drawings.map(d => `${d.shortId ? `${d.shortId} ` : ''}${d.label} ${d.points[0].p}`).join(', ');
+        return receipt(true, `Marked on the stored chart for ${symbol} (${interval}): ${listed}. The lines are on the chart as soon as you open it.`);
+    }
+    if (call.name === 'draw_tool_levels') {
+        const { drawings, error, tool } = await drawToolLevelsFromCall(args, { symbol, interval, existing, lastBarTime, drawnPrice });
+        if (error) return receipt(false, `draw_tool_levels rejected: ${error}`);
+        bucket.add(drawings);
+        repaint();
+        const listed = drawings.map(d => `${d.shortId ? `${d.shortId} ` : ''}${d.label}${d.kind === 'rect' ? ' (zone)' : ''} @ ${d.points[0].p}`).join(', ');
+        return receipt(true, `Drew ${tool}'s computed levels at the tool's own prices on the stored chart for ${symbol}: ${listed}.`);
+    }
+    // draw_on_chart — bars-ago anchors resolve against "now" (this surface has
+    // no candle buffer; the newest candle is the live one).
+    const { drawings, error, note } = drawingFromChartTool(args, {
+        lastBarTime,
+        barSeconds: intervalSeconds(interval as never),
+        drawnPrice,
+        symbol,
+        interval,
+        existing,
+    });
+    if (error) return receipt(false, `draw_on_chart rejected: ${error}`);
+    bucket.add(drawings);
+    repaint();
+    const described = drawings
+        .map(d => `${d.kind}${d.label ? ` "${d.label}"` : ''} @ ${d.points.map(p => p.p).join('→')}`)
+        .join('; ');
+    return receipt(true, `Drew on the stored chart for ${symbol} (${interval}): ${described}.${note ?? ''}`);
+};
 
 /** What travelled in one turn's system prompt: the text, and the skill slugs it
  *  was built from. The slugs come back WITH the text on purpose — a caller that
@@ -625,6 +735,13 @@ export const runChatSurfaceTurn = async (req: ChatSurfaceTurnRequest): Promise<T
         // receipt the model reads says exactly that instead of promising a
         // [HARNESS SIGNAL] that would never arrive.
         executePanelTool: async (call: Parameters<NonNullable<ToolTurnRequest['transport']['executePanelTool']>>[0]) => {
+            // Store-backed chart drawing: no canvas here — the shapes persist
+            // into the session/coin bucket the dock's chart renders, so they
+            // are on the chart the moment the trader switches back.
+            if (call.name === 'draw_on_chart' || call.name === 'mark_trade_levels'
+                || call.name === 'draw_tool_levels' || call.name === 'clear_chart_drawings') {
+                return executeChatSurfaceChartTool(call, { sessionId: req.sessionId, symbol: req.symbol, interval: req.interval });
+            }
             // A proposed settlement fix. The shared executor validates and
             // RECORDS the proposal; this sink then attaches it to THIS
             // conversation row via req.patch — the store the transcript reads —
@@ -698,7 +815,7 @@ export const runChatSurfaceTurn = async (req: ChatSurfaceTurnRequest): Promise<T
                 return result;
             }
             if (call.name !== 'present_trade') return null;
-            return runPresentTrade(
+            return await runPresentTrade(
                 {
                     call,
                     symbol: req.symbol || call.arguments?.symbol?.toString() || 'BTCUSDT',

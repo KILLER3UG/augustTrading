@@ -230,7 +230,7 @@ export const TOOL_REGISTRY: readonly ToolRegistryEntry[] = [
     },
     {
         name: 'scan_confluence', label: 'confluence scan', kind: 'compute', activity: 'Scanning multi-TF confluence',
-        cacheable: true, marketTool: true, marketRead: true,
+        deskGrant: true, cacheable: true, marketTool: true, marketRead: true,
     },
     {
         name: 'get_trade_log', label: 'trade log', kind: 'read', activity: 'Reading the trade log',
@@ -484,6 +484,7 @@ export const TOOL_REGISTRY: readonly ToolRegistryEntry[] = [
     },
     {
         name: 'read_tool_output', label: 'stored result', kind: 'read', activity: 'Reading a stored result',
+        deskGrant: true,
     },
     {
         name: 'present_trade', label: 'present trade', kind: 'present', activity: 'Presenting the trade',
@@ -509,6 +510,11 @@ export const TOOL_REGISTRY: readonly ToolRegistryEntry[] = [
     },
     {
         name: 'wake_me', label: 'wake me', kind: 'other', activity: 'Waking you',
+    },
+    {
+        // Chart-action family (offered only when a live canvas capture is wired
+        // AND the active model is vision-capable — see shouldOfferChartImageTool).
+        name: 'inspect_chart_image', label: 'chart image', kind: 'read', activity: 'Capturing the chart image',
     },
 ];
 

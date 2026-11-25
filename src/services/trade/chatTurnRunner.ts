@@ -42,13 +42,10 @@ import { focusedGoal } from '../goals/GoalService';
 import { buildTier0UserTurnContext, buildTradeChatContext, composeUserTurnMessage, describeChartSnapshotForModel, extractTraderQuestion } from './tradeChatContext';
 import {
     describeDrawingsForModel, drawingFromChartTool, drawingsFromDetectedPattern, drawingsFromLevelTool, type ChartDrawing,
-    MODEL_COLOR_NAMES, createDrawingId,
 } from './chartDrawings';
-import { allocateDrawingShortId, computeAtr14, computeChartRevision, evaluateChartDrawings } from './chartGeometry';
+import { computeAtr14, computeChartRevision, evaluateChartDrawings } from './chartGeometry';
+import { drawToolLevelsFromCall } from './drawToolLevels';
 import { DEFAULT_MAX_HISTORY_IMAGES, pruneHistoryImages } from '../providers/contextCompact';
-// Type-only: erased at build, so the market-tool module stays lazy even
-// though the drawer names its anchor unions in two casts.
-import type { ProfileAnchor, VwapAnchor } from '../analysis/marketTools';
 import { runPresentTrade } from './presentTradeTool';
 import { runToolTurn, type CaptureSnapshot, type ToolTurnEvents, type ToolTurnRequest } from './toolTurn';
 import { scoreDrawnShape, levelAccuracy, describeLevelAccuracyForModel } from './tradePlanLevels';
@@ -164,6 +161,36 @@ export const userContentWithImage = (
     return `${text}\n\n[The user attached a chart screenshot but this model cannot see images.]`;
 };
 
+/** Downscale a captured chart data-URL so the tool result stays inside a
+ *  sane wire budget. Best-effort: any failure (node, private mode, a decode
+ *  error) resolves the ORIGINAL — the receipt is honest either way. */
+const shrinkChartImageDataUrl = (dataUrl: string, maxDim = 1280): Promise<string> =>
+    new Promise(resolve => {
+        try {
+            if (typeof document === 'undefined' || dataUrl.length < 400_000) return resolve(dataUrl);
+            const img = new Image();
+            img.onload = () => {
+                try {
+                    const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+                    const canvas = document.createElement('canvas');
+                    canvas.width = Math.max(1, Math.round(img.width * scale));
+                    canvas.height = Math.max(1, Math.round(img.height * scale));
+                    const ctx = canvas.getContext('2d');
+                    if (!ctx) return resolve(dataUrl);
+                    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                    const out = canvas.toDataURL('image/png');
+                    resolve(out.length > 0 ? out : dataUrl);
+                } catch {
+                    resolve(dataUrl);
+                }
+            };
+            img.onerror = () => resolve(dataUrl);
+            img.src = dataUrl;
+        } catch {
+            resolve(dataUrl);
+        }
+    });
+
 /** Cap on attached text file bulk handed to the prompt. */
 const MAX_FILE_CHARS = 200_000;
 
@@ -219,6 +246,10 @@ export interface ChatTurnRunnerDeps {
     trades: LoggedTrade[];
     /** Plain-data snapshot of everything the canvas currently displays. */
     getChartSnapshot?: () => ChartSnapshot | null;
+    /** The chart's PNG capture — candles, studies and every committed drawing
+     *  (the model's included). Wired on the dock only; a surface without a
+     *  live canvas omits it, which keeps `inspect_chart_image` unoffered. */
+    captureChartPng?: () => string | null;
     /** The fallback provider (the composer's resolved selection). */
     provider: ProviderConfig | null;
     /** Resolve a `${providerId}:${modelId}` seat to a runnable config. */
@@ -345,7 +376,7 @@ const titleAsked = new Set<string>();
 export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner => {
     const {
         symbol, interval, effort, selectedChatModel, chartLevels, allDrawings, trades,
-        getChartSnapshot, provider, configForSeat, systemPromptFor, bots, activeId, draft,
+        getChartSnapshot, captureChartPng, provider, configForSeat, systemPromptFor, bots, activeId, draft,
         sessions, botThreadRows, conversationRows, activeConversationId, attachments, attachedImages,
         clearAttachments, setDraft, setContextAt, addModelDrawings,
         clearModelDrawings, clearAllDrawings, onPlanPresented, onBotTurnCommit, onSoloTurnCommit, onSyncConversation, onRunAnalysis, onAnalysisError,
@@ -422,6 +453,7 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
         const name = call.name;
         if (name !== 'draw_on_chart' && name !== 'draw_detected' && name !== 'draw_tool_levels' && name !== 'mark_trade_levels' && name !== 'clear_chart_drawings'
             && name !== 'present_trade' && name !== 'watch_price' && name !== 'wake_me' && name !== 'cancel_watch'
+            && name !== 'inspect_chart_image'
             && name !== 'correct_trade_outcome' && name !== 'update_trade' && name !== 'close_trade' && name !== 'propose_risk_change'
             && name !== 'propose_strategy_activation' && name !== 'propose_ai_setting_change'
             && name !== 'propose_session_plan' && name !== 'propose_rule_change'
@@ -448,6 +480,27 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
         const canvasNote = crossCanvas
             ? ` NOTE: the canvas shows ${canvasSymbol}; this snapshot was taken while the turn was on ${turn.symbol} — treat its prices/bar times as stale for ${turn.symbol}, not as its live mark.`
             : '';
+        // ── inspect_chart_image — the model's VISUAL read of the live canvas ──
+        // Offered only for vision-capable active models with a wired capture
+        // (see the chartDefs filter); the PNG rides back as a real image part
+        // on the follow-up turn, next to the deterministic data.
+        if (name === 'inspect_chart_image') {
+            const png = captureChartPng?.();
+            if (!png) {
+                return receipt(false, 'inspect_chart_image: no chart canvas is available to capture right now — the chart may not be mounted on this surface.');
+            }
+            const image = await shrinkChartImageDataUrl(png);
+            if (!image || !image.startsWith('data:image')) {
+                return receipt(false, 'inspect_chart_image: the canvas capture failed — nothing was attached.');
+            }
+            return {
+                toolCallId: call.id,
+                name,
+                ok: true,
+                content: `Chart image captured (${Math.max(1, Math.round(image.length / 1024))} KB, candles + studies + every committed drawing, yours included) — it is attached below for visual inspection alongside the deterministic numbers.`,
+                imagePart: { type: 'image_url', image_url: { url: image } },
+            };
+        }
         // ── Watch / schedule harness (model arms a price trigger or a time
         //    wake-up; the harness wakes it back up when the condition holds).
         if (name === 'watch_price' || name === 'wake_me') {
@@ -631,7 +684,7 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
         if (name === 'present_trade') {
             let mintedPlanId = '';
             const mintedRef: { proposal: import('./proposedTrade').TradeProposal | null } = { proposal: null };
-            const result = runPresentTrade(
+            const result = await runPresentTrade(
                 { call, symbol: turn.symbol, trades, drawnPrice, crossCanvas, canvasNote, watchable: true },
                 {
                     setProposal: p => {
@@ -850,89 +903,20 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
         // draw_detected: the drawing and the computation cannot disagree,
         // because the model never restates a number.
         if (name === 'draw_tool_levels') {
-            // Lazy: the market-tool module (and its fetch layer) stays out of
-            // the dock chunk until a seat actually draws.
-            const mt = await import('../analysis/marketTools');
-            const wanted = String(args.tool ?? '').trim();
-            if (!mt.DRAWABLE_TOOLS.includes(wanted)) {
-                return receipt(false, `draw_tool_levels rejected: "tool" must be one of ${mt.DRAWABLE_TOOLS.join(', ')}.`);
-            }
-            // Re-run the tool FRESH at draw time (never from a cached copy the
-            // turn might have clipped) — the same move draw_detected makes.
-            const sym = String(args.symbol || turn.symbol || '').trim();
-            const items = Array.isArray(args.items) ? args.items.map(String) : undefined;
-            let content: string;
-            try {
-                switch (wanted) {
-                    case 'volume_profile':
-                        content = await mt.runVolumeProfileTool(sym, (['session', 'day', 'week', 'visible', 'swing', 'custom'].includes(String(args.anchor)) ? String(args.anchor) : 'session') as ProfileAnchor);
-                        break;
-                    case 'naked_pocs':
-                        content = await mt.runNakedPocsTool(sym, String(args.granularity) === 'week' ? 'week' : 'day', Math.min(20, Math.max(1, Number(args.lookback) || 5)));
-                        break;
-                    case 'vwap':
-                        content = await mt.runVwapTool(sym, (['session_open', 'swing_high', 'swing_low', 'custom'].includes(String(args.anchor)) ? String(args.anchor) : 'session_open') as VwapAnchor);
-                        break;
-                    case 'auction_state':
-                        content = await mt.runAuctionStateTool(sym);
-                        break;
-                    case 'get_key_levels':
-                        content = await mt.runKeyLevelsEnvelope(sym);
-                        break;
-                    default:
-                        content = await mt.runStructureTool(wanted, sym, (['5m', '15m', '1h', '4h'].includes(String(args.interval)) ? String(args.interval) : '1h'));
-                        break;
-                }
-            } catch (e) {
-                return receipt(false, `draw_tool_levels could not re-run ${wanted}: ${e instanceof Error ? e.message : 'fetch failed'}.`);
-            }
-            if (!content) return receipt(false, `draw_tool_levels: ${wanted} returned nothing.`);
-            let parsed: { values?: unknown; data_quality?: { reason?: string } };
-            try {
-                parsed = JSON.parse(content);
-            } catch {
-                return receipt(false, `draw_tool_levels: ${wanted} returned a non-JSON result; nothing to draw.`);
-            }
-            // get_key_levels' shape is its own (session_levels at the root, no
-            // envelope) — wrap it so the extractor sees one shape.
-            const set = mt.drawableLevelsFor(wanted, wanted === 'get_key_levels' ? { values: parsed } : parsed, items);
-            if (!set || (set.hlines.length === 0 && set.zones.length === 0)) {
-                const reason = parsed.data_quality?.reason ?? 'no drawable levels in the fresh result (nothing qualified)';
-                return receipt(false, `draw_tool_levels: ${wanted} produced nothing drawable — ${reason}. Nothing was drawn.`);
-            }
-            const drawnPrice2 = drawnPrice ?? undefined;
-            const nowSec = Date.now() / 1000;
-            // Zones anchor to the VISIBLE window (a zone is a region, not a
-            // point); without a fitted range, fall back to the snapshot's
-            // candle span.
-            const t0 = snap?.visibleRange?.timeLow
-                ?? (snap && snap.candles.length > 0 ? snap.candles[0].time : nowSec - 3600);
-            const t1 = snap?.visibleRange?.timeHigh
-                ?? (snap && snap.candles.length > 0 ? snap.candles[snap.candles.length - 1].time : nowSec);
-            const seenToolShapes: Array<Pick<ChartDrawing, 'shortId'>> = [...allDrawings];
-            const mk = (price: number, label: string, color: string): ChartDrawing => {
-                const shortId = allocateDrawingShortId(turn.symbol, seenToolShapes);
-                seenToolShapes.push({ shortId });
-                return {
-                    id: createDrawingId(), shortId, origin: 'agent', createdOnTf: turn.interval, version: 1,
-                    kind: 'hline', points: [{ t: nowSec, p: price }], color, createdAt: Date.now(), label, drawnPrice: drawnPrice2,
-                };
-            };
-            const mkZone = (label: string, top: number, bottom: number, color: string): ChartDrawing => {
-                const shortId = allocateDrawingShortId(turn.symbol, seenToolShapes);
-                seenToolShapes.push({ shortId });
-                return {
-                    id: createDrawingId(), shortId, origin: 'agent', createdOnTf: turn.interval, version: 1,
-                    kind: 'rect', points: [{ t: t0, p: top }, { t: t1, p: bottom }], color, createdAt: Date.now(), label, drawnPrice: drawnPrice2,
-                };
-            };
-            const drawings2: ChartDrawing[] = [
-                ...set.hlines.map(h => mk(h.price, h.label, MODEL_COLOR_NAMES[h.color])),
-                ...set.zones.map(z => mkZone(z.label, z.top, z.bottom, MODEL_COLOR_NAMES[z.color])),
-            ].slice(0, 20); // the model-drawing cap is 40 per symbol; one call stays half of it
+            // The ONE shared core (also used by the Chat surface's store-backed
+            // executor): re-run the named tool FRESH and draw at its prices.
+            const { drawings: drawings2, error, tool: wantedTool } = await drawToolLevelsFromCall(args, {
+                symbol: turn.symbol,
+                interval: turn.interval,
+                existing: allDrawings,
+                visibleRange: snap?.visibleRange ?? null,
+                lastBarTime: snap && snap.candles.length > 0 ? snap.candles[snap.candles.length - 1].time : undefined,
+                drawnPrice,
+            });
+            if (error) return receipt(false, `draw_tool_levels rejected: ${error}`);
             addModelDrawings(drawings2, turn);
             const listed = drawings2.map(d => `${d.shortId ? `${d.shortId} ` : ''}${d.label}${d.kind === 'rect' ? ' (zone)' : ''} @ ${d.points[0].p}`).join(', ');
-            return receipt(true, `Drew ${wanted}'s computed levels at the tool's own prices: ${listed}.${visibility(drawings2)}${canvasNote}`);
+            return receipt(true, `Drew ${wantedTool}'s computed levels at the tool's own prices: ${listed}.${visibility(drawings2)}${canvasNote}`);
         }
         // draw_on_chart — resolve bars-ago anchors against the newest candle.
         const lastBarTime = snap && snap.candles.length > 0
@@ -1123,6 +1107,7 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
                 return cs.length > 0 ? cs[cs.length - 1] : null;
             },
             getChartSnapshot,
+            captureChartPng,
             executePanelTool: call => executePanelTool(call, turnCtx, planCapture),
             trades,
             mailbox,
