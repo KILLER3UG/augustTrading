@@ -60,6 +60,10 @@ export interface TurnTrace {
     gateRefusals: number;
     /** Stage-1 microcompaction savings for this turn (chars stubbed). */
     microCompactChars?: number;
+    /** Condition-scoped rules active on this turn. */
+    activeScopedRuleIds?: string[];
+    /** True when this turn ran under read-only Plan Mode. */
+    planMode?: boolean;
 }
 
 export type LiveEntry = StoredChatEntry & {
@@ -103,6 +107,9 @@ export type LiveEntry = StoredChatEntry & {
      *  the receipt's own fields; the one-tap way to the numbers stays the
      *  Journal's stats tab. */
     statsCard?: import('./statsCard').StatsCardSnapshot;
+    /** Ephemeral diagnostic snapshots for `/context` and `/doctor` (zero-LLM local commands). */
+    contextDiagnostic?: import('./diagnosticsCore').ContextDiagnosticSnapshot;
+    doctorDiagnostic?: import('./diagnosticsCore').DoctorDiagnosticSnapshot;
     /** The live-only "still working" line for a slow call; not persisted. */
     liveProgress?: string;
 };
@@ -129,6 +136,8 @@ export interface ChatSnapshot {
     /** Live Chat-surface runs, keyed by CONVERSATION id. */
     conversationRunning: Record<string, true>;
     signals: HarnessSignal[];
+    /** Session-scoped read-only Plan Mode flags, keyed by session id (shared across Desk & Chat). */
+    planMode: Record<string, true>;
 }
 
 /** One queued `[HARNESS SIGNAL …]` and the session that should receive it. */
@@ -178,11 +187,13 @@ const controllers = new Map<string, AbortController>();
  * dock's run state lives here (see the file header).
  */
 const conversationControllers = new Map<string, AbortController>();
+/** Session-scoped read-only Plan Mode state (shared across Desk & Chat). */
+const planModeBySid = new Map<string, boolean>();
 const listeners = new Set<() => void>();
 let saveTimer = 0;
 let storageWatched = false;
 
-let snapshot: ChatSnapshot = { sessions, activeId, running: {}, conversationRunning: {}, signals: [] };
+let snapshot: ChatSnapshot = { sessions, activeId, running: {}, conversationRunning: {}, signals: [], planMode: {} };
 
 /** Last-open session id, per user — so a reload returns to the same chat. */
 const activeKey = (user: string): string => `trade_chat_active_v1_${user}`;
@@ -192,7 +203,11 @@ const rebuild = (): void => {
     for (const id of controllers.keys()) running[id] = true;
     const conversationRunning: Record<string, true> = {};
     for (const id of conversationControllers.keys()) conversationRunning[id] = true;
-    snapshot = { sessions, activeId, running, conversationRunning, signals: pendingSignals };
+    const planMode: Record<string, true> = {};
+    for (const [id, enabled] of planModeBySid.entries()) {
+        if (enabled) planMode[id] = true;
+    }
+    snapshot = { sessions, activeId, running, conversationRunning, signals: pendingSignals, planMode };
 };
 
 // ── Session cap (mirrors trimForStorage) ───────────────────────────────────
@@ -308,7 +323,7 @@ const schedulePersist = (): void => {
             ...s,
             entries: s.entries
                 .filter(e => !e.streaming)
-                .map(({ streaming: _streaming, proposal: _proposal, settlementCorrection: _correction, tradeAction: _action, riskChange: _riskChange, aiSettingChange: _aiSetting, strategyActivation: _strategy, sessionPlan: _sessionPlan, ruleProposal: _ruleProposal, statsCard: _stats, liveProgress: _liveProgress, ...rest }) => rest),
+                .map(({ streaming: _streaming, proposal: _proposal, settlementCorrection: _correction, tradeAction: _action, riskChange: _riskChange, aiSettingChange: _aiSetting, strategyActivation: _strategy, sessionPlan: _sessionPlan, ruleProposal: _ruleProposal, statsCard: _stats, contextDiagnostic: _ctxDiag, doctorDiagnostic: _docDiag, liveProgress: _liveProgress, ...rest }) => rest),
             // openTrades / loggedTradeIds are runtime-only — persisted sessions
             // never carry them (a reload means "we have no live trade state"),
             // so strip them defensively here even though chatSessions.ts also
@@ -362,7 +377,7 @@ export const persistInterrupted = (): void => {
         flushEphemeralFor(undefined, false);
         const stored: ChatSession[] = sessions.map(s => ({
             ...s,
-            entries: s.entries.map(({ streaming, proposal: _proposal, settlementCorrection: _correction, tradeAction: _action, riskChange: _riskChange, aiSettingChange: _aiSetting, strategyActivation: _strategy, sessionPlan: _sessionPlan, ruleProposal: _ruleProposal, statsCard: _stats, liveProgress: _liveProgress, ...rest }) => (streaming ? { ...rest, interrupted: true } : rest)),
+            entries: s.entries.map(({ streaming, proposal: _proposal, settlementCorrection: _correction, tradeAction: _action, riskChange: _riskChange, aiSettingChange: _aiSetting, strategyActivation: _strategy, sessionPlan: _sessionPlan, ruleProposal: _ruleProposal, statsCard: _stats, contextDiagnostic: _ctxDiag, doctorDiagnostic: _docDiag, liveProgress: _liveProgress, ...rest }) => (streaming ? { ...rest, interrupted: true } : rest)),
             openTrades: undefined,
             loggedTradeIds: undefined,
         }));
@@ -533,6 +548,7 @@ export const removeSession = (id: string): string => {
     ensureLoaded();
     controllers.get(id)?.abort();
     controllers.delete(id);
+    planModeBySid.delete(id);
     // Queued harness signals bound to a deleted session can never drain (the
     // dock's drain only takes signals for a LIVE session) — they sat until
     // cap eviction, carrying records the seat was promised. Drop them.
@@ -918,6 +934,7 @@ export const resetForUserSwitch = (): void => {
     controllers.clear();
     for (const c of conversationControllers.values()) { try { c.abort(); } catch { /* older runtimes */ } }
     conversationControllers.clear();
+    planModeBySid.clear();
     if (saveTimer) window.clearTimeout(saveTimer);
     saveTimer = 0;
     sessions = [];
@@ -928,12 +945,38 @@ export const resetForUserSwitch = (): void => {
     ensureLoaded();
 };
 
+/** Read session-scoped Plan Mode state (defaults to false). */
+export const getPlanMode = (sid?: string): boolean => {
+    ensureLoaded();
+    const target = sid ?? activeId;
+    return target ? planModeBySid.get(target) === true : false;
+};
+
+/** Set session-scoped Plan Mode state and notify subscribers across Desk & Chat. */
+export const setPlanMode = (enabled: boolean, sid?: string): boolean => {
+    ensureLoaded();
+    const target = sid ?? activeId;
+    if (!target) return false;
+    const prev = planModeBySid.get(target) === true;
+    if (prev !== enabled) {
+        if (enabled) planModeBySid.set(target, true);
+        else planModeBySid.delete(target);
+        publish();
+    }
+    return enabled;
+};
+
+/** Toggle session-scoped Plan Mode state and return the new boolean value. */
+export const togglePlanMode = (sid?: string): boolean =>
+    setPlanMode(!getPlanMode(sid), sid);
+
 /** Test hook: reset the singleton between suites. */
 export const __resetForTests = (): void => {
     for (const c of controllers.values()) c.abort();
     controllers.clear();
     for (const c of conversationControllers.values()) c.abort();
     conversationControllers.clear();
+    planModeBySid.clear();
     listeners.clear();
     if (saveTimer) window.clearTimeout(saveTimer);
     saveTimer = 0;
@@ -942,5 +985,5 @@ export const __resetForTests = (): void => {
     loaded = false;
     loadedFor = '';
     pendingSignals = [];
-    snapshot = { sessions, activeId, running: {}, conversationRunning: {}, signals: [] };
+    snapshot = { sessions, activeId, running: {}, conversationRunning: {}, signals: [], planMode: {} };
 };

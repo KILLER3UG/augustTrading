@@ -25,7 +25,7 @@ import ModelChip from '../../shared/ModelChip';
 import ChatAttachmentStrip from './ChatAttachmentStrip';
 import ComposerWorkspaceRow from './ComposerWorkspaceRow';
 import * as chatStore from '../../../services/trade/chatStore';
-import { parseComposerRefs } from '../../../utils/composerRefs';
+import { parseComposerRefs, SLASH_COMMAND_SUGGESTIONS } from '../../../utils/composerRefs';
 
 interface ChatComposerProps {
     /** Desk dock vs centered Chat focus view. */
@@ -87,6 +87,9 @@ interface ChatComposerProps {
     onTogglePicker: () => void;
     botName: string | null;
     contextAt: number | null;
+    /** Session-scoped read-only Plan Mode flag and toggle callback. */
+    planMode?: boolean;
+    onTogglePlanMode?: () => void;
 }
 
 /**
@@ -114,7 +117,7 @@ const ChatComposer: React.FC<ChatComposerProps> = ({
     effort, changeEffort, modelIssue, provider, selectedChatModel,
     changeSoloModel, providers, onRefreshModels, attachments, removeAttachment, fileInputRef,
     attachFiles, showAttachMenu, setShowAttachMenu, captureChart, onCaptureChart, composerRef,
-    panelCount, pickerOpen, onTogglePicker, botName, contextAt,
+    panelCount, pickerOpen, onTogglePicker, botName, contextAt, planMode = false, onTogglePlanMode,
 }) => {
     // The field is one line at rest and grows with the draft, up to a ceiling;
     // a fixed `min-h-[56px]` gave a one-line "what about now?" two lines of
@@ -160,6 +163,18 @@ const ChatComposer: React.FC<ChatComposerProps> = ({
     const parsedRefs = parseComposerRefs(draft);
     const refChips = [...parsedRefs.refs.shapes, ...parsedRefs.refs.timeframes, ...parsedRefs.refs.skills.map(sk => `skill:${sk}`), ...parsedRefs.refs.plans.map(pl => `plan:${pl}`)];
 
+    // Slash-command autocomplete: surfaces when typing `/` without whitespace
+    // (hides once an exact command is typed so Enter submits cleanly).
+    const trimmedLeading = draft.trimStart();
+    const slashToken = /^\/([a-z]*)$/i.exec(trimmedLeading);
+    const slashMatches = slashToken
+        ? SLASH_COMMAND_SUGGESTIONS.filter(s => s.command.startsWith(slashToken[1].toLowerCase()))
+        : [];
+    const exactSlashMatch = slashToken
+        ? SLASH_COMMAND_SUGGESTIONS.some(s => s.command === slashToken[1].toLowerCase())
+        : false;
+    const showSlashMenu = ready && slashMatches.length > 0 && !exactSlashMatch;
+
     // The attach menu is a click-outside popover, so it owns Escape too — the
     // same contract the symbol picker and the timeframe menus keep.
     useEscapeClose(showAttachMenu, () => setShowAttachMenu(false));
@@ -186,7 +201,32 @@ const ChatComposer: React.FC<ChatComposerProps> = ({
                 onRemove={removeAttachment}
             />
         )}
-        <div className="rounded-[20px] border border-white/[0.07] bg-zinc-900/90 px-3.5 pb-2.5 pt-3 shadow-[0_8px_28px_rgba(0,0,0,0.32)] transition-[border-color,background-color,box-shadow] duration-150 ease-[var(--ease-out-expo)] focus-within:border-white/[0.15] focus-within:bg-zinc-900">
+        <div className="relative rounded-[20px] border border-white/[0.07] bg-zinc-900/90 px-3.5 pb-2.5 pt-3 shadow-[0_8px_28px_rgba(0,0,0,0.32)] transition-[border-color,background-color,box-shadow] duration-150 ease-[var(--ease-out-expo)] focus-within:border-white/[0.15] focus-within:bg-zinc-900">
+            {showSlashMenu && (
+                <div
+                    data-testid="slash-command-menu"
+                    role="listbox"
+                    aria-label="Slash commands"
+                    className="absolute bottom-full left-0 right-0 z-shield mb-1.5 max-h-56 overflow-y-auto rounded-xl border border-white/[0.08] bg-zinc-900/95 p-1 shadow-elevated"
+                >
+                    {slashMatches.map(item => (
+                        <button
+                            key={item.command}
+                            type="button"
+                            role="option"
+                            data-testid={`slash-option-${item.command}`}
+                            onClick={() => {
+                                setDraft(`/${item.command}`);
+                                composerRef.current?.focus();
+                            }}
+                            className="flex w-full items-center justify-between gap-3 rounded-control px-2.5 py-1.5 text-left text-ui-dense transition-colors hover:bg-white/[0.06]"
+                        >
+                            <span className="font-mono font-medium text-zinc-100">{item.usage}</span>
+                            <span className="truncate text-ui-2xs text-zinc-500">{item.description}</span>
+                        </button>
+                    ))}
+                </div>
+            )}
             <textarea
                 ref={composerRef}
                 data-testid="composer-input"
@@ -195,6 +235,13 @@ const ChatComposer: React.FC<ChatComposerProps> = ({
                 disabled={!ready}
                 onChange={ev => setDraft(ev.target.value)}
                 onKeyDown={ev => {
+                    // Shift+Tab toggles read-only Plan Mode strictly when focus
+                    // sits inside the composer textarea (never hijacks global tabbing).
+                    if (ev.key === 'Tab' && ev.shiftKey) {
+                        ev.preventDefault();
+                        onTogglePlanMode?.();
+                        return;
+                    }
                     // Esc while a run is live aborts it (the keyboard twin of
                     // the Stop control) — and never wipes the draft.
                     if (ev.key === 'Escape' && busy) {
@@ -278,6 +325,17 @@ const ChatComposer: React.FC<ChatComposerProps> = ({
                     )}
                 </div>
                 <div className="ml-auto flex min-w-0 flex-1 items-center justify-end gap-2" data-testid="composer-model-and-send">
+                    {planMode && (
+                        <button
+                            type="button"
+                            onClick={onTogglePlanMode}
+                            data-testid="plan-mode-pill"
+                            title="Plan Mode (read-only) — click or press Shift+Tab to unlock execution"
+                            className="inline-flex shrink-0 items-center gap-1 rounded-full border border-hairline bg-zinc-800/90 px-2 py-0.5 font-mono text-ui-2xs uppercase tracking-wider text-zinc-200 transition-colors hover:bg-zinc-700"
+                        >
+                            PLAN · read-only
+                        </button>
+                    )}
                     {!isPanel && (
                         <ModelChip providers={providers} value={selectedChatModel} onChange={changeSoloModel}
                             onRefreshModels={onRefreshModels} issue={modelIssue} fallbackLabel={provider?.name}

@@ -96,11 +96,15 @@ export interface TradeProposalCardProps {
     guardBlock?: string | null;
     /** Non-blocking session-guard lines (budget used, equity unset). */
     guardWarnings?: string[];
+    /** True when read-only Plan Mode is active — shows conscious unlock control. */
+    planMode?: boolean;
+    /** Disable Plan Mode without clearing this card. */
+    onUnlockPlanMode?: () => void;
 }
 
 const TradeProposalCard: React.FC<TradeProposalCardProps> = ({
     proposal, entryId, canLog, awaitingLog = false, leverage, logNote,
-    guardBlock = null, guardWarnings = [],
+    guardBlock = null, guardWarnings = [], planMode = false, onUnlockPlanMode,
     getMark, presentedAt, undoTick = 0, onUndoWindowClose, onApprove, onReject, onAskWhy, onUndo,
 }) => {
     // The card shows levels the moment the model names them, but the probability,
@@ -468,18 +472,23 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({
                     {canLog && (
                         <button type="button"
                             onClick={() => {
+                                if (planMode) return;
                                 if (needsStaleConfirm) { setStaleAcknowledged(true); return; }
                                 onApprove();
                             }}
-                            disabled={awaitingLog || !!refused || !!guardBlock}
-                            title={refused
-                                ? 'The gate refused this plan; the reason is printed above.'
-                                : guardBlock
-                                    ? 'The session guard stands down; the reason is printed above.'
-                                    : undefined}
+                            disabled={planMode || awaitingLog || !!refused || !!guardBlock}
+                            title={planMode
+                                ? 'Plan Mode is active (read-only). Click "Unlock execution" to approve.'
+                                : refused
+                                    ? 'The gate refused this plan; the reason is printed above.'
+                                    : guardBlock
+                                        ? 'The session guard stands down; the reason is printed above.'
+                                        : undefined}
                             data-testid="proposal-approve"
                             className="rounded-control bg-zinc-100 px-2.5 py-1 text-ui-dense font-medium text-zinc-950 transition-colors hover:bg-white disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-300">
-                            {refused
+                            {planMode
+                                ? 'Locked (Plan Mode)'
+                                : refused
                                 ? 'Refused by the gate'
                                 : guardBlock
                                     ? 'Guard stands down'
@@ -488,6 +497,16 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({
                                     : needsStaleConfirm
                                         ? 'Re-confirm: approve anyway'
                                         : 'Approve — log & monitor'}
+                        </button>
+                    )}
+                    {planMode && onUnlockPlanMode && (
+                        <button
+                            type="button"
+                            onClick={onUnlockPlanMode}
+                            data-testid="plan-mode-unlock-btn"
+                            className="rounded-control border border-hairline bg-zinc-900 px-2.5 py-1 text-ui-dense font-medium text-zinc-100 transition-colors hover:bg-zinc-800"
+                        >
+                            Unlock execution
                         </button>
                     )}
                     <button type="button"

@@ -90,7 +90,7 @@ import { useSessionGuardVerdict } from '../../hooks/useSessionGuard';
 import { useEscapeClose } from '../../hooks/useEscapeClose';
 import * as watchService from '../../services/trade/watchService';
 import * as levelWatch from '../../services/trade/levelWatchService';
-import { slashTemplateOf, expandSlashTemplate } from '../../utils/composerRefs';
+import { slashTemplateOf, expandSlashTemplate, parsePlanSlashArgs } from '../../utils/composerRefs';
 import { buildHandoffCheckpoint } from '../../utils/handoffCheckpoint';
 const AutonomyControl = React.lazy(() => import('./panels/AutonomyDrawer').then(m => ({ default: m.AutonomyControl })));
 import ChatHistoryPalette from './panels/ChatHistoryPalette';
@@ -818,6 +818,100 @@ ${riskConstitution}`
         const template = slashTemplateOf(raw);
         if (!template) return runnerSend(raw, retryOf);
         const rest = raw.trim().slice(('/' + template).length);
+        if (template === 'plan') {
+            setDraft('');
+            const sid = activeSession.id;
+            const parsed = parsePlanSlashArgs(rest);
+            if (parsed.action === 'invalid') {
+                chatStore.mutate(sid, st => ({
+                    ...st,
+                    updatedAt: Date.now(),
+                    entries: [
+                        ...st.entries,
+                        { id: newId('u'), role: 'user' as const, text: raw.trim(), tools: [], at: Date.now() },
+                        { id: newId('a'), role: 'ai' as const, text: parsed.usage, tools: ['Plan Mode · invalid argument (0 LLM tokens)'], notice: true, at: Date.now() },
+                    ],
+                }));
+                return;
+            }
+            const next = parsed.action === 'toggle'
+                ? chatStore.togglePlanMode(sid)
+                : chatStore.setPlanMode(parsed.action === 'on', sid);
+            const receiptText = next
+                ? 'Plan Mode ON (read-only) — execution, price watches, and memory/skill writes are locked. Verify math & chart levels, then click "Unlock execution" or run /plan off.'
+                : 'Plan Mode OFF — execution and write tools unlocked.';
+            chatStore.mutate(sid, st => ({
+                ...st,
+                updatedAt: Date.now(),
+                entries: [
+                    ...st.entries,
+                    { id: newId('u'), role: 'user' as const, text: raw.trim(), tools: [], at: Date.now() },
+                    { id: newId('a'), role: 'ai' as const, text: '', tools: [receiptText], notice: true, at: Date.now() },
+                ],
+            }));
+            return;
+        }
+        if (template === 'context') {
+            setDraft('');
+            const { collectContextDiagnostic } = await import('../../services/trade/diagnosticsRuntime');
+            const sid = activeSession.id;
+            const snapshot = collectContextDiagnostic({
+                systemPromptText: systemPromptFor(boundBot),
+                entries,
+                provider,
+            });
+            chatStore.mutate(sid, st => ({
+                ...st,
+                updatedAt: Date.now(),
+                entries: [
+                    ...st.entries,
+                    { id: newId('u'), role: 'user' as const, text: '/context', tools: [], at: Date.now() },
+                    {
+                        id: newId('a'),
+                        role: 'ai' as const,
+                        text: '',
+                        tools: [`Context · ${snapshot.totalTokens.toLocaleString()} / ${snapshot.windowTokens.toLocaleString()} tokens (${snapshot.pctUsed}%) · 0 LLM tokens`],
+                        contextDiagnostic: snapshot,
+                        at: Date.now(),
+                    },
+                ],
+            }));
+            return;
+        }
+        if (template === 'doctor') {
+            setDraft('');
+            const { collectDoctorDiagnostic } = await import('../../services/trade/diagnosticsRuntime');
+            const sid = activeSession.id;
+            const snap = getChartSnapshot?.();
+            const snapshot = await collectDoctorDiagnostic({
+                provider,
+                effort,
+                symbol,
+                interval,
+                sessionId: sid,
+                planMode: chatStore.getPlanMode(sid),
+                markPrice: snap?.markPrice ?? null,
+                modelDrawings,
+            });
+            const passCount = snapshot.checks.filter(c => c.status === 'PASS').length;
+            chatStore.mutate(sid, st => ({
+                ...st,
+                updatedAt: Date.now(),
+                entries: [
+                    ...st.entries,
+                    { id: newId('u'), role: 'user' as const, text: '/doctor', tools: [], at: Date.now() },
+                    {
+                        id: newId('a'),
+                        role: 'ai' as const,
+                        text: '',
+                        tools: [`Doctor · ${snapshot.overall} (${passCount}/${snapshot.checks.length} PASS) · 0 LLM tokens`],
+                        doctorDiagnostic: snapshot,
+                        at: Date.now(),
+                    },
+                ],
+            }));
+            return;
+        }
         if (template === 'dream') {
             setDraft('');
             const { runMemoryDream, formatDreamResultSummary } = await import('../../services/learning/memoryDream');
@@ -857,7 +951,7 @@ ${riskConstitution}`
             return;
         }
         return runnerSend(expandSlashTemplate(template, { symbol, interval }, rest), retryOf);
-    }, [runnerSend, getChartSnapshot, symbol, interval, activeSession]);
+    }, [runnerSend, getChartSnapshot, symbol, interval, activeSession, systemPromptFor, boundBot, entries, provider, effort, modelDrawings]);
 
 
     // ── Per-session composer memory ─────────────────────────────────────────
@@ -1429,6 +1523,14 @@ ${riskConstitution}`
     const quickPrompts = useMemo(() => buildQuickPrompts(symbol, interval), [symbol, interval]);
     /** ONE composer element, mounted in the centered group while the canvas is
      *  empty (Chat layout) and below the transcript otherwise. */
+    const activePlanMode = snap.planMode[activeId] === true;
+    const handleTogglePlanMode = useCallback((): void => {
+        chatStore.togglePlanMode(activeId);
+    }, [activeId]);
+    const handleUnlockPlanMode = useCallback((): void => {
+        chatStore.setPlanMode(false, activeId);
+    }, [activeId]);
+
     const composerNode = (
         <ChatComposer
             layoutMode={layoutMode}
@@ -1469,6 +1571,8 @@ ${riskConstitution}`
             onTogglePicker={() => setPanelPickerFor(panelPickerFor === activeId ? null : activeId)}
             botName={boundBot ? boundBot.name : null}
             contextAt={contextAt}
+            planMode={activePlanMode}
+            onTogglePlanMode={handleTogglePlanMode}
         />
     );
 
@@ -1810,6 +1914,8 @@ ${riskConstitution}`
                         onConfirmRuleProposal={onConfirmRuleProposal}
                         onDismissRuleProposal={onDismissRuleProposal}
                         onRevertRuleProposal={onRevertRuleProposal}
+                        planMode={activePlanMode}
+                        onUnlockPlanMode={handleUnlockPlanMode}
                     />
                 )}
                 </div>

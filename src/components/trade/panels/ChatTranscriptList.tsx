@@ -50,6 +50,7 @@ import {
     ruleProposalStateOf, ruleProposalRevertOf, type RuleProposal,
 } from '../../../services/learning/candidateRuleLoop';
 import StatsCard from './StatsCard';
+import { ContextDiagnosticCard, DoctorDiagnosticCard } from './DiagnosticCards';
 import { getArmedPlans } from '../../../services/trade/levelWatchService';
 import type { GuardEnforcement } from '../../../services/validation/SessionGuardService';
 import type { LoggedTrade } from '../../../types';
@@ -282,6 +283,9 @@ interface ChatTranscriptListProps {
     onConfirmRuleProposal?: (proposal: RuleProposal, sessionId?: string) => void;
     onDismissRuleProposal?: (proposal: RuleProposal) => void;
     onRevertRuleProposal?: (proposal: RuleProposal, sessionId?: string) => void;
+    /** Read-only Plan Mode state + unlock handler for TradeProposalCard. */
+    planMode?: boolean;
+    onUnlockPlanMode?: () => void;
 }
 
 const ChatTranscriptList: React.FC<ChatTranscriptListProps> = ({
@@ -296,6 +300,7 @@ const ChatTranscriptList: React.FC<ChatTranscriptListProps> = ({
     onConfirmStrategyActivation, onDismissStrategyActivation, onRevertStrategyActivation,
     onConfirmSessionPlan, onDismissSessionPlan, onRevertSessionPlan,
     onConfirmRuleProposal, onDismissRuleProposal, onRevertRuleProposal,
+    planMode = false, onUnlockPlanMode,
 }) => {
     /** Re-render trigger for the module-scope proposal dispositions (see
      *  proposalDisposition): the disposition itself must SURVIVE a dock
@@ -799,6 +804,12 @@ const ChatTranscriptList: React.FC<ChatTranscriptListProps> = ({
                         {e.statsCard && (
                             <StatsCard snapshot={e.statsCard} />
                         )}
+                        {e.contextDiagnostic && (
+                            <ContextDiagnosticCard snapshot={e.contextDiagnostic} />
+                        )}
+                        {e.doctorDiagnostic && (
+                            <DoctorDiagnosticCard snapshot={e.doctorDiagnostic} />
+                        )}
                         {e.proposal && (!proposalStateOf(e.id) || (proposalStateOf(e.id) === 'logged' && !!undoWindowOf(e.id))) && (
                             <TradeProposalCard
                                 proposal={e.proposal}
@@ -806,6 +817,8 @@ const ChatTranscriptList: React.FC<ChatTranscriptListProps> = ({
                                 canLog={!!onLogProposedTrade}
                                 guardBlock={sessionGuard?.block ?? null}
                                 guardWarnings={sessionGuard?.warnings ?? []}
+                                planMode={planMode}
+                                onUnlockPlanMode={onUnlockPlanMode}
                                 logNote={e.error
                                     ? 'This plan arrived on a run that stopped before it finished — the rest of the answer never came.'
                                     : undefined}
@@ -900,8 +913,8 @@ const ChatTranscriptList: React.FC<ChatTranscriptListProps> = ({
     const itemContent = useCallback((index: number, entry: LiveEntry) => renderEntryRef.current(index, entry), []);
     const virtuosoContext = useMemo(() => ({
         proposalTick, decisionTick, awaitingLogEntryId, pinnedMessageIds, sessionGuard,
-        trades, symbol, resolveVerdictByIdentity, answerStreamingFlags,
-    }), [proposalTick, decisionTick, awaitingLogEntryId, pinnedMessageIds, sessionGuard, trades, symbol, resolveVerdictByIdentity, answerStreamingFlags]);
+        trades, symbol, resolveVerdictByIdentity, answerStreamingFlags, planMode,
+    }), [proposalTick, decisionTick, awaitingLogEntryId, pinnedMessageIds, sessionGuard, trades, symbol, resolveVerdictByIdentity, answerStreamingFlags, planMode]);
 
     return (
         <Virtuoso

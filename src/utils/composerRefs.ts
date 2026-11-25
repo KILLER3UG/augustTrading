@@ -65,17 +65,49 @@ export const focusLineForRefs = (refs: ComposerRefs): string => {
     return parts.length > 0 ? `[TRADER FOCUS — prioritize: ${parts.join(' · ')}]` : '';
 };
 
-export const SLASH_TEMPLATES = ['brief', 'audit', 'scan', 'handoff', 'dream'] as const;
+export const SLASH_TEMPLATES = ['plan', 'context', 'doctor', 'dream', 'brief', 'audit', 'scan', 'handoff'] as const;
 export type SlashTemplate = (typeof SLASH_TEMPLATES)[number];
+
+export interface SlashCommandSuggestion {
+    command: SlashTemplate;
+    usage: string;
+    description: string;
+}
+
+export const SLASH_COMMAND_SUGGESTIONS: readonly SlashCommandSuggestion[] = [
+    { command: 'plan', usage: '/plan [on|off]', description: 'Toggle read-only Plan Mode (locks execution & writes)' },
+    { command: 'context', usage: '/context', description: 'Inspect session token breakdown & compaction headroom' },
+    { command: 'doctor', usage: '/doctor', description: 'Run 6-subsystem harness health diagnostics' },
+    { command: 'dream', usage: '/dream', description: 'Consolidate curated memory files (0 LLM tokens)' },
+    { command: 'brief', usage: '/brief [focus]', description: 'Structured multi-TF desk brief on active symbol' },
+    { command: 'audit', usage: '/audit [focus]', description: 'Counter-thesis check on every drawn #D shape' },
+    { command: 'scan', usage: '/scan [symbols]', description: 'Run multi-TF confluence scan across watchlist' },
+    { command: 'handoff', usage: '/handoff', description: 'Mint a fresh session with a compact checkpoint' },
+];
+
+export type PlanSlashAction =
+    | { action: 'toggle' }
+    | { action: 'on' }
+    | { action: 'off' }
+    | { action: 'invalid'; usage: string };
+
+/** Parse `/plan` arguments safely so trailing whitespace or invalid args never fall through to LLM send. */
+export const parsePlanSlashArgs = (rest: string): PlanSlashAction => {
+    const arg = (rest ?? '').trim().toLowerCase();
+    if (!arg) return { action: 'toggle' };
+    if (arg === 'on' || arg === 'true' || arg === 'enable') return { action: 'on' };
+    if (arg === 'off' || arg === 'false' || arg === 'disable') return { action: 'off' };
+    return { action: 'invalid', usage: 'Usage: `/plan`, `/plan on`, or `/plan off` (Shift+Tab also toggles when focused in the composer).' };
+};
 
 /** The draft's slash template, or null. Matches only at position 0. */
 export const slashTemplateOf = (text: string): SlashTemplate | null => {
-    const m = /^\/(brief|audit|scan|handoff|dream)\b/.exec(text.trim());
-    return m ? (m[1] as SlashTemplate) : null;
+    const m = /^\/(plan|context|doctor|dream|brief|audit|scan|handoff)\b/i.exec(text.trim());
+    return m ? (m[1].toLowerCase() as SlashTemplate) : null;
 };
 
-/** Expand a NON-special slash template into its desk instruction. `/handoff`
- *  and `/dream` are handled by the caller directly. */
+/** Expand a NON-special slash template into its desk instruction. `/plan`,
+ *  `/context`, `/doctor`, `/handoff`, and `/dream` are handled locally. */
 export const expandSlashTemplate = (
     template: SlashTemplate,
     ctx: { symbol: string; interval: string },
@@ -89,6 +121,9 @@ export const expandSlashTemplate = (
             return `AUDIT my current chart setup on ${ctx.symbol} ${ctx.interval}: run the counter-thesis check on every #D shape on screen (strongest case against each), verify the levels against the tape, and flag anything whose invalidation has already broken.${tail ? ` Focus: ${tail}` : ''}`;
         case 'scan':
             return `Scan for confluence on my watchlist: run scan_confluence across the symbols I trade and rank what agrees across timeframes.${tail ? ` Symbols: ${tail}` : ''}`;
+        case 'plan':
+        case 'context':
+        case 'doctor':
         case 'handoff':
         case 'dream':
             return tail || '';

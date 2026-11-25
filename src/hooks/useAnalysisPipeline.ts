@@ -692,6 +692,112 @@ export function useAnalysisPipeline(params: UseAnalysisPipelineParams) {
             }], activeConversationId);
         };
 
+        const trimmedCmd = effectiveInput.trim();
+        if (/^\/plan\b/i.test(trimmedCmd)) {
+            const [{ parsePlanSlashArgs }, chatStore] = await Promise.all([
+                import('../utils/composerRefs'),
+                import('../services/trade/chatStore'),
+            ]);
+            const rest = trimmedCmd.slice('/plan'.length);
+            const parsed = parsePlanSlashArgs(rest);
+            setInput('');
+            if (parsed.action === 'invalid') {
+                updateMessages(prev => [...prev, {
+                    id: `user-${Date.now()}`,
+                    role: MessageRole.USER,
+                    text: trimmedCmd,
+                    createdAt: new Date().toISOString(),
+                }, {
+                    id: `plan-${Date.now() + 1}`,
+                    role: MessageRole.AI,
+                    text: parsed.usage,
+                    toolEvents: ['Plan Mode · invalid argument (0 LLM tokens)'],
+                    createdAt: new Date().toISOString(),
+                }], activeConversationId);
+                return { ok: true };
+            }
+            const sid = chatStore.getActiveId();
+            const next = parsed.action === 'toggle'
+                ? chatStore.togglePlanMode(sid)
+                : chatStore.setPlanMode(parsed.action === 'on', sid);
+            const msg = next
+                ? 'Plan Mode ON (read-only) — execution, price watches, and memory/skill writes are locked.'
+                : 'Plan Mode OFF — execution and write tools unlocked.';
+            updateMessages(prev => [...prev, {
+                id: `user-${Date.now()}`,
+                role: MessageRole.USER,
+                text: trimmedCmd,
+                createdAt: new Date().toISOString(),
+            }, {
+                id: `plan-${Date.now() + 1}`,
+                role: MessageRole.AI,
+                text: msg,
+                toolEvents: [msg],
+                createdAt: new Date().toISOString(),
+            }], activeConversationId);
+            return { ok: true };
+        }
+
+        if (/^\/context\b/i.test(trimmedCmd)) {
+            const [{ collectContextDiagnostic }, chatStore] = await Promise.all([
+                import('../services/trade/diagnosticsRuntime'),
+                import('../services/trade/chatStore'),
+            ]);
+            const activeSess = chatStore.getActiveSession();
+            const snapshot = collectContextDiagnostic({
+                systemPromptText: '',
+                entries: activeSess?.entries ?? [],
+                provider: enabledProviders[0]?.config ?? null,
+            });
+            setInput('');
+            updateMessages(prev => [...prev, {
+                id: `user-${Date.now()}`,
+                role: MessageRole.USER,
+                text: '/context',
+                createdAt: new Date().toISOString(),
+            }, {
+                id: `ctx-${Date.now() + 1}`,
+                role: MessageRole.AI,
+                text: '',
+                toolEvents: [`Context · ${snapshot.totalTokens.toLocaleString()} / ${snapshot.windowTokens.toLocaleString()} tokens (${snapshot.pctUsed}%) · 0 LLM tokens`],
+                contextDiagnostic: snapshot,
+                createdAt: new Date().toISOString(),
+            }], activeConversationId);
+            return { ok: true };
+        }
+        if (/^\/doctor\b/i.test(trimmedCmd)) {
+            const [{ collectDoctorDiagnostic }, chatStore] = await Promise.all([
+                import('../services/trade/diagnosticsRuntime'),
+                import('../services/trade/chatStore'),
+            ]);
+            const activeSess = chatStore.getActiveSession();
+            const sid = activeSess?.id ?? '';
+            const snapshot = await collectDoctorDiagnostic({
+                provider: enabledProviders[0]?.config ?? null,
+                effort: activeSess?.effort ?? 'auto',
+                symbol: activeSess?.symbol ?? 'BTCUSDT',
+                interval: activeSess?.interval ?? '15m',
+                sessionId: sid,
+                planMode: chatStore.getPlanMode(sid),
+            });
+            const passCount = snapshot.checks.filter(c => c.status === 'PASS').length;
+            setInput('');
+            updateMessages(prev => [...prev, {
+                id: `user-${Date.now()}`,
+                role: MessageRole.USER,
+                text: '/doctor',
+                createdAt: new Date().toISOString(),
+            }, {
+                id: `doc-${Date.now() + 1}`,
+                role: MessageRole.AI,
+                text: '',
+                toolEvents: [`Doctor · ${snapshot.overall} (${passCount}/${snapshot.checks.length} PASS) · 0 LLM tokens`],
+                doctorDiagnostic: snapshot,
+                createdAt: new Date().toISOString(),
+            }], activeConversationId);
+            return { ok: true };
+        }
+
         // P0 fix: Surface a clear error when no AI providers are enabled.
         // Previously this returned silently, leaving the user with no feedback.
         if (enabledProviders.length === 0) {
