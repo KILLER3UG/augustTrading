@@ -103,7 +103,7 @@ let cachedRawSnapshot: string | null | undefined = undefined;
 let cachedSettingsSnapshot: HarnessSettings | null = null;
 
 export const getHarnessSettings = (): HarnessSettings => {
-    let raw: string | null = null;
+    let raw: string | null;
     try {
         raw = typeof localStorage === 'undefined' ? null : localStorage.getItem(KEY);
     } catch {

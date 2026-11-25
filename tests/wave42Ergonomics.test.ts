@@ -47,7 +47,7 @@ describe('Wave 4.2 Ergonomics & Redacted Diagnostics', () => {
         assert.equal(clean.nested['x-api-key'], '[REDACTED]');
         assert.equal(clean.nested.password, '[REDACTED]');
         assert.equal(clean.nested.secret, '[REDACTED]');
-        assert.equal(clean.nested.headers[0], 'Authorization: Bearer [REDACTED]');
+        assert.equal(clean.nested.headers[0], 'Authorization: [REDACTED]');
         assert.equal(clean.windowTokens, 128000);
         assert.equal(clean.totalTokens, 2450);
 
