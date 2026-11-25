@@ -634,7 +634,7 @@ const TradeLogContent: React.FC<TradeLogContentProps> = ({
                                     ? 'bg-zinc-800 text-zinc-100'
                                     : 'text-zinc-500 hover:text-zinc-200 hover:bg-zinc-900'}`}
                         >
-                            {type === 'scalp' ? '◆ ' : type === 'swing' ? '◇ ' : ''}{type}
+                            {type === 'scalp' ? '◆ Scalp' : type === 'swing' ? '◇ Swing' : 'All'}
                         </button>
                     ))}
                     <span className="w-px h-4 bg-white/10 mx-0.5" />
@@ -649,7 +649,7 @@ const TradeLogContent: React.FC<TradeLogContentProps> = ({
                                     : 'text-zinc-500 hover:text-zinc-200 hover:bg-zinc-900'
                             }`}
                         >
-                            {o === TradeOutcome.ENTRY_NOT_HIT ? 'NO ENTRY' : o === TradeOutcome.PENDING ? 'OPEN' : o}
+                            {o === TradeOutcome.WIN ? 'Win' : o === TradeOutcome.LOSS ? 'Loss' : o === TradeOutcome.PENDING ? 'Open' : o === TradeOutcome.ENTRY_NOT_HIT ? 'No Entry' : 'Skipped'}
                         </button>
                     ))}
                     {outcomeFilter !== 'all' && (
@@ -669,13 +669,13 @@ const TradeLogContent: React.FC<TradeLogContentProps> = ({
                             data-testid={`trade-log-sim-filter-${mode}`}
                             onClick={() => setSimFilter(mode)}
                             aria-pressed={simFilter === mode}
-                            className={`px-2.5 py-1 text-ui-dense font-medium rounded-full capitalize transition-colors ${
+                            className={`px-2.5 py-1 text-ui-dense font-medium rounded-full transition-colors ${
                                 simFilter === mode
                                     ? 'bg-zinc-800 text-zinc-100'
                                     : 'text-zinc-500 hover:text-zinc-200 hover:bg-zinc-900'
                             }`}
                         >
-                            {mode === 'real' ? 'Live' : mode === 'simulated' ? 'Paper' : 'All'}
+                            {mode === 'real' ? 'Live' : mode === 'simulated' ? 'Paper' : 'All Sources'}
                         </button>
                     ))}
                 </div>

@@ -41,8 +41,8 @@ const SkillsLibrary: React.FC<{ studio?: React.ReactNode }> = ({ studio }) => {
                     <StatusPill tone="neutral">Draft · Active · Retired</StatusPill>
                 </div>
                 <p className="mt-1 text-ui-dense text-zinc-500">
-                    Named strategies the model proposed. Only an ACTIVE plan is shown to the desk —
-                    a draft is an unapproved proposal and no seat follows it.
+                    Named strategies August proposed. Only an ACTIVE plan is shown during analysis —
+                    a draft is an unapproved proposal and August does not apply it until you activate it.
                 </p>
                 <div className="mt-3">
                     <StrategyPlans />

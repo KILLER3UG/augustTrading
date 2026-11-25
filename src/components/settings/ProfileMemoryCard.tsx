@@ -30,9 +30,12 @@ import {
     restoreProfileMemory, flushProfileMemoryWrites, type ProfileMemoryEntry,
 } from '../../services/learning/profileMemory';
 import { memorySectionOf, memorySectionSlug, orderMemorySections } from '../../services/learning/memorySections';
+import { activeModelPair } from '../../services/infrastructure/ActiveModelConfig';
+import { formatModelDisplayName } from '../../utils/providerUtils';
 
 interface ProfileMemoryCardProps {
-    /** Settings → Memory still owns the model pick; the row lives in this list. */
+    /** Deprecated legacy prop kept optional for call-site compatibility; the
+     *  card always displays the single active model from AI setup. */
     memoryModel?: string;
     /** The notebook is the Learning surface's, so this is a door, not a copy. */
     onOpenNotebook?: () => void;
@@ -332,17 +335,22 @@ const ProfileMemoryCard: React.FC<ProfileMemoryCardProps> = ({ memoryModel, onOp
                     </div>
                 )}
 
-                {memoryModel && (
-                    <div className="flex items-center justify-between gap-6 rounded-control py-3 transition-colors hover:bg-white/[0.02]">
-                        <div className="min-w-0">
-                            <div className="text-ui-sm font-medium text-zinc-100">Memory model</div>
-                            <p className="mt-1 text-ui-sm leading-relaxed text-zinc-500">
-                                The model that reviews the notebook and drafts amendments.
-                            </p>
+                {(() => {
+                    const pair = activeModelPair();
+                    const activeId = pair ? pair.split('::').slice(1).join('::') : '';
+                    const activeLabel = activeId ? formatModelDisplayName(activeId) : 'Default from AI setup';
+                    return (
+                        <div className="flex items-center justify-between gap-6 rounded-control py-3 transition-colors hover:bg-white/[0.02]" data-testid="memory-active-model-row">
+                            <div className="min-w-0">
+                                <div className="text-ui-sm font-medium text-zinc-100">Active model</div>
+                                <p className="mt-1 text-ui-sm leading-relaxed text-zinc-500">
+                                    Uses your active model from AI setup.
+                                </p>
+                            </div>
+                            <span className="shrink-0 text-ui-sm text-zinc-300">{activeLabel}</span>
                         </div>
-                        <span className="shrink-0 text-ui-sm text-zinc-300">{memoryModel}</span>
-                    </div>
-                )}
+                    );
+                })()}
             </div>
 
             {entries.length === 0 ? (

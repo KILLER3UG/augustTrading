@@ -48,7 +48,7 @@ const StrategyStudio: React.FC<StrategyStudioProps> = ({
             <header className="mb-3 shrink-0">
                 <h2 className="font-serif text-ui-xl tracking-tight text-zinc-100">Skills</h2>
                 <p className="text-ui-dense text-zinc-500">
-                    One folder per skill: SKILL.md plus references, templates, scripts and assets.
+                    Reusable trading playbooks and procedures August can open on demand.
                 </p>
             </header>
             <div className="min-h-0 flex-1">

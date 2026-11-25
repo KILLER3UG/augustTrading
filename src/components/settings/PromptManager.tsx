@@ -198,7 +198,10 @@ const PromptManager: React.FC<PromptManagerProps> = ({ username }) => {
                 <div>
                     <h3 className="text-ui-lg font-semibold tracking-[-0.01em] text-zinc-100">Prompts</h3>
                     <p className="text-ui-sm text-zinc-500 mt-2 leading-relaxed">
-                        Every prompt sent to your models. Edits apply on the next analysis.
+                        System instructions August uses behind the scenes.
+                    </p>
+                    <p className="mt-2 text-ui-dense text-zinc-400" data-testid="prompts-advanced-note">
+                        Advanced — August manages prompts automatically; most traders never need to edit these.
                     </p>
                 </div>
                 {modifiedCount > 0 && (

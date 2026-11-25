@@ -15,6 +15,7 @@ import { getMemoryFiles, subscribeMemoryFilesChanged } from '../../../services/l
 import { isTraderLearningEnabled, setTraderLearningEnabled } from '../../../services/learning/traderLearner';
 import { getHarnessSettings, saveHarnessSettings } from '../../../utils/harnessSettings';
 import { SettingsGroup, SettingsPageHeader } from './shared';
+import { partitionMemoryFolders } from '../../../utils/uiFormatting';
 import type { SettingsTabProps } from './types';
 
 /** `SettingsTabProps`, narrowed to what this tab reads. An alias rather than an
@@ -87,6 +88,7 @@ const MemoryTab: React.FC<{ tab: MemoryTabProps }> = ({ tab: props }) => {
     // An entry's page IS the page — the reference drops the page title there and
     // leads with the back link, so the Memory heading belongs to the list only.
     const [detailOpen, setDetailOpen] = useState(false);
+    const [showEmptyFolders, setShowEmptyFolders] = useState(false);
     const [folders, setFolders] = useState<FolderCard[]>(() => folderCards());
     // The behavior switches live HERE (the Settings page), not on the entries
     // card — one home per concern. The values read from their services on
@@ -142,13 +144,13 @@ const MemoryTab: React.FC<{ tab: MemoryTabProps }> = ({ tab: props }) => {
                     the prompt. */}
                 <SettingsGroup
                     title="Memory behavior"
-                    description="What the seat's memory tools may read and write. With memory off, nothing is read from or saved to the notebook."
+                    description="Controls what August may read and remember across sessions. With memory off, nothing is read from or saved to your notebook."
                 >
                     <div className="py-3">
                         <BehaviorRow
                             icon={<FolderIcon className="h-4 w-4" aria-hidden="true" />}
                             title="Global memory"
-                            description="When enabled, the seat reads and updates your preferences, habits and long-term context across surfaces. When disabled, the memory tools are refused — nothing is read or saved."
+                            description="When enabled, August reads and updates your preferences, habits and long-term context across chats. When off, nothing is read or saved."
                             testid="global-memory-toggle"
                             control={onToggleGlobalMemory
                                 ? <ToggleSwitch checked={isGlobalMemoryEnabled !== false} onChange={onToggleGlobalMemory} label="Toggle Global Memory" />
@@ -157,75 +159,104 @@ const MemoryTab: React.FC<{ tab: MemoryTabProps }> = ({ tab: props }) => {
                         <BehaviorRow
                             icon={<BrainIcon className="h-4 w-4" aria-hidden="true" />}
                             title="Generate memory from chats"
-                            description="Allow August to generate memory from your chats and trading sessions."
+                            description="Allow August to save helpful long-term lessons from your chats and trading sessions."
                             testid="trader-learning-toggle"
                             control={<ToggleSwitch checked={learning} onChange={toggleLearning} label="Generate memory from chats" />}
                         />
                         <BehaviorRow
                             icon={<ShieldAlert className="h-4 w-4" aria-hidden="true" />}
                             title="Include sensitive topics in memory"
-                            description="Allow facts about health, finances or identity; secrets are always refused."
+                            description="Allow facts about finances, schedule or personal context; API keys and secrets are always blocked."
                             testid="memory-sensitive-toggle"
                             control={<ToggleSwitch checked={sensitive} onChange={toggleSensitive} label="Include sensitive topics in memory" />}
                         />
                         <BehaviorRow
                             icon={<BrainIcon className="h-4 w-4" aria-hidden="true" />}
                             title="Review turns for durable lessons"
-                            description="After a substantive turn, a zero-model pass may add a dated USER.md / MEMORY.md entry or a probation skill. Writes are receipted and reversible; the ledger and trades are never touched."
+                            description="After substantive sessions, August may automatically save a dated profile note or draft skill. Every update can be undone; your trade log is never modified."
                             testid="background-review-toggle"
                             control={<ToggleSwitch checked={backgroundReview} onChange={toggleBackgroundReview} label="Review turns for durable lessons" />}
                         />
                         <BehaviorRow
                             icon={<FolderIcon className="h-4 w-4" aria-hidden="true" />}
                             title="Periodic memory consolidation"
-                            description="Consolidate the two bounded memory files after 24 hours and 5 new sessions (or a manual trigger). Relative dates, duplicates and ledger contradictions are resolved before the hard caps are enforced."
+                            description="Clean up duplicates, resolve outdated notes, and keep your memory concise after 24 hours and 5 new sessions (or when you run /dream)."
                             testid="memory-dream-toggle"
                             control={<ToggleSwitch checked={memoryDream} onChange={toggleMemoryDream} label="Periodic memory consolidation" />}
                         />
                     </div>
                 </SettingsGroup>
 
-                {/* Notebook memory — one card per folder, with the folder's
-                    honest file count and its latest update. Opening a card
-                    lands on the Learning surface's notebook, the one home of
-                    these files. */}
-                {!detailOpen && (
-                    <div className="mt-7">
-                        <SettingsGroup
-                            title="Notebook memory"
-                            description="The folders the desk reads on every analysis. Open one to browse its files on the Learning surface."
-                        >
-                            <div className="py-3 grid gap-2 sm:grid-cols-2" data-testid="memory-folder-cards">
-                                {folders.map(f => (
-                                    <div key={f.id}
-                                        className="flex items-center justify-between gap-4 rounded-control border border-hairline bg-zinc-950/40 px-3 py-3">
-                                        <div className="flex items-center gap-3 min-w-0">
-                                            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-control bg-zinc-800 text-zinc-300">
-                                                <FolderIcon className="h-4 w-4" aria-hidden="true" />
-                                            </span>
-                                            <div className="min-w-0">
-                                                <div className="truncate text-ui-sm font-medium text-zinc-100">{f.name}</div>
-                                                <div className="text-ui-dense text-zinc-500">
-                                                    {f.count} memory file{f.count === 1 ? '' : 's'} · {f.updatedLabel}
-                                                </div>
-                                            </div>
+                {/* Notebook memory — populated folders first; empty folders stay tucked behind a quiet toggle. */}
+                {!detailOpen && (() => {
+                    const { active: activeFolders, empty: emptyFolders } = partitionMemoryFolders(folders);
+                    const renderFolder = (f: FolderCard): React.ReactNode => (
+                        <div key={f.id}
+                            className="flex items-center justify-between gap-4 rounded-control border border-hairline bg-zinc-950/40 px-3 py-3">
+                            <div className="flex items-center gap-3 min-w-0">
+                                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-control bg-zinc-800 text-zinc-300">
+                                    <FolderIcon className="h-4 w-4" aria-hidden="true" />
+                                </span>
+                                <div className="min-w-0">
+                                    <div className="truncate text-ui-sm font-medium text-zinc-100">{f.name}</div>
+                                    <div className="text-ui-dense text-zinc-500">
+                                        {f.count} memory file{f.count === 1 ? '' : 's'} · {f.updatedLabel}
+                                    </div>
+                                </div>
+                            </div>
+                            {openNotebook && (
+                                <button
+                                    type="button"
+                                    onClick={openNotebook}
+                                    data-testid={`memory-folder-open-${f.id}`}
+                                    className="shrink-0 rounded-control border border-zinc-800 px-2.5 py-1 text-ui-xs font-medium text-zinc-300 transition-colors hover:border-line hover:text-zinc-100"
+                                >
+                                    Open
+                                </button>
+                            )}
+                        </div>
+                    );
+                    return (
+                        <div className="mt-7">
+                            <SettingsGroup
+                                title="Notebook memory"
+                                description="Folders August reads before analyzing markets. Open one to view or edit notes."
+                            >
+                                <div className="py-3 space-y-3" data-testid="memory-folder-cards">
+                                    {activeFolders.length === 0 ? (
+                                        <p className="rounded-control border border-dashed border-hairline px-3 py-4 text-center text-ui-dense text-zinc-500">
+                                            No populated folders yet — folders appear here once notes are saved.
+                                        </p>
+                                    ) : (
+                                        <div className="grid gap-2 sm:grid-cols-2">
+                                            {activeFolders.map(renderFolder)}
                                         </div>
-                                        {openNotebook && (
+                                    )}
+                                    {emptyFolders.length > 0 && (
+                                        <div>
                                             <button
                                                 type="button"
-                                                onClick={openNotebook}
-                                                data-testid={`memory-folder-open-${f.id}`}
-                                                className="shrink-0 rounded-control border border-zinc-800 px-2.5 py-1 text-ui-xs font-medium text-zinc-300 transition-colors hover:border-line hover:text-zinc-100"
+                                                onClick={() => setShowEmptyFolders(v => !v)}
+                                                aria-expanded={showEmptyFolders}
+                                                data-testid="memory-empty-folders-toggle"
+                                                className="text-ui-dense font-medium text-zinc-400 transition-colors hover:text-zinc-100"
                                             >
-                                                Open
+                                                {showEmptyFolders
+                                                    ? 'Hide empty folders'
+                                                    : `Show ${emptyFolders.length} empty folder${emptyFolders.length === 1 ? '' : 's'}`}
                                             </button>
-                                        )}
-                                    </div>
-                                ))}
-                            </div>
-                        </SettingsGroup>
-                    </div>
-                )}
+                                            {showEmptyFolders && (
+                                                <div className="mt-2.5 grid gap-2 sm:grid-cols-2" data-testid="memory-empty-folders-list">
+                                                    {emptyFolders.map(renderFolder)}
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
+                            </SettingsGroup>
+                        </div>
+                    );
+                })()}
 
                 <ProfileMemoryCard
                     memoryModel={model}
@@ -235,13 +266,11 @@ const MemoryTab: React.FC<{ tab: MemoryTabProps }> = ({ tab: props }) => {
 
                 {/* The corrections log lives with the notebook it edits (owner
                     ruling 2026-11-03: no Approvals tab). Model amendments apply
-                    themselves; this keeps the before/after and the ONE Undo.
-                    A pending row exists only when a trader-requested edit
-                    deferred one to a human. */}
+                    themselves; this keeps the before/after and the ONE Undo. */}
                 <div className="mt-7">
                     <SettingsGroup
                         title="Corrections"
-                        description="Notes the desk changed with amend_memory. Applied directly — the before and after are kept here so a correction can be undone."
+                        description="Recent automatic memory edits. Before and after versions are kept here so any change can be undone."
                     >
                         <div className="py-3">
                             <AmendmentsInbox />

@@ -35,6 +35,8 @@ import { importSkillFiles, readSkillFiles, fetchSkillFromUrl, type SkillFileRead
 import { subscribeMemoryFilesChanged } from '../../services/learning/MemoryFilesService';
 import { rewriteSkillWithModel } from '../../services/learning/SkillFormatService';
 import { skillFormatIssues } from '../../utils/skillFrontmatter';
+import { getCachedSkillMetaMap, primeSkillMetaCache, type SkillMeta } from '../../services/learning/skillManage';
+import { humanizeSkillTitle } from '../../utils/uiFormatting';
 
 import type { ProviderConfig } from '../../types/provider';
 import { ArrowLeft, CodeIcon, Download, Eye, FileText, Layers, Pencil, Plus, Search, Trash2, Upload, Wrench } from '../shared/Icons';
@@ -101,15 +103,18 @@ export const SkillLibrary: React.FC<SkillLibraryProps> = ({
     const [tab, setTab] = useState<DetailTab>('contents');
     const [openFile, setOpenFile] = useState('SKILL.md');
     const [raw, setRaw] = useState(false);
+    const [metaMap, setMetaMap] = useState<Record<string, SkillMeta>>(() => getCachedSkillMetaMap());
     const fileInput = useRef<HTMLInputElement>(null);
     const folderInput = useRef<HTMLInputElement>(null);
 
     const refresh = useCallback(() => {
         setSkills(listSkillFiles());
+        setMetaMap(getCachedSkillMetaMap());
     }, []);
 
     useEffect(() => {
         refresh();
+        void primeSkillMetaCache().then(() => setMetaMap(getCachedSkillMetaMap()));
         return subscribeMemoryFilesChanged(() => refresh());
     }, [refresh]);
 
@@ -427,39 +432,50 @@ export const SkillLibrary: React.FC<SkillLibraryProps> = ({
                 )}
                 {filtered.map(skill => {
                     const isArmed = armed === skill.slug;
+                    const displayTitle = humanizeSkillTitle(skill.name, skill.slug);
+                    const meta = metaMap[skill.slug];
+                    const statusLabel = meta?.status === 'verified'
+                        ? 'Verified'
+                        : meta?.status === 'stale'
+                            ? 'Stale'
+                            : meta?.status === 'archived'
+                                ? 'Archived'
+                                : meta?.status === 'probation' || meta?.createdBy === 'agent' || meta?.createdBy === 'review'
+                                    ? 'Probation'
+                                    : null;
                     return (
                         <div key={skill.slug} className="relative">
                             <button
                                 type="button"
                                 onClick={() => choose(skill.slug)}
                                 data-testid="skills-catalog-card"
-                                aria-label={`Read ${skill.name}`}
+                                aria-label={`Read ${displayTitle}`}
                                 className="flex h-full w-full flex-col gap-1.5 rounded-control border border-hairline bg-zinc-900 p-3 pr-10 text-left transition-colors hover:border-line hover:bg-zinc-800/70 focus:outline-none focus-visible:ring-1 focus-visible:ring-zinc-500"
                             >
                                 <span className="flex items-center gap-2">
                                     <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-control bg-zinc-800 text-zinc-400">
                                         <Layers className="h-3.5 w-3.5" aria-hidden="true" />
                                     </span>
-                                    <span className="min-w-0 flex-1 truncate text-ui-base font-medium text-zinc-100">{skill.name}</span>
-                                </span>
-                                <span className="line-clamp-2 text-ui-dense text-zinc-500">{skill.description || 'No description'}</span>
-                                <span className="mt-auto flex items-center gap-2 pt-1 font-mono text-ui-2xs text-zinc-600">
-                                    rev {skill.version.slice(0, 8)} · {skill.bundled.length} support file{skill.bundled.length === 1 ? '' : 's'}
-                                    {issueCountBySlug.has(skill.slug) && (
+                                    <span className="min-w-0 flex-1 truncate text-ui-base font-medium text-zinc-100" title={displayTitle}>{displayTitle}</span>
+                                    {statusLabel && (
                                         <span
-                                            className="rounded-control border border-zinc-400/40 bg-zinc-400/10 px-1.5 py-0.5 font-sans text-zinc-300"
-                                            data-testid={`skill-format-flag-${skill.slug}`}
-                                            title="This skill does not follow the SKILL.md format"
+                                            data-testid={`skill-status-${skill.slug}`}
+                                            className={`shrink-0 rounded-control border px-1.5 py-0.5 text-ui-2xs font-medium ${
+                                                statusLabel === 'Verified'
+                                                    ? 'border-zinc-500/40 bg-zinc-800 text-zinc-200'
+                                                    : 'border-hairline bg-zinc-950/60 text-zinc-400'
+                                            }`}
                                         >
-                                            format · {issueCountBySlug.get(skill.slug)}
+                                            {statusLabel}
                                         </span>
                                     )}
                                 </span>
+                                <span className="line-clamp-2 text-ui-dense text-zinc-500">{skill.description || 'No description'}</span>
                             </button>
                             <button
                                 type="button"
                                 data-testid={`skill-delete-${skill.slug}`}
-                                aria-label={isArmed ? `Confirm delete ${skill.name}` : `Delete ${skill.name}`}
+                                aria-label={isArmed ? `Confirm delete ${displayTitle}` : `Delete ${displayTitle}`}
                                 title={isArmed ? 'Press again to delete this skill and its bundled files' : 'Delete'}
                                 onClick={() => {
                                     // Two presses, never one: the first arms the
@@ -523,9 +539,18 @@ export const SkillLibrary: React.FC<SkillLibraryProps> = ({
                     <Layers className="h-4 w-4" aria-hidden="true" />
                 </span>
                 <div className="min-w-0">
-                    <h3 className="truncate text-ui-lg font-semibold text-zinc-100" title={current.name}>{current.name}</h3>
+                    <h3 className="truncate text-ui-lg font-semibold text-zinc-100" title={humanizeSkillTitle(current.name, current.slug)}>{humanizeSkillTitle(current.name, current.slug)}</h3>
                     <p className="truncate font-mono text-ui-dense text-zinc-500">
-                        rev {current.version.slice(0, 8)} · {current.bundled.length} support file{current.bundled.length === 1 ? '' : 's'} · from the notebook
+                        rev {current.version.slice(0, 8)} · {current.bundled.length} support file{current.bundled.length === 1 ? '' : 's'} · from your notebook
+                        {issueCountBySlug.has(current.slug) && (
+                            <span
+                                className="ml-2 inline-block rounded-control border border-zinc-400/40 bg-zinc-400/10 px-1.5 py-0.5 font-sans text-ui-2xs text-zinc-300"
+                                data-testid={`skill-format-flag-${current.slug}`}
+                                title="This skill does not follow the SKILL.md format"
+                            >
+                                format · {issueCountBySlug.get(current.slug)}
+                            </span>
+                        )}
                     </p>
                 </div>
             </div>

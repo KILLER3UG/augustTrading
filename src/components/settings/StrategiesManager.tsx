@@ -243,9 +243,9 @@ const StrategiesManager: React.FC<StrategiesManagerProps> = ({
             <div className="px-8 pt-[60px] pb-4 shrink-0 space-y-3 lg:px-10">
                 <div className="flex items-start justify-between gap-3">
                     <div>
-                        <h3 className="text-ui-lg font-semibold tracking-[-0.01em] text-zinc-100">Strategies</h3>
+                        <h3 className="text-ui-lg font-semibold tracking-[-0.01em] text-zinc-100">Playbooks</h3>
                         <p className="text-ui-sm text-zinc-500 mt-2">
-                            Upload trading books (PDF) — a model summarizes them into strategies the desk follows.
+                            Upload trading books (PDF) — August summarizes them into playbooks you can toggle on for analysis.
                         </p>
                     </div>
                     {setIsStrategiesEnabled && (
@@ -304,10 +304,10 @@ const StrategiesManager: React.FC<StrategiesManagerProps> = ({
                 ) : docs.length === 0 ? (
                     <div className="rounded-bubble border border-dashed border-zinc-800 bg-zinc-900/40 px-6 py-12 text-center">
                         <BookmarkIcon className="w-8 h-8 text-zinc-500 mx-auto mb-3" aria-hidden="true" />
-                        <p className="text-ui-sm font-bold text-zinc-400">No strategy books yet</p>
+                        <p className="text-ui-sm font-bold text-zinc-400">No playbooks yet</p>
                         <p className="text-ui-dense text-zinc-600 mt-1 max-w-sm mx-auto leading-relaxed">
-                            Upload a trading PDF and it will be summarized into strategies here. Enable it and the desk
-                            will follow it like a human trader following the book.
+                            Upload a trading PDF and August will summarize it into a playbook. Enable it and
+                            analysis follows those rules automatically.
                         </p>
                     </div>
                 ) : docs.map(doc => {

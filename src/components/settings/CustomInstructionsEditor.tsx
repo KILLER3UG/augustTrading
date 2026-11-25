@@ -113,7 +113,6 @@ const CustomInstructionsEditor: React.FC<CustomInstructionsEditorProps> = ({
     customInstructions,
     setCustomInstructions,
     activeTab,
-    onTabChange,
 }) => {
     const currentInstructions = useMemo(() => customInstructions[activeTab] || [], [customInstructions, activeTab]);
 
@@ -158,23 +157,13 @@ const CustomInstructionsEditor: React.FC<CustomInstructionsEditorProps> = ({
         <div className="flex-1 overflow-y-auto pb-6 space-y-4 custom-scrollbar">
             <SettingsPageHeader
                 title="Instructions"
-                description="Define multiple custom instruction sets for how the AI should reason, behave, or filter trades. Select the mode below to manage its instructions."
+                description="Define custom rules for how August analyzes charts, manages risk, or formats answers."
             />
-
-            {/* Tabs for Mode Selection */}
-            <div className="flex space-x-1 bg-zinc-900 p-1 rounded-control border border-hairline">
-                <button
-                    onClick={() => onTabChange('general')}
-                    className={`flex-1 py-1.5 text-ui-xs font-bold uppercase tracking-wider rounded-control transition-colors duration-[150ms] ease-[var(--ease-snappy)] ${activeTab === 'general' ? 'bg-zinc-700 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}
-                >
-                    Standard
-                </button>
-            </div>
 
             {/* Word Count Progress */}
             <div className="bg-zinc-800 rounded-bubble p-3 border border-hairline">
                 <div className="flex justify-between items-center text-ui-xs font-mono mb-1.5">
-                    <span className="text-zinc-500 uppercase font-bold tracking-wider">Token Usage</span>
+                    <span className="text-zinc-500 uppercase font-bold tracking-wider">Word Limit</span>
                     <span className={`${totalWordCount > MAX_WORD_COUNT ? 'text-rose-400 font-bold' : 'text-zinc-400'}`}>
                         {totalWordCount} / {MAX_WORD_COUNT} words
                     </span>
