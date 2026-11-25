@@ -22,6 +22,19 @@ export const PLAYBOOK_IDS = [
 
 export type PlaybookId = typeof PLAYBOOK_IDS[number];
 
+/** Canonical setup names supported by historical OHLCV `setup_replay` (subset of `PLAYBOOK_IDS` that run over single-timeframe candles). */
+export const REPLAY_SUPPORTED_SETUPS = [
+    'turtle_soup',
+    'trend_pullback',
+    'wyckoff_spring',
+    'wyckoff_utad',
+    'sweep_structure_shift',
+    'vwap_reclaim',
+    'absorption_reversal',
+] as const;
+
+export type ReplaySetupName = (typeof REPLAY_SUPPORTED_SETUPS)[number];
+
 /** Normalise a caller-supplied id and prove it names a detector. */
 export const asPlaybookId = (value: unknown): PlaybookId | null => {
     if (typeof value !== 'string') return null;
