@@ -45,6 +45,7 @@
     "verify:signature": "node scripts/verify-release-signature.cjs",
     "replay:plans": "node scripts/replay-plans.cjs",
     "check:docs": "node scripts/check-docs.cjs",
+    "eval:trading": "tsx scripts/eval-trading.ts",
     "hooks:install": "git config core.hooksPath .githooks"
   },
   "dependencies": {
