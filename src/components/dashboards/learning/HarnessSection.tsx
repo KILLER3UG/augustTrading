@@ -160,7 +160,12 @@ export const HarnessSection: React.FC<HarnessSectionProps> = ({ closedWindowed, 
                 </div>
                 <div className="bg-zinc-800 rounded-bubble border border-hairline p-3">
                     <p className="text-ui-2xs text-zinc-500 uppercase tracking-wider mb-1">Drawdown</p>
-                    <p className="text-xl font-bold text-rose-400">{drawdown.open.toFixed(1)}%</p>
+                    <p
+                        data-testid="learning-drawdown-value"
+                        className={`text-xl font-bold ${drawdown.open < 0 ? 'text-rose-400' : 'text-zinc-100'}`}
+                    >
+                        {drawdown.open.toFixed(1)}%
+                    </p>
                     <p className="text-ui-2xs text-zinc-600">open · historical max {drawdown.max.toFixed(1)}%</p>
                 </div>
             </div>

@@ -5,6 +5,7 @@ interface ToggleSwitchProps {
     onChange: () => void;
     label?: string;
     disabled?: boolean;
+    testId?: string;
 }
 
 /**
@@ -12,7 +13,7 @@ interface ToggleSwitchProps {
  * five visually different toggle implementations (button-pill, checkbox,
  * CSS-only, inline-styled); this is the one they all delegate to.
  */
-export const ToggleSwitch: React.FC<ToggleSwitchProps> = ({ checked, onChange, label = 'Toggle setting', disabled = false }) => (
+export const ToggleSwitch: React.FC<ToggleSwitchProps> = ({ checked, onChange, label = 'Toggle setting', disabled = false, testId }) => (
     <button
         type="button"
         onClick={onChange}
@@ -20,6 +21,7 @@ export const ToggleSwitch: React.FC<ToggleSwitchProps> = ({ checked, onChange, l
         aria-checked={checked}
         aria-label={label}
         disabled={disabled}
+        data-testid={testId}
         className={`w-11 h-6 flex items-center rounded-full p-1 transition-colors duration-[150ms] ease-[var(--ease-snappy)] ${
             disabled ? 'opacity-50 cursor-not-allowed' : ''
         } ${checked ? 'bg-accent' : 'bg-zinc-700'}`}

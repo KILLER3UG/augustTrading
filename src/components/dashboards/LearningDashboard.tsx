@@ -1,10 +1,8 @@
 import React, { useMemo, useState } from 'react';
-import { BrainCircuit } from '../shared/Icons';
 import { LoggedTrade, TradeOutcome } from '../../types';
 import { decidedAtOf } from '../../utils/journalAnalytics';
 import { computeLearningProfile } from '../../services/learning/SelfLearningService';
 import { computeTopLessons } from '../../services/learning/MemoryFilesService';
-import { EmptyState } from '../ui/EmptyState';
 import { HarnessSection } from './learning/HarnessSection';
 import { LessonsSection } from './learning/LessonsSection';
 import { ProfileHeader } from './learning/ProfileHeader';
@@ -34,29 +32,52 @@ export const LearningDashboard: React.FC<LearningDashboardProps> = ({ trades }) 
         return trades.filter(t => new Date(decidedAtOf(t)).getTime() >= cutoff);
     }, [trades, windowDays]);
 
+    const totalClosed = useMemo(() => trades.filter(isClosed).length, [trades]);
     const closedWindowed = useMemo(() => windowedTrades.filter(isClosed), [windowedTrades]);
 
     const harnessSection = (
         <HarnessSection
             closedWindowed={closedWindowed}
-            totalClosed={trades.filter(isClosed).length}
+            totalClosed={totalClosed}
             windowDays={windowDays}
             onWindowDaysChange={setWindowDays}
         />
     );
     const lessonsSection = <LessonsSection topLessons={topLessons} closedWindowed={closedWindowed} />;
 
-    if (profile.totalAnalyzedTrades < 3) {
+    if (totalClosed === 0) {
+        return (
+            <div data-testid="learn-analytics" className="space-y-4 p-3 sm:p-4 overflow-y-auto custom-scrollbar">
+                <div className="flex items-center justify-between gap-2">
+                    <h4 className="text-ui-xs sm:text-ui-sm font-bold text-zinc-400 uppercase tracking-wider">Learning &amp; accuracy</h4>
+                    <span className="font-mono text-ui-dense text-zinc-500">
+                        Drawdown <span data-testid="learning-drawdown-value" className="font-semibold text-zinc-100">0.0%</span>
+                    </span>
+                </div>
+                <div
+                    data-testid="learning-empty-state"
+                    className="rounded-bubble border border-hairline bg-zinc-900/50 p-6 text-center"
+                >
+                    <p className="text-ui-base font-medium text-zinc-100">No closed trades yet</p>
+                    <p className="mx-auto mt-1.5 max-w-md text-ui-sm leading-relaxed text-zinc-500">
+                        Log or settle 5 trades to unlock accuracy, regime stats, and execution autopsy.
+                    </p>
+                </div>
+            </div>
+        );
+    }
+
+    if (totalClosed < 5) {
         return (
             <div data-testid="learn-analytics" className="space-y-4 p-3 sm:p-4 overflow-y-auto custom-scrollbar">
                 {harnessSection}
                 {lessonsSection}
-                <EmptyState
-                    icon={<BrainCircuit className="w-8 h-8" aria-hidden="true" />}
-                    title="Building Your Profile"
-                    description={`Log at least 3 trades (WIN or LOSS) to start seeing personalized AI learnings. Current: ${profile.totalAnalyzedTrades} / 3 trades.`}
-                    className="h-64"
-                />
+                <div
+                    data-testid="learning-progress-note"
+                    className="rounded-bubble border border-hairline bg-zinc-900/50 px-4 py-3 text-ui-sm text-zinc-400"
+                >
+                    Log or settle {5 - totalClosed} more trade{5 - totalClosed === 1 ? '' : 's'} to unlock full profile breakdowns and execution autopsy ({totalClosed} / 5).
+                </div>
             </div>
         );
     }

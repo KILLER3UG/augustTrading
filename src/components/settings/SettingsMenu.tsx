@@ -554,14 +554,58 @@ const SettingsMenu: React.FC<SettingsMenuProps> = (props) => {
                         )}
                         {activeEntry?.label ?? 'Settings'}
                     </h2>
-                    <button
-                        type="button"
-                        onClick={requestClose}
-                        aria-label="Close settings"
-                        className="motion-press rounded-control p-1.5 text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-zinc-100"
-                    >
-                        <CloseIcon className="h-4 w-4" aria-hidden="true" />
-                    </button>
+                    <div className="relative flex shrink-0 items-center gap-1">
+                        <button
+                            type="button"
+                            onClick={() => setHelpOpen(v => !v)}
+                            aria-label="Settings help"
+                            aria-expanded={helpOpen}
+                            data-testid="settings-help"
+                            title="Keyboard shortcuts and local storage notes"
+                            className="motion-press flex h-7 w-7 items-center justify-center rounded-control border border-hairline bg-zinc-800/80 text-ui-sm font-semibold text-zinc-300 transition-colors hover:bg-zinc-700 hover:text-zinc-100"
+                        >
+                            ?
+                        </button>
+                        <button
+                            type="button"
+                            onClick={requestClose}
+                            aria-label="Close settings"
+                            className="motion-press rounded-control p-1.5 text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-zinc-100"
+                        >
+                            <CloseIcon className="h-4 w-4" aria-hidden="true" />
+                        </button>
+                        {helpOpen && (
+                            <div
+                                role="dialog"
+                                aria-label="Settings help"
+                                data-testid="settings-help-panel"
+                                className="motion-pop absolute right-0 top-full z-20 mt-2 w-72 rounded-bubble border border-hairline bg-zinc-900 p-4 shadow-elevated"
+                            >
+                                <p className="text-ui-sm font-semibold text-zinc-100">Settings help</p>
+                                <p className="mt-1.5 text-ui-dense leading-relaxed text-zinc-500">
+                                    Search finds a control by name and jumps to it. Back and forward walk the pages
+                                    you visited in this window.
+                                </p>
+                                <dl className="mt-3 space-y-1.5 text-ui-dense">
+                                    {[
+                                        ['Ctrl/⌘ + ,', 'Open settings'],
+                                        ['Esc', 'Close settings'],
+                                        ['Ctrl/⌘ + K', 'New chat'],
+                                        ['Ctrl/⌘ + B', 'Hide conversation'],
+                                    ].map(([key, action]) => (
+                                        <div key={key} className="flex items-center justify-between gap-2">
+                                            <dt className="font-mono text-ui-2xs text-zinc-400">{key}</dt>
+                                            <dd className="text-zinc-500">{action}</dd>
+                                        </div>
+                                    ))}
+                                </dl>
+                                <p className="mt-3 flex items-start gap-1.5 text-ui-2xs leading-relaxed text-zinc-600">
+                                    <Info className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
+                                    August is local-first. No account, subscription or order placement lives here.
+                                </p>
+                            </div>
+                        )}
+                    </div>
                 </div>
 
                 <div className="relative flex min-h-0 flex-1">
@@ -833,42 +877,6 @@ const SettingsMenu: React.FC<SettingsMenuProps> = (props) => {
                         );
                         })()}</div>
                     </div>
-                </div>
-
-                {/* Bottom-right help — the reference's floating "?" button. */}
-                <div className="pointer-events-none absolute bottom-4 right-4 z-10 flex flex-col items-end gap-2">
-                    {helpOpen && (
-                        <div role="dialog" aria-label="Settings help" data-testid="settings-help-panel"
-                            className="motion-pop pointer-events-auto w-72 rounded-bubble border border-hairline bg-zinc-900 p-4 shadow-elevated">
-                            <p className="text-ui-sm font-semibold text-zinc-100">Settings help</p>
-                            <p className="mt-1.5 text-ui-dense leading-relaxed text-zinc-500">
-                                Search finds a control by name and jumps to it. Back and forward walk the pages
-                                you visited in this window.
-                            </p>
-                            <dl className="mt-3 space-y-1.5 text-ui-dense">
-                                {[
-                                    ['Ctrl/⌘ + ,', 'Open settings'],
-                                    ['Esc', 'Close settings'],
-                                    ['Ctrl/⌘ + K', 'New chat'],
-                                    ['Ctrl/⌘ + B', 'Hide conversation'],
-                                ].map(([key, action]) => (
-                                    <div key={key} className="flex items-center justify-between gap-2">
-                                        <dt className="font-mono text-ui-2xs text-zinc-400">{key}</dt>
-                                        <dd className="text-zinc-500">{action}</dd>
-                                    </div>
-                                ))}
-                            </dl>
-                            <p className="mt-3 flex items-start gap-1.5 text-ui-2xs leading-relaxed text-zinc-600">
-                                <Info className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
-                                August is local-first. No account, subscription or order placement lives here.
-                            </p>
-                        </div>
-                    )}
-                    <button type="button" onClick={() => setHelpOpen(v => !v)}
-                        aria-label="Settings help" aria-expanded={helpOpen} data-testid="settings-help"
-                        className="motion-press pointer-events-auto flex h-8 w-8 items-center justify-center rounded-full border border-hairline bg-zinc-800 text-ui-base font-semibold text-zinc-200 transition-colors hover:bg-zinc-700">
-                        ?
-                    </button>
                 </div>
 
                 {/* The Settings modal's own prompt bar — docked INSIDE the

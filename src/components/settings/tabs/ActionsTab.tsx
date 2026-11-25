@@ -5,6 +5,7 @@
 import React from 'react';
 import { BackupManager } from '../BackupManager';
 import { StorageLocationCard } from '../StorageLocationCard';
+import { ToggleSwitch } from '../../shared/ToggleSwitch';
 import { SettingsPageHeader } from './shared';
 import { exportTrainingDataJSONL, trainingRecordFor } from '../../../utils/reportExport';
 import { captureStatus, exportCorpusJsonl, setCaptureEnabled, isCaptureEnabled, lastCaptureFailureInfo, TRAINING_CAPTURE_MAX_RECORDS } from '../../../services/learning/trainingCapture';
@@ -103,18 +104,12 @@ const ActionsTab: React.FC<{ tab: ActionsTabProps }> = ({ tab: props }) => {
                             part of backups. When OFF, nothing is stored.
                         </p>
                     </div>
-                    <button
-                        type="button"
-                        role="switch"
-                        aria-checked={capture?.enabled ?? false}
-                        data-testid="training-capture-toggle"
-                        onClick={flipCapture}
-                        className={`shrink-0 rounded-control border px-3 py-1.5 text-ui-xs font-semibold transition-colors ${(capture?.enabled ?? false)
-                            ? 'border-zinc-500/40 bg-zinc-500/10 text-zinc-200'
-                            : 'border-hairline bg-zinc-900 text-zinc-400 hover:border-line'}`}
-                    >
-                        {(capture?.enabled ?? false) ? 'Recording ON' : 'Recording OFF'}
-                    </button>
+                    <ToggleSwitch
+                        checked={capture?.enabled ?? false}
+                        onChange={flipCapture}
+                        label="Improve future August models"
+                        testId="training-capture-toggle"
+                    />
                 </div>
                 <p className="mt-2 text-ui-xs leading-4 text-zinc-500" data-testid="training-capture-status" role="status">
                     {!capture

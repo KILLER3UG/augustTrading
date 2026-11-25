@@ -431,7 +431,7 @@ const ModelMenu: React.FC<ModelMenuProps> = ({
                 onPointerDownCapture={(e) => e.stopPropagation()}
                 onKeyDown={onMainKeyDown}
                 style={{ top: pos.top, left: pos.left, width: MAIN_W, maxHeight: pos.maxHeight }}
-                className={`fixed z-flyout flex flex-col rounded-xl border border-white/[0.08] bg-zinc-900/95 shadow-elevated backdrop-blur-md outline-none ${pos.openUp ? 'motion-popover-in' : 'motion-popover-down'}`}
+                className={`fixed z-flyout flex flex-col overflow-hidden rounded-xl border border-white/[0.08] bg-zinc-900/95 shadow-elevated backdrop-blur-md outline-none ${pos.openUp ? 'motion-popover-in' : 'motion-popover-down'}`}
             >
                 <button type="button" role="menuitem" aria-haspopup="menu" aria-expanded={providersOpen}
                     data-testid="model-menu-provider-row"
@@ -445,11 +445,9 @@ const ModelMenu: React.FC<ModelMenuProps> = ({
                 </button>
 
                 {/* ONE row: the Models label, a borderless magnifier and the
-                    inline search input. The old separate bordered search box,
-                    free-only filter and refresh button were three clones of
-                    one decision around a single list — the reference keeps the
-                    list header and the filter on the same line. */}
-                <div className="flex shrink-0 items-center gap-2 px-3 pb-1 pt-2">
+                    inline search input. Separated by a hairline above the
+                    scrolling viewport so rows never clip behind it. */}
+                <div className="flex shrink-0 items-center gap-2 border-b border-white/[0.05] px-3 py-2" data-testid="model-menu-search-bar">
                     <span className="shrink-0 text-ui-2xs font-bold uppercase tracking-widest text-zinc-600">Models</span>
                     {searching && (
                         <span className="shrink-0 text-ui-2xs tabular-nums text-zinc-500" data-testid="model-menu-count">
@@ -478,7 +476,7 @@ const ModelMenu: React.FC<ModelMenuProps> = ({
                     />
                 </div>
 
-                <div className="custom-scrollbar min-h-0 flex-1 overflow-y-auto px-1 pb-1"
+                <div className="custom-scrollbar min-h-0 flex-1 overflow-y-auto px-1.5 py-1.5"
                     data-testid={searching ? 'model-picker-results' : 'model-menu-rows'}>
                     {!searching && starredRows.picked.length > 0 && (
                         <div className="pb-1">

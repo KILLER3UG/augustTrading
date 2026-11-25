@@ -16,6 +16,7 @@
 import React, { useEffect, useState } from 'react';
 import { getStorageInfo } from '../../services/infrastructure/dbService';
 import { getStoreFailure, storeBackendKind, storeLocation, type StoreFailure } from '../../services/infrastructure/storeBackend';
+import { formatStorageBackendLabel } from '../../utils/uiFormatting';
 
 interface StorageInfo {
     platform: string;
@@ -77,16 +78,17 @@ export const StorageLocationCard: React.FC = () => {
         );
     }
 
-    const where = info.storageType === 'sqlite'
-        ? 'SQLite — the app’s own data file'
-        : 'IndexedDB — inside the browser profile';
+    const isElectron = typeof window !== 'undefined' && Boolean((window as unknown as { electronAPI?: unknown }).electronAPI);
+    const where = formatStorageBackendLabel(info.storageType, isElectron);
 
     return (
         <div className="rounded-bubble border border-hairline bg-zinc-900/60 px-4 py-3" data-testid="storage-location-card">
             <p className="text-ui-xs uppercase tracking-widest text-zinc-500">Storage</p>
             <p className="text-ui-base text-zinc-200 mt-1" data-testid="storage-location-value">
                 {where}
-                <span className="text-zinc-500"> · {info.platform} · {info.userCount} {info.userCount === 1 ? 'profile' : 'profiles'}</span>
+                <span className="text-zinc-500">
+                    {isElectron ? '' : ` · ${info.platform}`} · {info.userCount} {info.userCount === 1 ? 'profile' : 'profiles'}
+                </span>
             </p>
             {/* The stores that hold the most: files on desktop, localStorage on web. */}
             <p className="text-ui-dense text-zinc-400 mt-2" data-testid="store-backend">

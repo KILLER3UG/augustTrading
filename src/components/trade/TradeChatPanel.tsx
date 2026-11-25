@@ -1665,7 +1665,7 @@ ${riskConstitution}`
                                         Agents surface's pane passes none, and a row
                                         reading "Expand over chart" in a host with
                                         no chart is a promise plus a dead press. */}
-                                    {onToggleExpanded && (
+                                    {onToggleExpanded && layoutMode !== 'chat' && (
                                         <button type="button" onClick={() => { setShowNewMenu(false); onToggleExpanded(); }}
                                             className="block w-full rounded-control px-2 py-1.5 text-left text-ui-dense text-zinc-300 hover:bg-white/[0.06]">
                                             {expanded ? 'Shrink back' : 'Expand over chart'}
@@ -1676,7 +1676,7 @@ ${riskConstitution}`
                                         route, not a frequent toggle, and the
                                         header lost its last chrome row. */}
                                     <div className="my-1 border-t border-hairline" />
-                                    <p className="px-2 py-0.5 text-ui-2xs text-zinc-600">Start</p>
+                                    <p className="px-2 py-0.5 text-ui-2xs text-zinc-600">{isChatFocus ? 'Multi-model & rooms' : 'Start'}</p>
                                     <button type="button" onClick={() => addSession('panel')} className="block w-full rounded-control px-2 py-1.5 text-left text-ui-dense text-zinc-300 hover:bg-white/[0.06]">
                                         New panel <span className="text-zinc-600">· up to {PANEL_MAX_MODELS} models</span>
                                     </button>

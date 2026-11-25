@@ -82,6 +82,7 @@ export const TellAugustBar: React.FC<{ onSent?: () => void; busy?: boolean }> = 
                 type="button"
                 onClick={submit}
                 disabled={!draft.trim() || busy}
+                data-testid="tell-august-ask"
                 className="shrink-0 rounded-control bg-zinc-100 px-3 py-2 text-ui-sm font-semibold text-zinc-950 transition-colors hover:bg-white disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400"
             >
                 Ask
