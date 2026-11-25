@@ -739,15 +739,32 @@ export function useAnalysisPipeline(params: UseAnalysisPipelineParams) {
         }
 
         if (/^\/context\b/i.test(trimmedCmd)) {
-            const [{ collectContextDiagnostic }, chatStore] = await Promise.all([
+            const [
+                { collectContextDiagnostic },
+                chatStore,
+                { pickActiveModelConfig, orderReadyByActiveModel },
+                { chatSurfaceSystemPrompt },
+            ] = await Promise.all([
                 import('../services/trade/diagnosticsRuntime'),
                 import('../services/trade/chatStore'),
+                import('../services/infrastructure/ActiveModelConfig'),
+                import('../services/trade/chatSurfaceTurn'),
             ]);
+            const readyConfigs = enabledProviders.map(p => p.config);
+            const activeProvider = (await pickActiveModelConfig())
+                ?? (await orderReadyByActiveModel(readyConfigs))[0]
+                ?? readyConfigs[0]
+                ?? null;
             const activeSess = chatStore.getActiveSession();
+            const sysPrompt = chatSurfaceSystemPrompt({
+                sessionKey: activeConversationId ?? undefined,
+                memoryEnabled: isGlobalMemoryEnabled,
+                strategiesEnabled: isStrategiesEnabled,
+            }).text;
             const snapshot = collectContextDiagnostic({
-                systemPromptText: '',
+                systemPromptText: sysPrompt,
                 entries: activeSess?.entries ?? [],
-                provider: enabledProviders[0]?.config ?? null,
+                provider: activeProvider,
             });
             setInput('');
             updateMessages(prev => [...prev, {
@@ -766,19 +783,31 @@ export function useAnalysisPipeline(params: UseAnalysisPipelineParams) {
             return { ok: true };
         }
         if (/^\/doctor\b/i.test(trimmedCmd)) {
-            const [{ collectDoctorDiagnostic }, chatStore] = await Promise.all([
+            const [
+                { collectDoctorDiagnostic },
+                chatStore,
+                { pickActiveModelConfig, orderReadyByActiveModel },
+                { DEFAULT_SYMBOL },
+            ] = await Promise.all([
                 import('../services/trade/diagnosticsRuntime'),
                 import('../services/trade/chatStore'),
+                import('../services/infrastructure/ActiveModelConfig'),
+                import('../config/exchangeEndpoints'),
             ]);
+            const readyConfigs = enabledProviders.map(p => p.config);
+            const activeProvider = (await pickActiveModelConfig())
+                ?? (await orderReadyByActiveModel(readyConfigs))[0]
+                ?? readyConfigs[0]
+                ?? null;
             const activeSess = chatStore.getActiveSession();
             const sid = activeSess?.id ?? '';
             const snapshot = await collectDoctorDiagnostic({
-                provider: enabledProviders[0]?.config ?? null,
+                provider: activeProvider,
                 effort: activeSess?.effort ?? 'auto',
-                symbol: activeSess?.symbol ?? 'BTCUSDT',
+                symbol: activeSess?.symbol ?? DEFAULT_SYMBOL,
                 interval: activeSess?.interval ?? '15m',
                 sessionId: sid,
-                planMode: chatStore.getPlanMode(sid),
+                planMode: chatStore.getPlanMode(sid) || chatStore.getPlanMode(),
             });
             const passCount = snapshot.checks.filter(c => c.status === 'PASS').length;
             setInput('');

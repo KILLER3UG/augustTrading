@@ -182,16 +182,22 @@ const evaluateSetupAtPrefix = (
     if (setup === 'sweep_structure_shift') {
         if (prefix.length < 60) return null;
         const slice = prefix.length > 80 ? prefix.slice(-80) : prefix;
-        const padded = [...slice, lastBar];
         ctx.candles = slice;
         ctx.structure = readStructure(slice);
-        const eq = detectEqualLevels(padded, 60);
+        // `detectEqualLevels` slices off its trailing candle (forming bar) — pass `slice` directly
+        // so equal-level pools are extracted strictly BEFORE `lastBar` (never cloning `lastBar`).
+        const eq = detectEqualLevels(slice, 60);
         const poolLevels = [
             ...eq.equalHighs.map(h => ({ price: h.level, label: 'equal_highs' })),
             ...eq.equalLows.map(l => ({ price: l.level, label: 'equal_lows' })),
         ];
         if (poolLevels.length === 0 || !ctx.structure) return null;
-        const sweeps = detectSweepReversals(padded, poolLevels, { atr }).filter(s => s.barsElapsed <= 1);
+        // `detectSweepReversals` drops its trailing candle (`.slice(0, -1)`), so pad one extra element
+        // only here and require confirmation strictly on `lastBar` (`slice.length - 1`).
+        const padded = [...slice, lastBar];
+        const sweeps = detectSweepReversals(padded, poolLevels, { atr }).filter(
+            s => s.status === 'confirmed' && s.confirmIndex === slice.length - 1,
+        );
         if (sweeps.length === 0) return null;
         ctx.sweeps = sweeps;
         return scanPlaybooks(ctx).find(m => m.playbook === 'sweep_structure_shift') ?? null;
@@ -405,7 +411,7 @@ export const runSetupReplay = (
     const targetHits = occurrences.filter(o => o.exitReason === 'target').length;
     const stopHits = occurrences.filter(o => o.exitReason === 'stop').length;
     const timeouts = occurrences.filter(o => o.exitReason === 'timeout').length;
-    const wins = occurrences.filter(o => o.exitReason === 'target' || (o.exitReason === 'timeout' && o.netR > 0)).length;
+    const wins = occurrences.filter(o => o.netR > 0).length;
     const losses = sampleCount - wins;
     const winRate = sampleCount > 0 ? round4(wins / sampleCount) : null;
     const wilson = sampleCount > 0 ? wilsonInterval95(wins, sampleCount) : null;

@@ -19,6 +19,7 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { createServer } from 'node:http';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
@@ -69,6 +70,7 @@ import {
 import {
     CHAT_SURFACE_TOOLS,
     clearChatSurfacePromptCache,
+    runChatSurfaceTurn,
     surfacePromptWith,
 } from '../src/services/trade/chatSurfaceTurn';
 import * as chatStore from '../src/services/trade/chatStore';
@@ -84,6 +86,7 @@ import {
 } from '../src/services/market/divergenceCore';
 import { drawableLevelsFor, DRAWABLE_TOOLS } from '../src/services/analysis/marketTools';
 import { evaluateScopedRules } from '../src/services/trade/scopedRules';
+import { collectScopedRulesForSymbol } from '../src/services/trade/scopedRulesRuntime';
 import {
     buildContextDiagnostic,
     buildDoctorDiagnostic,
@@ -95,6 +98,10 @@ import {
     slashTemplateOf,
 } from '../src/utils/composerRefs';
 import { contentVersion } from '../src/services/learning/SkillFileService';
+import { setPreference } from '../src/services/infrastructure/PreferencesService';
+import { createPaperAccount } from '../src/services/paper/paperCore';
+import { getPaperAccount } from '../src/services/paper/PaperBrokerService';
+import { publishPaperMark, resetPaperFrameCache } from '../src/services/trade/futuresStreams';
 
 const BASE_TIME_MS = Date.parse('2026-10-01T00:00:00.000Z');
 const HOUR_MS = 3_600_000;
@@ -683,5 +690,216 @@ describe('Wave 2 Power Layer', () => {
             assert.equal(loadableDeskToolNamesFor(true, DESK_TOOL_NAMES).includes(name), true, `${name} loadable on Desk`);
             assert.equal(loadableDeskToolNamesFor(true, CHAT_SURFACE_TOOLS).includes(name), true, `${name} loadable on Chat`);
         }
+    });
+
+    it('7. Wave 2 audit fixes: Chat conv-123 Plan Mode key fallback, MTM drawdown, sweep_structure_shift, and /context dedup', async () => {
+        // 7a. P0 Plan Mode Chat key sync: toggle on active dock session, invoke runChatSurfaceTurn with distinct req.sessionId='conv-123'
+        chatStore.__resetForTests();
+        chatStore.setPlanMode(true); // active dock session ON; 'conv-123' not separately toggled
+        let capturedWireTools: string[] = [];
+        let capturedSystem = '';
+        const srv = createServer((req, res) => {
+            let body = '';
+            req.on('data', (chunk: Buffer) => { body += chunk; });
+            req.on('end', () => {
+                const parsed = JSON.parse(body || '{}') as {
+                    messages?: Array<{ role: string; content: unknown }>;
+                    tools?: Array<{ function?: { name?: string } }>;
+                };
+                capturedWireTools = Array.isArray(parsed.tools)
+                    ? parsed.tools.map(t => String(t?.function?.name ?? ''))
+                    : [];
+                const sysMsgs = (parsed.messages ?? []).filter(m => m.role === 'system');
+                capturedSystem = sysMsgs.map(m => String(m.content ?? '')).join('\n');
+                res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' });
+                res.write(`data: ${JSON.stringify({ id: 'chat-p0', object: 'chat.completion.chunk', choices: [{ index: 0, delta: { role: 'assistant', content: 'Plan checked.' }, finish_reason: 'stop' }] })}\n\n`);
+                res.write('data: [DONE]\n\n');
+                res.end();
+            });
+        });
+        await new Promise<void>(resolve => srv.listen(0, '127.0.0.1', () => resolve()));
+        const addr = srv.address();
+        const port = typeof addr === 'object' && addr ? addr.port : 0;
+        try {
+            await runChatSurfaceTurn({
+                sessionId: 'conv-123',
+                config: {
+                    id: 'mock-surf',
+                    name: 'Mock',
+                    apiKey: 'test',
+                    baseUrl: `http://127.0.0.1:${port}/v1`,
+                    selectedModel: 'gpt-4o',
+                    models: ['gpt-4o'],
+                    isBuiltIn: false,
+                    isEnabled: true,
+                    apiFormat: 'chat_completions',
+                },
+                history: [],
+                prompt: 'Plan BTC setup',
+                effort: 'low',
+                signal: new AbortController().signal,
+                startedAt: Date.now(),
+                trades: [],
+                memoryEnabled: false,
+                strategiesEnabled: false,
+                patch: () => {},
+                paint: () => {},
+            });
+        } finally {
+            await new Promise<void>(resolve => srv.close(() => resolve()));
+        }
+        assert.equal(capturedWireTools.includes('paper_order'), false, 'paper_order locked on Chat conv-123 via active dock Plan Mode');
+        assert.equal(capturedWireTools.includes('remember'), false, 'remember locked on Chat conv-123');
+        assert.equal(capturedWireTools.includes('trade_math'), true, 'trade_math remains available');
+        assert.ok(
+            capturedSystem.includes('[PLAN MODE'),
+            `Expected PLAN_MODE_MANDATE in system prompt (len=${capturedSystem.length}): ${capturedSystem.slice(-500)}`,
+        );
+        chatStore.setPlanMode(false);
+
+        // 7b. P1 Mark-to-Market unrealized drawdown (-2% unrealized loss) trips drawdown_cooldown & surfaces in /doctor
+        resetPaperFrameCache();
+        const activeLs = g.localStorage as Storage;
+        const prevMtmUser = activeLs.getItem('last_active_user');
+        activeLs.setItem('last_active_user', 'wave2-probe');
+        const acct = createPaperAccount({
+            startingBalanceUsd: 10_000,
+            enabled: true,
+            dailyDrawdownKillSwitchPct: 3.0,
+        });
+        acct.dayStartEquityUsd = 10_000;
+        acct.cashBalanceUsd = 10_000;
+        const openedMs = Date.now() - 60_000;
+        acct.positions = [{
+            id: 'pos-mtm-1',
+            symbol: 'SOLUSDT',
+            side: 'long',
+            qty: 10,
+            entryPrice: 100,
+            stopLoss: 75,
+            takeProfits: [150],
+            leverage: 1,
+            marginUsd: 1_000,
+            riskUsd: 250,
+            entryFeeUsd: 0,
+            liquidationPrice: 1,
+            openedAt: openedMs,
+            lastFundingSlotMs: openedMs,
+            fundingPaidUsd: 0,
+            closedQty: 0,
+        }];
+        await setPreference('paper_account_v1_wave2-probe', JSON.stringify(acct));
+        await getPaperAccount('wave2-probe');
+        // Re-assert user + mark synchronously right before sync scopedRules read (`test-isolation=none --test-concurrency=4`)
+        activeLs.setItem('last_active_user', 'wave2-probe');
+        publishPaperMark('SOLUSDT', 80, 0.0001); // uPnL = -$200 -> equity = 9,800 (-2.00% dd)
+        const scopedMtm = collectScopedRulesForSymbol('SOLUSDT');
+        assert.ok(
+            scopedMtm.activeRules.some(r => r.id === 'drawdown_cooldown'),
+            `Expected MTM -2% drawdown to trip drawdown_cooldown, got: ${JSON.stringify(scopedMtm.activeRules)}`,
+        );
+        activeLs.setItem('last_active_user', 'wave2-probe');
+        const docMtm = await collectDoctorDiagnostic({
+            provider: {
+                id: 'p1',
+                name: 'OpenAI',
+                apiKey: 'k',
+                baseUrl: 'https://api.openai.com/v1',
+                selectedModel: 'gpt-4o',
+                models: ['gpt-4o'],
+                isBuiltIn: false,
+                isEnabled: true,
+                apiFormat: 'chat_completions',
+            },
+            effort: 'high',
+            symbol: 'SOLUSDT',
+            interval: '15m',
+            sessionId: 'mtm-s1',
+            planMode: false,
+            markPrice: 80,
+        });
+        const paperCheck = docMtm.checks.find(c => c.id === 'paper_risk');
+        assert.equal(paperCheck?.status, 'WARN', 'MTM -2% drawdown surfaces WARN on paper_risk in /doctor');
+        assert.ok(paperCheck?.summary.includes('daily drawdown=2.00%'), `Expected daily drawdown=2.00% in summary, got: ${paperCheck?.summary}`);
+        if (prevMtmUser === null) activeLs.removeItem('last_active_user');
+        else activeLs.setItem('last_active_user', prevMtmUser);
+        resetPaperFrameCache();
+
+        // 7c. P1 sweep_structure_shift replay exercise (without fabricating equal level on lastBar clone)
+        const sssCandles: Kline[] = [];
+        for (let i = 0; i < 95; i += 1) {
+            let open = 100;
+            let high = 101;
+            let low = 99;
+            let close = 100;
+            if (i < 50) {
+                // Monotonically ascending gentle oscillation so no prior equal pools trigger before bar 76
+                const wave = 90 + i * 0.22 + (i % 2 === 0 ? 0.35 : -0.35);
+                open = wave;
+                close = wave;
+                high = close + 0.5;
+                low = close - 0.5;
+            } else if (i === 52 || i === 64) {
+                // Two distinct swing highs at 105.0 (equal_highs pool) prior to sweep bar 76
+                open = 103.5; high = 105.0; low = 102.5; close = 104.0;
+            } else if (i === 51 || i === 53 || i === 63 || i === 65) {
+                open = 101.5; high = 102.5; low = 100.5; close = 102.0;
+            } else if (i === 58 || i === 70) {
+                // Confirmed swing lows at 98.0 / 98.2 flanked by higher bars -> readStructure sees swings >= 4
+                open = 99.5; high = 100.0; low = 98.0; close = 98.8;
+            } else if (i === 57 || i === 59 || i === 69 || i === 71) {
+                open = 100.5; high = 101.2; low = 99.6; close = 100.5;
+            } else if (i === 75) {
+                open = 104.0; high = 104.5; low = 99.2; close = 104.5;
+            } else if (i === 76) {
+                // Sweep above 105.0 equal highs and slam-close below 98.0 swing low -> bearish BOS + confirmed sweep
+                open = 104.8; high = 107.0; low = 96.2; close = 96.5;
+            } else if (i > 76 && i <= 86) {
+                const step = i - 76;
+                open = 96.5 - (step - 1) * 0.9;
+                close = open - 0.9;
+                high = open + 0.2;
+                low = close - 0.2;
+            }
+            sssCandles.push(makeKline(i, open, high, low, close));
+        }
+        const sssRes = runSetupReplay(sssCandles, {
+            symbol: 'BTCUSDT',
+            interval: '1h',
+            setup: 'sweep_structure_shift',
+            direction: 'Short',
+            lookbackBars: 95,
+        });
+        assert.equal(sssRes.ok, true);
+        if (sssRes.ok) {
+            assert.equal(sssRes.setup, 'sweep_structure_shift');
+            assert.ok(sssRes.sampleCount >= 1, `Expected sweep_structure_shift to detect seeded setup, got sampleCount=${sssRes.sampleCount}`);
+            assert.ok(sssRes.recentOccurrences.some(o => o.direction === 'Short'), 'Expected bearish sweep_structure_shift occurrence');
+        }
+
+        // 7d. P2 /context deduplicates curated memory tokens already embedded in systemPromptText
+        const curatedBlock = '## USER PROFILE & DURABLE MEMORY\nTrader only risks 0.5% per trade on BTCUSDT.';
+        const baseSys = 'CORE MANDATE INSTRUCTIONS';
+        const combinedSys = `${baseSys}\n\n${curatedBlock}`;
+        const snapWithoutEmbed = buildContextDiagnostic({
+            systemPromptText: baseSys,
+            curatedMemoryText: curatedBlock,
+            loadedSkillsTexts: [],
+            historyTexts: [],
+            toolResultsTexts: [],
+        });
+        const snapWithEmbed = buildContextDiagnostic({
+            systemPromptText: combinedSys,
+            curatedMemoryText: curatedBlock,
+            embeddedCuratedText: curatedBlock,
+            loadedSkillsTexts: [],
+            historyTexts: [],
+            toolResultsTexts: [],
+        });
+        assert.equal(
+            snapWithEmbed.totalTokens,
+            snapWithoutEmbed.totalTokens,
+            'Embedded curated memory inside systemPromptText must NOT be double-counted in /context totalTokens',
+        );
     });
 });

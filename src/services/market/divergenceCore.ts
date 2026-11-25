@@ -293,7 +293,7 @@ export const detectDivergences = (
                 seenB.add(dedupeKey);
 
                 const barsAgo = lastClosedIdx - pb.index;
-                const priceDeltaPct = round4(((pb.price - pa.price) / pa.price) * 100);
+                const priceDeltaPct = pa.price > 0 ? round4(((pb.price - pa.price) / pa.price) * 100) : 0;
                 const indicatorDelta = round4(vb - va);
                 found.push({
                     indicator: name,
@@ -334,7 +334,7 @@ export const detectDivergences = (
                 seenB.add(dedupeKey);
 
                 const barsAgo = lastClosedIdx - pb.index;
-                const priceDeltaPct = round4(((pb.price - pa.price) / pa.price) * 100);
+                const priceDeltaPct = pa.price > 0 ? round4(((pb.price - pa.price) / pa.price) * 100) : 0;
                 const indicatorDelta = round4(vb - va);
                 found.push({
                     indicator: name,

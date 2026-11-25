@@ -10,6 +10,8 @@ import { resolveContextWindow, type ContextWindowInput, type ContextWindowSource
 export interface ContextDiagnosticInput {
     systemPromptText: string;
     curatedMemoryText: string;
+    /** Exact block string embedded inside `systemPromptText` when already injected (prevents double-counting). */
+    embeddedCuratedText?: string;
     loadedSkillsTexts: readonly string[];
     historyTexts: readonly string[];
     toolResultsTexts: readonly string[];
@@ -111,8 +113,12 @@ export const buildContextDiagnostic = (input: ContextDiagnosticInput): ContextDi
         : resolveContextWindow({ selectedModel: '', contextWindowTokens: undefined, modelContextWindows: undefined });
     const windowTokens = resolved.tokens;
 
-    const systemTokens = input.systemPromptText ? estimateTokens(input.systemPromptText) : 0;
     const curatedTokens = input.curatedMemoryText ? estimateTokens(input.curatedMemoryText) : 0;
+    const embeddedTrimmed = input.embeddedCuratedText?.trim() ?? '';
+    const systemOnlyText = embeddedTrimmed && input.systemPromptText.includes(embeddedTrimmed)
+        ? input.systemPromptText.replace(embeddedTrimmed, '').trim()
+        : input.systemPromptText;
+    const systemTokens = systemOnlyText ? estimateTokens(systemOnlyText) : 0;
     const skillsTokens = sumTokens(input.loadedSkillsTexts);
     const historyTokens = sumTokens(input.historyTexts);
     const toolsTokens = sumTokens(input.toolResultsTexts);

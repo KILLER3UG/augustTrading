@@ -719,7 +719,7 @@ export const runChatSurfaceTurn = async (req: ChatSurfaceTurnRequest): Promise<T
 
     // The training recorder's plan tee: filled by the structured present_trade
     // sink (in the transport below), read by runToolTurn at turn end.
-    const planMode = req.planMode ?? chatStore.getPlanMode(req.sessionId);
+    const planMode = req.planMode ?? (chatStore.getPlanMode(req.sessionId) || chatStore.getPlanMode());
     const planCapture: { planId: string | null; symbol: string | null; playbookId: string | null; snapshot: CaptureSnapshot | null } = { planId: null, symbol: null, playbookId: null, snapshot: null };
     const transport: ToolTurnRequest['transport'] = {
         defaultSymbol: req.symbol ?? null,

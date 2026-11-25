@@ -10,11 +10,18 @@ import { resolveContextWindow } from '../../utils/contextWindow';
 import { getHarnessSettings } from '../../utils/harnessSettings';
 import { getActiveUsername } from '../../utils/activeUser';
 import { isVisionModel } from '../../utils/modelUtils';
+import { detectWireCapabilities } from '../providers/reasoningControls';
 import { APP_VERSION } from '../../constants/version';
-import { getCachedCuratedMemorySnapshot, USER_MD_MAX_CHARS, MEMORY_MD_MAX_CHARS } from '../learning/curatedMemory';
+import {
+    buildCuratedMemoryPromptBlock,
+    getCachedCuratedMemorySnapshot,
+    USER_MD_MAX_CHARS,
+    MEMORY_MD_MAX_CHARS,
+} from '../learning/curatedMemory';
 import { listRejectedFingerprints } from '../learning/rejectedFingerprints';
 import { skillIndexRows, usableSkillRows } from '../learning/SkillFileService';
-import { getPaperAccount, getPaperCorruptionWarning } from '../paper/PaperBrokerService';
+import { getPaperAccount, getPaperCorruptionWarning, livePaperMarks } from '../paper/PaperBrokerService';
+import { paperAccountView } from '../paper/paperCore';
 import { getPaperLiveFrame, hasLivePaperFeed } from './futuresStreams';
 import { drawingsControl } from './drawingsControl';
 import type { ChartDrawing } from './chartDrawings';
@@ -66,6 +73,7 @@ export const collectContextDiagnostic = (opts: CollectContextOpts): ContextDiagn
     return buildContextDiagnostic({
         systemPromptText: opts.systemPromptText,
         curatedMemoryText: curatedText,
+        embeddedCuratedText: buildCuratedMemoryPromptBlock(snap),
         loadedSkillsTexts,
         historyTexts,
         toolResultsTexts,
@@ -93,7 +101,18 @@ export const collectDoctorDiagnostic = async (opts: CollectDoctorOpts): Promise<
 
     const modelId = opts.provider?.selectedModel ?? '';
     const visionCapable = modelId ? isVisionModel(modelId) : false;
-    const reasoningCapable = Boolean(modelId && !/gpt-3\.5/i.test(modelId));
+    const wireCaps = opts.provider ? detectWireCapabilities(opts.provider) : null;
+    const reasoningCapable = Boolean(
+        opts.provider && wireCaps && (
+            wireCaps.anthropicThinking
+            || wireCaps.responsesEffort
+            || wireCaps.openaiEffort
+            || wireCaps.xaiEffort
+            || wireCaps.glmThinking
+            || wireCaps.deepseekThinking
+            || (wireCaps.genericEffort && !/gpt-3\.5/i.test(modelId))
+        ),
+    );
 
     const liveFrame = opts.symbol ? getPaperLiveFrame(opts.symbol, 300_000) : null;
     const markPrice = typeof opts.markPrice === 'number' && Number.isFinite(opts.markPrice) && opts.markPrice > 0
@@ -121,17 +140,20 @@ export const collectDoctorDiagnostic = async (opts: CollectDoctorOpts): Promise<
     let paperMaxPositions = 3;
     try {
         const account = await getPaperAccount(user);
+        const cleanSym = opts.symbol ? opts.symbol.trim().toUpperCase() : '';
+        const liveMarks = livePaperMarks(
+            [...account.positions.map(p => p.symbol), ...account.pendingOrders.map(o => o.symbol)],
+            cleanSym,
+            markPrice,
+        );
+        const view = paperAccountView(account, liveMarks);
         paperEnabled = account.config.enabled;
-        paperEquityUsd = account.cashBalanceUsd;
-        paperKillSwitchPct = account.config.dailyDrawdownKillSwitchPct;
-        paperKillSwitchActive = account.killSwitchActive;
-        paperOpenPositions = account.positions.length;
-        paperMaxPositions = account.config.maxConcurrentPositions;
-        if (account.dayStartEquityUsd > 0 && account.cashBalanceUsd < account.dayStartEquityUsd) {
-            paperDailyDrawdownPct = ((account.dayStartEquityUsd - account.cashBalanceUsd) / account.dayStartEquityUsd) * 100;
-        } else {
-            paperDailyDrawdownPct = 0;
-        }
+        paperEquityUsd = view.equity;
+        paperDailyDrawdownPct = view.dailyDrawdownPct;
+        paperKillSwitchPct = view.riskLimits.dailyDrawdownKillSwitchPct;
+        paperKillSwitchActive = view.killSwitchActive;
+        paperOpenPositions = view.openPositions.length;
+        paperMaxPositions = view.riskLimits.maxConcurrentPositions;
     } catch { /* cold or uninitialized store */ }
     const paperCorruption = getPaperCorruptionWarning();
 

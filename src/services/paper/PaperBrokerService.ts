@@ -245,7 +245,13 @@ export const getCachedPaperAccountView = (
     nowMs: number = Date.now(),
 ): PaperAccountView | null => {
     if (!cachedPaperAccount || cachedPaperAccount.username !== username) return null;
-    return paperAccountView(cachedPaperAccount.account, {}, nowMs);
+    const acct = cachedPaperAccount.account;
+    const liveMarks = livePaperMarks(
+        [...acct.positions.map(p => p.symbol), ...acct.pendingOrders.map(o => o.symbol)],
+        '',
+        null,
+    );
+    return paperAccountView(acct, liveMarks, nowMs);
 };
 
 export const getPaperAccount = async (
