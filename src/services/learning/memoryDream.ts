@@ -35,6 +35,7 @@ import {
     type ExecutionAutopsyReport,
 } from './executionAutopsyCore';
 import type { SignalRow } from '../../types/signal';
+import type { PaperSettledTrade } from '../paper/paperCore';
 import { isRejectedFingerprint } from './rejectedFingerprints';
 
 export const DREAM_MIN_HOURS = 24;
@@ -390,18 +391,18 @@ export interface DreamRunOptions {
     manual?: boolean;
     username?: string;
     nowMs?: number;
-    /** Injected gatherers — the real ones read chatSessions + signalLedger;
+    /** Injected gatherers — the real ones read chatSessions + signalLedger + paperTrades;
      *  tests pass fixtures. */
-    gather?: () => { newSessions: number; corrections: string[]; ledger: LedgerSummaryRow[]; signalRows?: SignalRow[] };
+    gather?: () => { newSessions: number; corrections: string[]; ledger: LedgerSummaryRow[]; signalRows?: SignalRow[]; paperTrades?: PaperSettledTrade[] };
 }
 
 let dreamInFlight: Promise<DreamRunResult> | null = null;
 
 /** The default gatherer: chat-dock sessions + canonical Chat conversations +
- *  the settled signal ledger. A Chat-surface turn is as much experience as a
+ *  the settled signal ledger + closed paper broker trades. A Chat-surface turn is as much experience as a
  *  dock turn; counting only the dock meant five Chat sessions never unlocked
  *  a Dream (the >= 5 gate) while every gate stayed green. */
-const defaultGather = async (username: string, sinceMs: number): Promise<{ newSessions: number; corrections: string[]; ledger: LedgerSummaryRow[]; signalRows: SignalRow[] }> => {
+const defaultGather = async (username: string, sinceMs: number): Promise<{ newSessions: number; corrections: string[]; ledger: LedgerSummaryRow[]; signalRows: SignalRow[]; paperTrades: PaperSettledTrade[] }> => {
     let newSessions = 0;
     const corrections: string[] = [];
     try {
@@ -425,6 +426,7 @@ const defaultGather = async (username: string, sinceMs: number): Promise<{ newSe
     } catch { /* a gather miss just weakens the pass */ }
     const ledger: LedgerSummaryRow[] = [];
     let signalRows: SignalRow[] = [];
+    let paperTrades: PaperSettledTrade[] = [];
     try {
         const { readSignals } = await import('../signals/signalLedger');
         signalRows = readSignals(username).filter(r => r.resolution && r.resolution.status !== 'never_triggered');
@@ -440,7 +442,12 @@ const defaultGather = async (username: string, sinceMs: number): Promise<{ newSe
         }
         ledger.push(...byKey.values());
     } catch { /* ledger unavailable — the dream still consolidates */ }
-    return { newSessions, corrections, ledger, signalRows };
+    try {
+        const { getPaperAccount } = await import('../paper/PaperBrokerService');
+        const paper = await getPaperAccount(username);
+        paperTrades = Array.isArray(paper?.closedTrades) ? paper.closedTrades : [];
+    } catch { /* paper store unavailable — the dream still consolidates */ }
+    return { newSessions, corrections, ledger, signalRows, paperTrades };
 };
 
 /**
@@ -460,7 +467,7 @@ const runMemoryDreamUnlocked = async (options: DreamRunOptions): Promise<DreamRu
     const state = await readDreamState(username);
     const sinceMs = state.lastRunAt ? Date.parse(state.lastRunAt) || 0 : 0;
     const gather = options.gather ?? (() => defaultGather(username, sinceMs));
-    const { newSessions, corrections, ledger, signalRows } = await gather();
+    const { newSessions, corrections, ledger, signalRows, paperTrades } = await gather();
     const eligibility = dreamEligibility(state, newSessions, nowMs);
     if (!options.manual && !eligibility.eligible) {
         return { ran: false, manual: false, eligibility, error: eligibility.reasons.join('; ') };
@@ -470,7 +477,10 @@ const runMemoryDreamUnlocked = async (options: DreamRunOptions): Promise<DreamRu
     const beforeSnapshot = { userMd: snap.userMd, memoryMd: snap.memoryMd };
     // Deterministic execution autopsy (N >= 5 settled rows only). Fail-closed
     // against `rejectedFingerprints`: if rejected previously or store unreadable, withhold entry.
-    const autopsy = signalRows && signalRows.length > 0 ? buildExecutionAutopsy({ signals: signalRows }) : undefined;
+    const hasAutopsyInputs = (signalRows?.length ?? 0) + (paperTrades?.length ?? 0) > 0;
+    const autopsy = hasAutopsyInputs
+        ? buildExecutionAutopsy({ signals: signalRows ?? [], paperTrades: paperTrades ?? [] })
+        : undefined;
     let extraMemoryEntry: string | undefined;
     let rejectedNote: string | undefined;
     if (autopsy?.sufficientSample && autopsy.findings.length > 0) {

@@ -174,6 +174,20 @@ describe('Wave 3 Execution Autopsy & Compounding Loop', () => {
         const autopsy = buildExecutionAutopsy({ signals: signalRows });
         const promptSummary = formatAutopsyForPrompt(autopsy);
 
+        // Interleaved multi-symbol revenge cluster (BTC loss -> ETH trade -> BTC re-entry <= 30m)
+        const interleaved = buildExecutionAutopsy({
+            signals: [
+                makeSignalRow(10, { coin: 'BTCUSDT', outcomeR: -1.0, openOffsetMin: 0, closeOffsetMin: 10 }),
+                makeSignalRow(11, { coin: 'ETHUSDT', outcomeR: 1.5, openOffsetMin: 12, closeOffsetMin: 18 }),
+                makeSignalRow(12, { coin: 'BTCUSDT', outcomeR: -0.9, openOffsetMin: 22, closeOffsetMin: 30 }),
+                makeSignalRow(13, { coin: 'ETHUSDT', outcomeR: 1.2, openOffsetMin: 90, closeOffsetMin: 120 }),
+                makeSignalRow(14, { coin: 'SOLUSDT', outcomeR: 1.1, openOffsetMin: 150, closeOffsetMin: 180 }),
+            ],
+        });
+        assert.equal(interleaved.behavioral.revengeClusters.length, 1);
+        assert.equal(interleaved.behavioral.revengeClusters[0].symbol, 'BTCUSDT');
+        assert.equal(interleaved.behavioral.revengeClusters[0].gapMinutes, 12);
+
         // weeklyReview includes autopsy findings
         const weeklyPrompt = buildWeeklyImpulsePrompt({
             closed: 5, wins: 2, losses: 3, netPnlUsd: -120, dollarRows: 5,
@@ -231,6 +245,7 @@ describe('Wave 3 Execution Autopsy & Compounding Loop', () => {
         await recordRejectedFingerprint(
             { kind: 'memory', target: 'memory', content: promptSummary },
             'user_undo',
+            'Rejected autopsy finding',
             'wave3-dream-user',
         );
         const secondDream = await runMemoryDream({
@@ -242,6 +257,37 @@ describe('Wave 3 Execution Autopsy & Compounding Loop', () => {
         assert.equal(secondDream.ran, true);
         assert.equal(secondDream.core?.memoryMd.includes('MFE giveback leak'), false, 'Rejected autopsy must NOT re-enter MEMORY.md');
         assert.ok(secondDream.core?.notes.some(n => n.includes('rejectedFingerprints')));
+
+        // Paper-only trader (zero signals, >= 5 settled paper trades) receives autopsy insights in /dream
+        await setCuratedMemoryTexts([{ target: 'memory', text: '## [2026-10-01]\nPaper start note.' }], 'wave3-paper-only-user');
+        const paperDream = await runMemoryDream({
+            manual: true,
+            username: 'wave3-paper-only-user',
+            nowMs: BASE_MS + 30_000,
+            gather: () => ({
+                newSessions: 6,
+                corrections: [],
+                ledger: [],
+                signalRows: [],
+                paperTrades: Array.from({ length: 5 }, (_, i) => ({
+                    positionId: `pos-${i}`,
+                    symbol: 'BTCUSDT',
+                    side: 'long' as const,
+                    qty: 1,
+                    entryPrice: 100,
+                    exitPrice: 95,
+                    pnlUsd: -500,
+                    feesUsd: 5,
+                    fundingUsd: 0,
+                    rMultiple: -1.0,
+                    exitReason: 'sl' as const,
+                    openedAt: BASE_MS + i * 20 * MIN_MS,
+                    closedAt: BASE_MS + (i * 20 + 10) * MIN_MS,
+                })) as never,
+            }),
+        });
+        assert.equal(paperDream.ran, true);
+        assert.ok(paperDream.core?.memoryMd.includes('Revenge re-entry cluster'), `Paper-only /dream must write autopsy finding, got: ${paperDream.core?.memoryMd}`);
 
         // Touch snapshot helper cleanly
         assert.ok(typeof getCachedCuratedMemorySnapshot('wave3-dream-user').memoryMd === 'string');

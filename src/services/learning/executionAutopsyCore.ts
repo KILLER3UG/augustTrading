@@ -249,8 +249,10 @@ export const buildExecutionAutopsy = (input: BuildAutopsyInput): ExecutionAutops
     const bySession = aggregateBuckets(merged, r => classifyUtcSession(r.openedAtMs));
     const byPlaybook = aggregateBuckets(merged, r => r.playbook);
 
-    // Behavioral clusters: same-symbol re-entries opened quickly after a losing exit + streak metrics.
+    // Behavioral clusters: same-symbol re-entries opened quickly after a losing exit
+    // (tracked per symbol so interleaved symbols never mask a revenge entry) + streak metrics.
     const revengeClusters: RevengeCluster[] = [];
+    const lastLossCloseBySymbol = new Map<string, { id: string; closedAtMs: number; outcomeR: number }>();
     const postLossOutcomes: number[] = [];
     let maxLossStreak = 0;
     let curStreak = 0;
@@ -263,22 +265,27 @@ export const buildExecutionAutopsy = (input: BuildAutopsyInput): ExecutionAutops
         } else {
             curStreak = 0;
         }
-        if (i > 0) {
-            const prev = merged[i - 1];
-            if (prev.outcomeR <= 0) {
-                postLossOutcomes.push(cur.outcomeR);
-                const gapMs = cur.openedAtMs - prev.closedAtMs;
-                if (cur.symbol === prev.symbol && gapMs >= 0 && gapMs <= REVENGE_WINDOW_MS) {
-                    revengeClusters.push({
-                        priorId: prev.id,
-                        reentryId: cur.id,
-                        symbol: cur.symbol,
-                        gapMinutes: r2(gapMs / 60_000),
-                        priorOutcomeR: r4(prev.outcomeR),
-                        reentryOutcomeR: r4(cur.outcomeR),
-                    });
-                }
+        if (i > 0 && merged[i - 1].outcomeR <= 0) {
+            postLossOutcomes.push(cur.outcomeR);
+        }
+        const priorLoss = lastLossCloseBySymbol.get(cur.symbol);
+        if (priorLoss) {
+            const gapMs = cur.openedAtMs - priorLoss.closedAtMs;
+            if (gapMs >= 0 && gapMs <= REVENGE_WINDOW_MS) {
+                revengeClusters.push({
+                    priorId: priorLoss.id,
+                    reentryId: cur.id,
+                    symbol: cur.symbol,
+                    gapMinutes: r2(gapMs / 60_000),
+                    priorOutcomeR: r4(priorLoss.outcomeR),
+                    reentryOutcomeR: r4(cur.outcomeR),
+                });
             }
+        }
+        if (cur.outcomeR <= 0) {
+            lastLossCloseBySymbol.set(cur.symbol, { id: cur.id, closedAtMs: cur.closedAtMs, outcomeR: cur.outcomeR });
+        } else {
+            lastLossCloseBySymbol.delete(cur.symbol);
         }
     }
 

@@ -140,6 +140,21 @@ export const maybeRunAgentLearningPass = async (
 ): Promise<BackgroundReviewReceipt | null> => {
     const settings = getHarnessSettings();
     if (!settings.backgroundReviewEnabled) return null;
+    let autopsy: Awaited<ReturnType<typeof import('./executionAutopsyCore').buildExecutionAutopsy>> | undefined;
+    try {
+        const username = getActiveUsername() || 'default';
+        const [{ readSignals }, { getPaperAccount }, { buildExecutionAutopsy }] = await Promise.all([
+            import('../signals/signalLedger'),
+            import('../paper/PaperBrokerService'),
+            import('./executionAutopsyCore'),
+        ]);
+        const signals = readSignals(username).filter(r => r.resolution && r.resolution.status !== 'never_triggered');
+        const paper = await getPaperAccount(username);
+        const paperTrades = Array.isArray(paper?.closedTrades) ? paper.closedTrades : [];
+        if (signals.length + paperTrades.length > 0) {
+            autopsy = buildExecutionAutopsy({ signals, paperTrades });
+        }
+    } catch { /* autopsy stays optional when local stores are unavailable */ }
     return runBackgroundReview({
         toolCallCount: input.toolCallCount,
         userMessage: input.userMessage,
@@ -147,6 +162,7 @@ export const maybeRunAgentLearningPass = async (
         skillsUsed: input.skillsUsed,
         enabled: true,
         sourceSessionId: input.sid,
+        autopsy,
     }, { emit });
 };
 
