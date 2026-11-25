@@ -20,7 +20,7 @@
 
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { Virtuoso, type FollowOutput, type VirtuosoHandle } from 'react-virtuoso';
-import { Camera, Zap } from '../../shared/Icons';
+import { Camera, FileText, Zap } from '../../shared/Icons';
 import { InterruptedRunNotice } from '../../shared/InterruptedRunNotice';
 import type { Message } from '../../../types/message';
 import type { LiveEntry } from '../../../services/trade/chatStore';
@@ -61,7 +61,7 @@ import SignalCard, { DeskScorecard, signalIdFromActions, signalRowById } from '.
 import Disclosure from '../../shared/Disclosure';
 import { JUMP_AWAY_PX } from '../../shared/JumpToLatestFab';
 import { ageMinutes } from '../../../utils/relativeTime';
-import { formatAssistantFooterMeta } from '../../../utils/uiFormatting';
+import { formatAssistantFooterMeta, summarizeCollapsiblePrompt } from '../../../utils/uiFormatting';
 import { harnessNoticeDisplay, stripInternalContextMarks } from '../../../utils/chatDisplay';
 import { proposalStateOf as sharedProposalStateOf, rememberProposalState, forgetProposalState } from '../../../services/trade/proposalDisposition';
 import { markUndoWindow, undoWindowOf, clearUndoWindow } from '../../../services/trade/tradeDecision';
@@ -149,6 +149,70 @@ const askWhyPrompt = (p: TradeProposal): string => (
     + ` at ${p.entry} (stop ${p.stopLoss}, targets ${p.takeProfits.join('/')}).`
     + ` What invalidates it, and what makes this entry worth the risk now?`
 );
+
+/** Collapsible wrapper for long (> 6 lines or >= 420 chars multiline) user prompts. */
+const UserPromptBubble: React.FC<{
+    text: string;
+    answerStreaming: boolean;
+    entryId: string;
+    onRetry: (id: string) => void;
+}> = ({ text, answerStreaming, entryId, onRetry }) => {
+    const [expanded, setExpanded] = useState(false);
+    const summary = summarizeCollapsiblePrompt(text);
+
+    if (summary.collapsible && !expanded) {
+        return (
+            <div className="flex max-w-[78%] flex-col items-end">
+                <button
+                    type="button"
+                    data-testid="collapsed-prompt-pill"
+                    onClick={() => setExpanded(true)}
+                    aria-expanded={false}
+                    title="Expand full message"
+                    className="flex items-center gap-2 rounded-xl border border-white/[0.08] bg-zinc-800/80 px-3 py-2 text-left text-ui-dense text-zinc-200 transition-colors hover:bg-zinc-800"
+                >
+                    <FileText className="h-3.5 w-3.5 shrink-0 text-zinc-400" aria-hidden="true" />
+                    <span className="min-w-0 truncate">{summary.preview}</span>
+                    <span className="shrink-0 font-mono text-ui-xs text-zinc-500">| {summary.lineCount} lines</span>
+                </button>
+                {!answerStreaming && (
+                    <div className="mt-1 flex items-center justify-end gap-0.5 opacity-55 transition-opacity group-hover/user:opacity-100 focus-within:opacity-100">
+                        <CopyChip text={text} />
+                        <RetryChip onRetry={() => onRetry(entryId)} />
+                    </div>
+                )}
+            </div>
+        );
+    }
+
+    return (
+        <div className="flex max-w-[78%] flex-col items-end">
+            <p className={`min-w-0 rounded-[20px] border border-white/[0.05] bg-zinc-800/90 px-4 py-2.5 text-ui-base leading-[1.55] text-zinc-100 ${summary.collapsible ? 'whitespace-pre-wrap' : ''}`}>
+                {text}
+            </p>
+            {(!answerStreaming || summary.collapsible) && (
+                <div className="mt-1 flex items-center justify-end gap-1 opacity-55 transition-opacity group-hover/user:opacity-100 focus-within:opacity-100">
+                    {summary.collapsible && (
+                        <button
+                            type="button"
+                            data-testid="collapse-prompt-btn"
+                            onClick={() => setExpanded(false)}
+                            className="rounded-control px-1.5 py-0.5 text-ui-2xs text-zinc-500 transition-colors hover:bg-white/[0.06] hover:text-zinc-200"
+                        >
+                            Collapse · {summary.lineCount} lines
+                        </button>
+                    )}
+                    {!answerStreaming && (
+                        <>
+                            <CopyChip text={text} />
+                            <RetryChip onRetry={() => onRetry(entryId)} />
+                        </>
+                    )}
+                </div>
+            )}
+        </div>
+    );
+};
 
 interface ChatTranscriptListProps {
     /** Desk dock vs centered Chat focus view. */
@@ -422,17 +486,12 @@ const ChatTranscriptList: React.FC<ChatTranscriptListProps> = ({
                             </div>
                         )}
                         {e.text && e.text !== '(chart screenshot)' && (
-                            <div className="flex max-w-[78%] flex-col items-end">
-                                <p className="min-w-0 rounded-[20px] border border-white/[0.05] bg-zinc-800/90 px-4 py-2.5 text-ui-base leading-[1.55] text-zinc-100">
-                                    {e.text}
-                                </p>
-                                {!answerStreaming && (
-                                    <div className="mt-1 flex items-center justify-end gap-0.5 opacity-55 transition-opacity group-hover/user:opacity-100 focus-within:opacity-100">
-                                        <CopyChip text={e.text} />
-                                        <RetryChip onRetry={() => void send('', e.id)} />
-                                    </div>
-                                )}
-                            </div>
+                            <UserPromptBubble
+                                text={e.text}
+                                answerStreaming={answerStreaming}
+                                entryId={e.id}
+                                onRetry={(id) => void send('', id)}
+                            />
                         )}
                     </div>
                 ) : e.notice ? (

@@ -10,8 +10,9 @@
  * line). Reads only the entry it is given — no dock state.
  */
 
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useSyncExternalStore } from 'react';
 import { Lightbulb } from '../../shared/Icons';
+import { getHarnessSettings, subscribeHarnessSettings } from '../../../utils/harnessSettings';
 import type { ToolAction } from '../../../types/message';
 import type { WireAuditEntry } from '../../../types/provider';
 import { tipForSeed } from '../../../utils/tradingTips';
@@ -378,6 +379,7 @@ export interface ChatWorkTimelineProps {
 }
 
 const ChatWorkTimeline: React.FC<ChatWorkTimelineProps> = ({ entry }) => {
+    const { autoFoldTools } = useSyncExternalStore(subscribeHarnessSettings, getHarnessSettings, getHarnessSettings);
     const reasoning = entry.reasoning ?? '';
     const turnStreaming = !!entry.streaming;
     const hasAnswerText = Boolean(entry.text && entry.text.trim().length > 0);
@@ -537,6 +539,9 @@ const ChatWorkTimeline: React.FC<ChatWorkTimelineProps> = ({ entry }) => {
                     persistedMs={entry.workedMs}
                     startedAt={startedAt}
                     activity={activity}
+                    autoFold={autoFoldTools}
+                    toolCount={callCount}
+                    foldSummaryTestId={!running && autoFoldTools && callCount >= 2 ? 'tool-summary-fold' : undefined}
                 >
                     {nodes}
                     {entry.liveProgress && entry.streaming && (

@@ -6,14 +6,15 @@
 // they must stay in SettingsMenu so a choice survives leaving and re-entering
 // the tab. The service setter `setIdleMotionEnabled` is imported here because
 // only this body writes through it.
-import React from 'react';
-import { Activity, ChevronDown, ClipboardCheck, Target, Wrench } from '../../shared/Icons';
+import React, { useSyncExternalStore } from 'react';
+import { Activity, ChevronDown, ClipboardCheck, Layers, Target, Wrench } from '../../shared/Icons';
 import { ToggleSwitch } from '../../shared/ToggleSwitch';
 import { HarnessControls } from '../SessionUsagePanel';
 import { SettingsGroup, SettingsPageHeader, SettingsRow } from './shared';
 import Disclosure from '../../shared/Disclosure';
 import DeskToolCatalogue from './DeskToolCatalogue';
 import { setIdleMotionEnabled } from '../../../services/desk/idleMotion';
+import { getHarnessSettings, saveHarnessSettings, subscribeHarnessSettings } from '../../../utils/harnessSettings';
 import { askDesk } from '../../../utils/askDesk';
 import type { SettingsTabProps } from './types';
 
@@ -35,6 +36,7 @@ export interface GeneralTabProps extends SettingsTabProps {
 }
 
 const GeneralTab: React.FC<{ tab: GeneralTabProps }> = ({ tab: props }) => {
+    const harness = useSyncExternalStore(subscribeHarnessSettings, getHarnessSettings, getHarnessSettings);
     const {
         isHybridIntelligenceEnabled,
         deskToolsEnabled,
@@ -113,6 +115,55 @@ const GeneralTab: React.FC<{ tab: GeneralTabProps }> = ({ tab: props }) => {
                             checked={!idleMotionEnabled}
                             onChange={() => setIdleMotionEnabled(!idleMotionEnabled)}
                             label="Toggle reduced motion"
+                        />
+                    }
+                />
+            </SettingsGroup>
+
+            <SettingsGroup title="Composer & transcript" description="How running turns handle queued follow-ups and finished tool receipts.">
+                <SettingsRow
+                    icon={<Activity className="h-4 w-4" aria-hidden="true" />}
+                    title="Send while running"
+                    description="Default action when you press Enter during an active turn (Alt+Enter uses the other mode)."
+                    control={
+                        <div
+                            data-testid="settings-send-while-running"
+                            role="group"
+                            aria-label="Send while running"
+                            className="inline-flex shrink-0 rounded-control border border-hairline bg-zinc-900/80 p-0.5"
+                        >
+                            {(['steer', 'queue'] as const).map(mode => {
+                                const active = harness.sendWhileRunning === mode;
+                                return (
+                                    <button
+                                        key={mode}
+                                        type="button"
+                                        data-testid={`settings-send-${mode}`}
+                                        aria-pressed={active}
+                                        onClick={() => saveHarnessSettings({ sendWhileRunning: mode })}
+                                        className={`rounded-control px-2.5 py-1 text-ui-xs font-medium capitalize transition-colors ${
+                                            active
+                                                ? 'bg-zinc-800 text-zinc-100'
+                                                : 'text-zinc-500 hover:text-zinc-300'
+                                        }`}
+                                    >
+                                        {mode}
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    }
+                />
+                <SettingsRow
+                    icon={<Layers className="h-4 w-4" aria-hidden="true" />}
+                    title="Auto-fold tool work"
+                    description="Collapse completed multi-tool runs into a single expandable summary row."
+                    control={
+                        <ToggleSwitch
+                            checked={harness.autoFoldTools}
+                            onChange={() => saveHarnessSettings({ autoFoldTools: !harness.autoFoldTools })}
+                            label="Toggle auto-fold tool work"
+                            testId="settings-auto-fold-tools"
                         />
                     }
                 />

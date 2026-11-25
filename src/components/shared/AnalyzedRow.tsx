@@ -32,6 +32,12 @@ export interface AnalyzedRowProps {
      *  the turn's own tool lines (`utils/turnStatus.ts`), so it can only
      *  report what the tools did. Absent ⇒ the bare "Analyzing". */
     activity?: string | null;
+    /** Auto-fold completed multi-tool runs into a single expandable summary row. Default true. */
+    autoFold?: boolean;
+    /** Parsed paired tool call count (drives `Used N tools · view work` summary when >= 2). */
+    toolCount?: number;
+    /** Optional testid placed on the `<summary>` element when showing the folded multi-tool roll-up. */
+    foldSummaryTestId?: string;
     children: React.ReactNode;
 }
 
@@ -50,10 +56,21 @@ export interface AnalyzedRowProps {
  * The clock covers the pre-answer work phase only — it starts at turn start and
  * freezes when the answer text begins.
  */
-const AnalyzedRow: React.FC<AnalyzedRowProps> = ({ running = false, className = '', summary, persistedMs, startedAt, activity, children }) => {
-    // Open while the work is live; a row that mounts already settled (a
-    // reloaded conversation) starts folded.
-    const [open, setOpen] = useState(running);
+const AnalyzedRow: React.FC<AnalyzedRowProps> = ({
+    running = false,
+    className = '',
+    summary,
+    persistedMs,
+    startedAt,
+    activity,
+    autoFold = true,
+    toolCount,
+    foldSummaryTestId,
+    children,
+}) => {
+    // Open while the work is live (or when auto-fold is disabled); a settled
+    // row with autoFold=true starts folded.
+    const [open, setOpen] = useState(running || !autoFold);
     const turnStartMs = typeof startedAt === 'number' && Number.isFinite(startedAt) ? startedAt : null;
     const wasRunningRef = useRef(running);
     const startedAtRef = useRef<number | null>(turnStartMs ?? (running ? Date.now() : null));
@@ -72,12 +89,15 @@ const AnalyzedRow: React.FC<AnalyzedRowProps> = ({ running = false, className = 
             const start = startedAtRef.current;
             setSettledSeconds(start !== null ? Math.max(0, Math.round((Date.now() - start) / 1000)) : null);
             startedAtRef.current = null;
-            // Settling folds the log: the answer owns the reading space now,
-            // and the steps stay one chevron away.
-            setOpen(false);
+            // Settling folds the log only when auto-fold is enabled.
+            if (autoFold) setOpen(false);
         }
         wasRunningRef.current = running;
-    }, [running, turnStartMs]);
+    }, [running, turnStartMs, autoFold]);
+
+    useEffect(() => {
+        if (!running) setOpen(!autoFold);
+    }, [autoFold, running]);
 
     // The live clock. This row used to run its OWN setInterval, so a
     // 200-message conversation held up to 400 live timers — one per row —
@@ -107,17 +127,23 @@ const AnalyzedRow: React.FC<AnalyzedRowProps> = ({ running = false, className = 
     // lines (the desk writes two lines per call).
     const workSummary = (summary ?? '').trim();
     const ranTools = workSummary.length > 0;
+    const foldedToolCount = typeof toolCount === 'number' ? toolCount : 0;
+    const showFoldRollup = !running && autoFold && foldedToolCount >= 2;
     // The RUNNING label is the ACTIVITY, not the state: "Reading the order
     // book" says what the desk is doing, "Analyzing" only says it is busy.
     const runningActivity = (activity ?? '').trim();
     const label = running
         ? (runningActivity || 'Analyzing')
-        : seconds !== null
-            ? thoughtForLabel(Math.max(1, seconds))
-            : 'Thought';
+        : showFoldRollup
+            ? `Used ${foldedToolCount} tools · view work`
+            : seconds !== null
+                ? thoughtForLabel(Math.max(1, seconds))
+                : 'Thought';
     const detail = running
         ? (seconds !== null ? (runningActivity ? ` · ${formatElapsed(seconds)}` : ` for ${formatElapsed(seconds)}`) : '')
-        : ranTools ? ` · ${workSummary}` : '';
+        : showFoldRollup
+            ? ''
+            : (ranTools ? ` · ${workSummary}` : '');
 
     return (
         <details
@@ -132,7 +158,11 @@ const AnalyzedRow: React.FC<AnalyzedRowProps> = ({ running = false, className = 
                 setOpen((e.target as HTMLDetailsElement).open);
             }}
         >
-            <summary className="reasoning-row-summary" aria-label={`${label}${detail} — ${open ? 'collapse' : 'expand'}`}>
+            <summary
+                className="reasoning-row-summary"
+                data-testid={foldSummaryTestId}
+                aria-label={`${label}${detail} — ${open ? 'collapse' : 'expand'}`}
+            >
                 {running && (
                     /* Three dots, in the reference's WARM colour: the work is
                        running, and the app's running hue is the amber one.
