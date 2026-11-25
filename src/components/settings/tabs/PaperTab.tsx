@@ -158,7 +158,7 @@ const PaperTab: React.FC<{ tab: PaperTabProps }> = ({ tab }) => {
                 <SettingsRow
                     icon={<Activity className="h-4 w-4" aria-hidden="true" />}
                     title="Paper Mode"
-                    description="When off, paper_order is refused and no simulated fill is priced. Nothing here can place a live order."
+                    description="When off, simulated orders are blocked and no paper fills are placed. Nothing here can place a live exchange order."
                     control={
                         <span data-testid="settings-paper-enabled" className="inline-flex">
                             <ToggleSwitch
@@ -172,7 +172,7 @@ const PaperTab: React.FC<{ tab: PaperTabProps }> = ({ tab }) => {
                 <SettingsRow
                     icon={<Target className="h-4 w-4" aria-hidden="true" />}
                     title="Autonomous watch"
-                    description="Lets the seat watch resting paper orders between turns. Off by default — the seat never watches them on its own."
+                    description="Lets August monitor resting paper orders between messages. Off by default — nothing is monitored automatically until you enable it."
                     control={
                         <span data-testid="settings-paper-autonomous" className="inline-flex">
                             <ToggleSwitch
@@ -199,8 +199,8 @@ const PaperTab: React.FC<{ tab: PaperTabProps }> = ({ tab }) => {
                 description="Deterministic walls on every simulated fill. They are enforced in the broker core, not in a prompt."
             >
                 <NumberRow
-                    title="Maker fee (bps)"
-                    description="Fee charged on resting limit entries and take-profit exits, in basis points of full notional."
+                    title={`Maker fee (bps) · ${(cfg.makerFeeBps / 100).toFixed(2)}%`}
+                    description="Fee charged on resting limit entries and take-profit exits, in basis points of full notional (1 bps = 0.01%)."
                     testId="settings-paper-maker-fee-bps"
                     value={cfg.makerFeeBps}
                     min={0}
@@ -208,8 +208,8 @@ const PaperTab: React.FC<{ tab: PaperTabProps }> = ({ tab }) => {
                     onChange={makerFeeBps => updateConfig({ makerFeeBps })}
                 />
                 <NumberRow
-                    title="Taker fee (bps)"
-                    description="Fee charged on market entries, stop exits and manual closes, in basis points of full notional."
+                    title={`Taker fee (bps) · ${(cfg.takerFeeBps / 100).toFixed(2)}%`}
+                    description="Fee charged on market entries, stop exits and manual closes, in basis points of full notional (1 bps = 0.01%)."
                     testId="settings-paper-taker-fee-bps"
                     value={cfg.takerFeeBps}
                     min={0}

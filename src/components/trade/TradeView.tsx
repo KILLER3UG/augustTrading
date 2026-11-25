@@ -1056,7 +1056,12 @@ const TradeView: React.FC<TradeViewProps> = ({
                             removes. `levelCandles` stays — it feeds level
                             accuracy, not this head. Funding rides the chart
                             head too: the quiet line, not a band. */}
-                        <span className="hidden shrink-0 flex-col gap-1 sm:flex" data-testid="chart-head-funding">
+                        <span
+                            className="hidden shrink-0 flex-col gap-1 sm:flex"
+                            data-testid="chart-head-funding"
+                            title="Funding rate · next 8h settlement countdown"
+                            aria-label="Funding rate and next 8h settlement countdown"
+                        >
                             {Number.isFinite(fundingRate) ? (
                                 <FundingCountdown nextFundingTime={nextFundingTime ?? 0} fundingRate={fundingRate!} />
                             ) : <span className="font-mono text-ui-dense text-zinc-300">—</span>}

@@ -60,11 +60,13 @@ import KeyLevelsCard from '../KeyLevelsCard';
 import SignalCard, { DeskScorecard, signalIdFromActions, signalRowById } from '../SignalCard';
 import Disclosure from '../../shared/Disclosure';
 import { JUMP_AWAY_PX } from '../../shared/JumpToLatestFab';
-import { ageMinutes, roundAgoHoursLabel } from '../../../utils/relativeTime';
+import { ageMinutes } from '../../../utils/relativeTime';
+import { formatAssistantFooterMeta } from '../../../utils/uiFormatting';
 import { harnessNoticeDisplay, stripInternalContextMarks } from '../../../utils/chatDisplay';
 import { proposalStateOf as sharedProposalStateOf, rememberProposalState, forgetProposalState } from '../../../services/trade/proposalDisposition';
 import { markUndoWindow, undoWindowOf, clearUndoWindow } from '../../../services/trade/tradeDecision';
-import { CopyChip, PinChip, RetryChip, ThinkingTierChip } from '../../shared/chatChips';
+import { CopyChip, PinChip, RetryChip } from '../../shared/chatChips';
+import { effortChoiceOf } from '../../shared/effortScale';
 import AnswerBody from '../../shared/AnswerBody';
 import ChatFailureRow from '../../shared/ChatFailureRow';
 import { BotFace } from '../../chat/BotFace';
@@ -122,16 +124,8 @@ const provLine = (e: LiveEntry): string | null => {
     const mins = e.at ? Math.max(0, Math.round(ageMinutes(e.at))) : -1;
     const hit = provLineCache.get(e);
     if (hit && hit.mins === mins) return hit.line;
-    const parts: string[] = [];
-    const sid = e.speaker?.split(':')[0]?.replace(/-/g, '').slice(0, 6);
-    if (sid && sid !== 'desk') parts.push(sid);
-    // Model short: seat label's second half ("provider:model") already in
-    // `speaker`; fall back to nothing rather than a fabricated name.
-    const model = e.speaker?.split(':')[1]?.split('/').pop()?.slice(0, 12);
-    if (model) parts.push(model);
-    if (e.effort) parts.push(String(e.effort));
-    if (mins >= 0) parts.push(roundAgoHoursLabel(mins));
-    const line = parts.length > 0 ? parts.join(' · ') : null;
+    const effortLabel = e.effort ? effortChoiceOf(e.effort).label : undefined;
+    const line = formatAssistantFooterMeta({ speaker: e.speaker, effortLabel, at: e.at });
     provLineCache.set(e, { mins, line });
     return line;
 };
@@ -545,7 +539,6 @@ const ChatTranscriptList: React.FC<ChatTranscriptListProps> = ({
                                     <PinChip pinned={pinnedMessageIds.has(analysisId)}
                                         onToggle={() => onToggleWatch(analysisId)} />
                                 )}
-                                {e.effort && <ThinkingTierChip effort={e.effort} />}
                                 {(() => {
                                     const prov = provLine(e);
                                     return prov ? (

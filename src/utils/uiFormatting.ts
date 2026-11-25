@@ -90,13 +90,13 @@ export const formatAssistantFooterMeta = (
     const parts: string[] = [];
     const rawSpeaker = (input.speaker ?? '').trim();
     if (rawSpeaker) {
-        const colonIdx = rawSpeaker.indexOf(':');
-        const prefix = colonIdx >= 0 ? rawSpeaker.slice(0, colonIdx).trim().toLowerCase() : '';
-        const modelRaw = colonIdx >= 0 ? rawSpeaker.slice(colonIdx + 1).trim() : rawSpeaker;
+        const segments = rawSpeaker.split(':').map(s => s.trim()).filter(Boolean);
+        while (segments.length > 0 && RAW_INTERNAL_SPEAKER_PREFIXES.has(segments[0].toLowerCase())) {
+            segments.shift();
+        }
+        const modelRaw = segments.join(':');
         if (modelRaw) {
             parts.push(formatModelDisplayName(modelRaw));
-        } else if (prefix && !RAW_INTERNAL_SPEAKER_PREFIXES.has(prefix)) {
-            parts.push(prefix);
         }
     }
     const effortRaw = (input.effortLabel ?? (input.effort ? (EFFORT_LABELS[String(input.effort).toLowerCase()] ?? String(input.effort)) : '')).trim();

@@ -14,11 +14,13 @@
  * The age helper lives here; nothing else defines it.
  */
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type { Conversation } from '../../types';
 import { conversationTitle } from '../../utils/conversationTitle';
 import { renameConversationRow } from '../../hooks/useConversations';
 import { signalIdFromActions, signalRowById } from '../trade/SignalCard';
+import * as chatStore from '../../services/trade/chatStore';
+import { formatThreadBadge } from '../../utils/uiFormatting';
 
 /** The side of the thread's latest signal — the mock's `Long` tag. Read from
  *  the ledger's own id on the turn's actions, never guessed from prose; a
@@ -70,16 +72,27 @@ export interface ConversationGroupsProps {
     onOpenActivity?: () => void;
 }
 
+const conversationBadgeFallback = (conversation: Conversation): string | null => {
+    for (let i = conversation.messages.length - 1; i >= 0; i -= 1) {
+        const a = conversation.messages[i].analysis;
+        if (a?.coinName) {
+            return formatThreadBadge(a.coinName, (a as { timeframe?: string }).timeframe ?? null);
+        }
+    }
+    return null;
+};
+
 const ConversationRow: React.FC<{
     conversation: Conversation;
     selected: boolean;
     running: boolean;
     pinned: boolean;
+    threadBadge?: string | null;
     onOpen: (id: string) => void;
     onDelete: (id: string) => void;
     onClear: (id: string) => void;
     onTogglePin?: (id: string) => void;
-}> = ({ conversation, selected, running, pinned, onOpen, onDelete, onClear, onTogglePin }) => {
+}> = ({ conversation, selected, running, pinned, threadBadge, onOpen, onDelete, onClear, onTogglePin }) => {
     const [menuOpen, setMenuOpen] = useState(false);
     // Inline rename: the row's own name becomes an input. Enter commits,
     // Escape cancels, a blur commits (unless Escape already cancelled it).
@@ -165,6 +178,14 @@ const ConversationRow: React.FC<{
                         className={`h-1.5 w-1.5 shrink-0 rounded-full ${running ? 'animate-pulse bg-zinc-300' : selected ? 'bg-zinc-100' : 'border border-zinc-600/60'}`}
                     />
                     <span className="min-w-0 flex-1 truncate">{title}</span>
+                    {threadBadge && (
+                        <span
+                            data-testid="conversation-symbol-badge"
+                            className="shrink-0 rounded-control border border-hairline px-1.5 py-0.5 font-mono text-ui-2xs leading-none text-zinc-500"
+                        >
+                            {threadBadge}
+                        </span>
+                    )}
                     {side && (
                         <span data-testid="conversation-side"
                             className={`shrink-0 font-mono text-ui-2xs uppercase tracking-wide ${side === 'Long' ? 'text-emerald-400' : 'text-rose-400'}`}>
@@ -249,6 +270,16 @@ export const ConversationGroups: React.FC<ConversationGroupsProps> = ({
         () => pinnedIds ? rows.filter(c => pinnedIds.has(c.id)) : rows.filter(c => (c as Conversation & { pinned?: boolean }).pinned),
         [rows, pinnedIds],
     );
+    const snap = useSyncExternalStore(chatStore.subscribe, chatStore.getSnapshot, chatStore.getSnapshot);
+    const badgeByConvId = useMemo(() => {
+        const m = new Map<string, string>();
+        for (const s of snap.sessions) {
+            if (!s.conversationId) continue;
+            const b = formatThreadBadge(s.symbol, s.interval);
+            if (b) m.set(s.conversationId, b);
+        }
+        return m;
+    }, [snap.sessions]);
     const recent = useMemo(
         () => rows.filter(c => !pinnedIds?.has(c.id) && !(c as Conversation & { pinned?: boolean }).pinned),
         [rows, pinnedIds],
@@ -311,6 +342,7 @@ export const ConversationGroups: React.FC<ConversationGroupsProps> = ({
                                 selected={conversation.id === activeConversationId}
                                 running={isRunning(conversation.id)}
                                 pinned
+                                threadBadge={badgeByConvId.get(conversation.id) ?? conversationBadgeFallback(conversation)}
                                 onTogglePin={onTogglePin}
                                 onOpen={onOpenConversation}
                                 onDelete={onDeleteConversation}
@@ -337,6 +369,7 @@ export const ConversationGroups: React.FC<ConversationGroupsProps> = ({
                             selected={conversation.id === activeConversationId}
                             running={isRunning(conversation.id)}
                                 pinned={false}
+                                threadBadge={badgeByConvId.get(conversation.id) ?? conversationBadgeFallback(conversation)}
                                 onTogglePin={onTogglePin}
                             onOpen={onOpenConversation}
                             onDelete={onDeleteConversation}

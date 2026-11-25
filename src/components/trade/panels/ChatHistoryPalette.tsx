@@ -19,6 +19,7 @@ import * as chatStore from '../../../services/trade/chatStore';
 import type { LiveSession } from '../../../services/trade/chatStore';
 import { MANUAL_TITLE_MAX_CHARS } from '../../../utils/conversationTitle';
 import { ageMinutes, agoLabel } from '../../../utils/relativeTime';
+import { formatThreadBadge } from '../../../utils/uiFormatting';
 
 /** "2 days ago" style relative time — the palette's right column, copied from
  *  the reference's recency labels. Shared with the dock header's "answered"
@@ -115,8 +116,19 @@ const ChatHistoryPalette: React.FC<ChatHistoryPaletteProps> = ({
                             <button type="button"
                                 onClick={() => onSelect(s.id)}
                                 onMouseEnter={() => onSelChange(i)}
-                                className="flex min-w-0 flex-1 items-center justify-between gap-3 text-left">
-                                <span className={`truncate text-ui-sm ${s.id === activeId ? 'font-semibold text-zinc-100' : 'text-zinc-300'}`} title={`${s.kind === 'panel' ? '◆ ' : ''}${s.title}`}>{s.kind === 'panel' ? '◆ ' : ''}{s.title}</span>
+                                className="flex min-w-0 flex-1 items-center justify-between gap-2 text-left">
+                                <span className={`min-w-0 flex-1 truncate text-ui-sm ${s.id === activeId ? 'font-semibold text-zinc-100' : 'text-zinc-300'}`} title={`${s.kind === 'panel' ? '◆ ' : ''}${s.title}`}>{s.kind === 'panel' ? '◆ ' : ''}{s.title}</span>
+                                {(() => {
+                                    const badge = formatThreadBadge(s.symbol, s.interval);
+                                    return badge ? (
+                                        <span
+                                            data-testid="history-symbol-badge"
+                                            className="shrink-0 rounded-control border border-hairline px-1.5 py-0.5 font-mono text-ui-2xs leading-none text-zinc-500"
+                                        >
+                                            {badge}
+                                        </span>
+                                    ) : null;
+                                })()}
                                 <span className="shrink-0 text-ui-xs text-zinc-600">{relTime(s.updatedAt)}</span>
                             </button>
                         )}

@@ -163,7 +163,9 @@ export const AutonomyControl: React.FC<{ providers: ProviderConfig[] }> = ({ pro
                 data-testid="autonomy-control"
                 aria-expanded={open}
                 onClick={() => setOpen(v => !v)}
-                title={autonomous ? 'Desk autonomy: on — click for activity & pause' : 'Desk autonomy: paused — click to resume'}
+                title={autonomous
+                    ? 'Background automation (watches, memory, and scheduled checks) — click to configure or pause'
+                    : 'Background automation paused — click to resume'}
                 className={`hit-target flex items-center gap-1 rounded-control px-1.5 py-1 text-ui-2xs font-mono transition-colors ${
                     autonomous ? 'text-zinc-300 hover:bg-white/[0.06]' : 'text-zinc-500 hover:bg-white/[0.06]'
                 }`}

@@ -34,12 +34,12 @@ const SEGMENTS: ReadonlyArray<{
 }> = [
     {
         layout: 'desk', surface: 'trade', label: 'Desk', short: 'D',
-        title: 'Desk — chart + AI side by side (Alt+D toggles the chart)',
+        title: 'Desk: Chart + AI copilot (Alt+D)',
         testId: 'layout-pill-desk', miniTestId: 'layout-pill-mini-desk',
     },
     {
         layout: 'chat', surface: 'agents', label: 'Chat', short: 'C',
-        title: 'Chat — pure chat focus view (Alt+D toggles the chart)',
+        title: 'Chat: Focused conversation (Alt+D)',
         testId: 'layout-pill-chat', miniTestId: 'layout-pill-mini-chat',
     },
 ];
@@ -117,13 +117,13 @@ export const LayoutMiniToggle: React.FC<LayoutMiniToggleProps> = ({ surface, onS
                     aria-current={surface && surface === s.surface ? 'page' : undefined}
                     title={s.title}
                     data-testid={s.miniTestId}
-                    className={`flex h-6 w-6 items-center justify-center rounded-[6px] font-mono text-[10px] font-bold uppercase transition-colors ${
+                    className={`flex h-6 items-center justify-center rounded-[6px] px-2 text-ui-2xs font-medium tracking-wide transition-colors ${
                         layout === s.layout
                             ? 'bg-zinc-800 text-zinc-100'
                             : 'text-zinc-500 hover:text-zinc-300'
                     }`}
                 >
-                    {s.short}
+                    {s.label}
                 </button>
             ))}
         </div>
