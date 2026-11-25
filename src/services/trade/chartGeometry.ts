@@ -198,9 +198,12 @@ const tfSecondsSafe = (tf: string | undefined | null): number | null => {
  *    charts; LTF drawings (`createdOnTf < activeTf`) are hidden on HTF charts.
  *  - Legacy drawings without `createdOnTf` stay visible on all timeframes. */
 export const isDrawingVisibleOnTf = (
-    drawing: Pick<ChartDrawing, 'createdOnTf' | 'visibleOnTfs'>,
+    drawing: Pick<ChartDrawing, 'createdOnTf' | 'visibleOnTfs'> & { persistAcrossTf?: boolean },
     activeTf: string,
 ): boolean => {
+    // Execution/plan shapes (Entry/SL/TP) persist across timeframe switches:
+    // the stop the model drew on 15m is still the stop on 1h.
+    if (drawing.persistAcrossTf === true) return true;
     if (Array.isArray(drawing.visibleOnTfs) && drawing.visibleOnTfs.length > 0) {
         return drawing.visibleOnTfs.includes(activeTf);
     }
@@ -211,6 +214,14 @@ export const isDrawingVisibleOnTf = (
     if (createdSec === null || activeSec === null) return true;
     return createdSec >= activeSec;
 };
+
+/** How many committed shapes the ACTIVE timeframe currently hides (drawings
+ *  anchored on a LOWER timeframe than the one on screen). Drives the chart's
+ *  quiet "N lower-TF hidden" pill — a count, never a warning banner. */
+export const countHiddenLowerTf = (
+    drawings: ReadonlyArray<Pick<ChartDrawing, 'createdOnTf' | 'visibleOnTfs' | 'persistAcrossTf'>>,
+    activeTf: string,
+): number => drawings.filter(d => !isDrawingVisibleOnTf(d, activeTf)).length;
 
 /** Pure ATR(14) over candles (Wilder smoothing; falls back to SMA over
  *  available true ranges when fewer than 15 bars exist). */

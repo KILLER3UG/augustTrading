@@ -56,6 +56,12 @@ export interface ChartDrawing {
     createdOnTf?: string;
     /** Optional explicit list of timeframes on which the shape is visible. */
     visibleOnTfs?: string[];
+    /** True for EXECUTION/PLAN shapes (`mark_trade_levels`' Entry/SL/TP lines):
+     *  a stop the model drew on 15m is still the stop when the trader flips to
+     *  1h, so these render on every timeframe (`isDrawingVisibleOnTf` returns
+     *  true immediately). Micro-structure drawings (trend/zones/fibs) keep the
+     *  created-on-TF rule so higher timeframes stay clean. */
+    persistAcrossTf?: boolean;
     /** Monotonic edit version for optimistic updates / revision hashing. */
     version?: number;
     kind: DrawKind;
@@ -568,7 +574,7 @@ export const drawingFromChartTool = (
     let throughNote = '';
     if (kind === 'hline') {
         const drawn = finiteNum(ctx.drawnPrice);
-        if (drawn !== null && ctx.klines && ctx.klines.length > 0) {
+        if (drawn !== null && drawn > 0 && ctx.klines && ctx.klines.length > 0) {
             const snapped = snapPriceToStructure(prices[0], ctx.klines);
             if (snapped.snapped) {
                 snapNote = ` (snapped to the swing at ${snapped.price}, ${Math.abs(((snapped.price - prices[0]) / prices[0]) * 100).toFixed(2)}% from your ${prices[0]})`;
@@ -585,6 +591,11 @@ export const drawingFromChartTool = (
             if (gapPct > PRICE_ALREADY_PAST_PCT) {
                 throughNote = ` NOTE: price is ${drawn}, ${gapPct.toFixed(1)}% ${drawn < points[0].p ? 'above' : 'below'} your level at ${points[0].p}. If you meant a level price is currently holding, this is not it.`;
             }
+        } else if (drawn === null || drawn <= 0) {
+            // A missing, zero or negative mark must never reach the percentage
+            // math: |(level − 0) / 0| printed "Infinity% above your level" and
+            // read like a harness bug. Say the mark is unavailable instead.
+            throughNote = ' NOTE: live mark unavailable — the distance/staleness note for this level was skipped.';
         }
     }
 
@@ -723,6 +734,10 @@ export const drawingsFromLevelTool = (
             shortId,
             origin: 'agent',
             createdOnTf: ctx?.interval,
+            // An Entry/SL/TP plan is an EXECUTION annotation, not micro-
+            // structure: the stop drawn on 15m is still the stop on 1h/4h, so
+            // these lines persist across timeframe switches.
+            persistAcrossTf: true,
             version: 1,
             kind: 'hline',
             points: [{ t: Date.now() / 1000, p: price }],

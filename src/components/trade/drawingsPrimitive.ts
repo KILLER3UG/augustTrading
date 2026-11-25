@@ -62,6 +62,9 @@ export interface DrawingsPrimitiveState {
     barSeconds: number;
     priceScaleMode: PriceScaleMode;
     candles: ReadonlyArray<EvalCandle>;
+    /** When true, lower-TF drawings the active timeframe would hide are drawn
+     *  anyway (the "N lower-TF hidden" pill's temporary reveal). */
+    includeLowerTf?: boolean;
 }
 
 interface ProjectedShape {
@@ -606,7 +609,7 @@ export class ChartDrawingsPrimitive implements ISeriesPrimitive<Time> {
 
         const appendList = (list: ReadonlyArray<ChartDrawing>, defaultOrigin: 'user' | 'agent'): void => {
             for (const drawing of list) {
-                if (!isDrawingVisibleOnTf(drawing, this.state.activeTf)) continue;
+                if (!this.state.includeLowerTf && !isDrawingVisibleOnTf(drawing, this.state.activeTf)) continue;
                 const pts = drawing.points
                     .map(p => this.projectPoint(p))
                     .filter((p): p is ScreenXY => p !== null);

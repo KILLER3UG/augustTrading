@@ -23,7 +23,7 @@
  *    screen in plain data.
  */
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import TimeframeBar from './TimeframeBar';
 import {
     createChart,
@@ -80,6 +80,7 @@ import {
 } from '../../services/trade/positionBoxMath';
 import { renderAnnotatedChartSnapshot, type SnapshotBadge } from '../../services/trade/chartSnapshotAnnotator';
 import { drawingsControl } from '../../services/trade/drawingsControl';
+import { countHiddenLowerTf } from '../../services/trade/chartGeometry';
 import type { LiveKline } from '../../services/trade/futuresStreams';
 import type { MessageLevelLines } from '../../services/trade/keyLevels';
 import { getActiveUsername } from '../../utils/activeUser';
@@ -703,6 +704,11 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
     /** Hide-all (the rail's eye): every drawing layer off the canvas, nothing
      *  deleted — TradingView's "hide all objects" toggle. */
     const [drawingsHidden, setDrawingsHidden] = useState(false);
+    /** The "N lower-TF hidden" pill's temporary reveal: when true, drawings the
+     *  active timeframe would hide render anyway until the trader closes the
+     *  pill. Plan levels (persistAcrossTf) are never hidden, so they never
+     *  count toward the pill. */
+    const [showLowerTfDrawings, setShowLowerTfDrawings] = useState(false);
     /** Magnet snap: each anchor is pulled onto the nearest candle's OHLC (12px). */
     const [magnet, setMagnet] = useState(false);
     const magnetRef = useRef(magnet);
@@ -713,6 +719,8 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
     const [lineWidth, setLineWidth] = useState<number>(DRAW_WIDTH_DEFAULT);
     const drawingsHiddenRef = useRef(drawingsHidden);
     drawingsHiddenRef.current = drawingsHidden;
+    const showLowerTfRef = useRef(showLowerTfDrawings);
+    showLowerTfRef.current = showLowerTfDrawings;
     /** Live-editing a text note: which drawing id + where its input renders. */
     const [textEdit, setTextEdit] = useState<{ id: string; x: number; y: number } | null>(null);
     const lastTickRef = useRef<number>(Date.now());
@@ -720,6 +728,13 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
     drawingsRef.current = drawings;
     const modelDrawingsRef = useRef<ChartDrawing[]>([]);
     modelDrawingsRef.current = modelDrawings ?? [];
+    /** Committed shapes the ACTIVE timeframe hides (micro-structure anchored on
+     *  a lower timeframe). Plan levels (persistAcrossTf) never count — they
+     *  always render. Drives the quiet "N lower-TF hidden" pill. */
+    const hiddenLowerTfCount = useMemo(
+        () => countHiddenLowerTf([...drawings, ...(modelDrawings ?? [])], interval),
+        [drawings, modelDrawings, interval],
+    );
     // Paper levels are a THIRD, ephemeral list: never merged into `drawings`
     // or `modelDrawings`, so no paper fill can be undone or saved as a user
     // drawing. Only the primitive reads them.
@@ -889,6 +904,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
             selectedId: overrides?.selectedId !== undefined ? overrides.selectedId : selectedDrawingIdRef.current,
             hoveredId: overrides?.hoveredId !== undefined ? overrides.hoveredId : hoveredDrawingIdRef.current,
             hidden: drawingsHiddenRef.current,
+            includeLowerTf: showLowerTfRef.current,
             activeTf: intervalRef.current,
             barSeconds: intervalSeconds(intervalRef.current),
             priceScaleMode: priceScaleModeRef.current,
@@ -3370,6 +3386,22 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                     <span className="pointer-events-none absolute right-3 top-2 z-10 rounded-full bg-zinc-800/80 px-2 py-0.5 text-ui-2xs text-zinc-400" title="Current verdict levels drawn on the chart" data-testid="verdict-overlay-chip">
                         Verdict overlay · {levels.map(l => l.label).join(' ')}
                     </span>
+                )}
+                {hiddenLowerTfCount > 0 && (
+                    /* QUIET monochrome pill: how many committed shapes the active
+                       timeframe hides (micro-structure drawn on a lower TF). A
+                       click temporarily reveals them; plan levels never count. */
+                    <button
+                        type="button"
+                        data-testid="lower-tf-hidden-pill"
+                        onClick={() => setShowLowerTfDrawings(v => !v)}
+                        title={showLowerTfDrawings
+                            ? 'Hide the lower-timeframe drawings again'
+                            : 'Temporarily show the drawings anchored on lower timeframes'}
+                        className="absolute bottom-2 left-3 z-10 rounded-full border border-hairline bg-zinc-900/80 px-2 py-0.5 font-mono text-ui-2xs text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-200"
+                    >
+                        {hiddenLowerTfCount} lower-TF hidden{showLowerTfDrawings ? ' · showing' : ''}
+                    </button>
                 )}
                 <ChartToolRail
                     tool={tool}
