@@ -237,15 +237,31 @@ const normalizeStoredAccount = async (
     };
 };
 
+/** Synchronous in-memory cache of the last loaded/persisted paper account view (zero I/O, zero network). */
+let cachedPaperAccount: { username: string; account: PaperAccount } | null = null;
+
+export const getCachedPaperAccountView = (
+    username: string = getActiveUsername() || 'default',
+    nowMs: number = Date.now(),
+): PaperAccountView | null => {
+    if (!cachedPaperAccount || cachedPaperAccount.username !== username) return null;
+    return paperAccountView(cachedPaperAccount.account, {}, nowMs);
+};
+
 export const getPaperAccount = async (
     username: string = getActiveUsername() || 'default',
     nowMs: number = Date.now(),
-): Promise<PaperAccount> => normalizeStoredAccount(await getPreference(storeKey(username)), username, nowMs);
+): Promise<PaperAccount> => {
+    const account = await normalizeStoredAccount(await getPreference(storeKey(username)), username, nowMs);
+    cachedPaperAccount = { username, account };
+    return account;
+};
 
 const persistAccount = async (
     account: PaperAccount,
     username: string = getActiveUsername() || 'default',
 ): Promise<void> => {
+    cachedPaperAccount = { username, account };
     await setPreference(storeKey(username), JSON.stringify(account));
     notifySubscribers(account);
 };

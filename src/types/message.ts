@@ -320,6 +320,9 @@ export interface Message {
   strategyActivation?: import('../services/trade/strategyActivation').StrategyActivationProposal;
   /** A stats-tool receipt rendered as a card (P-5) — same projection rule. */
   statsCard?: import('../services/trade/statsCard').StatsCardSnapshot;
+  /** Ephemeral diagnostic snapshots for `/context` and `/doctor`. */
+  contextDiagnostic?: import('../services/trade/diagnosticsCore').ContextDiagnosticSnapshot;
+  doctorDiagnostic?: import('../services/trade/diagnosticsCore').DoctorDiagnosticSnapshot;
   /** A PROPOSED change to one risk limit or the guard preset. Set by
    *  propose_risk_change; rendered as a decision card. NOTHING is applied until
    *  the trader confirms — the confirm writes through the same settings writer
