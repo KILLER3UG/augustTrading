@@ -311,11 +311,11 @@ describe('Phase 3: Tool Audit Fixes (runAllTimeframes, present_trade sync gate, 
         assert.match(raw, /## 1d/);
     });
 
-    it('synchronously refuses inverted plans in runPresentTrade before drawing or arming', () => {
+    it('refuses inverted plans in runPresentTrade before drawing or arming', async () => {
         let drew = false;
         let armed = false;
         let presented = false;
-        const result = runPresentTrade(
+        const result = await runPresentTrade(
             {
                 call: {
                     id: 'tc-1',

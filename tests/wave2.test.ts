@@ -59,7 +59,7 @@ describe('Wave 2 invariants', () => {
             confidence: 'High' as const, rationale: 'test', invalidation: 'below 98',
             evidence: ['level'], symbol: 'BTCUSDT',
         };
-        const result = runPresentTrade(
+        const result = await runPresentTrade(
             {
                 call: { id: 'c1', name: 'present_trade', arguments: proposal },
                 symbol: 'BTCUSDT', trades: [], drawnPrice: 100.5, crossCanvas: false,

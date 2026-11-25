@@ -334,6 +334,27 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({
                 )}
             </div>
         )}
+        {proposal.math && (
+            // THE HARNESS'S OWN NUMBERS (present_trade's deterministic math
+            // gate): gross/net R:R after fees + measured funding, break-even
+            // win rate, sizing at the account's equity/risk cap, and the
+            // isolated liquidation estimate. Monochrome; every figure is
+            // computed by the harness, none quoted from the model.
+            <div className="mt-2 rounded-control border border-hairline bg-white/[0.02] p-2" data-testid="proposal-harness-math">
+                <div className="font-mono text-ui-xs uppercase text-zinc-500">Harness math</div>
+                <div className="mt-0.5 font-mono text-ui-dense tabular-nums text-zinc-200">
+                    gross {proposal.math.grossRatio}:1 · net {proposal.math.netRewardR ?? '—'}R · break-even {proposal.math.breakEvenWinRatePct ?? '—'}%
+                </div>
+                <div className="mt-0.5 font-mono text-ui-2xs tabular-nums text-zinc-400">
+                    risk ${proposal.math.riskUsd ?? '—'} → qty {proposal.math.qty ?? '—'} @ {proposal.math.leverageNeeded ?? '—'}x · notional ${proposal.math.notionalUsd ?? '—'} · liq ~{proposal.math.liquidationPrice ?? '—'}
+                </div>
+                <div className="mt-0.5 font-mono text-ui-2xs text-zinc-500">
+                    fees {proposal.math.costR ?? '—'}R{proposal.math.fundingDragR !== null
+                        ? ` · funding ${proposal.math.fundingDragR >= 0 ? '+' : ''}${proposal.math.fundingDragR}R (${proposal.math.fundingRate ?? '—'} at ${proposal.math.fundingIntervalHours ?? '—'}h)`
+                        : ' · funding unavailable'}
+                </div>
+            </div>
+        )}
         {(stated.riskUsd !== undefined || stated.notionalUsd !== undefined) && (
             // What the MODEL said, kept apart from the suggestion above: the
             // trader can see the two side by side, and the model's claim never

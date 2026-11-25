@@ -91,6 +91,37 @@ export interface TradeProposal {
     simulated?: boolean;
     /** Explicit fee, spread, slippage, and gap-open fill assumptions. */
     fillAssumptions?: PaperFillAssumptions;
+    /**
+     * The HARNESS's own deterministic math for this plan (present_trade's
+     * math gate): gross/net R:R after fees + measured funding, break-even
+     * win rate, sizing at the account's equity and risk cap, and the isolated
+     * liquidation estimate. Every number a trader reads comes from here —
+     * never from the model's arithmetic; the card shows the model's stated
+     * figures beside them when it volunteered any.
+     */
+    math?: PresentTradeMath;
+}
+
+/** Flattened, JSON-safe trade math stamped by `present_trade`
+ *  (services/trade/presentTradeTool.computePresentTradeMath). */
+export interface PresentTradeMath {
+    grossRatio: number;
+    /** Net reward at the nearest target, in R, after round-trip fees. */
+    netRewardR: number | null;
+    /** Round-trip taker cost in R. */
+    costR: number | null;
+    breakEvenWinRatePct: number | null;
+    riskUsd: number | null;
+    qty: number | null;
+    notionalUsd: number | null;
+    leverageNeeded: number | null;
+    liquidationPrice: number | null;
+    liquidationDistanceAtr: number | null;
+    /** Signed funding carry for ONE settlement at the measured interval. */
+    fundingDragR: number | null;
+    fundingRate: number | null;
+    fundingIntervalHours: number | null;
+    inverted: boolean;
 }
 
 /**

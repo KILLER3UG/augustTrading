@@ -20,12 +20,141 @@
 
 import type { LoggedTrade } from '../../types';
 import type { DeskToolCall, DeskToolResult } from '../analysis/DeskToolsService';
-import type { ProposalGate } from './proposedTrade';
+import type { ProposalGate, PresentTradeMath } from './proposedTrade';
 import { parseTradeProposal, mintPlanId, buildTradePlan, type TradeProposal } from './proposedTrade';
 import { formatPaperFillAssumptions, PAPER_EXECUTION_RECEIPT } from '../tracking/paperExecution';
 import { beginGateScan, cancelGateScan, evaluatePlanLocalSync, gateReceiptLine } from './proposalGate';
 import { drawingsFromLevelTool, type ChartDrawing } from './chartDrawings';
+import { computeTradeMath, computeFundingDrag, type TradeMathRead } from '../market/tradeMathCore';
+import type { Kline } from '../../types/message';
 import type { WatchPlan } from './tradePlanLevels';
+
+/**
+ * Injectable inputs for the deterministic math gate. Tests stub these;
+ * the defaults read the LIVE paper account (equity, risk cap, max leverage),
+ * the MEASURED funding interval and the coin's recent candles — each
+ * best-effort and time-boxed, so an offline harness degrades to `null`
+ * inputs (the math still runs; the missing piece is named) instead of
+ * inventing numbers.
+ */
+export interface PresentTradeMathDeps {
+    getAccount?: () => Promise<{ equityUsd: number; riskPercent: number; leverage: number } | null>;
+    getFunding?: (symbol: string) => Promise<{ rate: number; intervalHours: number | null } | null>;
+    getCandles?: (symbol: string) => Promise<Kline[]>;
+}
+
+/** Never let a slow/offline market fetch stall a presented plan. */
+const withTimeout = async <T>(promise: Promise<T>, fallback: T, ms = 1_500): Promise<T> => {
+    try {
+        return await Promise.race([
+            promise,
+            new Promise<T>(resolve => { setTimeout(() => resolve(fallback), ms); }),
+        ]);
+    } catch {
+        return fallback;
+    }
+};
+
+const defaultPresentTradeMathDeps: PresentTradeMathDeps = {
+    getAccount: async () => {
+        try {
+            const { getPaperAccount } = await import('../paper/PaperBrokerService');
+            const account = await withTimeout(getPaperAccount(), null as never);
+            if (!account) return null;
+            return {
+                equityUsd: account.cashBalanceUsd > 0 ? account.cashBalanceUsd : account.config.startingBalanceUsd,
+                riskPercent: account.config.maxRiskPerTradePct,
+                leverage: account.config.maxLeverage,
+            };
+        } catch {
+            return null;
+        }
+    },
+    getFunding: async symbol => {
+        try {
+            const mds = await import('../analysis/MarketDataService');
+            const [intervalHours, mark] = await Promise.all([
+                withTimeout(mds.fetchFundingInfo(symbol).catch(() => null), null),
+                withTimeout(mds.fetchMarkIndex(symbol).catch(() => null), null as never),
+            ]);
+            const rate = Number((mark as unknown as { lastFundingRate?: unknown } | null)?.lastFundingRate);
+            if (!Number.isFinite(rate)) return null;
+            return { rate, intervalHours: intervalHours ?? null };
+        } catch {
+            return null;
+        }
+    },
+    getCandles: async symbol => {
+        try {
+            const { fetchRecentForTools } = await import('../analysis/marketTools');
+            return await withTimeout(fetchRecentForTools(symbol, '15m', 100).catch(() => []), []);
+        } catch {
+            return [];
+        }
+    },
+};
+
+/** The harness's OWN numbers for a presented plan — attached to the card and
+ *  the receipt, so no figure a trader reads was ever the model's arithmetic. */
+export interface PresentTradeMathResult {
+    /** Null when the levels themselves are uncomputable (refused upstream). */
+    read: TradeMathRead | null;
+    snapshot: PresentTradeMath;
+}
+
+/** Compute the deterministic trade math for a presented plan. Pure over its
+ *  inputs; every input defaults to the live harness sources and degrades to
+ *  null (named on the card) rather than guessed. */
+export const computePresentTradeMath = async (
+    proposal: Pick<TradeProposal, 'symbol' | 'direction' | 'entry' | 'stopLoss' | 'takeProfits'>,
+    deps: PresentTradeMathDeps = {},
+): Promise<PresentTradeMathResult> => {
+    const d = { ...defaultPresentTradeMathDeps, ...deps };
+    const [account, funding, candles] = await Promise.all([
+        d.getAccount?.() ?? Promise.resolve(null),
+        d.getFunding?.(proposal.symbol) ?? Promise.resolve(null),
+        d.getCandles?.(proposal.symbol) ?? Promise.resolve(null),
+    ]);
+    const read = computeTradeMath({
+        direction: proposal.direction,
+        entry: proposal.entry,
+        stopLoss: proposal.stopLoss,
+        takeProfits: proposal.takeProfits,
+        equityUsd: account?.equityUsd,
+        riskPercent: account?.riskPercent,
+        leverage: account?.leverage,
+    }, candles ?? []);
+    // Funding carry at the MEASURED interval (never an invented 8h). One
+    // settlement over the immediate hold is the honest minimum assumption —
+    // stated on the card beside the number.
+    let fundingDragR: number | null = null;
+    if (funding && read && !read.gross.inverted) {
+        fundingDragR = computeFundingDrag({
+            direction: proposal.direction,
+            entry: proposal.entry,
+            stopLoss: proposal.stopLoss,
+            fundingRate: funding.rate,
+            settlements: 1,
+        });
+    }
+    const snapshot: PresentTradeMath = {
+        grossRatio: read?.gross.ratio ?? 0,
+        netRewardR: read?.costs.netRewardR ?? null,
+        costR: read?.costs.costR ?? null,
+        breakEvenWinRatePct: read?.costs.breakEvenWinRatePct ?? null,
+        riskUsd: read?.sizing.riskUsd ?? null,
+        qty: read?.sizing.qty ?? null,
+        notionalUsd: read?.sizing.notionalUsd ?? null,
+        leverageNeeded: read?.sizing.leverageNeeded ?? null,
+        liquidationPrice: read?.liquidation?.price ?? null,
+        liquidationDistanceAtr: read?.liquidation?.distanceAtr ?? null,
+        fundingDragR,
+        fundingRate: funding?.rate ?? null,
+        fundingIntervalHours: funding?.intervalHours ?? null,
+        inverted: !read || read.gross.inverted,
+    };
+    return { read, snapshot };
+};
 
 /** What the turn is running against: the argument bag, the coin it was asked
  *  on, the closed-trade log for the gate, and the canvas truth it must not
@@ -100,8 +229,14 @@ export const playbookAttributionLine = (requested: unknown, stamped: string | un
         : '';
 };
 
-/** Run one `present_trade` call. */
-export const runPresentTrade = (ctx: PresentTradeContext, sink: PresentTradeSink): DeskToolResult => {
+/** Run one `present_trade` call. Async because the deterministic math gate
+ *  reads the live paper account + measured funding (both time-boxed and
+ *  best-effort); every caller awaits it. */
+export const runPresentTrade = async (
+    ctx: PresentTradeContext,
+    sink: PresentTradeSink,
+    mathDeps: PresentTradeMathDeps = {},
+): Promise<DeskToolResult> => {
     const { call } = ctx;
     const name = call.name;
     const args = call.arguments ?? {};
@@ -120,6 +255,23 @@ export const runPresentTrade = (ctx: PresentTradeContext, sink: PresentTradeSink
             `present_trade rejected: ${localCheck.refusal ?? 'levels are inverted for the stated direction.'}`,
         );
     }
+
+    // DETERMINISTIC MATH GATE — zero mental arithmetic. The harness computes
+    // the plan's own numbers (gross R:R, fee/funding-adjusted net R:R,
+    // break-even win rate, sizing at the account's equity + risk cap,
+    // isolated liquidation) and attaches them to the card AND this receipt.
+    // An inverted bracket that slips past the shape check is refused here too,
+    // and the model's prose never supplies a number the trader reads.
+    const math = await computePresentTradeMath(proposal, mathDeps);
+    if (math.snapshot.inverted) {
+        return receipt(
+            call,
+            name,
+            false,
+            'present_trade rejected: inverted bracket (harness math) — the stop and/or targets sit on the wrong side of the entry for the stated direction.',
+        );
+    }
+    proposal.math = math.snapshot;
 
     // The DOCK generates the stable plan id first: it keys the level-watch,
     // the receipt's level ids, "Log this trade" onto the journal row, AND the
@@ -218,10 +370,15 @@ export const runPresentTrade = (ctx: PresentTradeContext, sink: PresentTradeSink
     const paperLine = proposal.simulated !== false
         ? ` Paper lane: ${formatPaperFillAssumptions(proposal.fillAssumptions)} (${PAPER_EXECUTION_RECEIPT})`
         : '';
+    // The harness's own numbers on the receipt — the model quotes THESE, and
+    // any R:R/size it said in prose is subordinate to them (the card shows
+    // both side by side).
+    const m = math.snapshot;
+    const mathLine = ` Harness math: gross ${m.grossRatio}:1, net ${m.netRewardR ?? '—'}R (fees ${m.costR ?? '—'}R${m.fundingDragR !== null ? `, funding ${m.fundingDragR >= 0 ? '+' : ''}${m.fundingDragR}R${m.fundingIntervalHours !== null ? ` at the measured ${m.fundingIntervalHours}h interval` : ''}` : ''}), break-even ${m.breakEvenWinRatePct ?? '—'}%, risk $${m.riskUsd ?? '—'} → qty ${m.qty ?? '—'} @ ${m.leverageNeeded ?? '—'}x (notional $${m.notionalUsd ?? '—'}), liq ~${m.liquidationPrice ?? '—'}${m.liquidationDistanceAtr !== null ? ` (${m.liquidationDistanceAtr} ATR)` : ''}.`;
     return receipt(
         call,
         name,
         true,
-        `Presented ${proposal.direction} ${proposal.symbol} @ ${proposal.entry}, SL ${proposal.stopLoss}, TP ${proposal.takeProfits.join('/')}, R:R ~${rr}:1. ${gateLine} The user sees a "Log this trade" card.${playbookLine}${paperLine} ${watchLine}${ctx.canvasNote}`,
+        `Presented ${proposal.direction} ${proposal.symbol} @ ${proposal.entry}, SL ${proposal.stopLoss}, TP ${proposal.takeProfits.join('/')}, R:R ~${rr}:1.${mathLine} ${gateLine} The user sees a "Log this trade" card.${playbookLine}${paperLine} ${watchLine}${ctx.canvasNote}`,
     );
 };
