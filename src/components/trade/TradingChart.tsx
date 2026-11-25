@@ -915,7 +915,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
     useEffect(() => {
         syncPrimitive();
         scheduleRepaint();
-    }, [drawings, modelDrawings, paperDrawings, selectedDrawingId, drawingsHidden, interval, priceScaleMode, syncPrimitive, scheduleRepaint]);
+    }, [drawings, modelDrawings, paperDrawings, selectedDrawingId, drawingsHidden, showLowerTfDrawings, interval, priceScaleMode, syncPrimitive, scheduleRepaint]);
 
     // Apply Normal / Logarithmic mode directly to lightweight-charts' right price scale.
     useEffect(() => {
