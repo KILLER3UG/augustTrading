@@ -860,11 +860,16 @@ const TradeView: React.FC<TradeViewProps> = ({
      *  emerald-400 is 9.78:1 on the page and rose-400 8.00:1, so this is the one
      *  place the semantic hues are allowed on chrome-scale text without a contrast
      *  question. */
+    const lastCandleClose = levelCandles.length > 0 ? levelCandles[levelCandles.length - 1]?.close : undefined;
+    const displayMarkPrice = typeof markPrice === 'number' && Number.isFinite(markPrice) && markPrice > 0
+        ? markPrice
+        : (typeof lastCandleClose === 'number' && Number.isFinite(lastCandleClose) && lastCandleClose > 0 ? lastCandleClose : null);
     const priceTone = useMemo(() => {
+        if (displayMarkPrice === null) return 'text-zinc-400';
         const v = changePct ?? 0;
         return v > 0 ? 'text-emerald-400' : v < 0 ? 'text-rose-400' : 'text-zinc-100';
-    }, [changePct]);
-    const tickFlash = useTickFlash(markPrice);
+    }, [changePct, displayMarkPrice]);
+    const tickFlash = useTickFlash(displayMarkPrice ?? undefined);
 
     // ── Dock drag-resize ────────────────────────────────────────────
     // The drag itself belongs to the shared contract now (hooks/useRightPanel):
@@ -1040,7 +1045,7 @@ const TradeView: React.FC<TradeViewProps> = ({
                             data-testid="hero-price"
                             className={`-mx-1 rounded-control px-1 font-mono text-ui-price font-medium tracking-[-0.035em] tabular-nums ${priceTone} ${tickFlash.cls}`.trim()}
                         >
-                            {Number.isFinite(markPrice) ? fmtPrice(markPrice!) : '—'}
+                            {displayMarkPrice !== null ? fmtPrice(displayMarkPrice) : '—'}
                         </div>
                         {Number.isFinite(changePct) && (
                             <span

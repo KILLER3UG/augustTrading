@@ -7,9 +7,10 @@
  * and the probes measure the sidebar with, and the account row the Agents surface's
  * sidebar carries once the rail is not rendered there.
  */
-import React from 'react';
-import { Settings, Inbox, AlertTriangleIcon } from '../shared/Icons';
+import React, { useState } from 'react';
+import { Activity, AlertTriangleIcon, Inbox, Plus, Settings, SwitchUserIcon } from '../shared/Icons';
 import Tip from '../ui/Tip';
+import { useEscapeClose } from '../../hooks/useEscapeClose';
 import { useUpdateStatusDot } from '../shared/UpdateButton';
 import { useAutoUpdate } from '../../hooks/useAutoUpdate';
 
@@ -43,9 +44,24 @@ export const AccountRow: React.FC<{
     /** The profile write's state. Only ERROR speaks — a silent save error is
      *  data loss wearing a clean bar (the old header-save-failed chip). */
     saveStatus?: 'SAVED' | 'SAVING' | 'ERROR';
-}> = ({ expanded, activeUsername, onOpenSettings, onOpenActivity, saveStatus = 'SAVED' }) => {
+    /** Quick actions inside the bottom-left profile popover. */
+    onNewChat?: () => void;
+    onRunDoctor?: () => void;
+    onSwitchProfile?: () => void;
+}> = ({
+    expanded,
+    activeUsername,
+    onOpenSettings,
+    onOpenActivity,
+    saveStatus = 'SAVED',
+    onNewChat,
+    onRunDoctor,
+    onSwitchProfile,
+}) => {
     const { isElectron } = useAutoUpdate();
     const updateDot = useUpdateStatusDot();
+    const [menuOpen, setMenuOpen] = useState(false);
+    useEscapeClose(menuOpen, () => setMenuOpen(false));
 
     if (!expanded) {
         return (
@@ -69,8 +85,73 @@ export const AccountRow: React.FC<{
     return (
         <div
             data-testid="nav-account"
-            className="flex shrink-0 flex-col gap-1 px-3 pb-2.5 pt-2"
+            className="relative flex shrink-0 flex-col gap-1 px-3 pb-2.5 pt-2"
         >
+            {menuOpen && (
+                <>
+                    <div className="fixed inset-0 z-shield" aria-hidden onClick={() => setMenuOpen(false)} />
+                    <div
+                        data-testid="profile-quick-menu"
+                        role="menu"
+                        aria-label="Profile quick menu"
+                        className="motion-popover-down absolute bottom-full left-2 right-2 z-shield mb-1.5 rounded-xl border border-white/[0.08] bg-zinc-900/95 p-1 shadow-elevated backdrop-blur-md"
+                    >
+                        <button
+                            type="button"
+                            role="menuitem"
+                            onClick={() => { setMenuOpen(false); onOpenSettings(); }}
+                            className="flex w-full items-center justify-between gap-2 rounded-control px-2.5 py-2 text-left text-ui-dense text-zinc-200 transition-colors hover:bg-white/[0.06]"
+                        >
+                            <span className="flex items-center gap-2">
+                                <Settings className="h-3.5 w-3.5 text-zinc-400" aria-hidden="true" />
+                                Settings
+                            </span>
+                            <kbd className="font-mono text-ui-2xs text-zinc-500">Ctrl ,</kbd>
+                        </button>
+                        {onNewChat && (
+                            <button
+                                type="button"
+                                role="menuitem"
+                                onClick={() => { setMenuOpen(false); onNewChat(); }}
+                                className="flex w-full items-center justify-between gap-2 rounded-control px-2.5 py-2 text-left text-ui-dense text-zinc-200 transition-colors hover:bg-white/[0.06]"
+                            >
+                                <span className="flex items-center gap-2">
+                                    <Plus className="h-3.5 w-3.5 text-zinc-400" aria-hidden="true" />
+                                    New chat
+                                </span>
+                                <kbd className="font-mono text-ui-2xs text-zinc-500">Ctrl K</kbd>
+                            </button>
+                        )}
+                        {onRunDoctor && (
+                            <button
+                                type="button"
+                                role="menuitem"
+                                onClick={() => { setMenuOpen(false); onRunDoctor(); }}
+                                className="flex w-full items-center justify-between gap-2 rounded-control px-2.5 py-2 text-left text-ui-dense text-zinc-200 transition-colors hover:bg-white/[0.06]"
+                            >
+                                <span className="flex items-center gap-2">
+                                    <Activity className="h-3.5 w-3.5 text-zinc-400" aria-hidden="true" />
+                                    Run /doctor
+                                </span>
+                            </button>
+                        )}
+                        {onSwitchProfile && (
+                            <>
+                                <div aria-hidden="true" className="my-1 h-px bg-white/[0.07]" />
+                                <button
+                                    type="button"
+                                    role="menuitem"
+                                    onClick={() => { setMenuOpen(false); onSwitchProfile(); }}
+                                    className="flex w-full items-center gap-2 rounded-control px-2.5 py-2 text-left text-ui-dense text-zinc-200 transition-colors hover:bg-white/[0.06]"
+                                >
+                                    <SwitchUserIcon className="h-3.5 w-3.5 text-zinc-400" aria-hidden="true" />
+                                    Switch profile
+                                </button>
+                            </>
+                        )}
+                    </div>
+                </>
+            )}
             {saveStatus === 'ERROR' && (
                 <span role="status" aria-label="Save failed"
                     title="The profile could not be saved"
@@ -80,14 +161,19 @@ export const AccountRow: React.FC<{
                 </span>
             )}
             <div className="flex items-center gap-2">
-                <div
-                    className="flex min-w-0 flex-1 items-center gap-2 rounded-control py-0.5"
+                <button
+                    type="button"
+                    data-testid="profile-menu-trigger"
+                    aria-haspopup="menu"
+                    aria-expanded={menuOpen}
+                    onClick={() => setMenuOpen(v => !v)}
+                    className="flex min-w-0 flex-1 items-center gap-2 rounded-control px-1.5 py-1 -ml-1.5 text-left transition-colors hover:bg-white/[0.05] focus-visible:ring-2 focus-visible:ring-zinc-400"
                 >
                     <span className="min-w-0 flex-1">
                         <span className="block truncate text-ui-caption text-zinc-300" data-testid="nav-account-name" title={activeUsername || 'No profile'}>{activeUsername || 'No profile'}</span>
                         <span className="block truncate text-ui-2xs text-zinc-600" title="Signed in · local-first">Signed in · local-first</span>
                     </span>
-                </div>
+                </button>
                 {onOpenActivity && (
                     <Tip label="Activity" shortcut="">
                         <button

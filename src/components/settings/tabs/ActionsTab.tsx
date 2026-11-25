@@ -9,6 +9,7 @@ import { ToggleSwitch } from '../../shared/ToggleSwitch';
 import { SettingsPageHeader } from './shared';
 import { exportTrainingDataJSONL, trainingRecordFor } from '../../../utils/reportExport';
 import { captureStatus, exportCorpusJsonl, setCaptureEnabled, isCaptureEnabled, lastCaptureFailureInfo, TRAINING_CAPTURE_MAX_RECORDS } from '../../../services/learning/trainingCapture';
+import { collectRedactedDiagnosticBundle } from '../../../services/trade/diagnosticsRuntime';
 import type { SettingsTabProps } from './types';
 
 export interface ActionsTabProps extends SettingsTabProps {
@@ -27,6 +28,28 @@ const ActionsTab: React.FC<{ tab: ActionsTabProps }> = ({ tab: props }) => {
     const [capture, setCapture] = React.useState<{ enabled: boolean; desktop: boolean; recordCount: number; refusedOnce: boolean; lastAt: string | null } | null>(null);
     const [corpusBusy, setCorpusBusy] = React.useState(false);
     const [corpusError, setCorpusError] = React.useState<string | null>(null);
+    const [diagBusy, setDiagBusy] = React.useState(false);
+    const [diagNote, setDiagNote] = React.useState<string | null>(null);
+    const exportDiagnostics = async (): Promise<void> => {
+        setDiagBusy(true);
+        setDiagNote(null);
+        try {
+            const bundle = await collectRedactedDiagnosticBundle();
+            const stamp = new Date().toISOString().slice(0, 10);
+            const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `august-diagnostics-${stamp}.json`;
+            link.click();
+            setTimeout(() => URL.revokeObjectURL(url), 60_000);
+            setDiagNote('Exported redacted diagnostic log.');
+        } catch (e) {
+            setDiagNote(e instanceof Error ? e.message : String(e));
+        } finally {
+            setDiagBusy(false);
+        }
+    };
     const refreshCapture = React.useCallback(() => { void captureStatus().then(setCapture); }, []);
     React.useEffect(() => { refreshCapture(); }, [refreshCapture]);
     const flipCapture = () => {
@@ -139,6 +162,31 @@ const ActionsTab: React.FC<{ tab: ActionsTabProps }> = ({ tab: props }) => {
                 >
                     {corpusBusy ? 'Preparing…' : 'Export training corpus (JSONL)'}
                 </button>
+            </section>
+
+            {/* Diagnostics — 1-click redacted troubleshooting bundle export. */}
+            <section className="rounded-bubble border border-hairline bg-zinc-800/40 p-4" data-testid="diagnostics-export-card">
+                <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                        <h3 className="text-ui-dense font-semibold text-zinc-200">Diagnostics</h3>
+                        <p className="mt-1 max-w-prose text-ui-xs leading-4 text-zinc-500">
+                            Troubleshooting log — exports system checks, active model capabilities, app version,
+                            and recent runtime errors as JSON. API keys and bearer tokens are stripped.
+                        </p>
+                    </div>
+                    <button
+                        type="button"
+                        data-testid="export-diagnostic-log"
+                        disabled={diagBusy}
+                        onClick={() => { void exportDiagnostics(); }}
+                        className="shrink-0 rounded-control border border-hairline bg-zinc-900 px-3 py-1.5 text-ui-xs font-semibold text-zinc-200 transition-colors hover:border-line hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                        {diagBusy ? 'Preparing…' : 'Export log'}
+                    </button>
+                </div>
+                {diagNote && (
+                    <p className="mt-2 text-ui-xs text-zinc-400" role="status">{diagNote}</p>
+                )}
             </section>
 
             {/* Backups — list/export/restore/delete the 30-min auto-backups */}

@@ -234,3 +234,97 @@ export const buildDoctorDiagnostic = (input: DoctorDiagnosticInput): DoctorDiagn
         checks,
     };
 };
+
+// ─── Redacted Diagnostic Bundle Export ───────────────────────────────────────
+
+const SAFE_TOKEN_METRIC_KEYS = new Set([
+    'windowtokens',
+    'totaltokens',
+    'tokensin',
+    'tokensout',
+    'tokensuntilautocompact',
+    'autocompacttriggertokens',
+]);
+
+const SENSITIVE_KEY_RE =
+    /^(?:x[-_])?api[-_]?key$|^authorization$|^bearer$|secret|password|passwd|private[-_]?key|access[-_]?token|refresh[-_]?token|auth[-_]?token|session[-_]?token|cookie|credential|api[-_]?token/i;
+
+const redactStringSecrets = (text: string): string =>
+    text
+        .replace(/\bBearer\s+[A-Za-z0-9._~+/-]{6,}=*/gi, 'Bearer [REDACTED]')
+        .replace(/\bsk-[A-Za-z0-9_-]{8,}\b/g, '[REDACTED]')
+        .replace(
+            /\b(x-api-key|api[_-]?key|authorization|secret|password|access[_-]?token|refresh[_-]?token)\s*([:=])\s*["']?([^\s"',;}{]+)["']?/gi,
+            (_m, k: string, sep: string) => `${k}${sep} [REDACTED]`,
+        );
+
+/** Recursively strip API keys, bearer tokens, passwords, and secrets from diagnostic payloads. */
+export const redactSensitiveFields = <T>(value: T, seen = new WeakSet<object>()): T => {
+    if (value === null || value === undefined) return value;
+    if (typeof value === 'string') return redactStringSecrets(value) as unknown as T;
+    if (typeof value !== 'object') return value;
+    if (seen.has(value as object)) return '[Circular]' as unknown as T;
+    seen.add(value as object);
+
+    if (Array.isArray(value)) {
+        return value.map(item => redactSensitiveFields(item, seen)) as unknown as T;
+    }
+
+    const out: Record<string, unknown> = {};
+    for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
+        const lower = key.toLowerCase();
+        if (!SAFE_TOKEN_METRIC_KEYS.has(lower) && SENSITIVE_KEY_RE.test(key)) {
+            out[key] = '[REDACTED]';
+            continue;
+        }
+        out[key] = redactSensitiveFields(val, seen);
+    }
+    return out as T;
+};
+
+export interface RedactedErrorSummary {
+    source: 'lastPromiseError' | 'lastGlobalError' | 'lastCrashError';
+    timestamp?: string;
+    type?: string;
+    message: string;
+}
+
+export interface RedactedDiagnosticBundle {
+    schemaVersion: 1;
+    exportedAt: string;
+    appVersion: string;
+    runtime: 'electron' | 'web';
+    activeModel: {
+        providerName: string | null;
+        modelId: string | null;
+        effort: string;
+        reasoningCapable: boolean;
+        visionCapable: boolean;
+    };
+    doctor: DoctorDiagnosticSnapshot;
+    recentErrors: RedactedErrorSummary[];
+}
+
+/** Build and deeply redact a 1-click troubleshooting bundle safe to share or inspect offline. */
+export const buildRedactedDiagnosticBundle = (input: {
+    appVersion: string;
+    isElectron: boolean;
+    activeModel: {
+        providerName: string | null;
+        modelId: string | null;
+        effort: string;
+        reasoningCapable: boolean;
+        visionCapable: boolean;
+    };
+    doctor: DoctorDiagnosticSnapshot;
+    recentErrors?: readonly RedactedErrorSummary[];
+    exportedAt?: string;
+}): RedactedDiagnosticBundle => redactSensitiveFields({
+    schemaVersion: 1,
+    exportedAt: input.exportedAt ?? new Date().toISOString(),
+    appVersion: input.appVersion,
+    runtime: input.isElectron ? 'electron' : 'web',
+    activeModel: input.activeModel,
+    doctor: input.doctor,
+    recentErrors: [...(input.recentErrors ?? [])],
+});

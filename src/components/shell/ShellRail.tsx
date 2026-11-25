@@ -62,6 +62,8 @@ interface ShellRailProps {
     /** The Customize row lands on a named Settings tab (Memory). */
     onOpenCustomize?: () => void;
     onOpenActivity?: () => void;
+    onRunDoctor?: () => void;
+    onSwitchProfile?: () => void;
     /** The dragged width of the conversation column; the whole rail is it. */
     width: number;
     isResizing: boolean;
@@ -85,6 +87,7 @@ const ShellRail: React.FC<ShellRailProps> = ({
     conversations, activeConversationId, onOpenConversation,
     onDeleteConversation, onClearConversation,
     activeUsername, onOpenSettings, onOpenCustomize, onOpenActivity,
+    onRunDoctor, onSwitchProfile,
     width, isResizing, onResizeStart, onResizeReset, onCollapse,
     saveStatus, overlay = false, onCloseOverlay, hideTopControls = false,
 }) => {
@@ -167,6 +170,9 @@ const ShellRail: React.FC<ShellRailProps> = ({
                         activeUsername={activeUsername}
                         onOpenSettings={onOpenSettings}
                         onOpenActivity={onOpenActivity}
+                        onNewChat={onNewChat}
+                        onRunDoctor={onRunDoctor}
+                        onSwitchProfile={onSwitchProfile}
                         saveStatus={saveStatus}
                     />
                     <div

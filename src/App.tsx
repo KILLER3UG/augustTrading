@@ -2837,6 +2837,16 @@ const App: React.FC = () => {
                             setIsSettingsMenuVisible(true);
                         }}
                         onOpenActivity={() => setIsJobsDrawerVisible(true)}
+                        onRunDoctor={() => {
+                            if (surface !== 'trade' && surface !== 'agents') selectSurface('trade');
+                            window.setTimeout(() => {
+                                window.dispatchEvent(new CustomEvent('august:run-slash', { detail: { command: '/doctor' } }));
+                            }, 0);
+                        }}
+                        onSwitchProfile={() => {
+                            setSettingsSection('profile');
+                            setIsSettingsMenuVisible(true);
+                        }}
                         width={railResize.width}
                         isResizing={railResize.isResizing}
                         onResizeStart={railResize.startResize}

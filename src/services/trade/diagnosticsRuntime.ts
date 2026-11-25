@@ -31,8 +31,11 @@ import { collectScopedRulesForSymbol } from './scopedRulesRuntime';
 import {
     buildContextDiagnostic,
     buildDoctorDiagnostic,
+    buildRedactedDiagnosticBundle,
     type ContextDiagnosticSnapshot,
     type DoctorDiagnosticSnapshot,
+    type RedactedDiagnosticBundle,
+    type RedactedErrorSummary,
 } from './diagnosticsCore';
 import type { LiveEntry } from './chatStore';
 
@@ -238,5 +241,82 @@ export const collectDoctorDiagnostic = async (opts: CollectDoctorOpts): Promise<
         isElectron,
         updateStatus,
         updateError,
+    });
+};
+
+const ERROR_STORAGE_KEYS: ReadonlyArray<RedactedErrorSummary['source']> = [
+    'lastCrashError',
+    'lastPromiseError',
+    'lastGlobalError',
+];
+
+const readRecentRuntimeErrors = (): RedactedErrorSummary[] => {
+    if (typeof localStorage === 'undefined') return [];
+    const out: RedactedErrorSummary[] = [];
+    for (const source of ERROR_STORAGE_KEYS) {
+        try {
+            const raw = localStorage.getItem(source);
+            if (!raw) continue;
+            const parsed = JSON.parse(raw) as { timestamp?: unknown; type?: unknown; message?: unknown } | null;
+            if (!parsed || typeof parsed !== 'object') continue;
+            out.push({
+                source,
+                timestamp: typeof parsed.timestamp === 'string' ? parsed.timestamp : undefined,
+                type: typeof parsed.type === 'string' ? parsed.type : undefined,
+                message: typeof parsed.message === 'string' ? parsed.message.slice(0, 600) : raw.slice(0, 300),
+            });
+        } catch {
+            // Skip malformed diagnostic entries silently.
+        }
+    }
+    return out;
+};
+
+/** Collect and redact a complete 1-click diagnostic bundle (zero secret fields, zero LLM calls). */
+export const collectRedactedDiagnosticBundle = async (
+    opts: Partial<CollectDoctorOpts> = {},
+): Promise<RedactedDiagnosticBundle> => {
+    const resolvedProvider = opts.provider ?? null;
+    const settings = getHarnessSettings();
+    const effort = opts.effort ?? settings.responseEffort ?? 'quality';
+    const doctor = await collectDoctorDiagnostic({
+        provider: resolvedProvider,
+        effort,
+        symbol: opts.symbol ?? 'BTCUSDT',
+        interval: opts.interval ?? '15m',
+        sessionId: opts.sessionId ?? '',
+        planMode: Boolean(opts.planMode),
+        markPrice: opts.markPrice ?? null,
+        modelDrawings: opts.modelDrawings ?? [],
+    });
+
+    const modelId = resolvedProvider?.selectedModel ?? '';
+    const visionCapable = modelId ? isVisionModel(modelId) : false;
+    const wireCaps = resolvedProvider ? detectWireCapabilities(resolvedProvider) : null;
+    const reasoningCapable = Boolean(
+        resolvedProvider && wireCaps && (
+            wireCaps.anthropicThinking
+            || wireCaps.responsesEffort
+            || wireCaps.openaiEffort
+            || wireCaps.xaiEffort
+            || wireCaps.glmThinking
+            || wireCaps.deepseekThinking
+            || (wireCaps.genericEffort && !/gpt-3\.5/i.test(modelId))
+        ),
+    );
+    const isElectron = typeof window !== 'undefined' && Boolean(window.electronAPI);
+
+    return buildRedactedDiagnosticBundle({
+        appVersion: APP_VERSION,
+        isElectron,
+        activeModel: {
+            providerName: resolvedProvider?.name ?? null,
+            modelId: modelId || null,
+            effort,
+            reasoningCapable,
+            visionCapable,
+        },
+        doctor,
+        recentErrors: readRecentRuntimeErrors(),
     });
 };
