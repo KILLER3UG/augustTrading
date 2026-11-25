@@ -142,3 +142,65 @@ export const shouldSuppressStandAsideLevels = (analysis: {
         && !hasLevelPrice(analysis.stopLoss)
         && !hasLevelPrice(analysis.takeProfit?.[0]?.price);
 };
+
+export interface ContextRingUsage {
+    totalTokens: number;
+    windowTokens: number;
+    pctUsed: number;
+    autoCompactTriggerTokens: number;
+    tokensToAutoCompact: number;
+    circumference: number;
+    dashOffset: number;
+    tooltip: string;
+}
+
+const CONTEXT_RING_RADIUS = 6;
+const CONTEXT_RING_CIRCUMFERENCE = 2 * Math.PI * CONTEXT_RING_RADIUS;
+
+/** Compute clamped context-window percentage, remaining auto-compact tokens, and SVG ring dash offset. */
+export const computeContextRingUsage = (input: {
+    totalTokens: number;
+    windowTokens: number;
+}): ContextRingUsage => {
+    const safeTotal = Number.isFinite(input.totalTokens) && input.totalTokens > 0
+        ? Math.floor(input.totalTokens)
+        : 0;
+    const safeWindow = Number.isFinite(input.windowTokens) && input.windowTokens > 0
+        ? Math.floor(input.windowTokens)
+        : 128_000;
+    const clampedPct = Math.min(100, Math.max(0, (safeTotal / safeWindow) * 100));
+    const pctUsed = Math.round(clampedPct * 10) / 10;
+    const autoCompactTriggerTokens = Math.floor(safeWindow * 0.9);
+    const tokensToAutoCompact = Math.max(0, autoCompactTriggerTokens - safeTotal);
+    const dashOffset = CONTEXT_RING_CIRCUMFERENCE * (1 - pctUsed / 100);
+    const tooltip = `Context: ${safeTotal.toLocaleString('en-US')} / ${safeWindow.toLocaleString('en-US')} tokens (${pctUsed}%) · ${tokensToAutoCompact.toLocaleString('en-US')} tokens to 90% auto-compact`;
+    return {
+        totalTokens: safeTotal,
+        windowTokens: safeWindow,
+        pctUsed,
+        autoCompactTriggerTokens,
+        tokensToAutoCompact,
+        circumference: CONTEXT_RING_CIRCUMFERENCE,
+        dashOffset,
+        tooltip,
+    };
+};
+
+export interface CollapsiblePromptSummary {
+    collapsible: boolean;
+    preview: string;
+    lineCount: number;
+}
+
+/** Collapse long pasted prompts (> 6 lines or >= 420 chars with newlines) into a compact first-line pill. */
+export const summarizeCollapsiblePrompt = (text: string): CollapsiblePromptSummary => {
+    const normalized = text ?? '';
+    const lines = normalized.split(/\r?\n/);
+    const lineCount = lines.length;
+    const collapsible = lineCount > 6 || (normalized.length >= 420 && lineCount > 1);
+    const firstNonEmpty = lines.find(l => l.trim().length > 0)?.trim() ?? normalized.trim();
+    const preview = firstNonEmpty.length > 72
+        ? `${firstNonEmpty.slice(0, 71).trimEnd()}…`
+        : (firstNonEmpty || '(empty prompt)');
+    return { collapsible, preview, lineCount };
+};

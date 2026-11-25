@@ -78,6 +78,10 @@ export interface HarnessSettings {
     /** Periodic "Dream" consolidation of USER.md/MEMORY.md (>= 24h + >= 5 new
      *  sessions, or a manual trigger). Default ON. */
     memoryDreamEnabled: boolean;
+    /** Automatically fold completed multi-tool turn timelines into one summary row. Default ON. */
+    autoFoldTools: boolean;
+    /** Default Enter action while a turn is actively streaming: steer mid-turn or queue for next turn. */
+    sendWhileRunning: 'steer' | 'queue';
 }
 
 const KEY = 'harness_settings_v1';
@@ -93,9 +97,23 @@ const read = (): Partial<HarnessSettings> => {
     }
 };
 
+// Cached snapshot keyed by serialized localStorage value so useSyncExternalStore
+// receives referential equality across renders when settings have not changed.
+let cachedRawSnapshot: string | null | undefined = undefined;
+let cachedSettingsSnapshot: HarnessSettings | null = null;
+
 export const getHarnessSettings = (): HarnessSettings => {
-    const stored = typeof localStorage === 'undefined' ? {} : read();
-    return {
+    let raw: string | null = null;
+    try {
+        raw = typeof localStorage === 'undefined' ? null : localStorage.getItem(KEY);
+    } catch {
+        raw = null;
+    }
+    if (cachedSettingsSnapshot && raw === cachedRawSnapshot) {
+        return cachedSettingsSnapshot;
+    }
+    const stored = raw ? read() : {};
+    const snapshot: HarnessSettings = {
         // 0 means "not configured" — sizing and the session guard fail closed
         // on it. The old $10,000 stand-in here made every downstream number
         // look authoritative for a user who never set an account.
@@ -148,6 +166,8 @@ export const getHarnessSettings = (): HarnessSettings => {
         //    files (>= 24h + >= 5 new sessions, or a manual /dream).
         backgroundReviewEnabled: stored.backgroundReviewEnabled !== false,
         memoryDreamEnabled: stored.memoryDreamEnabled !== false,
+        autoFoldTools: stored.autoFoldTools !== false,
+        sendWhileRunning: stored.sendWhileRunning === 'queue' ? 'queue' : 'steer',
         // The trader's Risk Constitution rides the frozen session prefix;
         // length-capped here at the STORE so one oversized paste cannot bloat
         // every future prefix regardless of what the editor sends.
@@ -155,12 +175,20 @@ export const getHarnessSettings = (): HarnessSettings => {
             ? stored.riskConstitution.slice(0, 1200)
             : undefined,
     };
+    if (typeof localStorage !== 'undefined') {
+        cachedRawSnapshot = raw;
+        cachedSettingsSnapshot = snapshot;
+    }
+    return snapshot;
 };
 
 export const saveHarnessSettings = (next: Partial<HarnessSettings>): HarnessSettings => {
     const merged = { ...getHarnessSettings(), ...next };
     try {
-        localStorage.setItem(KEY, JSON.stringify(merged));
+        const serialized = JSON.stringify(merged);
+        localStorage.setItem(KEY, serialized);
+        cachedRawSnapshot = serialized;
+        cachedSettingsSnapshot = merged;
     } catch { /* ignore */ }
     listeners.forEach(fn => { try { fn(merged); } catch { /* a subscriber must not break the save */ } });
     return merged;

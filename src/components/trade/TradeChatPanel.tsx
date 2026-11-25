@@ -79,6 +79,8 @@ import { getMemoryFiles } from '../../services/learning/MemoryFilesService';
 import { buildNotebookTopicsIndex } from '../../services/learning/memoryTopics';
 import { indexBudgetFor } from '../../utils/promptIndexBudget';
 import { DEFAULT_CONTEXT_WINDOW_TOKENS, resolveContextWindow } from '../../utils/contextWindow';
+import { estimateTokens } from '../../utils/tokenEstimate';
+import { computeContextRingUsage } from '../../utils/uiFormatting';
 import { buildLearningRulesIndex } from '../../utils/learningRulesIndex';
 import { storageService } from '../../services/infrastructure/StorageService';
 import { buildProfileMemoryIndex } from '../../services/learning/profileMemory';
@@ -1530,6 +1532,35 @@ ${riskConstitution}`
     const handleUnlockPlanMode = useCallback((): void => {
         chatStore.setPlanMode(false, activeId);
     }, [activeId]);
+    const handleRunContext = useCallback((): void => {
+        void send('/context');
+    }, [send]);
+
+    useEffect(() => {
+        const onRunSlash = (ev: Event): void => {
+            const cmd = (ev as CustomEvent<{ command?: string }>).detail?.command;
+            if (cmd) void send(cmd);
+        };
+        window.addEventListener('august:run-slash', onRunSlash);
+        return () => window.removeEventListener('august:run-slash', onRunSlash);
+    }, [send]);
+
+    const contextRing = useMemo(() => {
+        const snapMem = getCachedCuratedMemorySnapshot();
+        const memTokens = estimateTokens([snapMem.userMd, snapMem.memoryMd].filter(Boolean).join('\n'));
+        let turnTokens = 0;
+        for (const e of entries) {
+            if (e.text) turnTokens += estimateTokens(e.text);
+            if (Array.isArray(e.tools)) {
+                for (const line of e.tools) {
+                    if (line) turnTokens += estimateTokens(line);
+                }
+            }
+        }
+        const totalTokens = 1539 + memTokens + turnTokens;
+        const resolved = resolveContextWindow(provider ?? { selectedModel: '' });
+        return computeContextRingUsage({ totalTokens, windowTokens: resolved.tokens });
+    }, [entries, provider]);
 
     const composerNode = (
         <ChatComposer
@@ -1573,6 +1604,8 @@ ${riskConstitution}`
             contextAt={contextAt}
             planMode={activePlanMode}
             onTogglePlanMode={handleTogglePlanMode}
+            contextRing={contextRing}
+            onRunContext={handleRunContext}
         />
     );
 
@@ -1839,34 +1872,41 @@ ${riskConstitution}`
                         : 'flex min-h-full w-full min-w-0 flex-col px-4 pt-5 pb-12'}
                 >
                 {entries.length === 0 && !panelPickerFor && (
-                    <div className={`flex flex-1 flex-col items-center justify-center text-center ${isChatFocus ? 'gap-7 py-10' : 'gap-5 py-6'}`}>
-                        <WorkspaceGreeting compact={!isChatFocus} />
+                    <div className={`flex flex-1 flex-col items-center justify-center text-center ${isChatFocus ? 'gap-6 py-10' : 'gap-5 py-6'}`}>
+                        {isChatFocus ? (
+                            <h1
+                                data-testid="empty-chat-wordmark"
+                                className="select-none text-[32px] font-semibold tracking-[-0.035em] text-zinc-100"
+                            >
+                                August
+                            </h1>
+                        ) : (
+                            <WorkspaceGreeting compact />
+                        )}
                         {/* The composer rides IN the centered group while the
                             canvas is empty — greeting, composer and starters
                             are one unit — and moves to the bottom as soon as
                             the first message lands (see `emptyCentered`). */}
                         {isChatFocus && <div className="w-full max-w-[740px] text-left">{composerNode}</div>}
-                        <div
-                            className={isChatFocus
-                                ? 'flex w-full max-w-[36rem] flex-col gap-2'
-                                : 'flex w-full max-w-[17rem] flex-col gap-1.5'}
-                            data-testid="dock-quick-prompts"
-                        >
-                            {quickPrompts.map(({ text, Icon }) => (
-                                <button key={text} type="button" disabled={!ready} aria-label={text} onClick={() => void send(text)}
-                                    className={isChatFocus
-                                        ? 'group flex w-full items-center gap-2.5 rounded-xl border border-white/[0.06] bg-zinc-900/65 px-3.5 py-2.5 text-left text-ui-caption text-zinc-300 transition-colors hover:border-white/[0.10] hover:bg-zinc-800/80 hover:text-zinc-100 disabled:border-white/[0.04] disabled:bg-zinc-900/40 disabled:text-zinc-500'
-                                        : 'group inline-flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-ui-dense text-zinc-400 transition-colors hover:bg-white/[0.05] hover:text-zinc-100 disabled:text-zinc-600 disabled:hover:bg-transparent'}
-                                >
-                                    <Icon className="h-3.5 w-3.5 shrink-0 text-zinc-500 transition-colors group-hover:text-zinc-200 group-disabled:text-zinc-600" aria-hidden="true" />
-                                    {/* No truncate: a starter's full text is
-                                        the affordance — "Audit BTC 1h
-                                        structure & positioning" never clips
-                                        to "…" on desktop widths. */}
-                                    <span className="min-w-0 flex-1">{text}</span>
-                                </button>
-                            ))}
-                        </div>
+                        {!isChatFocus && (
+                            <div
+                                className="flex w-full max-w-[17rem] flex-col gap-1.5"
+                                data-testid="dock-quick-prompts"
+                            >
+                                {quickPrompts.map(({ text, Icon }) => (
+                                    <button key={text} type="button" disabled={!ready} aria-label={text} onClick={() => void send(text)}
+                                        className="group inline-flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-ui-dense text-zinc-400 transition-colors hover:bg-white/[0.05] hover:text-zinc-100 disabled:text-zinc-600 disabled:hover:bg-transparent"
+                                    >
+                                        <Icon className="h-3.5 w-3.5 shrink-0 text-zinc-500 transition-colors group-hover:text-zinc-200 group-disabled:text-zinc-600" aria-hidden="true" />
+                                        {/* No truncate: a starter's full text is
+                                            the affordance — "Audit BTC 1h
+                                            structure & positioning" never clips
+                                            to "…" on desktop widths. */}
+                                        <span className="min-w-0 flex-1">{text}</span>
+                                    </button>
+                                ))}
+                            </div>
+                        )}
                     </div>
                 )}
                 {scrollEl && scrollerVisible && paneVisible && entries.length > 0 && (
@@ -1930,10 +1970,12 @@ ${riskConstitution}`
             />
             </div>
 
-            {/* The turn's collapsed plan checklist sits immediately above the
+            {/* The turn's docked Progress X/Y drawer sits immediately above the
                 composer in BOTH layouts — this panel is the dock and the Chat
                 composer. It renders nothing until the seat calls update_plan. */}
-            <TurnPlanPill sessionId={activeId} />
+            <div className={isChatFocus ? 'mx-auto w-full max-w-[740px] px-6' : 'px-4'}>
+                <TurnPlanPill sessionId={activeId} />
+            </div>
             {/* Composer — the reference's layout: a workspace-style section
                 header (symbol · panel seats · bot · packet age), then one
                 rounded-bubble card holding the input and its toolbar, then a plain

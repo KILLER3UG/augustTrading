@@ -11,14 +11,16 @@
  * Stop while a run is live.
  */
 
-import React, { useLayoutEffect } from 'react';
-import {Camera, FileText, Plus, TriangleAlert, SendIcon, StopIcon, ChartBarIcon, LayersIcon} from '../../shared/Icons';
+import React, { useLayoutEffect, useSyncExternalStore } from 'react';
+import {Camera, FileText, Plus, TriangleAlert, SendIcon, StopIcon, ChartBarIcon} from '../../shared/Icons';
 import type { ProviderConfig } from '../../../types/provider';
 import type { SymbolMeta } from '../../../services/analysis/MarketDataService';
 import type { ChartInterval } from '../../../utils/chartIntervals';
 import type { Attachment } from '../../../hooks/useChatAttachments';
 import type { ReasoningEffort } from '../../../services/providers/reasoningControls';
 import { formatModelDisplayName } from '../../../utils/providerUtils';
+import type { ContextRingUsage } from '../../../utils/uiFormatting';
+import { getHarnessSettings, subscribeHarnessSettings } from '../../../utils/harnessSettings';
 import { useEscapeClose } from '../../../hooks/useEscapeClose';
 
 import ModelChip from '../../shared/ModelChip';
@@ -90,6 +92,9 @@ interface ChatComposerProps {
     /** Session-scoped read-only Plan Mode flag and toggle callback. */
     planMode?: boolean;
     onTogglePlanMode?: () => void;
+    /** Context-window usage ring summary + click handler for `/context`. */
+    contextRing?: ContextRingUsage | null;
+    onRunContext?: () => void;
 }
 
 /**
@@ -118,7 +123,10 @@ const ChatComposer: React.FC<ChatComposerProps> = ({
     changeSoloModel, providers, onRefreshModels, attachments, removeAttachment, fileInputRef,
     attachFiles, showAttachMenu, setShowAttachMenu, captureChart, onCaptureChart, composerRef,
     panelCount, pickerOpen, onTogglePicker, botName, contextAt, planMode = false, onTogglePlanMode,
+    contextRing = null, onRunContext,
 }) => {
+    const harness = useSyncExternalStore(subscribeHarnessSettings, getHarnessSettings, getHarnessSettings);
+    const queueDefault = harness.sendWhileRunning === 'queue';
     // The field is one line at rest and grows with the draft, up to a ceiling;
     // a fixed `min-h-[56px]` gave a one-line "what about now?" two lines of
     // empty card, which is most of what made the composer read as a panel.
@@ -252,12 +260,11 @@ const ChatComposer: React.FC<ChatComposerProps> = ({
                     }
                     if (ev.key === 'Enter' && !ev.shiftKey) {
                         ev.preventDefault();
-                        // Two-speed input (pi-style): while a turn is live,
-                        // Enter STEERS it (the loop injects the message at the
-                        // next round boundary) and Alt+Enter QUEUES it for
-                        // after the turn. Esc stays with the Stop control.
+                        // Respect the trader's Send-while-running default (Steer vs Queue);
+                        // Alt+Enter always invokes the opposite action.
                         if (busy && draft.trim()) {
-                            if (ev.altKey) chatStore.queueFollowUp(draft);
+                            const shouldQueue = queueDefault ? !ev.altKey : ev.altKey;
+                            if (shouldQueue) chatStore.queueFollowUp(draft);
                             else chatStore.queueSteering(draft);
                             setDraft('');
                             return;
@@ -279,7 +286,7 @@ const ChatComposer: React.FC<ChatComposerProps> = ({
             )}
             {busy && (
                 <p data-testid="steering-hint" className="mt-0.5 px-1 text-ui-2xs text-zinc-600">
-                    Enter: steer · Alt+Enter: queue
+                    {queueDefault ? 'Enter: queue · Alt+Enter: steer' : 'Enter: steer · Alt+Enter: queue'}
                 </p>
             )}
             <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -324,16 +331,47 @@ const ChatComposer: React.FC<ChatComposerProps> = ({
                         </>
                     )}
                 </div>
-                <div className="ml-auto flex min-w-0 flex-1 items-center justify-end gap-2" data-testid="composer-model-and-send">
-                    {planMode && (
+                <button
+                    type="button"
+                    onClick={onTogglePlanMode}
+                    data-testid="composer-mode-pill"
+                    aria-pressed={planMode}
+                    title={planMode
+                        ? 'Plan Mode (read-only) — click or press Shift+Tab to unlock execution'
+                        : 'Trade mode — execution enabled. Click or press Shift+Tab for read-only Plan Mode'}
+                    className={`inline-flex h-7 shrink-0 items-center gap-1.5 rounded-full border px-2.5 font-mono text-ui-2xs transition-colors ${
+                        planMode
+                            ? 'border-zinc-500/60 bg-zinc-800 text-zinc-100 hover:bg-zinc-700'
+                            : 'border-hairline bg-zinc-900/60 text-zinc-400 hover:bg-white/[0.06] hover:text-zinc-200'
+                    }`}
+                >
+                    {planMode ? <span data-testid="plan-mode-pill">Plan · read-only</span> : 'Trade'}
+                </button>
+                <div className="ml-auto flex min-w-0 flex-1 items-center justify-end gap-1.5" data-testid="composer-model-and-send">
+                    {contextRing && (
                         <button
                             type="button"
-                            onClick={onTogglePlanMode}
-                            data-testid="plan-mode-pill"
-                            title="Plan Mode (read-only) — click or press Shift+Tab to unlock execution"
-                            className="inline-flex shrink-0 items-center gap-1 rounded-full border border-hairline bg-zinc-800/90 px-2 py-0.5 font-mono text-ui-2xs uppercase tracking-wider text-zinc-200 transition-colors hover:bg-zinc-700"
+                            onClick={() => onRunContext?.()}
+                            data-testid="composer-context-ring"
+                            title={contextRing.tooltip}
+                            aria-label={contextRing.tooltip}
+                            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full transition-colors hover:bg-white/[0.06]"
                         >
-                            PLAN · read-only
+                            <svg className="h-[14px] w-[14px] -rotate-90" viewBox="0 0 16 16" aria-hidden="true">
+                                <circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" strokeWidth="1.75" className="text-zinc-700" />
+                                <circle
+                                    cx="8"
+                                    cy="8"
+                                    r="6"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    strokeWidth="1.75"
+                                    strokeLinecap="round"
+                                    strokeDasharray={contextRing.circumference}
+                                    strokeDashoffset={contextRing.dashOffset}
+                                    className={contextRing.pctUsed >= 85 ? 'text-zinc-100' : 'text-zinc-400'}
+                                />
+                            </svg>
                         </button>
                     )}
                     {!isPanel && (

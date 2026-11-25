@@ -11,10 +11,11 @@
  * ones the trader learns to ignore.
  */
 import React, { useCallback, useEffect, useSyncExternalStore } from 'react';
+import { Check, ChevronDown, ListChecks } from '../shared/Icons';
 import { getActiveSession } from '../../services/trade/chatStore';
 import {
-    clearTurnPlan, getTurnPlan, subscribeTurnPlanKey,
-    type TurnPlanStepStatus,
+    clearTurnPlan, getTurnPlan, setTurnPlan, subscribeTurnPlanKey,
+    type TurnPlanStep,
 } from '../../services/trade/turnPlan';
 
 /**
@@ -30,19 +31,6 @@ const resolvePlanKey = (sessionId: string | null): string => {
     if (!key) return '';
     const active = getActiveSession();
     return active?.id === key && active.conversationId ? active.conversationId : key;
-};
-
-const GLYPH: Record<TurnPlanStepStatus, string> = {
-    completed: '✓',
-    in_progress: '→',
-    pending: '○',
-};
-
-/** Muted done, bright active, dimmed waiting — monochrome only. */
-const GLYPH_CLASS: Record<TurnPlanStepStatus, string> = {
-    completed: 'text-zinc-500',
-    in_progress: 'text-zinc-50',
-    pending: 'text-zinc-700',
 };
 
 export interface TurnPlanPillProps {
@@ -69,6 +57,18 @@ const TurnPlanPill: React.FC<TurnPlanPillProps> = ({ sessionId }) => {
     // checklist without touching the plan itself — dismissal is presentation.
     useEffect(() => { setOpen(false); }, [key]);
     useEffect(() => {
+        const onSeed = (ev: Event): void => {
+            const detail = (ev as CustomEvent<{ sessionId?: string; steps?: TurnPlanStep[]; open?: boolean }>).detail;
+            if (!detail || !Array.isArray(detail.steps)) return;
+            const targetKey = detail.sessionId || planKey;
+            if (detail.steps.length === 0) clearTurnPlan(targetKey);
+            else setTurnPlan(targetKey, detail.steps);
+            if (typeof detail.open === 'boolean') setOpen(detail.open);
+        };
+        window.addEventListener('august:seed-turn-plan', onSeed);
+        return () => { window.removeEventListener('august:seed-turn-plan', onSeed); };
+    }, [planKey]);
+    useEffect(() => {
         if (!open) return;
         const onKey = (e: KeyboardEvent): void => {
             if (e.key === 'Escape') setOpen(false);
@@ -82,35 +82,66 @@ const TurnPlanPill: React.FC<TurnPlanPillProps> = ({ sessionId }) => {
     const total = plan.steps.length;
 
     return (
-        <div className="relative mb-1.5 flex justify-start" data-testid="turn-plan-pill-wrap">
+        <div className="relative mb-1.5 flex w-full justify-start" data-testid="turn-plan-pill-wrap">
             <button
                 type="button"
-                aria-label={`Turn plan, ${completed} of ${total} steps complete`}
+                aria-label={`Progress ${completed}/${total}`}
                 aria-expanded={open}
-                data-testid="turn-plan-pill"
-                title="Turn plan"
+                data-testid="turn-plan-progress-bar"
+                title="Turn progress"
                 onClick={() => setOpen(o => !o)}
-                className="inline-flex items-center gap-1.5 rounded-full bg-zinc-900/80 px-2.5 py-1 text-ui-2xs text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100"
+                className="inline-flex items-center gap-2 rounded-control border border-hairline bg-zinc-900/90 px-3 py-1.5 text-ui-xs text-zinc-300 transition-colors hover:border-line hover:bg-zinc-800 hover:text-zinc-100"
             >
-                <span className="h-1.5 w-1.5 rounded-full bg-zinc-300" aria-hidden="true" />
-                <span>In progress {completed}/{total}</span>
-                <span aria-hidden="true" className="text-zinc-600">{open ? '−' : '+'}</span>
+                <ListChecks className="h-3.5 w-3.5 shrink-0 text-zinc-400" aria-hidden="true" />
+                <span className="font-medium text-zinc-200">Progress</span>
+                <span className="font-mono tabular-nums text-zinc-400">{completed}/{total}</span>
+                <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-zinc-500 transition-transform duration-150 ${open ? 'rotate-180' : ''}`} aria-hidden="true" />
             </button>
             {open && (
                 <div
-                    data-testid="turn-plan-popover"
+                    data-testid="turn-plan-progress-list"
                     role="list"
                     aria-label="Turn plan steps"
-                    className="motion-popover-down absolute bottom-full left-0 z-shield mb-1.5 w-72 rounded-xl border border-white/[0.08] bg-zinc-900/95 p-2 shadow-elevated backdrop-blur-md"
+                    className="motion-popover-down absolute bottom-full left-0 right-0 z-shield mb-1.5 max-h-60 overflow-y-auto custom-scrollbar rounded-xl border border-white/[0.08] bg-zinc-900/95 p-2.5 shadow-elevated backdrop-blur-md"
                 >
-                    {plan.steps.map(step => (
-                        <div key={step.id} role="listitem" className="flex items-start gap-2 px-1 py-1">
-                            <span aria-hidden="true" className={`w-3 shrink-0 text-center text-ui-caption leading-5 ${GLYPH_CLASS[step.status]}`}>
-                                {GLYPH[step.status]}
-                            </span>
-                            <span className="min-w-0 flex-1 text-ui-caption leading-5 text-zinc-400">{step.label}</span>
-                        </div>
-                    ))}
+                    <div className="mb-1.5 flex items-center justify-between border-b border-hairline px-1 pb-1.5">
+                        <span className="flex items-center gap-2 text-ui-xs font-medium text-zinc-200">
+                            <ListChecks className="h-3.5 w-3.5 text-zinc-400" aria-hidden="true" />
+                            Progress <span className="font-mono tabular-nums text-zinc-400">{completed}/{total}</span>
+                        </span>
+                        <button
+                            type="button"
+                            onClick={() => setOpen(false)}
+                            aria-label="Collapse progress checklist"
+                            className="rounded-control p-0.5 text-zinc-500 transition-colors hover:bg-white/[0.06] hover:text-zinc-200"
+                        >
+                            <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" />
+                        </button>
+                    </div>
+                    <div className="space-y-0.5">
+                        {plan.steps.map(step => (
+                            <div key={step.id} role="listitem" className="flex items-start gap-2.5 rounded-control px-1.5 py-1">
+                                <span aria-hidden="true" className="mt-1 flex h-3.5 w-3.5 shrink-0 items-center justify-center">
+                                    {step.status === 'completed' ? (
+                                        <Check className="h-3.5 w-3.5 text-zinc-400" />
+                                    ) : step.status === 'in_progress' ? (
+                                        <span className="h-2 w-2 rounded-full bg-zinc-100" />
+                                    ) : (
+                                        <span className="h-2.5 w-2.5 rounded-full border border-zinc-600" />
+                                    )}
+                                </span>
+                                <span className={`min-w-0 flex-1 text-ui-caption leading-5 ${
+                                    step.status === 'in_progress'
+                                        ? 'font-medium text-zinc-100'
+                                        : step.status === 'completed'
+                                            ? 'text-zinc-400'
+                                            : 'text-zinc-500'
+                                }`}>
+                                    {step.label}
+                                </span>
+                            </div>
+                        ))}
+                    </div>
                 </div>
             )}
         </div>
