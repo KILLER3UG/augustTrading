@@ -1250,7 +1250,7 @@ const TradeView: React.FC<TradeViewProps> = ({
                     <LevelAccuracyBadge
                         drawings={modelDrawings}
                         candles={levelCandles}
-                        className="absolute top-11 right-2 z-10 rounded-control bg-zinc-800/90 px-2 py-1" />
+                        className="absolute bottom-8 right-20 z-10 rounded-control border border-hairline bg-zinc-900/90 px-2 py-1" />
                     {chartFocus && !isBelowLg && !chatLayout && (
                         <FloatingChartComposer
                             symbol={symbol}

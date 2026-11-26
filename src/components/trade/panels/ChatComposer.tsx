@@ -356,7 +356,7 @@ const ChatComposer: React.FC<ChatComposerProps> = ({
                     {queueDefault ? 'Enter: queue · Alt+Enter: steer' : 'Enter: steer · Alt+Enter: queue'}
                 </p>
             )}
-            <div className="mt-2 flex flex-wrap items-center gap-2">
+            <div className="mt-2 flex flex-nowrap items-center gap-1.5">
                 <input type="file" multiple accept="image/*,.md,.txt,.csv,.json" ref={fileInputRef} className="hidden"
                     onChange={ev => { attachFiles(ev.target.files); ev.target.value = ''; }} />
                 <div className="relative">

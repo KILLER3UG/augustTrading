@@ -89,7 +89,7 @@ function createSseParser(apiFormat) {
                 const key = tc.index ?? position;
                 const slot = slotFor(key, { id: '', name: '', args: '' });
                 if (tc.id) slot.id = tc.id;
-                if (tc.function?.name) slot.name += tc.function.name;
+                if (tc.function?.name && tc.function.name !== slot.name) slot.name += tc.function.name;
                 if (typeof tc.function?.arguments === 'string') slot.args += tc.function.arguments;
             }
             return { events, done: false };
@@ -123,7 +123,7 @@ function createSseParser(apiFormat) {
                 const key = tc.index ?? position;
                 const slot = slotFor(key, { id: '', name: '', args: '' });
                 if (tc.id) slot.id = tc.id;
-                if (tc.function?.name) slot.name += tc.function.name;
+                if (tc.function?.name && tc.function.name !== slot.name) slot.name += tc.function.name;
                 if (typeof tc.function?.arguments === 'string') slot.args += tc.function.arguments;
             }
         }

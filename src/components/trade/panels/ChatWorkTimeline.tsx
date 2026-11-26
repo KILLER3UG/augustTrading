@@ -542,16 +542,20 @@ const ChatWorkTimeline: React.FC<ChatWorkTimelineProps> = ({ entry, symbol, inte
     // over the trace, not a work card wrapped around a single thought. Keep
     // live Thinking open for the whole stream so it never disappears once answer
     // tokens start arriving, and render any harness notices strictly below it.
-    if (reasoning.trim().length > 0 && callCount === 0 && !hasActions && !wireAlone) {
+    if (callCount === 0 && !hasActions && !wireAlone) {
         const noticeLines = entry.tools.filter(line => isHarnessNoticeLine(line));
-        return (
-            <div className="my-1 space-y-1.5">
-                <ReasoningRow thinking={reasoning} running={turnStreaming} persistedMs={entry.workedMs} startedAt={startedAt} settledLabel="thoughtFor" />
-                {noticeLines.length > 0 && (
-                    <ToolActivityRow lines={noticeLines} running={turnStreaming} payloadIds={noticeLines.map(() => '')} />
-                )}
-            </div>
-        );
+        if (reasoning.trim().length > 0 || noticeLines.length > 0) {
+            return (
+                <div className="my-1 space-y-1.5">
+                    {reasoning.trim().length > 0 && (
+                        <ReasoningRow thinking={reasoning} running={turnStreaming} persistedMs={entry.workedMs} startedAt={startedAt} settledLabel="thoughtFor" />
+                    )}
+                    {noticeLines.length > 0 && (
+                        <ToolActivityRow lines={noticeLines} running={turnStreaming} payloadIds={noticeLines.map(() => '')} />
+                    )}
+                </div>
+            );
+        }
     }
     const segs = splitReasoningIncremental(entry.id, reasoning);
     const markerCount = segs.length - 1;

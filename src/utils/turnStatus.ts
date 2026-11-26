@@ -55,6 +55,7 @@ const HARNESS_NOTICE_PREFIXES = [
     'THE PROVIDER STOPPED EARLY',
     'TOOL FAILURE',
     'UNGROUNDED CLAIM',
+    'CHART NOT UPDATED',
 ];
 
 export const isHarnessNoticeLine = (raw: string): boolean => {

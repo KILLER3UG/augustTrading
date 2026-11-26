@@ -39,7 +39,7 @@ import { evaluateScopedRules } from './scopedRules';
 import { settleDockEntry } from '../../utils/rowSettlement';
 import { maybeRunAgentLearningPass, maybeRunMemoryDreamIfDue } from '../learning/learningPassWiring';
 import { CHART_ACTION_TOOL_DEFS, isMarketReadTool } from '../analysis/deskToolShared';
-import { FULL_ANALYSIS_MANDATE, groundingNotice, shouldRequireTools } from './chatSurfaceTurn';
+import { chartDrawGroundingNotice, FULL_ANALYSIS_MANDATE, groundingNotice, shouldRequireTools } from './chatSurfaceTurn';
 import { focusedGoal } from '../goals/GoalService';
 import { buildTier0UserTurnContext, buildTradeChatContext, composeUserTurnMessage, describeChartSnapshotForModel, extractTraderQuestion } from './tradeChatContext';
 import {
@@ -1143,10 +1143,16 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
         };
         // Each method here is a WRITE TO THIS ROW SHAPE, not generic turn logic.
         let sawMarketTool = false;
+        let sawDrawTool = false;
         const events: ToolTurnEvents = {
             setText: text => patch(e => ({ ...e, text })),
             addReasoning: chunk => patch(e => ({ ...e, reasoning: (e.reasoning ?? '') + chunk })),
-            addToolCall: name => { if (isMarketReadTool(name)) sawMarketTool = true; },
+            addToolCall: name => {
+                if (isMarketReadTool(name)) sawMarketTool = true;
+                if (name === 'draw_on_chart' || name === 'mark_trade_levels' || name === 'draw_tool_levels' || name === 'draw_detected') {
+                    sawDrawTool = true;
+                }
+            },
             // Tool lines AND their ids are appended in the SAME patch. The id is
             // the only safe join key for a payload: `results` inside the desk
             // loop is assembled `[...replays, ...extra, ...forged, ...core]`, so
@@ -1259,6 +1265,13 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
                 answer: outcome.text,
             })
             : null;
+        const ungroundedDraw = !cutOff
+            ? chartDrawGroundingNotice({
+                sawDrawTool,
+                interrupted: outcome.interrupted,
+                answer: outcome.text,
+            })
+            : null;
         // The Execution Trace row: measured facts only. The SYSTEM prefix hash
         // is the frozen prompt's own FNV (contentVersion), the delta is against
         // THIS session's previous settled turn in THIS runtime — CACHE WARM is
@@ -1285,7 +1298,7 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
             updatedAt: Date.now(),
             entries: s.entries.map(e => {
                 if (e.id !== entryId) return e;
-                const extraNotices = [outcome.notice, ungrounded, cutOff].filter((n): n is string => Boolean(n));
+                const extraNotices = [outcome.notice, ungrounded, ungroundedDraw, cutOff].filter((n): n is string => Boolean(n));
                 return settleDockEntry({
                     ...e,
                     trace: { ...trace, gateRefusals: e.tools.filter(t => t.includes('rejected')).length, microCompactChars: outcome.microCompactChars },

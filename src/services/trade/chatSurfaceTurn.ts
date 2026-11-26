@@ -131,6 +131,27 @@ export const FULL_ANALYSIS_NOTHING_LOOKED_UP_NOTICE =
 export const UNGROUNDED_CLAIM_NOTICE =
     'UNGROUNDED CLAIM: this turn called no market tool, yet it states live prices, setups or indicators. Those numbers are the model’s own memory, not the market. Re-ask with Full analysis, or check the chart.';
 
+/** Honest warning when a model claims in prose that it marked/drew lines on
+ *  the chart without actually calling any chart-drawing tool (common on free
+ *  or weak-tool-calling models that hallucinate tool execution). */
+export const UNGROUNDED_DRAW_CLAIM_NOTICE =
+    'CHART NOT UPDATED: this model claimed to draw or mark levels on your chart without calling any drawing tool — zero lines were added. Re-ask explicitly or switch to a stronger tool-calling model.';
+
+const UNGROUNDED_DRAW_CLAIM_MATCHER =
+    /\b(?:\d+\s+lines?\s+(?:are|is)\s+(?:now\s+)?(?:live|marked|drawn|plotted|applied)\s+on\s+(?:your|the)\s+(?:\w+\s+)?chart|(?:i(?:'ve|\s+have)?|just)\s+(?:marked|drawn|plotted|re-?applied|placed|added)\s+(?:those|these|the|\d+)\s+(?:levels?|lines?|zones?|marks?)\s+on\s+(?:your|the)\s+(?:\w+\s+)?chart|re-?applied\s+(?:them|the\s+levels?|the\s+marks?)\s+(?:now|to\s+(?:your|the)\s+chart))\b/i;
+
+export const looksLikeUngroundedDrawClaim = (answer: string): boolean =>
+    UNGROUNDED_DRAW_CLAIM_MATCHER.test(answer ?? '');
+
+export const chartDrawGroundingNotice = (args: {
+    sawDrawTool: boolean;
+    interrupted: boolean;
+    answer: string;
+}): string | null => {
+    if (args.interrupted || args.sawDrawTool) return null;
+    return looksLikeUngroundedDrawClaim(args.answer) ? UNGROUNDED_DRAW_CLAIM_NOTICE : null;
+};
+
 /** Does an answer READ like a live-market result? Conservative: it takes an
  *  explicit scan/completion phrase, a priced entry/stop/target/RSI with a
  *  number, or a quoted symbol with a price — not mere talk about the market. */

@@ -893,6 +893,6 @@ export const formatTier0ChartManifest = (input: Tier0ManifestInput): string => {
     if (input.postMortemBrief?.trim()) lines.push(input.postMortemBrief.trim());
     if (input.indexDeltaNote?.trim()) lines.push(input.indexDeltaNote.trim());
 
-    lines.push(`Call get_chart_view(if_revision: "${input.revision}") for full candles/book if needed, or get_market_packet / get_all_timeframes for full MTF + derivatives.`);
+    lines.push(`Call get_chart_view(if_revision: "${input.revision}") for full candles/book if needed, or get_market_packet / get_all_timeframes for full MTF + derivatives. Do not echo this manifest block verbatim in your answer.`);
     return lines.join('\n');
 };

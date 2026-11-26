@@ -105,7 +105,7 @@ const ModelChip: React.FC<ModelChipProps> = ({
     };
 
     return (
-        <div className="relative min-w-0 max-w-full">
+        <div className="relative min-w-0 max-w-full overflow-hidden">
             <button type="button"
                 ref={triggerRef}
                 onClick={toggle}
@@ -113,8 +113,8 @@ const ModelChip: React.FC<ModelChipProps> = ({
                 aria-expanded={open} aria-haspopup="menu"
                 title={issue ? 'Model fallback active — re-pick a model' : tooltip}
                 data-testid="composer-model-chip"
-                className={`flex items-center gap-1.5 rounded-control px-2 py-1 text-ui-dense text-zinc-400 transition-colors hover:bg-white/[0.05] hover:text-zinc-100 min-w-0 max-w-full ${compact ? 'sm:max-w-[26rem]' : 'sm:max-w-[34rem]'}`}>
-                <span className="min-w-0 truncate" title={fullLabel}>{selectedLabel}</span>
+                className={`flex w-full min-w-0 max-w-full items-center gap-1.5 rounded-control px-2 py-1 text-ui-dense text-zinc-400 transition-colors hover:bg-white/[0.05] hover:text-zinc-100 ${compact ? 'sm:max-w-[min(100%,26rem)]' : 'sm:max-w-[min(100%,34rem)]'}`}>
+                <span className="min-w-0 flex-1 truncate text-right" title={fullLabel}>{selectedLabel}</span>
                 <ChevronDown className={`h-2.5 w-2.5 shrink-0 transition-transform duration-150 ease-[var(--ease-snappy)] ${open ? 'rotate-180' : ''}`} aria-hidden="true" />
             </button>
             {open && anchor && (

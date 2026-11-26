@@ -1865,30 +1865,32 @@ ${riskConstitution}`
                     : 'bg-transparent px-3 py-2.5'
             }`}>
                 {isChatFocus && leadingChrome}
-                <div className="flex shrink-0 items-center gap-0.5">
-                    <button
-                        type="button"
-                        onClick={handleNavBack}
-                        disabled={!canNavBack}
-                        aria-label="Previous conversation"
-                        title="Previous conversation"
-                        data-testid="nav-history-back"
-                        className="flex h-6 w-6 items-center justify-center rounded-control text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-zinc-100 disabled:opacity-30"
-                    >
-                        <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
-                    </button>
-                    <button
-                        type="button"
-                        onClick={handleNavForward}
-                        disabled={!canNavForward}
-                        aria-label="Next conversation"
-                        title="Next conversation"
-                        data-testid="nav-history-forward"
-                        className="flex h-6 w-6 items-center justify-center rounded-control text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-zinc-100 disabled:opacity-30"
-                    >
-                        <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
-                    </button>
-                </div>
+                {(isChatFocus || canNavBack || canNavForward) && (
+                    <div className="flex shrink-0 items-center gap-0.5">
+                        <button
+                            type="button"
+                            onClick={handleNavBack}
+                            disabled={!canNavBack}
+                            aria-label="Previous conversation"
+                            title="Previous conversation"
+                            data-testid="nav-history-back"
+                            className="flex h-6 w-6 items-center justify-center rounded-control text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-zinc-100 disabled:opacity-30"
+                        >
+                            <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
+                        </button>
+                        <button
+                            type="button"
+                            onClick={handleNavForward}
+                            disabled={!canNavForward}
+                            aria-label="Next conversation"
+                            title="Next conversation"
+                            data-testid="nav-history-forward"
+                            className="flex h-6 w-6 items-center justify-center rounded-control text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-zinc-100 disabled:opacity-30"
+                        >
+                            <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+                        </button>
+                    </div>
+                )}
                 <button
                     type="button"
                     onClick={() => { setHistoryOpen(v => !v); setHistoryQuery(''); setHistorySel(0); setHistoryShowAll(false); }}
@@ -1909,7 +1911,7 @@ ${riskConstitution}`
                         data-view-mode={transcriptViewMode}
                         title="Transcript detail mode (Ctrl+O): Normal · Audit · Calm"
                         aria-label={`Transcript view mode: ${transcriptViewMode}`}
-                        className="mr-1 h-6 shrink-0 rounded-control border border-hairline bg-zinc-900/70 px-2 font-mono text-ui-2xs uppercase tracking-wider text-zinc-400 transition-colors hover:border-zinc-600 hover:bg-zinc-800 hover:text-zinc-100"
+                        className="mr-0.5 h-6 shrink-0 rounded-control border border-hairline bg-zinc-900/70 px-1.5 font-mono text-ui-2xs uppercase tracking-wider text-zinc-400 transition-colors hover:border-zinc-600 hover:bg-zinc-800 hover:text-zinc-100"
                     >
                         {transcriptViewMode}
                     </button>

@@ -2219,7 +2219,11 @@ class StreamToolCallBuffer {
             const idx = Number.isFinite(f?.index) ? Number(f.index) : position;
             const part = this.parts.get(idx) ?? { id: '', name: '', args: '' };
             if (typeof f?.id === 'string' && f.id) part.id = f.id;
-            if (typeof f?.function?.name === 'string') part.name += f.function.name;
+            // Some OpenAI-compat gateways repeat the full function.name on every
+            // delta chunk; avoid duplicating an identical name prefix.
+            if (typeof f?.function?.name === 'string' && f.function.name && f.function.name !== part.name) {
+                part.name += f.function.name;
+            }
             if (typeof f?.function?.arguments === 'string') part.args += f.function.arguments;
             this.parts.set(idx, part);
         });
