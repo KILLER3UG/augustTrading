@@ -353,6 +353,12 @@ const SettingsMenu: React.FC<SettingsMenuProps> = (props) => {
         changeTab(id);
     }, [changeTab]);
 
+    // Reset dirty state whenever Settings closes so an abandoned draft can
+    // never linger into a subsequent open.
+    useEffect(() => {
+        if (!isVisible) setIsDirty(false);
+    }, [isVisible]);
+
     // Closing with a staged (unsaved) provider draft would silently discard
     // the user's edits — confirm first (Escape, backdrop, and the X all route
     // through here).
@@ -366,7 +372,12 @@ const SettingsMenu: React.FC<SettingsMenuProps> = (props) => {
             message: 'You have unsaved provider edits. Closing Settings will discard them.',
             confirmLabel: 'Discard',
             destructive: true,
-        }).then(ok => { if (ok) onClose(); });
+        }).then(ok => {
+            if (ok) {
+                setIsDirty(false);
+                onClose();
+            }
+        });
     }, [isDirty, onClose, confirm]);
 
     // The open-effect below must re-run ONLY when the dialog opens/closes.

@@ -414,7 +414,11 @@
                             (120) the old z-confirm rung (100) painted it
                             UNDER the modal and buried every trigger inside
                             Settings. One rung above modal, below UpdateOverlay. */
-  --z-confirm: 100;      /* ConfirmDialog, Toast */
+  --z-confirm: 140;      /* ConfirmDialog, Toast — must clear z-modal (120) and
+                            z-flyout (130) so a confirmation dialog triggered
+                            from inside Settings (e.g. "Discard unsaved
+                            changes?" when setting up providers) never paints
+                            behind the Settings window and traps the user. */
   --z-shield: 60;        /* click-outside backdrops — must clear the Chart AI
                             dock: RightPanel carries z-drawer (50) as its
                             permanent layer, so a shield below it can never see

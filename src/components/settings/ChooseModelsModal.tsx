@@ -124,7 +124,7 @@ export const ChooseModelsModal: React.FC<ChooseModelsModalProps> = ({
 
     return (
         <div
-            className="fixed inset-0 z-modal flex items-center justify-center bg-black/75 p-4"
+            className="fixed inset-0 z-confirm flex items-center justify-center bg-black/75 p-4"
             onClick={onCancel}
             role="presentation"
         >

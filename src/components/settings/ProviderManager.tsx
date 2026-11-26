@@ -244,6 +244,12 @@ const ProviderManager: React.FC<ProviderManagerProps> = ({
         onDirtyChange?.(isDirty);
     }, [isDirty, onDirtyChange]);
 
+    // Always clear the parent's dirty flag when switching away from AI setup
+    // or unmounting the provider manager so Settings never gets stuck dirty.
+    useEffect(() => () => {
+        onDirtyChange?.(false);
+    }, [onDirtyChange]);
+
     const openEdit = useCallback((config: ProviderConfig): void => {
         const next = draftFromConfig(config);
         setDraft(next);
@@ -569,12 +575,13 @@ const ProviderManager: React.FC<ProviderManagerProps> = ({
             setDraft(null);
             setBaselineJson('');
             setChooseModalCatalog(null);
+            onDirtyChange?.(false);
         } catch (err) {
             setSaveError(err instanceof Error ? err.message : 'Could not save provider.');
         } finally {
             setSaving(false);
         }
-    }, [draft, urlValidation, onAddCustomProvider, onUpdateProvider, toast]);
+    }, [draft, urlValidation, onAddCustomProvider, onUpdateProvider, onDirtyChange, toast]);
 
     const handleDeleteProvider = useCallback(async (config: ProviderConfig): Promise<void> => {
         const ok = await confirm({
