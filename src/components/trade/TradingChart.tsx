@@ -3402,7 +3402,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                     <div
                         data-testid="ohlcv-row"
                         className={`pointer-events-none absolute left-12 z-10 flex items-center gap-3 overflow-hidden whitespace-nowrap rounded-control bg-zinc-950/80 px-2 py-0.5 text-ui-dense tabular-nums text-zinc-500 ${levels.length > 0 ? 'max-w-[calc(100%-248px)]' : 'max-w-[calc(100%-56px)]'}`}
-                        style={{ top: status === 'live' ? '5.5rem' : '0.375rem' }}
+                        style={{ top: status === 'live' ? (legendExpanded ? '5.5rem' : '2.75rem') : '0.375rem' }}
                     >
                         <span className="font-mono tabular-nums">H <span className="text-zinc-300">{ohlcvRow.high24h ? fmtPriceForChart(ohlcvRow.high24h) : '—'}</span></span>
                         <span className="font-mono tabular-nums">L <span className="text-zinc-300">{ohlcvRow.low24h ? fmtPriceForChart(ohlcvRow.low24h) : '—'}</span></span>

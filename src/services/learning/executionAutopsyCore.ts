@@ -15,6 +15,8 @@
 
 import type { SignalRow } from '../../types/signal';
 import type { PaperSettledTrade } from '../paper/paperCore';
+import type { LoggedTrade } from '../../types/trade';
+import { TradeOutcome } from '../../types/enums';
 
 export const AUTOPSY_MIN_SAMPLE = 5;
 export const MFE_GIVEBACK_PEAK_R = 1.5;
@@ -148,6 +150,52 @@ export const autopsyRowsFromPaperTrades = (trades: readonly PaperSettledTrade[])
     return out;
 };
 
+/** Normalize closed journal `LoggedTrade` rows into `AutopsyRow` entries (skips ids already represented via signals/paper). */
+export const autopsyRowsFromLoggedTrades = (
+    trades: readonly LoggedTrade[],
+    excludeIds?: ReadonlySet<string>,
+): AutopsyRow[] => {
+    const out: AutopsyRow[] = [];
+    for (const t of trades) {
+        if (t.outcome !== TradeOutcome.WIN && t.outcome !== TradeOutcome.LOSS) continue;
+        const paperId = t.paper?.positionId;
+        if (excludeIds && (excludeIds.has(t.id) || (paperId && excludeIds.has(paperId)))) continue;
+        const rawR = typeof t.netR === 'number' && Number.isFinite(t.netR)
+            ? t.netR
+            : typeof t.realizedR === 'number' && Number.isFinite(t.realizedR)
+                ? t.realizedR
+                : typeof t.rMultiple === 'number' && Number.isFinite(t.rMultiple)
+                    ? t.rMultiple
+                    : t.outcome === TradeOutcome.WIN ? 1 : -1;
+        const openedIso = t.decidedAt || t.analysis?.createdAt || t.timestamp;
+        const closedIso = t.outcomeResolvedAt || t.timestamp;
+        const openedAtMs = Date.parse(openedIso);
+        const closedAtMs = Date.parse(closedIso);
+        if (!Number.isFinite(closedAtMs)) continue;
+        const mfeR = typeof t.resolutionRecord?.mfeR === 'number' && Number.isFinite(t.resolutionRecord.mfeR)
+            ? t.resolutionRecord.mfeR
+            : undefined;
+        const maeR = typeof t.resolutionRecord?.maeR === 'number' && Number.isFinite(t.resolutionRecord.maeR)
+            ? t.resolutionRecord.maeR
+            : undefined;
+        const dir = t.analysis?.direction === 'Short' ? 'short' : 'long';
+        out.push({
+            id: paperId ?? t.id,
+            symbol: (t.analysis?.coinName ?? 'UNKNOWN').trim().toUpperCase(),
+            direction: dir,
+            openedAtMs: Number.isFinite(openedAtMs) ? openedAtMs : closedAtMs,
+            closedAtMs,
+            outcomeR: rawR,
+            mfeR,
+            maeR,
+            isStopOut: t.outcome === TradeOutcome.LOSS,
+            regime: t.marketRegime,
+            playbook: t.paper?.skillSlug?.trim() || undefined,
+        });
+    }
+    return out;
+};
+
 const aggregateBuckets = (
     rows: readonly AutopsyRow[],
     keyFn: (row: AutopsyRow) => string | undefined,
@@ -184,14 +232,20 @@ export interface BuildAutopsyInput {
     rows?: readonly AutopsyRow[];
     signals?: readonly SignalRow[];
     paperTrades?: readonly PaperSettledTrade[];
+    loggedTrades?: readonly LoggedTrade[];
 }
 
 /** Deterministically compute MFE/MAE execution autopsy & behavioral leak flags. */
 export const buildExecutionAutopsy = (input: BuildAutopsyInput): ExecutionAutopsyReport => {
-    const merged: AutopsyRow[] = [
+    const baseRows: AutopsyRow[] = [
         ...(input.rows ?? []),
         ...(input.signals ? autopsyRowsFromSignals(input.signals) : []),
         ...(input.paperTrades ? autopsyRowsFromPaperTrades(input.paperTrades) : []),
+    ];
+    const seen = new Set(baseRows.map(r => r.id));
+    const merged: AutopsyRow[] = [
+        ...baseRows,
+        ...(input.loggedTrades ? autopsyRowsFromLoggedTrades(input.loggedTrades, seen) : []),
     ].sort((a, b) => a.closedAtMs - b.closedAtMs || a.id.localeCompare(b.id));
 
     const sampleCount = merged.length;

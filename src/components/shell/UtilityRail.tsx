@@ -25,8 +25,9 @@ import {
 } from '../../services/learning/skillManage';
 import { getActiveUsername } from '../../utils/activeUser';
 import { display } from '../../utils/symbol';
-import { getPaperAccount, subscribePaperAccount } from '../../services/paper/PaperBrokerService';
-import { paperAccountView, paperEquity, type PaperAccount } from '../../services/paper/paperCore';
+import { getPaperAccount, submitPaperOrder, subscribePaperAccount } from '../../services/paper/PaperBrokerService';
+import { paperAccountView, paperEquity, paperUnrealizedPnl, type PaperAccount } from '../../services/paper/paperCore';
+import { getPaperLiveFrame, subscribePaperLiveTicks } from '../../services/trade/futuresStreams';
 
 const emptyCounters: CuratedMemorySnapshot = {
     userMd: '', memoryMd: '', userChars: 0, memoryChars: 0,
@@ -62,6 +63,9 @@ const UtilityRail: React.FC<UtilityRailProps> = ({
     const [note, setNote] = useState<string | null>(null);
     const [skillRows, setSkillRows] = useState<Record<string, SkillStatusRow>>({});
     const [paperAccount, setPaperAccount] = useState<PaperAccount | null>(null);
+    const [, setPaperTick] = useState(0);
+    const [closingPaperId, setClosingPaperId] = useState<string | null>(null);
+    const [paperActionNote, setPaperActionNote] = useState<string | null>(null);
 
     const snap = useSyncExternalStore(
         chatStore.subscribe, chatStore.getSnapshot, chatStore.getSnapshot);
@@ -98,8 +102,41 @@ const UtilityRail: React.FC<UtilityRailProps> = ({
         return () => { alive = false; unsubscribe(); };
     }, [user]);
 
-    const paperView = paperAccount ? paperAccountView(paperAccount) : null;
-    const paperEquityUsd = paperAccount ? paperEquity(paperAccount) : 0;
+    useEffect(() => {
+        if (!open || section !== 'paper') return;
+        return subscribePaperLiveTicks(() => setPaperTick(t => t + 1));
+    }, [open, section]);
+
+    const livePaperMarks: Record<string, number> = {};
+    if (paperAccount) {
+        for (const p of paperAccount.positions) {
+            const frame = getPaperLiveFrame(p.symbol, 300_000);
+            const livePrice = frame?.mark ?? frame?.last;
+            if (typeof livePrice === 'number' && Number.isFinite(livePrice) && livePrice > 0) {
+                livePaperMarks[p.symbol] = livePrice;
+            }
+        }
+    }
+    const paperView = paperAccount ? paperAccountView(paperAccount, livePaperMarks) : null;
+    const paperEquityUsd = paperAccount ? paperEquity(paperAccount, livePaperMarks) : 0;
+    const closePaperPosition = async (positionId: string, symbol: string): Promise<void> => {
+        if (closingPaperId) return;
+        setClosingPaperId(positionId);
+        setPaperActionNote(null);
+        try {
+            const receipt = await submitPaperOrder(
+                { action: 'close', symbol, position_id: positionId },
+                { username: user },
+            );
+            setPaperActionNote(receipt.ok
+                ? `Closed ${display(symbol)}${receipt.message ? ` — ${receipt.message}` : ''}`
+                : `Close refused — ${receipt.reason ?? receipt.error ?? 'error'}`);
+        } catch (err) {
+            setPaperActionNote(err instanceof Error ? err.message : String(err));
+        } finally {
+            setClosingPaperId(null);
+        }
+    };
     const paperStartUsd = paperView?.riskLimits.startingBalanceUsd ?? 0;
     const paperPct = paperStartUsd > 0
         ? ((paperEquityUsd - paperStartUsd) / paperStartUsd) * 100
@@ -265,22 +302,54 @@ const UtilityRail: React.FC<UtilityRailProps> = ({
                     {!paperView || (paperView.openPositions.length === 0 && paperView.pendingOrders.length === 0) ? (
                         <p className="text-ui-2xs text-zinc-600">No open paper positions or resting limits.</p>
                     ) : (
-                        <div className="space-y-1 font-mono text-ui-2xs text-zinc-500">
-                            {paperView.openPositions.map(position => (
-                                <p
-                                    key={position.id}
-                                    data-testid={`utility-paper-position-${position.id}`}
-                                    className="truncate"
-                                    title={`${position.side.toUpperCase()} ${position.symbol} · ${position.qty} @ ${position.entryPrice} · SL ${position.stopLoss} · TP ${position.takeProfits.join('/') || '—'}`}
-                                >
-                                    {position.side.toUpperCase()} {display(position.symbol)} · {position.qty} @ {position.entryPrice.toFixed(2)} · SL {position.stopLoss.toFixed(2)}
-                                </p>
-                            ))}
+                        <div className="space-y-1.5 font-mono text-ui-2xs text-zinc-400">
+                            {paperView.openPositions.map(position => {
+                                const mark = livePaperMarks[position.symbol] ?? position.entryPrice;
+                                const unrealizedUsd = paperUnrealizedPnl(position, mark);
+                                const unrealizedR = position.riskUsd > 0 ? unrealizedUsd / position.riskUsd : null;
+                                const signedUsd = `${unrealizedUsd >= 0 ? '+' : '-'}$${Math.abs(unrealizedUsd).toFixed(2)}`;
+                                const signedR = unrealizedR !== null
+                                    ? `${unrealizedR >= 0 ? '+' : ''}${unrealizedR.toFixed(2)}R`
+                                    : '—';
+                                const isClosing = closingPaperId === position.id;
+                                return (
+                                    <div
+                                        key={position.id}
+                                        data-testid={`utility-paper-position-${position.id}`}
+                                        className="rounded-control border border-white/[0.05] bg-zinc-950/50 px-2 py-1.5"
+                                        title={`${position.side.toUpperCase()} ${position.symbol} · ${position.qty} @ ${position.entryPrice} · SL ${position.stopLoss} · TP ${position.takeProfits.join('/') || '—'}`}
+                                    >
+                                        <div className="flex items-center justify-between gap-1.5">
+                                            <span className="truncate text-zinc-300">
+                                                {position.side.toUpperCase()} {display(position.symbol)} @ {position.entryPrice.toFixed(2)}
+                                            </span>
+                                            <button
+                                                type="button"
+                                                data-testid="utilities-paper-close-btn"
+                                                disabled={isClosing || Boolean(closingPaperId)}
+                                                onClick={() => { void closePaperPosition(position.id, position.symbol); }}
+                                                className="shrink-0 rounded-control border border-line bg-zinc-800 px-1.5 py-0.5 text-ui-2xs text-zinc-200 transition-colors hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-40"
+                                            >
+                                                {isClosing ? 'Closing…' : 'Close'}
+                                            </button>
+                                        </div>
+                                        <div className="mt-0.5 flex items-center justify-between text-zinc-500">
+                                            <span>SL {position.stopLoss.toFixed(2)}</span>
+                                            <span
+                                                data-testid={`utility-paper-pnl-${position.id}`}
+                                                className={unrealizedUsd >= 0 ? 'text-emerald-400' : 'text-rose-400'}
+                                            >
+                                                {signedR} · {signedUsd}
+                                            </span>
+                                        </div>
+                                    </div>
+                                );
+                            })}
                             {paperView.pendingOrders.map(order => (
                                 <p
                                     key={order.id}
                                     data-testid={`utility-paper-order-${order.id}`}
-                                    className="truncate"
+                                    className="truncate text-zinc-500"
                                     title={`LIMIT ${order.side.toUpperCase()} ${order.symbol} · ${order.qty} @ ${order.limitPrice}`}
                                 >
                                     LIMIT {order.side.toUpperCase()} {display(order.symbol)} · {order.qty} @ {order.limitPrice.toFixed(2)}
@@ -288,13 +357,18 @@ const UtilityRail: React.FC<UtilityRailProps> = ({
                             ))}
                         </div>
                     )}
+                    {paperActionNote && (
+                        <p className="mt-1.5 text-ui-2xs leading-4 text-zinc-400" role="status" data-testid="utilities-paper-note">
+                            {paperActionNote}
+                        </p>
+                    )}
                     {paperView && (
                         <p className="mt-1.5 text-ui-2xs leading-4 text-zinc-600">
                             Equity ${paperView.equity.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} · free ${paperView.freeMargin.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </p>
                     )}
-                    {/* No undo here: an executed paper fill is final, like the
-                        write receipts in chat. This rail only reads the book. */}
+                    {/* An executed paper fill or close is final, matching the write
+                        receipts in chat. */}
                 </div>
             )}
         </aside>

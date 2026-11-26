@@ -34,6 +34,26 @@ import { assessProposalStaleness, undoWindowOf } from '../../../services/trade/t
 import { fmtRiskReward } from '../../../utils/riskReward';
 import { humanizeSkillTitle } from '../../../utils/uiFormatting';
 import { getHarnessSettings } from '../../../utils/harnessSettings';
+import { getPaperAccount, submitPaperOrder, subscribePaperAccount } from '../../../services/paper/PaperBrokerService';
+import type { PaperOrderInput, PaperReceipt } from '../../../services/paper/paperCore';
+
+/** Build a deterministic PaperOrderInput from a TradeProposal + trader risk/leverage. */
+export const buildPaperOrderFromProposal = (
+    proposal: TradeProposal,
+    riskPct: number,
+    leverage: number,
+): PaperOrderInput => ({
+    action: 'open_market',
+    symbol: proposal.symbol,
+    side: proposal.direction === 'Long' ? 'long' : 'short',
+    risk_pct: Number.isFinite(riskPct) && riskPct > 0 ? riskPct : 1,
+    leverage: Number.isFinite(leverage) && leverage >= 1 ? Math.floor(leverage) : 1,
+    entry_price: proposal.entry,
+    stop_loss: proposal.stopLoss,
+    take_profits: proposal.takeProfits.slice(0, 3),
+    ...(proposal.skillSlug ? { skill_slug: proposal.skillSlug } : {}),
+    ...(proposal.rationale ? { thesis: proposal.rationale.slice(0, 240) } : {}),
+});
 import { defaultLeverage } from '../../../utils/conversationUtils';
 import { computeLiquidationBuffer } from '../../../utils/ticketSize';
 
@@ -101,11 +121,16 @@ export interface TradeProposalCardProps {
     planMode?: boolean;
     /** Disable Plan Mode without clearing this card. */
     onUnlockPlanMode?: () => void;
+    /** Optional override for whether Paper Mode is active (defaults to local PaperBroker config). */
+    paperEnabled?: boolean;
+    /** Optional override for deterministic paper execution testing. */
+    onPaperExecute?: (proposal: TradeProposal) => Promise<PaperReceipt>;
 }
 
 const TradeProposalCard: React.FC<TradeProposalCardProps> = ({
     proposal, entryId, canLog, awaitingLog = false, leverage, logNote,
     guardBlock = null, guardWarnings = [], planMode = false, onUnlockPlanMode,
+    paperEnabled, onPaperExecute,
     getMark, presentedAt, undoTick = 0, onUndoWindowClose, onApprove, onReject, onAskWhy, onUndo,
 }) => {
     // The card shows levels the moment the model names them, but the probability,
@@ -171,6 +196,43 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({
     // The optional decline reason — one compact line above the actions, read
     // by the Reject tap. A decline without a reason is still a decline.
     const [declineReason, setDeclineReason] = useState('');
+
+    // Paper execution state — routes through PaperBrokerService/paperCore
+    // enforcing all risk walls, L2 pricing, and skillSlug attribution.
+    const [accountPaperEnabled, setAccountPaperEnabled] = useState(true);
+    const [paperBusy, setPaperBusy] = useState(false);
+    const [paperReceipt, setPaperReceipt] = useState<PaperReceipt | null>(null);
+    useEffect(() => {
+        if (paperEnabled !== undefined) return;
+        let alive = true;
+        const unsubscribe = subscribePaperAccount(acc => {
+            if (alive) setAccountPaperEnabled(acc.config.enabled);
+        });
+        void getPaperAccount()
+            .then(acc => { if (alive) setAccountPaperEnabled(acc.config.enabled); })
+            .catch(() => { /* no stored account yet — default enabled */ });
+        return () => { alive = false; unsubscribe(); };
+    }, [paperEnabled]);
+    const isPaperEnabled = paperEnabled ?? accountPaperEnabled;
+    const handlePaperExecute = async (): Promise<void> => {
+        if (planMode || !isPaperEnabled || paperBusy || !!refused || !!guardBlock || paperReceipt?.ok) return;
+        setPaperBusy(true);
+        try {
+            const order = buildPaperOrderFromProposal(proposal, settings.riskPercent, lev);
+            const receipt = onPaperExecute
+                ? await onPaperExecute(proposal)
+                : await submitPaperOrder(order);
+            setPaperReceipt(receipt);
+        } catch (err) {
+            setPaperReceipt({
+                ok: false,
+                error: 'paper_execute_failed',
+                reason: err instanceof Error ? err.message : String(err),
+            });
+        } finally {
+            setPaperBusy(false);
+        }
+    };
 
     const secondsLeft = undo ? Math.max(1, Math.ceil(undo.msLeft / 1000)) : 0;
     // The planned R:R chip. Sub-1 ratios quote TWO decimals: the canonical
@@ -477,7 +539,7 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({
                     className="w-full rounded-control border border-hairline bg-white/[0.02] px-2 py-1 text-ui-dense text-zinc-300 placeholder:text-zinc-600 focus:border-zinc-600 focus:outline-none"
                     data-testid="proposal-decline-reason"
                 />
-                <div className="mt-1.5 flex items-center gap-1.5">
+                <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                     {canLog && (
                         <button type="button"
                             onClick={() => {
@@ -508,6 +570,24 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({
                                         : 'Approve — log & monitor'}
                         </button>
                     )}
+                    <button
+                        type="button"
+                        onClick={() => { void handlePaperExecute(); }}
+                        disabled={planMode || !isPaperEnabled || paperBusy || !!refused || !!guardBlock || !!paperReceipt?.ok}
+                        title={planMode
+                            ? 'Plan Mode is active (read-only). Unlock execution before paper trading.'
+                            : !isPaperEnabled
+                                ? 'Paper Mode is off in Settings.'
+                                : refused
+                                    ? 'The gate refused this plan.'
+                                    : guardBlock
+                                        ? 'The session guard stands down.'
+                                        : 'Execute simulated fill via local Paper Broker'}
+                        data-testid="proposal-paper-execute"
+                        className="rounded-control border border-line bg-zinc-900 px-2.5 py-1 text-ui-dense font-medium text-zinc-200 transition-colors hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                        {paperBusy ? 'Filling…' : paperReceipt?.ok ? 'Paper filled' : 'Paper execute'}
+                    </button>
                     {planMode && onUnlockPlanMode && (
                         <button
                             type="button"
@@ -536,6 +616,17 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({
                         nothing logs until you approve
                     </span>
                 </div>
+                {paperReceipt && (
+                    <p
+                        data-testid="proposal-paper-receipt"
+                        role="status"
+                        className="mt-1.5 rounded-control border border-hairline bg-white/[0.03] px-2 py-1 font-mono text-ui-2xs text-zinc-300"
+                    >
+                        {paperReceipt.ok
+                            ? `Filled · Paper #${paperReceipt.positionId ?? paperReceipt.orderId ?? 'ok'}${paperReceipt.message ? ` — ${paperReceipt.message}` : ''}`
+                            : `Refused · ${paperReceipt.reason ?? paperReceipt.error ?? 'Paper order rejected'}`}
+                    </p>
+                )}
             </div>
         )}
     </div>
