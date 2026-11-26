@@ -65,7 +65,7 @@ export const focusLineForRefs = (refs: ComposerRefs): string => {
     return parts.length > 0 ? `[TRADER FOCUS — prioritize: ${parts.join(' · ')}]` : '';
 };
 
-export const SLASH_TEMPLATES = ['plan', 'context', 'compact', 'doctor', 'dream', 'brief', 'audit', 'scan', 'handoff'] as const;
+export const SLASH_TEMPLATES = ['plan', 'context', 'doctor', 'dream', 'compact', 'brief', 'audit', 'scan', 'handoff'] as const;
 export type SlashTemplate = (typeof SLASH_TEMPLATES)[number];
 
 export interface SlashCommandSuggestion {
@@ -77,9 +77,9 @@ export interface SlashCommandSuggestion {
 export const SLASH_COMMAND_SUGGESTIONS: readonly SlashCommandSuggestion[] = [
     { command: 'plan', usage: '/plan [on|off]', description: 'Toggle read-only Plan Mode (locks execution & writes)' },
     { command: 'context', usage: '/context', description: 'Inspect session token breakdown & compaction headroom' },
-    { command: 'compact', usage: '/compact [focus]', description: 'Compress older turns into an in-place checkpoint (0 LLM tokens)' },
     { command: 'doctor', usage: '/doctor', description: 'Run 6-subsystem harness health diagnostics' },
     { command: 'dream', usage: '/dream', description: 'Consolidate curated memory files (0 LLM tokens)' },
+    { command: 'compact', usage: '/compact [focus]', description: 'Compress older turns into an in-place checkpoint (0 LLM tokens)' },
     { command: 'brief', usage: '/brief [focus]', description: 'Structured multi-TF desk brief on active symbol' },
     { command: 'audit', usage: '/audit [focus]', description: 'Counter-thesis check on every drawn #D shape' },
     { command: 'scan', usage: '/scan [symbols]', description: 'Run multi-TF confluence scan across watchlist' },

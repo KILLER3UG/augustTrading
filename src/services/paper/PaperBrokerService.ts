@@ -521,16 +521,31 @@ export const submitPaperOrder = async (
             ], tradedSymbol, mark),
             ...(deps.markPrices ?? {}),
         };
+        const receipt = placeOrderCore({
+            account, input, quote, nowMs,
+            nextId: deps.nextId,
+            planAllowed: () => ({ ok: true }), // already applied above, once
+            fundingRate,
+            fundingFrames,
+            markPrices,
+        });
+        if (!receipt.ok || !receipt.account) {
+            return { ...receipt, view: paperAccountView(account, markPrices, nowMs) };
+        }
         if (input.action === 'open_market' || input.action === 'open_limit') {
             const equity = paperEquity(account, markPrices);
-            const entryPx = mark ?? (typeof input.entry_price === 'number' ? input.entry_price : 0);
-            const stopPx = typeof input.stop_loss === 'number' ? input.stop_loss : 0;
-            const candRiskPct = typeof input.risk_pct === 'number' && Number.isFinite(input.risk_pct) && input.risk_pct > 0
-                ? input.risk_pct
-                : (typeof input.notional_usd === 'number' && Number.isFinite(input.notional_usd) && input.notional_usd > 0
-                    && entryPx > 0 && stopPx > 0 && equity > 0)
-                    ? ((input.notional_usd / entryPx) * Math.abs(entryPx - stopPx) / equity) * 100
-                    : account.config.maxRiskPerTradePct;
+            const builtPos = receipt.positionId
+                ? receipt.account.positions.find(p => p.id === receipt.positionId)
+                : undefined;
+            const builtOrder = receipt.orderId
+                ? receipt.account.pendingOrders.find(o => o.id === receipt.orderId)
+                : undefined;
+            const builtRiskUsd = builtPos?.riskUsd ?? builtOrder?.riskUsd;
+            const candRiskPct = typeof builtRiskUsd === 'number' && Number.isFinite(builtRiskUsd) && builtRiskUsd > 0 && equity > 0
+                ? (builtRiskUsd / equity) * 100
+                : (typeof input.risk_pct === 'number' && Number.isFinite(input.risk_pct) && input.risk_pct > 0
+                    ? input.risk_pct
+                    : account.config.maxRiskPerTradePct);
             const hooks = deps.preTradeHooks ?? getHarnessSettings().preTradeHooks;
             const regime = deps.regime !== undefined ? deps.regime : getCachedRegime(tradedSymbol, nowMs);
             const effectiveFunding = fundingRate !== undefined && fundingRate !== null
@@ -559,17 +574,6 @@ export const submitPaperOrder = async (
                     view: paperAccountView(account, markPrices, nowMs),
                 };
             }
-        }
-        const receipt = placeOrderCore({
-            account, input, quote, nowMs,
-            nextId: deps.nextId,
-            planAllowed: () => ({ ok: true }), // already applied above, once
-            fundingRate,
-            fundingFrames,
-            markPrices,
-        });
-        if (!receipt.ok || !receipt.account) {
-            return { ...receipt, view: paperAccountView(account, markPrices, nowMs) };
         }
         await persistAccount(receipt.account, username);
         if (receipt.settlements?.length) publishSettlements(receipt.settlements);
