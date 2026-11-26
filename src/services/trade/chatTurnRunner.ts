@@ -54,6 +54,9 @@ import { scoreDrawnShape, levelAccuracy, describeLevelAccuracyForModel } from '.
 import { contentVersion, getSkill, listSkillFiles } from '../learning/SkillFileService';
 import { cachedSkillStatusRows, touchSkillUsage } from '../learning/skillManage';
 import { routeSkillsForContext } from '../learning/skillRoutingCore';
+import { selectPreTurnMemories } from '../learning/memoryRecallCore';
+import { getCachedCuratedMemorySnapshot } from '../learning/curatedMemory';
+import { listProfileMemories } from '../learning/profileMemory';
 import { skillFormatIssues } from '../../utils/skillFrontmatter';
 import { parseComposerRefs, focusLineForRefs, parseSlashSkillInvocation } from '../../utils/composerRefs';
 import * as levelWatch from './levelWatchService';
@@ -1463,12 +1466,23 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
                 killSwitchActive: liveCtx.killSwitchActive,
             },
         ).promptTailBlock;
+        const memoryRecallTail = deps.memoryEnabled !== false
+            ? selectPreTurnMemories({
+                symbol: liveCtx.symbol,
+                session: liveCtx.session,
+                regime: liveCtx.regime,
+                memoryMd: getCachedCuratedMemorySnapshot().memoryMd,
+                profileEntries: listProfileMemories(),
+                maxItems: 3,
+            }).promptTailBlock
+            : '';
         const focusLine = [
             refFocusLine,
             requireTools ? FULL_ANALYSIS_MANDATE.trim() : '',
             planModeTail,
             scopedTail,
             skillRoutingTail,
+            memoryRecallTail,
             invokedSkillBlock,
         ].filter(Boolean).join('\n\n');
         const sentAttachments: Attachment[] = retryEntry

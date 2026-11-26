@@ -36,7 +36,17 @@ import {
 } from './executionAutopsyCore';
 import type { SignalRow } from '../../types/signal';
 import type { PaperSettledTrade } from '../paper/paperCore';
-import { isRejectedFingerprint } from './rejectedFingerprints';
+import { isRejectedFingerprint, recordRejectedFingerprint } from './rejectedFingerprints';
+import { demoteSkillToStale, undoSkillMetaSnapshot, type SkillMeta, type SkillStatus } from './skillManage';
+
+export const skillDemotionFingerprintParts = (slug: string): { kind: string; target: string; content: string } => {
+    const clean = slug.trim().toLowerCase();
+    return {
+        kind: 'skill_demotion',
+        target: clean,
+        content: `demote_stale:${clean}`,
+    };
+};
 
 export const DREAM_MIN_HOURS = 24;
 export const DREAM_MIN_NEW_SESSIONS = 5;
@@ -376,6 +386,13 @@ export const dreamEligibility = (
 
 // ─── The runner (phases 1–2 + persistence), with a concurrency lock ─────────
 
+export interface DreamDemotedSkill {
+    slug: string;
+    priorStatus: SkillStatus;
+    sample: number;
+    expectancyR: number;
+}
+
 export interface DreamRunResult {
     ran: boolean;
     manual: boolean;
@@ -383,6 +400,8 @@ export interface DreamRunResult {
     core?: DreamCoreResult;
     beforeSnapshot?: { userMd: string; memoryMd: string };
     undoSnapshot?: { userMd: string; memoryMd: string };
+    demotedSkills?: DreamDemotedSkill[];
+    skillMetaUndoSnapshot?: Record<string, SkillMeta>;
     error?: string;
 }
 
@@ -519,6 +538,49 @@ const runMemoryDreamUnlocked = async (options: DreamRunOptions): Promise<DreamRu
         };
     }
     await setPreference(`${STATE_KEY_PREFIX}${username}`, JSON.stringify({ lastRunAt: new Date(nowMs).toISOString(), sessionsAtRun: newSessions } satisfies DreamState));
+
+    // Autopsy-to-skill feedback loop: demote playbooks with N >= 5 and negative expectancy
+    // to `stale`, fail-closed against `rejectedFingerprints` if user previously undid/rejected.
+    const demotedSkills: DreamDemotedSkill[] = [];
+    let skillMetaUndoSnapshot: Record<string, SkillMeta> | undefined;
+    if (autopsy?.sufficientSample) {
+        const leakyPlaybooks = autopsy.byPlaybook.filter(b => b.flaggedLeak && b.expectancyR < 0);
+        for (const bucket of leakyPlaybooks) {
+            const fp = skillDemotionFingerprintParts(bucket.key);
+            let rejected = true;
+            try {
+                rejected = await isRejectedFingerprint(fp, username);
+            } catch {
+                core.notes.push(`Skipped demoting playbook "${bucket.key}": durable rejection store unreadable (fail-closed).`);
+                continue;
+            }
+            if (rejected) {
+                core.notes.push(`Skipped demoting playbook "${bucket.key}": previously rejected/undone by trader (rejectedFingerprints).`);
+                continue;
+            }
+            const demotion = await demoteSkillToStale(bucket.key, {
+                username,
+                nowMs,
+                provenance: {
+                    rationale: `Playbook leak (N=${bucket.sample}, expectancy ${bucket.expectancyR}R)`,
+                    recordedAt: new Date(nowMs).toISOString(),
+                },
+            });
+            if (demotion.ok && demotion.changed && demotion.priorStatus) {
+                if (!skillMetaUndoSnapshot && demotion.undoSnapshot) {
+                    skillMetaUndoSnapshot = demotion.undoSnapshot;
+                }
+                demotedSkills.push({
+                    slug: demotion.slug,
+                    priorStatus: demotion.priorStatus,
+                    sample: bucket.sample,
+                    expectancyR: bucket.expectancyR,
+                });
+                core.notes.push(`Demoted leaky playbook "${demotion.slug}" to stale (N=${bucket.sample}, expectancy ${bucket.expectancyR}R; reversible).`);
+            }
+        }
+    }
+
     return {
         ran: true,
         manual: !!options.manual,
@@ -527,6 +589,8 @@ const runMemoryDreamUnlocked = async (options: DreamRunOptions): Promise<DreamRu
         beforeSnapshot,
         // The reversible before-snapshot: undo = write both files back.
         undoSnapshot: beforeSnapshot,
+        ...(demotedSkills.length > 0 ? { demotedSkills } : {}),
+        ...(skillMetaUndoSnapshot ? { skillMetaUndoSnapshot } : {}),
     };
 };
 
@@ -541,18 +605,34 @@ export const formatDreamResultSummary = (result: DreamRunResult): string => {
     if (core.duplicatesRemoved > 0) parts.push(`${core.duplicatesRemoved} duplicate(s) removed`);
     if (core.entriesRemoved.length > 0) parts.push(`${core.entriesRemoved.length} contradicted entry removed`);
     if (core.capDropped.length > 0) parts.push(`${core.capDropped.length} tail entry trimmed to cap`);
+    if (result.demotedSkills && result.demotedSkills.length > 0) {
+        parts.push(`${result.demotedSkills.length} leaky playbook(s) marked stale (${result.demotedSkills.map(d => d.slug).join(', ')})`);
+    }
     return parts.length > 0
         ? `Memory consolidated — ${parts.join(', ')}.`
         : 'Memory consolidated — clean (no duplicates or contradictions).';
 };
 
-/** Undo a dream: restore both files from the run's before-snapshot. */
+/** Undo a dream: restore both files from the run's before-snapshot and revert any demoted skills. */
 export const undoMemoryDream = async (
     beforeSnapshot: { userMd: string; memoryMd: string },
     username = getActiveUsername() || 'default',
+    opts?: { skillMetaUndoSnapshot?: Record<string, SkillMeta>; demotedSlugs?: readonly string[] },
 ): Promise<boolean> => {
     const { undoMemorySnapshot } = await import('./curatedMemory');
     const a = await undoMemorySnapshot('user', beforeSnapshot.userMd, username);
     const b = await undoMemorySnapshot('memory', beforeSnapshot.memoryMd, username);
-    return a.ok && b.ok;
+    let metaOk = true;
+    if (opts?.skillMetaUndoSnapshot) {
+        metaOk = await undoSkillMetaSnapshot(opts.skillMetaUndoSnapshot, username);
+    }
+    for (const slug of opts?.demotedSlugs ?? []) {
+        await recordRejectedFingerprint(
+            skillDemotionFingerprintParts(slug),
+            'user_undo',
+            `Undid /dream stale demotion for ${slug}`,
+            username,
+        ).catch(() => { /* best-effort */ });
+    }
+    return a.ok && b.ok && metaOk;
 };

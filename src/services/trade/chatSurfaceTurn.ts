@@ -48,8 +48,9 @@ import { indexBudgetFor } from '../../utils/promptIndexBudget';
 import { getHarnessSettings, RISK_CONSTITUTION_MAX_CHARS } from '../../utils/harnessSettings';
 import { DEFAULT_CONTEXT_WINDOW_TOKENS, resolveContextWindow } from '../../utils/contextWindow';
 import { activeStrategiesBlock } from '../learning/strategyStore';
-import { buildProfileMemoryIndex } from '../learning/profileMemory';
+import { buildProfileMemoryIndex, listProfileMemories } from '../learning/profileMemory';
 import { buildCuratedMemoryPromptBlock, getCachedCuratedMemorySnapshot } from '../learning/curatedMemory';
+import { selectPreTurnMemories } from '../learning/memoryRecallCore';
 import { buildGoalsIndex, focusedGoal, goalMatchesMessage, listGoals } from '../goals/GoalService';
 import { runToolTurn, type CaptureSnapshot, type ToolTurnEvents, type ToolTurnOutcome, type ToolTurnRequest } from './toolTurn';
 import * as chatStore from './chatStore';
@@ -915,10 +916,21 @@ export const runChatSurfaceTurn = async (req: ChatSurfaceTurnRequest): Promise<T
             },
         ).promptTailBlock
         : '';
+    const memoryRecallTail = liveCtx && req.memoryEnabled !== false
+        ? selectPreTurnMemories({
+            symbol: liveCtx.symbol,
+            session: liveCtx.session,
+            regime: liveCtx.regime,
+            memoryMd: getCachedCuratedMemorySnapshot().memoryMd,
+            profileEntries: listProfileMemories(),
+            maxItems: 3,
+        }).promptTailBlock
+        : '';
     const dynamicTailBlocks = [
         planMode ? PLAN_MODE_MANDATE : '',
         scopedTail,
         skillRoutingTail,
+        memoryRecallTail,
     ].filter(Boolean);
     const prompt = req.systemPrompt
         ? {

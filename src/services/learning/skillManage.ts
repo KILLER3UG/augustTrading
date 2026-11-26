@@ -503,6 +503,67 @@ export const touchSkillUsage = async (
     await writeMetaMap(username, map);
 };
 
+export interface SkillStaleDemotionResult {
+    ok: boolean;
+    changed: boolean;
+    slug: string;
+    priorStatus?: SkillStatus;
+    status?: SkillStatus;
+    undoSnapshot?: Record<string, SkillMeta>;
+    reason?: string;
+}
+
+/**
+ * Deterministic, reversible autopsy-driven demotion to `stale`.
+ * Pinned skills are protected and never auto-demoted; already stale/archived skills no-op cleanly.
+ */
+export const demoteSkillToStale = async (
+    slug: string,
+    opts: { username?: string; nowMs?: number; provenance?: ProvenanceInput } = {},
+): Promise<SkillStaleDemotionResult> => {
+    const cleanSlug = (slug || '').trim().toLowerCase();
+    if (!cleanSlug) return { ok: false, changed: false, slug: '', reason: 'slug is required.' };
+    const skill = getSkill(cleanSlug);
+    if (!skill) {
+        return { ok: false, changed: false, slug: cleanSlug, reason: `Skill "${cleanSlug}" not found in library.` };
+    }
+    const username = opts.username || getActiveUsername() || 'default';
+    const nowMs = opts.nowMs ?? Date.now();
+    const map = await readMetaMap(username);
+    const undoSnapshot: Record<string, SkillMeta> = JSON.parse(JSON.stringify(map));
+    const current = map[skill.slug] ?? defaultMetaFor(skill.slug, isBundledName(skill.file) ? 'bundled' : 'user', nowMs);
+    if (current.pinned === true) {
+        return {
+            ok: false, changed: false, slug: skill.slug, priorStatus: current.status, status: current.status,
+            undoSnapshot, reason: `Skill "${skill.slug}" is pinned — protected from auto-demotion.`,
+        };
+    }
+    if (current.status === 'stale' || current.status === 'archived') {
+        return {
+            ok: true, changed: false, slug: skill.slug, priorStatus: current.status, status: current.status,
+            undoSnapshot, reason: `Skill "${skill.slug}" is already ${current.status}.`,
+        };
+    }
+    const priorStatus = current.status;
+    const stamp = resolveProvenance(opts.provenance);
+    const next: SkillMeta = {
+        ...current,
+        status: 'stale',
+        updatedAt: new Date(nowMs).toISOString(),
+        ...(stamp ? { provenance: stamp } : {}),
+    };
+    map[skill.slug] = next;
+    await writeMetaMap(username, map);
+    return {
+        ok: true,
+        changed: true,
+        slug: skill.slug,
+        priorStatus,
+        status: 'stale',
+        undoSnapshot,
+    };
+};
+
 export interface SkillPromotionVerdict {
     promoted: boolean;
     slug: string;
