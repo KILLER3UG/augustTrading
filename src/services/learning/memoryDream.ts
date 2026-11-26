@@ -547,7 +547,7 @@ const runMemoryDreamUnlocked = async (options: DreamRunOptions): Promise<DreamRu
         const leakyPlaybooks = autopsy.byPlaybook.filter(b => b.flaggedLeak && b.expectancyR < 0);
         for (const bucket of leakyPlaybooks) {
             const fp = skillDemotionFingerprintParts(bucket.key);
-            let rejected = true;
+            let rejected: boolean;
             try {
                 rejected = await isRejectedFingerprint(fp, username);
             } catch {
