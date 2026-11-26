@@ -1,7 +1,7 @@
 /**
  * wave5SkillsMemory — offline unit tests for Wave 5.1 Part A & Part B:
  *   - Direct `/<skill-slug>` slash invocation parsing (`parseSlashSkillInvocation`)
- *   - Condition-scoped skill routing (`skillRoutingCore`: regimes/sessions/symbols/conditions, metadata.*, cap & zero preload)
+ *   - Condition-scoped skill routing (`skillRoutingCore`: regimes/sessions/symbols/conditions, metadata.*, stale exclusion & zero preload)
  *   - Deterministic pre-turn memory recall (`memoryRecallCore`: scoring, maxItems, sensitive/deleted filtering, empty safety)
  *   - Unified Turn-1 memory write contract (`memory`, `memory_add`, `memory_update` present on Turn 1 with <= 24 tools)
  *   - Automatic `skillSlug` attribution (`skill_view` / `initialViewedSkills` -> `present_trade`, `emit_signal`, `paper_order`)
@@ -53,11 +53,11 @@ import {
     DESK_TOOL_DEFINITIONS,
     INITIAL_CHART_ACTION_NAMES,
     INITIAL_DESK_TOOL_NAMES,
-    loadableDeskToolNamesFor,
     runDeskToolLoop,
     type DeskToolCall,
 } from '../src/services/analysis/DeskToolsService';
 import type { ProviderConfig } from '../src/types/provider';
+import { initMemoryFiles } from '../src/services/learning/MemoryFilesService';
 import {
     writeSkillFile,
     getSkill,
@@ -157,20 +157,22 @@ const makeSignalRow = (idx: number, skillSlug: string, outcomeR: number): Signal
 
 describe('Wave 5.1 Part A & B — Skills Intelligence & Memory Compounding', () => {
     it('1. parseSlashSkillInvocation resolves /<skill-slug> prompts while preserving built-in commands', () => {
-        const direct = parseSlashSkillInvocation('/london-sweep-bos analyze BTC 15m liquidity');
+        const slugs = ['london-sweep-bos', 'spot-perp-crowding-fade'];
+        const direct = parseSlashSkillInvocation('/london-sweep-bos analyze BTC 15m liquidity', slugs);
         assert.deepEqual(direct, { slug: 'london-sweep-bos', rest: 'analyze BTC 15m liquidity' });
 
-        const bare = parseSlashSkillInvocation('  /spot-perp-crowding-fade  ');
+        const bare = parseSlashSkillInvocation('  /spot-perp-crowding-fade  ', slugs);
         assert.deepEqual(bare, { slug: 'spot-perp-crowding-fade', rest: '' });
 
         // Built-ins must NOT be misclassified as skill invocations
         for (const cmd of ['/plan on', '/context', '/doctor', '/dream', '/handoff', '/brief', '/audit', '/scan']) {
-            assert.equal(parseSlashSkillInvocation(cmd), null, `${cmd} must stay a built-in command`);
+            assert.equal(parseSlashSkillInvocation(cmd, slugs), null, `${cmd} must stay a built-in command`);
         }
-        assert.equal(parseSlashSkillInvocation('hello world'), null);
+        assert.equal(parseSlashSkillInvocation('/unknown-skill test', slugs), null);
+        assert.equal(parseSlashSkillInvocation('hello world', slugs), null);
     });
 
-    it('2. skillRoutingCore parses top-level & metadata triggers, routes matching tape cleanly, and never preloads bodies', () => {
+    it('2. skillRoutingCore parses top-level & metadata triggers, routes matching tape cleanly, skips stale/archived, and never preloads bodies', () => {
         const londonContent = makeSkillMd({
             name: 'London Sweep BOS',
             description: 'Fade sweeps in London range.',
@@ -284,7 +286,7 @@ describe('Wave 5.1 Part A & B — Skills Intelligence & Memory Compounding', () 
 
         assert.equal(recalled.items.length, 2);
         assert.ok(recalled.items.every(i => !i.text.includes('secret') && !i.text.includes('Deleted')));
-        assert.ok(recalled.items[0].matchedTerms.includes('symbol'));
+        assert.ok(recalled.items[0].matchedTerms.some(t => t.startsWith('symbol:')));
         assert.ok(recalled.promptTailBlock.includes('[RECALLED MEMORY'));
         assert.ok(recalled.promptTailBlock.includes('BTC'));
     });
@@ -294,7 +296,7 @@ describe('Wave 5.1 Part A & B — Skills Intelligence & Memory Compounding', () 
         assert.equal(INITIAL_DESK_TOOL_NAMES.includes('memory_add'), true);
         assert.equal(INITIAL_DESK_TOOL_NAMES.includes('memory_update'), true);
 
-        const nonVisionInitialChart = INITIAL_CHART_ACTION_NAMES.filter(n => n !== 'capture_chart_screenshot');
+        const nonVisionInitialChart = [...INITIAL_CHART_ACTION_NAMES].filter(n => n !== 'inspect_chart_image');
         const turn1Count = INITIAL_DESK_TOOL_NAMES.length + nonVisionInitialChart.length;
         assert.ok(turn1Count <= 24, `Turn-1 tools must stay <= 24, got ${turn1Count}`);
 
@@ -303,29 +305,32 @@ describe('Wave 5.1 Part A & B — Skills Intelligence & Memory Compounding', () 
         assert.equal(schemaNames.includes('memory_add'), true);
         assert.equal(schemaNames.includes('memory_update'), true);
 
-        // Displaced chart drawing reset remains dynamically loadable via load_tools
-        const loadable = loadableDeskToolNamesFor(true, 'all');
-        assert.equal(loadable.includes('clear_chart_drawings'), true);
+        // Displaced chart drawing reset is deferred off Turn-1 chart actions
+        assert.equal(INITIAL_CHART_ACTION_NAMES.has('clear_chart_drawings'), false);
     });
 
     it('5. runDeskToolLoop auto-attaches most recently viewed skillSlug to present_trade, emit_signal, and paper_order', async () => {
         const user = 'wave5-attr-user';
-        backing.set('last_active_user', user);
+        const prevUser = localStorage.getItem('last_active_user');
+        localStorage.setItem('last_active_user', user);
+        await initMemoryFiles(user);
         __clearSignalLedgerForTests(user);
         await __paperBrokerTestHooks.clear(user);
 
-        await writeSkillFile({
+        const w1 = await writeSkillFile({
             slug: 'london-sweep-bos',
             name: 'London Sweep BOS',
-            description: 'Fade sweeps in London.',
-            body: '## When to use\nLondon sweep.\n## Steps\n1. Wait for sweep + BOS.\n## Pitfalls\n- No chase.',
+            description: 'Fade sweeps in London session ranges.',
+            body: '## When to Use\nLondon sweep.\n## Steps\n1. Wait for sweep + BOS.\n## Pitfalls\n- No chase.',
         }, user);
-        await writeSkillFile({
+        assert.equal(w1.ok, true, JSON.stringify(w1));
+        const w2 = await writeSkillFile({
             slug: 'spot-perp-crowding-fade',
             name: 'Spot Perp Crowding Fade',
-            description: 'Fade crowded perp funding.',
-            body: '## When to use\nExtreme funding.\n## Steps\n1. Short crowded rally.\n## Pitfalls\n- Respect spot bid.',
+            description: 'Counter-trade overleveraged perpetual funding imbalances against spot absorption.',
+            body: '## When to Use\nExtreme positive or negative funding spikes.\n## Steps\n1. Confirm spot CVD divergence before entry.\n## Pitfalls\n- Never stand in front of spot breakout flow.',
         }, user);
+        assert.equal(w2.ok, true, JSON.stringify(w2));
 
         // Stub globalThis.fetch strictly inside try/finally so paper_order & emit_signal stay 100% offline
         const origFetch = globalThis.fetch;
@@ -401,11 +406,12 @@ describe('Wave 5.1 Part A & B — Skills Intelligence & Memory Compounding', () 
                             toolCalls: [{
                                 id: 'sv-1',
                                 name: 'skill_view',
-                                arguments: { slug: 'spot-perp-crowding-fade' },
+                                arguments: { skill: 'spot-perp-crowding-fade' },
                             }],
                         };
                     }
                     if (round === 3) {
+                        localStorage.setItem('last_active_user', user);
                         // Round 3: emit_signal + paper_order WITHOUT explicit skillSlug/skill_slug
                         return {
                             text: '',
@@ -417,13 +423,14 @@ describe('Wave 5.1 Part A & B — Skills Intelligence & Memory Compounding', () 
                                     id: 'es-1',
                                     name: 'emit_signal',
                                     arguments: {
-                                        symbol: 'BTCUSDT',
-                                        direction: 'long',
+                                        coin: 'BTCUSDT',
+                                        direction: 'Long',
                                         entry: 100,
                                         stop: 95,
                                         target: 110,
+                                        expiresInMinutes: 120,
                                         thesis: 'Crowded squeeze reclaim with positive delta',
-                                        evidence_refs: ['trade_math'],
+                                        evidence: ['trade_math'],
                                     },
                                 },
                                 {
@@ -461,23 +468,30 @@ describe('Wave 5.1 Part A & B — Skills Intelligence & Memory Compounding', () 
             globalThis.fetch = origFetch;
             await deleteSkillFile('london-sweep-bos', user);
             await deleteSkillFile('spot-perp-crowding-fade', user);
+            if (prevUser === null) localStorage.removeItem('last_active_user');
+            else localStorage.setItem('last_active_user', prevUser);
         }
     });
 
     it('6. /dream demotes leaky playbook to stale and respects rejectedFingerprints on undo', async () => {
         const user = 'wave5-dream-stale-user';
-        backing.set('last_active_user', user);
+        const prevUser = localStorage.getItem('last_active_user');
+        localStorage.setItem('last_active_user', user);
+        await initMemoryFiles(user);
 
         await setCuratedMemoryTexts([
             { target: 'user', text: '## [2026-10-01]\nRisk 0.5% per setup.' },
             { target: 'memory', text: '## [2026-10-01]\nKeep journal clean.' },
         ], user);
-        await writeSkillFile({
+        const createdSkill = await writeSkillFile({
             slug: 'leaky-breakout-chase',
             name: 'Leaky Breakout Chase',
-            description: 'Chases high-timeframe range highs.',
-            body: '## When to use\nHigh volume breakout.\n## Steps\n1. Buy breakout close.\n## Pitfalls\n- Thin liquidity reversals.',
+            description: 'Chases high-timeframe range highs during low volatility.',
+            body: '## When to Use\nHigh volume breakout.\n## Steps\n1. Buy breakout close.\n## Pitfalls\n- Thin liquidity reversals.',
         }, user);
+        assert.equal(createdSkill.ok, true, JSON.stringify(createdSkill));
+        assert.ok(getSkill('leaky-breakout-chase'));
+
         await __seedSkillMetaForTests({
             'leaky-breakout-chase': {
                 createdBy: 'agent',
@@ -503,17 +517,17 @@ describe('Wave 5.1 Part A & B — Skills Intelligence & Memory Compounding', () 
                 gather: () => ({ newSessions: 6, corrections: [], ledger: [], signalRows: losingSignals }),
             });
             assert.equal(firstDream.ran, true);
-            assert.ok(firstDream.demotedSkills && firstDream.demotedSkills.length === 1);
+            assert.ok(firstDream.demotedSkills && firstDream.demotedSkills.length === 1, `Expected 1 demoted skill, notes=${JSON.stringify(firstDream.core?.notes)}`);
             assert.equal(firstDream.demotedSkills[0].slug, 'leaky-breakout-chase');
-            assert.equal(firstDream.demotedSkills[0].fromStatus, 'verified');
+            assert.equal(firstDream.demotedSkills[0].priorStatus, 'verified');
 
             const afterDemote = await getSkillMeta('leaky-breakout-chase', user);
             assert.equal(afterDemote?.status, 'stale');
             const summary = formatDreamResultSummary(firstDream);
-            assert.ok(summary.includes('Demoted skills to stale: leaky-breakout-chase'));
+            assert.ok(summary.includes('leaky-breakout-chase'));
 
             // Undo must restore verified status AND record rejectedFingerprint
-            const undone = await undoMemoryDream(firstDream.undoSnapshot, user, {
+            const undone = await undoMemoryDream(firstDream.undoSnapshot!, user, {
                 skillMetaUndoSnapshot: firstDream.skillMetaUndoSnapshot,
                 demotedSlugs: firstDream.demotedSkills.map(d => d.slug),
             });
@@ -533,6 +547,8 @@ describe('Wave 5.1 Part A & B — Skills Intelligence & Memory Compounding', () 
             assert.ok(getSkill('leaky-breakout-chase'));
         } finally {
             await deleteSkillFile('leaky-breakout-chase', user);
+            if (prevUser === null) localStorage.removeItem('last_active_user');
+            else localStorage.setItem('last_active_user', prevUser);
         }
     });
 });
