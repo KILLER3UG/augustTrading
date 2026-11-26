@@ -85,35 +85,32 @@ export const useModelCatalogRefresh = (
                         apiFormat: provider.apiFormat,
                     });
                     const discovered = catalog.ids;
-                    // Where the endpoint lists the whole catalog, it IS the
-                    // source of truth and pruning deprecated ids is correct.
-                    // A local server is the exception: Ollama's /api/tags
-                    // returns only what is currently PULLED, so an idle model
-                    // reads as deprecated and the sweep would delete a model
-                    // the user merely stopped. Remote catalogs — including a
-                    // hand-added one — stay authoritative; the explicit
-                    // "Refresh models" button is a full re-sync either way and
-                    // toasts what it removed.
-                    const keepUserModels = isLocalBaseUrl(provider.baseUrl);
-                    const nextModels = keepUserModels
+                    // Respect the trader's curated active roster: when a
+                    // provider already has models chosen (via presets or the
+                    // `Choose models` modal), the background sweep must NOT
+                    // overwrite `provider.models` with the full remote catalog
+                    // (e.g. 200+ OpenRouter slugs). It still refreshes
+                    // `modelContextWindows` metadata, and seeds `models` only
+                    // when the list is empty (or merges locally pulled models
+                    // for local Ollama/LM Studio endpoints).
+                    const isLocal = isLocalBaseUrl(provider.baseUrl);
+                    const hasCuratedRoster = provider.models.length > 0;
+                    const nextModels = isLocal
                         ? mergeDiscoveredModels(provider.models, discovered)
-                        : sortModelsFreeFirst(discovered);
+                        : hasCuratedRoster
+                            ? provider.models
+                            : sortModelsFreeFirst(discovered);
                     const isUnchanged = provider.models.length === nextModels.length
                         && provider.models.every((m, idx) => m === nextModels[idx]);
                     const existing = new Set(provider.models);
                     const fresh = discovered.filter(m => !existing.has(m));
-                    // The windows ride the SAME write: `/models` is the only
-                    // place this app can learn a model's real context length
-                    // without the trader typing it, and the answer to "how much
-                    // history may I send" decides whether a long turn compacts
-                    // or overflows.
                     const nextWindows = mergeModelContextWindows(provider.modelContextWindows, catalog.windows);
                     const windowsChanged = !sameModelContextWindows(provider.modelContextWindows, nextWindows);
                     if ((!isUnchanged && nextModels.length > 0) || windowsChanged) {
                         const updates: Partial<Omit<ProviderConfig, 'id' | 'isBuiltIn'>> = isUnchanged
                             ? {}
                             : { models: nextModels };
-                        if (provider.selectedModel && !nextModels.includes(provider.selectedModel)) {
+                        if (!isUnchanged && provider.selectedModel && !nextModels.includes(provider.selectedModel)) {
                             updates.selectedModel = nextModels[0] || '';
                         }
                         if (windowsChanged) updates.modelContextWindows = nextWindows;
