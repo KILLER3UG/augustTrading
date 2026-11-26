@@ -173,13 +173,11 @@ export const HoverLegend: React.FC<{
     return (
         <div
             data-testid="chart-legend"
-            /* The drawing rail owns the plot's left 40px (w-10, z-20), so the
-               legend starts right of it — left-2 sat underneath the rail's icon
-               column. When the verdict-overlay chip is up, its ~190px at the
-               right edge are reserved too, so the chip's presence narrows the
-               legend instead. `contain: layout` keeps a longer number from
-               re-laying anything outside this box. */
-            className={`pointer-events-none absolute left-12 top-1.5 z-10 overflow-hidden rounded-control bg-zinc-950/80 px-2 py-1 font-mono text-ui-dense tabular-nums text-zinc-500 [contain:layout] ${narrow ? 'max-w-[calc(100%-248px)]' : 'max-w-[calc(100%-56px)]'}`}
+            /* The drawing rail now occupies its own dedicated 38px flex column
+               to the left of the canvas wrapper, so the legend starts cleanly
+               at left-2 inside the plot with zero rail overlap. When the
+               verdict chip is up, its ~190px on the right stay reserved. */
+            className={`pointer-events-none absolute left-2 top-1.5 z-10 overflow-hidden rounded-control bg-zinc-950/80 px-2 py-1 font-mono text-ui-dense tabular-nums text-zinc-500 [contain:layout] ${narrow ? 'max-w-[calc(100%-204px)]' : 'max-w-[calc(100%-16px)]'}`}
         >
             {/* ONE compact OHLCV line: time, the four prices and the volume.
                 whitespace-nowrap keeps the tokens whole: a narrowed legend

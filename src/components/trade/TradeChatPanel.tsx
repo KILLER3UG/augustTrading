@@ -1687,9 +1687,41 @@ ${riskConstitution}`
                 ?? (ev as CustomEvent<{ command?: string }>).detail?.command;
             if (cmd) void send(cmd);
         };
+        const onFloatingSend = (ev: Event): void => {
+            const text = (ev as CustomEvent<{ text?: string }>).detail?.text;
+            if (text && text.trim()) void send(text.trim());
+        };
+        const onComposerInject = (ev: Event): void => {
+            const detail = (ev as CustomEvent<{ text?: string; focus?: boolean }>).detail;
+            if (!detail?.text) return;
+            const snippet = detail.text.trim();
+            if (!snippet) return;
+            setDraft(prev => (prev.trim() ? `${prev.trim()} ${snippet} ` : `${snippet} `));
+            if (detail.focus !== false) {
+                window.setTimeout(() => composerRef.current?.focus(), 0);
+            }
+        };
+        const onAttachPng = (ev: Event): void => {
+            const dataUrl = (ev as CustomEvent<{ dataUrl?: string; name?: string }>).detail?.dataUrl;
+            if (!dataUrl) return;
+            addAttachment({
+                kind: 'image',
+                name: `${symbol}-${interval}.png`,
+                payload: dataUrl,
+            });
+            window.setTimeout(() => composerRef.current?.focus(), 0);
+        };
         window.addEventListener('august:run-slash', onRunSlash);
-        return () => window.removeEventListener('august:run-slash', onRunSlash);
-    }, [send]);
+        window.addEventListener('august:floating-send', onFloatingSend);
+        window.addEventListener('august:composer-inject', onComposerInject);
+        window.addEventListener('august:composer-attach-png', onAttachPng);
+        return () => {
+            window.removeEventListener('august:run-slash', onRunSlash);
+            window.removeEventListener('august:floating-send', onFloatingSend);
+            window.removeEventListener('august:composer-inject', onComposerInject);
+            window.removeEventListener('august:composer-attach-png', onAttachPng);
+        };
+    }, [send, addAttachment, symbol, interval]);
 
     const contextRing = useMemo(() => {
         const diag = collectContextDiagnostic({

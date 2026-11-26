@@ -90,6 +90,9 @@ export interface ChartDrawing {
      *  shape still hovers and selects — that is how it gets unlocked — but
      *  drags, eraser clicks and deletes refuse until the trader unlocks it. */
     locked?: boolean;
+    /** Individually hidden via the Object Tree visibility eye. Still persisted
+     *  so the trader can toggle it back on without recreating the shape. */
+    hidden?: boolean;
 }
 
 /** Two-anchor kinds the rail places with TV/OKX click-click (click anchor 1 →
@@ -187,6 +190,7 @@ const normalizeDrawingMetadata = (d: ChartDrawing): ChartDrawing => ({
         : undefined,
     version: typeof d.version === 'number' && Number.isInteger(d.version) && d.version > 0 ? d.version : undefined,
     drawnPrice: finiteNum(d.drawnPrice) ?? undefined,
+    hidden: d.hidden === true ? true : undefined,
     points: d.points.filter(validPoint).slice(0, MAX_POINTS_PER_DRAWING),
 });
 

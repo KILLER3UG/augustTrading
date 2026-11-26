@@ -38,7 +38,21 @@ import {
     type UTCTimestamp,
 } from 'lightweight-charts';
 import { fetchKlines } from '../../services/analysis/KlineService';
-import { Lock, Pencil, Target, Trash2 } from '../shared/Icons';
+import {
+    Camera,
+    ChevronRight,
+    Layers,
+    Lock,
+    Maximize2,
+    Minimize2,
+    Pencil,
+    Redo2,
+    RotateCcw,
+    Settings,
+    Target,
+    Trash2,
+    Undo2,
+} from '../shared/Icons';
 import type { Kline } from '../../services/analysis/MarketDataService';
 import { sessionLevelRows, type LevelRow } from '../../services/market/levelsCore';
 import { readStructure, type StructureRead } from '../../services/market/swingStructureCore';
@@ -94,8 +108,9 @@ import {
 import { chartColor } from '../../utils/themeColors';
 import { fmtPrice as fmtPriceForChart, fmtUsd as fmtUsdForChart } from '../../utils/formatters';
 import { TradeAnalysis } from '../../types';
-import { ChartToolRail, CHART_RAIL_WIDTH } from './ChartToolRail';
+import { ChartToolRail } from './ChartToolRail';
 import ChartFrame from '../shared/ChartFrame';
+import { ChartObjectTreePopover } from './ChartObjectTreePopover';
 import { shapeGeometry } from './drawingGeometry';
 import { ChartDrawingsPrimitive, paperDrawingsFromAccount } from './drawingsPrimitive';
 import { DrawingInspectorPopover } from './DrawingInspectorPopover';
@@ -199,6 +214,8 @@ const HISTORY_BARS = 1000;
  *  pan/zoom; the rest live in chartDrawings (shared with the rail). */
 export type { DrawTool } from '../../services/trade/chartDrawings';
 export { DRAW_COLORS } from '../../services/trade/chartDrawings';
+export type ChartScaleMode = 'normal' | 'logarithmic' | 'percentage';
+export type CandleDisplayStyle = 'candles' | 'hollow' | 'line';
 
 /** What the parent can ask the chart for, imperatively. */
 export interface ChartHandle {
@@ -322,6 +339,17 @@ interface TradingChartProps {
         oracle?: number | null;
         changePct?: number | null;
     } | null;
+    /** Full-Chart Focus mode (`Ctrl+\`) controlled by parent Desk view. */
+    chartFocus?: boolean;
+    onToggleChartFocus?: () => void;
+    /** Price scale mode (`normal` | `logarithmic` | `percentage`) synced with bottom footer. */
+    scaleMode?: ChartScaleMode;
+    onScaleModeChange?: (mode: ChartScaleMode) => void;
+    /** Auto-scale toggle synced with bottom footer. */
+    autoScale?: boolean;
+    onAutoScaleChange?: (auto: boolean) => void;
+    /** Imperative reset-view callback ref for bottom footer Reset button. */
+    onResetViewRef?: React.MutableRefObject<(() => void) | null>;
 }
 
 /** The chart's own candle row, WITH its weight fields. `series.data()` is not
@@ -374,7 +402,15 @@ const SUB_PANE_ORDER = ['rsi', 'macd', 'tsi', 'cvd'] as const satisfies readonly
 /** One bar as the legend describes it: OHLC plus the study values at that bar. */
 type LegendBar = HoverBar;
 
-const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onIntervalChange, sessionId, verdict, showSma = false, live = false, liveKline, lastPrice, markPrice, chartHandle, onDrawingsChange, modelDrawings, onRemoveModelShape, onReplaceModelDrawings, chatLevels, ohlcvRow }) => {
+const TradingChart: React.FC<TradingChartProps> = ({
+    symbol, interval, onIntervalChange, sessionId, verdict, showSma = false, live = false, liveKline,
+    lastPrice, markPrice, chartHandle, onDrawingsChange, modelDrawings, onRemoveModelShape,
+    onReplaceModelDrawings, chatLevels, ohlcvRow,
+    chartFocus = false, onToggleChartFocus,
+    scaleMode: controlledScaleMode, onScaleModeChange,
+    autoScale: controlledAutoScale, onAutoScaleChange,
+    onResetViewRef,
+}) => {
     const hostRef = useRef<HTMLDivElement | null>(null);
     const chartRef = useRef<IChartApi | null>(null);
     // The 24h fields are a CROSSHAIR readout (v3): they appear while the
@@ -680,10 +716,30 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
     const toolRef = useRef<DrawTool>(tool);
     toolRef.current = tool;
     const [color, setColor] = useState<string>(DRAW_COLORS[0]);
-    /** Right-axis price scale mode ('normal' | 'logarithmic'). */
-    const [priceScaleMode, setPriceScaleMode] = useState<PriceScaleMode>('normal');
+    /** Right-axis price scale mode ('normal' | 'logarithmic' | 'percentage'). */
+    const [internalScaleMode, setInternalScaleMode] = useState<ChartScaleMode>('normal');
+    const activeScaleMode: ChartScaleMode = controlledScaleMode ?? internalScaleMode;
+    const setScaleMode = useCallback((next: ChartScaleMode | ((prev: ChartScaleMode) => ChartScaleMode)): void => {
+        const resolved = typeof next === 'function' ? next(activeScaleMode) : next;
+        setInternalScaleMode(resolved);
+        onScaleModeChange?.(resolved);
+    }, [activeScaleMode, onScaleModeChange]);
+    const priceScaleMode: PriceScaleMode = activeScaleMode === 'logarithmic' ? 'logarithmic' : 'normal';
     const priceScaleModeRef = useRef<PriceScaleMode>(priceScaleMode);
     priceScaleModeRef.current = priceScaleMode;
+    const [internalAutoScale, setInternalAutoScale] = useState(true);
+    const activeAutoScale = controlledAutoScale ?? internalAutoScale;
+    const setAutoScale = useCallback((next: boolean | ((prev: boolean) => boolean)): void => {
+        const resolved = typeof next === 'function' ? next(activeAutoScale) : next;
+        setInternalAutoScale(resolved);
+        onAutoScaleChange?.(resolved);
+    }, [activeAutoScale, onAutoScaleChange]);
+    const [candleStyle, setCandleStyle] = useState<CandleDisplayStyle>('candles');
+    const closeLineRef = useRef<ISeriesApi<'Line'> | null>(null);
+    const [railCollapsed, setRailCollapsed] = useState(false);
+    const [objectTreeOpen, setObjectTreeOpen] = useState(false);
+    const [chartSettingsOpen, setChartSettingsOpen] = useState(false);
+    const [showGrid, setShowGrid] = useState(true);
     /** Currently selected & hovered drawing ids (selection handles render on `zOrder: 'top'`). */
     const [selectedDrawingId, setSelectedDrawingId] = useState<string | null>(null);
     const selectedDrawingIdRef = useRef<string | null>(null);
@@ -930,18 +986,96 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
         scheduleRepaint();
     }, [drawings, modelDrawings, paperDrawings, selectedDrawingId, drawingsHidden, showLowerTfDrawings, interval, priceScaleMode, syncPrimitive, scheduleRepaint]);
 
-    // Apply Normal / Logarithmic mode directly to lightweight-charts' right price scale.
+    // Apply Normal / Logarithmic / Percentage mode + AutoScale directly to lightweight-charts' right price scale.
     useEffect(() => {
         try {
             chartRef.current?.priceScale('right')?.applyOptions({
-                mode: priceScaleMode === 'logarithmic'
+                mode: activeScaleMode === 'logarithmic'
                     ? LwcPriceScaleMode.Logarithmic
-                    : LwcPriceScaleMode.Normal,
+                    : activeScaleMode === 'percentage'
+                        ? LwcPriceScaleMode.Percentage
+                        : LwcPriceScaleMode.Normal,
+                autoScale: activeAutoScale,
             });
             syncPrimitive();
             scheduleRepaint();
         } catch { /* chart tearing down */ }
-    }, [priceScaleMode, syncPrimitive, scheduleRepaint]);
+    }, [activeScaleMode, activeAutoScale, syncPrimitive, scheduleRepaint]);
+
+    // Apply grid visibility toggle without recreating the chart.
+    useEffect(() => {
+        try {
+            const c = showGrid ? 'rgba(255,255,255,0.025)' : 'transparent';
+            chartRef.current?.applyOptions({
+                grid: { vertLines: { color: c }, horzLines: { color: c } },
+            });
+        } catch { /* chart tearing down */ }
+    }, [showGrid]);
+
+    // Apply Candle style (Candles / Hollow / Line) without recreating the chart.
+    useEffect(() => {
+        const chart = chartRef.current;
+        const cs = candlesRef.current;
+        if (!chart || !cs) return;
+        try {
+            if (candleStyle === 'line') {
+                cs.applyOptions({
+                    upColor: 'transparent',
+                    downColor: 'transparent',
+                    borderVisible: false,
+                    wickVisible: false,
+                });
+                if (!closeLineRef.current) {
+                    closeLineRef.current = chart.addSeries(LineSeries, {
+                        color: chartColor('--color-zinc-200', '#e4e4e7'),
+                        lineWidth: 2,
+                        priceLineVisible: false,
+                        lastValueVisible: false,
+                    });
+                }
+                closeLineRef.current.setData(
+                    chartRowsRef.current.map(r => ({ time: r.time as UTCTimestamp, value: r.close })),
+                );
+            } else {
+                if (closeLineRef.current) {
+                    try { chart.removeSeries(closeLineRef.current); } catch { /* removed */ }
+                    closeLineRef.current = null;
+                }
+                const up = CANDLE_UP();
+                const dn = CANDLE_DOWN();
+                cs.applyOptions({
+                    upColor: candleStyle === 'hollow' ? 'transparent' : up,
+                    downColor: dn,
+                    borderVisible: true,
+                    borderUpColor: up,
+                    borderDownColor: dn,
+                    wickVisible: true,
+                    wickUpColor: up,
+                    wickDownColor: dn,
+                });
+            }
+        } catch { /* chart tearing down */ }
+    }, [candleStyle, status, symbol, interval]);
+
+    const handleResetView = useCallback((): void => {
+        try {
+            setScaleMode('normal');
+            setAutoScale(true);
+            chartRef.current?.priceScale('right')?.applyOptions({
+                mode: LwcPriceScaleMode.Normal,
+                autoScale: true,
+            });
+            chartRef.current?.timeScale()?.fitContent?.();
+            syncPrimitive();
+            scheduleRepaint();
+        } catch { /* chart tearing down */ }
+    }, [setScaleMode, setAutoScale, syncPrimitive, scheduleRepaint]);
+
+    useEffect(() => {
+        if (!onResetViewRef) return;
+        onResetViewRef.current = handleResetView;
+        return () => { onResetViewRef.current = null; };
+    }, [onResetViewRef, handleResetView]);
 
     const publishDrawings = useCallback((next: ChartDrawing[]): void => {
         setDrawings(next);
@@ -1043,6 +1177,23 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                 return;
             }
             const mod = ev.ctrlKey || ev.metaKey;
+            if (mod && ev.altKey && ev.key.toLowerCase() === 'd') {
+                ev.preventDefault();
+                setRailCollapsed(v => !v);
+                return;
+            }
+            if (mod && !ev.altKey && !ev.shiftKey && (ev.key === '\\' || ev.code === 'Backslash')) {
+                if (onToggleChartFocus) {
+                    ev.preventDefault();
+                    onToggleChartFocus();
+                }
+                return;
+            }
+            if (ev.altKey && !mod && !ev.shiftKey && ev.key.toLowerCase() === 'r') {
+                ev.preventDefault();
+                handleResetView();
+                return;
+            }
             if (mod && ev.key.toLowerCase() === 'z' && !ev.shiftKey) {
                 if (canUndoDrawing(historyRef.current)) {
                     ev.preventDefault();
@@ -1059,7 +1210,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
         };
         window.addEventListener('keydown', onKeyDown);
         return () => window.removeEventListener('keydown', onKeyDown);
-    }, [draft, inspector, deleteDrawingById, handleUndoDrawing, handleRedoDrawing]);
+    }, [draft, inspector, deleteDrawingById, handleUndoDrawing, handleRedoDrawing, handleResetView, onToggleChartFocus]);
 
     // ─── Chart lifecycle ────────────────────────────────────────────────────
     // Create the chart once per mount; theme tokens match the app's dark surface.
@@ -2852,7 +3003,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
             ev.stopPropagation();
             ev.preventDefault();
             setSelectedDrawingId(hit.drawing.id);
-            setInspector({ drawingId: hit.drawing.id, x: pt.x + CHART_RAIL_WIDTH, y: pt.y });
+            setInspector({ drawingId: hit.drawing.id, x: pt.x, y: pt.y });
         };
 
         host.addEventListener('pointerdown', onCapturePointerDown, true);
@@ -3256,6 +3407,41 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
         return () => { chartHandle.current = null; };
     }, [chartHandle, symbol, interval, lastPrice, markPrice, levels, chatLevels, commitDrawingChange, toScreen]);
 
+    const handleToggleDrawingVisibility = useCallback((id: string): void => {
+        const inModel = modelDrawingsRef.current.some(d => d.id === id);
+        if (inModel) {
+            const nextModel = modelDrawingsRef.current.map(d => (d.id === id ? bumpDrawingVersion({ ...d, hidden: !d.hidden }) : d));
+            commitDrawingChange(drawingsRef.current, nextModel);
+        } else {
+            const nextUser = drawingsRef.current.map(d => (d.id === id ? bumpDrawingVersion({ ...d, hidden: !d.hidden }) : d));
+            commitDrawingChange(nextUser);
+        }
+    }, [commitDrawingChange]);
+
+    const handleToggleDrawingLock = useCallback((id: string): void => {
+        const inModel = modelDrawingsRef.current.some(d => d.id === id);
+        if (inModel) {
+            const nextModel = modelDrawingsRef.current.map(d => (d.id === id ? bumpDrawingVersion({ ...d, locked: !d.locked }) : d));
+            commitDrawingChange(drawingsRef.current, nextModel);
+        } else {
+            const nextUser = drawingsRef.current.map(d => (d.id === id ? bumpDrawingVersion({ ...d, locked: !d.locked }) : d));
+            commitDrawingChange(nextUser);
+        }
+    }, [commitDrawingChange]);
+
+    const handleSnapshotToChat = useCallback((): void => {
+        const png = chartHandle?.current?.capturePng?.();
+        if (!png) return;
+        window.dispatchEvent(new CustomEvent('august:composer-attach-png', {
+            detail: { dataUrl: png, name: `${symbol}-${interval}.png` },
+        }));
+    }, [chartHandle, symbol, interval]);
+
+    const activeStudyIds = useMemo(
+        () => offerableIndicatorIds.filter(id => indicatorSettings.visible[id]),
+        [offerableIndicatorIds, indicatorSettings.visible],
+    );
+
     const toolActive = tool !== 'cursor';
 
     return (
@@ -3264,30 +3450,15 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
             className="flex h-full min-h-0 flex-col bg-zinc-950"
             data-testid="trading-chart"
             data-symbol={symbol}
-            /* Written imperatively by the crosshair frame (one string per bar),
-               so the hovered bar never costs this component a render. */
             data-hovered-candle=""
         >
-            {/* The timeframe bar is shared with the Agents surface, so the customizable
-                set and its persisted selection are one thing rather than two. The chart
-                keeps its own extras as children. */}
-            <TimeframeBar interval={interval} onIntervalChange={onIntervalChange}>
-                {/* Prototype's "Add studies" button, one honest study: the
-                    SMA-20 line over the closes. Amber = active, matching the
-                    overlay's color so the button and the line agree.
-
-                    CHROME: the study toggle is a flat control on the toolbar —
-                    no box, no border — and its state is the pressed read, not a
-                    colour (owner 1.4.2: amber was a third accent in a chrome
-                    row; green and red belong to price, everything else here is
-                    neutral). The reference's toolbars are a row of flat
-                    controls, and a bordered box on every one of them is what
-                    made this row read as a stack of chips. */}
-                {/* The studies menu. One toggle per study; every SERIES comes from
-                    chartIndicators, so the label on the line is the number in the
-                    prompt. Studies that need their own pane are marked — the
-                    toggle persists the choice until the pane lands. */}
-                <div className="relative ml-1.5">
+            {/* Top Chart Bar (36px): Left = Timeframes + Studies + Candle Style; Right = Undo/Redo, Object Tree, Snapshot, Focus, Settings */}
+            <TimeframeBar
+                interval={interval}
+                onIntervalChange={onIntervalChange}
+                className="h-9 flex-nowrap border-b border-hairline bg-zinc-950 px-2 py-0"
+            >
+                <div className="relative ml-1">
                     <button type="button" onClick={() => setIndicatorMenuOpen(v => !v)} aria-pressed={indicatorsOn}
                         aria-expanded={indicatorMenuOpen} title="Chart studies"
                         className={`rounded-control px-2 py-1 text-ui-dense font-medium transition-colors ${
@@ -3303,7 +3474,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                                 onClick={() => setIndicatorMenuOpen(false)}
                                 className="fixed inset-0 z-20 cursor-default" />
                             <div role="menu" data-testid="chart-indicator-menu"
-                                className="motion-popover-down absolute left-0 top-full z-30 mt-1 w-44 rounded-xl border border-white/[0.08] bg-zinc-900/95 py-1 shadow-elevated backdrop-blur-md">
+                                className="motion-popover-down absolute left-0 top-full z-30 mt-1 w-44 rounded-lg border border-hairline bg-zinc-950 py-1 shadow-elevated">
                                 {offerableIndicatorIds.map(id => {
                                     const on = indicatorSettings.visible[id];
                                     return (
@@ -3322,125 +3493,166 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                         </>
                     )}
                 </div>
-                {/* Normal / Logarithmic price-scale toggle */}
+
+                {/* Candle style cycle: Candles / Hollow / Line */}
                 <button
                     type="button"
-                    data-testid="price-scale-toggle"
-                    aria-pressed={priceScaleMode === 'logarithmic'}
-                    title={priceScaleMode === 'logarithmic' ? 'Switch to linear price scale' : 'Switch to logarithmic price scale'}
-                    onClick={() => setPriceScaleMode(m => (m === 'logarithmic' ? 'normal' : 'logarithmic'))}
-                    className={`ml-1 rounded-control px-2 py-1 font-mono text-ui-dense font-medium transition-colors ${
-                        priceScaleMode === 'logarithmic'
-                            ? 'bg-white/[0.08] text-zinc-100'
-                            : 'text-zinc-500 hover:bg-white/[0.05] hover:text-zinc-200'
-                    }`}
+                    data-testid="chart-candle-style"
+                    title="Cycle candle style (Candles / Hollow / Line)"
+                    onClick={() => setCandleStyle(s => (s === 'candles' ? 'hollow' : s === 'hollow' ? 'line' : 'candles'))}
+                    className="rounded-control px-2 py-1 text-ui-dense font-medium text-zinc-500 transition-colors hover:bg-white/[0.05] hover:text-zinc-200"
                 >
-                    {priceScaleMode === 'logarithmic' ? 'Log' : 'Lin'}
+                    {candleStyle === 'candles' ? 'Candles' : candleStyle === 'hollow' ? 'Hollow' : 'Line'}
                 </button>
-                {/* Drawing tools live in the TradingView-style LEFT RAIL over
-                    the plot (ChartToolRail) — the top bar keeps timeframes. */}
-                    <span className="ml-auto flex items-center gap-2 pr-1">
-                        <span className={`h-1.5 w-1.5 rounded-full ${status === 'live' ? 'bg-zinc-300' : status === 'loading' ? 'animate-pulse bg-zinc-500' : 'bg-zinc-600'}`} aria-label={`chart ${status}`} />
-                    </span>
-                </TimeframeBar>
-                {/* The 24h fields are the chart's CROSSHAIR readout (v3):
-                    shown while the pointer is over the plot, gone at rest —
-                    the metrics band is deleted, not restyled. */}
+
+                {/* Right utility cluster */}
+                <div className="relative ml-auto flex items-center gap-0.5 pr-0.5">
+                    <button
+                        type="button"
+                        data-testid="rail-undo"
+                        title="Undo last drawing (Ctrl+Z)"
+                        aria-label="Undo last drawing (Ctrl+Z)"
+                        disabled={!historyMeta.canUndo}
+                        onClick={handleUndoDrawing}
+                        className="flex h-7 w-7 items-center justify-center rounded-control text-zinc-500 transition-colors hover:bg-white/[0.05] hover:text-zinc-200 disabled:opacity-30 disabled:hover:bg-transparent"
+                    >
+                        <Undo2 className="h-3.5 w-3.5" aria-hidden="true" />
+                    </button>
+                    <button
+                        type="button"
+                        data-testid="rail-redo"
+                        title="Redo drawing (Ctrl+Y)"
+                        aria-label="Redo drawing (Ctrl+Y)"
+                        disabled={!historyMeta.canRedo}
+                        onClick={handleRedoDrawing}
+                        className="flex h-7 w-7 items-center justify-center rounded-control text-zinc-500 transition-colors hover:bg-white/[0.05] hover:text-zinc-200 disabled:opacity-30 disabled:hover:bg-transparent"
+                    >
+                        <Redo2 className="h-3.5 w-3.5" aria-hidden="true" />
+                    </button>
+                    <button
+                        type="button"
+                        data-testid="chart-object-tree-btn"
+                        aria-expanded={objectTreeOpen}
+                        title="Object Tree (AI levels, drawings, studies)"
+                        aria-label="Chart object tree"
+                        onClick={() => { setChartSettingsOpen(false); setObjectTreeOpen(v => !v); }}
+                        className={`flex h-7 w-7 items-center justify-center rounded-control transition-colors ${
+                            objectTreeOpen ? 'bg-white/[0.08] text-zinc-100' : 'text-zinc-500 hover:bg-white/[0.05] hover:text-zinc-200'
+                        }`}
+                    >
+                        <Layers className="h-3.5 w-3.5" aria-hidden="true" />
+                    </button>
+                    <button
+                        type="button"
+                        data-testid="chart-snapshot-btn"
+                        title="Snapshot chart to Chat composer"
+                        aria-label="Snapshot chart to Chat"
+                        onClick={handleSnapshotToChat}
+                        className="flex h-7 w-7 items-center justify-center rounded-control text-zinc-500 transition-colors hover:bg-white/[0.05] hover:text-zinc-200"
+                    >
+                        <Camera className="h-3.5 w-3.5" aria-hidden="true" />
+                    </button>
+                    {onToggleChartFocus && (
+                        <button
+                            type="button"
+                            data-testid="chart-focus-toggle"
+                            aria-pressed={chartFocus}
+                            title={chartFocus ? 'Exit Full-Chart Focus (Ctrl+\\)' : 'Full-Chart Focus (Ctrl+\\)'}
+                            aria-label={chartFocus ? 'Exit Full-Chart Focus' : 'Full-Chart Focus'}
+                            onClick={onToggleChartFocus}
+                            className={`flex h-7 w-7 items-center justify-center rounded-control transition-colors ${
+                                chartFocus ? 'bg-white/[0.08] text-zinc-100' : 'text-zinc-500 hover:bg-white/[0.05] hover:text-zinc-200'
+                            }`}
+                        >
+                            {chartFocus
+                                ? <Minimize2 className="h-3.5 w-3.5" aria-hidden="true" />
+                                : <Maximize2 className="h-3.5 w-3.5" aria-hidden="true" />}
+                        </button>
+                    )}
+                    <button
+                        type="button"
+                        data-testid="chart-settings-btn"
+                        aria-expanded={chartSettingsOpen}
+                        title="Chart display settings"
+                        aria-label="Chart settings"
+                        onClick={() => { setObjectTreeOpen(false); setChartSettingsOpen(v => !v); }}
+                        className={`flex h-7 w-7 items-center justify-center rounded-control transition-colors ${
+                            chartSettingsOpen ? 'bg-white/[0.08] text-zinc-100' : 'text-zinc-500 hover:bg-white/[0.05] hover:text-zinc-200'
+                        }`}
+                    >
+                        <Settings className="h-3.5 w-3.5" aria-hidden="true" />
+                    </button>
+                    <span className={`ml-1 h-1.5 w-1.5 rounded-full ${status === 'live' ? 'bg-zinc-300' : status === 'loading' ? 'animate-pulse bg-zinc-500' : 'bg-zinc-600'}`} aria-label={`chart ${status}`} />
+
+                    <ChartObjectTreePopover
+                        open={objectTreeOpen}
+                        onClose={() => setObjectTreeOpen(false)}
+                        userDrawings={drawings}
+                        modelDrawings={modelDrawings ?? []}
+                        activeStudies={activeStudyIds}
+                        selectedId={selectedDrawingId}
+                        onSelectDrawing={id => setSelectedDrawingId(id)}
+                        onToggleVisibility={handleToggleDrawingVisibility}
+                        onToggleLock={handleToggleDrawingLock}
+                        onRenameDrawing={renameTextDrawing}
+                        onDeleteDrawing={deleteDrawingById}
+                        onToggleStudy={toggleIndicator}
+                    />
+
+                    {chartSettingsOpen && (
+                        <>
+                            <div className="fixed inset-0 z-shield" aria-hidden="true" onClick={() => setChartSettingsOpen(false)} />
+                            <div
+                                data-testid="chart-settings-popover"
+                                role="menu"
+                                className="motion-popover-down absolute right-0 top-full z-flyout mt-1 w-48 rounded-lg border border-hairline bg-zinc-950 p-1.5 shadow-elevated"
+                            >
+                                <button
+                                    type="button"
+                                    role="menuitemcheckbox"
+                                    aria-checked={showGrid}
+                                    onClick={() => setShowGrid(v => !v)}
+                                    className="flex w-full items-center justify-between rounded-control px-2 py-1.5 text-ui-dense text-zinc-300 hover:bg-white/[0.05]"
+                                >
+                                    <span>Grid lines</span>
+                                    <span className="font-mono text-ui-2xs text-zinc-500">{showGrid ? 'On' : 'Off'}</span>
+                                </button>
+                                <button
+                                    type="button"
+                                    role="menuitem"
+                                    onClick={() => { setRailCollapsed(v => !v); setChartSettingsOpen(false); }}
+                                    className="flex w-full items-center justify-between rounded-control px-2 py-1.5 text-ui-dense text-zinc-300 hover:bg-white/[0.05]"
+                                >
+                                    <span>{railCollapsed ? 'Show drawing rail' : 'Hide drawing rail'}</span>
+                                    <span className="font-mono text-ui-2xs text-zinc-500">Ctrl+Alt+D</span>
+                                </button>
+                                <button
+                                    type="button"
+                                    role="menuitem"
+                                    onClick={() => { handleResetView(); setChartSettingsOpen(false); }}
+                                    className="flex w-full items-center justify-between rounded-control px-2 py-1.5 text-ui-dense text-zinc-300 hover:bg-white/[0.05]"
+                                >
+                                    <span className="flex items-center gap-1.5">
+                                        <RotateCcw className="h-3 w-3 text-zinc-400" aria-hidden="true" />
+                                        Reset view
+                                    </span>
+                                    <span className="font-mono text-ui-2xs text-zinc-500">Alt+R</span>
+                                </button>
+                            </div>
+                        </>
+                    )}
+                </div>
+            </TimeframeBar>
 
             <ChartFrame
                 variant="plain"
                 state={status === 'loading' ? 'loading' : status === 'unavailable' ? 'error' : 'ready'}
                 message="Candles unavailable — Binance fetch failed; retrying in 4s."
                 onRetry={() => retryLoadRef.current?.()}
-                bodyClassName="min-h-0 flex-1 bg-zinc-950"
+                bodyClassName="flex min-h-0 flex-1 overflow-hidden bg-zinc-950"
                 testId="trading-chart-plot"
             >
-                {/* The legend: timestamp, O/H/L/C, Change (value + %) and Range,
-                    then VOL as contracts and USDT, then one row per visible
-                    study. It follows the crosshair's bar and rests on the last
-                    bar, so the numbers under the pointer ARE the numbers on the
-                    lines — both come from `chartIndicators`. It is a LEAF over
-                    the crosshair readout store: sweeping the candles re-renders
-                    this box, never the chart around it. */}
-                <HoverLegend
-                    store={hoverReadout}
-                    expanded={legendExpanded}
-                    onToggleExpanded={() => setLegendExpanded(v => !v)}
-                    narrow={levels.length > 0}
-                    renderRows={legendSettingsRows}
-                    volumeFor={volumeFor}
-                />
-                {/* The last-price tag on the axis: price, coloured by the last
-                    candle's direction, with the countdown to that bar's close
-                    beneath it — the two things the library's own tag cannot
-                    carry. */}
-                {lastTag && (
-                    <div
-                        data-testid="last-price-tag"
-                        className="pointer-events-none absolute right-0.5 top-0 z-10 flex flex-col items-end gap-1 [will-change:transform]"
-                        /* Transform, not `top`: the last-price tag rides the live
-                           tick, and a moving layout box is a layout shift on
-                           every print. */
-                        style={{ transform: `translate3d(0, ${Math.max(6, lastTag.y - 10)}px, 0)` }}
-                    >
-                        <span
-                            data-testid="last-price-pill"
-                            style={{ minWidth: Math.max(48, axisW - 4) }}
-                            className={`rounded-[3px] px-1.5 py-0.5 text-right font-mono text-[11px] font-medium leading-none tabular-nums ${lastTag.up ? 'bg-emerald-700 text-zinc-50' : 'bg-rose-700 text-zinc-50'}`}
-                        >
-                            {fmtPriceForChart(lastTag.price)}
-                        </span>
-                        <BarCountdown barTime={lastTag.barTime} interval={interval} />
-                    </div>
-                )}
-                {/* The price under the crosshair, with its distance from the last
-                    price — OKX's crosshair label. Main pane only. A leaf over
-                    the same store: it follows the pointer without re-rendering
-                    the chart. */}
-                <HoverCrossTag store={hoverReadout} axisW={axisW} />
-                {ohlcvRow && overPlot && (
-                    <div
-                        data-testid="ohlcv-row"
-                        className={`pointer-events-none absolute left-12 z-10 flex items-center gap-3 overflow-hidden whitespace-nowrap rounded-control bg-zinc-950/80 px-2 py-0.5 text-ui-dense tabular-nums text-zinc-500 ${levels.length > 0 ? 'max-w-[calc(100%-248px)]' : 'max-w-[calc(100%-56px)]'}`}
-                        style={{ top: status === 'live' ? (legendExpanded ? '5.5rem' : '2.75rem') : '0.375rem' }}
-                    >
-                        <span className="font-mono tabular-nums">H <span className="text-zinc-300">{ohlcvRow.high24h ? fmtPriceForChart(ohlcvRow.high24h) : '—'}</span></span>
-                        <span className="font-mono tabular-nums">L <span className="text-zinc-300">{ohlcvRow.low24h ? fmtPriceForChart(ohlcvRow.low24h) : '—'}</span></span>
-                        <span className="font-mono tabular-nums">Vol <span className="text-zinc-300">{ohlcvRow.volume24h ? fmtUsdForChart(ohlcvRow.volume24h) : '—'}</span></span>
-                        <span className="font-mono tabular-nums">OI <span className="text-zinc-300">{ohlcvRow.oiValue ? fmtUsdForChart(ohlcvRow.oiValue) : '—'}</span></span>
-                        <span className="font-mono tabular-nums">Oracle <span className="text-zinc-300">{ohlcvRow.oracle ? fmtPriceForChart(ohlcvRow.oracle) : '—'}</span></span>
-                    </div>
-                )}
-                {/* The verdict-overlay tag floats INSIDE the plot now — the
-                    toolbar badge it replaced duplicated the symbol picker, the
-                    active timeframe and the feed dot at once. */}
-                {levels.length > 0 && (
-                    /* CHROME: a status CHIP, not a data readout — so it takes
-                       the reference's badge shape (a raised grey pill, no
-                       border) and the reference's sentence case, instead of the
-                       uppercase letter-spaced treatment the readout row keeps.
-                       The level names inside it are the verdict's own words and
-                       are unchanged. */
-                    <span className="pointer-events-none absolute right-3 top-2 z-10 rounded-full bg-zinc-800/80 px-2 py-0.5 text-ui-2xs text-zinc-400" title="Current verdict levels drawn on the chart" data-testid="verdict-overlay-chip">
-                        Verdict overlay · {levels.map(l => l.label).join(' ')}
-                    </span>
-                )}
-                {hiddenLowerTfCount > 0 && (
-                    /* QUIET monochrome pill: how many committed shapes the active
-                       timeframe hides (micro-structure drawn on a lower TF). A
-                       click temporarily reveals them; plan levels never count. */
-                    <button
-                        type="button"
-                        data-testid="lower-tf-hidden-pill"
-                        onClick={() => setShowLowerTfDrawings(v => !v)}
-                        title={showLowerTfDrawings
-                            ? 'Hide the lower-timeframe drawings again'
-                            : 'Temporarily show the drawings anchored on lower timeframes'}
-                        className="absolute bottom-2 left-3 z-10 rounded-full border border-hairline bg-zinc-900/80 px-2 py-0.5 font-mono text-ui-2xs text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-200"
-                    >
-                        {hiddenLowerTfCount} lower-TF hidden{showLowerTfDrawings ? ' · showing' : ''}
-                    </button>
-                )}
+                {/* Dedicated 38px flex drawing rail strictly OUTSIDE the canvas wrapper */}
                 <ChartToolRail
                     tool={tool}
                     onSelectTool={t => { setTool(t); setDraft(null); setTextEdit(null); setInspector(null); }}
@@ -3458,24 +3670,89 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                     onToggleMagnet={() => setMagnet(v => !v)}
                     lineWidth={lineWidth}
                     onCycleWidth={() => setLineWidth(w => nextDrawWidth(w))}
+                    collapsed={railCollapsed}
+                    onToggleCollapsed={() => setRailCollapsed(v => !v)}
                 />
-                <div ref={hostRef} className="absolute inset-y-0 right-0" style={{ left: CHART_RAIL_WIDTH }} />
-                {/* Transient overlay: captures pointer ONLY while a drawing tool is
-                    active; committed drawings render inside the native ISeriesPrimitive. */}
+                {/* Canvas wrapper — owns plot, overlays, hover readouts, and toolbars with zero rail overlap */}
+                <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden" data-testid="chart-canvas-wrapper">
+                <HoverLegend
+                    store={hoverReadout}
+                    expanded={legendExpanded}
+                    onToggleExpanded={() => setLegendExpanded(v => !v)}
+                    narrow={levels.length > 0}
+                    renderRows={legendSettingsRows}
+                    volumeFor={volumeFor}
+                />
+                {lastTag && (
+                    <div
+                        data-testid="last-price-tag"
+                        className="pointer-events-none absolute right-0.5 top-0 z-10 flex flex-col items-end gap-1 [will-change:transform]"
+                        style={{ transform: `translate3d(0, ${Math.max(6, lastTag.y - 10)}px, 0)` }}
+                    >
+                        <span
+                            data-testid="last-price-pill"
+                            style={{ minWidth: Math.max(48, axisW - 4) }}
+                            className={`rounded-[3px] px-1.5 py-0.5 text-right font-mono text-[11px] font-medium leading-none tabular-nums ${lastTag.up ? 'bg-emerald-700 text-zinc-50' : 'bg-rose-700 text-zinc-50'}`}
+                        >
+                            {fmtPriceForChart(lastTag.price)}
+                        </span>
+                        <BarCountdown barTime={lastTag.barTime} interval={interval} />
+                    </div>
+                )}
+                <HoverCrossTag store={hoverReadout} axisW={axisW} />
+                {ohlcvRow && overPlot && (
+                    <div
+                        data-testid="ohlcv-row"
+                        className={`pointer-events-none absolute left-2 z-10 flex items-center gap-3 overflow-hidden whitespace-nowrap rounded-control bg-zinc-950/80 px-2 py-0.5 text-ui-dense tabular-nums text-zinc-500 ${levels.length > 0 ? 'max-w-[calc(100%-204px)]' : 'max-w-[calc(100%-16px)]'}`}
+                        style={{ top: status === 'live' ? (legendExpanded ? '5.5rem' : '2.75rem') : '0.375rem' }}
+                    >
+                        <span className="font-mono tabular-nums">H <span className="text-zinc-300">{ohlcvRow.high24h ? fmtPriceForChart(ohlcvRow.high24h) : '—'}</span></span>
+                        <span className="font-mono tabular-nums">L <span className="text-zinc-300">{ohlcvRow.low24h ? fmtPriceForChart(ohlcvRow.low24h) : '—'}</span></span>
+                        <span className="font-mono tabular-nums">Vol <span className="text-zinc-300">{ohlcvRow.volume24h ? fmtUsdForChart(ohlcvRow.volume24h) : '—'}</span></span>
+                        <span className="font-mono tabular-nums">OI <span className="text-zinc-300">{ohlcvRow.oiValue ? fmtUsdForChart(ohlcvRow.oiValue) : '—'}</span></span>
+                        <span className="font-mono tabular-nums">Oracle <span className="text-zinc-300">{ohlcvRow.oracle ? fmtPriceForChart(ohlcvRow.oracle) : '—'}</span></span>
+                    </div>
+                )}
+                {levels.length > 0 && (
+                    <span className="pointer-events-none absolute right-3 top-2 z-10 rounded-full bg-zinc-800/80 px-2 py-0.5 text-ui-2xs text-zinc-400" title="Current verdict levels drawn on the chart" data-testid="verdict-overlay-chip">
+                        Verdict overlay · {levels.map(l => l.label).join(' ')}
+                    </span>
+                )}
+                {hiddenLowerTfCount > 0 && (
+                    <button
+                        type="button"
+                        data-testid="lower-tf-hidden-pill"
+                        onClick={() => setShowLowerTfDrawings(v => !v)}
+                        title={showLowerTfDrawings
+                            ? 'Hide the lower-timeframe drawings again'
+                            : 'Temporarily show the drawings anchored on lower timeframes'}
+                        className="absolute bottom-2 left-3 z-10 rounded-full border border-hairline bg-zinc-900/80 px-2 py-0.5 font-mono text-ui-2xs text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-200"
+                    >
+                        {hiddenLowerTfCount} lower-TF hidden{showLowerTfDrawings ? ' · showing' : ''}
+                    </button>
+                )}
+                {railCollapsed && (
+                    <button
+                        type="button"
+                        data-testid="rail-expand-toggle"
+                        onClick={() => setRailCollapsed(false)}
+                        title="Expand drawing rail (Ctrl+Alt+D)"
+                        aria-label="Expand drawing rail"
+                        className="absolute bottom-2 left-1.5 z-20 flex h-6 w-6 items-center justify-center rounded-control border border-hairline bg-zinc-950 text-zinc-400 transition-colors hover:bg-zinc-900 hover:text-zinc-100"
+                    >
+                        <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
+                    </button>
+                )}
+                <div ref={hostRef} className="absolute inset-0" />
                 <canvas
                     ref={overlayRef}
                     data-testid="draw-overlay"
-                    className={`absolute inset-y-0 right-0 z-10 h-full w-auto ${toolActive ? (tool === 'erase' ? 'cursor-pointer' : 'cursor-crosshair') : 'pointer-events-none'}`}
-                    style={{ left: CHART_RAIL_WIDTH, touchAction: 'none' }}
+                    className={`absolute inset-0 z-10 h-full w-full ${toolActive ? (tool === 'erase' ? 'cursor-pointer' : 'cursor-crosshair') : 'pointer-events-none'}`}
+                    style={{ touchAction: 'none' }}
                     onPointerDown={onPointerDown}
                     onPointerMove={onPointerMove}
                     onPointerUp={onPointerUp}
                 />
-                {/* Click-click placement readout — the live measurement the
-                    TV/OKX crosshair carries: Δprice% and bar span for two-anchor
-                    kinds (position boxes preview their own commit math), or the
-                    "where do I click" hint while only anchor 1 is down. HTML, so
-                    the snapshot never paints it. */}
                 {draft && toolActive && (() => {
                     const a = draft.points[0];
                     const b = draft.points[draft.points.length - 1];
@@ -3492,13 +3769,13 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                     } else if (da && db) {
                         text = `${b.x >= a.x ? '+' : ''}${Math.round(b.x - a.x)}px · click commits`;
                     }
-                    const hostW = (hostRef.current?.clientWidth ?? 600) + CHART_RAIL_WIDTH;
+                    const hostW = hostRef.current?.clientWidth ?? 600;
                     return (
                         <div
                             data-testid="draft-readout"
-                            className="pointer-events-none absolute z-20 whitespace-nowrap rounded-control bg-zinc-950/85 px-2 py-0.5 font-mono text-ui-dense text-zinc-300"
+                            className="pointer-events-none absolute z-20 whitespace-nowrap rounded-control bg-zinc-950/90 px-2 py-0.5 font-mono text-ui-dense text-zinc-300"
                             style={{
-                                left: Math.min(Math.max(CHART_RAIL_WIDTH + 8, b.x + CHART_RAIL_WIDTH + 14), hostW - 170),
+                                left: Math.min(Math.max(8, b.x + 14), Math.max(8, hostW - 170)),
                                 top: Math.max(4, b.y - 26),
                             }}
                         >
@@ -3506,10 +3783,6 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                         </div>
                     );
                 })()}
-                {/* Floating selection toolbar — the compact color / width /
-                    style / lock / inspector / delete cluster that rides the
-                    selected shape (TV's shape toolbar). Double-click still
-                    opens the numeric inspector. */}
                 {selectedDrawingId && !draft && !textEdit && (() => {
                     const sel = [...drawings, ...(modelDrawings ?? [])].find(d => d.id === selectedDrawingId);
                     if (!sel || !sel.points[0]) return null;
@@ -3525,13 +3798,13 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                             commitDrawingChange(drawingsRef.current.map(d => (d.id === bumped.id ? bumped : d)));
                         }
                     };
-                    const hostW = (hostRef.current?.clientWidth ?? 600) + CHART_RAIL_WIDTH;
-                    const left = Math.min(Math.max(CHART_RAIL_WIDTH + 8, anchor.x + CHART_RAIL_WIDTH + 10), hostW - 296);
+                    const hostW = hostRef.current?.clientWidth ?? 600;
+                    const left = Math.min(Math.max(8, anchor.x + 10), Math.max(8, hostW - 296));
                     const top = Math.max(6, anchor.y - 40);
                     return (
                         <div
                             data-testid="drawing-toolbar"
-                            className="motion-popover-in absolute z-20 flex items-center gap-0.5 rounded-xl border border-white/[0.08] bg-zinc-900/95 px-1.5 py-1 shadow-elevated backdrop-blur-md"
+                            className="motion-popover-in absolute z-20 flex items-center gap-0.5 rounded-lg border border-hairline bg-zinc-950 px-1.5 py-1 shadow-elevated"
                             style={{ left, top }}
                         >
                             {DRAW_COLORS.map(c => (
@@ -3600,7 +3873,6 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                         </div>
                     );
                 })()}
-                {/* Double-click inline inspector popover for exact numeric edits, label, & R:R preview. */}
                 {inspector && (() => {
                     const targetDrawing = [...drawings, ...(modelDrawings ?? [])].find(d => d.id === inspector.drawingId);
                     if (!targetDrawing) return null;
@@ -3610,7 +3882,7 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                             drawing={targetDrawing}
                             anchorX={inspector.x}
                             anchorY={inspector.y}
-                            containerWidth={(hostRef.current?.clientWidth ?? 640) + CHART_RAIL_WIDTH}
+                            containerWidth={hostRef.current?.clientWidth ?? 640}
                             containerHeight={hostRef.current?.clientHeight ?? 420}
                             onApply={applyInspectorUpdate}
                             onDelete={deleteDrawingById}
@@ -3618,7 +3890,6 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                         />
                     );
                 })()}
-                {/* In-place editor for a just-placed text note. */}
                 {textEdit && (
                     <input
                         autoFocus
@@ -3633,11 +3904,12 @@ const TradingChart: React.FC<TradingChartProps> = ({ symbol, interval, onInterva
                         placeholder="Type a note…"
                         className="absolute z-20 w-40 rounded-control border border-line bg-zinc-900 px-1.5 py-0.5 text-ui-dense text-zinc-100 focus:outline-none"
                         style={{
-                            left: Math.min(textEdit.x + CHART_RAIL_WIDTH + 6, (hostRef.current?.clientWidth ?? 400) - 170),
+                            left: Math.min(textEdit.x + 6, Math.max(8, (hostRef.current?.clientWidth ?? 400) - 170)),
                             top: Math.max(4, textEdit.y - 24),
                         }}
                     />
                 )}
+                </div>
             </ChartFrame>
         </div>
     );

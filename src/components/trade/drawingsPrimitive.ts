@@ -59,6 +59,8 @@ export interface DrawingsPrimitiveState {
     selectedId: string | null;
     hoveredId: string | null;
     hidden: boolean;
+    /** Granular layer visibility scope ('all' | 'hide_all' | 'hide_ai' | 'hide_user'). */
+    visibilityScope?: 'all' | 'hide_all' | 'hide_ai' | 'hide_user';
     activeTf: string;
     barSeconds: number;
     priceScaleMode: PriceScaleMode;
@@ -616,7 +618,7 @@ export class ChartDrawingsPrimitive implements ISeriesPrimitive<Time> {
         }
         const drawing = [...this.state.userDrawings, ...this.state.modelDrawings]
             .find(d => d.id === focus);
-        if (!drawing || !isDrawingVisibleOnTf(drawing, this.state.activeTf)) {
+        if (!drawing || drawing.hidden === true || !isDrawingVisibleOnTf(drawing, this.state.activeTf)) {
             this.axisViewsCache = [];
             return;
         }
@@ -670,6 +672,7 @@ export class ChartDrawingsPrimitive implements ISeriesPrimitive<Time> {
                 && prev.selectedId === next.selectedId
                 && prev.hoveredId === next.hoveredId
                 && prev.hidden === next.hidden
+                && prev.visibilityScope === next.visibilityScope
                 && prev.includeLowerTf === next.includeLowerTf
                 && prev.activeTf === next.activeTf
                 && prev.barSeconds === next.barSeconds
@@ -708,7 +711,8 @@ export class ChartDrawingsPrimitive implements ISeriesPrimitive<Time> {
 
     updateAllViews(): void {
         const param = this.attachedParam;
-        if (!param || this.state.hidden) {
+        const scope = this.state.visibilityScope ?? (this.state.hidden ? 'hide_all' : 'all');
+        if (!param || this.state.hidden || scope === 'hide_all') {
             this.committedView.update([], this.state.priceScaleMode, () => null, () => null);
             this.selectionView.update(null, null);
             this.rebuildAxisViews();
@@ -721,16 +725,20 @@ export class ChartDrawingsPrimitive implements ISeriesPrimitive<Time> {
 
         const appendList = (list: ReadonlyArray<ChartDrawing>, defaultOrigin: 'user' | 'agent'): void => {
             for (const drawing of list) {
+                if (drawing.hidden === true) continue;
+                const resolvedOrigin: 'user' | 'agent' = drawing.origin === 'agent'
+                    ? 'agent'
+                    : drawing.origin === 'user'
+                        ? 'user'
+                        : defaultOrigin;
+                if (scope === 'hide_ai' && resolvedOrigin === 'agent') continue;
+                if (scope === 'hide_user' && resolvedOrigin === 'user') continue;
                 if (!this.state.includeLowerTf && !isDrawingVisibleOnTf(drawing, this.state.activeTf)) continue;
                 const pts = drawing.points
                     .map(p => this.projectPoint(p))
                     .filter((p): p is ScreenXY => p !== null);
                 if (pts.length === 0) continue;
-                const origin: 'user' | 'agent' = drawing.origin === 'agent'
-                    ? 'agent'
-                    : drawing.origin === 'user'
-                        ? 'user'
-                        : defaultOrigin;
+                const origin = resolvedOrigin;
                 const item: ProjectedShape = {
                     drawing,
                     origin,

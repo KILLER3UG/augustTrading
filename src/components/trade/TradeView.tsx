@@ -38,7 +38,8 @@ import * as chatStore from '../../services/trade/chatStore';
 import { useFuturesLiveFeed } from '../../hooks/useFuturesLiveFeed';
 import { useSharedTicker } from '../../hooks/useSharedTicker';
 import { useSymbolUniverse } from '../../hooks/useSymbolUniverse';
-import TradingChart, { type ChartHandle } from './TradingChart';
+import TradingChart, { type ChartHandle, type ChartScaleMode } from './TradingChart';
+import FloatingChartComposer from './FloatingChartComposer';
 import ErrorBoundary from '../shared/ErrorBoundary';
 import { toKlineInterval, intervalSeconds, type ChartInterval } from '../../utils/chartIntervals';
 import type { MessageLevelLines } from '../../services/trade/keyLevels';
@@ -362,6 +363,32 @@ export const useTickFlash = (price: number | undefined): { cls: string; seq: num
     return flash;
 };
 
+
+/** Self-contained 1s ticking footer clock (`UTC` / `PHT` click toggle) — isolated
+ *  as a leaf so 1Hz ticks never re-render `TradeView` or `TradingChart`. */
+const ChartFooterClock: React.FC = () => {
+    const [zone, setZone] = useState<'UTC' | 'PHT'>('PHT');
+    const [now, setNow] = useState(() => Date.now());
+    useEffect(() => {
+        const t = window.setInterval(() => setNow(Date.now()), 1000);
+        return () => window.clearInterval(t);
+    }, []);
+    const d = new Date(zone === 'PHT' ? now + 8 * 3_600_000 : now);
+    const hh = String(d.getUTCHours()).padStart(2, '0');
+    const mm = String(d.getUTCMinutes()).padStart(2, '0');
+    const ss = String(d.getUTCSeconds()).padStart(2, '0');
+    return (
+        <button
+            type="button"
+            data-testid="chart-clock-toggle"
+            onClick={() => setZone(z => (z === 'PHT' ? 'UTC' : 'PHT'))}
+            title="Toggle chart clock between PHT (UTC+8) and UTC"
+            className="rounded-control px-1.5 py-0.5 font-mono text-ui-2xs tabular-nums text-zinc-400 transition-colors hover:bg-white/[0.05] hover:text-zinc-200"
+        >
+            {`${hh}:${mm}:${ss} ${zone}`}
+        </button>
+    );
+};
 
 const TradeView: React.FC<TradeViewProps> = ({
     memoryEnabled, strategiesEnabled, providers, selectedChatModel, onSelectChatModel, onRefreshModels, verdict, bots = [], trades = [], botSessionRequest, groupSessionRequest, onRunAnalysis, onAnalysisError, onStopRun, botThreadRows, onBotTurnCommit, onSoloTurnCommit, onSyncConversation, conversationRows, activeConversationId, onNewChat, onNewGroup, getAnalysisMessage, onLogProposedTrade, onRejectProposedTrade, onUndoApproval, onConfirmRiskChange, onDismissRiskChange, onRevertRiskChange, onConfirmAiSettingChange, onDismissAiSettingChange, onRevertAiSettingChange, onConfirmStrategyActivation, onDismissStrategyActivation, onRevertStrategyActivation, onConfirmSessionPlan, onDismissSessionPlan, onRevertSessionPlan, onConfirmRuleProposal, onDismissRuleProposal, onRevertRuleProposal, renderGroupSurface, groups = [], registerScrollToMessage, modeRequest, activeUsername, onTradeModeChange,    onToggleWatch, onOpenWatchList, watchOpenCount = 0, pinnedMessageIds, onToggleUtilityRail, utilityRailOpen,
@@ -764,8 +791,31 @@ const TradeView: React.FC<TradeViewProps> = ({
         return `spread ${spread.toFixed(2)} · imbalance ${imbalance >= 0 ? '+' : ''}${imbalance}%`;
     }, [feed.depth]);
 
-    // Order-book drawer: 30px strip closed by default, expands on demand.
+    // Order-book drawer: 28px footer strip closed by default, expands on demand.
     const [bookOpen, setBookOpen] = useState(false);
+    // Full-Chart Focus mode (`Ctrl+\`): hides the right dock and mounts a slim floating composer.
+    const [chartFocus, setChartFocus] = useState(false);
+    const [chartScaleMode, setChartScaleMode] = useState<ChartScaleMode>('normal');
+    const [chartAutoScale, setChartAutoScale] = useState(true);
+    const resetChartViewRef = useRef<(() => void) | null>(null);
+    useEffect(() => {
+        if (chatLayout && chartFocus) setChartFocus(false);
+    }, [chatLayout, chartFocus]);
+    useEffect(() => {
+        if (!chartFocus) return;
+        const onKey = (ev: KeyboardEvent): void => {
+            if (ev.key === 'Escape') {
+                const t = ev.target as HTMLElement | null;
+                if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+                setChartFocus(false);
+            }
+        };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, [chartFocus]);
+    const handleFloatingSend = useCallback((text: string): void => {
+        window.dispatchEvent(new CustomEvent('august:floating-send', { detail: { text } }));
+    }, []);
     // Chart-head OHLC/V/OI row data — the fields the removed metrics band
     // carried, forwarded to TradingChart's crosshair readout row.
     const ohlcvRow = useMemo(() => ({
@@ -1171,16 +1221,12 @@ const TradeView: React.FC<TradeViewProps> = ({
                         : 'flex min-h-0 min-w-0 flex-1 flex-col')}>
                 <div
                     data-testid="trade-chart-pane"
+                    data-chart-focus={chartFocus ? 'true' : 'false'}
                     className={chatLayout
                         ? 'hidden'
                         : (isBelowLg
-                            ? (mode === 'chart' ? 'min-h-0 flex-1' : 'hidden')
-                            /* Expanded, the chart is what GIVES way, and it gives way by
-                             * flexing — never by claiming a fixed third. It used to take
-                             * `lg:w-1/3 lg:flex-none`, which pinned its width while
-                             * refusing to shrink, so the row could only widen past the
-                             * viewport and clip the dock's right edge. */
-                            : 'min-h-[420px] flex-1 lg:min-h-0 lg:min-w-0')}
+                            ? (mode === 'chart' ? 'relative min-h-0 flex-1' : 'hidden')
+                            : 'relative min-h-[420px] flex-1 lg:min-h-0 lg:min-w-0')}
                 >
                     <ErrorBoundary pane label="The chart" resetKey={`${symbol}:${interval}`}>
                     <TradingChart symbol={symbol} interval={interval} onIntervalChange={changeInterval} sessionId={chatSnap.activeId ?? 'analyze'} verdict={chartVerdict} live={live} liveKline={feed.kline}
@@ -1192,41 +1238,107 @@ const TradeView: React.FC<TradeViewProps> = ({
                         onDrawingsChange={setChartDrawings}
                         modelDrawings={modelDrawings}
                         onRemoveModelShape={removeModelShape}
-                        onReplaceModelDrawings={setModelDrawings} />
+                        onReplaceModelDrawings={setModelDrawings}
+                        chartFocus={chartFocus}
+                        onToggleChartFocus={() => setChartFocus(v => !v)}
+                        scaleMode={chartScaleMode}
+                        onScaleModeChange={setChartScaleMode}
+                        autoScale={chartAutoScale}
+                        onAutoScaleChange={setChartAutoScale}
+                        onResetViewRef={resetChartViewRef} />
                     </ErrorBoundary>
                     <LevelAccuracyBadge
                         drawings={modelDrawings}
                         candles={levelCandles}
-                        /* A floating chip over the plot, so it keeps a raised
-                           surface to read against the candles — the same
-                           raised pill the reference's own badges use — and
-                           loses the border that framed it. */
-                        className="absolute top-2 right-2 z-10 rounded-control bg-zinc-800/90 px-2 py-1" />
+                        className="absolute top-11 right-2 z-10 rounded-control bg-zinc-800/90 px-2 py-1" />
+                    {chartFocus && !isBelowLg && !chatLayout && (
+                        <FloatingChartComposer
+                            symbol={symbol}
+                            interval={interval}
+                            onSend={handleFloatingSend}
+                            onExitFocus={() => setChartFocus(false)}
+                        />
+                    )}
                 </div>
-                {/* The order book is DETAIL THE USER PULLS: a 30px strip
-                    (name, live state, spread) closed by default, expanding
-                    on demand. Below lg the Book mode is a full-height pane. */}
+                {/* Bottom Chart Footer (28px): Left = Order book drawer strip, Right = Clock + % / Log / Auto + Reset */}
                 {!isBelowLg && !chatLayout && (
                     <div
                         data-testid="trade-sidebar"
                         data-book-open={bookOpen ? 'true' : 'false'}
-                        className="shrink-0 border-t border-white/[0.04] bg-zinc-900/35"
+                        className="shrink-0 border-t border-hairline bg-zinc-900/35"
                     >
-                        <button
-                            type="button"
-                            onClick={() => setBookOpen(v => !v)}
-                            aria-expanded={bookOpen}
-                            aria-label={bookOpen ? 'Collapse order book' : 'Expand order book'}
-                            data-testid="orderbook-drawer-strip"
-                            className="flex h-[30px] w-full items-center gap-2 px-3 text-ui-dense text-zinc-400 transition-colors hover:text-zinc-200"
-                        >
-                            <span className={`beacon ${feed.depthLive ? '' : 'is-quiet'}`.trim()} aria-hidden="true" />
-                            <span>Order book · <span className="text-zinc-500">live</span></span>
-                            <span className="font-mono tabular-nums text-zinc-500" data-testid="orderbook-drawer-spread">
-                                {bookMetrics || '—'}
-                            </span>
-                            <span className="ml-auto text-zinc-500">{bookOpen ? '▾' : '▴'}</span>
-                        </button>
+                        <div className="flex h-[28px] items-center justify-between gap-2 px-2" data-testid="chart-bottom-footer">
+                            <button
+                                type="button"
+                                onClick={() => setBookOpen(v => !v)}
+                                aria-expanded={bookOpen}
+                                aria-label={bookOpen ? 'Collapse order book' : 'Expand order book'}
+                                data-testid="orderbook-drawer-strip"
+                                className="flex h-full min-w-0 flex-1 items-center gap-2 px-1 text-ui-dense text-zinc-400 transition-colors hover:text-zinc-200"
+                            >
+                                <span className={`beacon ${feed.depthLive ? '' : 'is-quiet'}`.trim()} aria-hidden="true" />
+                                <span className="shrink-0">Order book · <span className="text-zinc-500">live</span></span>
+                                <span className="truncate font-mono tabular-nums text-zinc-500" data-testid="orderbook-drawer-spread">
+                                    {bookMetrics || '—'}
+                                </span>
+                                <span className="text-zinc-500">{bookOpen ? '▾' : '▴'}</span>
+                            </button>
+                            <div className="flex shrink-0 items-center gap-0.5">
+                                <ChartFooterClock />
+                                <span className="mx-1 h-3 w-px bg-white/[0.08]" aria-hidden="true" />
+                                <button
+                                    type="button"
+                                    data-testid="price-scale-pct"
+                                    aria-pressed={chartScaleMode === 'percentage'}
+                                    title="Toggle percentage price scale"
+                                    onClick={() => setChartScaleMode(m => (m === 'percentage' ? 'normal' : 'percentage'))}
+                                    className={`rounded-control px-1.5 py-0.5 font-mono text-ui-2xs transition-colors ${
+                                        chartScaleMode === 'percentage'
+                                            ? 'bg-white/[0.10] text-zinc-100'
+                                            : 'text-zinc-500 hover:bg-white/[0.05] hover:text-zinc-200'
+                                    }`}
+                                >
+                                    %
+                                </button>
+                                <button
+                                    type="button"
+                                    data-testid="price-scale-toggle"
+                                    aria-pressed={chartScaleMode === 'logarithmic'}
+                                    title={chartScaleMode === 'logarithmic' ? 'Switch to linear price scale' : 'Switch to logarithmic price scale'}
+                                    onClick={() => setChartScaleMode(m => (m === 'logarithmic' ? 'normal' : 'logarithmic'))}
+                                    className={`rounded-control px-1.5 py-0.5 font-mono text-ui-2xs transition-colors ${
+                                        chartScaleMode === 'logarithmic'
+                                            ? 'bg-white/[0.10] text-zinc-100'
+                                            : 'text-zinc-500 hover:bg-white/[0.05] hover:text-zinc-200'
+                                    }`}
+                                >
+                                    Log
+                                </button>
+                                <button
+                                    type="button"
+                                    data-testid="price-scale-auto"
+                                    aria-pressed={chartAutoScale}
+                                    title="Toggle auto-scale right price axis"
+                                    onClick={() => setChartAutoScale(v => !v)}
+                                    className={`rounded-control px-1.5 py-0.5 font-mono text-ui-2xs transition-colors ${
+                                        chartAutoScale
+                                            ? 'bg-white/[0.10] text-zinc-100'
+                                            : 'text-zinc-500 hover:bg-white/[0.05] hover:text-zinc-200'
+                                    }`}
+                                >
+                                    Auto
+                                </button>
+                                <button
+                                    type="button"
+                                    data-testid="chart-reset-view"
+                                    title="Reset chart view (Alt+R)"
+                                    onClick={() => resetChartViewRef.current?.()}
+                                    className="rounded-control px-1.5 py-0.5 font-mono text-ui-2xs text-zinc-500 transition-colors hover:bg-white/[0.05] hover:text-zinc-200"
+                                >
+                                    Reset
+                                </button>
+                            </div>
+                        </div>
                         <div className="motion-accordion" data-open={bookOpen ? 'true' : 'false'}>
                             <div>
                                 {bookOpen && (
@@ -1279,8 +1391,8 @@ const TradeView: React.FC<TradeViewProps> = ({
                     focusMode={chatLayout}
                     isResizing={rightPanel.isResizing}
                     width={dockWidth}
-                    isActive={!dockCollapsed}
-                    isHidden={dockCollapsed && !isBelowLg}
+                    isActive={!dockCollapsed && !chartFocus}
+                    isHidden={(dockCollapsed || chartFocus) && !isBelowLg}
                     docks={rightPanel.docks}
                     openIds={rightPanel.openIds}
                     activeId={rightPanel.activeId}
@@ -1291,10 +1403,6 @@ const TradeView: React.FC<TradeViewProps> = ({
                     label="Chart AI"
                     testId="trade-dock"
                     className={chatLayout
-                        /* Chat layout: the dock becomes the WORKSPACE —
-                         * full width, no resize seam, with the reading
-                         * column centered inside it at the reference's
-                         * ~760px. There is no chart to resize against. */
                         ? 'min-h-0 w-full flex-1 shrink mx-auto max-w-none min-w-0'
                         : (isBelowLg
                             ? (mode === 'ai' ? 'min-h-0 w-full flex-1' : 'hidden')
@@ -1304,15 +1412,7 @@ const TradeView: React.FC<TradeViewProps> = ({
                         {...dockProps}
                         leadingChrome={chatLayout ? leadingChrome : undefined}
                         layoutMode={workspaceLayout}
-                        /* Sync with the pane's visibility: below lg the dock
-                            pane is display:none-hidden whenever another mode
-                            owns the screen, and the transcript's virtualizer
-                            must unmount in the SAME commit — rendering
-                            Virtuoso against a 0×0 scroller is the
-                            infinite-update loop the top boundary catches
-                            (the async ResizeObserver gate fires a frame too
-                            late for the resize commit). */
-                        paneVisible={chatLayout ? true : (isBelowLg ? mode === 'ai' : !dockCollapsed)}
+                        paneVisible={chatLayout ? true : (isBelowLg ? mode === 'ai' : (!dockCollapsed && !chartFocus))}
                         memoryEnabled={memoryEnabled}
                         strategiesEnabled={strategiesEnabled}
                         onToggleCollapsed={isBelowLg || chatLayout ? undefined : collapseDock}
@@ -1328,7 +1428,7 @@ const TradeView: React.FC<TradeViewProps> = ({
                         onNewChat={onNewChat}
                     />
                 </RightPanel>
-                {dockCollapsed && !isBelowLg && (
+                {dockCollapsed && !chartFocus && !isBelowLg && (
                     <div className="hidden shrink-0 lg:block" data-testid="trade-dock-rail">
                         <ChartAiDockRail onExpand={expandDock} live={live} />
                     </div>

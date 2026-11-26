@@ -13,6 +13,7 @@ import {
     ArrowDown,
     ArrowUp,
     ArrowUpRight,
+    ChevronLeftIcon,
     Eraser,
     Eye,
     EyeOff,
@@ -23,19 +24,16 @@ import {
     MousePointer2,
     Palette,
     Pencil,
-    Redo2,
     Square,
     Trash2,
     TrendingUp,
     Type,
-    Undo2,
 } from '../shared/Icons';
 import { DRAW_COLORS, type DrawTool } from '../../services/trade/chartDrawings';
 import { useEscapeClose } from '../../hooks/useEscapeClose';
 
-/** Rail width in px — the chart host and overlay inset by this so shapes
- *  never paint under the rail. */
-export const CHART_RAIL_WIDTH = 40;
+/** Rail width in px — dedicated flex column to the left of the chart canvas. */
+export const CHART_RAIL_WIDTH = 38;
 
 interface RailButtonProps {
     title: string;
@@ -91,6 +89,9 @@ export interface ChartToolRailProps {
     /** The stroke weight NEW shapes are drawn with (cycles the ladder). */
     lineWidth: number;
     onCycleWidth: () => void;
+    /** Whether the left rail is currently collapsed (`Ctrl+Alt+D`). */
+    collapsed?: boolean;
+    onToggleCollapsed?: () => void;
 }
 
 export const ChartToolRail: React.FC<ChartToolRailProps> = ({
@@ -98,10 +99,6 @@ export const ChartToolRail: React.FC<ChartToolRailProps> = ({
     onSelectTool,
     color,
     onColorChange,
-    canUndo,
-    onUndo,
-    canRedo = false,
-    onRedo,
     agentDrawingCount = 0,
     onClearAgentDrawings,
     hidden,
@@ -110,11 +107,14 @@ export const ChartToolRail: React.FC<ChartToolRailProps> = ({
     onToggleMagnet,
     lineWidth,
     onCycleWidth,
+    collapsed = false,
+    onToggleCollapsed,
 }) => {
     const [paletteOpen, setPaletteOpen] = useState(false);
     // Escape lifts the palette wherever focus sits — the chart's own window
     // Escape handler stays standing down (useEscapeClose captures first).
     useEscapeClose(paletteOpen, () => setPaletteOpen(false));
+    if (collapsed) return null;
     const pick = (t: DrawTool): void => {
         onSelectTool(tool === t ? 'cursor' : t);
     };
@@ -124,7 +124,7 @@ export const ChartToolRail: React.FC<ChartToolRailProps> = ({
             data-testid="chart-tool-rail"
             role="toolbar"
             aria-label="Chart drawing tools"
-            className="absolute left-0 top-0 z-20 flex h-full w-10 flex-col items-center gap-0.5 overflow-y-auto overflow-x-hidden border-r border-white/[0.04] bg-zinc-900/30 py-1.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+            className="relative z-20 flex h-full w-[38px] shrink-0 flex-col items-center gap-0.5 overflow-y-auto overflow-x-hidden border-r border-hairline bg-zinc-950 py-1.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         >
             <RailButton
                 title="Cursor — select, drag, pan & zoom (Esc)"
@@ -250,24 +250,6 @@ export const ChartToolRail: React.FC<ChartToolRailProps> = ({
             >
                 {hidden ? <EyeOff className="h-3.5 w-3.5" aria-hidden="true" /> : <Eye className="h-3.5 w-3.5" aria-hidden="true" />}
             </RailButton>
-            <RailButton
-                title="Undo last drawing (Ctrl+Z)"
-                disabled={!canUndo}
-                onClick={onUndo}
-                testId="rail-undo"
-            >
-                <Undo2 className="h-3.5 w-3.5" aria-hidden="true" />
-            </RailButton>
-            {onRedo && (
-                <RailButton
-                    title="Redo drawing (Ctrl+Y)"
-                    disabled={!canRedo}
-                    onClick={onRedo}
-                    testId="rail-redo"
-                >
-                    <Redo2 className="h-3.5 w-3.5" aria-hidden="true" />
-                </RailButton>
-            )}
             {onClearAgentDrawings && (
                 <RailButton
                     title={agentDrawingCount > 0 ? `Clear AI Drawings (${agentDrawingCount})` : 'Clear AI Drawings (none active)'}
@@ -290,12 +272,8 @@ export const ChartToolRail: React.FC<ChartToolRailProps> = ({
                 </RailButton>
                 {paletteOpen && (
                     <>
-                        {/* z-shield: clears the dock's permanent z-drawer layer
-                            (see index.css --z-shield) so a click in the Chart AI
-                            dock dismisses the palette; the panel rides z-flyout
-                            above its own backdrop. */}
                         <div className="fixed inset-0 z-shield" aria-hidden onClick={() => setPaletteOpen(false)} />
-                        <div className="motion-popover-in absolute bottom-0 left-9 z-flyout flex flex-col gap-1 rounded-xl border border-white/[0.08] bg-zinc-900/95 p-2 shadow-elevated backdrop-blur-md" data-testid="rail-palette">
+                        <div className="motion-popover-in absolute bottom-0 left-9 z-flyout flex flex-col gap-1 rounded-lg border border-hairline bg-zinc-950 p-2 shadow-elevated" data-testid="rail-palette">
                             {DRAW_COLORS.map(c => (
                                 <button
                                     key={c}
@@ -318,6 +296,15 @@ export const ChartToolRail: React.FC<ChartToolRailProps> = ({
             >
                 <span aria-hidden="true" className="block w-4 rounded-full bg-current" style={{ height: Math.min(lineWidth, 4) }} />
             </RailButton>
+            {onToggleCollapsed && (
+                <RailButton
+                    title="Collapse drawing rail (Ctrl+Alt+D)"
+                    onClick={onToggleCollapsed}
+                    testId="rail-collapse-toggle"
+                >
+                    <ChevronLeftIcon className="h-3.5 w-3.5" aria-hidden="true" />
+                </RailButton>
+            )}
         </div>
     );
 };
