@@ -9,6 +9,7 @@
 export interface CompactUndoRecord {
     kind: 'desk' | 'chat';
     targetId: string;
+    conversationId?: string;
     entries?: unknown[];
     messages?: unknown[];
 }

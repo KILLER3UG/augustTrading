@@ -42,7 +42,7 @@ import type { FollowOutput, VirtuosoHandle } from 'react-virtuoso';
 import { Activity, ChevronDown, Crosshair, History, MoreHorizontal, PanelRightOpen, Plus, X } from '../shared/Icons';
 import JumpToLatestFab from '../shared/JumpToLatestFab';
 import { ProviderConfig } from '../../types/provider';
-import type { LoggedTrade } from '../../types';
+import { MessageRole, type LoggedTrade } from '../../types';
 import type { Message } from '../../types/message';
 import {
     buildSkillsIndexForPrompt, TRADE_CHAT_SYSTEM_PROMPT,
@@ -893,7 +893,10 @@ ${riskConstitution}`
                 import('../../services/paper/PaperBrokerService'),
             ]);
             const sid = activeSession.id;
-            const priorEntries = [...(activeSession.entries ?? [])];
+            const priorLocalEntries = [...(activeSession.entries ?? [])];
+            const priorCanonical = canonicalRows ? [...canonicalRows] : undefined;
+            const boundConversationId = activeSession.conversationId || undefined;
+            const priorEntries = [...entries];
             const snap = getChartSnapshot?.();
             const pinnedDrawings = [
                 ...(snap?.drawings ?? []),
@@ -937,22 +940,42 @@ ${riskConstitution}`
                 return;
             }
             const undoId = newId('cmp');
-            saveCompactUndo(undoId, { kind: 'desk', targetId: sid, entries: priorEntries });
+            const nowAt = Date.now();
+            const checkpointEntry: LiveEntry = {
+                id: newId('a'),
+                role: 'ai' as const,
+                text: result.checkpointText,
+                tools: [],
+                compactReceipt: { ...result.receipt, undoId },
+                at: nowAt,
+            };
+            saveCompactUndo(undoId, {
+                kind: 'desk',
+                targetId: sid,
+                entries: priorLocalEntries,
+                ...(boundConversationId && priorCanonical
+                    ? { conversationId: boundConversationId, messages: priorCanonical }
+                    : {}),
+            });
             chatStore.mutate(sid, st => ({
                 ...st,
-                updatedAt: Date.now(),
-                entries: [
-                    {
-                        id: newId('a'),
-                        role: 'ai' as const,
-                        text: result.checkpointText,
-                        tools: [],
-                        compactReceipt: { ...result.receipt, undoId },
-                        at: Date.now(),
-                    },
-                    ...result.retainedEntries,
-                ],
+                updatedAt: nowAt,
+                entries: [checkpointEntry, ...result.retainedEntries],
             }));
+            if (boundConversationId && priorCanonical) {
+                const keptIds = new Set(result.retainedEntries.map(e => e.id));
+                const retainedMessages = priorCanonical.filter(m => keptIds.has(m.id));
+                const checkpointMsg: Message = {
+                    id: checkpointEntry.id,
+                    role: MessageRole.AI,
+                    text: result.checkpointText,
+                    compactReceipt: checkpointEntry.compactReceipt,
+                    createdAt: new Date(nowAt).toISOString(),
+                };
+                window.dispatchEvent(new CustomEvent('august:undo-compact', {
+                    detail: { targetId: boundConversationId, messages: [checkpointMsg, ...retainedMessages] },
+                }));
+            }
             return;
         }
         if (template === 'doctor') {
@@ -1641,6 +1664,11 @@ ${riskConstitution}`
                     updatedAt: Date.now(),
                     entries: rec.entries as LiveEntry[],
                 }));
+                if (rec.conversationId && Array.isArray(rec.messages)) {
+                    window.dispatchEvent(new CustomEvent('august:undo-compact', {
+                        detail: { targetId: rec.conversationId, messages: rec.messages },
+                    }));
+                }
                 return;
             }
             if (rec.kind === 'chat' && Array.isArray(rec.messages)) {

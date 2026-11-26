@@ -37,7 +37,8 @@ if (!g.document) {
     };
 }
 
-import type { Kline } from '../src/types/message';
+import { MessageRole, type Kline, type Message } from '../src/types';
+import { entriesForSession, type ProjectedChatEntry } from '../src/services/trade/chatSessions';
 import { compactConversationEntries, type CompactEntryInput } from '../src/services/trade/compactCore';
 import {
     saveCompactUndo,
@@ -454,5 +455,63 @@ describe('Wave 5.2 Capstone — /compact, spot_vs_perp, scout_market & Pre-Trade
             action: 'cancel', symbol: 'ETHUSDT', order_id: 'ord-nonexistent',
         }, { ...commonDeps, preTradeHooks: tightHooks });
         assert.notEqual(cancelMissing.error, 'pre_trade_hook_blocked');
+    });
+
+    it('5. entriesForSession + CompactUndoRecord keep bound canonical conversations in lockstep on /compact and Undo', () => {
+        __clearCompactUndoForTests();
+        const priorLocal: ProjectedChatEntry[] = [
+            { id: 'u1', role: 'user', text: 'Turn 1 analysis request with verbose context', tools: [] },
+            { id: 'a1', role: 'ai', text: 'Turn 1 detailed market read', tools: [] },
+            { id: 'u2', role: 'user', text: 'Turn 2 follow-up on liquidation cluster', tools: [] },
+            { id: 'a2', role: 'ai', text: 'Turn 2 detailed follow-up answer', tools: [] },
+            { id: 'u3', role: 'user', text: 'Turn 3 recent ask kept verbatim', tools: [] },
+            { id: 'a3', role: 'ai', text: 'Turn 3 recent reply kept verbatim', tools: [] },
+            { id: 'u4', role: 'user', text: 'Turn 4 latest ask kept verbatim', tools: [] },
+            { id: 'a4', role: 'ai', text: 'Turn 4 latest reply kept verbatim', tools: [] },
+        ];
+        const priorCanonical: Message[] = priorLocal.map(e => ({
+            id: e.id,
+            role: e.role === 'user' ? MessageRole.USER : MessageRole.AI,
+            text: e.text,
+            createdAt: '2026-11-26T00:00:00.000Z',
+        }));
+
+        const compacted = compactConversationEntries({
+            entries: priorLocal,
+            keepRecentTurns: 2,
+            focus: 'BTC sweep invalidation',
+        });
+        assert.equal(compacted.compacted, true);
+        assert.equal(compacted.compactedCount, 4);
+
+        const checkpointEntry: ProjectedChatEntry = {
+            id: 'cmp-ai-1',
+            role: 'ai',
+            text: compacted.checkpointText,
+            tools: [],
+            compactReceipt: { ...compacted.receipt, undoId: 'cmp-1' },
+        };
+        const keptIds = new Set(compacted.retainedEntries.map(e => e.id));
+        const compactedCanonical: Message[] = [
+            { id: checkpointEntry.id, role: MessageRole.AI, text: compacted.checkpointText, createdAt: '2026-11-26T00:01:00.000Z' },
+            ...priorCanonical.filter(m => keptIds.has(m.id)),
+        ];
+
+        const mergedAfterCompact = entriesForSession([checkpointEntry, ...compacted.retainedEntries], compactedCanonical);
+        assert.equal(mergedAfterCompact.length, 5);
+        assert.equal(mergedAfterCompact[0].id, 'cmp-ai-1');
+        assert.equal(mergedAfterCompact.some(e => e.id === 'u1' || e.id === 'a1'), false);
+
+        saveCompactUndo('cmp-1', {
+            kind: 'desk',
+            targetId: 'sess-1',
+            conversationId: 'conv-1',
+            entries: priorLocal,
+            messages: priorCanonical,
+        });
+        const taken = takeCompactUndo('cmp-1');
+        assert.ok(taken);
+        assert.equal(taken.conversationId, 'conv-1');
+        assert.equal((taken.messages as Message[]).length, 8);
     });
 });
