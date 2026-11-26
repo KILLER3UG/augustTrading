@@ -52,6 +52,7 @@ import { buildVolumeProfile, nakedPocs, pricePositionVsValue, sessionPocs } from
 import { anchoredSlice, computeVwap, vwapPosition } from '../market/vwapCore';
 import { isSupportedReplaySetup, REPLAY_SUPPORTED_SETUPS, runSetupReplay, type SetupReplayInput } from '../market/setupReplayCore';
 import { detectDivergences, type DivergenceIndicator } from '../market/divergenceCore';
+import { analyzeSpotVsPerp, type SpotVsPerpResult } from '../market/spotVsPerpCore';
 import { recordCachedRegime } from '../trade/scopedRulesRuntime';
 
 export type EvidenceLevel = 'structural' | 'documented' | 'folklore';
@@ -2040,5 +2041,88 @@ export const buildDecisionSnapshot = async (symbolInput: string, asofMs: number 
         };
     } catch {
         return null;
+    }
+};
+
+/**
+ * spot_vs_perp — Compare Binance USDT-M perp vs. Spot `/api/v3/klines`
+ * taker CVD, basis bps, and flow regime. Gracefully discloses missing/delisted spot pairs.
+ */
+export const runSpotVsPerpTool = async (
+    symbolInput: string,
+    tf: string = '15m',
+    limit: number = 60,
+    asofMs: number = Date.now(),
+): Promise<string> => {
+    const symbol = normalizeSymbol(symbolInput);
+    const safeLimit = Math.min(200, Math.max(20, Math.floor(Number.isFinite(limit) ? limit : 60)));
+    const notes: string[] = ['venue: binance-usdtm-futures + binance-spot /api/v3/klines'];
+    try {
+        const perpKlines = await fetchRecent(symbol, tf, safeLimit, asofMs);
+        if (perpKlines.length < 5) {
+            return JSON.stringify(envelope({
+                tool: 'spot_vs_perp',
+                asof: asofMs,
+                symbol,
+                tf,
+                params: { limit: safeLimit },
+                barsUsed: perpKlines.length,
+                notes,
+                values: null,
+                distancesAtr: {},
+                evidence: 'structural',
+                summary: '',
+                reason: 'fewer than 5 closed perp candles available',
+            }));
+        }
+        let spotRaw: Kline[] = [];
+        try {
+            spotRaw = await fetchSpotOHLCV(symbol, tf, safeLimit);
+        } catch (err) {
+            notes.push(`spot fetch failed: ${(err as Error).message}`);
+        }
+        const spotKlines = closedCandles(spotRaw, tf, asofMs);
+        const markInfo = await fetchMarkIndex(symbol).catch(() => null);
+        const fundingRate = markInfo?.available && Number.isFinite(markInfo.lastFundingRate)
+            ? markInfo.lastFundingRate
+            : null;
+        const result: SpotVsPerpResult = analyzeSpotVsPerp({
+            symbol,
+            interval: tf,
+            spotKlines,
+            perpKlines,
+            fundingRate,
+        });
+        if (!result.spotAvailable && result.reason) {
+            notes.push(`spot unavailable: ${result.reason}`);
+        }
+        return JSON.stringify(envelope({
+            tool: 'spot_vs_perp',
+            asof: asofMs,
+            symbol,
+            tf,
+            params: { limit: safeLimit },
+            barsUsed: result.alignedBars || result.perpBars,
+            notes,
+            values: result,
+            distancesAtr: {},
+            evidence: 'structural',
+            summary: result.summary,
+        }));
+    } catch (error) {
+        return JSON.stringify(envelope({
+            tool: 'spot_vs_perp',
+            asof: asofMs,
+            symbol,
+            tf,
+            params: { limit: safeLimit },
+            barsUsed: 0,
+            notes: [`fetch failed: ${(error as Error).message}`],
+            values: null,
+            distancesAtr: {},
+            evidence: 'structural',
+            summary: '',
+            reason: 'spot/perp comparison fetch failed',
+        }));
     }
 };

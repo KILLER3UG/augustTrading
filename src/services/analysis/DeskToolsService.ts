@@ -737,6 +737,8 @@ const TOOL_BUDGETS: Record<string, number> = {
     scan_playbooks: 3200,
     setup_replay: 3200,
     divergences: 3200,
+    spot_vs_perp: 2600,
+    scout_market: 1800,
     // The meta-label read: a verdict with its reasons — the reasons ARE the
     // payload; a clip that cut them would leave a naked verdict.
     meta_label: 2800,
@@ -2366,6 +2368,48 @@ export const DESK_TOOL_DEFINITIONS: DeskToolDefinition[] = [
                         items: { type: 'string', enum: ['rsi', 'macd', 'cvd'] },
                         description: 'Subset of indicators to scan (default: all three).',
                     },
+                },
+                additionalProperties: false,
+            },
+        },
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'spot_vs_perp',
+            description:
+                'Compare Binance Spot (/api/v3/klines) vs. USDT-M Perp taker CVD, basis in bps, and flow regime (spot_absorption, perp_chasing, aligned_bull, aligned_bear, neutral). Gracefully discloses missing or delisted spot pairs.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    symbol: { type: 'string', description: 'Any USDT-M perp symbol (default: the chart\'s current symbol).' },
+                    interval: { type: 'string', enum: KLINE_INTERVALS_5M_TO_1D, description: 'Closed-bar comparison interval (default: active chart interval or 15m).' },
+                    limit: { type: 'number', description: 'Number of aligned bars to inspect (20..200, default 60).' },
+                },
+                additionalProperties: false,
+            },
+        },
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'scout_market',
+            description:
+                'Isolated read-only market scout subagent: scans up to 6 symbols across up to 2 intervals with per-symbol timeouts, combining regime, divergences, funding/OI, and spot_vs_perp flow into a ranked brief (<= 1,200 chars) without touching thread state.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    symbols: {
+                        type: 'array',
+                        items: { type: 'string' },
+                        description: 'Symbols to scout (capped at 6; default BTCUSDT, ETHUSDT, SOLUSDT).',
+                    },
+                    intervals: {
+                        type: 'array',
+                        items: { type: 'string', enum: KLINE_INTERVALS_5M_TO_1D },
+                        description: 'Timeframes to evaluate (capped at 2; default 15m, 1h).',
+                    },
+                    focus: { type: 'string', description: 'Optional bias/setup focus keyword to weight ranking.' },
                 },
                 additionalProperties: false,
             },
@@ -5855,6 +5899,33 @@ ${body}`);
                         ...(inds && inds.length > 0 ? { indicators: inds } : {}),
                     },
                 );
+                break;
+            }
+            case 'spot_vs_perp': {
+                const tfArg = asString(call.arguments.interval) || context.chartInterval || '15m';
+                const limitArg = typeof call.arguments.limit === 'number' ? call.arguments.limit : 60;
+                content = await (await importMarketTools()).runSpotVsPerpTool(
+                    asSymbol(call.arguments.symbol, fallback),
+                    KLINE_INTERVALS_5M_TO_1D.includes(tfArg as never) ? tfArg : '15m',
+                    limitArg,
+                );
+                break;
+            }
+            case 'scout_market': {
+                const { runMarketScout } = await import('../trade/scoutMarket');
+                const syms = Array.isArray(call.arguments.symbols)
+                    ? call.arguments.symbols.filter((x): x is string => typeof x === 'string')
+                    : undefined;
+                const tfs = Array.isArray(call.arguments.intervals)
+                    ? call.arguments.intervals.filter((x): x is string => typeof x === 'string' && KLINE_INTERVALS_5M_TO_1D.includes(x as never))
+                    : undefined;
+                const focusArg = asString(call.arguments.focus) || undefined;
+                const res = await runMarketScout({
+                    ...(syms && syms.length > 0 ? { symbols: syms } : {}),
+                    ...(tfs && tfs.length > 0 ? { intervals: tfs } : {}),
+                    ...(focusArg ? { focus: focusArg } : {}),
+                });
+                content = JSON.stringify(res, null, 2);
                 break;
             }
             case 'setup_base_rate':

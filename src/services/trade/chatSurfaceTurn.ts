@@ -189,7 +189,7 @@ export const CHAT_SURFACE_TOOLS = [
     'setup_base_rate', 'playbook_attribution', 'risk_state',
     // The P2 composites: derivatives positioning + cross-market, plus the
     // family-H playbook scan and the advisory meta-label read.
-    'derivatives_state', 'btc_relative', 'scan_playbooks', 'setup_replay', 'divergences', 'meta_label',
+    'derivatives_state', 'btc_relative', 'scan_playbooks', 'setup_replay', 'divergences', 'spot_vs_perp', 'scout_market', 'meta_label',
     // The trader's own history, as rows and as past sessions.
     'get_trade_log', 'recall', 'get_setup_history_stats', 'recall_chat',
     // Market-wide discovery and simulation.

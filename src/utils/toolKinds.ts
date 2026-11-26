@@ -212,6 +212,14 @@ export const TOOL_REGISTRY: readonly ToolRegistryEntry[] = [
         deskGrant: true, cacheable: true,
     },
     {
+        name: 'spot_vs_perp', label: 'spot vs perp', kind: 'compute', activity: 'Comparing spot vs perp flow',
+        deskGrant: true, cacheable: true, marketTool: true, marketRead: true,
+    },
+    {
+        name: 'scout_market', label: 'market scout', kind: 'search', activity: 'Scouting multi-symbol tape',
+        deskGrant: true, cacheable: true, marketTool: true, marketRead: true,
+    },
+    {
         name: 'meta_label', label: 'meta label', kind: 'compute', activity: 'Reading the meta label',
         deskGrant: true,
     },
