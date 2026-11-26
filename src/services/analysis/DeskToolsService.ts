@@ -5912,7 +5912,7 @@ ${body}`);
                 break;
             }
             case 'scout_market': {
-                const { runMarketScout } = await import('../trade/scoutMarket');
+                const { formatScoutToolPayload, runMarketScout } = await import('../trade/scoutMarket');
                 const syms = Array.isArray(call.arguments.symbols)
                     ? call.arguments.symbols.filter((x): x is string => typeof x === 'string')
                     : undefined;
@@ -5925,7 +5925,7 @@ ${body}`);
                     ...(tfs && tfs.length > 0 ? { intervals: tfs } : {}),
                     ...(focusArg ? { focus: focusArg } : {}),
                 });
-                content = JSON.stringify(res, null, 2);
+                content = formatScoutToolPayload(res);
                 break;
             }
             case 'setup_base_rate':

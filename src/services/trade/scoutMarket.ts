@@ -214,7 +214,7 @@ export const runMarketScout = async (input: MarketScoutInput = {}): Promise<Mark
 
             const primaryKlines = perpEntries[0]?.[1] ?? [];
             const divRead = primaryKlines.length >= 30
-                ? detectDivergences(primaryKlines, { symbol, interval: primaryTf, excludeFormingCandle: false })
+                ? detectDivergences(primaryKlines, { symbol, interval: primaryTf, excludeFormingCandle: true })
                 : null;
             const divKinds = (divRead?.divergences ?? []).map(d => `${d.indicator.toUpperCase()} ${d.kind}`);
 
@@ -293,4 +293,38 @@ export const runMarketScout = async (input: MarketScoutInput = {}): Promise<Mark
         brief,
         briefChars: brief.length,
     };
+};
+
+export const SCOUT_TOOL_PAYLOAD_MAX_CHARS = 1800;
+
+/**
+ * Format `runMarketScout` output as compact single-line JSON with `brief` FIRST
+ * and omitting the verbose `ranked` array so 6-symbol scans stay strictly
+ * `<= 1800` chars (`TOOL_RESULT_CAPS.scout_market`) and never clip mid-JSON.
+ */
+export const formatScoutToolPayload = (
+    res: MarketScoutResult,
+    maxChars = SCOUT_TOOL_PAYLOAD_MAX_CHARS,
+): string => {
+    const cap = Math.max(200, Math.floor(maxChars));
+    const build = (briefText: string): string => JSON.stringify({
+        brief: briefText,
+        ok: res.ok,
+        symbolsScanned: res.symbolsScanned,
+        intervalsUsed: res.intervalsUsed,
+        timedOutSymbols: res.timedOutSymbols,
+    });
+    let wire = build(res.brief);
+    if (wire.length <= cap) return wire;
+
+    const overhead = wire.length - res.brief.length;
+    const budget = Math.max(40, cap - overhead - 16);
+    let trimmed = res.brief.slice(0, budget);
+    wire = build(trimmed);
+    while (wire.length > cap && trimmed.length > 0) {
+        const overflow = wire.length - cap;
+        trimmed = trimmed.slice(0, Math.max(0, trimmed.length - Math.max(8, overflow)));
+        wire = build(trimmed);
+    }
+    return wire;
 };

@@ -68,15 +68,8 @@ const classifySpotPerpRegime = (
 ): SpotVsPerpRegime => {
     if (spotDeltaShare >= 0.05 && perpDeltaShare >= 0.05) return 'aligned_bull';
     if (spotDeltaShare <= -0.05 && perpDeltaShare <= -0.05) return 'aligned_bear';
-    if (
-        (spotDeltaShare >= 0.06 && perpDeltaShare <= -0.04)
-        || (
-            spotDeltaShare <= -0.06
-            && perpDeltaShare >= 0.04
-            && perpDeltaShare < 0.08
-            && Math.abs(spotDeltaShare) >= Math.abs(perpDeltaShare)
-        )
-    ) {
+    // Reserve spot_absorption strictly for bullish spot buying absorbing perp selling.
+    if (spotDeltaShare >= 0.06 && perpDeltaShare <= -0.04) {
         return 'spot_absorption';
     }
     if (

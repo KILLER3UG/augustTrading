@@ -48,10 +48,12 @@ import {
 import { SLASH_COMMAND_SUGGESTIONS, slashTemplateOf } from '../src/utils/composerRefs';
 import { analyzeSpotVsPerp } from '../src/services/market/spotVsPerpCore';
 import {
+    formatScoutToolPayload,
     runMarketScout,
     SCOUT_MAX_BRIEF_CHARS,
     SCOUT_MAX_INTERVALS,
     SCOUT_MAX_SYMBOLS,
+    SCOUT_TOOL_PAYLOAD_MAX_CHARS,
 } from '../src/services/trade/scoutMarket';
 import {
     INITIAL_CHART_ACTION_NAMES,
@@ -202,6 +204,23 @@ describe('Wave 5.2 Capstone — /compact, spot_vs_perp, scout_market & Pre-Trade
         });
         assert.equal(neutral.regime, 'neutral');
 
+        // Heavy spot selling into mild perp buying must NOT misclassify as spot_absorption
+        const spotDumpMildPerp = analyzeSpotVsPerp({
+            symbol: 'AVAXUSDT', interval: '15m',
+            spotKlines: makeBars({ count: 20, basePrice: 30, takerRatio: 0.32 }),
+            perpKlines: makeBars({ count: 20, basePrice: 30.05, takerRatio: 0.53 }),
+        });
+        assert.notEqual(spotDumpMildPerp.regime, 'spot_absorption');
+        assert.equal(spotDumpMildPerp.regime, 'neutral');
+
+        const spotDumpPerpChase = analyzeSpotVsPerp({
+            symbol: 'AVAXUSDT', interval: '15m',
+            spotKlines: makeBars({ count: 20, basePrice: 30, takerRatio: 0.32 }),
+            perpKlines: makeBars({ count: 20, basePrice: 30.1, takerRatio: 0.72 }),
+        });
+        assert.notEqual(spotDumpPerpChase.regime, 'spot_absorption');
+        assert.equal(spotDumpPerpChase.regime, 'perp_chasing');
+
         const missingSpot = analyzeSpotVsPerp({
             symbol: 'PERPONLYUSDT', interval: '15m', spotKlines: [], perpKlines: perpChase,
         });
@@ -212,7 +231,7 @@ describe('Wave 5.2 Capstone — /compact, spot_vs_perp, scout_market & Pre-Trade
         assert.ok(missingSpot.reason?.includes('unavailable'));
     });
 
-    it('3. scoutMarket enforces caps & timeouts cleanly, and spot_vs_perp + scout_market stay behind load_tools (Turn-1=24, Plan Mode allowed)', async () => {
+    it('3. scoutMarket enforces caps, forming-bar exclusion & <=1800 char payload, and spot_vs_perp + scout_market stay behind load_tools (Turn-1=24, Plan Mode allowed)', async () => {
         const res = await runMarketScout({
             symbols: ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 'XRPUSDT', 'AVAXUSDT', 'DOGEUSDT', 'ADAUSDT'],
             intervals: ['15m', '1h', '4h'],
@@ -241,6 +260,40 @@ describe('Wave 5.2 Capstone — /compact, spot_vs_perp, scout_market & Pre-Trade
         assert.ok(res.timedOutSymbols.includes('BNBUSDT'));
         assert.ok(res.briefChars <= SCOUT_MAX_BRIEF_CHARS);
         assert.ok(res.brief.length <= 1200);
+
+        // Compact tool payload stays strictly <= 1800 chars with brief first
+        const wire = formatScoutToolPayload(res);
+        assert.ok(wire.length <= SCOUT_TOOL_PAYLOAD_MAX_CHARS, `expected <= ${SCOUT_TOOL_PAYLOAD_MAX_CHARS}, got ${wire.length}`);
+        const parsedWire = JSON.parse(wire) as Record<string, unknown>;
+        assert.equal(Object.keys(parsedWire)[0], 'brief');
+        assert.equal(parsedWire.brief, res.brief);
+        const oversizedWire = formatScoutToolPayload({ ...res, brief: 'X'.repeat(2400) });
+        assert.ok(oversizedWire.length <= SCOUT_TOOL_PAYLOAD_MAX_CHARS);
+        assert.equal(typeof (JSON.parse(oversizedWire) as { brief?: string }).brief, 'string');
+
+        // Forming candle exclusion: mutating only the final unclosed candle must not change divergence read
+        const baseBars = makeBars({ count: 45, basePrice: 100, takerRatio: 0.55 });
+        const spikedBars = baseBars.map((b, idx) => idx === baseBars.length - 1
+            ? { ...b, high: 250, low: 40, close: 42, takerBuyVolume: 10 }
+            : b);
+        const scoutBase = await runMarketScout({
+            symbols: ['BTCUSDT'],
+            intervals: ['15m'],
+            fetchers: {
+                fetchPerpKlines: async () => baseBars,
+                fetchSpotKlines: async () => baseBars,
+            },
+        });
+        const scoutSpiked = await runMarketScout({
+            symbols: ['BTCUSDT'],
+            intervals: ['15m'],
+            fetchers: {
+                fetchPerpKlines: async () => spikedBars,
+                fetchSpotKlines: async () => baseBars,
+            },
+        });
+        assert.equal(scoutSpiked.ranked[0].divergenceCount, scoutBase.ranked[0].divergenceCount);
+        assert.equal(scoutSpiked.ranked[0].topDivergence, scoutBase.ranked[0].topDivergence);
 
         // Turn-1 invariant: MUST stay exact 24
         const nonVisionInitialChart = [...INITIAL_CHART_ACTION_NAMES].filter(n => n !== 'inspect_chart_image');

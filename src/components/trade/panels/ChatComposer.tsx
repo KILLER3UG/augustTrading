@@ -266,7 +266,7 @@ const ChatComposer: React.FC<ChatComposerProps> = ({
                                     }}
                                     className="flex w-full items-center justify-between gap-3 rounded-control px-2.5 py-1.5 text-left text-ui-dense transition-colors hover:bg-white/[0.06]"
                                 >
-                                    <span className="font-mono font-medium text-zinc-100">{item.usage}</span>
+                                    <span className="shrink-0 whitespace-nowrap font-mono font-medium text-zinc-100">{item.usage}</span>
                                     <span className="truncate text-ui-2xs text-zinc-500">{item.description}</span>
                                 </button>
                             ))}
