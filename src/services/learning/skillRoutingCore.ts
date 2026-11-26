@@ -278,7 +278,7 @@ export const routeSkillsForContext = (
     const matches: Array<RoutedSkillMatch & { statusScore: number }> = [];
 
     for (const candidate of candidates) {
-        if (!candidate.slug || candidate.status === 'archived') continue;
+        if (!candidate.slug || candidate.status === 'archived' || candidate.status === 'stale') continue;
         if (candidate.formatIssues && candidate.formatIssues.length > 0) continue;
 
         const triggers = parseSkillTriggers(candidate.content);
