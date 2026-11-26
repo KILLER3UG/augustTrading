@@ -277,20 +277,18 @@ export const ChartToolRail: React.FC<ChartToolRailProps> = ({
                     {renderRailToolIcon(def.tool)}
                 </RailButton>
                 {hasSubmenu && (
-                    <RailButton
-                        testId={`rail-group-chevron-${group.category}`}
-                        ariaLabel={`More ${group.label} tools`}
-                        ariaExpanded={flyoutOpen}
-                        title={`${group.label} tools`}
+                    <span
+                        data-testid={`rail-group-chevron-${group.category}`}
+                        title={`${group.label} tools (click corner or right-click)`}
                         onClick={(ev) => {
                             ev.stopPropagation();
                             if (flyoutOpen) setOpenFlyout(null);
                             else setOpenFlyout({ kind: 'group', category: group.category, ...anchorFor(ev.currentTarget) });
                         }}
-                        className="absolute bottom-0 right-0 flex h-2.5 w-2.5 items-center justify-center text-[7px] leading-none text-zinc-600 transition-colors hover:text-zinc-200"
+                        className="absolute bottom-0 right-0 flex h-3 w-3 cursor-pointer items-center justify-center text-[7px] leading-none text-zinc-600 transition-colors hover:text-zinc-200"
                     >
                         ▸
-                    </RailButton>
+                    </span>
                 )}
             </div>
         );
@@ -344,19 +342,18 @@ export const ChartToolRail: React.FC<ChartToolRailProps> = ({
                             <span className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-zinc-200" aria-hidden="true" />
                         )}
                     </RailButton>
-                    <RailButton
-                        testId="rail-magnet-chevron"
-                        ariaLabel="Magnet mode options"
-                        ariaExpanded={openFlyout?.kind === 'magnet'}
+                    <span
+                        data-testid="rail-magnet-chevron"
+                        title="Magnet mode options"
                         onClick={(ev) => {
                             ev.stopPropagation();
                             if (openFlyout?.kind === 'magnet') setOpenFlyout(null);
                             else setOpenFlyout({ kind: 'magnet', ...anchorFor(ev.currentTarget) });
                         }}
-                        className="absolute bottom-0 right-0 flex h-2.5 w-2.5 items-center justify-center text-[7px] leading-none text-zinc-600 hover:text-zinc-200"
+                        className="absolute bottom-0 right-0 flex h-3 w-3 cursor-pointer items-center justify-center text-[7px] leading-none text-zinc-600 hover:text-zinc-200"
                     >
                         ▸
-                    </RailButton>
+                    </span>
                 </div>
 
                 <RailButton
@@ -397,19 +394,18 @@ export const ChartToolRail: React.FC<ChartToolRailProps> = ({
                     >
                         {hiddenActive ? <EyeOff className="h-3.5 w-3.5" aria-hidden="true" /> : <Eye className="h-3.5 w-3.5" aria-hidden="true" />}
                     </RailButton>
-                    <RailButton
-                        testId="rail-visibility-chevron"
-                        ariaLabel="Visibility layer options"
-                        ariaExpanded={openFlyout?.kind === 'visibility'}
+                    <span
+                        data-testid="rail-visibility-chevron"
+                        title="Visibility layer options"
                         onClick={(ev) => {
                             ev.stopPropagation();
                             if (openFlyout?.kind === 'visibility') setOpenFlyout(null);
                             else setOpenFlyout({ kind: 'visibility', ...anchorFor(ev.currentTarget) });
                         }}
-                        className="absolute bottom-0 right-0 flex h-2.5 w-2.5 items-center justify-center text-[7px] leading-none text-zinc-600 hover:text-zinc-200"
+                        className="absolute bottom-0 right-0 flex h-3 w-3 cursor-pointer items-center justify-center text-[7px] leading-none text-zinc-600 hover:text-zinc-200"
                     >
                         ▸
-                    </RailButton>
+                    </span>
                 </div>
 
                 <RailButton

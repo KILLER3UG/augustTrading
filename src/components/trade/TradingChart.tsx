@@ -4119,12 +4119,13 @@ const TradingChart: React.FC<TradingChartProps> = ({
             <TimeframeBar
                 interval={interval}
                 onIntervalChange={onIntervalChange}
-                className="h-9 flex-nowrap border-b border-hairline bg-zinc-950 px-2 py-0"
+                noWrap
+                className="z-30 h-9 border-b border-hairline bg-zinc-950 px-2 py-0"
             >
-                <div className="relative ml-1">
+                <div className="relative ml-0.5 shrink-0">
                     <button type="button" onClick={() => setIndicatorMenuOpen(v => !v)} aria-pressed={indicatorsOn}
                         aria-expanded={indicatorMenuOpen} title="Chart studies"
-                        className={`rounded-control px-2 py-1 text-ui-dense font-medium transition-colors ${
+                        className={`whitespace-nowrap rounded-control px-1.5 py-1 text-ui-dense font-medium transition-colors ${
                             indicatorsOn
                                 ? 'bg-white/[0.06] text-zinc-100'
                                 : 'text-zinc-500 hover:bg-white/[0.05] hover:text-zinc-200'
@@ -4163,13 +4164,13 @@ const TradingChart: React.FC<TradingChartProps> = ({
                     data-testid="chart-candle-style"
                     title="Cycle candle style (Candles / Hollow / Line)"
                     onClick={() => setCandleStyle(s => (s === 'candles' ? 'hollow' : s === 'hollow' ? 'line' : 'candles'))}
-                    className="rounded-control px-2 py-1 text-ui-dense font-medium text-zinc-500 transition-colors hover:bg-white/[0.05] hover:text-zinc-200"
+                    className="shrink-0 whitespace-nowrap rounded-control px-1.5 py-1 text-ui-dense font-medium text-zinc-500 transition-colors hover:bg-white/[0.05] hover:text-zinc-200"
                 >
                     {candleStyle === 'candles' ? 'Candles' : candleStyle === 'hollow' ? 'Hollow' : 'Line'}
                 </button>
 
                 {/* Right utility cluster */}
-                <div className="relative ml-auto flex items-center gap-0.5 pr-0.5">
+                <div className="relative ml-auto flex shrink-0 items-center gap-0.5 pr-0.5">
                     <button
                         type="button"
                         data-testid="rail-undo"
@@ -4177,7 +4178,7 @@ const TradingChart: React.FC<TradingChartProps> = ({
                         aria-label="Undo last drawing (Ctrl+Z)"
                         disabled={!historyMeta.canUndo}
                         onClick={handleUndoDrawing}
-                        className="flex h-7 w-7 items-center justify-center rounded-control text-zinc-500 transition-colors hover:bg-white/[0.05] hover:text-zinc-200 disabled:opacity-30 disabled:hover:bg-transparent"
+                        className="flex h-6 w-6 items-center justify-center rounded-control text-zinc-500 transition-colors hover:bg-white/[0.05] hover:text-zinc-200 disabled:opacity-30 disabled:hover:bg-transparent"
                     >
                         <Undo2 className="h-3.5 w-3.5" aria-hidden="true" />
                     </button>
@@ -4188,7 +4189,7 @@ const TradingChart: React.FC<TradingChartProps> = ({
                         aria-label="Redo drawing (Ctrl+Y)"
                         disabled={!historyMeta.canRedo}
                         onClick={handleRedoDrawing}
-                        className="flex h-7 w-7 items-center justify-center rounded-control text-zinc-500 transition-colors hover:bg-white/[0.05] hover:text-zinc-200 disabled:opacity-30 disabled:hover:bg-transparent"
+                        className="flex h-6 w-6 items-center justify-center rounded-control text-zinc-500 transition-colors hover:bg-white/[0.05] hover:text-zinc-200 disabled:opacity-30 disabled:hover:bg-transparent"
                     >
                         <Redo2 className="h-3.5 w-3.5" aria-hidden="true" />
                     </button>
@@ -4199,7 +4200,7 @@ const TradingChart: React.FC<TradingChartProps> = ({
                         title="Object Tree (AI levels, drawings, studies)"
                         aria-label="Chart object tree"
                         onClick={() => { setChartSettingsOpen(false); setObjectTreeOpen(v => !v); }}
-                        className={`flex h-7 w-7 items-center justify-center rounded-control transition-colors ${
+                        className={`flex h-6 w-6 items-center justify-center rounded-control transition-colors ${
                             objectTreeOpen ? 'bg-white/[0.08] text-zinc-100' : 'text-zinc-500 hover:bg-white/[0.05] hover:text-zinc-200'
                         }`}
                     >
@@ -4211,7 +4212,7 @@ const TradingChart: React.FC<TradingChartProps> = ({
                         title="Snapshot chart to Chat composer"
                         aria-label="Snapshot chart to Chat"
                         onClick={handleSnapshotToChat}
-                        className="flex h-7 w-7 items-center justify-center rounded-control text-zinc-500 transition-colors hover:bg-white/[0.05] hover:text-zinc-200"
+                        className="flex h-6 w-6 items-center justify-center rounded-control text-zinc-500 transition-colors hover:bg-white/[0.05] hover:text-zinc-200"
                     >
                         <Camera className="h-3.5 w-3.5" aria-hidden="true" />
                     </button>
@@ -4223,7 +4224,7 @@ const TradingChart: React.FC<TradingChartProps> = ({
                             title={chartFocus ? 'Exit Full-Chart Focus (Ctrl+\\)' : 'Full-Chart Focus (Ctrl+\\)'}
                             aria-label={chartFocus ? 'Exit Full-Chart Focus' : 'Full-Chart Focus'}
                             onClick={onToggleChartFocus}
-                            className={`flex h-7 w-7 items-center justify-center rounded-control transition-colors ${
+                            className={`flex h-6 w-6 items-center justify-center rounded-control transition-colors ${
                                 chartFocus ? 'bg-white/[0.08] text-zinc-100' : 'text-zinc-500 hover:bg-white/[0.05] hover:text-zinc-200'
                             }`}
                         >
@@ -4239,7 +4240,7 @@ const TradingChart: React.FC<TradingChartProps> = ({
                         title="Chart display settings"
                         aria-label="Chart settings"
                         onClick={() => { setObjectTreeOpen(false); setChartSettingsOpen(v => !v); }}
-                        className={`flex h-7 w-7 items-center justify-center rounded-control transition-colors ${
+                        className={`flex h-6 w-6 items-center justify-center rounded-control transition-colors ${
                             chartSettingsOpen ? 'bg-white/[0.08] text-zinc-100' : 'text-zinc-500 hover:bg-white/[0.05] hover:text-zinc-200'
                         }`}
                     >
@@ -4547,13 +4548,13 @@ const TradingChart: React.FC<TradingChartProps> = ({
                         }
                     };
                     const hostW = hostRef.current?.clientWidth ?? 600;
-                    const left = Math.min(Math.max(8, anchor.x + 10), Math.max(8, hostW - 420));
+                    const left = Math.min(Math.max(8, anchor.x + 10), Math.max(8, hostW - (isPositionBoxKind(sel.kind) ? 520 : 420)));
                     const top = Math.max(6, anchor.y - 40);
                     const allTfs = sel.persistAcrossTf === true;
                     return (
                         <div
                             data-testid="drawing-selection-toolbar"
-                            className="motion-popover-in absolute z-20 flex items-center gap-0.5 rounded-lg border border-hairline bg-zinc-950 px-1.5 py-1 shadow-elevated"
+                            className="motion-popover-in absolute z-20 flex flex-nowrap items-center gap-0.5 whitespace-nowrap rounded-lg border border-hairline bg-zinc-950 px-1.5 py-1 shadow-elevated"
                             style={{ left, top }}
                         >
                             {DRAW_COLORS.map(c => (
@@ -4596,7 +4597,7 @@ const TradingChart: React.FC<TradingChartProps> = ({
                                 aria-label="Toggle timeframe visibility"
                                 aria-pressed={allTfs}
                                 onClick={() => patch({ persistAcrossTf: !allTfs })}
-                                className={`flex h-6 items-center justify-center rounded-control px-1.5 font-mono text-ui-2xs transition-colors hover:bg-white/[0.06] disabled:opacity-40 ${
+                                className={`flex h-6 shrink-0 items-center justify-center whitespace-nowrap rounded-control px-1.5 font-mono text-ui-2xs transition-colors hover:bg-white/[0.06] disabled:opacity-40 ${
                                     allTfs ? 'bg-white/[0.08] text-zinc-100' : 'text-zinc-400 hover:text-zinc-200'
                                 }`}
                             >
@@ -4643,7 +4644,7 @@ const TradingChart: React.FC<TradingChartProps> = ({
                                             data-testid="position-box-audit-btn"
                                             title="Audit this position box with August"
                                             onClick={() => handleAskAugust(buildPositionBoxAuditPrompt(symbol, boxReadout, sel.shortId))}
-                                            className="flex h-6 items-center rounded-control px-1.5 font-mono text-ui-2xs text-zinc-200 transition-colors hover:bg-white/[0.06] hover:text-zinc-50"
+                                            className="flex h-6 shrink-0 items-center whitespace-nowrap rounded-control px-1.5 font-mono text-ui-2xs text-zinc-200 transition-colors hover:bg-white/[0.06] hover:text-zinc-50"
                                         >
                                             Audit
                                         </button>
@@ -4653,7 +4654,7 @@ const TradingChart: React.FC<TradingChartProps> = ({
                                             disabled={stageDisabled}
                                             title={stageTitle}
                                             onClick={() => { void handleStagePaperFromPositionBox(sel); }}
-                                            className={`flex h-6 items-center rounded-control border border-hairline px-1.5 font-mono text-ui-2xs transition-colors hover:bg-white/[0.06] disabled:cursor-not-allowed disabled:opacity-40 ${
+                                            className={`flex h-6 shrink-0 items-center whitespace-nowrap rounded-control border border-hairline px-1.5 font-mono text-ui-2xs transition-colors hover:bg-white/[0.06] disabled:cursor-not-allowed disabled:opacity-40 ${
                                                 boxReadout.direction === 'Long' ? 'text-emerald-400' : 'text-rose-400'
                                             }`}
                                         >

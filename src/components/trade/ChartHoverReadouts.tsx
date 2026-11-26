@@ -277,9 +277,9 @@ export const PriceAxisPlusButton: React.FC<{
             }}
             style={{
                 right: Math.max(54, axisW + 2),
-                transform: `translate3d(0, ${Math.max(6, Math.round(cross.y) - 9)}px, 0)`,
+                transform: `translate3d(0, ${Math.max(6, Math.round(cross.y) - 12)}px, 0)`,
             }}
-            className="pointer-events-auto absolute top-0 z-20 flex h-[18px] w-[18px] items-center justify-center rounded-[3px] border border-hairline bg-zinc-900 text-zinc-300 transition-colors hover:bg-zinc-800 hover:text-zinc-50 [will-change:transform]"
+            className="pointer-events-auto absolute top-0 z-20 flex h-6 w-6 items-center justify-center rounded-[3px] border border-hairline bg-zinc-900 text-zinc-300 transition-colors hover:bg-zinc-800 hover:text-zinc-50 [will-change:transform]"
         >
             <Plus className="h-3 w-3" aria-hidden="true" />
         </button>

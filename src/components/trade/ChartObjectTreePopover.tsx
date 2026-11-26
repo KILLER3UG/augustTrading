@@ -112,7 +112,7 @@ export const ChartObjectTreePopover: React.FC<ChartObjectTreePopoverProps> = ({
                         <button
                             type="submit"
                             aria-label="Save name"
-                            className="flex h-5 w-5 shrink-0 items-center justify-center rounded-control text-zinc-300 hover:bg-white/[0.08]"
+                            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-control text-zinc-300 hover:bg-white/[0.08]"
                         >
                             <Check className="h-3 w-3" aria-hidden="true" />
                         </button>

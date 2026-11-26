@@ -383,7 +383,7 @@ const ChartFooterClock: React.FC = () => {
             data-testid="chart-clock-toggle"
             onClick={() => setZone(z => (z === 'PHT' ? 'UTC' : 'PHT'))}
             title="Toggle chart clock between PHT (UTC+8) and UTC"
-            className="rounded-control px-1.5 py-0.5 font-mono text-ui-2xs tabular-nums text-zinc-400 transition-colors hover:bg-white/[0.05] hover:text-zinc-200"
+            className="inline-flex h-6 items-center justify-center rounded-control px-1.5 font-mono text-ui-2xs tabular-nums text-zinc-400 transition-colors hover:bg-white/[0.05] hover:text-zinc-200"
         >
             {`${hh}:${mm}:${ss} ${zone}`}
         </button>
@@ -1292,7 +1292,7 @@ const TradeView: React.FC<TradeViewProps> = ({
                                     aria-pressed={chartScaleMode === 'percentage'}
                                     title="Toggle percentage price scale"
                                     onClick={() => setChartScaleMode(m => (m === 'percentage' ? 'normal' : 'percentage'))}
-                                    className={`rounded-control px-1.5 py-0.5 font-mono text-ui-2xs transition-colors ${
+                                    className={`inline-flex h-6 min-w-6 items-center justify-center rounded-control px-1.5 font-mono text-ui-2xs transition-colors ${
                                         chartScaleMode === 'percentage'
                                             ? 'bg-white/[0.10] text-zinc-100'
                                             : 'text-zinc-500 hover:bg-white/[0.05] hover:text-zinc-200'
@@ -1306,7 +1306,7 @@ const TradeView: React.FC<TradeViewProps> = ({
                                     aria-pressed={chartScaleMode === 'logarithmic'}
                                     title={chartScaleMode === 'logarithmic' ? 'Switch to linear price scale' : 'Switch to logarithmic price scale'}
                                     onClick={() => setChartScaleMode(m => (m === 'logarithmic' ? 'normal' : 'logarithmic'))}
-                                    className={`rounded-control px-1.5 py-0.5 font-mono text-ui-2xs transition-colors ${
+                                    className={`inline-flex h-6 min-w-6 items-center justify-center rounded-control px-1.5 font-mono text-ui-2xs transition-colors ${
                                         chartScaleMode === 'logarithmic'
                                             ? 'bg-white/[0.10] text-zinc-100'
                                             : 'text-zinc-500 hover:bg-white/[0.05] hover:text-zinc-200'
@@ -1320,7 +1320,7 @@ const TradeView: React.FC<TradeViewProps> = ({
                                     aria-pressed={chartAutoScale}
                                     title="Toggle auto-scale right price axis"
                                     onClick={() => setChartAutoScale(v => !v)}
-                                    className={`rounded-control px-1.5 py-0.5 font-mono text-ui-2xs transition-colors ${
+                                    className={`inline-flex h-6 min-w-6 items-center justify-center rounded-control px-1.5 font-mono text-ui-2xs transition-colors ${
                                         chartAutoScale
                                             ? 'bg-white/[0.10] text-zinc-100'
                                             : 'text-zinc-500 hover:bg-white/[0.05] hover:text-zinc-200'
@@ -1333,7 +1333,7 @@ const TradeView: React.FC<TradeViewProps> = ({
                                     data-testid="chart-reset-view"
                                     title="Reset chart view (Alt+R)"
                                     onClick={() => resetChartViewRef.current?.()}
-                                    className="rounded-control px-1.5 py-0.5 font-mono text-ui-2xs text-zinc-500 transition-colors hover:bg-white/[0.05] hover:text-zinc-200"
+                                    className="inline-flex h-6 min-w-6 items-center justify-center rounded-control px-1.5 font-mono text-ui-2xs text-zinc-500 transition-colors hover:bg-white/[0.05] hover:text-zinc-200"
                                 >
                                     Reset
                                 </button>

@@ -30,9 +30,11 @@ export interface TimeframeBarProps {
      * gear is unchanged.
      */
     compact?: boolean;
+    /** Single-line toolbar mode for the 36px Desk chart top bar (never wraps onto a second row). */
+    noWrap?: boolean;
 }
 
-const TimeframeBar: React.FC<TimeframeBarProps> = ({ interval, onIntervalChange, children, className, compact = false }) => {
+const TimeframeBar: React.FC<TimeframeBarProps> = ({ interval, onIntervalChange, children, className, compact = false, noWrap = false }) => {
     const [open, setOpen] = useState(false);
     const [menuOpen, setMenuOpen] = useState(false);
     /* This bar is rendered twice: on the chart, where a menu can hang below
@@ -71,7 +73,7 @@ const TimeframeBar: React.FC<TimeframeBarProps> = ({ interval, onIntervalChange,
     };
 
     return (
-        <div className={`relative flex shrink-0 flex-wrap items-center gap-1 ${className ?? 'px-3 py-1.5'}`}>
+        <div className={`relative flex shrink-0 ${noWrap ? 'flex-nowrap gap-0.5' : 'flex-wrap gap-1'} items-center ${className ?? 'px-3 py-1.5'}`}>
             {compact ? (
                 <>
                     <button type="button" data-testid="tf-compact" ref={chipRef}
@@ -121,7 +123,7 @@ const TimeframeBar: React.FC<TimeframeBarProps> = ({ interval, onIntervalChange,
                     key={tf}
                     type="button"
                     onClick={() => onIntervalChange(tf)}
-                    className={`rounded-control px-2.5 py-1 font-mono text-ui-dense font-medium tabular-nums transition-colors ${
+                    className={`shrink-0 rounded-control ${noWrap ? 'px-1.5 py-1' : 'px-2.5 py-1'} font-mono text-ui-dense font-medium tabular-nums transition-colors ${
                         interval === tf ? 'bg-white/[0.08] text-zinc-100' : 'text-zinc-500 hover:bg-white/[0.05] hover:text-zinc-200'
                     }`}
                 >
@@ -136,7 +138,7 @@ const TimeframeBar: React.FC<TimeframeBarProps> = ({ interval, onIntervalChange,
                 }}
                 aria-label="Customize timeframes" aria-expanded={open}
                 title="Choose which timeframes show in this bar"
-                className={`ml-0.5 flex h-6 w-6 items-center justify-center rounded-control transition-colors ${
+                className={`ml-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-control transition-colors ${
                     open ? 'bg-zinc-700 text-zinc-100' : 'text-zinc-500 hover:bg-white/[0.05] hover:text-zinc-200'
                 }`}>
                 <Settings className="h-3.5 w-3.5" aria-hidden="true" />
