@@ -771,6 +771,38 @@ export const setTraceHash = (sid: string, hash: string): void => { traceHashBySi
 const steeringBySid = new Map<string, string[]>();
 const followUpBySid = new Map<string, string[]>();
 
+/** Update the most recent live `TradeProposal` for `symbol` in session `sid`
+ *  (used when dragging an AI plan horizontal line on the chart so
+ *  `TradeProposalCard` reflects the adjusted level and recalculated math live). */
+export const updateLatestSymbolProposal = (
+    sid: string,
+    symbol: string,
+    updater: (proposal: TradeProposal) => TradeProposal | null,
+): boolean => {
+    ensureLoaded();
+    const target = sid || activeId;
+    const sess = sessions.find(s => s.id === target);
+    if (!sess) return false;
+    const upper = symbol.trim().toUpperCase();
+    let idx = -1;
+    for (let i = sess.entries.length - 1; i >= 0; i -= 1) {
+        const p = sess.entries[i].proposal;
+        if (p && p.symbol.trim().toUpperCase() === upper) {
+            idx = i;
+            break;
+        }
+    }
+    if (idx < 0) return false;
+    const current = sess.entries[idx].proposal!;
+    const nextProposal = updater(current);
+    if (!nextProposal) return false;
+    mutate(target, st => ({
+        ...st,
+        entries: st.entries.map((e, i) => (i === idx ? { ...e, proposal: nextProposal } : e)),
+    }));
+    return true;
+};
+
 /** The card's override: find the entry carrying this plan and mark the
  *  adversary verdict overridden — the 1-click "Arm anyway" writes here. */
 export const overrideAdversary = (planId: string): boolean => {

@@ -94,6 +94,19 @@ import {
     seedPositionBoxPoints,
     updatePositionBoxHandle,
 } from '../../services/trade/positionBoxMath';
+import {
+    applyAiLevelDragToProposal,
+    buildPositionBoxAuditPrompt,
+    classifyAiPlanLevelLabel,
+    computePaperHandlePreview,
+    computePositionBoxReadout,
+    parsePaperHandleId,
+    type PaperHandlePreview,
+    type PaperHandleTarget,
+    type PositionBoxSizing,
+} from '../../services/trade/positionHandleCore';
+import { getHarnessSettings, subscribeHarnessSettings } from '../../utils/harnessSettings';
+import type { PaperAccount } from '../../services/paper/paperCore';
 import { renderAnnotatedChartSnapshot, type SnapshotBadge } from '../../services/trade/chartSnapshotAnnotator';
 import { drawingsControl } from '../../services/trade/drawingsControl';
 import { countHiddenLowerTf } from '../../services/trade/chartGeometry';
@@ -856,8 +869,24 @@ const TradingChart: React.FC<TradingChartProps> = ({
     const [paperDrawings, setPaperDrawings] = useState<ReadonlyArray<ChartDrawing>>([]);
     const paperDrawingsRef = useRef<ReadonlyArray<ChartDrawing>>([]);
     paperDrawingsRef.current = paperDrawings;
+    const paperAccountRef = useRef<PaperAccount | null>(null);
     const [paperEnabled, setPaperEnabled] = useState(false);
     const [planMode, setPlanMode] = useState<boolean>(() => chatStore.getPlanMode(sessionId));
+    const planModeRef = useRef(planMode);
+    planModeRef.current = planMode;
+    const [harnessSizing, setHarnessSizing] = useState<PositionBoxSizing>(() => {
+        const s = getHarnessSettings();
+        return { equityUsd: s.equityUsd, riskPercent: s.riskPercent, leverage: s.defaultLeverage };
+    });
+    const harnessSizingRef = useRef<PositionBoxSizing>(harnessSizing);
+    harnessSizingRef.current = harnessSizing;
+    useEffect(() => subscribeHarnessSettings(() => {
+        const s = getHarnessSettings();
+        const acct = paperAccountRef.current;
+        const equity = s.equityUsd > 0 ? s.equityUsd : (acct?.cashBalanceUsd ?? 0);
+        setHarnessSizing({ equityUsd: equity, riskPercent: s.riskPercent, leverage: s.defaultLeverage });
+    }), []);
+    const [paperDragPreview, setPaperDragPreview] = useState<{ x: number; y: number; preview: PaperHandlePreview } | null>(null);
     useEffect(() => {
         setPlanMode(chatStore.getPlanMode(sessionId));
         return chatStore.subscribe(() => {
@@ -1016,15 +1045,24 @@ const TradingChart: React.FC<TradingChartProps> = ({
     // persisted drawing buckets.
     useEffect(() => {
         let alive = true;
-        const unsubscribe = subscribePaperAccount(account => {
-            if (!alive) return;
+        const applyAccount = (account: PaperAccount): void => {
+            paperAccountRef.current = account;
             setPaperEnabled(account.config.enabled === true);
             setPaperDrawings(paperDrawingsFromAccount(account, symbol));
+            const s = getHarnessSettings();
+            const equity = s.equityUsd > 0 ? s.equityUsd : account.cashBalanceUsd;
+            setHarnessSizing({
+                equityUsd: equity,
+                riskPercent: s.riskPercent,
+                leverage: s.defaultLeverage,
+                takerFeeBps: account.config.takerFeeBps,
+            });
+        };
+        const unsubscribe = subscribePaperAccount(account => {
+            if (alive) applyAccount(account);
         });
         void getPaperAccount().then(account => {
-            if (!alive) return;
-            setPaperEnabled(account.config.enabled === true);
-            setPaperDrawings(paperDrawingsFromAccount(account, symbol));
+            if (alive) applyAccount(account);
         }).catch(() => { /* no readable paper account — overlay stays empty */ });
         return () => { alive = false; unsubscribe(); };
     }, [symbol]);
@@ -1033,6 +1071,7 @@ const TradingChart: React.FC<TradingChartProps> = ({
     const syncPrimitive = useCallback((overrides?: {
         userDrawings?: ReadonlyArray<ChartDrawing>;
         modelDrawings?: ReadonlyArray<ChartDrawing>;
+        paperDrawings?: ReadonlyArray<ChartDrawing>;
         selectedId?: string | null;
         hoveredId?: string | null;
     }): void => {
@@ -1044,7 +1083,7 @@ const TradingChart: React.FC<TradingChartProps> = ({
         prim.setState({
             userDrawings: overrides?.userDrawings ?? drawingsRef.current,
             modelDrawings: overrides?.modelDrawings ?? modelDrawingsRef.current,
-            paperDrawings: paperDrawingsRef.current,
+            paperDrawings: overrides?.paperDrawings ?? paperDrawingsRef.current,
             selectedId: overrides?.selectedId !== undefined ? overrides.selectedId : selectedDrawingIdRef.current,
             hoveredId: overrides?.hoveredId !== undefined ? overrides.hoveredId : hoveredDrawingIdRef.current,
             spotlightId: spotlightIdRef.current,
@@ -1055,6 +1094,7 @@ const TradingChart: React.FC<TradingChartProps> = ({
             barSeconds: intervalSeconds(intervalRef.current),
             priceScaleMode: priceScaleModeRef.current,
             candles: bars,
+            sizing: harnessSizingRef.current,
         });
     }, []);
 
@@ -1079,7 +1119,7 @@ const TradingChart: React.FC<TradingChartProps> = ({
     useEffect(() => {
         syncPrimitive();
         scheduleRepaint();
-    }, [drawings, modelDrawings, paperDrawings, selectedDrawingId, visibilityScope, showLowerTfDrawings, interval, priceScaleMode, syncPrimitive, scheduleRepaint]);
+    }, [drawings, modelDrawings, paperDrawings, selectedDrawingId, visibilityScope, showLowerTfDrawings, interval, priceScaleMode, harnessSizing, syncPrimitive, scheduleRepaint]);
 
     // Apply Normal / Logarithmic / Percentage mode + AutoScale directly to lightweight-charts' right price scale.
     useEffect(() => {
@@ -1275,6 +1315,40 @@ const TradingChart: React.FC<TradingChartProps> = ({
             detail: { text: snippet, focus: true },
         }));
     }, []);
+
+    const handleStagePaperFromPositionBox = useCallback(async (sel: ChartDrawing): Promise<void> => {
+        if (!isPositionBoxKind(sel.kind)) return;
+        if (planMode) {
+            showChartNotice('Blocked in Plan Mode (read-only) — toggle Plan Mode off to stage paper orders');
+            return;
+        }
+        if (!paperEnabled) {
+            showChartNotice('Paper Mode is off — enable Paper Mode in Settings');
+            return;
+        }
+        const readout = computePositionBoxReadout(sel.kind, sel.points, harnessSizingRef.current);
+        if (!readout || readout.inverted) {
+            showChartNotice('Position box geometry is inverted — adjust SL/TP before staging');
+            return;
+        }
+        const side = readout.direction === 'Long' ? 'long' : 'short';
+        const receipt = await submitPaperOrder({
+            action: 'open_limit',
+            symbol,
+            side,
+            entry_price: readout.entry,
+            stop_loss: readout.stopLoss,
+            take_profits: [readout.takeProfit],
+            risk_pct: harnessSizingRef.current.riskPercent,
+            leverage: harnessSizingRef.current.leverage,
+            thesis: `Position box ${sel.shortId ?? ''} (${readout.direction} Net ${readout.netRR.toFixed(2)}R)`.trim(),
+        });
+        if (receipt.ok) {
+            showChartNotice(`Staged Paper ${readout.direction} @ $${fmtPriceForChart(readout.entry)} (SL $${fmtPriceForChart(readout.stopLoss)})`);
+        } else {
+            showChartNotice(`Paper refused: ${receipt.reason ?? receipt.error ?? 'blocked'}`);
+        }
+    }, [planMode, paperEnabled, symbol, showChartNotice]);
 
     const handleUndoDrawing = useCallback((): void => {
         const nextHistory = undoDrawingState(historyRef.current);
@@ -2979,6 +3053,16 @@ const TradingChart: React.FC<TradingChartProps> = ({
             latestDrawing: ChartDrawing;
         }
         let activeDrag: ActiveDrag | null = null;
+        interface ActivePaperDrag {
+            pointerId: number;
+            drawing: ChartDrawing;
+            target: PaperHandleTarget;
+            startY: number;
+            moved: boolean;
+            candidatePrice: number;
+            preview: PaperHandlePreview | null;
+        }
+        let activePaperDrag: ActivePaperDrag | null = null;
         let shiftMeasureActive: { pointerId: number; start: ScreenXY; startData: DrawPoint } | null = null;
         /** Pending passive-hover frame + where the pointer actually is. */
         let hoverFrame: number | null = null;
@@ -2996,6 +3080,65 @@ const TradingChart: React.FC<TradingChartProps> = ({
 
         const getAllDrawings = (): ChartDrawing[] =>
             drawingsHiddenRef.current ? [] : [...drawingsRef.current, ...modelDrawingsRef.current];
+
+        const getDraggablePaperDrawings = (): ChartDrawing[] =>
+            drawingsHiddenRef.current
+                ? []
+                : paperDrawingsRef.current.filter(d => parsePaperHandleId(d.id) !== null);
+
+        const finishPaperDrag = (commit: boolean): void => {
+            const pDrag = activePaperDrag;
+            activePaperDrag = null;
+            setPaperDragPreview(null);
+            unlockChart();
+            host.style.cursor = '';
+            if (!pDrag) return;
+            const revert = (): void => {
+                syncPrimitive({ paperDrawings: paperDrawingsRef.current });
+            };
+            if (!commit || !pDrag.moved) {
+                revert();
+                return;
+            }
+            if (planModeRef.current) {
+                revert();
+                showChartNotice('Blocked in Plan Mode (read-only) — paper SL/TP unchanged');
+                return;
+            }
+            if (!pDrag.preview || !pDrag.preview.valid) {
+                revert();
+                showChartNotice(pDrag.preview?.pillText ?? 'Invalid SL/TP price — reverted');
+                return;
+            }
+            const account = paperAccountRef.current;
+            const pos = account?.positions.find(p => p.id === pDrag.target.positionId);
+            if (!pos) {
+                revert();
+                return;
+            }
+            const nextPrice = pDrag.candidatePrice;
+            const orderInput = pDrag.target.kind === 'sl'
+                ? {
+                    action: 'modify_sl_tp' as const,
+                    symbol: pos.symbol,
+                    position_id: pos.id,
+                    stop_loss: nextPrice,
+                }
+                : {
+                    action: 'modify_sl_tp' as const,
+                    symbol: pos.symbol,
+                    position_id: pos.id,
+                    take_profits: pos.takeProfits.map((tp, idx) => (idx === (pDrag.target as { tpIndex: number }).tpIndex ? nextPrice : tp)),
+                };
+            void submitPaperOrder(orderInput).then(receipt => {
+                if (receipt.ok) {
+                    showChartNotice(`Updated paper ${pDrag.preview!.label} @ $${fmtPriceForChart(nextPrice)}`);
+                } else {
+                    revert();
+                    showChartNotice(`Modify refused: ${receipt.reason ?? receipt.error ?? 'blocked'}`);
+                }
+            });
+        };
 
         const applyLiveDrawing = (isModel: boolean, updated: ChartDrawing): void => {
             if (isModel) {
@@ -3020,6 +3163,36 @@ const TradingChart: React.FC<TradingChartProps> = ({
             if (commit && drag.moved) {
                 const bumped = bumpDrawingVersion(drag.latestDrawing);
                 if (drag.isModel) {
+                    // If this is an AI Plan horizontal line (Entry / SL / TP1..3),
+                    // sync the updated price live to the unapproved TradeProposalCard
+                    // and revert cleanly if the drag inverted Long/Short geometry.
+                    const levelKind = bumped.kind === 'hline' ? classifyAiPlanLevelLabel(bumped.label) : null;
+                    if (levelKind && bumped.points[0]) {
+                        let invalidReason: string | null = null;
+                        let synced = false;
+                        chatStore.updateLatestSymbolProposal(sessionId, symbol, proposal => {
+                            const res = applyAiLevelDragToProposal(
+                                proposal,
+                                levelKind,
+                                bumped.points[0].p,
+                                harnessSizingRef.current,
+                            );
+                            if (!res.ok || !res.proposal) {
+                                invalidReason = res.reason ?? 'Invalid plan geometry';
+                                return null;
+                            }
+                            synced = true;
+                            return res.proposal;
+                        });
+                        if (invalidReason) {
+                            applyLiveDrawing(true, drag.origDrawing);
+                            showChartNotice(`Reverted — ${invalidReason}`);
+                            return;
+                        }
+                        if (synced) {
+                            showChartNotice(`Synced AI ${bumped.label ?? levelKind.toUpperCase()} @ $${fmtPriceForChart(bumped.points[0].p)}`);
+                        }
+                    }
                     const nextModel = modelDrawingsRef.current.map(d => (d.id === bumped.id ? bumped : d));
                     commitDrawingChange(drawingsRef.current, nextModel);
                 } else {
@@ -3093,6 +3266,30 @@ const TradingChart: React.FC<TradingChartProps> = ({
             }
             const { plotW, plotH } = plotBounds();
             if (pt.x > plotW || pt.y > plotH) return;
+            // Check draggable paper SL/TP handles first when pointer sits on one.
+            const paperLines = getDraggablePaperDrawings();
+            if (paperLines.length > 0) {
+                const paperHit = hitTestDrawings(pt.x, pt.y, paperLines, null, toScreen, plotW, plotH);
+                const parsed = paperHit ? parsePaperHandleId(paperHit.drawing.id) : null;
+                if (paperHit && parsed) {
+                    ev.stopPropagation();
+                    ev.preventDefault();
+                    setInspector(null);
+                    activePaperDrag = {
+                        pointerId: ev.pointerId,
+                        drawing: paperHit.drawing,
+                        target: parsed,
+                        startY: pt.y,
+                        moved: false,
+                        candidatePrice: paperHit.drawing.points[0]?.p ?? 0,
+                        preview: null,
+                    };
+                    lockChart();
+                    host.style.cursor = 'ns-resize';
+                    try { host.setPointerCapture?.(ev.pointerId); } catch { /* synthetic events */ }
+                    return;
+                }
+            }
             const hit = hitTestDrawings(
                 pt.x,
                 pt.y,
@@ -3169,6 +3366,37 @@ const TradingChart: React.FC<TradingChartProps> = ({
                     });
                 }
                 scheduleRepaint();
+                return;
+            }
+            if (activePaperDrag) {
+                ev.stopPropagation();
+                ev.preventDefault();
+                if (!activePaperDrag.moved && Math.abs(rawPt.y - activePaperDrag.startY) < 2) return;
+                const dp = toData(rawPt.x, rawPt.y);
+                if (!dp) return;
+                activePaperDrag.moved = true;
+                activePaperDrag.candidatePrice = dp.p;
+                const movedPaper = paperDrawingsRef.current.map(d => (
+                    d.id === activePaperDrag!.drawing.id
+                        ? { ...d, points: [{ t: d.points[0].t, p: dp.p }] }
+                        : d
+                ));
+                syncPrimitive({ paperDrawings: movedPaper });
+                const pos = paperAccountRef.current?.positions.find(p => p.id === activePaperDrag!.target.positionId);
+                if (pos) {
+                    const preview = computePaperHandlePreview({
+                        position: pos,
+                        target: activePaperDrag.target,
+                        candidatePrice: dp.p,
+                    });
+                    activePaperDrag.preview = preview;
+                    const hostW = host.clientWidth || 600;
+                    setPaperDragPreview({
+                        x: Math.min(Math.max(8, rawPt.x + 14), Math.max(8, hostW - 220)),
+                        y: Math.max(8, rawPt.y - 28),
+                        preview,
+                    });
+                }
                 return;
             }
             if (activeDrag) {
@@ -3273,6 +3501,18 @@ const TradingChart: React.FC<TradingChartProps> = ({
                 clearHover();
                 return;
             }
+            const paperLines = getDraggablePaperDrawings();
+            if (paperLines.length > 0) {
+                const paperHit = hitTestDrawings(pt.x, pt.y, paperLines, null, toScreen, plotW, plotH);
+                if (paperHit) {
+                    if (host.style.cursor !== 'ns-resize') host.style.cursor = 'ns-resize';
+                    if (hoveredDrawingIdRef.current !== null) {
+                        hoveredDrawingIdRef.current = null;
+                        syncPrimitive({ hoveredId: null });
+                    }
+                    return;
+                }
+            }
             const drawings = getAllDrawings();
             if (drawings.length === 0) {
                 clearHover();
@@ -3305,6 +3545,12 @@ const TradingChart: React.FC<TradingChartProps> = ({
         };
 
         const onCapturePointerUp = (ev: PointerEvent): void => {
+            if (activePaperDrag) {
+                ev.stopPropagation();
+                try { host.releasePointerCapture?.(ev.pointerId); } catch { /* ignore */ }
+                finishPaperDrag(true);
+                return;
+            }
             if (shiftMeasureActive) {
                 ev.stopPropagation();
                 try { host.releasePointerCapture?.(ev.pointerId); } catch { /* ignore */ }
@@ -3323,6 +3569,11 @@ const TradingChart: React.FC<TradingChartProps> = ({
         };
 
         const onCapturePointerCancel = (ev: PointerEvent): void => {
+            if (activePaperDrag) {
+                try { host.releasePointerCapture?.(ev.pointerId); } catch { /* ignore */ }
+                finishPaperDrag(false);
+                return;
+            }
             if (shiftMeasureActive) {
                 try { host.releasePointerCapture?.(ev.pointerId); } catch { /* ignore */ }
                 shiftMeasureActive = null;
@@ -3339,6 +3590,7 @@ const TradingChart: React.FC<TradingChartProps> = ({
         };
 
         const onWindowBlur = (): void => {
+            if (activePaperDrag) finishPaperDrag(false);
             if (activeDrag) finishDrag(false);
             else unlockChart();
         };
@@ -3398,7 +3650,7 @@ const TradingChart: React.FC<TradingChartProps> = ({
             unlockChart();
             host.style.cursor = '';
         };
-    }, [toScreen, toData, magnetPoint, syncPrimitive, commitDrawingChange, scheduleRepaint, indicatorSettings.visible.avwap]);
+    }, [toScreen, toData, magnetPoint, syncPrimitive, commitDrawingChange, scheduleRepaint, indicatorSettings.visible.avwap, sessionId, symbol, showChartNotice]);
 
     // ─── Pointer capture on the overlay (only while a drawing tool is active) ───
     const localPoint = (ev: React.PointerEvent): { x: number; y: number } => {
@@ -4131,6 +4383,21 @@ const TradingChart: React.FC<TradingChartProps> = ({
                         {measureReadout.metrics.formattedSummary}
                     </div>
                 )}
+                {paperDragPreview && (
+                    <div
+                        data-testid="paper-handle-preview-pill"
+                        style={{ transform: `translate3d(${paperDragPreview.x}px, ${paperDragPreview.y}px, 0)` }}
+                        className={`pointer-events-none absolute left-0 top-0 z-30 whitespace-nowrap rounded-control border border-hairline bg-zinc-950/95 px-2 py-1 font-mono text-ui-dense tabular-nums shadow-elevated will-change-transform ${
+                            !paperDragPreview.preview.valid
+                                ? 'text-rose-400'
+                                : paperDragPreview.preview.pnlUsd >= 0
+                                    ? 'text-emerald-400'
+                                    : 'text-rose-400'
+                        }`}
+                    >
+                        {paperDragPreview.preview.pillText}
+                    </div>
+                )}
                 <HoverLegend
                     store={hoverReadout}
                     expanded={legendExpanded}
@@ -4357,6 +4624,44 @@ const TradingChart: React.FC<TradingChartProps> = ({
                                 <MessageSquare className="h-3 w-3" aria-hidden="true" />
                                 <span>Ask</span>
                             </button>
+                            {isPositionBoxKind(sel.kind) && (() => {
+                                const boxReadout = computePositionBoxReadout(sel.kind, sel.points, harnessSizing);
+                                if (!boxReadout) return null;
+                                const stageDisabled = planMode || !paperEnabled || boxReadout.inverted;
+                                const stageTitle = planMode
+                                    ? 'Disabled in Plan Mode (read-only)'
+                                    : !paperEnabled
+                                        ? 'Enable Paper Mode in Settings'
+                                        : boxReadout.inverted
+                                            ? 'Position geometry is inverted'
+                                            : `Stage Paper ${boxReadout.direction} @ $${fmtPriceForChart(boxReadout.entry)}`;
+                                return (
+                                    <>
+                                        <span className="mx-1 h-3.5 w-px bg-white/[0.10]" aria-hidden />
+                                        <button
+                                            type="button"
+                                            data-testid="position-box-audit-btn"
+                                            title="Audit this position box with August"
+                                            onClick={() => handleAskAugust(buildPositionBoxAuditPrompt(symbol, boxReadout, sel.shortId))}
+                                            className="flex h-6 items-center rounded-control px-1.5 font-mono text-ui-2xs text-zinc-200 transition-colors hover:bg-white/[0.06] hover:text-zinc-50"
+                                        >
+                                            Audit
+                                        </button>
+                                        <button
+                                            type="button"
+                                            data-testid="position-box-stage-paper-btn"
+                                            disabled={stageDisabled}
+                                            title={stageTitle}
+                                            onClick={() => { void handleStagePaperFromPositionBox(sel); }}
+                                            className={`flex h-6 items-center rounded-control border border-hairline px-1.5 font-mono text-ui-2xs transition-colors hover:bg-white/[0.06] disabled:cursor-not-allowed disabled:opacity-40 ${
+                                                boxReadout.direction === 'Long' ? 'text-emerald-400' : 'text-rose-400'
+                                            }`}
+                                        >
+                                            Stage Paper
+                                        </button>
+                                    </>
+                                );
+                            })()}
                             <span className="mx-1 h-3.5 w-px bg-white/[0.10]" aria-hidden />
                             <button
                                 type="button"

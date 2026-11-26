@@ -25,7 +25,6 @@ import type {
     Time,
 } from 'lightweight-charts';
 import {
-    createDrawingId,
     drawWidthOf,
     FIB_RATIOS,
     type ChartDrawing,
@@ -43,6 +42,14 @@ import {
     computePositionBoxMetrics,
     isPositionBoxKind,
 } from '../../services/trade/positionBoxMath';
+import {
+    computePositionBoxReadout,
+    paperEntryDrawingId,
+    paperLimitDrawingId,
+    paperSlDrawingId,
+    paperTpDrawingId,
+    type PositionBoxSizing,
+} from '../../services/trade/positionHandleCore';
 import {
     handlePointsForDrawing,
     projectTimestampToX,
@@ -70,6 +77,8 @@ export interface DrawingsPrimitiveState {
     /** When true, lower-TF drawings the active timeframe would hide are drawn
      *  anyway (the "N lower-TF hidden" pill's temporary reveal). */
     includeLowerTf?: boolean;
+    /** Optional trader sizing defaults for smart Long/Short Position Box readouts. */
+    sizing?: PositionBoxSizing | null;
 }
 
 interface ProjectedShape {
@@ -112,6 +121,7 @@ class CommittedDrawingsRenderer implements IPrimitivePaneRenderer {
     private priceAtCoord: (y: number) => number | null = () => null;
     private priceToCoord: (p: number) => number | null = () => null;
     private spotlightId: string | null = null;
+    private sizing: PositionBoxSizing | null = null;
 
     setRenderData(
         shapes: ProjectedShape[],
@@ -119,12 +129,14 @@ class CommittedDrawingsRenderer implements IPrimitivePaneRenderer {
         priceAtCoord: (y: number) => number | null,
         priceToCoord: (p: number) => number | null,
         spotlightId: string | null = null,
+        sizing: PositionBoxSizing | null = null,
     ): void {
         this.shapes = shapes;
         this.priceScaleMode = priceScaleMode;
         this.priceAtCoord = priceAtCoord;
         this.priceToCoord = priceToCoord;
         this.spotlightId = spotlightId;
+        this.sizing = sizing;
     }
 
     draw(target: Parameters<IPrimitivePaneRenderer['draw']>[0]): void {
@@ -418,22 +430,22 @@ class CommittedDrawingsRenderer implements IPrimitivePaneRenderer {
                         strokePolyline([{ x: left, y: slPt.y }, { x: left + boxW, y: slPt.y }], riskStroke, 1.4, dashed ? [5, 3] : []);
                         strokePolyline([{ x: left, y: entryPt.y }, { x: left + boxW, y: entryPt.y }], '#e4e4e7', 1.4, dashed ? [5, 3] : []);
 
-                        // Live R:R stats bar anchored near Entry midline, offset
-                        // past the left drag handle — OKX's position-box layout:
-                        // a direction pill, then `Target +x% · R:R x · Stop -x%`
-                        // on one line, each step separated so nothing overlaps.
-                        if (metrics) {
-                            const dirLabel = drawing.kind === 'long_position' ? 'LONG' : 'SHORT';
+                        // Live R:R + Risk $ + Qty + Liq % stats bar anchored near Entry midline,
+                        // offset past the left drag handle.
+                        const readout = computePositionBoxReadout(drawing.kind, drawing.points, this.sizing);
+                        if (readout || metrics) {
                             const headLabel = drawing.label ? `${drawing.label} · ` : '';
                             const prefix = isAgent ? `AI · ${headLabel}` : headLabel;
-                            const stats = `Target +${metrics.rewardPct.toFixed(2)}% · R:R ${metrics.formattedRR} · Stop -${metrics.riskPct.toFixed(2)}%`;
-                            const full = `${prefix}${dirLabel}  ${stats}`;
+                            const body = readout
+                                ? readout.canvasBadge
+                                : `${drawing.kind === 'long_position' ? 'LONG' : 'SHORT'}  Target +${metrics!.rewardPct.toFixed(2)}% · R:R ${metrics!.formattedRR} · Stop -${metrics!.riskPct.toFixed(2)}%`;
+                            const inverted = readout ? readout.inverted : Boolean(metrics?.inverted);
                             drawTagChip(
                                 left + 10,
                                 entryPt.y - 7,
-                                full,
-                                metrics.inverted ? '#fda4af' : '#f4f4f5',
-                                metrics.inverted ? 'rgba(136, 19, 55, 0.90)' : 'rgba(9, 9, 11, 0.90)',
+                                `${prefix}${body}`,
+                                inverted ? '#fda4af' : '#f4f4f5',
+                                inverted ? 'rgba(136, 19, 55, 0.90)' : 'rgba(9, 9, 11, 0.90)',
                                 dashed,
                             );
                         }
@@ -602,8 +614,9 @@ class CommittedDrawingsPaneView implements IPrimitivePaneView {
         priceAtCoord: (y: number) => number | null,
         priceToCoord: (p: number) => number | null,
         spotlightId: string | null = null,
+        sizing: PositionBoxSizing | null = null,
     ): void {
-        this._renderer.setRenderData(shapes, priceScaleMode, priceAtCoord, priceToCoord, spotlightId);
+        this._renderer.setRenderData(shapes, priceScaleMode, priceAtCoord, priceToCoord, spotlightId, sizing);
     }
 }
 
@@ -740,7 +753,10 @@ export class ChartDrawingsPrimitive implements ISeriesPrimitive<Time> {
                 && prev.activeTf === next.activeTf
                 && prev.barSeconds === next.barSeconds
                 && prev.priceScaleMode === next.priceScaleMode
-                && prev.candles === next.candles);
+                && prev.candles === next.candles
+                && prev.sizing?.equityUsd === next.sizing?.equityUsd
+                && prev.sizing?.riskPercent === next.sizing?.riskPercent
+                && prev.sizing?.leverage === next.sizing?.leverage);
     }
 
     setState(next: DrawingsPrimitiveState): void {
@@ -831,7 +847,14 @@ export class ChartDrawingsPrimitive implements ISeriesPrimitive<Time> {
             return y === null || y === undefined || !Number.isFinite(Number(y)) ? null : Number(y);
         };
 
-        this.committedView.update(projected, this.state.priceScaleMode, priceAtCoord, priceToCoord, this.state.spotlightId ?? null);
+        this.committedView.update(
+            projected,
+            this.state.priceScaleMode,
+            priceAtCoord,
+            priceToCoord,
+            this.state.spotlightId ?? null,
+            this.state.sizing ?? null,
+        );
         this.selectionView.update(selectedShape, hoveredShape);
         this.rebuildAxisViews();
     }
@@ -844,12 +867,13 @@ export class ChartDrawingsPrimitive implements ISeriesPrimitive<Time> {
 // palette. Nothing here writes back to the account or to either drawing list.
 
 const PAPER_ENTRY_COLOR = '#f4f1ea';
-const PAPER_TP_COLOR = '#e4e4e7';
+const PAPER_TP_COLOR = '#10b981';
+const PAPER_SL_COLOR = '#f43f5e';
 const PAPER_LEVEL_COLOR = '#a1a1aa';
 
 /** Build ephemeral horizontal lines for open paper positions and resting
- *  limits. Pure: the account is read-only and the result is safe to hand to
- *  `DrawingsPrimitiveState.paperDrawings` on every account notification. */
+ *  limits with deterministic IDs (`paper:<posId>:sl`, `paper:<posId>:tp:<idx>`)
+ *  so SL/TP lines are directly draggable on the chart. */
 export const paperDrawingsFromAccount = (
     account: Pick<PaperAccount, 'positions' | 'pendingOrders'> | null | undefined,
     symbol?: string,
@@ -859,26 +883,27 @@ export const paperDrawingsFromAccount = (
     const targetSymbol = typeof symbol === 'string' && symbol.trim() ? symbol.trim().toUpperCase() : null;
     const out: ChartDrawing[] = [];
     const t = nowMs / 1000;
-    const add = (price: number, label: string, color: string): void => {
+    const add = (id: string, price: number, label: string, color: string): void => {
         if (!Number.isFinite(price) || price <= 0) return;
         out.push({
-            id: createDrawingId(),
+            id,
             kind: 'hline',
             points: [{ t, p: price }],
             color,
             createdAt: nowMs,
             label,
+            persistAcrossTf: true,
         });
     };
     for (const position of account.positions ?? []) {
         if (targetSymbol && position.symbol.toUpperCase() !== targetSymbol) continue;
-        add(position.entryPrice, `PAPER ${position.side === 'short' ? 'SHORT' : 'LONG'}`, PAPER_ENTRY_COLOR);
-        add(position.stopLoss, 'SL', PAPER_LEVEL_COLOR);
-        (position.takeProfits ?? []).forEach((tp, i) => add(tp, `TP${i + 1}`, PAPER_TP_COLOR));
+        add(paperEntryDrawingId(position.id), position.entryPrice, `PAPER ${position.side === 'short' ? 'SHORT' : 'LONG'}`, PAPER_ENTRY_COLOR);
+        add(paperSlDrawingId(position.id), position.stopLoss, 'SL', PAPER_SL_COLOR);
+        (position.takeProfits ?? []).forEach((tp, i) => add(paperTpDrawingId(position.id, i), tp, `TP${i + 1}`, PAPER_TP_COLOR));
     }
     for (const order of account.pendingOrders ?? []) {
         if (targetSymbol && order.symbol.toUpperCase() !== targetSymbol) continue;
-        add(order.limitPrice, 'LIMIT', PAPER_LEVEL_COLOR);
+        add(paperLimitDrawingId(order.id), order.limitPrice, 'LIMIT', PAPER_LEVEL_COLOR);
     }
     return out;
 };
