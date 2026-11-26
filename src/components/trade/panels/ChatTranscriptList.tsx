@@ -50,7 +50,8 @@ import {
     ruleProposalStateOf, ruleProposalRevertOf, type RuleProposal,
 } from '../../../services/learning/candidateRuleLoop';
 import StatsCard from './StatsCard';
-import { ContextDiagnosticCard, DoctorDiagnosticCard } from './DiagnosticCards';
+import { CompactReceiptCard, ContextDiagnosticCard, DoctorDiagnosticCard } from './DiagnosticCards';
+import { hasCompactUndo } from '../../../services/trade/compactUndoStore';
 import { getArmedPlans } from '../../../services/trade/levelWatchService';
 import type { GuardEnforcement } from '../../../services/validation/SessionGuardService';
 import type { LoggedTrade } from '../../../types';
@@ -344,6 +345,8 @@ interface ChatTranscriptListProps {
     /** Read-only Plan Mode state + unlock handler for TradeProposalCard. */
     planMode?: boolean;
     onUnlockPlanMode?: () => void;
+    /** 1-click Undo callback for in-place `/compact` checkpoint receipts. */
+    onUndoCompact?: (undoId: string) => void;
 }
 
 const ChatTranscriptList: React.FC<ChatTranscriptListProps> = ({
@@ -358,7 +361,7 @@ const ChatTranscriptList: React.FC<ChatTranscriptListProps> = ({
     onConfirmStrategyActivation, onDismissStrategyActivation, onRevertStrategyActivation,
     onConfirmSessionPlan, onDismissSessionPlan, onRevertSessionPlan,
     onConfirmRuleProposal, onDismissRuleProposal, onRevertRuleProposal,
-    planMode = false, onUnlockPlanMode,
+    planMode = false, onUnlockPlanMode, onUndoCompact,
 }) => {
     /** Re-render trigger for the module-scope proposal dispositions (see
      *  proposalDisposition): the disposition itself must SURVIVE a dock
@@ -861,6 +864,15 @@ const ChatTranscriptList: React.FC<ChatTranscriptListProps> = ({
                         )}
                         {e.doctorDiagnostic && (
                             <DoctorDiagnosticCard snapshot={e.doctorDiagnostic} />
+                        )}
+                        {e.compactReceipt && (
+                            <CompactReceiptCard
+                                snapshot={e.compactReceipt}
+                                canUndo={!!(e.compactReceipt.undoId && hasCompactUndo(e.compactReceipt.undoId))}
+                                onUndo={e.compactReceipt.undoId && onUndoCompact
+                                    ? () => onUndoCompact(e.compactReceipt!.undoId!)
+                                    : undefined}
+                            />
                         )}
                         {e.proposal && (!proposalStateOf(e.id) || (proposalStateOf(e.id) === 'logged' && !!undoWindowOf(e.id))) && (
                             <TradeProposalCard

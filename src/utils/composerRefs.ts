@@ -65,7 +65,7 @@ export const focusLineForRefs = (refs: ComposerRefs): string => {
     return parts.length > 0 ? `[TRADER FOCUS — prioritize: ${parts.join(' · ')}]` : '';
 };
 
-export const SLASH_TEMPLATES = ['plan', 'context', 'doctor', 'dream', 'brief', 'audit', 'scan', 'handoff'] as const;
+export const SLASH_TEMPLATES = ['plan', 'context', 'compact', 'doctor', 'dream', 'brief', 'audit', 'scan', 'handoff'] as const;
 export type SlashTemplate = (typeof SLASH_TEMPLATES)[number];
 
 export interface SlashCommandSuggestion {
@@ -77,6 +77,7 @@ export interface SlashCommandSuggestion {
 export const SLASH_COMMAND_SUGGESTIONS: readonly SlashCommandSuggestion[] = [
     { command: 'plan', usage: '/plan [on|off]', description: 'Toggle read-only Plan Mode (locks execution & writes)' },
     { command: 'context', usage: '/context', description: 'Inspect session token breakdown & compaction headroom' },
+    { command: 'compact', usage: '/compact [focus]', description: 'Compress older turns into an in-place checkpoint (0 LLM tokens)' },
     { command: 'doctor', usage: '/doctor', description: 'Run 6-subsystem harness health diagnostics' },
     { command: 'dream', usage: '/dream', description: 'Consolidate curated memory files (0 LLM tokens)' },
     { command: 'brief', usage: '/brief [focus]', description: 'Structured multi-TF desk brief on active symbol' },
@@ -102,7 +103,7 @@ export const parsePlanSlashArgs = (rest: string): PlanSlashAction => {
 
 /** The draft's slash template, or null. Matches only at position 0. */
 export const slashTemplateOf = (text: string): SlashTemplate | null => {
-    const m = /^\/(plan|context|doctor|dream|brief|audit|scan|handoff)\b/i.exec(text.trim());
+    const m = /^\/(plan|context|compact|doctor|dream|brief|audit|scan|handoff)\b/i.exec(text.trim());
     return m ? (m[1].toLowerCase() as SlashTemplate) : null;
 };
 
@@ -149,6 +150,7 @@ export const expandSlashTemplate = (
             return `Scan for confluence on my watchlist: run scan_confluence across the symbols I trade and rank what agrees across timeframes.${tail ? ` Symbols: ${tail}` : ''}`;
         case 'plan':
         case 'context':
+        case 'compact':
         case 'doctor':
         case 'handoff':
         case 'dream':

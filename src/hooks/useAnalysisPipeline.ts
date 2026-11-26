@@ -782,6 +782,76 @@ export function useAnalysisPipeline(params: UseAnalysisPipelineParams) {
             }], activeConversationId);
             return { ok: true };
         }
+        const compactMatch = /^\/compact(?:\s+([\s\S]*))?$/i.exec(trimmedCmd);
+        if (compactMatch) {
+            const [
+                { compactConversationEntries },
+                { saveCompactUndo },
+                { readToolPayload },
+                { getPaperAccount },
+                levelWatch,
+            ] = await Promise.all([
+                import('../services/trade/compactCore'),
+                import('../services/trade/compactUndoStore'),
+                import('../services/trade/toolPayloadStore'),
+                import('../services/paper/PaperBrokerService'),
+                import('../services/trade/levelWatchService'),
+            ]);
+            const priorMessages = [...messagesRef.current];
+            const compactInput = priorMessages.map(m => ({
+                id: m.id,
+                role: (m.role === MessageRole.USER ? 'user' : 'ai') as 'user' | 'ai',
+                text: m.text ?? '',
+                tools: m.toolEvents,
+                toolIds: m.toolIds,
+                at: Date.parse(m.createdAt || '') || undefined,
+            }));
+            const paperAcct = await getPaperAccount().catch(() => null);
+            const armedWatches = levelWatch.getArmedPlans().map(p => ({
+                symbol: p.symbol,
+                direction: p.direction,
+                price: p.entry,
+                planId: p.planId,
+            }));
+            const result = compactConversationEntries({
+                entries: compactInput,
+                keepRecentTurns: 2,
+                focus: (compactMatch[1] ?? '').trim() || undefined,
+                openPaperPositions: paperAcct?.positions ?? [],
+                armedWatches,
+                toolPayloadLookup: tid => readToolPayload(tid)?.text ?? null,
+            });
+            setInput('');
+            if (!result.compacted) {
+                updateMessages(prev => [...prev, {
+                    id: `user-${Date.now()}`,
+                    role: MessageRole.USER,
+                    text: trimmedCmd,
+                    createdAt: new Date().toISOString(),
+                }, {
+                    id: `compact-${Date.now() + 1}`,
+                    role: MessageRole.AI,
+                    text: '',
+                    toolEvents: [`Compact · ${result.reason ?? 'Nothing older to compact'} · 0 LLM tokens`],
+                    compactReceipt: result.receipt,
+                    createdAt: new Date().toISOString(),
+                }], activeConversationId);
+                return { ok: true };
+            }
+            const keptIds = new Set(result.retainedEntries.map(e => e.id));
+            const retainedMessages = priorMessages.filter(m => keptIds.has(m.id));
+            const undoId = `cmp-${Date.now()}`;
+            saveCompactUndo(undoId, { kind: 'chat', targetId: activeConversationId ?? '', messages: priorMessages });
+            const checkpointMsg: Message = {
+                id: `compact-${Date.now()}`,
+                role: MessageRole.AI,
+                text: result.checkpointText,
+                compactReceipt: { ...result.receipt, undoId },
+                createdAt: new Date().toISOString(),
+            };
+            updateMessages(() => [checkpointMsg, ...retainedMessages], activeConversationId);
+            return { ok: true };
+        }
         if (/^\/doctor\b/i.test(trimmedCmd)) {
             const [
                 { collectDoctorDiagnostic },
@@ -1759,6 +1829,18 @@ export function useAnalysisPipeline(params: UseAnalysisPipelineParams) {
         setSteeringFor(activeConversationId, []);
         void drainSendRef.current?.(queuedDrain.join('\n'));
     }, [activeConversationId, isAnalysisInProgress]);
+
+    useEffect(() => {
+        const onUndoCompact = (ev: Event): void => {
+            const detail = (ev as CustomEvent<{ targetId?: string; messages?: Message[] }>).detail;
+            if (!detail || !Array.isArray(detail.messages)) return;
+            const targetId = detail.targetId || activeConversationIdRef.current;
+            if (!targetId) return;
+            updateMessages(() => detail.messages!, targetId);
+        };
+        window.addEventListener('august:undo-compact', onUndoCompact);
+        return () => window.removeEventListener('august:undo-compact', onUndoCompact);
+    }, [updateMessages]);
 
     return {
         // State

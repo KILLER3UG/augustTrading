@@ -879,6 +879,82 @@ ${riskConstitution}`
             }));
             return;
         }
+        if (template === 'compact') {
+            setDraft('');
+            const [
+                { compactConversationEntries },
+                { saveCompactUndo },
+                { readToolPayload },
+                { getPaperAccount },
+            ] = await Promise.all([
+                import('../../services/trade/compactCore'),
+                import('../../services/trade/compactUndoStore'),
+                import('../../services/trade/toolPayloadStore'),
+                import('../../services/paper/PaperBrokerService'),
+            ]);
+            const sid = activeSession.id;
+            const priorEntries = [...(activeSession.entries ?? [])];
+            const snap = getChartSnapshot?.();
+            const pinnedDrawings = [
+                ...(snap?.drawings ?? []),
+                ...(modelDrawings ?? []),
+            ];
+            const armedWatches = levelWatch.getArmedPlans().map(p => ({
+                symbol: p.symbol,
+                direction: p.direction,
+                price: p.entry,
+                planId: p.planId,
+            }));
+            const paperAcct = await getPaperAccount().catch(() => null);
+            const result = compactConversationEntries({
+                entries: priorEntries,
+                keepRecentTurns: 2,
+                focus: rest.trim() || undefined,
+                activeSymbol: symbol,
+                activeInterval: interval,
+                pinnedDrawings,
+                openPaperPositions: paperAcct?.positions ?? [],
+                armedWatches,
+                toolPayloadLookup: tid => readToolPayload(tid)?.text ?? null,
+            });
+            if (!result.compacted) {
+                chatStore.mutate(sid, st => ({
+                    ...st,
+                    updatedAt: Date.now(),
+                    entries: [
+                        ...st.entries,
+                        { id: newId('u'), role: 'user' as const, text: raw.trim(), tools: [], at: Date.now() },
+                        {
+                            id: newId('a'),
+                            role: 'ai' as const,
+                            text: '',
+                            tools: [`Compact · ${result.reason ?? 'Nothing older to compact'} · 0 LLM tokens`],
+                            compactReceipt: result.receipt,
+                            at: Date.now(),
+                        },
+                    ],
+                }));
+                return;
+            }
+            const undoId = newId('cmp');
+            saveCompactUndo(undoId, { kind: 'desk', targetId: sid, entries: priorEntries });
+            chatStore.mutate(sid, st => ({
+                ...st,
+                updatedAt: Date.now(),
+                entries: [
+                    {
+                        id: newId('a'),
+                        role: 'ai' as const,
+                        text: result.checkpointText,
+                        tools: [],
+                        compactReceipt: { ...result.receipt, undoId },
+                        at: Date.now(),
+                    },
+                    ...result.retainedEntries,
+                ],
+            }));
+            return;
+        }
         if (template === 'doctor') {
             setDraft('');
             const { collectDoctorDiagnostic } = await import('../../services/trade/diagnosticsRuntime');
@@ -1554,6 +1630,25 @@ ${riskConstitution}`
     const handleRunContext = useCallback((): void => {
         void send('/context');
     }, [send]);
+    const handleUndoCompact = useCallback((undoId: string): void => {
+        void import('../../services/trade/compactUndoStore').then(({ takeCompactUndo }) => {
+            const rec = takeCompactUndo(undoId);
+            if (!rec) return;
+            if (rec.kind === 'desk' && Array.isArray(rec.entries)) {
+                chatStore.mutate(rec.targetId, st => ({
+                    ...st,
+                    updatedAt: Date.now(),
+                    entries: rec.entries as LiveEntry[],
+                }));
+                return;
+            }
+            if (rec.kind === 'chat' && Array.isArray(rec.messages)) {
+                window.dispatchEvent(new CustomEvent('august:undo-compact', {
+                    detail: { targetId: rec.targetId, messages: rec.messages },
+                }));
+            }
+        });
+    }, []);
 
     useEffect(() => {
         const queued = chatStore.consumePendingSlashCommand();
@@ -1970,6 +2065,7 @@ ${riskConstitution}`
                         onRevertRuleProposal={onRevertRuleProposal}
                         planMode={activePlanMode}
                         onUnlockPlanMode={handleUnlockPlanMode}
+                        onUndoCompact={handleUndoCompact}
                     />
                 )}
                 </div>

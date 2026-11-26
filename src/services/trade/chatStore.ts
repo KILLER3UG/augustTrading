@@ -107,9 +107,10 @@ export type LiveEntry = StoredChatEntry & {
      *  the receipt's own fields; the one-tap way to the numbers stays the
      *  Journal's stats tab. */
     statsCard?: import('./statsCard').StatsCardSnapshot;
-    /** Ephemeral diagnostic snapshots for `/context` and `/doctor` (zero-LLM local commands). */
+    /** Ephemeral diagnostic snapshots for `/context`, `/doctor`, and `/compact` (zero-LLM local commands). */
     contextDiagnostic?: import('./diagnosticsCore').ContextDiagnosticSnapshot;
     doctorDiagnostic?: import('./diagnosticsCore').DoctorDiagnosticSnapshot;
+    compactReceipt?: import('./compactCore').CompactReceiptSnapshot;
     /** The live-only "still working" line for a slow call; not persisted. */
     liveProgress?: string;
 };
@@ -323,7 +324,7 @@ const schedulePersist = (): void => {
             ...s,
             entries: s.entries
                 .filter(e => !e.streaming)
-                .map(({ streaming: _streaming, proposal: _proposal, settlementCorrection: _correction, tradeAction: _action, riskChange: _riskChange, aiSettingChange: _aiSetting, strategyActivation: _strategy, sessionPlan: _sessionPlan, ruleProposal: _ruleProposal, statsCard: _stats, contextDiagnostic: _ctxDiag, doctorDiagnostic: _docDiag, liveProgress: _liveProgress, ...rest }) => rest),
+                .map(({ streaming: _streaming, proposal: _proposal, settlementCorrection: _correction, tradeAction: _action, riskChange: _riskChange, aiSettingChange: _aiSetting, strategyActivation: _strategy, sessionPlan: _sessionPlan, ruleProposal: _ruleProposal, statsCard: _stats, contextDiagnostic: _ctxDiag, doctorDiagnostic: _docDiag, compactReceipt: _compactReceipt, liveProgress: _liveProgress, ...rest }) => rest),
             // openTrades / loggedTradeIds are runtime-only — persisted sessions
             // never carry them (a reload means "we have no live trade state"),
             // so strip them defensively here even though chatSessions.ts also
@@ -377,7 +378,7 @@ export const persistInterrupted = (): void => {
         flushEphemeralFor(undefined, false);
         const stored: ChatSession[] = sessions.map(s => ({
             ...s,
-            entries: s.entries.map(({ streaming, proposal: _proposal, settlementCorrection: _correction, tradeAction: _action, riskChange: _riskChange, aiSettingChange: _aiSetting, strategyActivation: _strategy, sessionPlan: _sessionPlan, ruleProposal: _ruleProposal, statsCard: _stats, contextDiagnostic: _ctxDiag, doctorDiagnostic: _docDiag, liveProgress: _liveProgress, ...rest }) => (streaming ? { ...rest, interrupted: true } : rest)),
+            entries: s.entries.map(({ streaming, proposal: _proposal, settlementCorrection: _correction, tradeAction: _action, riskChange: _riskChange, aiSettingChange: _aiSetting, strategyActivation: _strategy, sessionPlan: _sessionPlan, ruleProposal: _ruleProposal, statsCard: _stats, contextDiagnostic: _ctxDiag, doctorDiagnostic: _docDiag, compactReceipt: _compactReceipt, liveProgress: _liveProgress, ...rest }) => (streaming ? { ...rest, interrupted: true } : rest)),
             openTrades: undefined,
             loggedTradeIds: undefined,
         }));

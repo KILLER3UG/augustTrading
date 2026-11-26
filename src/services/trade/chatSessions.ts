@@ -154,6 +154,7 @@ export type ProjectedChatEntry = StoredChatEntry & {
     statsCard?: import('./statsCard').StatsCardSnapshot;
     contextDiagnostic?: import('./diagnosticsCore').ContextDiagnosticSnapshot;
     doctorDiagnostic?: import('./diagnosticsCore').DoctorDiagnosticSnapshot;
+    compactReceipt?: import('./compactCore').CompactReceiptSnapshot;
 };
 
 export interface ChatSession {
@@ -681,6 +682,7 @@ export const liveEntryFromMessage = (m: Message): ProjectedChatEntry => {
         statsCard: m.statsCard,
         contextDiagnostic: m.contextDiagnostic,
         doctorDiagnostic: m.doctorDiagnostic,
+        compactReceipt: m.compactReceipt,
         // A row with an unparseable timestamp keeps `at` undefined rather than
         // stamping it as 0: the memory-attribution window join treats a real
         // stamp as meaningful and 0 as noise.

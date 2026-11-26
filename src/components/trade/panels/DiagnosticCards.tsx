@@ -8,6 +8,7 @@
 
 import React from 'react';
 import type { ContextDiagnosticSnapshot, DoctorDiagnosticSnapshot, DoctorStatus } from '../../../services/trade/diagnosticsCore';
+import type { CompactReceiptSnapshot } from '../../../services/trade/compactCore';
 
 const STATUS_BADGE: Record<DoctorStatus, string> = {
     PASS: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400',
@@ -75,5 +76,42 @@ export const DoctorDiagnosticCard: React.FC<{ snapshot: DoctorDiagnosticSnapshot
                 </div>
             ))}
         </div>
+    </div>
+);
+
+export const CompactReceiptCard: React.FC<{
+    snapshot: CompactReceiptSnapshot;
+    canUndo?: boolean;
+    onUndo?: () => void;
+}> = ({ snapshot, canUndo = false, onUndo }) => (
+    <div
+        className="mt-1 rounded-control border border-hairline bg-zinc-900/60 p-2.5"
+        data-testid="compact-receipt-card"
+    >
+        <div className="flex flex-wrap items-center gap-2">
+            <span className="rounded-control bg-white/[0.06] px-1.5 py-0.5 font-mono text-ui-xs font-bold uppercase tracking-wider text-zinc-200">
+                /compact
+            </span>
+            <span className="font-mono text-ui-dense tabular-nums text-zinc-100">
+                {snapshot.compacted
+                    ? `Compacted ${snapshot.compactedCount} older entries · ${snapshot.beforeTokens.toLocaleString()} → ${snapshot.afterTokens.toLocaleString()} tokens (−${snapshot.savedPct}%)`
+                    : `${snapshot.reason ?? 'Nothing older to compact'} · ${snapshot.beforeTokens.toLocaleString()} tokens`}
+            </span>
+            {snapshot.compacted && canUndo && onUndo && (
+                <button
+                    type="button"
+                    data-testid="compact-undo-btn"
+                    onClick={onUndo}
+                    className="ml-auto rounded-control border border-line bg-zinc-900 px-2 py-0.5 font-mono text-ui-2xs text-zinc-200 transition-colors hover:bg-zinc-800"
+                >
+                    Undo
+                </button>
+            )}
+        </div>
+        {snapshot.focus && (
+            <p className="mt-1 truncate font-mono text-ui-2xs text-zinc-500">
+                Focus: {snapshot.focus} · kept {snapshot.keptCount} recent entries · 0 LLM tokens
+            </p>
+        )}
     </div>
 );
