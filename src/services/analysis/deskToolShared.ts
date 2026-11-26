@@ -139,6 +139,10 @@ export const CHART_ACTION_TOOL_DEFS: DeskToolDefinition[] = [
                         enum: [...PLAYBOOK_IDS],
                         description: 'The scan_playbooks detector id this plan follows — copy it exactly from the scan match. Omit when no detector fired; never invent one.',
                     },
+                    skillSlug: {
+                        type: 'string',
+                        description: 'Optional playbook skill slug applied to this plan.',
+                    },
                 },
                 required: ['direction', 'entry', 'stopLoss', 'takeProfits'],
                 additionalProperties: false,

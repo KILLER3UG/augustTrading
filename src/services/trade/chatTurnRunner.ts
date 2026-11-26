@@ -34,7 +34,8 @@ import type { DeskToolCall, DeskToolResult } from '../analysis/DeskToolsService'
 import type { HybridDataPacket } from '../analysis/HybridIntelligenceService';
 const hybridService = (): Promise<typeof import('../analysis/HybridIntelligenceService')> => import('../analysis/HybridIntelligenceService');
 import { DESK_TOOL_NAMES, isBlockedInPlanMode, PLAN_MODE_MANDATE } from '../../utils/toolKinds';
-import { collectScopedRulesForSymbol } from './scopedRulesRuntime';
+import { collectLiveMarketContextForSymbol, collectScopedRulesForSymbol } from './scopedRulesRuntime';
+import { evaluateScopedRules } from './scopedRules';
 import { settleDockEntry } from '../../utils/rowSettlement';
 import { maybeRunAgentLearningPass, maybeRunMemoryDreamIfDue } from '../learning/learningPassWiring';
 import { CHART_ACTION_TOOL_DEFS, isMarketReadTool } from '../analysis/deskToolShared';
@@ -50,8 +51,11 @@ import { DEFAULT_MAX_HISTORY_IMAGES, pruneHistoryImages } from '../providers/con
 import { runPresentTrade } from './presentTradeTool';
 import { runToolTurn, type CaptureSnapshot, type ToolTurnEvents, type ToolTurnRequest } from './toolTurn';
 import { scoreDrawnShape, levelAccuracy, describeLevelAccuracyForModel } from './tradePlanLevels';
-import { contentVersion } from '../learning/SkillFileService';
-import { parseComposerRefs, focusLineForRefs } from '../../utils/composerRefs';
+import { contentVersion, getSkill, listSkillFiles } from '../learning/SkillFileService';
+import { cachedSkillStatusRows, touchSkillUsage } from '../learning/skillManage';
+import { routeSkillsForContext } from '../learning/skillRoutingCore';
+import { skillFormatIssues } from '../../utils/skillFrontmatter';
+import { parseComposerRefs, focusLineForRefs, parseSlashSkillInvocation } from '../../utils/composerRefs';
 import * as levelWatch from './levelWatchService';
 import { describePlanForModel, type WatchPlan } from './tradePlanLevels';
 
@@ -1066,8 +1070,10 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
         rawTraderQuestion?: string;
         /** True when the turn carries the live-market grounding mandate. */
         requireTools?: boolean;
+        /** Skills deterministically pre-opened for this turn (e.g. `/<skill-slug>`). */
+        initialViewedSkills?: Array<{ slug: string; body: string; version?: string }>;
     }): Promise<string> => {
-        const { sid, entryId, config, messages, mailboxSeat, mailbox, onMailSent, onAction, hidePass, rawTraderQuestion, requireTools } = params;
+        const { sid, entryId, config, messages, mailboxSeat, mailbox, onMailSent, onAction, hidePass, rawTraderQuestion, requireTools, initialViewedSkills } = params;
         const controller = chatStore.getController(sid);
         if (!controller) return '';
         // One snapshot per seat turn feeds BOTH stamps (live mark + forming
@@ -1130,6 +1136,7 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
             mailboxRound: 0,
             onMailSent,
             planMode: chatStore.getPlanMode(sid),
+            ...(initialViewedSkills?.length ? { initialViewedSkills } : {}),
         };
         // Each method here is a WRITE TO THIS ROW SHAPE, not generic turn logic.
         let sawMarketTool = false;
@@ -1396,22 +1403,74 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
         // trader's words and ride the turn context as a FOCUS line — the row
         // shows the cleaned question, the model gets the priorities.
         const parsedInput = retryEntry ? null : parseComposerRefs(raw);
-        const text = retryEntry
+        const allInstalledSkills = listSkillFiles();
+        const skillStatuses = cachedSkillStatusRows();
+        const slashSkillInv = retryEntry
+            ? null
+            : parseSlashSkillInvocation(
+                parsedInput?.cleaned ?? raw,
+                allInstalledSkills
+                    .filter(sk => skillStatuses[sk.slug]?.status !== 'archived')
+                    .map(sk => sk.slug),
+            );
+        const invokedSkill = slashSkillInv ? getSkill(slashSkillInv.slug) : null;
+        if (invokedSkill) {
+            void touchSkillUsage(invokedSkill.slug).catch(() => { /* best-effort */ });
+        }
+        const initialViewedSkills = invokedSkill
+            ? [{ slug: invokedSkill.slug, body: invokedSkill.body, version: invokedSkill.version }]
+            : undefined;
+        const invokedSkillBlock = invokedSkill
+            ? `[INVOKED PLAYBOOK — /${invokedSkill.slug} (${invokedSkill.name}, v${invokedSkill.version}) — loaded deterministically by slash trigger]\n${invokedSkill.body}`
+            : '';
+        const visibleUserText = retryEntry
             ? (retryEntry.text === '(chart screenshot)' ? '' : retryEntry.text.trim())
             : (parsedInput?.cleaned.trim() || raw.trim());
-        const requireTools = shouldRequireTools(text, false);
+        const text = visibleUserText;
+        const modelQuestionText = invokedSkill
+            ? (slashSkillInv?.rest || `Apply /${invokedSkill.slug} to ${symbol} ${interval}.`)
+            : text;
+        const requireTools = shouldRequireTools(modelQuestionText, false);
         const refFocusLine = parsedInput ? focusLineForRefs(parsedInput.refs) : '';
         const planModeTail = chatStore.getPlanMode(sid) ? PLAN_MODE_MANDATE : '';
         const snapForRules = getChartSnapshot?.() ?? null;
-        const scopedTail = collectScopedRulesForSymbol(symbol, {
+        const liveCtx = collectLiveMarketContextForSymbol(symbol, {
             evalCandles: snapForRules?.evalCandles ?? snapForRules?.candles ?? null,
+        });
+        const scopedTail = evaluateScopedRules({
+            regime: liveCtx.regime,
+            fundingRate: liveCtx.fundingRate,
+            dailyDrawdownPct: liveCtx.dailyDrawdownPct,
+            killSwitchActive: liveCtx.killSwitchActive,
+            maxDailyDrawdownPct: liveCtx.maxDailyDrawdownPct,
         }).promptTailBlock;
+        const skillRoutingTail = routeSkillsForContext(
+            allInstalledSkills.map(sk => ({
+                slug: sk.slug,
+                name: sk.name,
+                description: sk.description,
+                content: sk.file.content,
+                status: skillStatuses[sk.slug]?.status,
+                formatIssues: skillFormatIssues(sk.file.content).map(i => i.what),
+            })),
+            {
+                symbol: liveCtx.symbol,
+                session: liveCtx.session,
+                nowMs: liveCtx.nowMs,
+                regime: liveCtx.regime,
+                fundingRate: liveCtx.fundingRate,
+                dailyDrawdownPct: liveCtx.dailyDrawdownPct,
+                killSwitchActive: liveCtx.killSwitchActive,
+            },
+        ).promptTailBlock;
         const focusLine = [
             refFocusLine,
             requireTools ? FULL_ANALYSIS_MANDATE.trim() : '',
             planModeTail,
             scopedTail,
-        ].filter(Boolean).join('\n');
+            skillRoutingTail,
+            invokedSkillBlock,
+        ].filter(Boolean).join('\n\n');
         const sentAttachments: Attachment[] = retryEntry
             ? (retryEntry.image ? [{ id: newId('at'), kind: 'image', name: 'chart.png', payload: retryEntry.image }] : [])
             : attachments;
@@ -1548,7 +1607,7 @@ ${focusLine}` : contextBlockRaw;
         const userText = composeUserTurnMessage({
             contextBlock,
             fileBlocks,
-            traderQuestion: text,
+            traderQuestion: modelQuestionText,
         });
 
         // ── SOLO (optionally bound to a roster bot persona) ────────────────
@@ -1613,7 +1672,7 @@ ${focusLine}` : contextBlockRaw;
             ];
             const messages = pruneHistoryImages(rawMessages, DEFAULT_MAX_HISTORY_IMAGES).messages;
             try {
-                await runSeatTurn({ sid, entryId: aiEntry.id, config: soloProvider, messages, mailboxSeat: '', rawTraderQuestion: text, requireTools });
+                await runSeatTurn({ sid, entryId: aiEntry.id, config: soloProvider, messages, mailboxSeat: '', rawTraderQuestion: modelQuestionText, requireTools, initialViewedSkills });
             } catch (e) {
                 // An explicit Stop throws a transport AbortError — that is a
                 // user action, not a failure: the bubble keeps what streamed

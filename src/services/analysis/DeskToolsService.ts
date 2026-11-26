@@ -4522,7 +4522,18 @@ ${hitContent}`, ...resolvedSymbolField(call, fallback) };
                         ...(Array.isArray(context.chartDrawings) ? { hadUserDrawings: context.chartDrawings.length > 0 } : {}),
                         ...(marketRegime ? { marketRegime } : {}),
                         ...(typeof htfAligned === 'boolean' ? { htfAligned } : {}),
-                        ...(context.skillSlugsRead?.[0] ? { skillSlug: context.skillSlugsRead[0] } : {}),
+                        ...(() => {
+                            const explicitSkill = typeof call.arguments?.skill_slug === 'string'
+                                ? call.arguments.skill_slug.trim()
+                                : typeof call.arguments?.skillSlug === 'string'
+                                    ? call.arguments.skillSlug.trim()
+                                    : '';
+                            const latestRead = context.skillSlugsRead && context.skillSlugsRead.length > 0
+                                ? context.skillSlugsRead[context.skillSlugsRead.length - 1]
+                                : '';
+                            const resolvedSkill = explicitSkill || latestRead;
+                            return resolvedSkill ? { skillSlug: resolvedSkill } : {};
+                        })(),
                     });
                     if (!outcome.ok) {
                         return rejectedResult(call, `emit_signal rejected: ${outcome.error}`);
@@ -6939,6 +6950,15 @@ ${body}`);
             case 'paper_order': {
                 const a = call.arguments ?? {};
                 const side: PaperSide | undefined = a.side === 'long' || a.side === 'short' ? a.side : undefined;
+                const explicitSkillSlug = typeof a.skill_slug === 'string'
+                    ? a.skill_slug.trim()
+                    : typeof a.skillSlug === 'string'
+                        ? a.skillSlug.trim()
+                        : '';
+                const latestViewed = context.skillSlugsRead && context.skillSlugsRead.length > 0
+                    ? context.skillSlugsRead[context.skillSlugsRead.length - 1]
+                    : '';
+                const resolvedSkillSlug = explicitSkillSlug || latestViewed;
                 const receipt = await submitPaperOrder({
                     action: a.action as PaperOrderAction,
                     ...(typeof a.symbol === 'string' ? { symbol: a.symbol } : {}),
@@ -6953,7 +6973,7 @@ ${body}`);
                         : {}),
                     ...(typeof a.position_id === 'string' ? { position_id: a.position_id } : {}),
                     ...(typeof a.order_id === 'string' ? { order_id: a.order_id } : {}),
-                    ...(typeof a.skill_slug === 'string' ? { skill_slug: a.skill_slug } : {}),
+                    ...(resolvedSkillSlug ? { skill_slug: resolvedSkillSlug } : {}),
                     ...(typeof a.thesis === 'string' ? { thesis: a.thesis } : {}),
                 });
                 // The authoritative account stays in the service store; the
@@ -7499,6 +7519,8 @@ export async function runDeskToolLoop(params: {
     speaker?: string;
     /** True when read-only Plan Mode is active — strips blocked tools & enforces hard dispatch lock. */
     planMode?: boolean;
+    /** Skills deterministically pre-opened for this turn (e.g. via `/<skill-slug>`). */
+    initialViewedSkills?: Array<{ slug: string; body: string; version?: string }>;
 }): Promise<DeskToolLoopResult> {
     const {
         config,
@@ -7540,6 +7562,7 @@ export async function runDeskToolLoop(params: {
         onSteered,
         requireFirstToolRound = false,
         planMode = false,
+        initialViewedSkills = [],
     } = params;
     let steeredThisTurn = false;
     let microCompactCharsTotal = 0;
@@ -7582,23 +7605,28 @@ export async function runDeskToolLoop(params: {
      *  result is a tool payload — the first thing compaction shortens — so the
      *  loop keeps its own copy to test the outbound request against. */
     const skillBodiesThisTurn = new Map<string, string>();
-    /** The review the CONVERSATION already carries, not just this turn.
-     *
-     *  Every new message used to start from nothing: the seat had to call
-     *  `skill_index` again and re-open every skill it meant to change, even
-     *  though the index and the bodies it read on the previous turn are still
-     *  in its own transcript — one or two model rounds of pure ceremony per
-     *  write.
-     *
-     *  Seeding is safe rather than merely cheap. What is proved here is that
-     *  the library was SHOWN to this seat; whether that showing is still
-     *  current is decided in `writeSkillFile`, which refuses an index whose
-     *  fingerprint no longer matches the library and an update whose
-     *  `ifVersion` is not the version that exists. A stale seed therefore buys
-     *  nothing — it only costs a re-read. */
+    /** Ordered slugs of skills opened this turn (via `skill_view` or `/<skill-slug>`). */
+    const viewedSkillSlugs: string[] = [];
+    const recordViewedSkill = (slug: string, body?: string, version?: string): void => {
+        const clean = slug.trim();
+        if (!clean) return;
+        const idx = viewedSkillSlugs.indexOf(clean);
+        if (idx >= 0) viewedSkillSlugs.splice(idx, 1);
+        viewedSkillSlugs.push(clean);
+        if (body !== undefined) {
+            skillBodiesThisTurn.delete(clean);
+            skillBodiesThisTurn.set(clean, body);
+        }
+        if (version) openedSkillVersions.set(clean, version);
+    };
+    const latestViewedSkill = (): string | undefined =>
+        viewedSkillSlugs.length > 0 ? viewedSkillSlugs[viewedSkillSlugs.length - 1] : undefined;
     const seeded = skillReviewFromTranscript(messages);
     let skillIndexVersion: string | undefined = seeded.indexVersion;
     const openedSkillVersions = new Map(seeded.opened);
+    for (const pre of initialViewedSkills) {
+        if (pre?.slug) recordViewedSkill(pre.slug, pre.body, pre.version);
+    }
     const initialDeskDefs = DESK_TOOL_DEFINITIONS.filter(
         d => INITIAL_DESK_TOOL_NAMES.includes(d.function.name) && (!planMode || !isBlockedInPlanMode(d.function.name)),
     );
@@ -8112,7 +8140,14 @@ export async function runDeskToolLoop(params: {
                     reportToolCompletion(receipt);
                     continue;
                 }
-                const handled = await executeExtraTool(call);
+                const latestSkill = latestViewedSkill();
+                const callForExtra = call.name === 'present_trade'
+                    && latestSkill
+                    && typeof call.arguments?.skillSlug !== 'string'
+                    && typeof call.arguments?.skill_slug !== 'string'
+                    ? { ...call, arguments: { ...(call.arguments ?? {}), skillSlug: latestSkill } }
+                    : call;
+                const handled = await executeExtraTool(callForExtra);
                 if (handled) {
                     extraResults.push(handled);
                     reportToolCompletion(handled);
@@ -8236,7 +8271,7 @@ export async function runDeskToolLoop(params: {
                 memoryEnabled,
                 lastUserMessage,
                 memoryRecipe,
-                skillSlugsRead: [...skillBodiesThisTurn.keys()],
+                skillSlugsRead: [...viewedSkillSlugs],
                 skillReview: { indexVersion: skillIndexVersion, opened: openedSkillVersions },
                 untrustedSeen,
                 modelName: config.selectedModel,
@@ -8267,13 +8302,13 @@ export async function runDeskToolLoop(params: {
         for (const r of results) {
             if ((r.name !== 'skill_view' && r.name !== 'skill_reader' && r.name !== 'read_skill') || !r.ok) continue;
             const call = calls.find(c => c.id === r.toolCallId);
-            const slug = typeof call?.arguments?.skill === 'string' ? call.arguments.skill.trim() : '';
+            const slug = r.skillRead?.slug
+                ?? (typeof call?.arguments?.skill === 'string' ? call.arguments.skill.trim() : '');
             const filePath = typeof call?.arguments?.file_path === 'string' ? call.arguments.file_path.trim() : '';
             if (slug && !filePath) {
                 // Re-reading a skill moves it to the end: the restoration order
-                // is the order the seat last loaded them, newest closest.
-                skillBodiesThisTurn.delete(slug);
-                skillBodiesThisTurn.set(slug, r.content);
+                // and attribution pick the most recently opened skill.
+                recordViewedSkill(slug, r.content, r.skillRead?.version);
             }
         }
         if (forgedResults.length > 0 || coreResults.some(r => UNTRUSTED_RESULT_TOOLS.has(r.name))) {
@@ -8531,6 +8566,8 @@ export interface StreamWithDeskToolsOptions extends ChatRequestOptions {
     onStreamReset?: () => void;
     /** True when read-only Plan Mode is active — blocks execution and write tools. */
     planMode?: boolean;
+    /** Skills deterministically pre-opened for this turn (e.g. via `/<skill-slug>`). */
+    initialViewedSkills?: Array<{ slug: string; body: string; version?: string }>;
 }
 
 /**
@@ -8882,6 +8919,7 @@ export async function* streamChatWithDeskTools(
         onSteered: options?.onSteered,
         requireFirstToolRound,
         planMode,
+        initialViewedSkills: options?.initialViewedSkills,
         extraToolDefs: extraDefs,
         executeExtraTool: async call => {
             // Panel-owned chart actions first (draw/levels/clear) — they

@@ -45,6 +45,8 @@ export interface TradeProposal {
      *  tag is what makes per-detector attribution measurable; it is context,
      *  never a size or a veto. */
     playbookId?: PlaybookId;
+    /** The SKILL.md playbook slug opened/invoked in the turn that presented this plan. */
+    skillSlug?: string;
     /** Which model / session presented it — carried onto the trade for
      *  attribution so the model-performance ledger can credit/debit it. */
     proposedBy?: string;
@@ -351,6 +353,11 @@ export const parseTradeProposal = (args: Record<string, unknown>): { proposal?: 
     // futures form (base + quote, bare base defaults to USDT): 'BTC' and
     // 'BTC/USDT' both arm as 'BTCUSDT'; a canonical input is unchanged.
     const rawSymbol = String(args.symbol ?? '').trim();
+    const rawSkillSlug = typeof args.skillSlug === 'string'
+        ? args.skillSlug.trim()
+        : typeof args.skill_slug === 'string'
+            ? args.skill_slug.trim()
+            : '';
     return {
         proposal: {
             symbol: rawSymbol ? `${baseOf(rawSymbol)}${quoteOf(rawSymbol)}` : 'BTCUSDT',
@@ -362,6 +369,7 @@ export const parseTradeProposal = (args: Record<string, unknown>): { proposal?: 
             // become a detector bucket of its own the stats could never join.
             // present_trade's receipt names the dropped value to the model.
             playbookId: asPlaybookId(args.playbook) ?? undefined,
+            ...(rawSkillSlug ? { skillSlug: rawSkillSlug.slice(0, 80) } : {}),
             simulated: args.simulated === false ? false : true,
             fillAssumptions: normalizePaperFillAssumptions(
                 args.fillAssumptions && typeof args.fillAssumptions === 'object'

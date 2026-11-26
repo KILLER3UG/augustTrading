@@ -55,7 +55,12 @@ import { runToolTurn, type CaptureSnapshot, type ToolTurnEvents, type ToolTurnOu
 import * as chatStore from './chatStore';
 import { isMarketReadTool, PAPER_TRADING_PROMPT } from '../analysis/deskToolShared';
 import { isBlockedInPlanMode, PLAN_MODE_MANDATE } from '../../utils/toolKinds';
-import { collectScopedRulesForSymbol } from './scopedRulesRuntime';
+import { collectLiveMarketContextForSymbol } from './scopedRulesRuntime';
+import { evaluateScopedRules } from './scopedRules';
+import { listSkillFiles } from '../learning/SkillFileService';
+import { cachedSkillStatusRows } from '../learning/skillManage';
+import { routeSkillsForContext } from '../learning/skillRoutingCore';
+import { skillFormatIssues } from '../../utils/skillFrontmatter';
 import type { DeskToolCall, DeskToolResult } from '../analysis/DeskToolsService';
 import { runPresentTrade } from './presentTradeTool';
 import { drawingsControl } from './drawingsControl';
@@ -878,10 +883,42 @@ export const runChatSurfaceTurn = async (req: ChatSurfaceTurnRequest): Promise<T
     // A caller that brings its own mandate (a persona, a room note) gets it
     // verbatim and NO skill record: nothing was injected that it did not ask
     // for, and a row claiming skills it never saw is worse than a silent row.
-    const scopedTail = req.symbol ? collectScopedRulesForSymbol(req.symbol).promptTailBlock : '';
+    const liveCtx = req.symbol ? collectLiveMarketContextForSymbol(req.symbol) : null;
+    const scopedTail = liveCtx
+        ? evaluateScopedRules({
+            regime: liveCtx.regime,
+            fundingRate: liveCtx.fundingRate,
+            dailyDrawdownPct: liveCtx.dailyDrawdownPct,
+            killSwitchActive: liveCtx.killSwitchActive,
+            maxDailyDrawdownPct: liveCtx.maxDailyDrawdownPct,
+        }).promptTailBlock
+        : '';
+    const skillStatuses = cachedSkillStatusRows();
+    const skillRoutingTail = liveCtx
+        ? routeSkillsForContext(
+            listSkillFiles().map(sk => ({
+                slug: sk.slug,
+                name: sk.name,
+                description: sk.description,
+                content: sk.file.content,
+                status: skillStatuses[sk.slug]?.status,
+                formatIssues: skillFormatIssues(sk.file.content).map(i => i.what),
+            })),
+            {
+                symbol: liveCtx.symbol,
+                session: liveCtx.session,
+                nowMs: liveCtx.nowMs,
+                regime: liveCtx.regime,
+                fundingRate: liveCtx.fundingRate,
+                dailyDrawdownPct: liveCtx.dailyDrawdownPct,
+                killSwitchActive: liveCtx.killSwitchActive,
+            },
+        ).promptTailBlock
+        : '';
     const dynamicTailBlocks = [
         planMode ? PLAN_MODE_MANDATE : '',
         scopedTail,
+        skillRoutingTail,
     ].filter(Boolean);
     const prompt = req.systemPrompt
         ? {

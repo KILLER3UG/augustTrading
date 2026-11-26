@@ -32,6 +32,7 @@ import { computeRrRatio, buildTradePlan, modelStatedSize, proposedTicketSize } f
 import { formatPaperFillAssumptions, PAPER_EXECUTION_RECEIPT } from '../../../services/tracking/paperExecution';
 import { assessProposalStaleness, undoWindowOf } from '../../../services/trade/tradeDecision';
 import { fmtRiskReward } from '../../../utils/riskReward';
+import { humanizeSkillTitle } from '../../../utils/uiFormatting';
 import { getHarnessSettings } from '../../../utils/harnessSettings';
 import { defaultLeverage } from '../../../utils/conversationUtils';
 import { computeLiquidationBuffer } from '../../../utils/ticketSize';
@@ -179,7 +180,7 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({
     const rr = computeRrRatio(proposal);
     return (
     <div className="mt-1 rounded-control border border-hairline bg-zinc-900/60 p-2.5" data-testid="trade-proposal-card">
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
             <span className={`rounded-control px-1.5 py-0.5 text-ui-xs font-bold ${proposal.direction === 'Long' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-rose-500/15 text-rose-400'}`}>{proposal.direction}</span>
             <span className="font-mono text-ui-sm font-bold text-zinc-100">{proposal.symbol}</span>
             {proposal.simulated !== false && (
@@ -188,6 +189,14 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({
                     className="rounded-control border border-hairline bg-white/[0.04] px-1.5 py-0.5 font-mono text-ui-2xs uppercase tracking-wider text-zinc-300"
                 >
                     Simulated
+                </span>
+            )}
+            {proposal.skillSlug && (
+                <span
+                    data-testid="proposal-playbook-chip"
+                    className="rounded-control border border-hairline bg-white/[0.04] px-1.5 py-0.5 font-mono text-ui-2xs text-zinc-300"
+                >
+                    Playbook: {humanizeSkillTitle('', proposal.skillSlug)}
                 </span>
             )}
             {/* The number that gates "Log this trade" — from the canonical

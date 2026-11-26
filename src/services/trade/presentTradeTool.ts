@@ -371,6 +371,7 @@ export const runPresentTrade = async (
         ? gateReceiptLine(proposal.gate)
         : `Gate: scanning now — no probability is shown on the card or recorded on the row until the scan answers, and the logged plan is capped by it.${syncWarnLine}`;
     const playbookLine = playbookAttributionLine(args.playbook, proposal.playbookId);
+    const skillLine = proposal.skillSlug ? ` Skill: ${proposal.skillSlug}.` : '';
     const paperLine = proposal.simulated !== false
         ? ` Paper lane: ${formatPaperFillAssumptions(proposal.fillAssumptions)} (${PAPER_EXECUTION_RECEIPT})`
         : '';
@@ -383,6 +384,6 @@ export const runPresentTrade = async (
         call,
         name,
         true,
-        `Presented ${proposal.direction} ${proposal.symbol} @ ${proposal.entry}, SL ${proposal.stopLoss}, TP ${proposal.takeProfits.join('/')}, R:R ~${rr}:1.${mathLine} ${gateLine} The user sees a "Log this trade" card.${playbookLine}${paperLine} ${watchLine}${ctx.canvasNote}`,
+        `Presented ${proposal.direction} ${proposal.symbol} @ ${proposal.entry}, SL ${proposal.stopLoss}, TP ${proposal.takeProfits.join('/')}, R:R ~${rr}:1.${mathLine} ${gateLine} The user sees a "Log this trade" card.${playbookLine}${skillLine}${paperLine} ${watchLine}${ctx.canvasNote}`,
     );
 };

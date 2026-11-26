@@ -11,6 +11,18 @@ import { getPaperLiveFrame } from './futuresStreams';
 import { regimeRead } from '../market/regimeCore';
 import { getCachedPaperAccountView } from '../paper/PaperBrokerService';
 import { evaluateScopedRules, type ScopedRulesResult } from './scopedRules';
+import { classifyUtcSession } from '../learning/executionAutopsyCore';
+
+export interface LiveMarketContextSnapshot {
+    symbol: string;
+    regime: string | null;
+    fundingRate: number | null;
+    dailyDrawdownPct: number | null;
+    killSwitchActive: boolean | null;
+    maxDailyDrawdownPct: number | null;
+    session: string;
+    nowMs: number;
+}
 
 const cachedRegimeBySymbol = new Map<string, { regime: string; atMs: number }>();
 const REGIME_CACHE_TTL_MS = 5 * 60_000;
@@ -32,10 +44,10 @@ export const getCachedRegime = (symbol: string, nowMs = Date.now()): string | nu
 
 export type ScopedRuleCandle = Omit<Kline, 'volume'> & { volume?: number };
 
-export const collectScopedRulesForSymbol = (
+export const collectLiveMarketContextForSymbol = (
     symbol: string,
     opts?: { evalCandles?: readonly ScopedRuleCandle[] | null; nowMs?: number },
-): ScopedRulesResult => {
+): LiveMarketContextSnapshot => {
     const nowMs = opts?.nowMs ?? Date.now();
     const cleanSymbol = symbol.trim().toUpperCase();
 
@@ -51,14 +63,30 @@ export const collectScopedRulesForSymbol = (
 
     const frame = cleanSymbol ? getPaperLiveFrame(cleanSymbol, 120_000, nowMs) : null;
     const fundingRate = frame?.fundingRate ?? null;
-
     const paperView = getCachedPaperAccountView();
 
-    return evaluateScopedRules({
+    return {
+        symbol: cleanSymbol,
         regime,
         fundingRate,
         dailyDrawdownPct: paperView?.dailyDrawdownPct ?? null,
         killSwitchActive: paperView?.killSwitchActive ?? null,
         maxDailyDrawdownPct: paperView?.riskLimits?.dailyDrawdownKillSwitchPct ?? null,
+        session: classifyUtcSession(nowMs),
+        nowMs,
+    };
+};
+
+export const collectScopedRulesForSymbol = (
+    symbol: string,
+    opts?: { evalCandles?: readonly ScopedRuleCandle[] | null; nowMs?: number },
+): ScopedRulesResult => {
+    const snap = collectLiveMarketContextForSymbol(symbol, opts);
+    return evaluateScopedRules({
+        regime: snap.regime,
+        fundingRate: snap.fundingRate,
+        dailyDrawdownPct: snap.dailyDrawdownPct,
+        killSwitchActive: snap.killSwitchActive,
+        maxDailyDrawdownPct: snap.maxDailyDrawdownPct,
     });
 };

@@ -11,7 +11,7 @@
  * Stop while a run is live.
  */
 
-import React, { useLayoutEffect, useSyncExternalStore } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import {Camera, FileText, Plus, TriangleAlert, SendIcon, StopIcon, ChartBarIcon} from '../../shared/Icons';
 import type { ProviderConfig } from '../../../types/provider';
 import type { SymbolMeta } from '../../../services/analysis/MarketDataService';
@@ -19,9 +19,13 @@ import type { ChartInterval } from '../../../utils/chartIntervals';
 import type { Attachment } from '../../../hooks/useChatAttachments';
 import type { ReasoningEffort } from '../../../services/providers/reasoningControls';
 import { formatModelDisplayName } from '../../../utils/providerUtils';
+import { humanizeSkillTitle } from '../../../utils/uiFormatting';
 import type { ContextRingUsage } from '../../../utils/uiFormatting';
 import { getHarnessSettings, subscribeHarnessSettings } from '../../../utils/harnessSettings';
 import { useEscapeClose } from '../../../hooks/useEscapeClose';
+import { listSkillFiles } from '../../../services/learning/SkillFileService';
+import { cachedSkillStatusRows, filterArchivedSkillRows } from '../../../services/learning/skillManage';
+import { subscribeMemoryFilesChanged } from '../../../services/learning/MemoryFilesService';
 
 import ModelChip from '../../shared/ModelChip';
 import ChatAttachmentStrip from './ChatAttachmentStrip';
@@ -95,6 +99,8 @@ interface ChatComposerProps {
     /** Context-window usage ring summary + click handler for `/context`. */
     contextRing?: ContextRingUsage | null;
     onRunContext?: () => void;
+    /** Optional override of installed skills for `/` autocomplete. */
+    installedSkills?: Array<{ slug: string; name: string; description: string }>;
 }
 
 /**
@@ -123,7 +129,7 @@ const ChatComposer: React.FC<ChatComposerProps> = ({
     changeSoloModel, providers, onRefreshModels, attachments, removeAttachment, fileInputRef,
     attachFiles, showAttachMenu, setShowAttachMenu, captureChart, onCaptureChart, composerRef,
     panelCount, pickerOpen, onTogglePicker, botName, contextAt, planMode = false, onTogglePlanMode,
-    contextRing = null, onRunContext,
+    contextRing = null, onRunContext, installedSkills,
 }) => {
     const harness = useSyncExternalStore(subscribeHarnessSettings, getHarnessSettings, getHarnessSettings);
     const queueDefault = harness.sendWhileRunning === 'queue';
@@ -171,21 +177,47 @@ const ChatComposer: React.FC<ChatComposerProps> = ({
     const parsedRefs = parseComposerRefs(draft);
     const refChips = [...parsedRefs.refs.shapes, ...parsedRefs.refs.timeframes, ...parsedRefs.refs.skills.map(sk => `skill:${sk}`), ...parsedRefs.refs.plans.map(pl => `plan:${pl}`)];
 
-    // Slash-command autocomplete: surfaces when typing `/` without whitespace
-    // (hides once an exact command is typed so Enter submits cleanly).
+    // Slash-command & skill autocomplete: surfaces when typing `/` without whitespace
+    // (hides once an exact command/skill is typed or dismissed with Escape).
+    const [skillsVersion, setSkillsVersion] = useState(0);
+    useEffect(() => {
+        if (installedSkills) return;
+        return subscribeMemoryFilesChanged(() => setSkillsVersion(v => v + 1));
+    }, [installedSkills]);
+    const availableSkills = useMemo(() => {
+        if (installedSkills) return installedSkills;
+        void skillsVersion;
+        const statuses = cachedSkillStatusRows();
+        const rows = listSkillFiles().map(s => ({ slug: s.slug, name: s.name, description: s.description }));
+        return filterArchivedSkillRows(rows, statuses);
+    }, [installedSkills, skillsVersion]);
+
+    const [slashDismissedFor, setSlashDismissedFor] = useState<string | null>(null);
     const trimmedLeading = draft.trimStart();
-    const slashToken = /^\/([a-z]*)$/i.exec(trimmedLeading);
+    const slashToken = /^\/([a-z0-9-]*)$/i.exec(trimmedLeading);
+    const slashQuery = slashToken ? slashToken[1].toLowerCase() : '';
     const slashMatches = slashToken
-        ? SLASH_COMMAND_SUGGESTIONS.filter(s => s.command.startsWith(slashToken[1].toLowerCase()))
+        ? SLASH_COMMAND_SUGGESTIONS.filter(s =>
+            s.command.startsWith(slashQuery) || s.description.toLowerCase().includes(slashQuery))
+        : [];
+    const skillMatches = slashToken
+        ? availableSkills.filter(s =>
+            s.slug.toLowerCase().includes(slashQuery)
+            || humanizeSkillTitle(s.name, s.slug).toLowerCase().includes(slashQuery)
+            || s.description.toLowerCase().includes(slashQuery))
         : [];
     const exactSlashMatch = slashToken
-        ? SLASH_COMMAND_SUGGESTIONS.some(s => s.command === slashToken[1].toLowerCase())
+        ? SLASH_COMMAND_SUGGESTIONS.some(s => s.command === slashQuery)
+            || availableSkills.some(s => s.slug.toLowerCase() === slashQuery)
         : false;
-    const showSlashMenu = ready && slashMatches.length > 0 && !exactSlashMatch;
+    const showSlashMenu = ready
+        && (slashMatches.length > 0 || skillMatches.length > 0)
+        && !exactSlashMatch
+        && slashDismissedFor !== trimmedLeading;
 
-    // The attach menu is a click-outside popover, so it owns Escape too — the
-    // same contract the symbol picker and the timeframe menus keep.
+    // Both the attach menu and the slash autocomplete popover own Escape.
     useEscapeClose(showAttachMenu, () => setShowAttachMenu(false));
+    useEscapeClose(showSlashMenu, () => setSlashDismissedFor(trimmedLeading));
 
     return (
     <div className={isChatFocus ? (embedded ? 'mx-auto w-full max-w-[740px] shrink-0 pb-5 pt-2' : 'mx-auto w-full max-w-[740px] shrink-0 px-6 pb-5 pt-2') : 'shrink-0 px-4 pb-3.5 pt-2'}>
@@ -212,27 +244,62 @@ const ChatComposer: React.FC<ChatComposerProps> = ({
         <div className="relative rounded-[20px] border border-white/[0.07] bg-zinc-900/90 px-3.5 pb-2.5 pt-3 shadow-[0_8px_28px_rgba(0,0,0,0.32)] transition-[border-color,background-color,box-shadow] duration-150 ease-[var(--ease-out-expo)] focus-within:border-white/[0.15] focus-within:bg-zinc-900">
             {showSlashMenu && (
                 <div
-                    data-testid="slash-command-menu"
+                    data-testid="slash-autocomplete-menu"
                     role="listbox"
-                    aria-label="Slash commands"
-                    className="absolute bottom-full left-0 right-0 z-shield mb-1.5 max-h-56 overflow-y-auto rounded-xl border border-white/[0.08] bg-zinc-900/95 p-1 shadow-elevated"
+                    aria-label="Slash commands and skills"
+                    className="absolute bottom-full left-0 right-0 z-shield mb-1.5 max-h-64 overflow-y-auto custom-scrollbar rounded-xl border border-hairline bg-zinc-900 p-1 shadow-elevated"
                 >
-                    {slashMatches.map(item => (
-                        <button
-                            key={item.command}
-                            type="button"
-                            role="option"
-                            data-testid={`slash-option-${item.command}`}
-                            onClick={() => {
-                                setDraft(`/${item.command}`);
-                                composerRef.current?.focus();
-                            }}
-                            className="flex w-full items-center justify-between gap-3 rounded-control px-2.5 py-1.5 text-left text-ui-dense transition-colors hover:bg-white/[0.06]"
-                        >
-                            <span className="font-mono font-medium text-zinc-100">{item.usage}</span>
-                            <span className="truncate text-ui-2xs text-zinc-500">{item.description}</span>
-                        </button>
-                    ))}
+                    {slashMatches.length > 0 && (
+                        <div>
+                            <div className="px-2.5 py-1 text-ui-2xs font-semibold uppercase tracking-wider text-zinc-500">
+                                Commands
+                            </div>
+                            {slashMatches.map(item => (
+                                <button
+                                    key={item.command}
+                                    type="button"
+                                    role="option"
+                                    data-testid={`slash-option-${item.command}`}
+                                    onClick={() => {
+                                        setDraft(`/${item.command}`);
+                                        composerRef.current?.focus();
+                                    }}
+                                    className="flex w-full items-center justify-between gap-3 rounded-control px-2.5 py-1.5 text-left text-ui-dense transition-colors hover:bg-white/[0.06]"
+                                >
+                                    <span className="font-mono font-medium text-zinc-100">{item.usage}</span>
+                                    <span className="truncate text-ui-2xs text-zinc-500">{item.description}</span>
+                                </button>
+                            ))}
+                        </div>
+                    )}
+                    {skillMatches.length > 0 && (
+                        <div className={slashMatches.length > 0 ? 'mt-1 border-t border-hairline pt-1' : undefined}>
+                            <div className="px-2.5 py-1 text-ui-2xs font-semibold uppercase tracking-wider text-zinc-500">
+                                Skills
+                            </div>
+                            {skillMatches.map(skill => (
+                                <button
+                                    key={skill.slug}
+                                    type="button"
+                                    role="option"
+                                    data-testid={`slash-skill-option-${skill.slug}`}
+                                    onClick={() => {
+                                        setDraft(`/${skill.slug} `);
+                                        composerRef.current?.focus();
+                                    }}
+                                    className="flex w-full items-center justify-between gap-3 rounded-control px-2.5 py-1.5 text-left text-ui-dense transition-colors hover:bg-white/[0.06]"
+                                >
+                                    <span className="shrink-0 font-mono font-medium text-zinc-100">
+                                        /{skill.slug}
+                                    </span>
+                                    <span className="min-w-0 flex-1 truncate text-ui-2xs text-zinc-400">
+                                        {humanizeSkillTitle(skill.name, skill.slug)}
+                                        {skill.description ? ` — ${skill.description}` : ''}
+                                    </span>
+                                </button>
+                            ))}
+                        </div>
+                    )}
                 </div>
             )}
             <textarea

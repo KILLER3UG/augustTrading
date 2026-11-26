@@ -106,6 +106,32 @@ export const slashTemplateOf = (text: string): SlashTemplate | null => {
     return m ? (m[1].toLowerCase() as SlashTemplate) : null;
 };
 
+export interface SlashSkillInvocation {
+    slug: string;
+    rest: string;
+}
+
+/**
+ * Parse a leading `/<skill-slug> [rest]` command against installed skill slugs.
+ * Built-in slash templates (`/plan`, `/context`, etc.) take precedence and return null here.
+ */
+export const parseSlashSkillInvocation = (
+    text: string,
+    availableSlugs: readonly string[],
+): SlashSkillInvocation | null => {
+    const trimmed = (text ?? '').trim();
+    if (!trimmed.startsWith('/') || slashTemplateOf(trimmed)) return null;
+    const m = /^\/([a-z0-9][a-z0-9-]*)(?:\s+([\s\S]*))?$/i.exec(trimmed);
+    if (!m) return null;
+    const wanted = m[1].toLowerCase();
+    const matched = availableSlugs.find(s => s.trim().toLowerCase() === wanted);
+    if (!matched) return null;
+    return {
+        slug: matched,
+        rest: (m[2] ?? '').trim(),
+    };
+};
+
 /** Expand a NON-special slash template into its desk instruction. `/plan`,
  *  `/context`, `/doctor`, `/handoff`, and `/dream` are handled locally. */
 export const expandSlashTemplate = (
