@@ -406,7 +406,7 @@ export async function analyzeTradingView(
     // --- BUILD MESSAGES (with optional vision content) ---
     const messages: ChatMessage[] = [{ role: 'system', content: systemPrompt }];
 
-    const canUseVision = isVisionModel(modelName);
+    const canUseVision = isVisionModel(modelName, config.modelOverrides?.[modelName]);
     if (canUseVision && hasImages) {
         const parts: ContentPart[] = [{ type: 'text', text: userPromptText }];
         for (const image of images) {

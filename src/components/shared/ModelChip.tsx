@@ -25,7 +25,7 @@ import { releaseEffortDial, retainEffortDial } from './effortDial';
 import type { EffortChoice } from './effortScale';
 import { effortChoiceOf } from './effortScale';
 import type { ProviderConfig } from '../../types/provider';
-import { formatModelDisplayName, isProviderReady } from '../../utils/providerUtils';
+import { isProviderReady, resolveProviderModelLabel } from '../../utils/providerUtils';
 import { resolveContextWindow } from '../../utils/contextWindow';
 
 export interface ModelChipProps {
@@ -77,7 +77,7 @@ const ModelChip: React.FC<ModelChipProps> = ({
     const modelId = value.split('::').slice(1).join('::');
     const provider = ready.find(p => p.id === pairId) ?? null;
     const modelLabel = provider && provider.models.includes(modelId)
-        ? formatModelDisplayName(modelId)
+        ? resolveProviderModelLabel(provider, modelId)
         : null;
     const tierLabel = showEffort && effort ? effortChoiceOf(effort).label : null;
     // The FULL label — provider prefix included — lives in the tooltip and the

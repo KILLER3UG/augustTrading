@@ -5,7 +5,7 @@ import { useEscapeClose } from '../../hooks/useEscapeClose';
 import { APP_NAME, APP_VERSION } from '../../constants/version';
 import { AIProvider, LoggedTrade } from '../../types';
 import { CustomInstructionsMap } from '../../types/user';
-import { ProviderConfig, ApiFormat } from '../../types/provider';
+import { ProviderConfig, ApiFormat, ModelOverride, ProviderRetryPolicy } from '../../types/provider';
 import type { JournalUIState } from '../../hooks/useJournalUI';
 import type { TradeOutcome } from '../../types';
 import { EmptyState } from '../ui/EmptyState';
@@ -136,7 +136,7 @@ interface SettingsMenuProps {
      *  "No providers configured" empty-state flash. */
     providerConfigsLoaded?: boolean;
     onUpdateProvider?: (id: string, updates: Partial<Omit<ProviderConfig, 'id' | 'isBuiltIn'>>) => Promise<void>;
-    onAddCustomProvider?: (provider: { name: string; baseUrl: string; apiKey: string; apiFormat: ApiFormat; models?: string[]; selectedModel?: string }) => Promise<void>;
+    onAddCustomProvider?: (provider: { id?: string; name: string; baseUrl: string; apiKey: string; apiFormat: ApiFormat; models?: string[]; selectedModel?: string; modelOverrides?: Record<string, ModelOverride>; retryPolicy?: ProviderRetryPolicy; providerPreset?: string }) => Promise<void>;
     onRemoveProvider?: (id: string) => Promise<void>;
     onToggleProviderConfig?: (id: string) => Promise<void>;
     onAddModel?: (providerId: string, modelId: string) => Promise<void>;

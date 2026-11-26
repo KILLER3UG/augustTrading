@@ -8848,7 +8848,11 @@ export async function* streamChatWithDeskTools(
             // ONLY when the active model can actually see images AND a live
             // canvas capture is wired — zero schema noise otherwise.
             .filter(d => d.function.name !== 'inspect_chart_image'
-                || shouldOfferChartImageTool(config.selectedModel, typeof captureChartPng === 'function'))
+                || shouldOfferChartImageTool(
+                    config.selectedModel,
+                    typeof captureChartPng === 'function',
+                    config.modelOverrides?.[config.selectedModel],
+                ))
         : [];
     const extraDefs = [
         ...chartDefs,

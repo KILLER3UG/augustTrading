@@ -67,6 +67,43 @@ export interface WireAuditEntry {
     reason: string;
 }
 
+/** Retry posture for transient provider errors (429 / 5xx / network). */
+export type ProviderRetryPolicy = 'default' | 'aggressive' | 'off';
+
+/** One effort-tier → wire-value mapping on a model override. */
+export interface ModelReasoningLevel {
+  /** User-facing effort tier key (e.g. 'low', 'medium', 'high', 'max'). */
+  level: string;
+  /** Exact value sent over the wire for that tier (e.g. 'low', 'medium', 'high'). */
+  apiValue: string;
+}
+
+/** Explicit modality flags for a model catalog entry. */
+export interface ModelInputTypes {
+  text: boolean;
+  image: boolean;
+}
+
+/**
+ * Per-model metadata & capability override stored on a ProviderConfig.
+ * Every field is optional and backwards-compatible with legacy providers.
+ */
+export interface ModelOverride {
+  displayName?: string;
+  contextWindow?: number;
+  maxOutputTokens?: number;
+  inputTypes?: ModelInputTypes;
+  reasoningEnabled?: boolean;
+  reasoningLevels?: ModelReasoningLevel[];
+  supportsTools?: boolean;
+  isFree?: boolean;
+}
+
+/** One model row in a provider's fetched or customized catalog. */
+export interface ModelCatalogEntry extends ModelOverride {
+  id: string;
+}
+
 /**
  * Configuration for a single AI provider.
  * Built-in providers have isBuiltIn=true and cannot be deleted.
@@ -87,8 +124,14 @@ export interface ProviderConfig {
   apiFormat: ApiFormat;          // Which API format to use
   isEnabled: boolean;            // Whether this provider is active
   isBuiltIn: boolean;            // true = default provider, false = user-added
-  models: string[];              // Available model IDs
+  models: string[];              // Available model IDs (saved catalog order)
   selectedModel: string;         // Currently selected model ID
+  /** Optional per-model capability & display overrides keyed by model ID. */
+  modelOverrides?: Record<string, ModelOverride>;
+  /** Optional transient-error retry policy (defaults to `'default'`). */
+  retryPolicy?: ProviderRetryPolicy;
+  /** Optional preset slug ('openrouter' | 'deepseek' | ... | 'custom'). */
+  providerPreset?: string;
   /** Models included when Ensemble mode is enabled (maximum three total). */
   /** Optional USD per 1k prompt tokens for run cost estimates. */
   inputUsdPer1k?: number;

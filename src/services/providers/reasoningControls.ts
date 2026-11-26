@@ -309,9 +309,71 @@ const CUSTOM_EFFORT_ROUTE: WireAuditEntry['route'] = 'custom-effort';
  * pass 'auto' to explicitly request no body change.
  */
 export const buildReasoningPatch = (
-    config: Pick<ProviderConfig, 'id' | 'baseUrl' | 'apiFormat' | 'selectedModel'>,
+    config: Pick<ProviderConfig, 'id' | 'baseUrl' | 'apiFormat' | 'selectedModel' | 'modelOverrides'>,
     effort: ReasoningEffort,
 ): ReasoningBodyPatch => {
+    const modelOverride = config.selectedModel ? config.modelOverrides?.[config.selectedModel] : undefined;
+    if (modelOverride?.reasoningEnabled === false) {
+        return {
+            patch: {},
+            audit: {
+                route: 'none',
+                effort,
+                applied: false,
+                reason: 'model override: reasoning disabled',
+            },
+        };
+    }
+    if (modelOverride?.reasoningEnabled === true && modelOverride.reasoningLevels && modelOverride.reasoningLevels.length > 0) {
+        if (effort === 'off') {
+            return {
+                patch: {},
+                audit: {
+                    route: 'none',
+                    effort,
+                    applied: false,
+                    reason: 'model override: effort=off omits reasoning parameter',
+                },
+            };
+        }
+        const levels = modelOverride.reasoningLevels;
+        const lowerEffort = effort.toLowerCase();
+        const exact = levels.find(l => l.level.trim().toLowerCase() === lowerEffort);
+        const mapped = exact
+            ?? (lowerEffort === 'max'
+                ? levels[levels.length - 1]
+                : lowerEffort === 'auto'
+                    ? levels[Math.floor(levels.length / 2)]
+                    : levels[0]);
+        if (mapped && mapped.apiValue.trim()) {
+            const apiVal = mapped.apiValue.trim();
+            if (config.apiFormat === 'responses') {
+                return {
+                    patch: { reasoning: { effort: apiVal, summary: 'auto' } },
+                    audit: {
+                        route: 'responses-effort',
+                        effort,
+                        applied: true,
+                        reason: `model override: reasoning.effort=${apiVal}`,
+                    },
+                };
+            }
+            const gateway = classifyReasoningGateway(config.baseUrl);
+            const patch: Record<string, unknown> = gateway === 'openrouter'
+                ? { reasoning: { effort: apiVal }, include_reasoning: true }
+                : { reasoning_effort: apiVal };
+            const field = gateway === 'openrouter' ? 'reasoning.effort' : 'reasoning_effort';
+            return {
+                patch,
+                audit: {
+                    route: CUSTOM_EFFORT_ROUTE,
+                    effort,
+                    applied: true,
+                    reason: `model override: ${field}=${apiVal}`,
+                },
+            };
+        }
+    }
     const caps = detectWireCapabilities(config);
     if (caps.xaiEffort) {
         const value = XAI_EFFORT_MAP[effort];
@@ -455,7 +517,7 @@ declare module './GenericProviderService' {
  * Returns the audit entry either way (the audit labels every call, applied or not).
  */
 export const applyReasoningToChatParams = (
-    config: Pick<ProviderConfig, 'id' | 'baseUrl' | 'apiFormat' | 'selectedModel'>,
+    config: Pick<ProviderConfig, 'id' | 'baseUrl' | 'apiFormat' | 'selectedModel' | 'modelOverrides'>,
     params: Record<string, unknown>,
     options?: Pick<ChatRequestOptions, 'reasoningEffort' | 'onWireAudit'>,
 ): WireAuditEntry => {

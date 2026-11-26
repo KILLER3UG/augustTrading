@@ -107,7 +107,7 @@ export const collectDoctorDiagnostic = async (opts: CollectDoctorOpts): Promise<
         : resolveContextWindow({ selectedModel: '', contextWindowTokens: undefined, modelContextWindows: undefined });
 
     const modelId = opts.provider?.selectedModel ?? '';
-    const visionCapable = modelId ? isVisionModel(modelId) : false;
+    const visionCapable = modelId ? isVisionModel(modelId, opts.provider?.modelOverrides?.[modelId]) : false;
     const wireCaps = opts.provider ? detectWireCapabilities(opts.provider) : null;
     const reasoningCapable = Boolean(
         opts.provider && wireCaps && (
@@ -315,7 +315,7 @@ export const collectRedactedDiagnosticBundle = async (
     });
 
     const modelId = resolvedProvider?.selectedModel ?? '';
-    const visionCapable = modelId ? isVisionModel(modelId) : false;
+    const visionCapable = modelId ? isVisionModel(modelId, resolvedProvider?.modelOverrides?.[modelId]) : false;
     const wireCaps = resolvedProvider ? detectWireCapabilities(resolvedProvider) : null;
     const reasoningCapable = Boolean(
         resolvedProvider && wireCaps && (

@@ -4,7 +4,7 @@
  */
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { ProviderConfig, ApiFormat } from '../types/provider';
+import { ProviderConfig, ApiFormat, ModelOverride, ProviderRetryPolicy } from '../types/provider';
 import {
     loadProviderConfigs,
     saveProviderConfigs,
@@ -57,12 +57,16 @@ export function useProviderConfigs() {
 
     // Add a custom provider
     const handleAddCustomProvider = useCallback(async (provider: {
+        id?: string;
         name: string;
         baseUrl: string;
         apiKey: string;
         apiFormat: ApiFormat;
         models?: string[];
         selectedModel?: string;
+        modelOverrides?: Record<string, ModelOverride>;
+        retryPolicy?: ProviderRetryPolicy;
+        providerPreset?: string;
     }) => {
         const updated = await addCustomProvider(provider);
         setConfigs(updated);

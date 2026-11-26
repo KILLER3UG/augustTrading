@@ -29,9 +29,9 @@ import { Box, Check, ChevronRight, Search, StarIcon } from './Icons';
 import StatusPill from '../ui/StatusPill';
 import type { ProviderConfig } from '../../types/provider';
 import {
-    formatModelDisplayName,
     isProviderReady,
     readStarredModels,
+    resolveProviderModelLabel,
     writeStarredModels,
 } from '../../utils/providerUtils';
 import { isVisionModel } from '../../utils/modelUtils';
@@ -146,18 +146,19 @@ const buildRows = (input: {
     for (const p of input.source) {
         for (const m of p.models) {
             const pair = `${p.id}::${m}`;
-            if (input.searching && !m.toLowerCase().includes(input.q)) continue;
-            const label = formatModelDisplayName(m);
+            const label = resolveProviderModelLabel(p, m);
+            if (input.searching && !m.toLowerCase().includes(input.q) && !label.toLowerCase().includes(input.q)) continue;
             if (isBareFreeEntry(m, label)) continue;
+            const override = p.modelOverrides?.[m];
             out.push({
                 value: pair,
                 id: m,
                 label,
                 providerName: p.name,
-                vision: isVisionModel(m),
+                vision: isVisionModel(m, override),
                 starred: input.starred.includes(pair),
                 disabled: input.disabledValues?.has(pair) ?? false,
-                ctx: compactTokens(p.modelContextWindows?.[m]),
+                ctx: compactTokens(override?.contextWindow ?? p.modelContextWindows?.[m]),
             });
         }
     }

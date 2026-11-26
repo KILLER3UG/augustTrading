@@ -39,6 +39,7 @@ import {
 
 import { recordProviderSuccess, recordProviderError } from '../infrastructure/ProviderHealthService';
 import { applyReasoningToChatParams, buildReasoningPatch, detectWireCapabilities } from './reasoningControls';
+import { resolveModelOverride, retryAttemptsForPolicy } from './modelCatalogCore';
 // Side-effect import: harnessLessons registers the wire-route pin checker
 // into reasoningControls at module init (harness-lesson read path). Importing here (the
 // transport) guarantees the registration happens before any reasoning patch
@@ -778,6 +779,18 @@ function withStreamTimeoutSignal(signal?: AbortSignal): AbortSignal {
 
 // ─── Chat Completions Format ────────────────────────────────────────────────
 
+/** Resolve effective max output tokens, honoring per-model `maxOutputTokens` override. */
+export function resolveEffectiveMaxTokens(config: ProviderConfig, requested?: number): number {
+    const overrideMax = resolveModelOverride(config)?.maxOutputTokens;
+    if (typeof overrideMax === 'number' && Number.isFinite(overrideMax) && overrideMax > 0) {
+        if (typeof requested === 'number' && Number.isFinite(requested) && requested > 0) {
+            return Math.min(Math.floor(requested), Math.floor(overrideMax));
+        }
+        return Math.floor(overrideMax);
+    }
+    return requested ?? 4096;
+}
+
 async function chatCompletionsTurn(
     config: ProviderConfig,
     messages: ChatMessage[],
@@ -787,7 +800,7 @@ async function chatCompletionsTurn(
     const params: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming = {
         model: config.selectedModel,
         messages: reasoningPreambleMessages(config, messages, options) as any,
-        max_tokens: options?.maxTokens ?? 4096,
+        max_tokens: resolveEffectiveMaxTokens(config, options?.maxTokens),
         temperature: options?.temperature ?? 0.7,
     };
     const rf = buildJsonResponseFormat(config, options);
@@ -874,7 +887,7 @@ async function* chatCompletionsStream(
     const params: OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming = {
         model: config.selectedModel,
         messages: reasoningPreambleMessages(config, messages, options) as any,
-        max_tokens: options?.maxTokens ?? 4096,
+        max_tokens: resolveEffectiveMaxTokens(config, options?.maxTokens),
         temperature: options?.temperature ?? 0.7,
         stream: true,
         stream_options: { include_usage: true },
@@ -1007,7 +1020,7 @@ async function messagesCall(
 
     const body: any = {
         model: config.selectedModel,
-        max_tokens: options?.maxTokens ?? 4096,
+        max_tokens: resolveEffectiveMaxTokens(config, options?.maxTokens),
         messages: nonSystemMsgs.map(m => ({ role: m.role, content: toAnthropicContent(m.content) })),
     };
     const maxTokensForBody = body.max_tokens as number;
@@ -1138,7 +1151,7 @@ async function responsesCall(
             model: config.selectedModel,
             input: toResponsesInput(messages),
             ...(instructions ? { instructions } : {}),
-            max_output_tokens: options?.maxTokens ?? 4096,
+            max_output_tokens: resolveEffectiveMaxTokens(config, options?.maxTokens),
             ...(reasoningPatch.patch.reasoning ? {} : { temperature: options?.temperature ?? 0.7 }),
             ...reasoningPatch.patch,
         }),
@@ -1684,7 +1697,7 @@ async function sendChatRequestOnce(
                 return stringTransportFor(effectiveConfig.apiFormat)(effectiveConfig, wireMessages, options);
             },
             (effectiveConfig.name as ProviderName) || 'Provider',
-            3,
+            retryAttemptsForPolicy(effectiveConfig.retryPolicy),
             options?.signal
         );
         recordProviderSuccess(config.id, Date.now() - startedAt);
@@ -1913,7 +1926,7 @@ async function sendChatTurnOnce(
                 } satisfies ChatTurnResult;
             },
             (effectiveConfig.name as ProviderName) || 'Provider',
-            3,
+            retryAttemptsForPolicy(effectiveConfig.retryPolicy),
             options?.signal
         );
         recordProviderSuccess(config.id, Date.now() - startedAt);
@@ -2624,7 +2637,7 @@ async function* streamViaProxy(
             throw error;
         }
         return attempt;
-    }, (config.name as ProviderName) || 'Provider', 3, options?.signal);
+    }, (config.name as ProviderName) || 'Provider', retryAttemptsForPolicy(config.retryPolicy), options?.signal);
     const contentType = (response.headers?.get?.('content-type') || '').toLowerCase();
     if (contentType.includes('application/json') && !contentType.includes('text/event-stream')) {
         const data = await response.json().catch(() => ({}));

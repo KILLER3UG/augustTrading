@@ -9,7 +9,7 @@
 import React from 'react';
 import ProviderManager from '../ProviderManager';
 import { SettingsPageHeader } from './shared';
-import type { ApiFormat, ProviderConfig } from '../../../types/provider';
+import type { ApiFormat, ModelOverride, ProviderConfig, ProviderRetryPolicy } from '../../../types/provider';
 import type { SettingsTabProps } from './types';
 
 export interface ModelsTabProps extends SettingsTabProps {
@@ -17,7 +17,7 @@ export interface ModelsTabProps extends SettingsTabProps {
     readyConfigProviders: ProviderConfig[];
     // Dynamic Providers
     onUpdateProvider?: (id: string, updates: Partial<Omit<ProviderConfig, 'id' | 'isBuiltIn'>>) => Promise<void>;
-    onAddCustomProvider?: (provider: { name: string; baseUrl: string; apiKey: string; apiFormat: ApiFormat; models?: string[]; selectedModel?: string }) => Promise<void>;
+    onAddCustomProvider?: (provider: { id?: string; name: string; baseUrl: string; apiKey: string; apiFormat: ApiFormat; models?: string[]; selectedModel?: string; modelOverrides?: Record<string, ModelOverride>; retryPolicy?: ProviderRetryPolicy; providerPreset?: string }) => Promise<void>;
     onRemoveProvider?: (id: string) => Promise<void>;
     onToggleProviderConfig?: (id: string) => Promise<void>;
     onAddModel?: (providerId: string, modelId: string) => Promise<void>;

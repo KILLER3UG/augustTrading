@@ -5,14 +5,15 @@
  */
 
 /**
- * Vision capability check: prefers explicit provider metadata when supplied,
- * falling back to known multimodal model-family heuristics only when metadata
- * is absent.
+ * Vision capability check: prefers explicit per-model `inputTypes.image` or
+ * provider `vision` metadata when supplied, falling back to known multimodal
+ * model-family heuristics only when metadata is absent.
  */
 export function isVisionModel(
     modelId: string,
-    capabilities?: { vision?: boolean },
+    capabilities?: { vision?: boolean; inputTypes?: { text?: boolean; image?: boolean } },
 ): boolean {
+    if (typeof capabilities?.inputTypes?.image === 'boolean') return capabilities.inputTypes.image;
     if (typeof capabilities?.vision === 'boolean') return capabilities.vision;
     const m = modelId.toLowerCase();
     return m.includes('vision')

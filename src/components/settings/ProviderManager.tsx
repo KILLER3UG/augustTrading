@@ -33,8 +33,11 @@ interface ProviderManagerProps {
     isLoaded?: boolean;
     onUpdateProvider: (id: string, updates: Partial<Omit<ProviderConfig, 'id' | 'isBuiltIn'>>) => Promise<void>;
     onAddCustomProvider: (provider: {
-        name: string; baseUrl: string; apiKey: string; apiFormat: ApiFormat;
+        id?: string; name: string; baseUrl: string; apiKey: string; apiFormat: ApiFormat;
         models?: string[]; selectedModel?: string;
+        modelOverrides?: ProviderConfig['modelOverrides'];
+        retryPolicy?: ProviderConfig['retryPolicy'];
+        providerPreset?: string;
     }) => Promise<void>;
     onRemoveProvider: (id: string) => Promise<void>;
     onToggleProvider: (id: string) => Promise<void>;

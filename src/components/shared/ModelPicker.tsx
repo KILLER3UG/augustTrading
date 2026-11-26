@@ -25,7 +25,7 @@
 
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { ProviderConfig } from '../../types/provider';
-import { formatModelDisplayName, isProviderReady } from '../../utils/providerUtils';
+import { formatModelDisplayName, isProviderReady, resolveProviderModelLabel } from '../../utils/providerUtils';
 import { ChevronDownIcon } from './Icons';
 import ModelMenu, { type ModelMenuAnchor } from './ModelMenu';
 
@@ -102,14 +102,14 @@ const ModelPicker: React.FC<ModelPickerProps> = ({
         if (!value) return placeholder;
         if (mode === 'model-only' || !value.includes('::')) {
             const owner = readyProviders.find(p => p.models.includes(value));
-            const label = formatModelDisplayName(value) || value;
+            const label = owner ? resolveProviderModelLabel(owner, value) : (formatModelDisplayName(value) || value);
             return owner ? `${owner.name} · ${label}` : `${label} · unavailable`;
         }
         const [pid, ...rest] = value.split('::');
         const model = rest.join('::');
         const p = readyProviders.find(x => x.id === pid);
         if (!p) return `${formatModelDisplayName(model) || model} · unavailable`;
-        return `${p.name} · ${formatModelDisplayName(model)}`;
+        return `${p.name} · ${resolveProviderModelLabel(p, model)}`;
     }, [value, mode, readyProviders, placeholder]);
 
     return (

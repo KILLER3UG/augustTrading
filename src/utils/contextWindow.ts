@@ -92,7 +92,7 @@ export interface ResolvedContextWindow {
 /** The keys `resolveContextWindow` needs, so a caller may pass a subset. */
 export type ContextWindowInput = Pick<
     ProviderConfig,
-    'contextWindowTokens' | 'modelContextWindows' | 'selectedModel'
+    'contextWindowTokens' | 'modelContextWindows' | 'selectedModel' | 'modelOverrides'
 > & { id?: string; name?: string };
 
 const positiveInt = (v: unknown): number | null => {
@@ -149,6 +149,16 @@ export const resetMeasuredContextWindows = (): void => { measuredWindows.clear()
  * relying on.
  */
 export const resolveContextWindow = (config: ContextWindowInput): ResolvedContextWindow => {
+    const perModelOverride = config.selectedModel
+        ? positiveInt(config.modelOverrides?.[config.selectedModel]?.contextWindow)
+        : null;
+    if (perModelOverride) {
+        return {
+            tokens: perModelOverride,
+            source: 'user',
+            label: `model override · ${perModelOverride.toLocaleString()} tokens`,
+        };
+    }
     const override = positiveInt(config.contextWindowTokens);
     if (override) {
         return { tokens: override, source: 'user', label: `your override · ${override.toLocaleString()} tokens` };

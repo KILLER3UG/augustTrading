@@ -283,8 +283,12 @@ export const CHART_ACTION_TOOL_DEFS: DeskToolDefinition[] = [
  * must be vision-capable AND a live canvas capture must be wired. A pure
  * predicate so the offer filter, the tests and the catalogue cannot drift.
  */
-export const shouldOfferChartImageTool = (modelId: string, captureWired: boolean): boolean =>
-    captureWired && isVisionModel(modelId);
+export const shouldOfferChartImageTool = (
+    modelId: string,
+    captureWired: boolean,
+    capabilities?: { vision?: boolean; inputTypes?: { text?: boolean; image?: boolean } },
+): boolean =>
+    captureWired && isVisionModel(modelId, capabilities);
 
 export const deskToolsMandateFor = (offered?: readonly string[], deferred = false): string => {
     const has = (name: string): boolean => offered === undefined || offered.includes(name);

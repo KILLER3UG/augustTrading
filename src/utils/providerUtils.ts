@@ -203,6 +203,20 @@ const formatModelToken = (token: string): string => {
 };
 
 /**
+ * Resolve a model's display name on a provider: prefers the trader's custom
+ * `modelOverrides[modelId].displayName`, falling back to `formatModelDisplayName`.
+ */
+export function resolveProviderModelLabel(
+    provider: Pick<ProviderConfig, 'modelOverrides'> | null | undefined,
+    modelId: string | undefined,
+): string {
+    if (!modelId) return '';
+    const custom = provider?.modelOverrides?.[modelId]?.displayName?.trim();
+    if (custom) return custom;
+    return formatModelDisplayName(modelId) || modelId;
+}
+
+/**
  * Build a model-id → display label map from all configured providers.
  * Replaces the legacy static `modelIdToName` / `ocrModelIdToName` constants.
  * Label format: "ProviderName · Pretty Model". Consumers fall back to a
@@ -215,7 +229,7 @@ export function buildModelIdToName(configs: ProviderConfig[]): Record<string, st
             if (!model) continue;
             // First provider wins if two providers list the same model id.
             if (!(model in map)) {
-                map[model] = `${config.name} · ${formatModelDisplayName(model)}`;
+                map[model] = `${config.name} · ${resolveProviderModelLabel(config, model)}`;
             }
         }
     }

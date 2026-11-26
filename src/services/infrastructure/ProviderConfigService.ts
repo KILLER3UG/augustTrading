@@ -3,7 +3,20 @@
  * Stores provider configs via PreferencesService (localStorage / Capacitor Preferences).
  */
 
-import { ProviderConfig, ApiFormat, parseApiFormat } from '../../types/provider';
+import {
+    ProviderConfig,
+    ApiFormat,
+    ModelCatalogEntry,
+    ModelOverride,
+    ProviderRetryPolicy,
+    parseApiFormat,
+} from '../../types/provider';
+import {
+    normalizeFetchedCatalog,
+    parseModelOverrides,
+    parseRetryPolicy,
+    sanitizeProviderId,
+} from '../providers/modelCatalogCore';
 import { getPreferenceObject, setPreferenceObject } from './PreferencesService';
 import { assertValidProviderUrl } from '../../utils/providerUrlValidation';
 import { usesGoogleGeminiDiscovery, googleModelsUrl } from '../../utils/googleGeminiFormat';
@@ -212,6 +225,11 @@ export async function loadProviderConfigs(): Promise<ProviderConfig[]> {
             jsonSchemaCapable: triState(config.jsonSchemaCapable),
             contextWindowTokens: positiveNumber(config.contextWindowTokens),
             modelContextWindows: parseModelContextWindows(config.modelContextWindows),
+            modelOverrides: parseModelOverrides(config.modelOverrides),
+            retryPolicy: parseRetryPolicy(config.retryPolicy),
+            providerPreset: typeof config.providerPreset === 'string' && config.providerPreset.trim()
+                ? config.providerPreset.trim()
+                : undefined,
         } satisfies ProviderConfig;
     }));
     // Owner ruling 2026-10-19: the per-provider ensemble roster is gone. A
@@ -289,12 +307,16 @@ export async function updateProviderConfig(
  * Add a custom provider.
  */
 export async function addCustomProvider(provider: {
+    id?: string;
     name: string;
     baseUrl: string;
     apiKey: string;
     apiFormat: ApiFormat;
     models?: string[];
     selectedModel?: string;
+    modelOverrides?: Record<string, ModelOverride>;
+    retryPolicy?: ProviderRetryPolicy;
+    providerPreset?: string;
 }): Promise<ProviderConfig[]> {
     return runExclusiveProviderWrite(async () => {
         const configs = await loadProviderConfigs();
@@ -305,8 +327,12 @@ export async function addCustomProvider(provider: {
         // without models stays NOT ready until the user refreshes/picks real
         // models from the endpoint.
         const firstModel = provider.selectedModel || provider.models?.[0] || '';
+        let resolvedId = provider.id?.trim() ? sanitizeProviderId(provider.id) : `custom-${Date.now()}`;
+        if (configs.some(c => c.id === resolvedId)) {
+            resolvedId = `${resolvedId}-${Date.now().toString(36).slice(-4)}`;
+        }
         const newConfig: ProviderConfig = {
-            id: `custom-${Date.now()}`,
+            id: resolvedId,
             name: provider.name,
             apiKey: provider.apiKey,
             baseUrl: assertValidProviderUrl(provider.baseUrl),
@@ -315,6 +341,9 @@ export async function addCustomProvider(provider: {
             isBuiltIn: false,
             models: provider.models ?? [],
             selectedModel: firstModel,
+            modelOverrides: parseModelOverrides(provider.modelOverrides),
+            retryPolicy: parseRetryPolicy(provider.retryPolicy),
+            providerPreset: provider.providerPreset?.trim() || undefined,
         };
         const updated = [...configs, newConfig];
         await saveProviderConfigs(updated);
@@ -365,7 +394,13 @@ export async function removeModelFromProvider(providerId: string, modelId: strin
             if (c.id === providerId) {
                 const models = c.models.filter(m => m !== modelId);
                 const selectedModel = c.selectedModel === modelId ? (models[0] || '') : c.selectedModel;
-                return { ...c, models, selectedModel };
+                let modelOverrides = c.modelOverrides;
+                if (modelOverrides && modelId in modelOverrides) {
+                    const copy = { ...modelOverrides };
+                    delete copy[modelId];
+                    modelOverrides = Object.keys(copy).length > 0 ? copy : undefined;
+                }
+                return { ...c, models, selectedModel, modelOverrides };
             }
             return c;
         });
@@ -386,7 +421,14 @@ export async function updateModelInProvider(providerId: string, oldModelId: stri
             if (c.id === providerId) {
                 const models = c.models.map(m => m === oldModelId ? trimmed : m);
                 const selectedModel = c.selectedModel === oldModelId ? trimmed : c.selectedModel;
-                return { ...c, models, selectedModel };
+                let modelOverrides = c.modelOverrides;
+                if (modelOverrides && oldModelId in modelOverrides && oldModelId !== trimmed) {
+                    const copy = { ...modelOverrides };
+                    copy[trimmed] = copy[oldModelId];
+                    delete copy[oldModelId];
+                    modelOverrides = copy;
+                }
+                return { ...c, models, selectedModel, modelOverrides };
             }
             return c;
         });
@@ -626,7 +668,7 @@ export async function discoverProviderModels(config: {
     return (await discoverProviderModelCatalog(config)).ids;
 }
 
-/** Model ids PLUS whatever the provider said about each one's context window. */
+/** Model ids PLUS rich hydrated catalog entries & context windows. */
 export interface DiscoveredModelCatalog {
     ids: string[];
     /** modelId → context window in tokens. Sparse: only models the provider
@@ -635,6 +677,8 @@ export interface DiscoveredModelCatalog {
      *  limit or the default, and a false zero here would compact a 1M model to
      *  nothing. */
     windows: Record<string, number>;
+    /** Rich normalized catalog entries hydrated from the `/models` payload. */
+    entries?: ModelCatalogEntry[];
 }
 
 /**
@@ -680,7 +724,8 @@ export async function discoverProviderModelCatalog(config: {
     if (ids.length === 0) {
         throw new Error('The provider returned no models — its /models endpoint may be unsupported.');
     }
-    return { ids, windows: parseDiscoveredModelWindows(parsed) };
+    const entries = normalizeFetchedCatalog(config.apiFormat, parsed);
+    return { ids, windows: parseDiscoveredModelWindows(parsed), entries };
 }
 
 /** The keys a context window hides under, across the families this app talks
