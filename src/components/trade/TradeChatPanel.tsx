@@ -1692,6 +1692,7 @@ ${riskConstitution}`
             if (text && text.trim()) void send(text.trim());
         };
         const onComposerInject = (ev: Event): void => {
+            if (!paneVisible) return;
             const detail = (ev as CustomEvent<{ text?: string; focus?: boolean }>).detail;
             if (!detail?.text) return;
             const snippet = detail.text.trim();
@@ -1721,7 +1722,7 @@ ${riskConstitution}`
             window.removeEventListener('august:composer-inject', onComposerInject);
             window.removeEventListener('august:composer-attach-png', onAttachPng);
         };
-    }, [send, addAttachment, symbol, interval]);
+    }, [send, addAttachment, symbol, interval, paneVisible]);
 
     const contextRing = useMemo(() => {
         const diag = collectContextDiagnostic({

@@ -45,6 +45,7 @@ import {
     CHART_RAIL_GROUPS,
     MAX_FAVORITE_TOOLS,
     computeMeasureMetrics,
+    filterInteractiveDrawings,
     findCategoryForTool,
     isEditableKeyboardTarget,
     normalizeFavoriteTools,
@@ -172,6 +173,43 @@ describe('chartDeckCore — Grouped Rail, Magnet, Favorites & Measure/Ruler', ()
         assert.equal(pointsForKind('vline', [{ t: 100, p: 50 }])?.length, 1);
         assert.equal(pointsForKind('price_range', [{ t: 100, p: 50 }, { t: 200, p: 55 }])?.length, 2);
         assert.equal(pointsForKind('price_range', [{ t: 100, p: 50 }]), null);
+    });
+
+    it('filters hidden and scoped-off drawings out of interactive hit-test & erase lists', () => {
+        const userVisible = { id: 'u1', origin: 'user' as const, hidden: false };
+        const userHidden = { id: 'u2', origin: 'user' as const, hidden: true };
+        const userImplicit = { id: 'u3' };
+        const aiVisible = { id: 'a1', origin: 'agent' as const, hidden: false };
+        const aiHidden = { id: 'a2', origin: 'agent' as const, hidden: true };
+        const aiImplicit = { id: 'a3' };
+
+        const all = filterInteractiveDrawings({
+            userDrawings: [userVisible, userHidden, userImplicit],
+            modelDrawings: [aiVisible, aiHidden, aiImplicit],
+            visibilityScope: 'all',
+        });
+        assert.deepEqual(all.map(d => d.id), ['u1', 'u3', 'a1', 'a3']);
+
+        const hideAi = filterInteractiveDrawings({
+            userDrawings: [userVisible, userHidden, userImplicit],
+            modelDrawings: [aiVisible, aiHidden, aiImplicit],
+            visibilityScope: 'hide_ai',
+        });
+        assert.deepEqual(hideAi.map(d => d.id), ['u1', 'u3']);
+
+        const hideUser = filterInteractiveDrawings({
+            userDrawings: [userVisible, userHidden, userImplicit],
+            modelDrawings: [aiVisible, aiHidden, aiImplicit],
+            visibilityScope: 'hide_user',
+        });
+        assert.deepEqual(hideUser.map(d => d.id), ['a1', 'a3']);
+
+        const hideAll = filterInteractiveDrawings({
+            userDrawings: [userVisible, userImplicit],
+            modelDrawings: [aiVisible, aiImplicit],
+            visibilityScope: 'hide_all',
+        });
+        assert.deepEqual(hideAll, []);
     });
 });
 

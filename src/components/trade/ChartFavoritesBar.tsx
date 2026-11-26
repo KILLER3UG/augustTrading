@@ -25,13 +25,13 @@ const posKey = (username: string): string => `august_chart_favbar_pos_v1_${usern
 const readStoredPos = (): { x: number; y: number } => {
     try {
         const raw = localStorage.getItem(posKey(getActiveUsername()));
-        if (!raw) return { x: 12, y: 44 };
+        if (!raw) return { x: 12, y: 76 };
         const parsed = JSON.parse(raw) as { x?: number; y?: number };
         if (typeof parsed.x === 'number' && Number.isFinite(parsed.x) && typeof parsed.y === 'number' && Number.isFinite(parsed.y)) {
             return { x: Math.max(8, parsed.x), y: Math.max(8, parsed.y) };
         }
     } catch { /* fallback */ }
-    return { x: 12, y: 44 };
+    return { x: 12, y: 76 };
 };
 
 export const ChartFavoritesBar: React.FC<ChartFavoritesBarProps> = ({

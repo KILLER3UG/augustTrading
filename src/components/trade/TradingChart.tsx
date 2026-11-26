@@ -133,6 +133,7 @@ import * as chatStore from '../../services/trade/chatStore';
 import { submitPaperOrder } from '../../services/paper/PaperBrokerService';
 import {
     computeMeasureMetrics,
+    filterInteractiveDrawings,
     isEditableKeyboardTarget,
     normalizeFavoriteTools,
     resolveEffectiveMagnetMode,
@@ -1120,6 +1121,19 @@ const TradingChart: React.FC<TradingChartProps> = ({
         syncPrimitive();
         scheduleRepaint();
     }, [drawings, modelDrawings, paperDrawings, selectedDrawingId, visibilityScope, showLowerTfDrawings, interval, priceScaleMode, harnessSizing, syncPrimitive, scheduleRepaint]);
+
+    // Auto-clear selection if the selected drawing is hidden individually or scoped off.
+    useEffect(() => {
+        if (!selectedDrawingId) return;
+        const interactive = filterInteractiveDrawings({
+            userDrawings: drawings,
+            modelDrawings: modelDrawings ?? [],
+            visibilityScope,
+        });
+        if (!interactive.some(d => d.id === selectedDrawingId)) {
+            setSelectedDrawingId(null);
+        }
+    }, [drawings, modelDrawings, visibilityScope, selectedDrawingId]);
 
     // Apply Normal / Logarithmic / Percentage mode + AutoScale directly to lightweight-charts' right price scale.
     useEffect(() => {
@@ -3079,7 +3093,13 @@ const TradingChart: React.FC<TradingChartProps> = ({
         });
 
         const getAllDrawings = (): ChartDrawing[] =>
-            drawingsHiddenRef.current ? [] : [...drawingsRef.current, ...modelDrawingsRef.current];
+            drawingsHiddenRef.current
+                ? []
+                : filterInteractiveDrawings({
+                    userDrawings: drawingsRef.current,
+                    modelDrawings: modelDrawingsRef.current,
+                    visibilityScope: visibilityScopeRef.current,
+                });
 
         const getDraggablePaperDrawings = (): ChartDrawing[] =>
             drawingsHiddenRef.current
@@ -3681,10 +3701,17 @@ const TradingChart: React.FC<TradingChartProps> = ({
             const host = hostRef.current;
             const plotW = Math.max(0, (host?.clientWidth ?? 600) - axisWRef.current);
             const plotH = Math.max(0, (host?.clientHeight ?? 400) - 28);
+            const erasable = drawingsHiddenRef.current
+                ? []
+                : filterInteractiveDrawings({
+                    userDrawings: drawingsRef.current,
+                    modelDrawings: modelDrawingsRef.current,
+                    visibilityScope: visibilityScopeRef.current,
+                });
             const hit = hitTestDrawings(
                 pt.x,
                 pt.y,
-                [...drawingsRef.current, ...modelDrawingsRef.current],
+                erasable,
                 null,
                 toScreen,
                 plotW,
@@ -4533,7 +4560,11 @@ const TradingChart: React.FC<TradingChartProps> = ({
                     );
                 })()}
                 {selectedDrawingId && !draft && !textEdit && (() => {
-                    const sel = [...drawings, ...(modelDrawings ?? [])].find(d => d.id === selectedDrawingId);
+                    const sel = filterInteractiveDrawings({
+                        userDrawings: drawings,
+                        modelDrawings: modelDrawings ?? [],
+                        visibilityScope,
+                    }).find(d => d.id === selectedDrawingId);
                     if (!sel || !sel.points[0]) return null;
                     const anchor = toScreen(sel.points[0]);
                     if (!anchor) return null;

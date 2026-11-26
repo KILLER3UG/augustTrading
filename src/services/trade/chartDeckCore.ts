@@ -384,3 +384,45 @@ export const isEditableKeyboardTarget = (
     const upper = tagName.toUpperCase();
     return upper === 'INPUT' || upper === 'TEXTAREA' || upper === 'SELECT';
 };
+
+export interface FilterInteractiveDrawingsInput<
+    T extends { id: string; hidden?: boolean; origin?: 'user' | 'agent' },
+> {
+    userDrawings: ReadonlyArray<T>;
+    modelDrawings: ReadonlyArray<T>;
+    visibilityScope: DrawingVisibilityScope;
+}
+
+/**
+ * Pure filter returning only drawings currently visible & eligible for
+ * hit-testing, selection, dragging, or erasing:
+ *  - `hide_all` returns `[]`
+ *  - individual `d.hidden === true` drawings are excluded
+ *  - `hide_ai` excludes drawings whose resolved origin is `'agent'`
+ *  - `hide_user` excludes drawings whose resolved origin is `'user'`
+ */
+export const filterInteractiveDrawings = <
+    T extends { id: string; hidden?: boolean; origin?: 'user' | 'agent' },
+>(
+    input: FilterInteractiveDrawingsInput<T>,
+): T[] => {
+    const { userDrawings, modelDrawings, visibilityScope } = input;
+    if (visibilityScope === 'hide_all') return [];
+    const out: T[] = [];
+    const append = (list: ReadonlyArray<T>, defaultOrigin: 'user' | 'agent'): void => {
+        for (const drawing of list) {
+            if (drawing.hidden === true) continue;
+            const resolvedOrigin: 'user' | 'agent' = drawing.origin === 'agent'
+                ? 'agent'
+                : drawing.origin === 'user'
+                    ? 'user'
+                    : defaultOrigin;
+            if (visibilityScope === 'hide_ai' && resolvedOrigin === 'agent') continue;
+            if (visibilityScope === 'hide_user' && resolvedOrigin === 'user') continue;
+            out.push(drawing);
+        }
+    };
+    append(userDrawings, 'user');
+    append(modelDrawings, 'agent');
+    return out;
+};
