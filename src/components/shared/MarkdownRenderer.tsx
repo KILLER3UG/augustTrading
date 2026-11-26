@@ -146,6 +146,44 @@ const CodeFenceBlock: React.FC<{ children?: React.ReactNode }> = ({ children }) 
   );
 };
 
+const DRAWING_REF_PATTERN = /(#D\d+)\b/g;
+
+const emitChartSpotlight = (shortId: string | null): void => {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(new CustomEvent('august:chart-spotlight', { detail: { shortId } }));
+};
+
+const DrawingRefChip: React.FC<{ shortId: string }> = ({ shortId }) => (
+  <span
+    data-testid="drawing-ref-chip"
+    data-drawing-ref={shortId}
+    onMouseEnter={() => emitChartSpotlight(shortId)}
+    onMouseLeave={() => emitChartSpotlight(null)}
+    className="inline-flex cursor-pointer items-center rounded-[4px] border border-hairline bg-zinc-900 px-1 py-0 font-mono text-[11px] leading-snug text-zinc-200 transition-colors hover:border-line hover:bg-zinc-800 hover:text-zinc-50"
+  >
+    {shortId}
+  </span>
+);
+
+const decorateDrawingRefs = (nodes: React.ReactNode): React.ReactNode =>
+  React.Children.map(nodes, (child, idx) => {
+    if (typeof child !== 'string' || !DRAWING_REF_PATTERN.test(child)) {
+      DRAWING_REF_PATTERN.lastIndex = 0;
+      return child;
+    }
+    DRAWING_REF_PATTERN.lastIndex = 0;
+    const parts = child.split(DRAWING_REF_PATTERN);
+    return (
+      <React.Fragment key={idx}>
+        {parts.map((part, pIdx) =>
+          /^#D\d+$/.test(part)
+            ? <DrawingRefChip key={pIdx} shortId={part} />
+            : part,
+        )}
+      </React.Fragment>
+    );
+  });
+
 const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, className }) => {
   return (
     <div className={`text-ui-base leading-[1.7] text-zinc-200 prose prose-invert prose-sm prose-code:before:content-none prose-code:after:content-none max-w-none ${className ?? ''}`}>
@@ -160,6 +198,10 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, className 
               return (
                 <code className="font-mono text-zinc-200" {...props}>{children}</code>
               );
+            }
+            const rawText = extractNodeText(children).trim();
+            if (/^#D\d+$/.test(rawText)) {
+              return <DrawingRefChip shortId={rawText} />;
             }
             return (
               <code
@@ -195,7 +237,7 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, className 
             <th className="whitespace-nowrap border-b border-zinc-700 bg-zinc-800 px-3 py-1.5 text-ui-caption font-medium text-zinc-200 text-left">{children}</th>
           ),
           td: ({ children }) => (
-            <td className="border-b border-zinc-700/60 px-3 py-1.5 text-ui-caption text-zinc-300 align-middle leading-snug">{children}</td>
+            <td className="border-b border-zinc-700/60 px-3 py-1.5 text-ui-caption text-zinc-300 align-middle leading-snug">{decorateDrawingRefs(children)}</td>
           ),
           blockquote: ({ children }) => (
             <blockquote className="border-l-2 border-line pl-3.5 text-zinc-400 italic">{children}</blockquote>
@@ -204,10 +246,10 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, className 
           h2: ({ children }) => <h2 className="mt-5 mb-2.5 text-ui-lg font-semibold text-zinc-100">{children}</h2>,
           h3: ({ children }) => <h3 className="mt-4 mb-2 text-ui-base font-semibold text-zinc-100">{children}</h3>,
           hr: () => <hr className="my-4 border-hairline" />,
-          p: ({ children }) => <p className="my-3 leading-[1.65] text-zinc-300">{children}</p>,
+          p: ({ children }) => <p className="my-3 leading-[1.65] text-zinc-300">{decorateDrawingRefs(children)}</p>,
           ul: ({ children }) => <ul className="my-3 list-disc space-y-1.5 pl-5 text-zinc-300 marker:text-zinc-600">{children}</ul>,
           ol: ({ children }) => <ol className="my-3 list-decimal space-y-1.5 pl-5 text-zinc-300 marker:text-zinc-600">{children}</ol>,
-          li: ({ children }) => <li className="leading-[1.65]">{children}</li>,
+          li: ({ children }) => <li className="leading-[1.65]">{decorateDrawingRefs(children)}</li>,
           em: ({ children }) => <em className="italic text-zinc-200">{children}</em>,
           strong: ({ children }) => <strong className="font-bold text-zinc-50">{children}</strong>,
           a: ({ children, href }) => (

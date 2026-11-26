@@ -58,6 +58,8 @@ export interface DrawingsPrimitiveState {
     paperDrawings: ReadonlyArray<ChartDrawing>;
     selectedId: string | null;
     hoveredId: string | null;
+    /** Optional spotlighted drawing id when hovering a `#Dn` chip in chat. */
+    spotlightId?: string | null;
     hidden: boolean;
     /** Granular layer visibility scope ('all' | 'hide_all' | 'hide_ai' | 'hide_user'). */
     visibilityScope?: 'all' | 'hide_all' | 'hide_ai' | 'hide_user';
@@ -109,17 +111,20 @@ class CommittedDrawingsRenderer implements IPrimitivePaneRenderer {
     private priceScaleMode: PriceScaleMode = 'normal';
     private priceAtCoord: (y: number) => number | null = () => null;
     private priceToCoord: (p: number) => number | null = () => null;
+    private spotlightId: string | null = null;
 
     setRenderData(
         shapes: ProjectedShape[],
         priceScaleMode: PriceScaleMode,
         priceAtCoord: (y: number) => number | null,
         priceToCoord: (p: number) => number | null,
+        spotlightId: string | null = null,
     ): void {
         this.shapes = shapes;
         this.priceScaleMode = priceScaleMode;
         this.priceAtCoord = priceAtCoord;
         this.priceToCoord = priceToCoord;
+        this.spotlightId = spotlightId;
     }
 
     draw(target: Parameters<IPrimitivePaneRenderer['draw']>[0]): void {
@@ -239,13 +244,19 @@ class CommittedDrawingsRenderer implements IPrimitivePaneRenderer {
                 const { drawing, origin, pts, isHovered } = item;
                 if (pts.length === 0) continue;
                 const isAgent = origin === 'agent';
-                const stroke = drawing.color || '#f4f4f5';
-                const baseWidth = drawWidthOf(drawing) + (isHovered ? 0.5 : 0);
+                const isSpotlight = this.spotlightId !== null && drawing.id === this.spotlightId;
+                const stroke = isSpotlight ? '#fafafa' : (drawing.color || '#f4f4f5');
+                const baseWidth = drawWidthOf(drawing) + (isHovered ? 0.5 : 0) + (isSpotlight ? 1.5 : 0);
                 // The dash is a STYLE (selection toolbar) plus the agent's
                 // origin marker: an agent shape is dashed regardless, a user
                 // shape only when the trader toggled the style.
                 const dashed = isAgent || drawing.dash === true;
                 const agentDash = dashed ? [6, 4] : [];
+                if (isSpotlight) {
+                    ctx.save();
+                    ctx.shadowColor = 'rgba(250, 250, 250, 0.45)';
+                    ctx.shadowBlur = 8 * fontScale;
+                }
 
                 switch (drawing.kind) {
                     case 'hline': {
@@ -523,6 +534,7 @@ class CommittedDrawingsRenderer implements IPrimitivePaneRenderer {
                         }
                     }
                 }
+                if (isSpotlight) ctx.restore();
             }
 
             ctx.restore();
@@ -589,8 +601,9 @@ class CommittedDrawingsPaneView implements IPrimitivePaneView {
         priceScaleMode: PriceScaleMode,
         priceAtCoord: (y: number) => number | null,
         priceToCoord: (p: number) => number | null,
+        spotlightId: string | null = null,
     ): void {
-        this._renderer.setRenderData(shapes, priceScaleMode, priceAtCoord, priceToCoord);
+        this._renderer.setRenderData(shapes, priceScaleMode, priceAtCoord, priceToCoord, spotlightId);
     }
 }
 
@@ -720,6 +733,7 @@ export class ChartDrawingsPrimitive implements ISeriesPrimitive<Time> {
                 && prev.paperDrawings === next.paperDrawings
                 && prev.selectedId === next.selectedId
                 && prev.hoveredId === next.hoveredId
+                && prev.spotlightId === next.spotlightId
                 && prev.hidden === next.hidden
                 && prev.visibilityScope === next.visibilityScope
                 && prev.includeLowerTf === next.includeLowerTf
@@ -817,7 +831,7 @@ export class ChartDrawingsPrimitive implements ISeriesPrimitive<Time> {
             return y === null || y === undefined || !Number.isFinite(Number(y)) ? null : Number(y);
         };
 
-        this.committedView.update(projected, this.state.priceScaleMode, priceAtCoord, priceToCoord);
+        this.committedView.update(projected, this.state.priceScaleMode, priceAtCoord, priceToCoord, this.state.spotlightId ?? null);
         this.selectionView.update(selectedShape, hoveredShape);
         this.rebuildAxisViews();
     }

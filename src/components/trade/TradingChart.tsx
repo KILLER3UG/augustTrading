@@ -39,19 +39,21 @@ import {
 } from 'lightweight-charts';
 import { fetchKlines } from '../../services/analysis/KlineService';
 import {
+    BellIcon,
     Camera,
     ChevronRight,
     Layers,
     Lock,
     Maximize2,
+    MessageSquare,
     Minimize2,
-    Pencil,
     Redo2,
     RotateCcw,
     Settings,
     Target,
     Trash2,
     Undo2,
+    Unlock,
 } from '../shared/Icons';
 import type { Kline } from '../../services/analysis/MarketDataService';
 import { sessionLevelRows, type LevelRow } from '../../services/market/levelsCore';
@@ -110,8 +112,12 @@ import { fmtPrice as fmtPriceForChart, fmtUsd as fmtUsdForChart } from '../../ut
 import { TradeAnalysis } from '../../types';
 import { ChartToolRail } from './ChartToolRail';
 import { ChartFavoritesBar } from './ChartFavoritesBar';
+import { ChartContextMenu } from './ChartContextMenu';
 import ChartFrame from '../shared/ChartFrame';
 import { ChartObjectTreePopover } from './ChartObjectTreePopover';
+import * as watchService from '../../services/trade/watchService';
+import * as chatStore from '../../services/trade/chatStore';
+import { submitPaperOrder } from '../../services/paper/PaperBrokerService';
 import {
     computeMeasureMetrics,
     isEditableKeyboardTarget,
@@ -143,6 +149,7 @@ import {
     createHoverReadout,
     HoverLegend,
     HoverCrossTag,
+    PriceAxisPlusButton,
     type HoverBar,
     type HoverReadout,
 } from './ChartHoverReadouts';
@@ -849,6 +856,31 @@ const TradingChart: React.FC<TradingChartProps> = ({
     const [paperDrawings, setPaperDrawings] = useState<ReadonlyArray<ChartDrawing>>([]);
     const paperDrawingsRef = useRef<ReadonlyArray<ChartDrawing>>([]);
     paperDrawingsRef.current = paperDrawings;
+    const [paperEnabled, setPaperEnabled] = useState(false);
+    const [planMode, setPlanMode] = useState<boolean>(() => chatStore.getPlanMode(sessionId));
+    useEffect(() => {
+        setPlanMode(chatStore.getPlanMode(sessionId));
+        return chatStore.subscribe(() => {
+            setPlanMode(chatStore.getPlanMode(sessionId));
+        });
+    }, [sessionId]);
+    const [contextMenu, setContextMenu] = useState<{ price: number; x: number; y: number } | null>(null);
+    const [chartNotice, setChartNotice] = useState<string | null>(null);
+    const chartNoticeTimerRef = useRef<number | null>(null);
+    const showChartNotice = useCallback((msg: string): void => {
+        setChartNotice(msg);
+        if (chartNoticeTimerRef.current !== null) window.clearTimeout(chartNoticeTimerRef.current);
+        chartNoticeTimerRef.current = window.setTimeout(() => {
+            chartNoticeTimerRef.current = null;
+            setChartNotice(null);
+        }, 3200);
+    }, []);
+    useEffect(() => () => {
+        if (chartNoticeTimerRef.current !== null) window.clearTimeout(chartNoticeTimerRef.current);
+    }, []);
+    /** Drawing spotlighted by hovering a `#Dn` chip inside Chat messages. */
+    const [spotlightShortId, setSpotlightShortId] = useState<string | null>(null);
+    const spotlightIdRef = useRef<string | null>(null);
     const onReplaceModelDrawingsRef = useRef(onReplaceModelDrawings);
     onReplaceModelDrawingsRef.current = onReplaceModelDrawings;
     const intervalRef = useRef<ChartInterval>(interval);
@@ -985,10 +1017,14 @@ const TradingChart: React.FC<TradingChartProps> = ({
     useEffect(() => {
         let alive = true;
         const unsubscribe = subscribePaperAccount(account => {
-            if (alive) setPaperDrawings(paperDrawingsFromAccount(account, symbol));
+            if (!alive) return;
+            setPaperEnabled(account.config.enabled === true);
+            setPaperDrawings(paperDrawingsFromAccount(account, symbol));
         });
         void getPaperAccount().then(account => {
-            if (alive) setPaperDrawings(paperDrawingsFromAccount(account, symbol));
+            if (!alive) return;
+            setPaperEnabled(account.config.enabled === true);
+            setPaperDrawings(paperDrawingsFromAccount(account, symbol));
         }).catch(() => { /* no readable paper account — overlay stays empty */ });
         return () => { alive = false; unsubscribe(); };
     }, [symbol]);
@@ -1011,6 +1047,7 @@ const TradingChart: React.FC<TradingChartProps> = ({
             paperDrawings: paperDrawingsRef.current,
             selectedId: overrides?.selectedId !== undefined ? overrides.selectedId : selectedDrawingIdRef.current,
             hoveredId: overrides?.hoveredId !== undefined ? overrides.hoveredId : hoveredDrawingIdRef.current,
+            spotlightId: spotlightIdRef.current,
             hidden: drawingsHiddenRef.current,
             visibilityScope: visibilityScopeRef.current,
             includeLowerTf: showLowerTfRef.current,
@@ -1020,6 +1057,24 @@ const TradingChart: React.FC<TradingChartProps> = ({
             candles: bars,
         });
     }, []);
+
+    useEffect(() => {
+        const onSpotlight = (ev: Event): void => {
+            const shortId = (ev as CustomEvent<{ shortId?: string | null }>).detail?.shortId ?? null;
+            setSpotlightShortId(shortId);
+            if (!shortId) {
+                spotlightIdRef.current = null;
+            } else {
+                const upper = shortId.trim().toUpperCase();
+                const found = [...drawingsRef.current, ...modelDrawingsRef.current]
+                    .find(d => d.shortId?.toUpperCase() === upper);
+                spotlightIdRef.current = found ? found.id : null;
+            }
+            syncPrimitive();
+        };
+        window.addEventListener('august:chart-spotlight', onSpotlight);
+        return () => window.removeEventListener('august:chart-spotlight', onSpotlight);
+    }, [syncPrimitive]);
 
     useEffect(() => {
         syncPrimitive();
@@ -1139,6 +1194,87 @@ const TradingChart: React.FC<TradingChartProps> = ({
         publishDrawings(nextUser);
         if (nextModel !== undefined) publishModelDrawings(nextModel);
     }, [publishDrawings, publishModelDrawings, syncHistoryMeta]);
+
+    const handleDrawHlineAtPrice = useCallback((price: number): void => {
+        if (!Number.isFinite(price) || price <= 0) return;
+        const bars = chartRowsRef.current;
+        const t = bars.length > 0 ? bars[bars.length - 1].time : Math.floor(Date.now() / 1000);
+        const shortId = allocateDrawingShortId(symbol, [...drawingsRef.current, ...modelDrawingsRef.current]);
+        const created: ChartDrawing = {
+            id: createDrawingId(),
+            shortId,
+            origin: 'user',
+            createdOnTf: interval,
+            version: 1,
+            kind: 'hline',
+            points: [{ t, p: price }],
+            color,
+            createdAt: Date.now(),
+            drawnPrice: markPrice ?? lastPrice ?? undefined,
+            width: lineWidth,
+        };
+        commitDrawingChange([...drawingsRef.current, created]);
+        setSelectedDrawingId(created.id);
+        showChartNotice(`Placed ${shortId} @ $${fmtPriceForChart(price)}`);
+    }, [symbol, interval, color, lineWidth, markPrice, lastPrice, commitDrawingChange, showChartNotice]);
+
+    const handleArmWatchAtPrice = useCallback((price: number, notePrefix = 'Chart level'): void => {
+        if (!Number.isFinite(price) || price <= 0) return;
+        const liveMark = markPrice ?? lastPrice ?? null;
+        const condition: 'above' | 'below' = liveMark !== null && price < liveMark ? 'below' : 'above';
+        const now = Date.now();
+        const res = watchService.arm({
+            kind: 'price',
+            id: `w-${now}-${Math.random().toString(36).slice(2, 6)}`,
+            symbol: symbol.toUpperCase(),
+            condition,
+            price,
+            note: `${notePrefix} @ $${fmtPriceForChart(price)}`,
+            expiresAt: now + 24 * 60 * 60 * 1000,
+            createdAt: now,
+            sid: sessionId,
+        }, liveMark);
+        showChartNotice(
+            res === 'armed'
+                ? `Watch armed: ${symbol.replace(/USDT$/i, '')} ${condition} $${fmtPriceForChart(price)}`
+                : `Watch refused — mark already ${condition} $${fmtPriceForChart(price)}`,
+        );
+    }, [symbol, sessionId, markPrice, lastPrice, showChartNotice]);
+
+    const handleStagePaperLimitAtPrice = useCallback(async (price: number, side: 'long' | 'short'): Promise<void> => {
+        if (planMode) {
+            showChartNotice('Blocked in Plan Mode (read-only) — toggle Plan Mode off to stage paper orders');
+            return;
+        }
+        if (!paperEnabled) {
+            showChartNotice('Paper Mode is off — enable Paper Mode in Settings');
+            return;
+        }
+        const atr = computeAtr14(chartRowsRef.current.slice(-200));
+        const riskDist = atr && atr > 0 ? atr : Math.max(price * 0.01, 1e-6);
+        const stopLoss = side === 'long' ? Math.max(1e-8, price - riskDist) : price + riskDist;
+        const takeProfit = side === 'long' ? price + riskDist * 2 : Math.max(1e-8, price - riskDist * 2);
+        const receipt = await submitPaperOrder({
+            action: 'open_limit',
+            symbol,
+            side,
+            entry_price: price,
+            stop_loss: stopLoss,
+            take_profits: [takeProfit],
+            thesis: `Chart limit ${side} @ $${fmtPriceForChart(price)}`,
+        });
+        if (receipt.ok) {
+            showChartNotice(`Staged Paper Limit ${side.toUpperCase()} @ $${fmtPriceForChart(price)}`);
+        } else {
+            showChartNotice(`Paper refused: ${receipt.reason ?? receipt.error ?? 'blocked'}`);
+        }
+    }, [planMode, paperEnabled, symbol, showChartNotice]);
+
+    const handleAskAugust = useCallback((snippet: string): void => {
+        window.dispatchEvent(new CustomEvent('august:composer-inject', {
+            detail: { text: snippet, focus: true },
+        }));
+    }, []);
 
     const handleUndoDrawing = useCallback((): void => {
         const nextHistory = undoDrawingState(historyRef.current);
@@ -2918,6 +3054,30 @@ const TradingChart: React.FC<TradingChartProps> = ({
                     }
                 }
             }
+            // Alt+Click on a `#Dn` drawing injects its handle straight into ChatComposer.
+            if (ev.altKey) {
+                const { plotW, plotH } = plotBounds();
+                if (pt.x <= plotW && pt.y <= plotH) {
+                    const altHit = hitTestDrawings(
+                        pt.x,
+                        pt.y,
+                        getAllDrawings(),
+                        selectedDrawingIdRef.current,
+                        toScreen,
+                        plotW,
+                        plotH,
+                    );
+                    if (altHit?.drawing.shortId) {
+                        ev.stopPropagation();
+                        ev.preventDefault();
+                        setSelectedDrawingId(altHit.drawing.id);
+                        window.dispatchEvent(new CustomEvent('august:composer-inject', {
+                            detail: { text: altHit.drawing.shortId, focus: true },
+                        }));
+                        return;
+                    }
+                }
+            }
             if (ev.altKey && indicatorSettings.visible.avwap) {
                 const ts = chartRef.current?.timeScale();
                 const logical = typeof ts?.coordinateToLogical === 'function' ? ts.coordinateToLogical(pt.x) : null;
@@ -3701,6 +3861,7 @@ const TradingChart: React.FC<TradingChartProps> = ({
             data-testid="trading-chart"
             data-symbol={symbol}
             data-hovered-candle=""
+            data-spotlight-drawing={spotlightShortId ?? ''}
         >
             {/* Top Chart Bar (36px): Left = Timeframes + Studies + Candle Style; Right = Undo/Redo, Object Tree, Snapshot, Focus, Settings */}
             <TimeframeBar
@@ -3925,13 +4086,42 @@ const TradingChart: React.FC<TradingChartProps> = ({
                     onToggleCollapsed={() => setRailCollapsed(v => !v)}
                 />
                 {/* Canvas wrapper — owns plot, overlays, hover readouts, and toolbars with zero rail overlap */}
-                <div ref={canvasWrapperRef} className="relative min-h-0 min-w-0 flex-1 overflow-hidden" data-testid="chart-canvas-wrapper">
+                <div
+                    ref={canvasWrapperRef}
+                    className="relative min-h-0 min-w-0 flex-1 overflow-hidden"
+                    data-testid="chart-canvas-wrapper"
+                    onContextMenu={(ev) => {
+                        const wrapper = canvasWrapperRef.current;
+                        const cs = candlesRef.current;
+                        if (!wrapper || !cs || typeof cs.coordinateToPrice !== 'function') return;
+                        const rect = wrapper.getBoundingClientRect();
+                        const localX = ev.clientX - rect.left;
+                        const localY = ev.clientY - rect.top;
+                        const plotW = Math.max(0, rect.width - axisWRef.current);
+                        const plotH = Math.max(0, rect.height - 28);
+                        if (localX > plotW || localY > plotH) return;
+                        const pRaw = cs.coordinateToPrice(localY as never);
+                        const price = pRaw === null || pRaw === undefined ? NaN : Number(pRaw);
+                        if (!Number.isFinite(price) || price <= 0) return;
+                        ev.preventDefault();
+                        setContextMenu({ price, x: localX, y: localY });
+                    }}
+                >
                 <ChartFavoritesBar
                     favorites={favoriteTools}
                     activeTool={tool}
                     onSelectTool={t => { setTool(t); setDraft(null); setTextEdit(null); setInspector(null); }}
                     containerRef={canvasWrapperRef}
                 />
+                {chartNotice && (
+                    <div
+                        data-testid="chart-action-notice"
+                        role="status"
+                        className="pointer-events-none absolute bottom-9 left-1/2 z-30 -translate-x-1/2 whitespace-nowrap rounded-control border border-hairline bg-zinc-950/95 px-2.5 py-1 font-mono text-ui-dense text-zinc-200 shadow-elevated"
+                    >
+                        {chartNotice}
+                    </div>
+                )}
                 {measureReadout && (
                     <div
                         data-testid="chart-measure-readout"
@@ -3966,6 +4156,31 @@ const TradingChart: React.FC<TradingChartProps> = ({
                     </div>
                 )}
                 <HoverCrossTag store={hoverReadout} axisW={axisW} />
+                <PriceAxisPlusButton
+                    store={hoverReadout}
+                    axisW={axisW}
+                    onOpenMenu={(price, y) => {
+                        const w = canvasWrapperRef.current?.clientWidth ?? 640;
+                        setContextMenu({ price, x: Math.max(12, w - axisW - 256), y: Math.max(12, y - 16) });
+                    }}
+                />
+                <ChartContextMenu
+                    open={contextMenu !== null}
+                    x={contextMenu?.x ?? 0}
+                    y={contextMenu?.y ?? 0}
+                    containerWidth={canvasWrapperRef.current?.clientWidth ?? 640}
+                    containerHeight={canvasWrapperRef.current?.clientHeight ?? 420}
+                    symbol={symbol}
+                    price={contextMenu?.price ?? 0}
+                    markPrice={markPrice ?? lastPrice ?? null}
+                    planMode={planMode}
+                    paperEnabled={paperEnabled}
+                    onClose={() => setContextMenu(null)}
+                    onDrawHline={handleDrawHlineAtPrice}
+                    onArmWatch={price => handleArmWatchAtPrice(price, 'Chart price')}
+                    onStagePaperLimit={(price, side) => { void handleStagePaperLimitAtPrice(price, side); }}
+                    onAskAugust={price => handleAskAugust(`${symbol.replace(/USDT$/i, '')} @ $${fmtPriceForChart(price)}`)}
+                />
                 {ohlcvRow && overPlot && (
                     <div
                         data-testid="ohlcv-row"
@@ -4065,11 +4280,12 @@ const TradingChart: React.FC<TradingChartProps> = ({
                         }
                     };
                     const hostW = hostRef.current?.clientWidth ?? 600;
-                    const left = Math.min(Math.max(8, anchor.x + 10), Math.max(8, hostW - 296));
+                    const left = Math.min(Math.max(8, anchor.x + 10), Math.max(8, hostW - 420));
                     const top = Math.max(6, anchor.y - 40);
+                    const allTfs = sel.persistAcrossTf === true;
                     return (
                         <div
-                            data-testid="drawing-toolbar"
+                            data-testid="drawing-selection-toolbar"
                             className="motion-popover-in absolute z-20 flex items-center gap-0.5 rounded-lg border border-hairline bg-zinc-950 px-1.5 py-1 shadow-elevated"
                             style={{ left, top }}
                         >
@@ -4105,6 +4321,42 @@ const TradingChart: React.FC<TradingChartProps> = ({
                             >
                                 <span aria-hidden className={`block w-4 ${sel.dash ? 'border-t-2 border-dashed border-current' : 'border-t-2 border-current'}`} />
                             </button>
+                            <button
+                                type="button"
+                                disabled={locked}
+                                data-testid="selection-tf-toggle"
+                                title={allTfs ? 'Visible on All TFs — click to scope to <= created TF' : 'Visible on <= created TF — click to show on All TFs'}
+                                aria-label="Toggle timeframe visibility"
+                                aria-pressed={allTfs}
+                                onClick={() => patch({ persistAcrossTf: !allTfs })}
+                                className={`flex h-6 items-center justify-center rounded-control px-1.5 font-mono text-ui-2xs transition-colors hover:bg-white/[0.06] disabled:opacity-40 ${
+                                    allTfs ? 'bg-white/[0.08] text-zinc-100' : 'text-zinc-400 hover:text-zinc-200'
+                                }`}
+                            >
+                                {allTfs ? 'All TFs' : `≤ ${sel.createdOnTf ?? interval}`}
+                            </button>
+                            <span className="mx-1 h-3.5 w-px bg-white/[0.10]" aria-hidden />
+                            <button
+                                type="button"
+                                data-testid="selection-arm-watch-btn"
+                                title={`Arm price watch @ $${fmtPriceForChart(sel.points[0].p)}`}
+                                aria-label="Arm price watch on selected drawing"
+                                onClick={() => handleArmWatchAtPrice(sel.points[0].p, sel.shortId ?? sel.label ?? sel.kind)}
+                                className="flex h-6 w-6 items-center justify-center rounded-control text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-zinc-100"
+                            >
+                                <BellIcon className="h-3.5 w-3.5" aria-hidden="true" />
+                            </button>
+                            <button
+                                type="button"
+                                data-testid="selection-ask-august-btn"
+                                title={`Ask August about ${sel.shortId ?? sel.kind}`}
+                                aria-label="Ask August about selected drawing"
+                                onClick={() => handleAskAugust(sel.shortId ?? `${sel.kind} @ $${fmtPriceForChart(sel.points[0].p)}`)}
+                                className="flex h-6 items-center gap-1 rounded-control px-1.5 font-mono text-ui-2xs text-zinc-300 transition-colors hover:bg-white/[0.06] hover:text-zinc-50"
+                            >
+                                <MessageSquare className="h-3 w-3" aria-hidden="true" />
+                                <span>Ask</span>
+                            </button>
                             <span className="mx-1 h-3.5 w-px bg-white/[0.10]" aria-hidden />
                             <button
                                 type="button"
@@ -4114,7 +4366,7 @@ const TradingChart: React.FC<TradingChartProps> = ({
                                 onClick={() => patch({ locked: !locked })}
                                 className={`flex h-6 w-6 items-center justify-center rounded-control transition-colors hover:bg-white/[0.06] ${locked ? 'text-zinc-100' : 'text-zinc-400 hover:text-zinc-200'}`}
                             >
-                                {locked ? <Lock className="h-3.5 w-3.5" aria-hidden /> : <Pencil className="h-3.5 w-3.5" aria-hidden />}
+                                {locked ? <Lock className="h-3.5 w-3.5" aria-hidden /> : <Unlock className="h-3.5 w-3.5" aria-hidden />}
                             </button>
                             <button
                                 type="button"
