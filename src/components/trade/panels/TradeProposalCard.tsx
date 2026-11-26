@@ -33,6 +33,7 @@ import { formatPaperFillAssumptions, PAPER_EXECUTION_RECEIPT } from '../../../se
 import { assessProposalStaleness, undoWindowOf } from '../../../services/trade/tradeDecision';
 import { fmtRiskReward } from '../../../utils/riskReward';
 import { humanizeSkillTitle } from '../../../utils/uiFormatting';
+import { computeProposalLiveDrift } from '../../../services/trade/toolVisualCore';
 import { getHarnessSettings } from '../../../utils/harnessSettings';
 import { getPaperAccount, submitPaperOrder, subscribePaperAccount } from '../../../services/paper/PaperBrokerService';
 import type { PaperOrderInput, PaperReceipt } from '../../../services/paper/paperCore';
@@ -162,14 +163,18 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({
     // emit, so the mark is fresh whenever the trader is looking at it). A
     // stale plan does not block the approval: it names the drift and makes
     // the approval an explicit re-confirm.
+    const liveMark = getMark?.() ?? null;
     const staleness = assessProposalStaleness({
         entry: proposal.entry,
         stopLoss: proposal.stopLoss,
-        mark: getMark?.() ?? null,
+        mark: liveMark,
         presentedAt: presentedAt ?? null,
     });
+    const liveDrift = computeProposalLiveDrift(proposal, liveMark);
     const [staleAcknowledged, setStaleAcknowledged] = useState(false);
     const needsStaleConfirm = staleness.stale && !staleAcknowledged;
+    const [mathExpanded, setMathExpanded] = useState(false);
+    const [rejecting, setRejecting] = useState(false);
 
     // The undo window — module-scope, read through the host's tick so an
     // approve (here or on a remount of this card) repaints it. A second-by-
@@ -268,6 +273,20 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({
                     {fmtRiskReward(rr, rr >= 1 ? 1 : 2)} R:R
                 </span>
             )}
+            {liveDrift && (
+                <span
+                    data-testid="proposal-live-drift"
+                    className={`rounded-control border px-1.5 py-0.5 font-mono text-ui-2xs tabular-nums ${
+                        liveDrift.slBreached
+                            ? 'border-rose-500/40 bg-rose-500/15 text-rose-300'
+                            : liveDrift.favorable
+                                ? 'border-hairline bg-white/[0.04] text-emerald-400'
+                                : 'border-hairline bg-white/[0.04] text-zinc-400'
+                    }`}
+                >
+                    {liveDrift.driftLabel}
+                </span>
+            )}
             {/* The adversary reviewer's verdict — an isolated read-only seat
                 read of the plan against the tape. Monochrome badge; the
                 objections live in the detail line below. */}
@@ -299,20 +318,70 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({
                 </span>
             )}
         </div>
-        <div className="mt-2 grid grid-cols-3 gap-2 rounded-control border border-hairline bg-white/[0.02] p-2 font-mono text-ui-dense tabular-nums">
-            <div>
-                <div className="font-mono text-ui-xs uppercase text-zinc-500">Entry</div>
-                <div className="font-semibold text-zinc-100">{proposal.entry}</div>
+        {/* Compact 2-row tabular grid: Row 1 (Entry / SL / TP1-TP2), Row 2 (Net R:R / Risk $ / Size / Liq Buffer). */}
+        <div className="mt-2 divide-y divide-white/[0.05] rounded-control border border-hairline bg-white/[0.02] font-mono text-ui-dense tabular-nums">
+            <div className="grid grid-cols-3 gap-2 px-2.5 py-2">
+                <div>
+                    <div className="text-ui-2xs uppercase text-zinc-500">Entry</div>
+                    <div className="font-semibold text-zinc-100">{proposal.entry}</div>
+                </div>
+                <div>
+                    <div className="text-ui-2xs uppercase text-zinc-500">SL</div>
+                    <div className="font-semibold text-rose-400">{proposal.stopLoss}</div>
+                </div>
+                <div>
+                    <div className="text-ui-2xs uppercase text-zinc-500">TP1 / TP2</div>
+                    <div className="font-semibold text-emerald-400">{proposal.takeProfits.join(' / ')}</div>
+                </div>
             </div>
-            <div>
-                <div className="font-mono text-ui-xs uppercase text-zinc-500">SL</div>
-                <div className="font-semibold text-zinc-200">{proposal.stopLoss}</div>
-            </div>
-            <div>
-                <div className="font-mono text-ui-xs uppercase text-zinc-500">TP</div>
-                <div className="font-semibold text-zinc-200">{proposal.takeProfits.join(' / ')}</div>
+            <div className="grid grid-cols-4 gap-2 px-2.5 py-1.5 text-ui-2xs">
+                <div>
+                    <div className="uppercase text-zinc-500">Net R:R</div>
+                    <div className="font-medium text-zinc-200">
+                        {proposal.math?.netRewardR != null
+                            ? `${proposal.math.netRewardR}R`
+                            : rr > 0
+                                ? `${fmtRiskReward(rr, rr >= 1 ? 1 : 2)}`
+                                : '—'}
+                    </div>
+                </div>
+                <div>
+                    <div className="uppercase text-zinc-500">Risk $</div>
+                    <div className="font-medium text-zinc-200">
+                        {proposal.math?.riskUsd != null
+                            ? `$${proposal.math.riskUsd}`
+                            : size && size.equityUsd > 0
+                                ? `$${Math.round(size.equityUsd * (size.riskPercent / 100))}`
+                                : '—'}
+                    </div>
+                </div>
+                <div data-testid="proposal-size">
+                    <div className="uppercase text-zinc-500">Size</div>
+                    <div className="truncate font-medium text-zinc-200" title={size?.line ?? undefined}>
+                        {proposal.math?.qty != null
+                            ? `${proposal.math.qty} @ ${proposal.math.leverageNeeded ?? lev}x`
+                            : size && size.equityUsd > 0
+                                ? size.line
+                                : 'Unset'}
+                    </div>
+                </div>
+                <div data-testid="proposal-liq-buffer">
+                    <div className="uppercase text-zinc-500">Liq Buffer</div>
+                    <div className="truncate font-medium text-zinc-300" title={liquidated?.line ?? undefined}>
+                        {liquidated ? `${liquidated.bufferPct.toFixed(1)}%` : (proposal.math?.liquidationPrice != null ? `~${proposal.math.liquidationPrice}` : '—')}
+                    </div>
+                </div>
             </div>
         </div>
+        {liveDrift?.slBreached && (
+            <div
+                role="alert"
+                data-testid="proposal-sl-breached"
+                className="mt-1.5 rounded-control border border-rose-500/40 bg-rose-500/10 px-2.5 py-1.5 font-mono text-ui-dense font-medium text-rose-300"
+            >
+                Price breached SL — re-audit before entering (mark {liveDrift.markPrice} vs SL {proposal.stopLoss})
+            </div>
+        )}
         {/* DECISION BLOCKERS FIRST (the audit's hierarchy fix): a gate
             refusal, a standing session guard, a stale plan or an unmeasurable
             gate is the first thing the trader must see — above the rationale
@@ -372,62 +441,37 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({
                 {proposal.invalidation}
             </p>
         )}
-        {liquidated && (
-            // The risk the levels grid does not show: how far isolated
-            // liquidation sits beyond the stop. At the old 100× default a 1 %
-            // wick was a total loss and nothing on the card said so.
-            <p
-                className={`mt-1.5 font-mono text-ui-2xs ${liquidated.bufferPct <= 0 ? 'text-zinc-300' : 'text-zinc-500'}`}
-                data-testid="proposal-liq-buffer"
-            >
-                {liquidated.line}
-            </p>
-        )}
-        {size && (
-            // The SUGGESTED size — the trader's own equity and risk % against
-            // this plan's stop distance, with the exchange's notional ceiling
-            // applied. It is the app's number, not the model's, and it can
-            // only ever be SMALLER than a full ticket: the sizing rule
-            // downgrades, it never scales up.
-            <div className="mt-2 rounded-control border border-hairline bg-white/[0.02] p-2" data-testid="proposal-size">
-                <div className="font-mono text-ui-xs uppercase text-zinc-500">Suggested size</div>
-                <div className={`font-mono text-ui-dense ${size.equityUsd > 0 ? 'text-zinc-200' : 'text-zinc-300'}`}>
-                    {size.equityUsd > 0 ? size.line : 'Not sized — equity not set'}
-                </div>
-                {size.equityUsd > 0 && (
-                    <div className="font-mono text-ui-2xs text-zinc-500">
-                        {size.riskPercent}% of ${Math.round(size.equityUsd)} · {lev}x notional cap
-                    </div>
-                )}
-                {size.equityUsd > 0 && size.reason !== 'Uncapped' && (
-                    <div className="font-mono text-ui-2xs text-zinc-300">{size.reason}</div>
-                )}
-                {size.equityUsd <= 0 && (
-                    <div className="font-mono text-ui-2xs text-zinc-500">
-                        Set your account equity in Settings → Risk to size this trade.
-                    </div>
-                )}
-            </div>
-        )}
         {proposal.math && (
-            // THE HARNESS'S OWN NUMBERS (present_trade's deterministic math
-            // gate): gross/net R:R after fees + measured funding, break-even
-            // win rate, sizing at the account's equity/risk cap, and the
-            // isolated liquidation estimate. Monochrome; every figure is
-            // computed by the harness, none quoted from the model.
-            <div className="mt-2 rounded-control border border-hairline bg-white/[0.02] p-2" data-testid="proposal-harness-math">
-                <div className="font-mono text-ui-xs uppercase text-zinc-500">Harness math</div>
-                <div className="mt-0.5 font-mono text-ui-dense tabular-nums text-zinc-200">
-                    gross {proposal.math.grossRatio}:1 · net {proposal.math.netRewardR ?? '—'}R · break-even {proposal.math.breakEvenWinRatePct ?? '—'}%
-                </div>
-                <div className="mt-0.5 font-mono text-ui-2xs tabular-nums text-zinc-400">
-                    risk ${proposal.math.riskUsd ?? '—'} → qty {proposal.math.qty ?? '—'} @ {proposal.math.leverageNeeded ?? '—'}x · notional ${proposal.math.notionalUsd ?? '—'} · liq ~{proposal.math.liquidationPrice ?? '—'}
-                </div>
-                <div className="mt-0.5 font-mono text-ui-2xs text-zinc-500">
-                    fees {proposal.math.costR ?? '—'}R{proposal.math.fundingDragR !== null
-                        ? ` · funding ${proposal.math.fundingDragR >= 0 ? '+' : ''}${proposal.math.fundingDragR}R (${proposal.math.fundingRate ?? '—'} at ${proposal.math.fundingIntervalHours ?? '—'}h)`
-                        : ' · funding unavailable'}
-                </div>
+            // Foldable 1-line HARNESS MATH toggle — keeps the proposal card
+            // scannable at a glance while preserving full fee/funding detail on click.
+            <div className="mt-1.5 rounded-control border border-hairline bg-white/[0.02]" data-testid="proposal-harness-math">
+                <button
+                    type="button"
+                    data-testid="proposal-harness-math-toggle"
+                    aria-expanded={mathExpanded}
+                    onClick={() => setMathExpanded(v => !v)}
+                    className="flex h-7 w-full items-center justify-between gap-2 px-2.5 text-left font-mono text-ui-2xs tabular-nums text-zinc-400 transition-colors hover:text-zinc-200"
+                >
+                    <span className="truncate">
+                        HARNESS MATH · Net {proposal.math.netRewardR ?? '—'}R · BE {proposal.math.breakEvenWinRatePct ?? '—'}% · Liq {liquidated ? `${liquidated.bufferPct.toFixed(1)}%` : (proposal.math.liquidationPrice != null ? `~${proposal.math.liquidationPrice}` : '—')}
+                    </span>
+                    <span aria-hidden="true" className="shrink-0 text-zinc-500">{mathExpanded ? '▾' : '▸'}</span>
+                </button>
+                {mathExpanded && (
+                    <div className="space-y-0.5 border-t border-hairline px-2.5 py-2 font-mono text-ui-2xs tabular-nums text-zinc-400">
+                        <div className="text-zinc-200">
+                            gross {proposal.math.grossRatio}:1 · net {proposal.math.netRewardR ?? '—'}R · break-even {proposal.math.breakEvenWinRatePct ?? '—'}%
+                        </div>
+                        <div>
+                            risk ${proposal.math.riskUsd ?? '—'} → qty {proposal.math.qty ?? '—'} @ {proposal.math.leverageNeeded ?? '—'}x · notional ${proposal.math.notionalUsd ?? '—'} · liq ~{proposal.math.liquidationPrice ?? '—'}
+                        </div>
+                        <div className="text-zinc-500">
+                            fees {proposal.math.costR ?? '—'}R{proposal.math.fundingDragR !== null
+                                ? ` · funding ${proposal.math.fundingDragR >= 0 ? '+' : ''}${proposal.math.fundingDragR}R (${proposal.math.fundingRate ?? '—'} at ${proposal.math.fundingIntervalHours ?? '—'}h)`
+                                : ' · funding unavailable'}
+                        </div>
+                    </div>
+                )}
             </div>
         )}
         {(stated.riskUsd !== undefined || stated.notionalUsd !== undefined) && (
@@ -530,16 +574,49 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({
             </div>
         ) : (
             <div className="mt-2.5">
-                <input
-                    type="text"
-                    value={declineReason}
-                    onChange={e => setDeclineReason(e.target.value)}
-                    placeholder="Optional: why decline? (sent with Reject)"
-                    maxLength={300}
-                    className="w-full rounded-control border border-hairline bg-white/[0.02] px-2 py-1 text-ui-dense text-zinc-300 placeholder:text-zinc-600 focus:border-zinc-600 focus:outline-none"
-                    data-testid="proposal-decline-reason"
-                />
-                <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                {rejecting && (
+                    <div className="mb-2 flex items-center gap-1.5">
+                        <input
+                            type="text"
+                            autoFocus
+                            value={declineReason}
+                            onChange={e => setDeclineReason(e.target.value)}
+                            onKeyDown={e => {
+                                if (e.key === 'Enter') {
+                                    e.preventDefault();
+                                    onReject(declineReason.trim() || undefined);
+                                    setRejecting(false);
+                                } else if (e.key === 'Escape') {
+                                    e.preventDefault();
+                                    setRejecting(false);
+                                }
+                            }}
+                            placeholder="Optional: why decline? (recorded in hold ledger)"
+                            maxLength={300}
+                            className="h-7 min-w-0 flex-1 rounded-control border border-hairline bg-zinc-950 px-2 text-ui-dense text-zinc-200 placeholder:text-zinc-600 focus:border-zinc-500 focus:outline-none"
+                            data-testid="proposal-decline-reason"
+                        />
+                        <button
+                            type="button"
+                            onClick={() => {
+                                onReject(declineReason.trim() || undefined);
+                                setRejecting(false);
+                            }}
+                            data-testid="proposal-confirm-reject"
+                            className="h-7 shrink-0 rounded-control border border-rose-500/40 bg-rose-500/15 px-2.5 text-ui-dense font-medium text-rose-300 transition-colors hover:bg-rose-500/25"
+                        >
+                            Confirm reject
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setRejecting(false)}
+                            className="h-7 shrink-0 rounded-control border border-hairline bg-zinc-900 px-2 text-ui-dense text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-200"
+                        >
+                            Cancel
+                        </button>
+                    </div>
+                )}
+                <div className="flex flex-wrap items-center gap-1.5">
                     {canLog && (
                         <button type="button"
                             onClick={() => {
@@ -556,7 +633,7 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({
                                         ? 'The session guard stands down; the reason is printed above.'
                                         : undefined}
                             data-testid="proposal-approve"
-                            className="rounded-control bg-zinc-100 px-2.5 py-1 text-ui-dense font-medium text-zinc-950 transition-colors hover:bg-white disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-300">
+                            className="h-7 rounded-control bg-zinc-100 px-2.5 text-ui-dense font-medium text-zinc-950 transition-colors hover:bg-white disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-300">
                             {planMode
                                 ? 'Locked (Plan Mode)'
                                 : refused
@@ -584,7 +661,7 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({
                                         ? 'The session guard stands down.'
                                         : 'Execute simulated fill via local Paper Broker'}
                         data-testid="proposal-paper-execute"
-                        className="rounded-control border border-line bg-zinc-900 px-2.5 py-1 text-ui-dense font-medium text-zinc-200 transition-colors hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
+                        className="h-7 rounded-control border border-line bg-zinc-900 px-2.5 text-ui-dense font-medium text-zinc-200 transition-colors hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
                     >
                         {paperBusy ? 'Filling…' : paperReceipt?.ok ? 'Paper filled' : 'Paper execute'}
                     </button>
@@ -593,23 +670,23 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({
                             type="button"
                             onClick={onUnlockPlanMode}
                             data-testid="plan-mode-unlock-btn"
-                            className="rounded-control border border-hairline bg-zinc-900 px-2.5 py-1 text-ui-dense font-medium text-zinc-100 transition-colors hover:bg-zinc-800"
+                            className="h-7 rounded-control border border-hairline bg-zinc-900 px-2.5 text-ui-dense font-medium text-zinc-100 transition-colors hover:bg-zinc-800"
                         >
                             Unlock execution
                         </button>
                     )}
                     <button type="button"
-                        onClick={() => onReject(declineReason.trim() || undefined)}
+                        onClick={() => setRejecting(v => !v)}
                         disabled={awaitingLog}
                         data-testid="proposal-reject"
-                        className="rounded-control border border-line bg-zinc-800/80 px-2.5 py-1 text-ui-dense text-zinc-200 transition-colors hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-40">
+                        className="h-7 rounded-control border border-line bg-zinc-800/80 px-2.5 text-ui-dense text-zinc-200 transition-colors hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-40">
                         Reject
                     </button>
                     <button type="button"
                         onClick={onAskWhy}
                         disabled={awaitingLog}
                         data-testid="proposal-ask-why"
-                        className="rounded-control border border-line bg-zinc-800/80 px-2.5 py-1 text-ui-dense text-zinc-200 transition-colors hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-40">
+                        className="h-7 rounded-control border border-line bg-zinc-800/80 px-2.5 text-ui-dense text-zinc-200 transition-colors hover:bg-zinc-700 disabled:cursor-not-allowed disabled:opacity-40">
                         Ask why
                     </button>
                     <span className="ml-auto font-mono text-ui-2xs text-zinc-600">

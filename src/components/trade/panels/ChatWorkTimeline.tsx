@@ -13,6 +13,8 @@
 import React, { useMemo, useState, useSyncExternalStore } from 'react';
 import { Lightbulb } from '../../shared/Icons';
 import { getHarnessSettings, subscribeHarnessSettings } from '../../../utils/harnessSettings';
+import { computeLineDiff, extractReceiptBeforeAfter } from '../../../utils/lineDiffCore';
+import { buildDescriptiveWorkSummary } from '../../../services/trade/toolVisualCore';
 import type { ToolAction } from '../../../types/message';
 import type { WireAuditEntry } from '../../../types/provider';
 import { tipForSeed } from '../../../utils/tradingTips';
@@ -172,6 +174,7 @@ const canUndo = (row: WriteRow): boolean => {
 const WriteReceiptRows: React.FC<{ toolIds: string[] }> = ({ toolIds }) => {
     const [undone, setUndone] = useState<ReadonlySet<string>>(() => new Set());
     const [viewed, setViewed] = useState<ReadonlySet<string>>(() => new Set());
+    const [rawMode, setRawMode] = useState<ReadonlySet<string>>(() => new Set());
     const [note, setNote] = useState<string | null>(null);
 
     const rows = useMemo<WriteRow[]>(() => {
@@ -350,7 +353,7 @@ const WriteReceiptRows: React.FC<{ toolIds: string[] }> = ({ toolIds }) => {
                                     title="Undo this write and refuse the same suggestion later"
                                     data-testid={`write-receipt-undo-${row.kind}`}
                                     onClick={() => undo(row)}
-                                    className="shrink-0 rounded-control px-1.5 py-px text-ui-2xs font-bold uppercase tracking-wider text-zinc-300 transition-colors hover:bg-zinc-800 hover:text-zinc-50"
+                                    className="h-6 shrink-0 rounded-control px-2 text-ui-2xs font-bold uppercase tracking-wider text-zinc-300 transition-colors hover:bg-zinc-800 hover:text-zinc-50"
                                 >
                                     Undo
                                 </button>
@@ -370,19 +373,72 @@ const WriteReceiptRows: React.FC<{ toolIds: string[] }> = ({ toolIds }) => {
                                     if (next.has(row.key)) next.delete(row.key); else next.add(row.key);
                                     return next;
                                 })}
-                                className="shrink-0 rounded-control px-1.5 py-px text-ui-2xs uppercase tracking-wider text-zinc-500 transition-colors hover:bg-white/[0.05] hover:text-zinc-200"
+                                className="h-6 shrink-0 rounded-control px-2 text-ui-2xs uppercase tracking-wider text-zinc-500 transition-colors hover:bg-white/[0.05] hover:text-zinc-200"
                             >
                                 View
                             </button>
                         </div>
-                        {viewOpen && (
-                            <pre
-                                data-testid={`write-receipt-detail-${row.kind}`}
-                                className="max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-control bg-zinc-900/60 px-2 py-1 font-mono text-ui-2xs leading-4 text-zinc-500"
-                            >
-                                {JSON.stringify(row.receipt ?? { note: why }, null, 2)}
-                            </pre>
-                        )}
+                        {viewOpen && (() => {
+                            const pair = extractReceiptBeforeAfter(row.kind, row.receipt);
+                            const diff = pair ? computeLineDiff(pair.before, pair.after) : null;
+                            const showRaw = rawMode.has(row.key) || !diff || diff.lines.length === 0;
+                            return (
+                                <div
+                                    data-testid={`write-receipt-detail-${row.kind}`}
+                                    className="mt-1 overflow-hidden rounded-control border border-hairline bg-zinc-950/90"
+                                >
+                                    {diff && diff.lines.length > 0 && (
+                                        <div className="flex items-center justify-between gap-2 border-b border-hairline bg-zinc-900/60 px-2 py-1 font-mono text-ui-2xs text-zinc-400">
+                                            <span className="tabular-nums">
+                                                <span className="text-emerald-400">+{diff.added}</span>
+                                                {' / '}
+                                                <span className="text-rose-400">-{diff.removed}</span>
+                                            </span>
+                                            <button
+                                                type="button"
+                                                data-testid="receipt-diff-raw-toggle"
+                                                onClick={() => setRawMode(prev => {
+                                                    const next = new Set(prev);
+                                                    if (next.has(row.key)) next.delete(row.key); else next.add(row.key);
+                                                    return next;
+                                                })}
+                                                className="h-6 rounded-control px-2 text-ui-2xs text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-zinc-100"
+                                            >
+                                                {showRaw ? 'Show diff' : 'Raw JSON'}
+                                            </button>
+                                        </div>
+                                    )}
+                                    {!showRaw && diff ? (
+                                        <div
+                                            data-testid="receipt-line-diff"
+                                            className="max-h-48 overflow-auto py-1 font-mono text-ui-2xs leading-4"
+                                        >
+                                            {diff.lines.map((ln, idx) => (
+                                                <div
+                                                    key={idx}
+                                                    className={`whitespace-pre-wrap break-words px-2 py-0.5 ${
+                                                        ln.kind === 'added'
+                                                            ? 'bg-emerald-500/10 text-emerald-300'
+                                                            : ln.kind === 'removed'
+                                                                ? 'bg-rose-500/10 text-rose-300'
+                                                                : 'text-zinc-500'
+                                                    }`}
+                                                >
+                                                    <span className="mr-1.5 inline-block w-3 select-none opacity-75">
+                                                        {ln.kind === 'added' ? '+' : ln.kind === 'removed' ? '-' : ' '}
+                                                    </span>
+                                                    {ln.text || ' '}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    ) : (
+                                        <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words px-2 py-1.5 font-mono text-ui-2xs leading-4 text-zinc-500">
+                                            {JSON.stringify(row.receipt ?? { note: why }, null, 2)}
+                                        </pre>
+                                    )}
+                                </div>
+                            );
+                        })()}
                     </div>
                 );
             })}
@@ -395,10 +451,18 @@ const WriteReceiptRows: React.FC<{ toolIds: string[] }> = ({ toolIds }) => {
 
 export interface ChatWorkTimelineProps {
     entry: ChatWorkView;
+    symbol?: string;
+    interval?: string;
 }
 
-const ChatWorkTimeline: React.FC<ChatWorkTimelineProps> = ({ entry }) => {
-    const { autoFoldTools } = useSyncExternalStore(subscribeHarnessSettings, getHarnessSettings, getHarnessSettings);
+const ChatWorkTimeline: React.FC<ChatWorkTimelineProps> = ({ entry, symbol, interval }) => {
+    const { autoFoldTools, transcriptViewMode } = useSyncExternalStore(
+        subscribeHarnessSettings,
+        getHarnessSettings,
+        getHarnessSettings,
+    );
+    const effectiveAutoFold = transcriptViewMode === 'audit' ? false : autoFoldTools;
+    const hideSettledToolRollup = transcriptViewMode === 'calm';
     const reasoning = entry.reasoning ?? '';
     const turnStreaming = !!entry.streaming;
     const hasAnswerText = Boolean(entry.text && entry.text.trim().length > 0);
@@ -455,6 +519,14 @@ const ChatWorkTimeline: React.FC<ChatWorkTimelineProps> = ({ entry }) => {
     const ranSummary = callCount > 0
         ? `${callCount} tool${callCount === 1 ? '' : 's'}`
         : null;
+    const descriptiveSummary = useMemo(
+        () => buildDescriptiveWorkSummary(pairedCalls, {
+            symbol,
+            interval,
+            seconds: typeof entry.workedMs === 'number' ? Math.max(1, Math.round(entry.workedMs / 1000)) : null,
+        }),
+        [pairedCalls, symbol, interval, entry.workedMs],
+    );
     if (!hasWork && !hasActions && !wireAlone) {
         // Nothing yet: the waiting tip covers
         // the silent first moments of a turn. It is the tip's ONLY home now —
@@ -551,16 +623,17 @@ const ChatWorkTimeline: React.FC<ChatWorkTimelineProps> = ({ entry }) => {
            rows keep their own card: in the reference a "Presented 2 files"
            card is a separate card BELOW the work, not part of it. */
         <div className="my-1.5 space-y-1.5">
-            {hasWork && (
+            {hasWork && (!hideSettledToolRollup || running) && (
                 <AnalyzedRow
                     running={running}
                     summary={ranSummary}
                     persistedMs={entry.workedMs}
                     startedAt={startedAt}
                     activity={activity}
-                    autoFold={autoFoldTools}
+                    autoFold={effectiveAutoFold}
                     toolCount={callCount}
-                    foldSummaryTestId={!running && autoFoldTools && callCount >= 2 ? 'tool-summary-fold' : undefined}
+                    descriptiveSummary={descriptiveSummary}
+                    foldSummaryTestId={!running && effectiveAutoFold && callCount >= 2 ? 'tool-summary-fold' : undefined}
                 >
                     {nodes}
                     {entry.liveProgress && entry.streaming && (

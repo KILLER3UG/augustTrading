@@ -34,8 +34,10 @@ export interface AnalyzedRowProps {
     activity?: string | null;
     /** Auto-fold completed multi-tool runs into a single expandable summary row. Default true. */
     autoFold?: boolean;
-    /** Parsed paired tool call count (drives `Used N tools · view work` summary when >= 2). */
+    /** Parsed paired tool call count (drives folded multi-tool summary when >= 2). */
     toolCount?: number;
+    /** Optional deterministic descriptive 1-line collapsed summary when tools ran. */
+    descriptiveSummary?: string | null;
     /** Optional testid placed on the `<summary>` element when showing the folded multi-tool roll-up. */
     foldSummaryTestId?: string;
     children: React.ReactNode;
@@ -65,6 +67,7 @@ const AnalyzedRow: React.FC<AnalyzedRowProps> = ({
     activity,
     autoFold = true,
     toolCount,
+    descriptiveSummary,
     foldSummaryTestId,
     children,
 }) => {
@@ -132,16 +135,20 @@ const AnalyzedRow: React.FC<AnalyzedRowProps> = ({
     // The RUNNING label is the ACTIVITY, not the state: "Reading the order
     // book" says what the desk is doing, "Analyzing" only says it is busy.
     const runningActivity = (activity ?? '').trim();
+    const cleanDescriptive = (descriptiveSummary ?? '').trim();
+    const useDescriptive = !running && cleanDescriptive.length > 0 && foldedToolCount >= 1;
     const label = running
         ? (runningActivity || 'Analyzing')
-        : showFoldRollup
-            ? `Used ${foldedToolCount} tools · view work`
-            : seconds !== null
-                ? thoughtForLabel(Math.max(1, seconds))
-                : 'Thought';
+        : useDescriptive
+            ? cleanDescriptive
+            : showFoldRollup
+                ? `Used ${foldedToolCount} tools · view work`
+                : seconds !== null
+                    ? thoughtForLabel(Math.max(1, seconds))
+                    : 'Thought';
     const detail = running
         ? (seconds !== null ? (runningActivity ? ` · ${formatElapsed(seconds)}` : ` for ${formatElapsed(seconds)}`) : '')
-        : showFoldRollup
+        : (useDescriptive || showFoldRollup)
             ? ''
             : (ranTools ? ` · ${workSummary}` : '');
 

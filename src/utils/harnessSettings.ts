@@ -13,6 +13,15 @@ import {
 
 export const RISK_CONSTITUTION_MAX_CHARS = 1200;
 
+/** 3-speed transcript verbosity mode toggled via `Ctrl+O` or the Desk/Chat header pill. */
+export type TranscriptViewMode = 'calm' | 'normal' | 'audit';
+
+export const cycleTranscriptViewMode = (mode: TranscriptViewMode): TranscriptViewMode => {
+    if (mode === 'normal') return 'audit';
+    if (mode === 'audit') return 'calm';
+    return 'normal';
+};
+
 export interface HarnessSettings {
     equityUsd: number;
     riskPercent: number;
@@ -84,6 +93,8 @@ export interface HarnessSettings {
     memoryDreamEnabled: boolean;
     /** Automatically fold completed multi-tool turn timelines into one summary row. Default ON. */
     autoFoldTools: boolean;
+    /** 3-speed transcript verbosity: 'calm' hides tool rollups, 'normal' folds, 'audit' expands. */
+    transcriptViewMode: TranscriptViewMode;
     /** Default Enter action while a turn is actively streaming: steer mid-turn or queue for next turn. */
     sendWhileRunning: 'steer' | 'queue';
     /** Deterministic Pre-Trade Hooks enforced in PaperBrokerService on open orders. */
@@ -173,6 +184,9 @@ export const getHarnessSettings = (): HarnessSettings => {
         backgroundReviewEnabled: stored.backgroundReviewEnabled !== false,
         memoryDreamEnabled: stored.memoryDreamEnabled !== false,
         autoFoldTools: stored.autoFoldTools !== false,
+        transcriptViewMode: stored.transcriptViewMode === 'calm' || stored.transcriptViewMode === 'audit'
+            ? stored.transcriptViewMode
+            : 'normal',
         sendWhileRunning: stored.sendWhileRunning === 'queue' ? 'queue' : 'steer',
         preTradeHooks: normalizePreTradeHooksSettings(stored.preTradeHooks),
         // The trader's Risk Constitution rides the frozen session prefix;

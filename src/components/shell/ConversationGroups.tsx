@@ -201,14 +201,17 @@ const ConversationRow: React.FC<{
                     </span>
                 </button>
             )}
-            {selected && !renaming && (
+            {!renaming && (
                 <button
                     type="button"
                     aria-label={`Conversation actions for ${title}`}
                     aria-expanded={menuOpen}
                     title="Conversation actions"
+                    data-testid={`conversation-menu-btn-${conversation.id}`}
                     onClick={() => setMenuOpen(m => !m)}
-                    className="absolute right-1 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-control text-zinc-500 transition-colors hover:bg-white/[0.06] hover:text-zinc-200"
+                    className={`absolute right-1 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-control text-zinc-500 transition-opacity hover:bg-white/[0.06] hover:text-zinc-200 ${
+                        selected || menuOpen ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100'
+                    }`}
                 >
                     <span aria-hidden="true" className="text-ui-caption leading-none">⋯</span>
                 </button>
@@ -216,14 +219,15 @@ const ConversationRow: React.FC<{
             {menuOpen && (
                 <div
                     ref={menuRef}
-                    className="motion-popover-down absolute right-1 top-full z-20 mt-0.5 flex flex-col rounded-xl border border-white/[0.08] bg-zinc-900/95 py-1 shadow-elevated backdrop-blur-md"
+                    className="motion-popover-down absolute right-1 top-full z-20 mt-0.5 flex flex-col rounded-xl border border-white/[0.08] bg-zinc-900 py-1 shadow-elevated"
                 >
                     <button
                         type="button"
+                        data-testid="conversation-pin-btn"
                         onClick={() => { setMenuOpen(false); onTogglePin?.(conversation.id); }}
-                        className="whitespace-nowrap px-3 py-1.5 text-left text-ui-xs text-zinc-400 transition-colors hover:bg-white/[0.05] hover:text-zinc-200"
+                        className="min-h-[28px] whitespace-nowrap px-3 py-1.5 text-left text-ui-xs text-zinc-400 transition-colors hover:bg-white/[0.05] hover:text-zinc-200"
                     >
-                        {pinned ? 'Unpin' : 'Pin to top'}
+                        {pinned ? 'Unpin' : 'Pin'}
                     </button>
                     <button
                         type="button"
@@ -260,17 +264,43 @@ export const ConversationGroups: React.FC<ConversationGroupsProps> = ({
 }) => {
     // A conversation with no messages is a placeholder, not a record: it is
     // hidden unless it is the one on screen (a fresh New chat stays visible).
+    const [sessionFilter, setSessionFilter] = useState<'all' | 'pinned' | 'active_plan'>('all');
+    const [pinnedCollapsed, setPinnedCollapsed] = useState(false);
+
     const rows = useMemo(
         () => [...conversations]
             .filter(c => c.messages.length > 0 || c.id === activeConversationId)
             .sort((a, b) => b.timestamp - a.timestamp),
         [conversations, activeConversationId],
     );
-    const pinned = useMemo(
-        () => pinnedIds ? rows.filter(c => pinnedIds.has(c.id)) : rows.filter(c => (c as Conversation & { pinned?: boolean }).pinned),
-        [rows, pinnedIds],
-    );
     const snap = useSyncExternalStore(chatStore.subscribe, chatStore.getSnapshot, chatStore.getSnapshot);
+    const activePlanConvIds = useMemo(() => {
+        const s = new Set<string>();
+        for (const sess of snap.sessions) {
+            if (!sess.conversationId) continue;
+            if (sess.entries.some(e => Boolean(e.proposal) || Boolean(e.sessionPlan))) {
+                s.add(sess.conversationId);
+            }
+        }
+        return s;
+    }, [snap.sessions]);
+
+    const filteredRows = useMemo(() => {
+        if (sessionFilter === 'pinned') {
+            return rows.filter(c => pinnedIds?.has(c.id) || Boolean((c as Conversation & { pinned?: boolean }).pinned));
+        }
+        if (sessionFilter === 'active_plan') {
+            return rows.filter(c => activePlanConvIds.has(c.id) || conversationSide(c) !== null);
+        }
+        return rows;
+    }, [rows, sessionFilter, pinnedIds, activePlanConvIds]);
+
+    const pinned = useMemo(
+        () => pinnedIds
+            ? filteredRows.filter(c => pinnedIds.has(c.id))
+            : filteredRows.filter(c => (c as Conversation & { pinned?: boolean }).pinned),
+        [filteredRows, pinnedIds],
+    );
     const badgeByConvId = useMemo(() => {
         const m = new Map<string, string>();
         for (const s of snap.sessions) {
@@ -281,8 +311,8 @@ export const ConversationGroups: React.FC<ConversationGroupsProps> = ({
         return m;
     }, [snap.sessions]);
     const recent = useMemo(
-        () => rows.filter(c => !pinnedIds?.has(c.id) && !(c as Conversation & { pinned?: boolean }).pinned),
-        [rows, pinnedIds],
+        () => filteredRows.filter(c => !pinnedIds?.has(c.id) && !(c as Conversation & { pinned?: boolean }).pinned),
+        [filteredRows, pinnedIds],
     );
     const isRunning = (id: string): boolean => runningAgentIds?.has(id) ?? false;
     // Search is app-level: the row publishes a window event and App opens its
@@ -332,10 +362,54 @@ export const ConversationGroups: React.FC<ConversationGroupsProps> = ({
                         </button>
                     ))}
                 </div>
+                {/* Subtle quick-filter pills: All | Pinned | Active Plan */}
+                <div
+                    data-testid="sidebar-session-filter"
+                    role="tablist"
+                    aria-label="Filter conversations"
+                    className="mb-2 flex items-center gap-1 px-1"
+                >
+                    {(
+                        [
+                            { id: 'all', label: 'All' },
+                            { id: 'pinned', label: 'Pinned' },
+                            { id: 'active_plan', label: 'Active Plan' },
+                        ] as const
+                    ).map(tab => {
+                        const active = sessionFilter === tab.id;
+                        return (
+                            <button
+                                key={tab.id}
+                                type="button"
+                                role="tab"
+                                aria-selected={active}
+                                data-testid={`sidebar-filter-${tab.id}`}
+                                onClick={() => setSessionFilter(tab.id)}
+                                className={`h-6 flex-1 truncate rounded-control border px-1.5 text-ui-2xs font-medium transition-colors ${
+                                    active
+                                        ? 'border-zinc-600 bg-zinc-800 text-zinc-100'
+                                        : 'border-transparent bg-transparent text-zinc-500 hover:bg-white/[0.04] hover:text-zinc-300'
+                                }`}
+                            >
+                                {tab.label}
+                            </button>
+                        );
+                    })}
+                </div>
+
                 {pinned.length > 0 && (
-                    <div className="mb-2">
-                        <div className="px-2.5 pb-1 text-ui-2xs font-semibold uppercase tracking-[0.14em] text-zinc-600">Pinned</div>
-                        {pinned.map(conversation => (
+                    <div className="mb-2" data-testid="sidebar-pinned-section">
+                        <button
+                            type="button"
+                            data-testid="sidebar-pinned-toggle"
+                            aria-expanded={!pinnedCollapsed}
+                            onClick={() => setPinnedCollapsed(v => !v)}
+                            className="flex h-6 w-full items-center justify-between rounded-control px-2.5 text-left text-ui-2xs font-semibold uppercase tracking-[0.14em] text-zinc-500 transition-colors hover:bg-white/[0.04] hover:text-zinc-300"
+                        >
+                            <span>Pinned ({pinned.length})</span>
+                            <span aria-hidden="true">{pinnedCollapsed ? '▸' : '▾'}</span>
+                        </button>
+                        {!pinnedCollapsed && pinned.map(conversation => (
                             <ConversationRow
                                 key={conversation.id}
                                 conversation={conversation}
@@ -351,32 +425,36 @@ export const ConversationGroups: React.FC<ConversationGroupsProps> = ({
                         ))}
                     </div>
                 )}
-                <div className="mb-2">
-                    {/* A plain section heading: the sidebar's ONE collapse toggle
-                        is the control beside the [Desk | Chat] pill (ShellRail).
-                        A second collapse icon here was the duplicate the UI
-                        audit flagged — two icons, one behaviour, and the trader
-                        could not tell which one owned the put-away. */}
-                    <div className="px-2.5 pb-1 text-ui-2xs font-semibold uppercase tracking-[0.14em] text-zinc-600">Recent</div>
-                    {recent.length === 0 && pinned.length === 0 ? (
-                        <p className="px-2.5 py-2 text-ui-xs leading-relaxed text-zinc-600">
-                            No conversations yet. Everything you ask the desk lands here.
-                        </p>
-                    ) : recent.map(conversation => (
-                        <ConversationRow
-                            key={conversation.id}
-                            conversation={conversation}
-                            selected={conversation.id === activeConversationId}
-                            running={isRunning(conversation.id)}
+                {sessionFilter !== 'pinned' && (
+                    <div className="mb-2" data-testid="sidebar-recent-section">
+                        <div className="px-2.5 pb-1 text-ui-2xs font-semibold uppercase tracking-[0.14em] text-zinc-600">Recent</div>
+                        {recent.length === 0 && pinned.length === 0 ? (
+                            <p className="px-2.5 py-2 text-ui-xs leading-relaxed text-zinc-600">
+                                {sessionFilter === 'active_plan'
+                                    ? 'No conversations with an active plan yet.'
+                                    : 'No conversations yet. Everything you ask the desk lands here.'}
+                            </p>
+                        ) : recent.map(conversation => (
+                            <ConversationRow
+                                key={conversation.id}
+                                conversation={conversation}
+                                selected={conversation.id === activeConversationId}
+                                running={isRunning(conversation.id)}
                                 pinned={false}
                                 threadBadge={badgeByConvId.get(conversation.id) ?? conversationBadgeFallback(conversation)}
                                 onTogglePin={onTogglePin}
-                            onOpen={onOpenConversation}
-                            onDelete={onDeleteConversation}
-                            onClear={onClearConversation}
-                        />
-                    ))}
-                </div>
+                                onOpen={onOpenConversation}
+                                onDelete={onDeleteConversation}
+                                onClear={onClearConversation}
+                            />
+                        ))}
+                    </div>
+                )}
+                {sessionFilter === 'pinned' && pinned.length === 0 && (
+                    <p className="px-2.5 py-2 text-ui-xs leading-relaxed text-zinc-600">
+                        No pinned conversations yet. Use a row menu to pin one.
+                    </p>
+                )}
             </div>
         </div>
     );

@@ -50,6 +50,9 @@ import {
     ruleProposalStateOf, ruleProposalRevertOf, type RuleProposal,
 } from '../../../services/learning/candidateRuleLoop';
 import StatsCard from './StatsCard';
+import ToolVisualCard from './ToolVisualCard';
+import { readToolPayload } from '../../../services/trade/toolPayloadStore';
+import { parseToolVisualsFromPayloads } from '../../../services/trade/toolVisualCore';
 import { CompactReceiptCard, ContextDiagnosticCard, DoctorDiagnosticCard } from './DiagnosticCards';
 import { hasCompactUndo } from '../../../services/trade/compactUndoStore';
 import { getArmedPlans } from '../../../services/trade/levelWatchService';
@@ -256,6 +259,10 @@ interface ChatTranscriptListProps {
     resolveVerdictByIdentity?: boolean;
     /** The chart the transcript talks about (Key Levels card rows). */
     symbol: string;
+    /** Active chart interval (passed to ChatWorkTimeline for descriptive summaries). */
+    interval?: string;
+    /** Jump chart to a symbol clicked inside an inline ToolVisualCard. */
+    onChangeSymbol?: (symbol: string) => void;
     /** The freshest mark for the levels card's Dist column — the canvas
      *  snapshot's markPrice, never a re-fetch. */
     getMark: () => number | null;
@@ -351,7 +358,7 @@ interface ChatTranscriptListProps {
 
 const ChatTranscriptList: React.FC<ChatTranscriptListProps> = ({
     layoutMode = 'desk', entries, scrollParent, virtuosoRef, followOutput, onAtBottomChange, onTotalHeightChanged,
-    send, setDraftText, getAnalysisMessage, resolveVerdictByIdentity, symbol, getMark, onChatLevels,
+    send, setDraftText, getAnalysisMessage, resolveVerdictByIdentity, symbol, interval, onChangeSymbol, getMark, onChatLevels,
     onToggleWatch, pinnedMessageIds, onLogProposedTrade, sessionId, onRejectProposedTrade, onUndoApproval, trades,
     sessionGuard,
     onConfirmRiskChange, onDismissRiskChange, onRevertRiskChange,
@@ -544,7 +551,24 @@ const ChatTranscriptList: React.FC<ChatTranscriptListProps> = ({
                                 />
                             );
                         })()}
-                        <ChatWorkTimeline entry={e} />
+                        <ChatWorkTimeline entry={e} symbol={symbol} interval={interval} />
+                        {(() => {
+                            const ids = e.toolIds;
+                            if (!ids || ids.length === 0) return null;
+                            const payloads = ids
+                                .map(id => (id ? readToolPayload(id) : null))
+                                .filter((p): p is NonNullable<typeof p> => p !== null);
+                            if (payloads.length === 0) return null;
+                            const visuals = parseToolVisualsFromPayloads(payloads);
+                            if (visuals.length === 0) return null;
+                            return visuals.map(visual => (
+                                <ToolVisualCard
+                                    key={visual.toolCallId}
+                                    visual={visual}
+                                    onJumpToSymbol={onChangeSymbol}
+                                />
+                            ));
+                        })()}
                         {/* An interrupted run is a half-written answer with no
                             way forward — say so IN FLOW, and offer the two
                             recoveries (re-ask, or edit what was asked). The

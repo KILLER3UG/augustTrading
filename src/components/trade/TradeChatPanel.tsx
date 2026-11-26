@@ -39,7 +39,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type { FollowOutput, VirtuosoHandle } from 'react-virtuoso';
-import { Activity, ChevronDown, Crosshair, History, MoreHorizontal, PanelRightOpen, Plus, X } from '../shared/Icons';
+import { Activity, ArrowLeft, ArrowRight, ChevronDown, Crosshair, History, MoreHorizontal, PanelRightOpen, Plus, X } from '../shared/Icons';
 import JumpToLatestFab from '../shared/JumpToLatestFab';
 import { ProviderConfig } from '../../types/provider';
 import { MessageRole, type LoggedTrade } from '../../types';
@@ -101,7 +101,21 @@ import ChatComposer from './panels/ChatComposer';
 import { consumePendingSkillTry } from '../chat/skillDeepLink';
 import { contentVersion } from '../../services/learning/SkillFileService';
 import { listProfileMemories } from '../../services/learning/profileMemory';
-import { getHarnessSettings, RISK_CONSTITUTION_MAX_CHARS } from '../../utils/harnessSettings';
+import {
+    cycleTranscriptViewMode,
+    getHarnessSettings,
+    RISK_CONSTITUTION_MAX_CHARS,
+    saveHarnessSettings,
+    subscribeHarnessSettings,
+} from '../../utils/harnessSettings';
+import { isEditableKeyboardTarget } from '../../services/trade/chartDeckCore';
+import {
+    createNavHistory,
+    pushNavHistory,
+    stepNavBack,
+    stepNavForward,
+    type NavHistoryState,
+} from '../../services/trade/toolVisualCore';
 import ModelPicker from '../shared/ModelPicker';
 import NewBotDialog from '../chat/NewBotDialog';
 import TurnPlanPill, { useClearTurnPlanOnSettle } from './TurnPlanPill';
@@ -1780,6 +1794,63 @@ ${riskConstitution}`
         />
     );
 
+    const { transcriptViewMode } = useSyncExternalStore(
+        subscribeHarnessSettings,
+        getHarnessSettings,
+        getHarnessSettings,
+    );
+    const cycleViewMode = useCallback((): void => {
+        const current = getHarnessSettings().transcriptViewMode;
+        saveHarnessSettings({ transcriptViewMode: cycleTranscriptViewMode(current) });
+    }, []);
+
+    useEffect(() => {
+        const onKeyDown = (e: KeyboardEvent): void => {
+            if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return;
+            if (e.key.toLowerCase() !== 'o') return;
+            const target = e.target as HTMLElement | null;
+            if (isEditableKeyboardTarget(target?.tagName, target?.isContentEditable)) return;
+            e.preventDefault();
+            cycleViewMode();
+        };
+        window.addEventListener('keydown', onKeyDown);
+        return () => window.removeEventListener('keydown', onKeyDown);
+    }, [cycleViewMode]);
+
+    // Back / Forward session navigation history stack
+    const [navHistory, setNavHistory] = useState<NavHistoryState>(() => createNavHistory(activeId));
+    const navSteppingRef = useRef(false);
+    useEffect(() => {
+        if (!activeId) return;
+        if (navSteppingRef.current) {
+            navSteppingRef.current = false;
+            return;
+        }
+        setNavHistory(prev => pushNavHistory(prev, activeId));
+    }, [activeId]);
+    const canNavBack = navHistory.index > 0;
+    const canNavForward = navHistory.index >= 0 && navHistory.index < navHistory.stack.length - 1;
+    const handleNavBack = useCallback((): void => {
+        setNavHistory(prev => {
+            const { next, targetId } = stepNavBack(prev);
+            if (targetId && sessions.some(s => s.id === targetId)) {
+                navSteppingRef.current = true;
+                chatStore.setActiveId(targetId);
+            }
+            return next;
+        });
+    }, [sessions]);
+    const handleNavForward = useCallback((): void => {
+        setNavHistory(prev => {
+            const { next, targetId } = stepNavForward(prev);
+            if (targetId && sessions.some(s => s.id === targetId)) {
+                navSteppingRef.current = true;
+                chatStore.setActiveId(targetId);
+            }
+            return next;
+        });
+    }, [sessions]);
+
     return (
         <div
             className={`relative flex h-full min-h-0 flex-col ${isChatFocus ? 'bg-transparent' : 'bg-zinc-900/25'}`}
@@ -1788,18 +1859,42 @@ ${riskConstitution}`
             {/* Header — borderless tonal bar. In Chat focus mode it runs flush
                 across the workspace with an interactive thread title switcher;
                 in Desk mode it stays compact above the market context row. */}
-            <div className={`@container flex shrink-0 items-center gap-2.5 ${
+            <div className={`@container flex shrink-0 items-center gap-2 ${
                 isChatFocus
                     ? 'bg-transparent px-6 py-3'
                     : 'bg-transparent px-4 py-2.5'
             }`}>
                 {isChatFocus && leadingChrome}
+                <div className="flex shrink-0 items-center gap-0.5">
+                    <button
+                        type="button"
+                        onClick={handleNavBack}
+                        disabled={!canNavBack}
+                        aria-label="Previous conversation"
+                        title="Previous conversation"
+                        data-testid="nav-history-back"
+                        className="flex h-7 w-7 items-center justify-center rounded-control text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-zinc-100 disabled:opacity-30"
+                    >
+                        <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
+                    </button>
+                    <button
+                        type="button"
+                        onClick={handleNavForward}
+                        disabled={!canNavForward}
+                        aria-label="Next conversation"
+                        title="Next conversation"
+                        data-testid="nav-history-forward"
+                        className="flex h-7 w-7 items-center justify-center rounded-control text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-zinc-100 disabled:opacity-30"
+                    >
+                        <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+                    </button>
+                </div>
                 <button
                     type="button"
                     onClick={() => { setHistoryOpen(v => !v); setHistoryQuery(''); setHistorySel(0); setHistoryShowAll(false); }}
                     aria-expanded={historyOpen}
                     title={`${activeSession.title} — switch conversation`}
-                    className="group flex min-w-0 max-w-full items-center gap-1.5 rounded-control px-1.5 py-1 -ml-1.5 text-left transition-colors hover:bg-white/[0.05]"
+                    className="group flex min-w-0 max-w-full items-center gap-1.5 rounded-control px-1.5 py-1 text-left transition-colors hover:bg-white/[0.05]"
                 >
                     <span className="min-w-0 truncate text-ui-sm font-medium tracking-[-0.01em] text-zinc-100">
                         {activeSession.title}
@@ -1807,6 +1902,17 @@ ${riskConstitution}`
                     <ChevronDown className="h-3.5 w-3.5 shrink-0 text-zinc-500 transition-colors group-hover:text-zinc-300" aria-hidden="true" />
                 </button>
                 <div className="ml-auto flex shrink-0 items-center gap-0.5">
+                    <button
+                        type="button"
+                        onClick={cycleViewMode}
+                        data-testid="transcript-view-mode-pill"
+                        data-view-mode={transcriptViewMode}
+                        title="Transcript detail mode (Ctrl+O): Normal · Audit · Calm"
+                        aria-label={`Transcript view mode: ${transcriptViewMode}`}
+                        className="mr-1 h-6 shrink-0 rounded-control border border-hairline bg-zinc-900/70 px-2 font-mono text-ui-2xs uppercase tracking-wider text-zinc-400 transition-colors hover:border-zinc-600 hover:bg-zinc-800 hover:text-zinc-100"
+                    >
+                        {transcriptViewMode}
+                    </button>
                     <React.Suspense fallback={null}>
                         <AutonomyControl providers={providers} />
                     </React.Suspense>
@@ -2095,6 +2201,8 @@ ${riskConstitution}`
                         getAnalysisMessage={getAnalysisMessage}
                         resolveVerdictByIdentity={!!activeSession.conversationId}
                         symbol={symbol}
+                        interval={interval}
+                        onChangeSymbol={onChangeSymbol}
                         getMark={getMarkForDist}
                         onChatLevels={handleCardLevels}
                         onToggleWatch={onToggleWatch}
