@@ -1859,10 +1859,10 @@ ${riskConstitution}`
             {/* Header — borderless tonal bar. In Chat focus mode it runs flush
                 across the workspace with an interactive thread title switcher;
                 in Desk mode it stays compact above the market context row. */}
-            <div className={`@container flex shrink-0 items-center gap-2 ${
+            <div className={`@container flex shrink-0 items-center gap-1 ${
                 isChatFocus
                     ? 'bg-transparent px-6 py-3'
-                    : 'bg-transparent px-4 py-2.5'
+                    : 'bg-transparent px-3 py-2.5'
             }`}>
                 {isChatFocus && leadingChrome}
                 <div className="flex shrink-0 items-center gap-0.5">
@@ -1873,7 +1873,7 @@ ${riskConstitution}`
                         aria-label="Previous conversation"
                         title="Previous conversation"
                         data-testid="nav-history-back"
-                        className="flex h-7 w-7 items-center justify-center rounded-control text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-zinc-100 disabled:opacity-30"
+                        className="flex h-6 w-6 items-center justify-center rounded-control text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-zinc-100 disabled:opacity-30"
                     >
                         <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
                     </button>
@@ -1884,7 +1884,7 @@ ${riskConstitution}`
                         aria-label="Next conversation"
                         title="Next conversation"
                         data-testid="nav-history-forward"
-                        className="flex h-7 w-7 items-center justify-center rounded-control text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-zinc-100 disabled:opacity-30"
+                        className="flex h-6 w-6 items-center justify-center rounded-control text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-zinc-100 disabled:opacity-30"
                     >
                         <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
                     </button>
@@ -1894,7 +1894,7 @@ ${riskConstitution}`
                     onClick={() => { setHistoryOpen(v => !v); setHistoryQuery(''); setHistorySel(0); setHistoryShowAll(false); }}
                     aria-expanded={historyOpen}
                     title={`${activeSession.title} — switch conversation`}
-                    className="group flex min-w-0 max-w-full items-center gap-1.5 rounded-control px-1.5 py-1 text-left transition-colors hover:bg-white/[0.05]"
+                    className="group flex min-w-0 flex-1 items-center gap-1 rounded-control px-1.5 py-1 text-left transition-colors hover:bg-white/[0.05]"
                 >
                     <span className="min-w-0 truncate text-ui-sm font-medium tracking-[-0.01em] text-zinc-100">
                         {activeSession.title}

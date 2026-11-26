@@ -61,6 +61,7 @@ interface ShellRailProps {
     onOpenSettings: () => void;
     /** The Customize row lands on a named Settings tab (Memory). */
     onOpenCustomize?: () => void;
+    onOpenWatches?: () => void;
     onOpenActivity?: () => void;
     onRunDoctor?: () => void;
     onSwitchProfile?: () => void;
@@ -86,7 +87,7 @@ const ShellRail: React.FC<ShellRailProps> = ({
     surface, onSelectSurface, onNewChat,
     conversations, activeConversationId, onOpenConversation,
     onDeleteConversation, onClearConversation,
-    activeUsername, onOpenSettings, onOpenCustomize, onOpenActivity,
+    activeUsername, onOpenSettings, onOpenCustomize, onOpenWatches, onOpenActivity,
     onRunDoctor, onSwitchProfile,
     width, isResizing, onResizeStart, onResizeReset, onCollapse,
     saveStatus, overlay = false, onCloseOverlay, hideTopControls = false,
@@ -163,6 +164,7 @@ const ShellRail: React.FC<ShellRailProps> = ({
                         onClearConversation={onClearConversation}
                         onOpenSettings={onOpenSettings}
                         onOpenCustomize={onOpenCustomize}
+                        onOpenWatches={onOpenWatches}
                         onOpenActivity={onOpenActivity}
                     />
                     <AccountRow

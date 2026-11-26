@@ -72,7 +72,7 @@ export const LessonsSection: React.FC<LessonsSectionProps> = ({ topLessons, clos
                                         )}
                                         <button
                                             onClick={() => setExpandedLesson(isOpen ? null : i)}
-                                            className="text-ui-2xs font-bold uppercase tracking-widest text-zinc-500 hover:text-zinc-200 transition-colors flex items-center gap-1"
+                                            className="min-h-[24px] py-1 text-ui-2xs font-bold uppercase tracking-widest text-zinc-500 hover:text-zinc-200 transition-colors flex items-center gap-1"
                                         >
                                             View {matches.length} trades <ChevronDownIcon className={`w-3 h-3 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
                                         </button>
@@ -84,7 +84,7 @@ export const LessonsSection: React.FC<LessonsSectionProps> = ({ topLessons, clos
                                         <div className="flex items-center gap-1 flex-wrap">
                                             <button
                                                 onClick={() => setLessonRegimeFilter('all')}
-                                                className={`px-1.5 py-0.5 rounded-control text-ui-2xs font-bold uppercase tracking-wider border transition-colors ${
+                                                className={`min-h-[24px] px-2 py-1 rounded-control text-ui-2xs font-bold uppercase tracking-wider border transition-colors ${
                                                     lessonRegimeFilter === 'all' ? 'bg-zinc-800 border-transparent text-zinc-100' : 'bg-zinc-900 border-hairline text-zinc-500 hover:text-zinc-300'
                                                 }`}
                                             >
@@ -94,7 +94,7 @@ export const LessonsSection: React.FC<LessonsSectionProps> = ({ topLessons, clos
                                                 <button
                                                     key={r}
                                                     onClick={() => setLessonRegimeFilter(prev => prev === r ? 'all' : r)}
-                                                    className={`px-1.5 py-0.5 rounded-control text-ui-2xs font-bold uppercase tracking-wider border transition-colors ${
+                                                    className={`min-h-[24px] px-2 py-1 rounded-control text-ui-2xs font-bold uppercase tracking-wider border transition-colors ${
                                                         lessonRegimeFilter === r ? 'bg-zinc-800 border-transparent text-zinc-100' : 'bg-zinc-900 border-hairline text-zinc-500 hover:text-zinc-300'
                                                     }`}
                                                 >
@@ -103,7 +103,7 @@ export const LessonsSection: React.FC<LessonsSectionProps> = ({ topLessons, clos
                                             ))}
                                             <button
                                                 onClick={() => setLessonPnlThreshold(v => !v)}
-                                                className={`px-1.5 py-0.5 rounded-control text-ui-2xs font-bold uppercase tracking-wider border transition-colors ${
+                                                className={`min-h-[24px] px-2 py-1 rounded-control text-ui-2xs font-bold uppercase tracking-wider border transition-colors ${
                                                     lessonPnlThreshold ? 'bg-rose-500/20 border-rose-500/30 text-rose-400' : 'bg-zinc-900 border-hairline text-zinc-500 hover:text-zinc-300'
                                                 }`}
                                             >

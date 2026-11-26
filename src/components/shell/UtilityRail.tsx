@@ -235,7 +235,7 @@ const UtilityRail: React.FC<UtilityRailProps> = ({
                     title="Close"
                     data-testid="utility-rail-close"
                     onClick={() => { setOpen(false); setSection('none'); }}
-                    className="rounded-control px-1.5 py-0.5 text-ui-caption text-zinc-500 transition-colors hover:bg-white/[0.06] hover:text-zinc-200"
+                    className="flex h-7 w-7 items-center justify-center rounded-control text-ui-caption text-zinc-500 transition-colors hover:bg-white/[0.06] hover:text-zinc-200"
                 >
                     ×
                 </button>

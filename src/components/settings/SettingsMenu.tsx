@@ -178,7 +178,7 @@ const NavTabButton: React.FC<{
         data-testid={'settings-section-' + (sectionId ?? label.toLowerCase().replace(/[^a-z]+/g, '-'))}
         aria-current={active ? 'page' : undefined}
         aria-label={label}
-        className={`motion-press flex w-full items-center justify-between gap-2 rounded-control px-2.5 py-2 text-left text-ui-sm font-medium transition-colors ${
+        className={`motion-press flex w-full items-center justify-between gap-2 rounded-control px-2.5 py-1.5 text-left text-ui-sm font-medium transition-colors ${
             active
                 ? 'bg-zinc-800 text-zinc-100 ring-1 ring-white/[0.09]'
                 : 'text-zinc-500 hover:bg-white/[0.04] hover:text-zinc-100'
@@ -618,15 +618,15 @@ const SettingsMenu: React.FC<SettingsMenuProps> = (props) => {
                         <div className={`flex h-full w-64 flex-col transition-[opacity,transform] duration-[var(--motion-base)] ease-[var(--motion-ease)] ${
                             sidebarCollapsed ? 'pointer-events-none -translate-x-3 opacity-0' : 'translate-x-0 opacity-100'
                         }`}>
-                            <div className="px-3 pt-4">
+                            <div className="px-3 pt-2.5">
                                 <button type="button" onClick={requestClose} data-testid="settings-back-to-app"
-                                    className="motion-press flex w-full items-center gap-2 rounded-control px-2.5 py-2 text-left text-ui-sm text-zinc-400 transition-colors hover:bg-white/[0.04] hover:text-zinc-100">
+                                    className="motion-press flex w-full items-center gap-2 rounded-control px-2.5 py-1.5 text-left text-ui-sm text-zinc-400 transition-colors hover:bg-white/[0.04] hover:text-zinc-100">
                                     <ChevronLeftIcon className="h-4 w-4" aria-hidden="true" />
                                     Back to app
                                 </button>
                             </div>
-                            <div className="px-3 pb-2 pt-3">
-                                <div className="flex items-center gap-2 rounded-control border border-hairline bg-zinc-800/80 px-2.5 py-2 transition-colors focus-within:border-line">
+                            <div className="px-3 pb-1.5 pt-2">
+                                <div className="flex items-center gap-2 rounded-control border border-hairline bg-zinc-800/80 px-2.5 py-1.5 transition-colors focus-within:border-line">
                                     <SearchIcon className="h-3.5 w-3.5 shrink-0 text-zinc-500" aria-hidden="true" />
                                     <input
                                         value={navQuery}
@@ -670,8 +670,8 @@ const SettingsMenu: React.FC<SettingsMenuProps> = (props) => {
                                     const entries = group.entries.filter(navMatches);
                                     if (entries.length === 0) return null;
                                     return (
-                                        <div key={group.title} className="space-y-0.5 pt-4 first:pt-0">
-                                            <p className="ui-kicker px-2.5 pb-1">{group.title}</p>
+                                        <div key={group.title} className="space-y-0.5 pt-2.5 first:pt-0">
+                                            <p className="ui-kicker px-2.5 pb-0.5">{group.title}</p>
                                             {entries.map(entry => (
                                                 <NavTabButton
                                                     key={entry.id}
@@ -696,7 +696,7 @@ const SettingsMenu: React.FC<SettingsMenuProps> = (props) => {
                                     />
                                 )}
                             </nav>
-                            <div className="shrink-0 border-t border-zinc-800/80 px-3 py-3">
+                            <div className="shrink-0 border-t border-zinc-800/80 px-3 py-2">
                                 <details className="group">
                                     <summary className="flex cursor-pointer select-none list-none items-center justify-between font-mono text-ui-xs text-zinc-600 hover:text-zinc-400">
                                         <span>Developer</span>

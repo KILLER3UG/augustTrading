@@ -69,6 +69,7 @@ export interface ConversationGroupsProps {
     /** Customize lands on a specific Settings tab (Memory) rather than the
      *  gear's remembered section. Falls back to onOpenSettings. */
     onOpenCustomize?: () => void;
+    onOpenWatches?: () => void;
     onOpenActivity?: () => void;
 }
 
@@ -260,7 +261,7 @@ export const ConversationGroups: React.FC<ConversationGroupsProps> = ({
     conversations, activeConversationId, onNewChat, onOpenConversation,
     onDeleteConversation, onClearConversation, runningAgentIds, pinnedIds,
     onTogglePin, onOpenSearch,
-    onOpenSettings, onOpenCustomize, onOpenActivity,
+    onOpenSettings, onOpenCustomize, onOpenWatches, onOpenActivity,
 }) => {
     // A conversation with no messages is a placeholder, not a record: it is
     // hidden unless it is the one on screen (a fresh New chat stays visible).
@@ -325,7 +326,7 @@ export const ConversationGroups: React.FC<ConversationGroupsProps> = ({
     const utilityRows: Array<{ id: string; label: string; testid: string; onClick: () => void }> = [
         { id: 'search', label: 'Search', testid: 'rail-search', onClick: openSearch },
         { id: 'customize', label: 'Customize', testid: 'rail-customize', onClick: () => (onOpenCustomize ?? onOpenSettings)?.() },
-        { id: 'watches', label: 'Watches', testid: 'rail-watches', onClick: () => onOpenActivity?.() },
+        { id: 'watches', label: 'Watches', testid: 'rail-watches', onClick: () => (onOpenWatches ?? onOpenActivity)?.() },
     ];
 
     return (
@@ -373,7 +374,7 @@ export const ConversationGroups: React.FC<ConversationGroupsProps> = ({
                         [
                             { id: 'all', label: 'All' },
                             { id: 'pinned', label: 'Pinned' },
-                            { id: 'active_plan', label: 'Active Plan' },
+                            { id: 'active_plan', label: 'Plans' },
                         ] as const
                     ).map(tab => {
                         const active = sessionFilter === tab.id;

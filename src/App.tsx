@@ -2711,7 +2711,7 @@ const App: React.FC = () => {
                             title="Close"
                             data-testid="search-close"
                             onClick={() => setIsSearchOpen(false)}
-                            className="rounded-control px-1.5 py-0.5 text-ui-caption text-zinc-500 transition-colors hover:bg-white/[0.06] hover:text-zinc-200"
+                            className="flex h-7 w-7 items-center justify-center rounded-control text-ui-caption text-zinc-500 transition-colors hover:bg-white/[0.06] hover:text-zinc-200"
                         >
                             ×
                         </button>
@@ -2796,6 +2796,7 @@ const App: React.FC = () => {
                             setSettingsSection('memory');
                             setIsSettingsMenuVisible(true);
                         }}
+                        onOpenWatches={() => setIsWatchListVisible(true)}
                         onOpenActivity={() => setIsJobsDrawerVisible(true)}
                         onRunDoctor={() => {
                             chatStore.queuePendingSlashCommand('/doctor');

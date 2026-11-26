@@ -4479,7 +4479,7 @@ const TradingChart: React.FC<TradingChartProps> = ({
                 {ohlcvRow && overPlot && (
                     <div
                         data-testid="ohlcv-row"
-                        className={`pointer-events-none absolute left-2 z-10 flex items-center gap-3 overflow-hidden whitespace-nowrap rounded-control bg-zinc-950/80 px-2 py-0.5 text-ui-dense tabular-nums text-zinc-500 ${levels.length > 0 ? 'max-w-[calc(100%-204px)]' : 'max-w-[calc(100%-16px)]'}`}
+                        className="pointer-events-none absolute left-2 z-10 flex max-w-[calc(100%-84px)] items-center gap-3 overflow-hidden whitespace-nowrap rounded-control bg-zinc-950/80 px-2 py-0.5 text-ui-dense tabular-nums text-zinc-500"
                         style={{ top: status === 'live' ? (legendExpanded ? '5.5rem' : '2.75rem') : '0.375rem' }}
                     >
                         <span className="font-mono tabular-nums">H <span className="text-zinc-300">{ohlcvRow.high24h ? fmtPriceForChart(ohlcvRow.high24h) : '—'}</span></span>
@@ -4490,7 +4490,7 @@ const TradingChart: React.FC<TradingChartProps> = ({
                     </div>
                 )}
                 {levels.length > 0 && (
-                    <span className="pointer-events-none absolute right-3 top-2 z-10 rounded-full bg-zinc-800/80 px-2 py-0.5 text-ui-2xs text-zinc-400" title="Current verdict levels drawn on the chart" data-testid="verdict-overlay-chip">
+                    <span className="pointer-events-none absolute bottom-2 right-20 z-10 rounded-full border border-hairline bg-zinc-900/90 px-2 py-0.5 text-ui-2xs text-zinc-400" title="Current verdict levels drawn on the chart" data-testid="verdict-overlay-chip">
                         Verdict overlay · {levels.map(l => l.label).join(' ')}
                     </span>
                 )}

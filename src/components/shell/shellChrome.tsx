@@ -180,7 +180,7 @@ export const AccountRow: React.FC<{
                             type="button"
                             data-testid="nav-activity"
                             onClick={onOpenActivity}
-                            aria-label="Activity — skill audits"
+                            aria-label="Activity"
                             className="flex h-7 w-7 items-center justify-center rounded-control text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-zinc-100 focus-visible:ring-2 focus-visible:ring-zinc-400"
                         >
                             <Inbox className="h-4 w-4" aria-hidden="true" />
