@@ -6,6 +6,10 @@ import {
 } from '../services/validation/SessionGuardService';
 import type { OutcomeSettlement } from './outcomeSettlement';
 import type { SelfModMode } from '../schemas/selfChange';
+import {
+    normalizePreTradeHooksSettings,
+    type PreTradeHooksSettings,
+} from '../services/paper/preTradeHooksCore';
 
 export const RISK_CONSTITUTION_MAX_CHARS = 1200;
 
@@ -82,6 +86,8 @@ export interface HarnessSettings {
     autoFoldTools: boolean;
     /** Default Enter action while a turn is actively streaming: steer mid-turn or queue for next turn. */
     sendWhileRunning: 'steer' | 'queue';
+    /** Deterministic Pre-Trade Hooks enforced in PaperBrokerService on open orders. */
+    preTradeHooks: PreTradeHooksSettings;
 }
 
 const KEY = 'harness_settings_v1';
@@ -168,6 +174,7 @@ export const getHarnessSettings = (): HarnessSettings => {
         memoryDreamEnabled: stored.memoryDreamEnabled !== false,
         autoFoldTools: stored.autoFoldTools !== false,
         sendWhileRunning: stored.sendWhileRunning === 'queue' ? 'queue' : 'steer',
+        preTradeHooks: normalizePreTradeHooksSettings(stored.preTradeHooks),
         // The trader's Risk Constitution rides the frozen session prefix;
         // length-capped here at the STORE so one oversized paste cannot bloat
         // every future prefix regardless of what the editor sends.
@@ -183,7 +190,14 @@ export const getHarnessSettings = (): HarnessSettings => {
 };
 
 export const saveHarnessSettings = (next: Partial<HarnessSettings>): HarnessSettings => {
-    const merged = { ...getHarnessSettings(), ...next };
+    const current = getHarnessSettings();
+    const merged: HarnessSettings = {
+        ...current,
+        ...next,
+        preTradeHooks: next.preTradeHooks
+            ? normalizePreTradeHooksSettings({ ...current.preTradeHooks, ...next.preTradeHooks })
+            : current.preTradeHooks,
+    };
     try {
         const serialized = JSON.stringify(merged);
         localStorage.setItem(KEY, serialized);

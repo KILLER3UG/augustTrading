@@ -13,10 +13,12 @@
 
 import { getPreference, setPreference, getAllKeys, removePreference } from '../infrastructure/PreferencesService';
 import { getActiveUsername } from '../../utils/activeUser';
+import { getHarnessSettings } from '../../utils/harnessSettings';
 import { BINANCE_FUTURES_WS } from '../../config/exchangeEndpoints';
 import { ensureKnownSymbol, fetchMarkIndex, fetchOrderBookDepth, fetchFuturesTicker24h } from '../analysis/MarketDataService';
 import { evaluatePlanLocalSync } from '../trade/proposalGate';
 import { fallbackAdversaryVerdict } from '../trade/adversaryReview';
+import { getCachedRegime } from '../trade/scopedRulesRuntime';
 import {
     getPaperLiveFrame, consumePaperLiveFrame, getAllPaperFundingFrames,
     subscribePaperLiveTicks, registerLivePaperFeed as registerLiveFeedOwner,
@@ -31,6 +33,7 @@ import {
     evaluatePaperTick as evaluateTickCore,
     placePaperOrder as placeOrderCore,
     paperAccountView,
+    paperEquity,
     isolatedLiquidationPrice,
     utcFundingSlotsBetween,
     PAPER_ORDER_ACTIONS,
@@ -45,6 +48,10 @@ import {
     type PaperTickOutcome,
     type PaperFundingFrame,
 } from './paperCore';
+import {
+    evaluatePreTradeHooks,
+    type PreTradeHooksSettings,
+} from './preTradeHooksCore';
 
 const STORE_KEY_PREFIX = 'paper_account_v1_';
 /** Distinct key for a preserved, untrusted raw payload. Never overwritten by
@@ -439,6 +446,10 @@ export interface SubmitPaperOrderDeps {
     fundingFrames?: ReadonlyArray<PaperFundingFrame>;
     /** Live marks for EVERY held symbol, injected in offline tests. */
     markPrices?: Readonly<Record<string, number>>;
+    /** Optional overrides for deterministic offline pre-trade hook tests. */
+    preTradeHooks?: PreTradeHooksSettings;
+    regime?: string | null;
+    betaOverrides?: Readonly<Record<string, number>>;
 }
 
 /**
@@ -510,6 +521,45 @@ export const submitPaperOrder = async (
             ], tradedSymbol, mark),
             ...(deps.markPrices ?? {}),
         };
+        if (input.action === 'open_market' || input.action === 'open_limit') {
+            const equity = paperEquity(account, markPrices);
+            const entryPx = mark ?? (typeof input.entry_price === 'number' ? input.entry_price : 0);
+            const stopPx = typeof input.stop_loss === 'number' ? input.stop_loss : 0;
+            const candRiskPct = typeof input.risk_pct === 'number' && Number.isFinite(input.risk_pct) && input.risk_pct > 0
+                ? input.risk_pct
+                : (typeof input.notional_usd === 'number' && Number.isFinite(input.notional_usd) && input.notional_usd > 0
+                    && entryPx > 0 && stopPx > 0 && equity > 0)
+                    ? ((input.notional_usd / entryPx) * Math.abs(entryPx - stopPx) / equity) * 100
+                    : account.config.maxRiskPerTradePct;
+            const hooks = deps.preTradeHooks ?? getHarnessSettings().preTradeHooks;
+            const regime = deps.regime !== undefined ? deps.regime : getCachedRegime(tradedSymbol, nowMs);
+            const effectiveFunding = fundingRate !== undefined && fundingRate !== null
+                ? fundingRate
+                : (getPaperLiveFrame(tradedSymbol, PAPER_FRAME_FRESH_MS, nowMs)?.fundingRate ?? null);
+            const hookEval = evaluatePreTradeHooks({
+                hooks,
+                positions: account.positions,
+                equityUsd: equity,
+                candidate: {
+                    symbol: tradedSymbol,
+                    side: input.side === 'short' ? 'short' : 'long',
+                    riskPct: candRiskPct,
+                    thesis: input.thesis,
+                    skillSlug: input.skill_slug,
+                },
+                regime,
+                fundingRate: effectiveFunding,
+                betaOverrides: deps.betaOverrides,
+            });
+            if (!hookEval.ok) {
+                return {
+                    ok: false,
+                    error: 'pre_trade_hook_blocked',
+                    reason: hookEval.reason,
+                    view: paperAccountView(account, markPrices, nowMs),
+                };
+            }
+        }
         const receipt = placeOrderCore({
             account, input, quote, nowMs,
             nextId: deps.nextId,

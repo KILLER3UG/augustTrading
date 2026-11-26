@@ -6,12 +6,21 @@
 // (ANTI-REWARD-HACKING). Writes go through updatePaperConfigForUser, which
 // serializes them on the same chain as every fill, and a reset is confirmed
 // with the shared in-app dialog before it touches the store.
-import React, { useEffect, useState } from 'react';
-import { Activity, FileText, Target, Wrench } from '../../shared/Icons';
+import React, { useEffect, useState, useSyncExternalStore } from 'react';
+import { Activity, FileText, ShieldCheck, Target, Wrench } from '../../shared/Icons';
 import { ToggleSwitch } from '../../shared/ToggleSwitch';
 import { useConfirmDialog } from '../../shared/ConfirmDialog';
 import { SettingsButton, SettingsGroup, SettingsPageHeader, SettingsRow } from './shared';
 import { getActiveUsername } from '../../../utils/activeUser';
+import {
+    getHarnessSettings,
+    saveHarnessSettings,
+    subscribeHarnessSettings,
+} from '../../../utils/harnessSettings';
+import {
+    normalizePreTradeHooksSettings,
+    type PreTradeHooksSettings,
+} from '../../../services/paper/preTradeHooksCore';
 import {
     createPaperAccount,
     DEFAULT_PAPER_ACCOUNT_CONFIG,
@@ -114,6 +123,11 @@ const PaperTab: React.FC<{ tab: PaperTabProps }> = ({ tab }) => {
     }, [user]);
 
     const cfg: PaperAccountConfig = account?.config ?? DEFAULT_PAPER_ACCOUNT_CONFIG;
+    const harness = useSyncExternalStore(subscribeHarnessSettings, getHarnessSettings, getHarnessSettings);
+    const hooks = harness.preTradeHooks;
+    const updateHooks = (patch: Partial<PreTradeHooksSettings>): void => {
+        saveHarnessSettings({ preTradeHooks: normalizePreTradeHooksSettings({ ...hooks, ...patch }) });
+    };
 
     const updateConfig = (patch: Partial<PaperAccountConfig>): void => {
         // Clamp locally for an immediate, honest UI; the service clamps again
@@ -255,6 +269,66 @@ const PaperTab: React.FC<{ tab: PaperTabProps }> = ({ tab }) => {
                     onChange={dailyDrawdownKillSwitchPct => updateConfig({ dailyDrawdownKillSwitchPct })}
                 />
             </SettingsGroup>
+
+            <div data-testid="settings-pretrade-hooks">
+                <SettingsGroup
+                    title="Pre-Trade Hooks"
+                    description="Deterministic guardrails enforced before any simulated entry opens. Closing, cancelling, and risk-reducing hedges are never blocked."
+                >
+                    <SettingsRow
+                        icon={<ShieldCheck className="h-4 w-4" aria-hidden="true" />}
+                        title="Block correlated portfolio heat"
+                        description="Blocks new entries when net directional BTC-beta risk heat exceeds the cap below (risk-reducing hedges still pass)."
+                        control={
+                            <span data-testid="settings-hook-correlated-heat" className="inline-flex">
+                                <ToggleSwitch
+                                    checked={hooks.blockCorrelatedHeat}
+                                    onChange={() => updateHooks({ blockCorrelatedHeat: !hooks.blockCorrelatedHeat })}
+                                    label="Toggle Block correlated portfolio heat"
+                                />
+                            </span>
+                        }
+                    />
+                    <NumberRow
+                        title="Max correlated BTC-beta heat (%)"
+                        description="Net directional BTC-beta risk ceiling (BTC=1.0x, ETH=1.15x, major L1/L2=1.35x, other alts=1.55x)."
+                        testId="settings-max-correlated-heat"
+                        value={hooks.maxCorrelatedHeatPct}
+                        min={0.5}
+                        max={20}
+                        step={0.5}
+                        onChange={maxCorrelatedHeatPct => updateHooks({ maxCorrelatedHeatPct })}
+                    />
+                    <SettingsRow
+                        icon={<ShieldCheck className="h-4 w-4" aria-hidden="true" />}
+                        title="Block breakouts in chop regime"
+                        description="Blocks breakout entries when live market regime reads chop/range unless thesis or playbook cites fade, reclaim, sweep, mean, or range."
+                        control={
+                            <span data-testid="settings-hook-chop-breakout" className="inline-flex">
+                                <ToggleSwitch
+                                    checked={hooks.blockChopBreakout}
+                                    onChange={() => updateHooks({ blockChopBreakout: !hooks.blockChopBreakout })}
+                                    label="Toggle Block breakouts in chop regime"
+                                />
+                            </span>
+                        }
+                    />
+                    <SettingsRow
+                        icon={<ShieldCheck className="h-4 w-4" aria-hidden="true" />}
+                        title="Block crowded side at extreme funding"
+                        description="Blocks entries aligned with extreme 8h funding (>= 5 bps) while permitting counter-trend fades."
+                        control={
+                            <span data-testid="settings-hook-extreme-funding" className="inline-flex">
+                                <ToggleSwitch
+                                    checked={hooks.blockExtremeFunding}
+                                    onChange={() => updateHooks({ blockExtremeFunding: !hooks.blockExtremeFunding })}
+                                    label="Toggle Block crowded side at extreme funding"
+                                />
+                            </span>
+                        }
+                    />
+                </SettingsGroup>
+            </div>
 
             <SettingsGroup title="Account actions">
                 <SettingsRow

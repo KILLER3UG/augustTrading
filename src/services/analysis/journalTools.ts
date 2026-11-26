@@ -29,6 +29,12 @@ import { wilsonInterval95 } from '../signals/signalAccuracy';
 import { plannedRiskReward, plannedRiskRewardSigned, type PlannedRiskDirection } from '../../utils/riskReward';
 import { roundTripCostR, breakEvenWinRate } from '../../utils/netRiskReward';
 import { readRiskState, MIN_TRADES_FOR_KELLY_FLOOR, type RiskStateRead } from '../market/riskStateCore';
+import {
+    computeCorrelatedPortfolioHeat,
+    DEFAULT_PRE_TRADE_HOOKS_SETTINGS,
+    type CorrelatedPortfolioHeatResult,
+    type PreTradeHooksSettings,
+} from '../paper/preTradeHooksCore';
 import { metaLabel } from '../market/metaLabelCore';
 import { regimeRead } from '../market/regimeCore';
 import { atr14 } from '../../utils/smcStructure';
@@ -437,24 +443,55 @@ export const runSetupBaseRateTool = (
 export const runRiskStateTool = (
     trades: LoggedTrade[],
     asofMs: number = Date.now(),
-    opts?: { simulationMode?: SimulationStatsMode },
+    opts?: {
+        simulationMode?: SimulationStatsMode;
+        paperPositions?: ReadonlyArray<{ symbol: string; side: 'long' | 'short'; riskUsd?: number; riskPct?: number }>;
+        paperEquityUsd?: number;
+        preTradeHooks?: PreTradeHooksSettings;
+    },
 ): string => {
     const tool = 'risk_state';
     const simMode = opts?.simulationMode ?? 'real';
     const simulatedExcluded = simMode === 'real' ? countSimulatedTrades(trades) : 0;
+    const hooks = opts?.preTradeHooks ?? DEFAULT_PRE_TRADE_HOOKS_SETTINGS;
     const notes: string[] = [
-        'source: the trader\'s logged journal rows',
+        'source: the trader\'s logged journal rows + live paper broker positions',
         'advisory only — context for sizing and refusal decisions, never a P&L report',
         ...(simulatedExcluded > 0 ? [`Simulated excluded (${simulatedExcluded})`] : []),
     ];
     const rows = filterTradesBySimulationMode(trades, simMode);
+    const paperPos = opts?.paperPositions ?? [];
+    const journalHeatPositions = rows
+        .filter(t => t.outcome === 'PENDING')
+        .map(t => ({
+            symbol: t.analysis.coinName ?? '',
+            side: (String(t.analysis.direction).toLowerCase() === 'short' ? 'short' : 'long') as 'long' | 'short',
+            riskPct: 1.0,
+        }));
+    const correlatedHeat: CorrelatedPortfolioHeatResult = computeCorrelatedPortfolioHeat({
+        positions: paperPos.length > 0 ? paperPos : journalHeatPositions,
+        equityUsd: opts?.paperEquityUsd,
+    });
+    const correlatedHeatBlock = {
+        ...correlatedHeat,
+        source: paperPos.length > 0 ? 'paper_positions' : 'pending_journal_plans',
+        maxCorrelatedHeatPct: hooks.maxCorrelatedHeatPct,
+        blockCorrelatedHeat: hooks.blockCorrelatedHeat,
+    };
+
     if (rows.length === 0) {
+        const reason = simulatedExcluded > 0
+            ? `the journal has no real rows yet (${simulatedExcluded} simulated row(s) excluded)`
+            : 'the journal has no rows yet';
         return JSON.stringify({
             tool, asof: asofMs, checkedAt: new Date(asofMs).toISOString(), symbol: '(journal)', tf: 'journal', params: {},
-            data_quality: { available: false, bars_used: 0, notes, reason: simulatedExcluded > 0 ? `the journal has no real rows yet (${simulatedExcluded} simulated row(s) excluded)` : 'the journal has no rows yet' },
-            values: null, distances_atr: {}, evidence_level: 'documented',
-            one_line_summary: simulatedExcluded > 0 ? `the journal has no real rows yet (${simulatedExcluded} simulated row(s) excluded)` : 'the journal has no rows yet',
-        } satisfies MarketToolEnvelope<null>);
+            data_quality: { available: paperPos.length > 0, bars_used: 0, notes, ...(paperPos.length > 0 ? {} : { reason }) },
+            values: paperPos.length > 0 ? { correlated_heat: correlatedHeatBlock } : null,
+            distances_atr: {}, evidence_level: 'documented',
+            one_line_summary: paperPos.length > 0
+                ? `${paperPos.length} paper position(s) · net BTC-beta heat ${correlatedHeat.currentNetBetaHeatPct}% / ${hooks.maxCorrelatedHeatPct}% cap`
+                : reason,
+        } satisfies MarketToolEnvelope<unknown>);
     }
     const read = readRiskState(rows, asofMs);
     // Fill the canonical planned R:R per open plan from its own numbers.
@@ -475,15 +512,22 @@ export const runRiskStateTool = (
                 };
             }),
         },
+        correlated_heat: correlatedHeatBlock,
         kelly_floor: MIN_TRADES_FOR_KELLY_FLOOR,
         simulated_excluded: simulatedExcluded,
         simulation_mode: simMode,
-    } as RiskStateRead & { kelly_floor: number; simulated_excluded: number; simulation_mode: SimulationStatsMode };
-    const summary = `${read.open.count} open plan(s)${read.open.correlated ? ' (CORRELATED)' : ''}, drawdown light ${read.drawdown.light} (day ${read.drawdown.todayR}R / week ${read.drawdown.weekR}R), Kelly ${read.kelly.available ? `half-Kelly ceiling ${read.kelly.halfKellyPct}%` : 'refused (thin sample)'}`;
+    } as RiskStateRead & {
+        correlated_heat: typeof correlatedHeatBlock;
+        kelly_floor: number;
+        simulated_excluded: number;
+        simulation_mode: SimulationStatsMode;
+    };
+    const summary = `${read.open.count} open plan(s)${read.open.correlated ? ' (CORRELATED)' : ''}, net BTC-beta heat ${correlatedHeat.currentNetBetaHeatPct}%/${hooks.maxCorrelatedHeatPct}% cap, drawdown light ${read.drawdown.light} (day ${read.drawdown.todayR}R / week ${read.drawdown.weekR}R), Kelly ${read.kelly.available ? `half-Kelly ceiling ${read.kelly.halfKellyPct}%` : 'refused (thin sample)'}`;
     const simRows = simMode === 'real' ? filterTradesBySimulationMode(trades, 'simulated') : [];
     const simValues = simMode === 'real'
         ? {
             ...readRiskState(simRows, asofMs),
+            correlated_heat: correlatedHeatBlock,
             kelly_floor: MIN_TRADES_FOR_KELLY_FLOOR,
             simulated_excluded: 0,
             simulation_mode: 'simulated' as SimulationStatsMode,

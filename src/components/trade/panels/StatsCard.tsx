@@ -18,6 +18,13 @@ interface RiskValues {
     open?: { count?: number; correlated?: boolean };
     drawdown?: { todayR?: number; weekR?: number; light?: string };
     kelly?: { available?: boolean; halfKellyPct?: number };
+    correlated_heat?: {
+        currentGrossBetaHeatPct?: number;
+        currentNetBetaHeatPct?: number;
+        currentAbsNetBetaHeatPct?: number;
+        maxCorrelatedHeatPct?: number;
+        blockCorrelatedHeat?: boolean;
+    };
     simulated_excluded?: number;
 }
 
@@ -138,6 +145,12 @@ export const StatsCard: React.FC<{ snapshot: StatsCardSnapshot }> = ({ snapshot 
                             ? `half-Kelly ceiling ${fmt(risk.kelly.halfKellyPct)}%`
                             : 'half-Kelly ceiling refused (thin sample)'}
                     </p>
+                    {risk?.correlated_heat && (
+                        <p className="text-zinc-400">
+                            net BTC-beta heat {fmt(risk.correlated_heat.currentNetBetaHeatPct)}% / {fmt(risk.correlated_heat.maxCorrelatedHeatPct)}% cap
+                            {' · gross '}{fmt(risk.correlated_heat.currentGrossBetaHeatPct)}%
+                        </p>
+                    )}
                     {planSummary && <p className="text-zinc-400">{planSummary}</p>}
                 </div>
             )}

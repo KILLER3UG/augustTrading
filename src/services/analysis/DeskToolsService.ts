@@ -5986,7 +5986,17 @@ ${body}`);
                         entryReturns,
                     });
                 } else if (call.name === 'risk_state') {
-                    content = jt.runRiskStateTool(context.trades ?? []);
+                    const [{ getPaperAccount }, { paperEquity }] = await Promise.all([
+                        import('../paper/PaperBrokerService'),
+                        import('../paper/paperCore'),
+                    ]);
+                    const paperAcct = await getPaperAccount().catch(() => null);
+                    const paperEq = paperAcct ? paperEquity(paperAcct, {}) : undefined;
+                    content = jt.runRiskStateTool(context.trades ?? [], Date.now(), {
+                        paperPositions: paperAcct?.positions ?? [],
+                        paperEquityUsd: paperEq,
+                        preTradeHooks: getHarnessSettings().preTradeHooks,
+                    });
                 } else if (call.name === 'playbook_attribution') {
                     content = jt.runPlaybookAttributionTool(context.trades ?? []);
                 } else {
