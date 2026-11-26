@@ -223,8 +223,8 @@ class CommittedDrawingsRenderer implements IPrimitivePaneRenderer {
                     {
                         pillHeight: HLINE_PILL_HEIGHT,
                         minGap: HLINE_PILL_GAP,
-                        minY: 2,
-                        maxY: Math.max(2, plotH - 2),
+                        minY: 38,
+                        maxY: Math.max(38, plotH - 2),
                     },
                 );
                 for (const placement of placements) {

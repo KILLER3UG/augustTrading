@@ -88,29 +88,68 @@ const normalizeRegimeTokens = (raw: string | null | undefined): string[] => {
     return [head];
 };
 
+const BULLET_LINE_RE = /^\s*[-*]\s+(.+)$/;
+
 const parseMemoryMdBlocks = (memoryMd: string): Array<{ id: string; day: string; body: string }> => {
     const raw = (memoryMd || '').trim();
     if (!raw) return [];
     const lines = raw.split(/\r?\n/);
-    const blocks: Array<{ day: string; body: string }> = [];
-    let current: { day: string; body: string } | null = null;
+    const blocks: Array<{ day: string; lines: string[] }> = [];
+    let current: { day: string; lines: string[] } | null = null;
     for (const line of lines) {
         const m = ENTRY_HEAD_RE.exec(line.trim());
         if (m) {
-            current = { day: m[1], body: '' };
+            current = { day: m[1], lines: [] };
             blocks.push(current);
             continue;
         }
         if (!current) {
             if (!line.trim()) continue;
-            current = { day: '', body: '' };
+            current = { day: '', lines: [] };
             blocks.push(current);
         }
-        current.body += (current.body ? '\n' : '') + line;
+        current.lines.push(line);
     }
-    return blocks
-        .map((b, i) => ({ id: `memory:${b.day || 'preamble'}:${i}`, day: b.day, body: b.body.trim() }))
-        .filter(b => b.body.length > 0);
+    const items: Array<{ id: string; day: string; body: string }> = [];
+    blocks.forEach((b, blockIdx) => {
+        const chunks: string[] = [];
+        let activeItem = '';
+        let inBullet = false;
+        for (const line of b.lines) {
+            const trimmed = line.trim();
+            if (!trimmed) {
+                if (activeItem.trim()) {
+                    chunks.push(activeItem.trim());
+                    activeItem = '';
+                    inBullet = false;
+                }
+                continue;
+            }
+            const bullet = BULLET_LINE_RE.exec(line);
+            if (bullet) {
+                if (activeItem.trim()) chunks.push(activeItem.trim());
+                activeItem = bullet[1].trim();
+                inBullet = true;
+            } else if (inBullet && /^\s+/.test(line)) {
+                activeItem += ` ${trimmed}`;
+            } else if (!inBullet && activeItem) {
+                activeItem += ` ${trimmed}`;
+            } else {
+                if (activeItem.trim()) chunks.push(activeItem.trim());
+                activeItem = trimmed;
+                inBullet = false;
+            }
+        }
+        if (activeItem.trim()) chunks.push(activeItem.trim());
+        chunks.forEach((body, itemIdx) => {
+            items.push({
+                id: `memory:${b.day || 'preamble'}:${blockIdx}:${itemIdx}`,
+                day: b.day,
+                body,
+            });
+        });
+    });
+    return items;
 };
 
 const clipSnippet = (text: string, maxLen = 220): string => {

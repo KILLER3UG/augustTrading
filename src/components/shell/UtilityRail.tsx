@@ -18,7 +18,15 @@ import {
     captureCuratedMemorySnapshot,
     type CuratedMemorySnapshot,
 } from '../../services/learning/curatedMemory';
-import { runMemoryDream, undoMemoryDream } from '../../services/learning/memoryDream';
+import {
+    applyDreamUndo,
+    buildDreamUndoPayload,
+    formatDreamResultSummary,
+    getLastDreamUndo,
+    runMemoryDream,
+    subscribeLastDreamUndo,
+    type DreamUndoPayload,
+} from '../../services/learning/memoryDream';
 import {
     skillStatusRows,
     type SkillStatusRow,
@@ -58,7 +66,8 @@ const UtilityRail: React.FC<UtilityRailProps> = ({
     };
     const [section, setSection] = useState<'none' | 'memory' | 'skills' | 'paper'>('none');
     const [mem, setMem] = useState<CuratedMemorySnapshot>(emptyCounters);
-    const [dreamUndo, setDreamUndo] = useState<{ userMd: string; memoryMd: string } | null>(null);
+    const user = username ?? getActiveUsername() ?? 'default';
+    const [dreamUndo, setDreamUndo] = useState<DreamUndoPayload | null>(() => getLastDreamUndo(user));
     const [busy, setBusy] = useState(false);
     const [note, setNote] = useState<string | null>(null);
     const [skillRows, setSkillRows] = useState<Record<string, SkillStatusRow>>({});
@@ -74,10 +83,18 @@ const UtilityRail: React.FC<UtilityRailProps> = ({
         ? `${display(session.symbol)} · ${session.interval} · Live`
         : 'No active session';
 
-    const user = username ?? getActiveUsername() ?? 'default';
     const refreshCounters = useCallback(async (): Promise<void> => {
         try { setMem(await captureCuratedMemorySnapshot(user)); }
         catch (e) { setNote(e instanceof Error ? e.message : String(e)); }
+    }, [user]);
+    const refreshSkills = useCallback(async (): Promise<void> => {
+        try { setSkillRows(await skillStatusRows(user)); }
+        catch { /* best-effort */ }
+    }, [user]);
+
+    useEffect(() => {
+        setDreamUndo(getLastDreamUndo(user));
+        return subscribeLastDreamUndo(() => setDreamUndo(getLastDreamUndo(user)));
     }, [user]);
 
     useEffect(() => {
@@ -151,8 +168,10 @@ const UtilityRail: React.FC<UtilityRailProps> = ({
                 const result = await runMemoryDream({ manual: true, username: user });
                 if (result.error) setNote(result.error);
                 else if (!result.ran) setNote('Nothing to consolidate yet.');
-                if (result.undoSnapshot) setDreamUndo(result.undoSnapshot);
-                await refreshCounters();
+                else setNote(formatDreamResultSummary(result));
+                const undoPayload = buildDreamUndoPayload(result);
+                if (undoPayload) setDreamUndo(undoPayload);
+                await Promise.all([refreshCounters(), refreshSkills()]);
             } catch (e) {
                 setNote(e instanceof Error ? e.message : String(e));
             } finally {
@@ -165,10 +184,13 @@ const UtilityRail: React.FC<UtilityRailProps> = ({
         if (!dreamUndo) return;
         void (async () => {
             try {
-                const ok = await undoMemoryDream(dreamUndo, user);
+                const ok = await applyDreamUndo(dreamUndo, user);
                 setNote(ok ? 'Consolidation undone.' : 'Undo refused by the memory store.');
-                if (ok) setDreamUndo(null);
-                await refreshCounters();
+                if (ok) {
+                    setDreamUndo(null);
+                    window.dispatchEvent(new Event('august-memory-refresh'));
+                }
+                await Promise.all([refreshCounters(), refreshSkills()]);
             } catch (e) {
                 setNote(e instanceof Error ? e.message : String(e));
             }

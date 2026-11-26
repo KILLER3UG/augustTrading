@@ -581,7 +581,7 @@ const runMemoryDreamUnlocked = async (options: DreamRunOptions): Promise<DreamRu
         }
     }
 
-    return {
+    const result: DreamRunResult = {
         ran: true,
         manual: !!options.manual,
         eligibility,
@@ -592,6 +592,8 @@ const runMemoryDreamUnlocked = async (options: DreamRunOptions): Promise<DreamRu
         ...(demotedSkills.length > 0 ? { demotedSkills } : {}),
         ...(skillMetaUndoSnapshot ? { skillMetaUndoSnapshot } : {}),
     };
+    setLastDreamUndo(username, buildDreamUndoPayload(result));
+    return result;
 };
 
 export const formatDreamResultSummary = (result: DreamRunResult): string => {
@@ -634,5 +636,52 @@ export const undoMemoryDream = async (
             username,
         ).catch(() => { /* best-effort */ });
     }
-    return a.ok && b.ok && metaOk;
+    const ok = a.ok && b.ok && metaOk;
+    if (ok) setLastDreamUndo(username, null);
+    return ok;
 };
+
+export interface DreamUndoPayload {
+    beforeSnapshot: { userMd: string; memoryMd: string };
+    skillMetaUndoSnapshot?: Record<string, SkillMeta>;
+    demotedSlugs?: string[];
+}
+
+const lastDreamUndoByUser = new Map<string, DreamUndoPayload>();
+const dreamUndoListeners = new Set<() => void>();
+
+const setLastDreamUndo = (username: string, payload: DreamUndoPayload | null): void => {
+    const clean = username || 'default';
+    if (payload) lastDreamUndoByUser.set(clean, payload);
+    else lastDreamUndoByUser.delete(clean);
+    for (const fn of dreamUndoListeners) {
+        try { fn(); } catch { /* listener error ignored */ }
+    }
+};
+
+export const getLastDreamUndo = (username = getActiveUsername() || 'default'): DreamUndoPayload | null =>
+    lastDreamUndoByUser.get(username || 'default') ?? null;
+
+export const subscribeLastDreamUndo = (listener: () => void): (() => void) => {
+    dreamUndoListeners.add(listener);
+    return () => { dreamUndoListeners.delete(listener); };
+};
+
+export const buildDreamUndoPayload = (result: DreamRunResult): DreamUndoPayload | null => {
+    if (!result?.ran || !result.undoSnapshot) return null;
+    const demotedSlugs = result.demotedSkills?.map(d => d.slug).filter(Boolean) ?? [];
+    return {
+        beforeSnapshot: result.undoSnapshot,
+        ...(result.skillMetaUndoSnapshot ? { skillMetaUndoSnapshot: result.skillMetaUndoSnapshot } : {}),
+        ...(demotedSlugs.length > 0 ? { demotedSlugs } : {}),
+    };
+};
+
+/** Apply one Dream undo payload (restores USER.md/MEMORY.md, prior skill meta statuses, and records rejectedFingerprints). */
+export const applyDreamUndo = async (
+    payload: DreamUndoPayload,
+    username = getActiveUsername() || 'default',
+): Promise<boolean> => undoMemoryDream(payload.beforeSnapshot, username, {
+    ...(payload.skillMetaUndoSnapshot ? { skillMetaUndoSnapshot: payload.skillMetaUndoSnapshot } : {}),
+    ...(payload.demotedSlugs?.length ? { demotedSlugs: payload.demotedSlugs } : {}),
+});

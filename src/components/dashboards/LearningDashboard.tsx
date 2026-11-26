@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { LoggedTrade, TradeOutcome } from '../../types';
 import { decidedAtOf } from '../../utils/journalAnalytics';
 import { getActiveUsername } from '../../utils/activeUser';
+import { humanizeSkillTitle } from '../../utils/uiFormatting';
 import { computeLearningProfile } from '../../services/learning/SelfLearningService';
 import { computeTopLessons } from '../../services/learning/MemoryFilesService';
 import { readSignals } from '../../services/signals/signalLedger';
@@ -158,9 +159,17 @@ export const LearningDashboard: React.FC<LearningDashboardProps> = ({
 
                 <div className="rounded-control border border-hairline bg-zinc-950/50 p-2.5">
                     <p className="text-ui-2xs uppercase tracking-wider text-zinc-500">Weakest Session / Playbook</p>
-                    <p className="mt-1 truncate font-mono text-ui-xs font-semibold text-zinc-100" data-testid="autopsy-weakest-leak">
+                    <p
+                        className="mt-1 truncate font-mono text-ui-xs font-semibold text-zinc-100"
+                        data-testid="autopsy-weakest-leak"
+                        title={weakestPlaybook?.flaggedLeak
+                            ? `${humanizeSkillTitle('', weakestPlaybook.key)} (${weakestPlaybook.key}) — ${fmtR(weakestPlaybook.expectancyR)} over N=${weakestPlaybook.sample}`
+                            : weakestSession
+                                ? `${weakestSession.key} UTC — ${fmtR(weakestSession.expectancyR)} over N=${weakestSession.sample}`
+                                : 'No statistical leaks flagged'}
+                    >
                         {weakestPlaybook?.flaggedLeak
-                            ? `${weakestPlaybook.key} (${fmtR(weakestPlaybook.expectancyR)})`
+                            ? `${humanizeSkillTitle('', weakestPlaybook.key)} (${fmtR(weakestPlaybook.expectancyR)})`
                             : weakestSession
                                 ? `${weakestSession.key} UTC (${fmtR(weakestSession.expectancyR)})`
                                 : 'None flagged'}

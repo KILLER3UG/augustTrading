@@ -296,7 +296,9 @@ describe('Wave 5.1 Part C — Paper Execution & Visible Execution Autopsy', () =
         assert.ok(autopsyHtml.includes('data-testid="autopsy-immediate-stops"'));
         assert.ok(autopsyHtml.includes('data-testid="autopsy-revenge-clusters"'));
         assert.ok(autopsyHtml.includes('data-testid="autopsy-weakest-leak"'));
+        assert.ok(autopsyHtml.includes('London Sweep BOS'));
         assert.ok(autopsyHtml.includes('london-sweep-bos'));
+        assert.ok(autopsyHtml.includes('title="London Sweep BOS (london-sweep-bos)'));
         assert.ok(autopsyHtml.includes('Execution Autopsy'));
 
         // Verify logged-trade dedupe helper skips IDs already present in base set

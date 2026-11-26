@@ -839,11 +839,24 @@ export function useAnalysisPipeline(params: UseAnalysisPipelineParams) {
         }
 
         if (/^\/dream\b/i.test(effectiveInput.trim())) {
-            const { runMemoryDream, formatDreamResultSummary } = await import('../services/learning/memoryDream');
+            const { runMemoryDream, formatDreamResultSummary, buildDreamUndoPayload } = await import('../services/learning/memoryDream');
+            const { saveToolPayload } = await import('../services/trade/toolPayloadStore');
             const { getActiveUsername } = await import('../utils/activeUser');
             const user = getActiveUsername() || 'default';
             const result = await runMemoryDream({ manual: true, username: user });
             const summary = formatDreamResultSummary(result);
+            const undoDream = buildDreamUndoPayload(result);
+            const dreamCallId = undoDream ? `dream-${Date.now()}` : '';
+            if (undoDream) {
+                saveToolPayload({
+                    toolCallId: dreamCallId,
+                    name: 'memory_dream',
+                    label: 'Dream',
+                    ok: result.ran,
+                    artifact: null,
+                    text: JSON.stringify({ ok: result.ran, summary, undoDream }),
+                });
+            }
             setInput('');
             updateMessages(prev => [...prev, {
                 id: `user-${Date.now()}`,
@@ -855,6 +868,7 @@ export function useAnalysisPipeline(params: UseAnalysisPipelineParams) {
                 role: MessageRole.AI,
                 text: summary,
                 toolEvents: [`Compacted · ${summary}`],
+                ...(dreamCallId ? { toolIds: [dreamCallId] } : {}),
                 createdAt: new Date().toISOString(),
             }], activeConversationId);
             return { ok: true };

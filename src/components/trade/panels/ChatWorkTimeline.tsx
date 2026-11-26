@@ -25,6 +25,7 @@ import ToolActionsRow from '../../chat/ToolActionsRow';
 import WireAuditRow from '../../shared/WireAuditRow';
 import { getPayloadWriteFailure, readToolPayload } from '../../../services/trade/toolPayloadStore';
 import { undoMemorySnapshot, type CuratedMemoryTarget } from '../../../services/learning/curatedMemory';
+import { applyDreamUndo, type DreamUndoPayload } from '../../../services/learning/memoryDream';
 import { undoSkillManageMutation, type SkillManageUndoSnapshot } from '../../../services/learning/skillManage';
 import { recordRejectedFingerprint } from '../../../services/learning/rejectedFingerprints';
 import { getActiveUsername } from '../../../utils/activeUser';
@@ -121,7 +122,7 @@ export interface ChatWorkView {
 // kept we have no undoSnapshot, so the row renders View ONLY. A fabricated
 // Undo that restores nothing is worse than a missing affordance.
 
-type WriteKind = 'memory' | 'skill_manage' | 'paper';
+type WriteKind = 'memory' | 'skill_manage' | 'paper' | 'memory_dream';
 
 interface MemoryReceipt {
     ok?: boolean;
@@ -143,11 +144,18 @@ interface SkillReceipt {
     error?: string;
 }
 
+interface DreamReceipt {
+    ok?: boolean;
+    summary?: string;
+    undoDream?: DreamUndoPayload;
+    error?: string;
+}
+
 interface WriteRow {
     key: string;
     kind: WriteKind;
     label: string;
-    receipt: MemoryReceipt | SkillReceipt | PaperReceipt | null;
+    receipt: MemoryReceipt | SkillReceipt | PaperReceipt | DreamReceipt | null;
     clipped: boolean;
     missing: boolean;
 }
@@ -157,6 +165,7 @@ const canUndo = (row: WriteRow): boolean => {
     // simulated fill may never be rolled back through this row.
     if (row.kind === 'paper') return false;
     if (row.kind === 'memory') return typeof (row.receipt as MemoryReceipt | null)?.undoSnapshot === 'string';
+    if (row.kind === 'memory_dream') return !!(row.receipt as DreamReceipt | null)?.undoDream;
     return !!(row.receipt as SkillReceipt | null)?.undoSkill;
 };
 
@@ -172,23 +181,26 @@ const WriteReceiptRows: React.FC<{ toolIds: string[] }> = ({ toolIds }) => {
             const payload = readToolPayload(id);
             if (!payload) continue;
             const isPaper = payload.name === 'paper_order' || payload.name === 'paper_account';
-            if (!isPaper && payload.name !== 'memory' && payload.name !== 'skill_manage') continue;
-            const kind: WriteKind = isPaper ? 'paper' : payload.name as 'memory' | 'skill_manage';
-            let receipt: MemoryReceipt | SkillReceipt | PaperReceipt | null = null;
+            const isDream = payload.name === 'memory_dream';
+            if (!isPaper && !isDream && payload.name !== 'memory' && payload.name !== 'skill_manage') continue;
+            const kind: WriteKind = isPaper ? 'paper' : isDream ? 'memory_dream' : payload.name as 'memory' | 'skill_manage';
+            let receipt: MemoryReceipt | SkillReceipt | PaperReceipt | DreamReceipt | null = null;
             if (payload.text) {
                 try {
                     const parsed: unknown = JSON.parse(payload.text);
                     if (parsed && typeof parsed === 'object') {
-                        receipt = parsed as MemoryReceipt | SkillReceipt | PaperReceipt;
+                        receipt = parsed as MemoryReceipt | SkillReceipt | PaperReceipt | DreamReceipt;
                     }
                 } catch { /* a non-JSON result is still a View-able receipt */ }
             }
             const clipped = !payload.text && (!!payload.artifact || typeof payload.kept === 'number');
             const label = kind === 'paper'
                 ? (payload.name === 'paper_account' ? 'Paper account' : 'Paper order')
-                : kind === 'memory'
-                    ? ((receipt as MemoryReceipt | null)?.target === 'user' ? 'USER.md' : 'MEMORY.md')
-                    : String((receipt as SkillReceipt | null)?.slug ?? 'skill');
+                : kind === 'memory_dream'
+                    ? 'Dream consolidation'
+                    : kind === 'memory'
+                        ? ((receipt as MemoryReceipt | null)?.target === 'user' ? 'USER.md' : 'MEMORY.md')
+                        : String((receipt as SkillReceipt | null)?.slug ?? 'skill');
             out.push({
                 key: id,
                 kind,
@@ -220,6 +232,11 @@ const WriteReceiptRows: React.FC<{ toolIds: string[] }> = ({ toolIds }) => {
                         { kind: 'memory', target, content: r.rejectedContent ?? '' },
                         'user_undo', `memory · ${target}`, username,
                     );
+                } else if (row.kind === 'memory_dream') {
+                    const r = row.receipt as DreamReceipt;
+                    const payload = r.undoDream as DreamUndoPayload;
+                    const ok = await applyDreamUndo(payload, username);
+                    if (!ok) { setNote('Dream undo was refused — nothing was restored.'); return; }
                 } else {
                     const r = row.receipt as SkillReceipt;
                     const snapshot = r.undoSkill as SkillManageUndoSnapshot;
@@ -235,7 +252,7 @@ const WriteReceiptRows: React.FC<{ toolIds: string[] }> = ({ toolIds }) => {
                     );
                 }
                 setUndone(prev => new Set(prev).add(row.key));
-                setNote(row.kind === 'memory' ? 'Memory write undone.' : 'Skill change undone.');
+                setNote(row.kind === 'memory' ? 'Memory write undone.' : row.kind === 'memory_dream' ? 'Consolidation undone.' : 'Skill change undone.');
                 window.dispatchEvent(new Event('august-memory-refresh'));
             } catch (e) {
                 setNote(e instanceof Error ? e.message : String(e));
@@ -322,7 +339,9 @@ const WriteReceiptRows: React.FC<{ toolIds: string[] }> = ({ toolIds }) => {
                             data-kind={row.kind}
                             className="flex items-center gap-2 rounded-control bg-white/[0.02] px-2 py-1 text-ui-dense leading-5 text-zinc-500"
                         >
-                            <span className="shrink-0 text-zinc-400">{row.kind === 'memory' ? 'Memory' : 'Skill'}</span>
+                            <span className="shrink-0 text-zinc-400">
+                                {row.kind === 'memory' ? 'Memory' : row.kind === 'memory_dream' ? 'Dream' : 'Skill'}
+                            </span>
                             <span className="min-w-0 flex-1 truncate" title={row.label}>{row.label}</span>
                             {undoable ? (
                                 <button

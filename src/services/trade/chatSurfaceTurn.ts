@@ -58,10 +58,11 @@ import { isMarketReadTool, PAPER_TRADING_PROMPT } from '../analysis/deskToolShar
 import { isBlockedInPlanMode, PLAN_MODE_MANDATE } from '../../utils/toolKinds';
 import { collectLiveMarketContextForSymbol } from './scopedRulesRuntime';
 import { evaluateScopedRules } from './scopedRules';
-import { listSkillFiles } from '../learning/SkillFileService';
-import { cachedSkillStatusRows } from '../learning/skillManage';
+import { listSkillFiles, getSkill } from '../learning/SkillFileService';
+import { cachedSkillStatusRows, touchSkillUsage } from '../learning/skillManage';
 import { routeSkillsForContext } from '../learning/skillRoutingCore';
 import { skillFormatIssues } from '../../utils/skillFrontmatter';
+import { parseSlashSkillInvocation } from '../../utils/composerRefs';
 import type { DeskToolCall, DeskToolResult } from '../analysis/DeskToolsService';
 import { runPresentTrade } from './presentTradeTool';
 import { drawingsControl } from './drawingsControl';
@@ -884,6 +885,30 @@ export const runChatSurfaceTurn = async (req: ChatSurfaceTurnRequest): Promise<T
     // A caller that brings its own mandate (a persona, a room note) gets it
     // verbatim and NO skill record: nothing was injected that it did not ask
     // for, and a row claiming skills it never saw is worse than a silent row.
+    const allInstalledSkills = listSkillFiles();
+    const skillStatuses = cachedSkillStatusRows();
+    const slashSkillInv = typeof req.prompt === 'string'
+        ? parseSlashSkillInvocation(
+            req.prompt,
+            allInstalledSkills
+                .filter(sk => skillStatuses[sk.slug]?.status !== 'archived')
+                .map(sk => sk.slug),
+        )
+        : null;
+    const invokedSkill = slashSkillInv ? getSkill(slashSkillInv.slug) : null;
+    if (invokedSkill) {
+        void touchSkillUsage(invokedSkill.slug).catch(() => { /* best-effort */ });
+    }
+    const initialViewedSkills = invokedSkill
+        ? [{ slug: invokedSkill.slug, body: invokedSkill.body, version: invokedSkill.version }]
+        : undefined;
+    const invokedSkillBlock = invokedSkill
+        ? `[INVOKED PLAYBOOK — /${invokedSkill.slug} (${invokedSkill.name}, v${invokedSkill.version}) — loaded deterministically by slash trigger]\n${invokedSkill.body}`
+        : '';
+    const effectivePrompt = invokedSkill && typeof req.prompt === 'string'
+        ? (slashSkillInv?.rest || `Apply /${invokedSkill.slug}${req.symbol ? ` to ${req.symbol}` : ''}.`)
+        : req.prompt;
+
     const liveCtx = req.symbol ? collectLiveMarketContextForSymbol(req.symbol) : null;
     const scopedTail = liveCtx
         ? evaluateScopedRules({
@@ -894,17 +919,18 @@ export const runChatSurfaceTurn = async (req: ChatSurfaceTurnRequest): Promise<T
             maxDailyDrawdownPct: liveCtx.maxDailyDrawdownPct,
         }).promptTailBlock
         : '';
-    const skillStatuses = cachedSkillStatusRows();
     const skillRoutingTail = liveCtx
         ? routeSkillsForContext(
-            listSkillFiles().map(sk => ({
-                slug: sk.slug,
-                name: sk.name,
-                description: sk.description,
-                content: sk.file.content,
-                status: skillStatuses[sk.slug]?.status,
-                formatIssues: skillFormatIssues(sk.file.content).map(i => i.what),
-            })),
+            allInstalledSkills
+                .filter(sk => !invokedSkill || sk.slug !== invokedSkill.slug)
+                .map(sk => ({
+                    slug: sk.slug,
+                    name: sk.name,
+                    description: sk.description,
+                    content: sk.file.content,
+                    status: skillStatuses[sk.slug]?.status,
+                    formatIssues: skillFormatIssues(sk.file.content).map(i => i.what),
+                })),
             {
                 symbol: liveCtx.symbol,
                 session: liveCtx.session,
@@ -931,6 +957,7 @@ export const runChatSurfaceTurn = async (req: ChatSurfaceTurnRequest): Promise<T
         scopedTail,
         skillRoutingTail,
         memoryRecallTail,
+        invokedSkillBlock,
     ].filter(Boolean);
     const prompt = req.systemPrompt
         ? {
@@ -945,7 +972,7 @@ export const runChatSurfaceTurn = async (req: ChatSurfaceTurnRequest): Promise<T
             // Only the trader's own line is matched — see the note in
             // `surfacePromptWith`. A caller that brought its own mandate gets
             // that mandate verbatim and no hint.
-            matchText: typeof req.prompt === 'string' ? req.prompt : undefined,
+            matchText: typeof effectivePrompt === 'string' ? effectivePrompt : undefined,
             dynamicTailBlocks,
         });
 
@@ -985,14 +1012,18 @@ export const runChatSurfaceTurn = async (req: ChatSurfaceTurnRequest): Promise<T
     // reset this one's counters (the 2026-10-27 audit L-7).
     const { value: out, summary } = await withTruncationWindow(async (recordFinishReason) => await runToolTurn({
         config: req.config,
-        messages: chatSurfaceTurnMessages(req.history, req.prompt, req.image, req.config.selectedModel, systemText, req.threadSummary),
+        messages: chatSurfaceTurnMessages(req.history, effectivePrompt, req.image, req.config.selectedModel, systemText, req.threadSummary),
         signal: req.signal,
         startedAt: req.startedAt,
         effort: resolveComposerEffort(req.effort, 'tradingDecision'),
-        transport: { ...transport, onFinishReason: recordFinishReason },
+        transport: {
+            ...transport,
+            ...(initialViewedSkills ? { initialViewedSkills } : {}),
+            onFinishReason: recordFinishReason,
+        },
         events: tracked,
         memoryEnabled: req.memoryEnabled !== false,
-        lastUserMessage: typeof req.prompt === 'string' ? req.prompt : undefined,
+        lastUserMessage: typeof effectivePrompt === 'string' ? effectivePrompt : undefined,
         capturePlan: () => (planCapture.planId
             ? { planId: planCapture.planId, symbol: planCapture.symbol ?? '', playbookId: planCapture.playbookId, snapshot: planCapture.snapshot }
             : null),

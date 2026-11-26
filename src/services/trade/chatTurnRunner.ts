@@ -1448,14 +1448,16 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
             maxDailyDrawdownPct: liveCtx.maxDailyDrawdownPct,
         }).promptTailBlock;
         const skillRoutingTail = routeSkillsForContext(
-            allInstalledSkills.map(sk => ({
-                slug: sk.slug,
-                name: sk.name,
-                description: sk.description,
-                content: sk.file.content,
-                status: skillStatuses[sk.slug]?.status,
-                formatIssues: skillFormatIssues(sk.file.content).map(i => i.what),
-            })),
+            allInstalledSkills
+                .filter(sk => !invokedSkill || sk.slug !== invokedSkill.slug)
+                .map(sk => ({
+                    slug: sk.slug,
+                    name: sk.name,
+                    description: sk.description,
+                    content: sk.file.content,
+                    status: skillStatuses[sk.slug]?.status,
+                    formatIssues: skillFormatIssues(sk.file.content).map(i => i.what),
+                })),
             {
                 symbol: liveCtx.symbol,
                 session: liveCtx.session,

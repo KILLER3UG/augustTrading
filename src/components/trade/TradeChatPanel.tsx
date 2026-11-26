@@ -915,11 +915,24 @@ ${riskConstitution}`
         }
         if (template === 'dream') {
             setDraft('');
-            const { runMemoryDream, formatDreamResultSummary } = await import('../../services/learning/memoryDream');
+            const { runMemoryDream, formatDreamResultSummary, buildDreamUndoPayload } = await import('../../services/learning/memoryDream');
+            const { saveToolPayload } = await import('../../services/trade/toolPayloadStore');
             const { getActiveUsername } = await import('../../utils/activeUser');
             const user = getActiveUsername() || 'default';
             const result = await runMemoryDream({ manual: true, username: user });
             const summary = formatDreamResultSummary(result);
+            const undoDream = buildDreamUndoPayload(result);
+            const dreamCallId = undoDream ? newId('dream') : '';
+            if (undoDream) {
+                saveToolPayload({
+                    toolCallId: dreamCallId,
+                    name: 'memory_dream',
+                    label: 'Dream',
+                    ok: result.ran,
+                    artifact: null,
+                    text: JSON.stringify({ ok: result.ran, summary, undoDream }),
+                });
+            }
             const sid = activeSession.id;
             chatStore.mutate(sid, st => ({
                 ...st,
@@ -927,7 +940,14 @@ ${riskConstitution}`
                 entries: [
                     ...st.entries,
                     { id: newId('u'), role: 'user' as const, text: '/dream', tools: [], at: Date.now() },
-                    { id: newId('a'), role: 'ai' as const, text: summary, tools: [`Compacted · ${summary}`], at: Date.now() },
+                    {
+                        id: newId('a'),
+                        role: 'ai' as const,
+                        text: summary,
+                        tools: [`Compacted · ${summary}`],
+                        ...(dreamCallId ? { toolIds: [dreamCallId] } : {}),
+                        at: Date.now(),
+                    },
                 ],
             }));
             return;

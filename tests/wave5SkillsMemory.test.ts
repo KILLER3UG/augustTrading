@@ -71,8 +71,11 @@ import {
     runMemoryDream,
     undoMemoryDream,
     formatDreamResultSummary,
+    buildDreamUndoPayload,
+    applyDreamUndo,
+    getLastDreamUndo,
 } from '../src/services/learning/memoryDream';
-import { setCuratedMemoryTexts } from '../src/services/learning/curatedMemory';
+import { setCuratedMemoryTexts, getCuratedMemoryText } from '../src/services/learning/curatedMemory';
 import type { SignalRow } from '../src/types/signal';
 import { readSignals, __clearSignalLedgerForTests } from '../src/services/signals/signalLedger';
 import { getPaperAccount, __paperBrokerTestHooks } from '../src/services/paper/PaperBrokerService';
@@ -550,5 +553,133 @@ describe('Wave 5.1 Part A & B — Skills Intelligence & Memory Compounding', () 
             if (prevUser === null) localStorage.removeItem('last_active_user');
             else localStorage.setItem('last_active_user', prevUser);
         }
+    });
+
+    it('7. buildDreamUndoPayload + applyDreamUndo restores memory bytes, skill status, and clears cached receipt', async () => {
+        const user = 'wave5-dream-ui-undo-user';
+        const prevUser = localStorage.getItem('last_active_user');
+        localStorage.setItem('last_active_user', user);
+        await initMemoryFiles(user);
+
+        const initialUserMd = '## [2026-10-01]\nRisk 0.5% per setup.';
+        const initialMemoryMd = '## [2026-10-01]\nKeep journal clean.';
+        await setCuratedMemoryTexts([
+            { target: 'user', text: initialUserMd },
+            { target: 'memory', text: initialMemoryMd },
+        ], user);
+
+        const createdSkill = await writeSkillFile({
+            slug: 'leaky-ui-undo-playbook',
+            name: 'Leaky UI Undo Playbook',
+            description: 'Chases mid-range breakouts without sweep confirmation.',
+            body: '## When to Use\nRange highs.\n## Steps\n1. Chase close.\n## Pitfalls\n- Stop hunts.',
+        }, user);
+        assert.equal(createdSkill.ok, true, JSON.stringify(createdSkill));
+
+        await __seedSkillMetaForTests({
+            'leaky-ui-undo-playbook': {
+                createdBy: 'agent',
+                status: 'verified',
+                createdAt: new Date(BASE_MS - 10 * 86_400_000).toISOString(),
+                updatedAt: new Date(BASE_MS - 1 * 86_400_000).toISOString(),
+            },
+        }, user);
+
+        const losingSignals: SignalRow[] = [
+            makeSignalRow(0, 'leaky-ui-undo-playbook', -1.0),
+            makeSignalRow(1, 'leaky-ui-undo-playbook', -1.0),
+            makeSignalRow(2, 'leaky-ui-undo-playbook', -0.9),
+            makeSignalRow(3, 'leaky-ui-undo-playbook', -0.8),
+            makeSignalRow(4, 'leaky-ui-undo-playbook', 0.2),
+        ];
+
+        try {
+            const firstDream = await runMemoryDream({
+                manual: true,
+                username: user,
+                nowMs: BASE_MS + 60_000,
+                gather: () => ({ newSessions: 6, corrections: [], ledger: [], signalRows: losingSignals }),
+            });
+            assert.equal(firstDream.ran, true);
+            assert.equal((await getSkillMeta('leaky-ui-undo-playbook', user))?.status, 'stale');
+
+            const receipt = buildDreamUndoPayload(firstDream);
+            assert.ok(receipt);
+            assert.deepEqual(receipt.demotedSlugs, ['leaky-ui-undo-playbook']);
+            assert.ok(receipt.skillMetaUndoSnapshot?.['leaky-ui-undo-playbook']);
+            assert.equal(getLastDreamUndo(user)?.beforeSnapshot.memoryMd, receipt.beforeSnapshot.memoryMd);
+
+            // Simulate clicking Undo from ChatWorkTimeline / UtilityRail
+            const undone = await applyDreamUndo(receipt, user);
+            assert.equal(undone, true);
+            assert.equal(getLastDreamUndo(user), null);
+            assert.equal((await getSkillMeta('leaky-ui-undo-playbook', user))?.status, 'verified');
+
+            assert.equal((await getCuratedMemoryText('user', user)).trim(), initialUserMd);
+            assert.equal((await getCuratedMemoryText('memory', user)).trim(), initialMemoryMd);
+
+            // Re-running /dream with the same leak must NOT re-demote (rejectedFingerprint was saved)
+            const secondDream = await runMemoryDream({
+                manual: true,
+                username: user,
+                nowMs: BASE_MS + 120_000,
+                gather: () => ({ newSessions: 6, corrections: [], ledger: [], signalRows: losingSignals }),
+            });
+            assert.equal(secondDream.ran, true);
+            assert.equal(secondDream.demotedSkills?.length ?? 0, 0);
+            assert.equal((await getSkillMeta('leaky-ui-undo-playbook', user))?.status, 'verified');
+        } finally {
+            await deleteSkillFile('leaky-ui-undo-playbook', user);
+            if (prevUser === null) localStorage.removeItem('last_active_user');
+            else localStorage.setItem('last_active_user', prevUser);
+        }
+    });
+
+    it('8. selectPreTurnMemories splits same-day multi-bullet MEMORY.md blocks independently without truncating later bullets', () => {
+        const memoryMd = [
+            '## [2026-10-12]',
+            '- Avoid chasing ETHUSDT Sunday pump extremes when funding stays elevated above 30bps and orderbook depth is thin across Asian open; always wait for reclaim.',
+            '- XRPUSDT range breakdowns fake out unless spot CVD confirms below previous day low with two consecutive 15m closes underneath.',
+            '- SOLUSDT during London session: wait for sweep + 15m BOS before fading range highs; never bid the initial spike.',
+        ].join('\n');
+
+        const recalled = selectPreTurnMemories({
+            symbol: 'SOLUSDT',
+            session: 'London',
+            regime: 'range',
+            memoryMd,
+            profileEntries: [],
+            maxItems: 2,
+        });
+
+        assert.equal(recalled.items.length >= 1, true);
+        assert.ok(recalled.items[0].text.includes('SOLUSDT'));
+        assert.ok(recalled.items[0].text.includes('London'));
+        assert.equal(recalled.items[0].text.includes('ETHUSDT'), false);
+    });
+
+    it('9. excluding already-invoked /<skill-slug> from routing candidates avoids duplicate skill_view prompt tail', () => {
+        const londonContent = makeSkillMd({
+            name: 'London Sweep BOS',
+            description: 'Fade sweeps in London range.',
+            extraFrontmatter: [
+                'regimes: [range]',
+                'sessions: [London]',
+                'symbols: [BTCUSDT]',
+            ].join('\n'),
+        });
+        const candidates: SkillRoutingCandidate[] = [
+            { slug: 'london-sweep-bos', content: londonContent, status: 'verified' },
+        ];
+        const invokedSlug = 'london-sweep-bos';
+        const filtered = candidates.filter(c => c.slug !== invokedSlug);
+        const routed = routeSkillsForContext(filtered, {
+            symbol: 'BTCUSDT',
+            nowMs: BASE_MS, // London UTC
+            regime: 'range:tight',
+            maxItems: 2,
+        });
+        assert.equal(routed.matches.length, 0);
+        assert.equal(routed.promptTailBlock, '');
     });
 });
