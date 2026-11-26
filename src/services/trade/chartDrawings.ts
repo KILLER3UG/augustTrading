@@ -37,7 +37,7 @@ import {
  * reward on the chart rather than only in prose.
  */
 export type DrawKind =
-    | 'trend' | 'hline' | 'ray' | 'rect' | 'brush' | 'fib' | 'text'
+    | 'trend' | 'hline' | 'hray' | 'vline' | 'ray' | 'rect' | 'price_range' | 'brush' | 'fib' | 'text'
     | 'channel' | 'arrow' | 'measured_move'
     | 'long_position' | 'short_position';
 
@@ -100,7 +100,7 @@ export interface ChartDrawing {
  *  press-move-release past the click threshold commits immediately, a
  *  press-release in place arms the pending second anchor. */
 export const CLICK_CLICK_KINDS: ReadonlySet<DrawKind> = new Set([
-    'trend', 'ray', 'rect', 'channel', 'fib', 'long_position', 'short_position',
+    'trend', 'ray', 'rect', 'price_range', 'channel', 'fib', 'arrow', 'long_position', 'short_position',
 ]);
 
 /** A pointer press-release inside this distance of its press point is a CLICK
@@ -111,7 +111,7 @@ export const MAX_DRAWINGS_PER_SYMBOL = 40;
 export const MAX_POINTS_PER_DRAWING = 200;
 
 const KINDS: readonly string[] = [
-    'trend', 'hline', 'ray', 'rect', 'brush', 'fib', 'text',
+    'trend', 'hline', 'hray', 'vline', 'ray', 'rect', 'price_range', 'brush', 'fib', 'text',
     'channel', 'arrow', 'measured_move', 'long_position', 'short_position',
 ];
 
@@ -150,7 +150,7 @@ export const drawWidthOf = (d: ChartDrawing): number => d.width ?? DRAW_WIDTH_DE
 /** What the tool rail's pointer flow puts on the overlay: 'cursor' is the
  *  chart's native pan/zoom, 'erase' deletes a user shape, the rest are the
  *  DrawKinds themselves. */
-export type DrawTool = 'cursor' | DrawKind | 'erase';
+export type DrawTool = 'cursor' | DrawKind | 'erase' | 'measure';
 
 const storageKey = (username: string, symbol: string): string =>
     `trade_drawings_v1_${username}_${symbol.toUpperCase()}`;
@@ -843,9 +843,11 @@ const TOUCHES_TO_CONFIRM_FOR_DRAWING = 3;
 
 /** Minimum anchors per kind — guards against junk shapes reaching storage. */
 export const pointsForKind = (kind: DrawKind, points: DrawPoint[]): DrawPoint[] | null => {
-    if (kind === 'hline' || kind === 'text') return points.length >= 1 ? [points[0]] : null;
+    if (kind === 'hline' || kind === 'hray' || kind === 'vline' || kind === 'text') {
+        return points.length >= 1 ? [points[0]] : null;
+    }
     if (kind === 'trend' || kind === 'ray') return points.length >= 2 ? points.slice(0, 2) : null;
-    if (kind === 'rect' || kind === 'fib' || kind === 'channel' || kind === 'arrow') {
+    if (kind === 'rect' || kind === 'price_range' || kind === 'fib' || kind === 'channel' || kind === 'arrow') {
         return points.length >= 2 ? points.slice(0, 2) : null;
     }
     // Three anchors: entry, stop, target.
@@ -963,6 +965,10 @@ export const describeDrawingsForModel = (
         switch (d.kind) {
             case 'hline':
                 return `- ${handle}horizontal line${tfTag}${tag} at price ${fmt(d.points[0].p)}${evalTail}${suffix}`;
+            case 'hray':
+                return `- ${handle}horizontal ray${tfTag}${tag} at price ${fmt(d.points[0].p)} from ${stamp(d.points[0].t)} extending right${evalTail}${suffix}`;
+            case 'vline':
+                return `- ${handle}vertical time marker${tfTag}${tag} at ${stamp(d.points[0].t)}${evalTail}${suffix}`;
             case 'trend':
             case 'ray': {
                 const [a, b] = d.points;
@@ -977,6 +983,12 @@ export const describeDrawingsForModel = (
                 const left = Math.min(a.t, b.t);
                 const right = Math.max(a.t, b.t);
                 return `- ${handle}supply/demand zone${tfTag}${tag} between prices ${fmt(bottom)} and ${fmt(top)}, from ${stamp(left)} to ${stamp(right)}${evalTail}${suffix}`;
+            }
+            case 'price_range': {
+                const [a, b] = d.points;
+                const delta = b.p - a.p;
+                const pct = a.p > 0 ? ((delta / a.p) * 100).toFixed(2) : '0.00';
+                return `- ${handle}price range${tfTag}${tag} from ${fmt(a.p)} to ${fmt(b.p)} (${delta >= 0 ? '+' : ''}${pct}%)${evalTail}${suffix}`;
             }
             case 'brush': {
                 const first = d.points[0];

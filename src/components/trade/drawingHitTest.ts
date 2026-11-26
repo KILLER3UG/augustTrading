@@ -134,6 +134,10 @@ const hitTestBody = (
     switch (drawing.kind) {
         case 'hline':
             return Math.abs(y - pts[0].y) <= tol;
+        case 'hray':
+            return x >= pts[0].x - tol && Math.abs(y - pts[0].y) <= tol;
+        case 'vline':
+            return Math.abs(x - pts[0].x) <= tol;
         case 'text': {
             const labelLen = Math.max(4, (drawing.label || 'Note').length);
             const approxW = Math.min(220, labelLen * 6.8 + 14);
@@ -177,6 +181,7 @@ const hitTestBody = (
             return x >= minX && x <= maxX && y >= loY - tol && y <= hiY + tol;
         }
         case 'rect':
+        case 'price_range':
         case 'fib': {
             if (pts.length < 2) return false;
             const [a, b] = pts;

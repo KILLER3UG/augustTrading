@@ -109,8 +109,20 @@ import { chartColor } from '../../utils/themeColors';
 import { fmtPrice as fmtPriceForChart, fmtUsd as fmtUsdForChart } from '../../utils/formatters';
 import { TradeAnalysis } from '../../types';
 import { ChartToolRail } from './ChartToolRail';
+import { ChartFavoritesBar } from './ChartFavoritesBar';
 import ChartFrame from '../shared/ChartFrame';
 import { ChartObjectTreePopover } from './ChartObjectTreePopover';
+import {
+    computeMeasureMetrics,
+    isEditableKeyboardTarget,
+    normalizeFavoriteTools,
+    resolveEffectiveMagnetMode,
+    resolveMagnetThresholdPx,
+    toggleFavoriteTool,
+    type DrawingVisibilityScope,
+    type MagnetMode,
+    type MeasureMetrics,
+} from '../../services/trade/chartDeckCore';
 import { shapeGeometry } from './drawingGeometry';
 import { ChartDrawingsPrimitive, paperDrawingsFromAccount } from './drawingsPrimitive';
 import { DrawingInspectorPopover } from './DrawingInspectorPopover';
@@ -715,7 +727,7 @@ const TradingChart: React.FC<TradingChartProps> = ({
     const [tool, setTool] = useState<DrawTool>('cursor');
     const toolRef = useRef<DrawTool>(tool);
     toolRef.current = tool;
-    const [color, setColor] = useState<string>(DRAW_COLORS[0]);
+    const [color] = useState<string>(DRAW_COLORS[0]);
     /** Right-axis price scale mode ('normal' | 'logarithmic' | 'percentage'). */
     const [internalScaleMode, setInternalScaleMode] = useState<ChartScaleMode>('normal');
     const activeScaleMode: ChartScaleMode = controlledScaleMode ?? internalScaleMode;
@@ -770,22 +782,49 @@ const TradingChart: React.FC<TradingChartProps> = ({
     useEffect(() => {
         if (!draft) draftStartRef.current = null;
     }, [draft]);
-    /** Hide-all (the rail's eye): every drawing layer off the canvas, nothing
-     *  deleted — TradingView's "hide all objects" toggle. */
-    const [drawingsHidden, setDrawingsHidden] = useState(false);
+    /** Visibility scope across user + AI drawing layers (`all` | `hide_all` | `hide_ai` | `hide_user`). */
+    const [visibilityScope, setVisibilityScope] = useState<DrawingVisibilityScope>('all');
+    const visibilityScopeRef = useRef<DrawingVisibilityScope>(visibilityScope);
+    visibilityScopeRef.current = visibilityScope;
+    const drawingsHidden = visibilityScope === 'hide_all';
     /** The "N lower-TF hidden" pill's temporary reveal: when true, drawings the
      *  active timeframe would hide render anyway until the trader closes the
      *  pill. Plan levels (persistAcrossTf) are never hidden, so they never
      *  count toward the pill. */
     const [showLowerTfDrawings, setShowLowerTfDrawings] = useState(false);
-    /** Magnet snap: each anchor is pulled onto the nearest candle's OHLC (12px). */
-    const [magnet, setMagnet] = useState(false);
-    const magnetRef = useRef(magnet);
-    magnetRef.current = magnet;
+    /** Magnet snap mode (`off` | `weak` 12px | `strong` 36px; holding Ctrl flips). */
+    const [magnetMode, setMagnetMode] = useState<MagnetMode>('off');
+    const magnetModeRef = useRef<MagnetMode>(magnetMode);
+    magnetModeRef.current = magnetMode;
+    /** Keep the active drawing tool selected after placing a shape. */
+    const [stayInDrawingMode, setStayInDrawingMode] = useState(false);
+    const stayInDrawingModeRef = useRef(stayInDrawingMode);
+    stayInDrawingModeRef.current = stayInDrawingMode;
+    /** Starred drawing tools for the draggable Favorites micro-bar (per user). */
+    const favStorageKey = `august_chart_favorites_v1_${getActiveUsername() || 'default'}`;
+    const [favoriteTools, setFavoriteTools] = useState<DrawTool[]>(() => {
+        try {
+            const raw = localStorage.getItem(`august_chart_favorites_v1_${getActiveUsername() || 'default'}`);
+            return raw ? normalizeFavoriteTools(JSON.parse(raw)) : [];
+        } catch {
+            return [];
+        }
+    });
+    const handleToggleFavorite = useCallback((t: DrawTool): void => {
+        setFavoriteTools(prev => {
+            const next = toggleFavoriteTool(prev, t);
+            try { localStorage.setItem(favStorageKey, JSON.stringify(next)); } catch { /* ignore */ }
+            return next;
+        });
+    }, [favStorageKey]);
+    const canvasWrapperRef = useRef<HTMLDivElement | null>(null);
+    /** Ephemeral Shift+Drag / Ruler measurement state (never saved as a drawing). */
+    const measureDragRef = useRef<{ start: ScreenXY; end: ScreenXY; metrics: MeasureMetrics | null } | null>(null);
+    const [measureReadout, setMeasureReadout] = useState<{ x: number; y: number; metrics: MeasureMetrics } | null>(null);
     /** Stroke weight for NEW shapes; the rail cycles the ladder. Committed
      *  shapes keep the width they were drawn at, so changing the control does
      *  not restyle the trader's existing work. */
-    const [lineWidth, setLineWidth] = useState<number>(DRAW_WIDTH_DEFAULT);
+    const [lineWidth] = useState<number>(DRAW_WIDTH_DEFAULT);
     const drawingsHiddenRef = useRef(drawingsHidden);
     drawingsHiddenRef.current = drawingsHidden;
     const showLowerTfRef = useRef(showLowerTfDrawings);
@@ -973,6 +1012,7 @@ const TradingChart: React.FC<TradingChartProps> = ({
             selectedId: overrides?.selectedId !== undefined ? overrides.selectedId : selectedDrawingIdRef.current,
             hoveredId: overrides?.hoveredId !== undefined ? overrides.hoveredId : hoveredDrawingIdRef.current,
             hidden: drawingsHiddenRef.current,
+            visibilityScope: visibilityScopeRef.current,
             includeLowerTf: showLowerTfRef.current,
             activeTf: intervalRef.current,
             barSeconds: intervalSeconds(intervalRef.current),
@@ -984,7 +1024,7 @@ const TradingChart: React.FC<TradingChartProps> = ({
     useEffect(() => {
         syncPrimitive();
         scheduleRepaint();
-    }, [drawings, modelDrawings, paperDrawings, selectedDrawingId, drawingsHidden, showLowerTfDrawings, interval, priceScaleMode, syncPrimitive, scheduleRepaint]);
+    }, [drawings, modelDrawings, paperDrawings, selectedDrawingId, visibilityScope, showLowerTfDrawings, interval, priceScaleMode, syncPrimitive, scheduleRepaint]);
 
     // Apply Normal / Logarithmic / Percentage mode + AutoScale directly to lightweight-charts' right price scale.
     useEffect(() => {
@@ -1130,6 +1170,32 @@ const TradingChart: React.FC<TradingChartProps> = ({
         setInspector(null);
     }, [publishDrawings, publishModelDrawings, syncHistoryMeta]);
 
+    const handleClearUserDrawings = useCallback((): void => {
+        if (drawingsRef.current.length === 0) return;
+        commitDrawingChange([], modelDrawingsRef.current);
+        setSelectedDrawingId(null);
+        setInspector(null);
+    }, [commitDrawingChange]);
+
+    const handleClearAllDrawings = useCallback((): void => {
+        if (drawingsRef.current.length === 0 && modelDrawingsRef.current.length === 0) return;
+        commitDrawingChange([], []);
+        setSelectedDrawingId(null);
+        setInspector(null);
+    }, [commitDrawingChange]);
+
+    const allLocked = useMemo(() => {
+        const combined = [...drawings, ...(modelDrawings ?? [])];
+        return combined.length > 0 && combined.every(d => d.locked === true);
+    }, [drawings, modelDrawings]);
+
+    const handleToggleLockAll = useCallback((): void => {
+        const nextLocked = !allLocked;
+        const nextUser = drawingsRef.current.map(d => bumpDrawingVersion({ ...d, locked: nextLocked }));
+        const nextModel = modelDrawingsRef.current.map(d => bumpDrawingVersion({ ...d, locked: nextLocked }));
+        commitDrawingChange(nextUser, nextModel);
+    }, [allLocked, commitDrawingChange]);
+
     const deleteDrawingById = useCallback((id: string): void => {
         const inUser = drawingsRef.current.some(d => d.id === id);
         const inModel = modelDrawingsRef.current.some(d => d.id === id);
@@ -1153,19 +1219,14 @@ const TradingChart: React.FC<TradingChartProps> = ({
     useEffect(() => {
         const onKeyDown = (ev: KeyboardEvent): void => {
             const target = ev.target as HTMLElement | null;
-            const inEditable = !!target && (
-                target.tagName === 'INPUT'
-                || target.tagName === 'TEXTAREA'
-                || target.isContentEditable
-            );
-            // The editable guard runs FIRST: keystrokes aimed at a field (the
-            // composer, the inspector inputs, the note editor) never reset
-            // chart state. The old order ran the Escape branch before this
-            // guard, so an Escape typed into any field also dropped the
-            // in-progress anchors, the selection, the inspector and the tool.
-            if (inEditable) return;
+            if (isEditableKeyboardTarget(target?.tagName, target?.isContentEditable)) return;
             if (ev.key === 'Escape') {
                 if (draft) setDraft(null);
+                if (measureDragRef.current) {
+                    measureDragRef.current = null;
+                    setMeasureReadout(null);
+                    scheduleRepaint();
+                }
                 if (inspector) setInspector(null);
                 if (selectedDrawingIdRef.current) setSelectedDrawingId(null);
                 if (toolRef.current !== 'cursor') setTool('cursor');
@@ -1177,9 +1238,15 @@ const TradingChart: React.FC<TradingChartProps> = ({
                 return;
             }
             const mod = ev.ctrlKey || ev.metaKey;
-            if (mod && ev.altKey && ev.key.toLowerCase() === 'd') {
+            const lower = ev.key.toLowerCase();
+            if (mod && ev.altKey && lower === 'd') {
                 ev.preventDefault();
                 setRailCollapsed(v => !v);
+                return;
+            }
+            if (mod && ev.altKey && lower === 'h') {
+                ev.preventDefault();
+                setVisibilityScope(prev => (prev === 'hide_all' ? 'all' : 'hide_all'));
                 return;
             }
             if (mod && !ev.altKey && !ev.shiftKey && (ev.key === '\\' || ev.code === 'Backslash')) {
@@ -1189,19 +1256,44 @@ const TradingChart: React.FC<TradingChartProps> = ({
                 }
                 return;
             }
-            if (ev.altKey && !mod && !ev.shiftKey && ev.key.toLowerCase() === 'r') {
-                ev.preventDefault();
-                handleResetView();
-                return;
+            if (ev.altKey && !mod) {
+                if (ev.shiftKey && lower === 'r') {
+                    ev.preventDefault();
+                    setTool('rect');
+                    setDraft(null);
+                    return;
+                }
+                if (!ev.shiftKey) {
+                    if (lower === 'r') {
+                        ev.preventDefault();
+                        handleResetView();
+                        return;
+                    }
+                    const altMap: Record<string, DrawTool> = {
+                        t: 'trend',
+                        h: 'hline',
+                        j: 'hray',
+                        v: 'vline',
+                        f: 'fib',
+                        a: 'text',
+                    };
+                    const mapped = altMap[lower];
+                    if (mapped) {
+                        ev.preventDefault();
+                        setTool(mapped);
+                        setDraft(null);
+                        return;
+                    }
+                }
             }
-            if (mod && ev.key.toLowerCase() === 'z' && !ev.shiftKey) {
+            if (mod && lower === 'z' && !ev.shiftKey) {
                 if (canUndoDrawing(historyRef.current)) {
                     ev.preventDefault();
                     handleUndoDrawing();
                 }
                 return;
             }
-            if (mod && (ev.key.toLowerCase() === 'y' || (ev.key.toLowerCase() === 'z' && ev.shiftKey))) {
+            if (mod && (lower === 'y' || (lower === 'z' && ev.shiftKey))) {
                 if (canRedoDrawing(historyRef.current)) {
                     ev.preventDefault();
                     handleRedoDrawing();
@@ -2006,8 +2098,11 @@ const TradingChart: React.FC<TradingChartProps> = ({
         return { t, p: Number(p) };
     }, [interval]);
 
-    /** Pull a screen point onto the nearest candle's OHLC within 12px (toggle or Ctrl-hold). */
-    const magnetPoint = useCallback((pt: ScreenXY): MagnetSnapResult => {
+    /** Pull a screen point onto the nearest candle's OHLC using effective magnet mode (Weak 12px / Strong 36px, Ctrl flips). */
+    const magnetPoint = useCallback((pt: ScreenXY, ctrlPressed = false): MagnetSnapResult => {
+        const effective = resolveEffectiveMagnetMode(magnetModeRef.current, ctrlPressed);
+        const thresholdPx = resolveMagnetThresholdPx(effective);
+        if (thresholdPx <= 0) return { snapped: false, x: pt.x, y: pt.y };
         const chart = chartRef.current;
         const cs = candlesRef.current;
         if (!chart || !cs || typeof cs.priceToCoordinate !== 'function') {
@@ -2040,6 +2135,7 @@ const TradingChart: React.FC<TradingChartProps> = ({
                 const y = cs.priceToCoordinate(price as never);
                 return y === null || y === undefined ? null : Number(y);
             },
+            thresholdPx,
         );
     }, [interval]);
 
@@ -2464,6 +2560,24 @@ const TradingChart: React.FC<TradingChartProps> = ({
                 case 'hline':
                     strokeLine([{ x: 0, y: pts[0].y }, { x: plotW, y: pts[0].y }], stroke, true, width);
                     break;
+                case 'hray':
+                    strokeLine([{ x: pts[0].x, y: pts[0].y }, { x: plotW, y: pts[0].y }], stroke, true, width);
+                    break;
+                case 'vline':
+                    strokeLine([{ x: pts[0].x, y: 0 }, { x: pts[0].x, y: plotH }], stroke, true, width);
+                    break;
+                case 'price_range': {
+                    if (pts.length < 2) return;
+                    const [a, b] = pts;
+                    const up = b.y <= a.y;
+                    const rangeColor = up ? '#10b981' : '#f43f5e';
+                    ctx.fillStyle = up ? 'rgba(16, 185, 129, 0.12)' : 'rgba(244, 63, 94, 0.12)';
+                    ctx.strokeStyle = rangeColor;
+                    ctx.lineWidth = width;
+                    ctx.fillRect(Math.min(a.x, b.x), Math.min(a.y, b.y), Math.abs(b.x - a.x), Math.abs(b.y - a.y));
+                    ctx.strokeRect(Math.min(a.x, b.x), Math.min(a.y, b.y), Math.abs(b.x - a.x), Math.abs(b.y - a.y));
+                    break;
+                }
                 case 'trend':
                     strokeLine(pts, stroke, false, width);
                     break;
@@ -2599,21 +2713,54 @@ const TradingChart: React.FC<TradingChartProps> = ({
         // `ChartDrawingsPrimitive` (`ISeriesPrimitive`). The overlay canvas
         // renders ONLY the transient creation draft and active magnet reticle
         // so `takeScreenshot(false, false)` never double-renders shapes.
-        if (!drawingsHiddenRef.current && draft && draft.points.length > 0) {
+        if (!drawingsHiddenRef.current && draft && draft.points.length > 0 && tool !== 'measure') {
             const draftKind: DrawKind =
                 tool === 'hline' ? 'hline'
-                    : tool === 'rect' ? 'rect'
-                        : tool === 'ray' ? 'ray'
-                            : tool === 'channel' ? 'channel'
-                                : tool === 'brush' ? 'brush'
-                                    : tool === 'fib' ? 'fib'
-                                        : tool === 'long_position' ? 'long_position'
-                                            : tool === 'short_position' ? 'short_position'
-                                                : 'trend';
+                    : tool === 'hray' ? 'hray'
+                        : tool === 'vline' ? 'vline'
+                            : tool === 'rect' ? 'rect'
+                                : tool === 'price_range' ? 'price_range'
+                                    : tool === 'ray' ? 'ray'
+                                        : tool === 'channel' ? 'channel'
+                                            : tool === 'arrow' ? 'arrow'
+                                                : tool === 'brush' ? 'brush'
+                                                    : tool === 'fib' ? 'fib'
+                                                        : tool === 'long_position' ? 'long_position'
+                                                            : tool === 'short_position' ? 'short_position'
+                                                                : 'trend';
             const previewPts = draftKind === 'channel' && draft.points.length === 2
                 ? [draft.points[0], draft.points[1], { x: draft.points[0].x, y: draft.points[0].y - 36 }]
                 : draft.points;
             drawShape(draftKind, previewPts, color, `${color}22`, undefined, lineWidth);
+        }
+
+        // Ephemeral Shift+Drag / Ruler measurement overlay (never persisted).
+        const mDrag = measureDragRef.current;
+        if (mDrag) {
+            const { start, end } = mDrag;
+            const left = Math.min(start.x, end.x);
+            const top = Math.min(start.y, end.y);
+            const rw = Math.abs(end.x - start.x);
+            const rh = Math.abs(end.y - start.y);
+            ctx.save();
+            ctx.fillStyle = 'rgba(250, 250, 250, 0.06)';
+            ctx.fillRect(left, top, rw, rh);
+            ctx.strokeStyle = 'rgba(212, 212, 216, 0.65)';
+            ctx.lineWidth = 1;
+            ctx.setLineDash([4, 3]);
+            ctx.strokeRect(left, top, rw, rh);
+            ctx.setLineDash([]);
+            // Center vertical & horizontal ruler guides
+            const midX = left + rw / 2;
+            const midY = top + rh / 2;
+            ctx.strokeStyle = 'rgba(228, 228, 231, 0.55)';
+            ctx.beginPath();
+            ctx.moveTo(midX, start.y);
+            ctx.lineTo(midX, end.y);
+            ctx.moveTo(start.x, midY);
+            ctx.lineTo(end.x, midY);
+            ctx.stroke();
+            ctx.restore();
         }
 
         // 12px OHLC magnet snap reticle (visible when snapping during create/drag).
@@ -2696,6 +2843,7 @@ const TradingChart: React.FC<TradingChartProps> = ({
             latestDrawing: ChartDrawing;
         }
         let activeDrag: ActiveDrag | null = null;
+        let shiftMeasureActive: { pointerId: number; start: ScreenXY; startData: DrawPoint } | null = null;
         /** Pending passive-hover frame + where the pointer actually is. */
         let hoverFrame: number | null = null;
         let hoverPoint: ScreenXY | null = null;
@@ -2751,6 +2899,25 @@ const TradingChart: React.FC<TradingChartProps> = ({
         const onCapturePointerDown = (ev: PointerEvent): void => {
             if (toolRef.current !== 'cursor' || ev.button !== 0) return;
             const pt = hostLocal(ev);
+            // Ephemeral Shift+Drag measure/ruler anywhere on the plot (zero saved drawings).
+            if (ev.shiftKey && !ev.altKey) {
+                const { plotW, plotH } = plotBounds();
+                if (pt.x <= plotW && pt.y <= plotH) {
+                    const startData = toData(pt.x, pt.y);
+                    if (startData) {
+                        ev.stopPropagation();
+                        ev.preventDefault();
+                        shiftMeasureActive = { pointerId: ev.pointerId, start: pt, startData };
+                        measureDragRef.current = { start: pt, end: pt, metrics: null };
+                        setMeasureReadout(null);
+                        lockChart();
+                        host.style.cursor = 'crosshair';
+                        try { host.setPointerCapture?.(ev.pointerId); } catch { /* synthetic events */ }
+                        scheduleRepaint();
+                        return;
+                    }
+                }
+            }
             if (ev.altKey && indicatorSettings.visible.avwap) {
                 const ts = chartRef.current?.timeScale();
                 const logical = typeof ts?.coordinateToLogical === 'function' ? ts.coordinateToLogical(pt.x) : null;
@@ -2821,11 +2988,33 @@ const TradingChart: React.FC<TradingChartProps> = ({
         const onCapturePointerMove = (ev: PointerEvent): void => {
             if (toolRef.current !== 'cursor') return;
             const rawPt = hostLocal(ev);
+            if (shiftMeasureActive) {
+                ev.stopPropagation();
+                ev.preventDefault();
+                const endData = toData(rawPt.x, rawPt.y);
+                const metrics = endData ? computeMeasureMetrics({
+                    startPrice: shiftMeasureActive.startData.p,
+                    endPrice: endData.p,
+                    startTimeSec: shiftMeasureActive.startData.t,
+                    endTimeSec: endData.t,
+                    barSeconds: intervalSeconds(intervalRef.current),
+                }) : null;
+                measureDragRef.current = { start: shiftMeasureActive.start, end: rawPt, metrics };
+                if (metrics) {
+                    const hostW = host.clientWidth || 600;
+                    setMeasureReadout({
+                        x: Math.min(Math.max(8, rawPt.x + 12), Math.max(8, hostW - 240)),
+                        y: Math.max(8, rawPt.y - 34),
+                        metrics,
+                    });
+                }
+                scheduleRepaint();
+                return;
+            }
             if (activeDrag) {
                 ev.stopPropagation();
                 ev.preventDefault();
-                const useMagnet = magnetRef.current || ev.ctrlKey;
-                const snapRes = useMagnet ? magnetPoint(rawPt) : { snapped: false, x: rawPt.x, y: rawPt.y };
+                const snapRes = magnetPoint(rawPt, ev.ctrlKey);
                 magnetSnapRef.current = snapRes.snapped ? snapRes : null;
                 const curPt = { x: snapRes.x, y: snapRes.y };
                 const dx = curPt.x - activeDrag.startX;
@@ -2956,6 +3145,17 @@ const TradingChart: React.FC<TradingChartProps> = ({
         };
 
         const onCapturePointerUp = (ev: PointerEvent): void => {
+            if (shiftMeasureActive) {
+                ev.stopPropagation();
+                try { host.releasePointerCapture?.(ev.pointerId); } catch { /* ignore */ }
+                shiftMeasureActive = null;
+                measureDragRef.current = null;
+                setMeasureReadout(null);
+                unlockChart();
+                host.style.cursor = '';
+                scheduleRepaint();
+                return;
+            }
             if (!activeDrag) return;
             ev.stopPropagation();
             try { host.releasePointerCapture?.(ev.pointerId); } catch { /* ignore */ }
@@ -2963,6 +3163,16 @@ const TradingChart: React.FC<TradingChartProps> = ({
         };
 
         const onCapturePointerCancel = (ev: PointerEvent): void => {
+            if (shiftMeasureActive) {
+                try { host.releasePointerCapture?.(ev.pointerId); } catch { /* ignore */ }
+                shiftMeasureActive = null;
+                measureDragRef.current = null;
+                setMeasureReadout(null);
+                unlockChart();
+                host.style.cursor = '';
+                scheduleRepaint();
+                return;
+            }
             if (!activeDrag) return;
             try { host.releasePointerCapture?.(ev.pointerId); } catch { /* ignore */ }
             finishDrag(false);
@@ -3038,19 +3248,23 @@ const TradingChart: React.FC<TradingChartProps> = ({
 
     const resolveToolPoint = (ev: React.PointerEvent): ScreenXY => {
         const raw = localPoint(ev);
-        if (magnet || ev.ctrlKey) {
-            const snap = magnetPoint(raw);
-            magnetSnapRef.current = snap.snapped ? snap : null;
-            return { x: snap.x, y: snap.y };
-        }
-        magnetSnapRef.current = null;
-        return raw;
+        const snap = magnetPoint(raw, ev.ctrlKey);
+        magnetSnapRef.current = snap.snapped ? snap : null;
+        return snap.snapped ? { x: snap.x, y: snap.y } : raw;
     };
 
     const onPointerDown = (ev: React.PointerEvent): void => {
         if (tool === 'cursor') return;
         ev.preventDefault();
         const pt = resolveToolPoint(ev);
+        if (tool === 'measure') {
+            measureDragRef.current = { start: pt, end: pt, metrics: null };
+            setMeasureReadout(null);
+            setDraft({ points: [pt] });
+            (ev.currentTarget as HTMLElement).setPointerCapture?.(ev.pointerId);
+            scheduleRepaint();
+            return;
+        }
         if (tool === 'erase') {
             const host = hostRef.current;
             const plotW = Math.max(0, (host?.clientWidth ?? 600) - axisWRef.current);
@@ -3069,7 +3283,7 @@ const TradingChart: React.FC<TradingChartProps> = ({
             if (hit && hit.drawing.locked !== true) deleteDrawingById(hit.drawing.id);
             return;
         }
-        if (tool === 'hline') {
+        if (tool === 'hline' || tool === 'hray' || tool === 'vline') {
             const dp = toData(pt.x, pt.y);
             if (dp) {
                 const shortId = allocateDrawingShortId(symbol, [...drawingsRef.current, ...modelDrawingsRef.current]);
@@ -3079,7 +3293,7 @@ const TradingChart: React.FC<TradingChartProps> = ({
                     origin: 'user',
                     createdOnTf: interval,
                     version: 1,
-                    kind: 'hline',
+                    kind: tool,
                     points: [dp],
                     color,
                     createdAt: Date.now(),
@@ -3088,6 +3302,7 @@ const TradingChart: React.FC<TradingChartProps> = ({
                 };
                 commitDrawingChange([...drawingsRef.current, created]);
                 setSelectedDrawingId(created.id);
+                if (!stayInDrawingModeRef.current) setTool('cursor');
             }
             magnetSnapRef.current = null;
             return;
@@ -3112,6 +3327,7 @@ const TradingChart: React.FC<TradingChartProps> = ({
                     width: lineWidth,
                 }]);
                 setTextEdit({ id, x: pt.x, y: pt.y });
+                if (!stayInDrawingModeRef.current) setTool('cursor');
             }
             magnetSnapRef.current = null;
             return;
@@ -3142,8 +3358,32 @@ const TradingChart: React.FC<TradingChartProps> = ({
     const onPointerMove = (ev: React.PointerEvent): void => {
         if (tool === 'cursor' || tool === 'erase') return;
         const pt = resolveToolPoint(ev);
+        if (tool === 'measure') {
+            const m = measureDragRef.current;
+            if (!m) return;
+            const startData = toData(m.start.x, m.start.y);
+            const endData = toData(pt.x, pt.y);
+            const metrics = startData && endData ? computeMeasureMetrics({
+                startPrice: startData.p,
+                endPrice: endData.p,
+                startTimeSec: startData.t,
+                endTimeSec: endData.t,
+                barSeconds: intervalSeconds(interval),
+            }) : null;
+            measureDragRef.current = { start: m.start, end: pt, metrics };
+            if (metrics) {
+                const hostW = hostRef.current?.clientWidth ?? 600;
+                setMeasureReadout({
+                    x: Math.min(Math.max(8, pt.x + 12), Math.max(8, hostW - 240)),
+                    y: Math.max(8, pt.y - 34),
+                    metrics,
+                });
+            }
+            scheduleRepaint();
+            return;
+        }
         if (!draft) {
-            if (magnet || ev.ctrlKey) scheduleRepaint();
+            if (magnetMode !== 'off' || ev.ctrlKey) scheduleRepaint();
             return;
         }
         if (tool === 'brush') {
@@ -3232,9 +3472,19 @@ const TradingChart: React.FC<TradingChartProps> = ({
         };
         commitDrawingChange([...drawingsRef.current, created]);
         setSelectedDrawingId(created.id);
+        if (!stayInDrawingModeRef.current) setTool('cursor');
     };
 
     const onPointerUp = (ev: React.PointerEvent): void => {
+        if (tool === 'measure') {
+            (ev.currentTarget as HTMLElement).releasePointerCapture?.(ev.pointerId);
+            setDraft(null);
+            measureDragRef.current = null;
+            setMeasureReadout(null);
+            scheduleRepaint();
+            if (!stayInDrawingModeRef.current) setTool('cursor');
+            return;
+        }
         if (!draft) return;
         const kind = tool as DrawKind;
         const pts = draft.points;
@@ -3656,25 +3906,41 @@ const TradingChart: React.FC<TradingChartProps> = ({
                 <ChartToolRail
                     tool={tool}
                     onSelectTool={t => { setTool(t); setDraft(null); setTextEdit(null); setInspector(null); }}
-                    color={color}
-                    onColorChange={setColor}
-                    canUndo={historyMeta.canUndo}
-                    onUndo={handleUndoDrawing}
-                    canRedo={historyMeta.canRedo}
-                    onRedo={handleRedoDrawing}
+                    favorites={favoriteTools}
+                    onToggleFavorite={handleToggleFavorite}
+                    magnetMode={magnetMode}
+                    onMagnetModeChange={setMagnetMode}
+                    stayInDrawingMode={stayInDrawingMode}
+                    onToggleStayInDrawingMode={() => setStayInDrawingMode(v => !v)}
+                    allLocked={allLocked}
+                    onToggleLockAll={handleToggleLockAll}
+                    visibilityScope={visibilityScope}
+                    onVisibilityScopeChange={setVisibilityScope}
+                    userDrawingCount={drawings.length}
                     agentDrawingCount={countAgentDrawings({ userDrawings: drawings, modelDrawings: modelDrawings ?? [] })}
                     onClearAgentDrawings={handleClearAgentDrawings}
-                    hidden={drawingsHidden}
-                    onToggleHidden={() => setDrawingsHidden(v => !v)}
-                    magnet={magnet}
-                    onToggleMagnet={() => setMagnet(v => !v)}
-                    lineWidth={lineWidth}
-                    onCycleWidth={() => setLineWidth(w => nextDrawWidth(w))}
+                    onClearUserDrawings={handleClearUserDrawings}
+                    onClearAllDrawings={handleClearAllDrawings}
                     collapsed={railCollapsed}
                     onToggleCollapsed={() => setRailCollapsed(v => !v)}
                 />
                 {/* Canvas wrapper — owns plot, overlays, hover readouts, and toolbars with zero rail overlap */}
-                <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden" data-testid="chart-canvas-wrapper">
+                <div ref={canvasWrapperRef} className="relative min-h-0 min-w-0 flex-1 overflow-hidden" data-testid="chart-canvas-wrapper">
+                <ChartFavoritesBar
+                    favorites={favoriteTools}
+                    activeTool={tool}
+                    onSelectTool={t => { setTool(t); setDraft(null); setTextEdit(null); setInspector(null); }}
+                    containerRef={canvasWrapperRef}
+                />
+                {measureReadout && (
+                    <div
+                        data-testid="chart-measure-readout"
+                        style={{ transform: `translate3d(${measureReadout.x}px, ${measureReadout.y}px, 0)` }}
+                        className="pointer-events-none absolute left-0 top-0 z-20 whitespace-nowrap rounded-control border border-hairline bg-zinc-950/95 px-2 py-1 font-mono text-ui-dense tabular-nums text-zinc-200 shadow-elevated will-change-transform"
+                    >
+                        {measureReadout.metrics.formattedSummary}
+                    </div>
+                )}
                 <HoverLegend
                     store={hoverReadout}
                     expanded={legendExpanded}

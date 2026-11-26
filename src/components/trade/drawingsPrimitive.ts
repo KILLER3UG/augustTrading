@@ -257,6 +257,24 @@ class CommittedDrawingsRenderer implements IPrimitivePaneRenderer {
                         );
                         break;
                     }
+                    case 'hray': {
+                        strokePolyline(
+                            [{ x: pts[0].x, y: pts[0].y }, { x: plotW, y: pts[0].y }],
+                            stroke,
+                            baseWidth,
+                            dashed ? [6, 4] : [],
+                        );
+                        break;
+                    }
+                    case 'vline': {
+                        strokePolyline(
+                            [{ x: pts[0].x, y: 0 }, { x: pts[0].x, y: plotH }],
+                            stroke,
+                            baseWidth,
+                            dashed ? [6, 4] : [4, 4],
+                        );
+                        break;
+                    }
                     case 'trend': {
                         strokePolyline(pts, stroke, baseWidth, agentDash);
                         break;
@@ -288,6 +306,37 @@ class CommittedDrawingsRenderer implements IPrimitivePaneRenderer {
                         if (dashed) ctx.setLineDash([6 * fontScale, 4 * fontScale]);
                         ctx.strokeRect(left, top, rw, rh);
                         ctx.setLineDash([]);
+                        break;
+                    }
+                    case 'price_range': {
+                        if (pts.length < 2 || drawing.points.length < 2) break;
+                        const [a, b] = pts;
+                        const [da, db] = drawing.points;
+                        const leftCss = Math.min(a.x, b.x);
+                        const rightCss = Math.max(a.x, b.x);
+                        const topCss = Math.min(a.y, b.y);
+                        const botCss = Math.max(a.y, b.y);
+                        const delta = db.p - da.p;
+                        const pct = da.p > 0 ? (delta / da.p) * 100 : 0;
+                        const up = delta >= 0;
+                        const rangeFill = up ? 'rgba(16, 185, 129, 0.12)' : 'rgba(244, 63, 94, 0.12)';
+                        const rangeStroke = up ? '#10b981' : '#f43f5e';
+                        ctx.fillStyle = rangeFill;
+                        ctx.fillRect(sx(leftCss), sy(topCss), sx(Math.max(4, rightCss - leftCss)), sy(Math.max(2, botCss - topCss)));
+                        strokePolyline([{ x: leftCss, y: a.y }, { x: rightCss, y: a.y }], rangeStroke, 1.2, dashed ? [5, 3] : []);
+                        strokePolyline([{ x: leftCss, y: b.y }, { x: rightCss, y: b.y }], rangeStroke, 1.2, dashed ? [5, 3] : []);
+                        const midX = (leftCss + rightCss) / 2;
+                        strokePolyline([{ x: midX, y: a.y }, { x: midX, y: b.y }], rangeStroke, 1, [3, 3]);
+                        const sign = delta >= 0 ? '+' : '';
+                        const summary = `${sign}${pct.toFixed(2)}% (${sign}${fmtPriceCompact(Math.abs(delta))})`;
+                        drawTagChip(
+                            leftCss + 6,
+                            topCss - 16,
+                            summary,
+                            up ? '#a7f3d0' : '#fecdd3',
+                            'rgba(9, 9, 11, 0.90)',
+                            false,
+                        );
                         break;
                     }
                     case 'brush': {
@@ -423,8 +472,8 @@ class CommittedDrawingsRenderer implements IPrimitivePaneRenderer {
                     }
                 }
 
-                // Label / AI badge + anchor price tag (except position boxes / text / fib which render their own)
-                if (drawing.kind !== 'text' && drawing.kind !== 'fib' && !isPositionBoxKind(drawing.kind)) {
+                // Label / AI badge + anchor price tag (except position boxes / text / fib / price_range / vline)
+                if (drawing.kind !== 'text' && drawing.kind !== 'fib' && drawing.kind !== 'price_range' && !isPositionBoxKind(drawing.kind)) {
                     const anchor = pts[0];
                     if (drawing.kind === 'hline') {
                         // ONE pill carrying label + price, placed by the
