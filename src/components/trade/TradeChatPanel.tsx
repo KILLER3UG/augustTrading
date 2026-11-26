@@ -996,6 +996,7 @@ ${riskConstitution}`
             const { getActiveUsername } = await import('../../utils/activeUser');
             const user = getActiveUsername() || 'default';
             const result = await runMemoryDream({ manual: true, username: user });
+            window.dispatchEvent(new Event('august-memory-refresh'));
             const summary = formatDreamResultSummary(result);
             const undoDream = buildDreamUndoPayload(result);
             const dreamCallId = undoDream ? newId('dream') : '';

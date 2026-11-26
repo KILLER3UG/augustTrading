@@ -108,6 +108,14 @@ const UtilityRail: React.FC<UtilityRailProps> = ({
         return () => { alive = false; };
     }, [section, user]);
 
+    useEffect(() => {
+        const onRefresh = (): void => {
+            void Promise.all([refreshCounters(), refreshSkills()]);
+        };
+        window.addEventListener('august-memory-refresh', onRefresh);
+        return () => window.removeEventListener('august-memory-refresh', onRefresh);
+    }, [refreshCounters, refreshSkills]);
+
     // The paper barometer is a view of the one authoritative account. Subscribe
     // for fills/config writes, and take one async snapshot on mount.
     useEffect(() => {
