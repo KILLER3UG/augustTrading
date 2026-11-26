@@ -3,15 +3,19 @@
  * chart (inspired by TradingView / OKX / Binance, zero glassmorphism).
  *
  * Three hairline-separated blocks:
- *  - Block 1: 6 grouped drawing categories (`Cursor`, `Lines`, `Fib & Rays`,
- *    `Zones & Shapes`, `Position & Risk`, `Annotations`), each showing its
- *    active tool icon + a subtle `▸` corner trigger opening a matte flyout
- *    with tool name, hotkey badge, and ★ star pin-to-Favorites toggle.
+ *  - Block 1: 6 grouped drawing categories (`Cursor`, `Lines` including
+ *    Trendline / Horizontal Line / Horizontal Ray / Vertical Line / Channel,
+ *    `Fib & Rays`, `Zones & Shapes`, `Position & Risk` with Long Position &
+ *    Short Position, and `Annotations` with Freehand — drag to draw, Callout,
+ *    Arrow, and Eraser — click a shape to remove it). Each group shows its
+ *    active tool icon + a `▸` corner trigger opening a matte flyout with tool
+ *    name, hotkey badge, and ★ star pin-to-Favorites toggle.
  *  - Block 2: Measure/Ruler (`Shift+Drag`), Magnet `▸` (`Off` / `Weak` /
  *    `Strong`, `Ctrl` flips), Stay-in-Drawing-Mode pin.
- *  - Block 3: Lock All Drawings, Visibility Eye `▸` (`Show All` / `Hide All` /
- *    `Hide AI Levels Only` / `Hide User Drawings Only`), Trash `▸` (`Clear AI`
- *    / `Clear User` / `Clear All`), bottom rail-collapse chevron (`Ctrl+Alt+D`).
+ *  - Block 3: Lock All Drawings, Visibility Eye `▸`, Trash `▸` (`Clear AI
+ *    Drawings`, `Clear User Drawings`, `Clear All`), and bottom rail-collapse
+ *    chevron (`Ctrl+Alt+D`). Undo last drawing (`Ctrl+Z`) & Redo live in the
+ *    36px top chart bar so the rail stays compact and un-overlaid.
  *
  * Strictly `zinc-*` chrome with semantic `emerald-*` / `rose-*` reserved for
  * Long / Short position icons (`check:palette` compliant).
@@ -67,9 +71,7 @@ export const renderRailToolIcon = (tool: DrawTool): React.ReactNode => {
         case 'hray':
             return <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />;
         case 'vline':
-            return (
-                <span className="inline-block h-3.5 w-px bg-current" aria-hidden="true" />
-            );
+            return <span className="inline-block h-3.5 w-px bg-current" aria-hidden="true" />;
         case 'channel':
             return <Layers className="h-3.5 w-3.5" aria-hidden="true" />;
         case 'fib':
@@ -98,6 +100,57 @@ export const renderRailToolIcon = (tool: DrawTool): React.ReactNode => {
             return <MousePointer2 className="h-3.5 w-3.5" aria-hidden="true" />;
     }
 };
+
+interface RailButtonProps {
+    title?: string;
+    ariaLabel?: string;
+    active?: boolean;
+    disabled?: boolean;
+    role?: React.AriaRole;
+    ariaChecked?: boolean;
+    ariaExpanded?: boolean;
+    testId?: string;
+    className?: string;
+    onClick: (ev: React.MouseEvent<HTMLButtonElement>) => void;
+    onContextMenu?: (ev: React.MouseEvent<HTMLButtonElement>) => void;
+    children: React.ReactNode;
+}
+
+const RailButton: React.FC<RailButtonProps> = ({
+    title,
+    ariaLabel,
+    active = false,
+    disabled = false,
+    role,
+    ariaChecked,
+    ariaExpanded,
+    testId,
+    className,
+    onClick,
+    onContextMenu,
+    children,
+}) => (
+    <button
+        type="button"
+        role={role}
+        title={title}
+        aria-label={ariaLabel ?? title}
+        aria-pressed={role ? undefined : active}
+        aria-checked={ariaChecked}
+        aria-expanded={ariaExpanded}
+        disabled={disabled}
+        data-testid={testId}
+        onClick={onClick}
+        onContextMenu={onContextMenu}
+        className={className ?? `relative flex h-7 w-7 shrink-0 items-center justify-center rounded-control transition-colors ${
+            active
+                ? 'bg-white/[0.10] text-zinc-100'
+                : 'text-zinc-500 hover:bg-white/[0.05] hover:text-zinc-200 disabled:opacity-30 disabled:hover:bg-transparent'
+        }`}
+    >
+        {children}
+    </button>
+);
 
 type OpenFlyout =
     | { kind: 'group'; category: ChartRailCategory; top: number; left: number }
@@ -189,6 +242,60 @@ export const ChartToolRail: React.FC<ChartToolRailProps> = ({
     const hiddenActive = visibilityScope !== 'all';
     const totalDrawings = userDrawingCount + agentDrawingCount;
 
+    const renderGroupSlot = (category: ChartRailCategory): React.ReactNode => {
+        const group = CHART_RAIL_GROUPS.find(g => g.category === category);
+        if (!group) return null;
+        const groupTool = activeCategory === group.category
+            ? tool
+            : (lastToolByCategory[group.category] ?? group.defaultTool);
+        const def = group.tools.find(t => t.tool === groupTool) ?? group.tools[0];
+        const isActive = activeCategory === group.category;
+        const hasSubmenu = group.tools.length > 1;
+        const flyoutOpen = openFlyout?.kind === 'group' && openFlyout.category === group.category;
+
+        return (
+            <div key={group.category} className="group/slot relative flex h-7 w-7 shrink-0 items-center justify-center">
+                <RailButton
+                    testId={def.testId}
+                    title={def.title}
+                    active={isActive}
+                    onClick={() => {
+                        setOpenFlyout(null);
+                        if (group.category === 'cursor') {
+                            onSelectTool('cursor');
+                        } else {
+                            onSelectTool(tool === def.tool ? 'cursor' : def.tool);
+                        }
+                    }}
+                    onContextMenu={(ev) => {
+                        if (!hasSubmenu) return;
+                        ev.preventDefault();
+                        const pos = anchorFor(ev.currentTarget);
+                        setOpenFlyout({ kind: 'group', category: group.category, ...pos });
+                    }}
+                >
+                    {renderRailToolIcon(def.tool)}
+                </RailButton>
+                {hasSubmenu && (
+                    <RailButton
+                        testId={`rail-group-chevron-${group.category}`}
+                        ariaLabel={`More ${group.label} tools`}
+                        ariaExpanded={flyoutOpen}
+                        title={`${group.label} tools`}
+                        onClick={(ev) => {
+                            ev.stopPropagation();
+                            if (flyoutOpen) setOpenFlyout(null);
+                            else setOpenFlyout({ kind: 'group', category: group.category, ...anchorFor(ev.currentTarget) });
+                        }}
+                        className="absolute bottom-0 right-0 flex h-2.5 w-2.5 items-center justify-center text-[7px] leading-none text-zinc-600 transition-colors hover:text-zinc-200"
+                    >
+                        ▸
+                    </RailButton>
+                )}
+            </div>
+        );
+    };
+
     return (
         <>
             <div
@@ -198,119 +305,49 @@ export const ChartToolRail: React.FC<ChartToolRailProps> = ({
                 className="relative z-20 flex h-full w-[38px] shrink-0 flex-col items-center gap-0.5 overflow-y-auto overflow-x-hidden border-r border-hairline bg-zinc-950 py-1.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
             >
                 {/* Block 1: 6 Grouped Drawing Categories */}
-                {CHART_RAIL_GROUPS.map(group => {
-                    const groupTool = activeCategory === group.category
-                        ? tool
-                        : (lastToolByCategory[group.category] ?? group.defaultTool);
-                    const def = group.tools.find(t => t.tool === groupTool) ?? group.tools[0];
-                    const isActive = activeCategory === group.category;
-                    const hasSubmenu = group.tools.length > 1;
-                    const flyoutOpen = openFlyout?.kind === 'group' && openFlyout.category === group.category;
-
-                    return (
-                        <div key={group.category} className="group/slot relative flex h-7 w-7 shrink-0 items-center justify-center">
-                            <button
-                                type="button"
-                                data-testid={def.testId}
-                                title={def.title}
-                                aria-label={def.title}
-                                aria-pressed={isActive}
-                                onClick={() => {
-                                    setOpenFlyout(null);
-                                    if (group.category === 'cursor') {
-                                        onSelectTool('cursor');
-                                    } else {
-                                        onSelectTool(tool === def.tool ? 'cursor' : def.tool);
-                                    }
-                                }}
-                                onContextMenu={(ev) => {
-                                    if (!hasSubmenu) return;
-                                    ev.preventDefault();
-                                    const pos = anchorFor(ev.currentTarget);
-                                    setOpenFlyout({ kind: 'group', category: group.category, ...pos });
-                                }}
-                                className={`flex h-7 w-7 items-center justify-center rounded-control transition-colors ${
-                                    isActive
-                                        ? 'bg-white/[0.10] text-zinc-100'
-                                        : 'text-zinc-500 hover:bg-white/[0.05] hover:text-zinc-200'
-                                }`}
-                            >
-                                {renderRailToolIcon(def.tool)}
-                            </button>
-                            {hasSubmenu && (
-                                <button
-                                    type="button"
-                                    data-testid={`rail-group-chevron-${group.category}`}
-                                    aria-label={`More ${group.label} tools`}
-                                    aria-expanded={flyoutOpen}
-                                    title={`${group.label} tools`}
-                                    onClick={(ev) => {
-                                        ev.stopPropagation();
-                                        if (flyoutOpen) {
-                                            setOpenFlyout(null);
-                                        } else {
-                                            const pos = anchorFor(ev.currentTarget);
-                                            setOpenFlyout({ kind: 'group', category: group.category, ...pos });
-                                        }
-                                    }}
-                                    className="absolute bottom-0 right-0 flex h-2.5 w-2.5 items-center justify-center text-[7px] leading-none text-zinc-600 transition-colors hover:text-zinc-200"
-                                >
-                                    ▸
-                                </button>
-                            )}
-                        </div>
-                    );
-                })}
+                {renderGroupSlot('cursor')}
+                {renderGroupSlot('lines')}
+                {renderGroupSlot('fib')}
+                {renderGroupSlot('zones')}
+                {renderGroupSlot('position')}
+                {renderGroupSlot('annotations')}
 
                 <RailSep />
 
                 {/* Block 2: Measure/Ruler, Magnet ▸, Stay-in-Drawing-Mode */}
-                <button
-                    type="button"
-                    data-testid="rail-tool-measure"
+                <RailButton
+                    testId="rail-tool-measure"
                     title="Measure / Ruler — Shift+Drag anywhere or drag to measure % / $ / bars"
-                    aria-label="Measure / Ruler"
-                    aria-pressed={tool === 'measure'}
+                    ariaLabel="Measure / Ruler"
+                    active={tool === 'measure'}
                     onClick={() => {
                         setOpenFlyout(null);
                         onSelectTool(tool === 'measure' ? 'cursor' : 'measure');
                     }}
-                    className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-control transition-colors ${
-                        tool === 'measure'
-                            ? 'bg-white/[0.10] text-zinc-100'
-                            : 'text-zinc-500 hover:bg-white/[0.05] hover:text-zinc-200'
-                    }`}
                 >
                     <Ruler className="h-3.5 w-3.5" aria-hidden="true" />
-                </button>
+                </RailButton>
 
                 <div className="relative flex h-7 w-7 shrink-0 items-center justify-center">
-                    <button
-                        type="button"
-                        data-testid="rail-magnet"
+                    <RailButton
+                        testId="rail-magnet"
                         title={`Magnet: ${magnetMode.toUpperCase()} — snaps to OHLC (hold Ctrl to flip)`}
-                        aria-label={`Magnet mode (${magnetMode})`}
-                        aria-pressed={magnetMode !== 'off'}
+                        ariaLabel={`Magnet mode (${magnetMode})`}
+                        active={magnetMode !== 'off'}
                         onClick={() => {
                             setOpenFlyout(null);
                             onMagnetModeChange(magnetMode === 'off' ? 'weak' : magnetMode === 'weak' ? 'strong' : 'off');
                         }}
-                        className={`relative flex h-7 w-7 items-center justify-center rounded-control transition-colors ${
-                            magnetMode !== 'off'
-                                ? 'bg-white/[0.10] text-zinc-100'
-                                : 'text-zinc-500 hover:bg-white/[0.05] hover:text-zinc-200'
-                        }`}
                     >
                         <Magnet className="h-3.5 w-3.5" aria-hidden="true" />
                         {magnetMode === 'strong' && (
                             <span className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-zinc-200" aria-hidden="true" />
                         )}
-                    </button>
-                    <button
-                        type="button"
-                        data-testid="rail-magnet-chevron"
-                        aria-label="Magnet mode options"
-                        aria-expanded={openFlyout?.kind === 'magnet'}
+                    </RailButton>
+                    <RailButton
+                        testId="rail-magnet-chevron"
+                        ariaLabel="Magnet mode options"
+                        ariaExpanded={openFlyout?.kind === 'magnet'}
                         onClick={(ev) => {
                             ev.stopPropagation();
                             if (openFlyout?.kind === 'magnet') setOpenFlyout(null);
@@ -319,70 +356,51 @@ export const ChartToolRail: React.FC<ChartToolRailProps> = ({
                         className="absolute bottom-0 right-0 flex h-2.5 w-2.5 items-center justify-center text-[7px] leading-none text-zinc-600 hover:text-zinc-200"
                     >
                         ▸
-                    </button>
+                    </RailButton>
                 </div>
 
-                <button
-                    type="button"
-                    data-testid="rail-stay-drawing"
+                <RailButton
+                    testId="rail-stay-drawing"
                     title={stayInDrawingMode ? 'Stay in drawing mode: ON' : 'Stay in drawing mode: OFF (returns to cursor after placing)'}
-                    aria-label="Stay in drawing mode"
-                    aria-pressed={stayInDrawingMode}
+                    ariaLabel="Stay in drawing mode"
+                    active={stayInDrawingMode}
                     onClick={onToggleStayInDrawingMode}
-                    className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-control transition-colors ${
-                        stayInDrawingMode
-                            ? 'bg-white/[0.10] text-zinc-100'
-                            : 'text-zinc-500 hover:bg-white/[0.05] hover:text-zinc-200'
-                    }`}
                 >
                     <Pin className="h-3.5 w-3.5" aria-hidden="true" />
-                </button>
+                </RailButton>
 
                 <span className="flex-1" aria-hidden="true" />
 
                 <RailSep />
 
                 {/* Block 3: Lock All, Visibility Eye ▸, Trash ▸, Collapse Rail */}
-                <button
-                    type="button"
-                    data-testid="rail-lock-all"
+                <RailButton
+                    testId="rail-lock-all"
                     title={allLocked ? 'Unlock all drawings' : 'Lock all drawings'}
-                    aria-label={allLocked ? 'Unlock all drawings' : 'Lock all drawings'}
-                    aria-pressed={allLocked}
+                    ariaLabel={allLocked ? 'Unlock all drawings' : 'Lock all drawings'}
+                    active={allLocked}
                     onClick={onToggleLockAll}
-                    className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-control transition-colors ${
-                        allLocked
-                            ? 'bg-white/[0.10] text-zinc-100'
-                            : 'text-zinc-500 hover:bg-white/[0.05] hover:text-zinc-200'
-                    }`}
                 >
                     {allLocked ? <Lock className="h-3.5 w-3.5" aria-hidden="true" /> : <Unlock className="h-3.5 w-3.5" aria-hidden="true" />}
-                </button>
+                </RailButton>
 
                 <div className="relative flex h-7 w-7 shrink-0 items-center justify-center">
-                    <button
-                        type="button"
-                        data-testid="rail-toggle-hidden"
+                    <RailButton
+                        testId="rail-toggle-hidden"
                         title={hiddenActive ? 'Show all drawings (Ctrl+Alt+H)' : 'Hide all drawings (Ctrl+Alt+H)'}
-                        aria-label={hiddenActive ? 'Show all drawings' : 'Hide all drawings'}
-                        aria-pressed={hiddenActive}
+                        ariaLabel={hiddenActive ? 'Show all drawings' : 'Hide all drawings'}
+                        active={hiddenActive}
                         onClick={() => {
                             setOpenFlyout(null);
                             onVisibilityScopeChange(hiddenActive ? 'all' : 'hide_all');
                         }}
-                        className={`flex h-7 w-7 items-center justify-center rounded-control transition-colors ${
-                            hiddenActive
-                                ? 'bg-white/[0.10] text-zinc-100'
-                                : 'text-zinc-500 hover:bg-white/[0.05] hover:text-zinc-200'
-                        }`}
                     >
                         {hiddenActive ? <EyeOff className="h-3.5 w-3.5" aria-hidden="true" /> : <Eye className="h-3.5 w-3.5" aria-hidden="true" />}
-                    </button>
-                    <button
-                        type="button"
-                        data-testid="rail-visibility-chevron"
-                        aria-label="Visibility layer options"
-                        aria-expanded={openFlyout?.kind === 'visibility'}
+                    </RailButton>
+                    <RailButton
+                        testId="rail-visibility-chevron"
+                        ariaLabel="Visibility layer options"
+                        ariaExpanded={openFlyout?.kind === 'visibility'}
                         onClick={(ev) => {
                             ev.stopPropagation();
                             if (openFlyout?.kind === 'visibility') setOpenFlyout(null);
@@ -391,33 +409,28 @@ export const ChartToolRail: React.FC<ChartToolRailProps> = ({
                         className="absolute bottom-0 right-0 flex h-2.5 w-2.5 items-center justify-center text-[7px] leading-none text-zinc-600 hover:text-zinc-200"
                     >
                         ▸
-                    </button>
+                    </RailButton>
                 </div>
 
-                <div className="relative flex h-7 w-7 shrink-0 items-center justify-center">
-                    <button
-                        type="button"
-                        data-testid="rail-trash-menu"
-                        title="Clear drawings…"
-                        aria-label="Clear drawings options"
-                        aria-expanded={openFlyout?.kind === 'trash'}
-                        disabled={totalDrawings === 0}
-                        onClick={(ev) => {
-                            if (openFlyout?.kind === 'trash') setOpenFlyout(null);
-                            else setOpenFlyout({ kind: 'trash', ...anchorFor(ev.currentTarget) });
-                        }}
-                        className="flex h-7 w-7 items-center justify-center rounded-control text-zinc-500 transition-colors hover:bg-white/[0.05] hover:text-zinc-200 disabled:opacity-30 disabled:hover:bg-transparent"
-                    >
-                        <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
-                    </button>
-                </div>
+                <RailButton
+                    testId="rail-trash-menu"
+                    title="Clear drawings…"
+                    ariaLabel="Clear drawings options"
+                    ariaExpanded={openFlyout?.kind === 'trash'}
+                    disabled={totalDrawings === 0}
+                    onClick={(ev) => {
+                        if (openFlyout?.kind === 'trash') setOpenFlyout(null);
+                        else setOpenFlyout({ kind: 'trash', ...anchorFor(ev.currentTarget) });
+                    }}
+                >
+                    <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+                </RailButton>
 
                 {onToggleCollapsed && (
-                    <button
-                        type="button"
-                        data-testid="rail-collapse-toggle"
+                    <RailButton
+                        testId="rail-collapse-toggle"
                         title="Hide drawing rail (Ctrl+Alt+D)"
-                        aria-label="Hide drawing rail"
+                        ariaLabel="Hide drawing rail"
                         onClick={() => {
                             setOpenFlyout(null);
                             onToggleCollapsed();
@@ -425,7 +438,7 @@ export const ChartToolRail: React.FC<ChartToolRailProps> = ({
                         className="flex h-6 w-7 shrink-0 items-center justify-center rounded-control text-zinc-600 transition-colors hover:bg-white/[0.05] hover:text-zinc-300"
                     >
                         <ChevronLeftIcon className="h-3.5 w-3.5" aria-hidden="true" />
-                    </button>
+                    </RailButton>
                 )}
             </div>
 
@@ -460,10 +473,9 @@ export const ChartToolRail: React.FC<ChartToolRailProps> = ({
                                                 active ? 'bg-white/[0.08] text-zinc-100' : 'text-zinc-300 hover:bg-white/[0.04]'
                                             }`}
                                         >
-                                            <button
-                                                type="button"
+                                            <RailButton
                                                 role="menuitem"
-                                                data-testid={`flyout-tool-${t.tool}`}
+                                                testId={`flyout-tool-${t.tool}`}
                                                 onClick={() => pickTool(grp.category, t.tool)}
                                                 className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-left text-ui-dense"
                                             >
@@ -472,14 +484,13 @@ export const ChartToolRail: React.FC<ChartToolRailProps> = ({
                                                 {t.hotkey && (
                                                     <span className="shrink-0 font-mono text-ui-2xs text-zinc-600">{t.hotkey}</span>
                                                 )}
-                                            </button>
+                                            </RailButton>
                                             {t.starrable && (
-                                                <button
-                                                    type="button"
-                                                    data-testid={`rail-star-${t.tool}`}
+                                                <RailButton
+                                                    testId={`rail-star-${t.tool}`}
                                                     title={starred ? 'Remove from favorites bar' : 'Pin to favorites bar'}
-                                                    aria-label={starred ? `Unstar ${t.label}` : `Star ${t.label}`}
-                                                    aria-pressed={starred}
+                                                    ariaLabel={starred ? `Unstar ${t.label}` : `Star ${t.label}`}
+                                                    active={starred}
                                                     onClick={(ev) => {
                                                         ev.stopPropagation();
                                                         onToggleFavorite(t.tool);
@@ -494,7 +505,7 @@ export const ChartToolRail: React.FC<ChartToolRailProps> = ({
                                                         className={`h-3 w-3 ${starred ? 'fill-zinc-200 text-zinc-200' : ''}`}
                                                         aria-hidden="true"
                                                     />
-                                                </button>
+                                                </RailButton>
                                             )}
                                         </div>
                                     );
@@ -518,12 +529,11 @@ export const ChartToolRail: React.FC<ChartToolRailProps> = ({
                                 { mode: 'weak', label: 'Weak Magnet', hint: '12px' },
                                 { mode: 'strong', label: 'Strong Magnet', hint: '36px' },
                             ] as const).map(item => (
-                                <button
+                                <RailButton
                                     key={item.mode}
-                                    type="button"
                                     role="menuitemradio"
-                                    aria-checked={magnetMode === item.mode}
-                                    data-testid={`magnet-mode-${item.mode}`}
+                                    ariaChecked={magnetMode === item.mode}
+                                    testId={`magnet-mode-${item.mode}`}
                                     onClick={() => {
                                         onMagnetModeChange(item.mode);
                                         setOpenFlyout(null);
@@ -536,7 +546,7 @@ export const ChartToolRail: React.FC<ChartToolRailProps> = ({
                                 >
                                     <span>{item.label}</span>
                                     <span className="font-mono text-ui-2xs text-zinc-500">{item.hint}</span>
-                                </button>
+                                </RailButton>
                             ))}
                         </div>
                     )}
@@ -557,12 +567,11 @@ export const ChartToolRail: React.FC<ChartToolRailProps> = ({
                                 { scope: 'hide_ai', label: 'Hide AI Levels Only', hint: '' },
                                 { scope: 'hide_user', label: 'Hide User Drawings Only', hint: '' },
                             ] as const).map(item => (
-                                <button
+                                <RailButton
                                     key={item.scope}
-                                    type="button"
                                     role="menuitemradio"
-                                    aria-checked={visibilityScope === item.scope}
-                                    data-testid={`visibility-scope-${item.scope}`}
+                                    ariaChecked={visibilityScope === item.scope}
+                                    testId={`visibility-scope-${item.scope}`}
                                     onClick={() => {
                                         onVisibilityScopeChange(item.scope);
                                         setOpenFlyout(null);
@@ -575,7 +584,7 @@ export const ChartToolRail: React.FC<ChartToolRailProps> = ({
                                 >
                                     <span>{item.label}</span>
                                     {item.hint && <span className="font-mono text-ui-2xs text-zinc-600">{item.hint}</span>}
-                                </button>
+                                </RailButton>
                             ))}
                         </div>
                     )}
@@ -590,10 +599,9 @@ export const ChartToolRail: React.FC<ChartToolRailProps> = ({
                             <div className="px-2 py-1 font-mono text-ui-2xs uppercase tracking-wider text-zinc-500">
                                 Clear Drawings
                             </div>
-                            <button
-                                type="button"
+                            <RailButton
                                 role="menuitem"
-                                data-testid="rail-clear-ai"
+                                testId="rail-clear-ai"
                                 disabled={agentDrawingCount === 0 || !onClearAgentDrawings}
                                 onClick={() => {
                                     onClearAgentDrawings?.();
@@ -601,13 +609,12 @@ export const ChartToolRail: React.FC<ChartToolRailProps> = ({
                                 }}
                                 className="flex w-full items-center justify-between rounded-control px-2 py-1.5 text-ui-dense text-zinc-300 transition-colors hover:bg-white/[0.05] disabled:opacity-30"
                             >
-                                <span>Clear AI Levels</span>
+                                <span>Clear AI Drawings</span>
                                 <span className="font-mono text-ui-2xs text-zinc-500">{agentDrawingCount}</span>
-                            </button>
-                            <button
-                                type="button"
+                            </RailButton>
+                            <RailButton
                                 role="menuitem"
-                                data-testid="rail-clear-user"
+                                testId="rail-clear-user"
                                 disabled={userDrawingCount === 0 || !onClearUserDrawings}
                                 onClick={() => {
                                     onClearUserDrawings?.();
@@ -617,11 +624,10 @@ export const ChartToolRail: React.FC<ChartToolRailProps> = ({
                             >
                                 <span>Clear User Drawings</span>
                                 <span className="font-mono text-ui-2xs text-zinc-500">{userDrawingCount}</span>
-                            </button>
-                            <button
-                                type="button"
+                            </RailButton>
+                            <RailButton
                                 role="menuitem"
-                                data-testid="rail-clear-all"
+                                testId="rail-clear-all"
                                 disabled={totalDrawings === 0 || !onClearAllDrawings}
                                 onClick={() => {
                                     onClearAllDrawings?.();
@@ -631,7 +637,7 @@ export const ChartToolRail: React.FC<ChartToolRailProps> = ({
                             >
                                 <span>Clear All</span>
                                 <span className="font-mono text-ui-2xs">{totalDrawings}</span>
-                            </button>
+                            </RailButton>
                         </div>
                     )}
                 </>
