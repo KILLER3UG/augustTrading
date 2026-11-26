@@ -6,7 +6,7 @@ import type { BackupMetadata } from './services/infrastructure/BackupService';
 // Apply the user's persisted stillness preference to <body> on app startup,
 // before the first running row can paint.
 reapplyIdleMotionClass();
-import { Message, MessageRole, TradeOutcome, Conversation, ImageMetadata, AIProvider, LoggedTrade } from './types';
+import { Message, MessageRole, TradeOutcome, Conversation, ImageMetadata, LoggedTrade } from './types';
 import { subscribeMemoryFilesChanged } from './services/learning/MemoryFilesService';
 import { runNotebookReview } from './services/learning/MemoryReviewService';
 import { stripRemovedAppSettings } from './services/infrastructure/legacySettings';
@@ -74,7 +74,6 @@ import { useConfirmDialog } from './components/shared/ConfirmDialog';
 import { useProviderConfigs } from './hooks/useProviderConfigs';
 import { useAppSettings } from './hooks/useAppSettings';
 import type { JournalUIState } from './hooks/useJournalUI';
-import { ChevronDownIcon, CloseIcon } from './components/shared/Icons';
 
 // Lazy-load heavy, conditionally-rendered components so the initial
 // bundle stays small. Previously the entire app was one ~1.73 MB chunk.
@@ -100,9 +99,8 @@ import SkillsLibrary from './components/skills/SkillsLibrary';
 import SurfaceOutlet, { SurfaceSkeleton } from './components/shell/SurfaceOutlet';
 import { effortDialUp } from './components/shared/effortDial';
 import { nextEffortTier } from './components/shared/effortScale';
-import { DEFAULT_FRAMEWORKS } from './constants/models';
 import { chatModelIdOf, isProviderReady } from './utils/providerUtils';
-import { defaultLeverage, createNewConversation, findReusableThrowawayConversation, isEmptyConversation } from './utils/conversationUtils';
+import { createNewConversation, findReusableThrowawayConversation, isEmptyConversation } from './utils/conversationUtils';
 import { type ThreadSelection, threadForProvider } from './utils/agentThreads';
 import {
     groupDisplayName,
@@ -129,7 +127,7 @@ import { offlineQueue } from './services/infrastructure/OfflineQueueService';
 import { getPreference, setPreference, removePreference, PREF_KEYS } from './services/infrastructure/PreferencesService';
 // AI Learning Services - Adaptive Learning, Mistake Patterns, Insight Extraction
 import { ProviderConfig, type ReasoningEffort } from './types/provider';
-import { isProviderOnCooldown, providerCooldownRemainingMs } from './services/infrastructure/ProviderHealthService';
+import { isProviderOnCooldown } from './services/infrastructure/ProviderHealthService';
 import { useWatchSideEffects } from './hooks/useWatchSideEffects';
 import { useSurfaceRouter } from './hooks/useSurfaceRouter';
 import { useColumnResize } from './hooks/useColumnResize';
@@ -284,7 +282,7 @@ const App: React.FC = () => {
         conversationHistory, setConversationHistory,
         activeConversationId, setActiveConversationId,
         activeConversation, messages, messagesRef,
-        updateMessages, updateActiveConversation, setThreadSummary,
+        updateMessages, setThreadSummary,
         selectedOcrModel,
         moderatorProviderId, moderatorModel,
 
@@ -567,7 +565,7 @@ const App: React.FC = () => {
         finalTradeSummary, setFinalTradeSummary,
         dataCaptureCandidate, setDataCaptureCandidate,
         entryNotHitCandidate, setEntryNotHitCandidate,
-        newlyAddedInsightIds, setNewlyAddedInsightIds,
+        setNewlyAddedInsightIds,
         confirmAutopilotOutcome,
         confirmAutopilotEntryNotHit,
         handleDataCaptureAuto,
@@ -604,7 +602,7 @@ const App: React.FC = () => {
     // reporting all three at this line for the life of the file.
     // (i/n) progress for the manual insight-generation loops (App only shows
     // a boolean spinner otherwise; a 50-trade rewrite runs for minutes).
-    const [insightProgress, setInsightProgress] = useState<{ done: number; total: number } | null>(null);
+    const [, setInsightProgress] = useState<{ done: number; total: number } | null>(null);
     const appRef = useRef<HTMLDivElement>(null);
     // ── Scroll-to-message bridge (audit UI-shell fix, 2026-09-15) ──────────
     // The main transcript lives in the trade surface's Chart AI dock
@@ -800,14 +798,8 @@ const App: React.FC = () => {
 
     // Analysis pipeline state, refs, and handlers (extracted to hooks/useAnalysisPipeline.ts)
     const {
-        input, setInput,
-
-        // tsc reports this binding as unused; it is NOT. The one function
-        // that reads it declares a local `const images` that shadows it, which
-        // is why no reference resolves back to this destructure member.
-        images, setImages,
-        setLoadingMessage,
-        currentVisionData,
+        setInput,
+        setImages,
         handleSendMessage,
         handleCancelAnalysis,
         handleClearChat,
@@ -1210,14 +1202,6 @@ const App: React.FC = () => {
     // of the clicked analysis card. The reasoning set is keyed by the
     // analysis createdAt, so resolve it via the card (message) id.
 
-    // ─── Saved analyses gallery ────────────────────────────────────────────
-    const handleLocateMessage = useCallback((messageId: string) => {
-        const index = messages.findIndex(m => m.id === messageId);
-        if (index >= 0) {
-            scrollToMessageRef.current?.(messageId);
-        }
-    }, [messages]);
-
     // The model's watches and the trade-plan level hits subscribe HERE, on
     // the surface that never unmounts — but only for the OS ping: the
     // harness RECORD is queued by the services themselves at the moment the
@@ -1445,9 +1429,7 @@ const App: React.FC = () => {
         watchOpenR,
 
         handleOpenWatchedSignal,
-        handleConfirmAutopilot,
         runWatchListAction,
-        handleDismissAutopilot,
     } = useWatchAndAutopilot({
         messages, conversationHistory, loggedTrades,
         activeConversationId, activeConversation, updateMessages, messagesRef,
@@ -2199,15 +2181,6 @@ const App: React.FC = () => {
         return newConv.id;
     }, [conversationHistory, activeConversationId, setActiveConversationId, activeConversation, setConversationHistory]);
 
-    // ─── Stable identities for overlay/panel callbacks ─────────────────────
-    // Inline arrows here were recreated on every App render, busting
-    // React.memo on ChatArea/Journal and rebuilding ChatArea's
-    // enhancedContext (re-rendering every memoized transcript row) on each
-    // keystroke / progress tick even when nothing relevant changed.
-    const handleCloseJournal = useCallback(() => {
-        setSurface('trade');
-    }, [setSurface]);
-
     // Settings → Journal's launcher cards route to the JOURNAL SURFACE.
     // They used to call a handler that re-opened Settings at its own Journal
     // tab — a launcher loop the audit caught (the surface was never reachable
@@ -2379,19 +2352,6 @@ const App: React.FC = () => {
         document.addEventListener('keydown', onKey);
         return () => document.removeEventListener('keydown', onKey);
     }, [startDeskChat]);
-    // Roster clicks route into the Chart AI dock (the Agents surface is gone).
-    // Declared after the thread selectors above so their useCallback
-    // identities exist at first read.
-    const openBotInTrade = useCallback((id: string) => {
-        selectBotThread(id);
-        setTradeBotRequest({ botId: id, nonce: Date.now() });
-        setSurface('trade');
-    }, [selectBotThread, setSurface]);
-    const openGroupInTrade = useCallback((id: string) => {
-        selectGroupThread(id);
-        setTradeGroupRequest({ groupId: id, nonce: Date.now() });
-        setSurface('trade');
-    }, [selectGroupThread, setSurface]);
     // Skill-citation chip tap: open the skill library so it mounts and
     // consumes the pending slug (the library listens for the same event when
     // it is already open).

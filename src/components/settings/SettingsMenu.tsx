@@ -3,7 +3,7 @@ import { useConfirmDialog } from '../shared/ConfirmDialog';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { useEscapeClose } from '../../hooks/useEscapeClose';
 import { APP_NAME, APP_VERSION } from '../../constants/version';
-import { AIProvider, LoggedTrade } from '../../types';
+import { LoggedTrade } from '../../types';
 import { CustomInstructionsMap } from '../../types/user';
 import { ProviderConfig, ApiFormat, ModelOverride, ProviderRetryPolicy } from '../../types/provider';
 import type { JournalUIState } from '../../hooks/useJournalUI';
