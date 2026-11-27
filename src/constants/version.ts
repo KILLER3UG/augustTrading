@@ -6,5 +6,5 @@ declare const __APP_VERSION__: string | undefined;
 export const APP_VERSION: string =
     (typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '')
     || (import.meta as { env?: { PACKAGE_VERSION?: string } }).env?.PACKAGE_VERSION
-    || '1.8.0';
+    || '1.8.1';
 export const APP_NAME = 'August Trading';
