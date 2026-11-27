@@ -18,7 +18,7 @@ const STATUS_BADGE: Record<DoctorStatus, string> = {
 
 export const ContextDiagnosticCard: React.FC<{ snapshot: ContextDiagnosticSnapshot }> = ({ snapshot }) => (
     <div
-        className="mt-1 rounded-control border border-hairline bg-zinc-900/60 p-2.5"
+        className="motion-card-enter mt-1 rounded-control border border-hairline bg-zinc-900/60 p-2.5"
         data-testid="context-diagnostic-card"
     >
         <div className="flex flex-wrap items-center gap-2">
@@ -48,7 +48,7 @@ export const ContextDiagnosticCard: React.FC<{ snapshot: ContextDiagnosticSnapsh
 
 export const DoctorDiagnosticCard: React.FC<{ snapshot: DoctorDiagnosticSnapshot }> = ({ snapshot }) => (
     <div
-        className="mt-1 rounded-control border border-hairline bg-zinc-900/60 p-2.5"
+        className="motion-card-enter mt-1 rounded-control border border-hairline bg-zinc-900/60 p-2.5"
         data-testid="doctor-diagnostic-card"
     >
         <div className="flex flex-wrap items-center gap-2">
@@ -85,7 +85,7 @@ export const CompactReceiptCard: React.FC<{
     onUndo?: () => void;
 }> = ({ snapshot, canUndo = false, onUndo }) => (
     <div
-        className="mt-1 rounded-control border border-hairline bg-zinc-900/60 p-2.5"
+        className="motion-card-enter mt-1 rounded-control border border-hairline bg-zinc-900/60 p-2.5"
         data-testid="compact-receipt-card"
     >
         <div className="flex flex-wrap items-center gap-2">

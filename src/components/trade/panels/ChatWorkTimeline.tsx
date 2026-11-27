@@ -284,7 +284,7 @@ const WriteReceiptRows: React.FC<{ toolIds: string[] }> = ({ toolIds }) => {
                             ? 'No stored receipt payload — view what the transcript kept.'
                             : 'Open the full paper receipt.';
                     return (
-                        <div key={row.key}>
+                        <div key={row.key} className="motion-tool-enter">
                             {shown.map((line, i) => (
                                 <div
                                     key={`${row.key}-${i}`}
@@ -308,19 +308,23 @@ const WriteReceiptRows: React.FC<{ toolIds: string[] }> = ({ toolIds }) => {
                                         if (next.has(row.key)) next.delete(row.key); else next.add(row.key);
                                         return next;
                                     })}
-                                    className="shrink-0 rounded-control px-1.5 py-px text-ui-2xs uppercase tracking-wider text-zinc-500 transition-colors hover:bg-white/[0.05] hover:text-zinc-200"
+                                    className="h-6 shrink-0 rounded-control px-2 text-ui-2xs uppercase tracking-wider text-zinc-500 transition-colors hover:bg-white/[0.05] hover:text-zinc-200"
                                 >
                                     View
                                 </button>
                             </div>
-                            {viewOpen && (
-                                <pre
-                                    data-testid="write-receipt-detail-paper"
-                                    className="max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-control bg-zinc-900/60 px-2 py-1 font-mono text-ui-2xs leading-4 text-zinc-500"
-                                >
-                                    {JSON.stringify(receipt ?? { note: why }, null, 2)}
-                                </pre>
-                            )}
+                            <div className="motion-collapse-grid" data-open={viewOpen ? 'true' : 'false'} aria-hidden={!viewOpen}>
+                                <div>
+                                    {viewOpen && (
+                                        <pre
+                                            data-testid="write-receipt-detail-paper"
+                                            className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-control bg-zinc-900/60 px-2 py-1 font-mono text-ui-2xs leading-4 text-zinc-500"
+                                        >
+                                            {JSON.stringify(receipt ?? { note: why }, null, 2)}
+                                        </pre>
+                                    )}
+                                </div>
+                            </div>
                         </div>
                     );
                 }
@@ -335,8 +339,11 @@ const WriteReceiptRows: React.FC<{ toolIds: string[] }> = ({ toolIds }) => {
                     : row.missing
                         ? 'No stored receipt payload — undo is unavailable. View what the transcript kept.'
                         : 'Open the full receipt bytes.';
+                const pair = viewOpen ? extractReceiptBeforeAfter(row.kind, row.receipt) : null;
+                const diff = pair ? computeLineDiff(pair.before, pair.after) : null;
+                const showRaw = rawMode.has(row.key) || !diff || diff.lines.length === 0;
                 return (
-                    <div key={row.key}>
+                    <div key={row.key} className="motion-tool-enter">
                         <div
                             data-testid="write-receipt-row"
                             data-kind={row.kind}
@@ -378,67 +385,66 @@ const WriteReceiptRows: React.FC<{ toolIds: string[] }> = ({ toolIds }) => {
                                 View
                             </button>
                         </div>
-                        {viewOpen && (() => {
-                            const pair = extractReceiptBeforeAfter(row.kind, row.receipt);
-                            const diff = pair ? computeLineDiff(pair.before, pair.after) : null;
-                            const showRaw = rawMode.has(row.key) || !diff || diff.lines.length === 0;
-                            return (
-                                <div
-                                    data-testid={`write-receipt-detail-${row.kind}`}
-                                    className="mt-1 overflow-hidden rounded-control border border-hairline bg-zinc-950/90"
-                                >
-                                    {diff && diff.lines.length > 0 && (
-                                        <div className="flex items-center justify-between gap-2 border-b border-hairline bg-zinc-900/60 px-2 py-1 font-mono text-ui-2xs text-zinc-400">
-                                            <span className="tabular-nums">
-                                                <span className="text-emerald-400">+{diff.added}</span>
-                                                {' / '}
-                                                <span className="text-rose-400">-{diff.removed}</span>
-                                            </span>
-                                            <button
-                                                type="button"
-                                                data-testid="receipt-diff-raw-toggle"
-                                                onClick={() => setRawMode(prev => {
-                                                    const next = new Set(prev);
-                                                    if (next.has(row.key)) next.delete(row.key); else next.add(row.key);
-                                                    return next;
-                                                })}
-                                                className="h-6 rounded-control px-2 text-ui-2xs text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-zinc-100"
-                                            >
-                                                {showRaw ? 'Show diff' : 'Raw JSON'}
-                                            </button>
-                                        </div>
-                                    )}
-                                    {!showRaw && diff ? (
-                                        <div
-                                            data-testid="receipt-line-diff"
-                                            className="max-h-48 overflow-auto py-1 font-mono text-ui-2xs leading-4"
-                                        >
-                                            {diff.lines.map((ln, idx) => (
-                                                <div
-                                                    key={idx}
-                                                    className={`whitespace-pre-wrap break-words px-2 py-0.5 ${
-                                                        ln.kind === 'added'
-                                                            ? 'bg-emerald-500/10 text-emerald-300'
-                                                            : ln.kind === 'removed'
-                                                                ? 'bg-rose-500/10 text-rose-300'
-                                                                : 'text-zinc-500'
-                                                    }`}
+                        <div className="motion-collapse-grid" data-open={viewOpen ? 'true' : 'false'} aria-hidden={!viewOpen}>
+                            <div>
+                                {viewOpen && (
+                                    <div
+                                        data-testid={`write-receipt-detail-${row.kind}`}
+                                        className="mt-1 overflow-hidden rounded-control border border-hairline bg-zinc-950/90"
+                                    >
+                                        {diff && diff.lines.length > 0 && (
+                                            <div className="flex items-center justify-between gap-2 border-b border-hairline bg-zinc-900/60 px-2 py-1 font-mono text-ui-2xs text-zinc-400">
+                                                <span className="tabular-nums">
+                                                    <span className="text-emerald-400">+{diff.added}</span>
+                                                    {' / '}
+                                                    <span className="text-rose-400">-{diff.removed}</span>
+                                                </span>
+                                                <button
+                                                    type="button"
+                                                    data-testid="receipt-diff-raw-toggle"
+                                                    onClick={() => setRawMode(prev => {
+                                                        const next = new Set(prev);
+                                                        if (next.has(row.key)) next.delete(row.key); else next.add(row.key);
+                                                        return next;
+                                                    })}
+                                                    className="h-6 rounded-control px-2 text-ui-2xs text-zinc-400 transition-colors hover:bg-white/[0.06] hover:text-zinc-100"
                                                 >
-                                                    <span className="mr-1.5 inline-block w-3 select-none opacity-75">
-                                                        {ln.kind === 'added' ? '+' : ln.kind === 'removed' ? '-' : ' '}
-                                                    </span>
-                                                    {ln.text || ' '}
-                                                </div>
-                                            ))}
-                                        </div>
-                                    ) : (
-                                        <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words px-2 py-1.5 font-mono text-ui-2xs leading-4 text-zinc-500">
-                                            {JSON.stringify(row.receipt ?? { note: why }, null, 2)}
-                                        </pre>
-                                    )}
-                                </div>
-                            );
-                        })()}
+                                                    {showRaw ? 'Show diff' : 'Raw JSON'}
+                                                </button>
+                                            </div>
+                                        )}
+                                        {!showRaw && diff ? (
+                                            <div
+                                                data-testid="receipt-line-diff"
+                                                className="max-h-48 overflow-auto py-1 font-mono text-ui-2xs leading-4"
+                                            >
+                                                {diff.lines.map((ln, idx) => (
+                                                    <div
+                                                        key={idx}
+                                                        className={`whitespace-pre-wrap break-words px-2 py-0.5 ${
+                                                            ln.kind === 'added'
+                                                                ? 'bg-emerald-500/10 text-emerald-300'
+                                                                : ln.kind === 'removed'
+                                                                    ? 'bg-rose-500/10 text-rose-300'
+                                                                    : 'text-zinc-500'
+                                                        }`}
+                                                    >
+                                                        <span className="mr-1.5 inline-block w-3 select-none opacity-75">
+                                                            {ln.kind === 'added' ? '+' : ln.kind === 'removed' ? '-' : ' '}
+                                                        </span>
+                                                        {ln.text || ' '}
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        ) : (
+                                            <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words px-2 py-1.5 font-mono text-ui-2xs leading-4 text-zinc-500">
+                                                {JSON.stringify(row.receipt ?? { note: why }, null, 2)}
+                                            </pre>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
                     </div>
                 );
             })}
@@ -447,6 +453,36 @@ const WriteReceiptRows: React.FC<{ toolIds: string[] }> = ({ toolIds }) => {
             )}
         </div>
     );
+};
+
+/** Extract up to the latest 3 non-empty reasoning / live-activity lines for
+ *  the Claude-Desktop 3-line rolling thinking peek while a turn is actively
+ *  thinking/running tools prior to the first visible answer token. */
+const extractLivePeekLines = (
+    reasoning: string,
+    liveProgress: string | undefined,
+    tools: string[],
+): string[] => {
+    const out: string[] = [];
+    if (reasoning.trim().length > 0) {
+        const rawLines = reasoning.split(/\r?\n/);
+        for (let i = rawLines.length - 1; i >= 0 && out.length < 3; i -= 1) {
+            const line = rawLines[i].trim();
+            if (!line || line.startsWith('[Desk tools]')) continue;
+            out.unshift(line);
+        }
+    }
+    if (out.length === 0 && liveProgress && liveProgress.trim().length > 0) {
+        out.push(liveProgress.trim());
+    }
+    if (out.length === 0 && tools.length > 0) {
+        for (let i = tools.length - 1; i >= 0 && out.length < 3; i -= 1) {
+            const line = tools[i].trim();
+            if (!line || isHarnessNoticeLine(line)) continue;
+            out.unshift(line);
+        }
+    }
+    return out;
 };
 
 export interface ChatWorkTimelineProps {
@@ -527,6 +563,12 @@ const ChatWorkTimeline: React.FC<ChatWorkTimelineProps> = ({ entry, symbol, inte
         }),
         [pairedCalls, symbol, interval, entry.workedMs],
     );
+    const showThinkingPeek = running && !hasAnswerText;
+    const peekLines = useMemo(
+        () => (showThinkingPeek ? extractLivePeekLines(reasoning, entry.liveProgress, entry.tools) : []),
+        [showThinkingPeek, reasoning, entry.liveProgress, entry.tools],
+    );
+
     if (!hasWork && !hasActions && !wireAlone) {
         // Nothing yet: the waiting tip covers
         // the silent first moments of a turn. It is the tip's ONLY home now —
@@ -628,64 +670,80 @@ const ChatWorkTimeline: React.FC<ChatWorkTimelineProps> = ({ entry, symbol, inte
            card is a separate card BELOW the work, not part of it. */
         <div className="my-1.5 space-y-1.5">
             {hasWork && (!hideSettledToolRollup || running) && (
-                <AnalyzedRow
-                    running={running}
-                    summary={ranSummary}
-                    persistedMs={entry.workedMs}
-                    startedAt={startedAt}
-                    activity={activity}
-                    autoFold={effectiveAutoFold}
-                    toolCount={callCount}
-                    descriptiveSummary={descriptiveSummary}
-                    foldSummaryTestId={!running && effectiveAutoFold && callCount >= 2 ? 'tool-summary-fold' : undefined}
-                >
-                    {nodes}
-                    {entry.liveProgress && entry.streaming && (
-                        <p className="text-ui-dense leading-5 text-zinc-500" data-testid="slow-call-progress">
-                            {entry.liveProgress}
-                        </p>
-                    )}
-                    {writeFailureNote && (
-                        <p className="text-ui-dense leading-5 text-zinc-500" data-testid="payload-write-failure">
-                            {writeFailureNote}
-                        </p>
-                    )}
-                    {hasWire && (
-                        <WireAuditRow entries={wireAudit} noTrace={noTrace} />
-                    )}
-                    {settled && entry.trace && (
-                        <details data-testid="turn-trace" className="mt-0.5 py-0.5">
-                            <summary className="cursor-pointer select-none font-mono text-ui-2xs uppercase tracking-wider text-zinc-500">
-                                Trace · {entry.trace.cacheWarm === null
-                                    ? 'first turn'
-                                    : entry.trace.cacheWarm
-                                        ? 'cache warm'
-                                        : 'prefix changed'}
-                                {' · '}{entry.trace.tokensIn}/{entry.trace.tokensOut} tok
-                                {entry.trace.gateRefusals > 0 ? ` · ${entry.trace.gateRefusals} refused` : ''}
-                            </summary>
-                            <div className="mt-1 space-y-0.5 font-mono text-ui-2xs text-zinc-500">
-                                <p>SYSTEM prefix hash: <span className="text-zinc-300">{entry.trace.prefixHash}</span>
-                                    {' · '}
-                                    <span className={entry.trace.cacheWarm === false ? 'text-zinc-200' : ''}>
-                                        {entry.trace.cacheWarm === null
-                                            ? 'FIRST TURN'
-                                            : entry.trace.cacheWarm
-                                                ? 'CACHE WARM'
-                                                : 'PREFIX CHANGED'}
-                                    </span>
-                                </p>
-                                {entry.trace.tier0Revision && (
-                                    <p>Tier 0 CONTEXT revision: <span className="text-zinc-300">{entry.trace.tier0Revision}</span></p>
-                                )}
-                                <p>turn {entry.trace.totalMs}ms · in {entry.trace.tokensIn} tok / out {entry.trace.tokensOut} tok
-                                    {entry.trace.gateRefusals > 0 ? ` · ${entry.trace.gateRefusals} gate refusal${entry.trace.gateRefusals === 1 ? '' : 's'}` : ''}
-                                    {entry.trace.microCompactChars ? ` · microcompaction −${entry.trace.microCompactChars.toLocaleString()} chars` : ''}
-                                </p>
-                            </div>
-                        </details>
-                    )}
-                </AnalyzedRow>
+                <>
+                    <AnalyzedRow
+                        running={running}
+                        summary={ranSummary}
+                        persistedMs={entry.workedMs}
+                        startedAt={startedAt}
+                        activity={activity}
+                        autoFold={effectiveAutoFold}
+                        toolCount={callCount}
+                        descriptiveSummary={descriptiveSummary}
+                        foldSummaryTestId={!running && effectiveAutoFold && callCount >= 2 ? 'tool-summary-fold' : undefined}
+                    >
+                        {nodes}
+                        {entry.liveProgress && entry.streaming && (
+                            <p className="text-ui-dense leading-5 text-zinc-500" data-testid="slow-call-progress">
+                                {entry.liveProgress}
+                            </p>
+                        )}
+                        {writeFailureNote && (
+                            <p className="text-ui-dense leading-5 text-zinc-500" data-testid="payload-write-failure">
+                                {writeFailureNote}
+                            </p>
+                        )}
+                        {hasWire && (
+                            <WireAuditRow entries={wireAudit} noTrace={noTrace} />
+                        )}
+                        {settled && entry.trace && (
+                            <details data-testid="turn-trace" className="mt-0.5 py-0.5">
+                                <summary className="cursor-pointer select-none font-mono text-ui-2xs uppercase tracking-wider text-zinc-500">
+                                    Trace · {entry.trace.cacheWarm === null
+                                        ? 'first turn'
+                                        : entry.trace.cacheWarm
+                                            ? 'cache warm'
+                                            : 'prefix changed'}
+                                    {' · '}{entry.trace.tokensIn}/{entry.trace.tokensOut} tok
+                                    {entry.trace.gateRefusals > 0 ? ` · ${entry.trace.gateRefusals} refused` : ''}
+                                </summary>
+                                <div className="mt-1 space-y-0.5 font-mono text-ui-2xs text-zinc-500">
+                                    <p>SYSTEM prefix hash: <span className="text-zinc-300">{entry.trace.prefixHash}</span>
+                                        {' · '}
+                                        <span className={entry.trace.cacheWarm === false ? 'text-zinc-200' : ''}>
+                                            {entry.trace.cacheWarm === null
+                                                ? 'FIRST TURN'
+                                                : entry.trace.cacheWarm
+                                                    ? 'CACHE WARM'
+                                                    : 'PREFIX CHANGED'}
+                                        </span>
+                                    </p>
+                                    {entry.trace.tier0Revision && (
+                                        <p>Tier 0 CONTEXT revision: <span className="text-zinc-300">{entry.trace.tier0Revision}</span></p>
+                                    )}
+                                    <p>turn {entry.trace.totalMs}ms · in {entry.trace.tokensIn} tok / out {entry.trace.tokensOut} tok
+                                        {entry.trace.gateRefusals > 0 ? ` · ${entry.trace.gateRefusals} gate refusal${entry.trace.gateRefusals === 1 ? '' : 's'}` : ''}
+                                        {entry.trace.microCompactChars ? ` · microcompaction −${entry.trace.microCompactChars.toLocaleString()} chars` : ''}
+                                    </p>
+                                </div>
+                            </details>
+                        )}
+                    </AnalyzedRow>
+                    <div
+                        className="motion-collapse-grid"
+                        data-open={showThinkingPeek && peekLines.length > 0 ? 'true' : 'false'}
+                        aria-hidden={!(showThinkingPeek && peekLines.length > 0)}
+                    >
+                        <div
+                            data-testid="live-thinking-peek"
+                            className="motion-thinking-peek ml-1 border-l border-hairline pl-3 text-ui-dense leading-[1.4] text-zinc-500"
+                        >
+                            {peekLines.map((line, idx) => (
+                                <p key={idx} className="truncate">{line}</p>
+                            ))}
+                        </div>
+                    </div>
+                </>
             )}
             {wireAlone && (
                 <div className="rounded-card bg-zinc-900/40 px-3 py-2.5">

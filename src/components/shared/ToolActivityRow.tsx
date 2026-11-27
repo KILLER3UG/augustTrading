@@ -139,7 +139,7 @@ const ToolRowGroupView: React.FC<{ group: ToolRowGroup; running: boolean }> = ({
                 <span className="shrink-0 tabular-nums text-zinc-500">×{group.count}</span>
             )}
             {anyCalling ? (
-                <span className="min-w-0 truncate text-zinc-500" title="calling…">calling…</span>
+                <span className="motion-tool-shimmer min-w-0 truncate" title="calling…">calling…</span>
             ) : detail ? (
                 <span className="min-w-0 truncate text-zinc-500 transition-colors group-hover/tool:text-zinc-300" title={detail}>{detail}</span>
             ) : anyFailed ? (
@@ -157,11 +157,11 @@ const ToolRowGroupView: React.FC<{ group: ToolRowGroup; running: boolean }> = ({
     );
 
     const rowState = anyCalling ? 'calling' : anyFailed ? 'failed' : 'done';
-    if (!expandable) return <div className="tool-row-static" data-testid="tool-row" data-state={rowState}>{line}</div>;
+    if (!expandable) return <div className="tool-row-static motion-tool-enter" data-testid="tool-row" data-state={rowState}>{line}</div>;
 
     return (
         <Disclosure
-            className="tool-row"
+            className="tool-row motion-tool-enter"
             summaryClassName="tool-row-summary"
             bodyClassName="tool-row-body custom-scrollbar"
             testId="tool-row"

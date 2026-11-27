@@ -24,7 +24,7 @@
  * only reflects `canLog` and forwards the taps.
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { CheckCircle } from '../../shared/Icons';
 import Disclosure from '../../shared/Disclosure';
 import type { TradeProposal } from '../../../services/trade/proposedTrade';
@@ -174,7 +174,12 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({
     const [staleAcknowledged, setStaleAcknowledged] = useState(false);
     const needsStaleConfirm = staleness.stale && !staleAcknowledged;
     const [mathExpanded, setMathExpanded] = useState(false);
+    const [sensorExpanded, setSensorExpanded] = useState(() => (proposal.conflictFlags?.length ?? 0) >= 2);
     const [rejecting, setRejecting] = useState(false);
+    const rejectInputRef = useRef<HTMLInputElement | null>(null);
+    useEffect(() => {
+        if (rejecting) rejectInputRef.current?.focus();
+    }, [rejecting]);
 
     // The undo window — module-scope, read through the host's tick so an
     // approve (here or on a remount of this card) repaints it. A second-by-
@@ -246,7 +251,7 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({
     // "R:R ratio (0.05)" line. One number, one precision per magnitude.
     const rr = computeRrRatio(proposal);
     return (
-    <div className="mt-1 rounded-control border border-hairline bg-zinc-900/60 p-2.5" data-testid="trade-proposal-card">
+    <div className="motion-card-enter mt-1 rounded-control border border-hairline bg-zinc-900/60 p-2.5" data-testid="trade-proposal-card">
         <div className="flex flex-wrap items-center gap-2">
             <span className={`rounded-control px-1.5 py-0.5 text-ui-xs font-bold ${proposal.direction === 'Long' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-rose-500/15 text-rose-400'}`}>{proposal.direction}</span>
             <span className="font-mono text-ui-sm font-bold text-zinc-100">{proposal.symbol}</span>
@@ -318,26 +323,37 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({
                             Sensor clear
                         </span>
                     ) : (
-                        <details open={proposal.conflictFlags.length >= 2} className="mt-1 rounded-control border border-hairline bg-white/[0.025] px-2 py-1">
-                            <summary className="flex min-h-[24px] cursor-pointer list-none items-center justify-between gap-2 font-mono text-ui-2xs uppercase tracking-wider text-zinc-300">
+                        <div className="mt-1 rounded-control border border-hairline bg-white/[0.025] px-2 py-1">
+                            <button
+                                type="button"
+                                aria-expanded={sensorExpanded}
+                                onClick={() => setSensorExpanded(v => !v)}
+                                className="flex min-h-[24px] w-full cursor-pointer items-center justify-between gap-2 text-left font-mono text-ui-2xs uppercase tracking-wider text-zinc-300"
+                            >
                                 <span className={proposal.conflictFlags.length >= 2 ? 'text-rose-400' : 'text-zinc-300'}>
                                     {proposal.conflictFlags.length === 1
                                         ? '1 caution flag'
                                         : `${proposal.conflictFlags.length} conflict flags · adversary engaged`}
                                 </span>
-                                <span className="text-zinc-500">5-check sensor</span>
-                            </summary>
-                            <ul className="mt-1 space-y-0.5 border-t border-hairline pt-1">
-                                {proposal.conflictFlags.map((f, idx) => (
-                                    <li key={`${f.id}-${idx}`} className="text-ui-2xs leading-4 text-zinc-400">
-                                        <span className={f.severity === 'high' ? 'font-medium text-rose-400' : 'font-medium text-zinc-200'}>
-                                            {f.label}:
-                                        </span>{' '}
-                                        {f.detail}
-                                    </li>
-                                ))}
-                            </ul>
-                        </details>
+                                <span className="shrink-0 text-zinc-500">
+                                    5-check sensor {sensorExpanded ? '▾' : '▸'}
+                                </span>
+                            </button>
+                            <div className="motion-collapse-grid" data-open={sensorExpanded ? 'true' : 'false'} aria-hidden={!sensorExpanded}>
+                                <div>
+                                    <ul className="mt-1 space-y-0.5 border-t border-hairline pt-1">
+                                        {proposal.conflictFlags.map((f, idx) => (
+                                            <li key={`${f.id}-${idx}`} className="text-ui-2xs leading-4 text-zinc-400">
+                                                <span className={f.severity === 'high' ? 'font-medium text-rose-400' : 'font-medium text-zinc-200'}>
+                                                    {f.label}:
+                                                </span>{' '}
+                                                {f.detail}
+                                            </li>
+                                        ))}
+                                    </ul>
+                                </div>
+                            </div>
+                        </div>
                     )}
                 </div>
             )}
@@ -490,21 +506,23 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({
                     </span>
                     <span aria-hidden="true" className="shrink-0 text-zinc-500">{mathExpanded ? '▾' : '▸'}</span>
                 </button>
-                {mathExpanded && (
-                    <div className="space-y-0.5 border-t border-hairline px-2.5 py-2 font-mono text-ui-2xs tabular-nums text-zinc-400">
-                        <div className="text-zinc-200">
-                            gross {proposal.math.grossRatio}:1 · net {proposal.math.netRewardR ?? '—'}R · break-even {proposal.math.breakEvenWinRatePct ?? '—'}%
-                        </div>
-                        <div>
-                            risk ${proposal.math.riskUsd ?? '—'} → qty {proposal.math.qty ?? '—'} @ {proposal.math.leverageNeeded ?? '—'}x · notional ${proposal.math.notionalUsd ?? '—'} · liq ~{proposal.math.liquidationPrice ?? '—'}
-                        </div>
-                        <div className="text-zinc-500">
-                            fees {proposal.math.costR ?? '—'}R{proposal.math.fundingDragR !== null
-                                ? ` · funding ${proposal.math.fundingDragR >= 0 ? '+' : ''}${proposal.math.fundingDragR}R (${proposal.math.fundingRate ?? '—'} at ${proposal.math.fundingIntervalHours ?? '—'}h)`
-                                : ' · funding unavailable'}
+                <div className="motion-collapse-grid" data-open={mathExpanded ? 'true' : 'false'} aria-hidden={!mathExpanded}>
+                    <div>
+                        <div className="space-y-0.5 border-t border-hairline px-2.5 py-2 font-mono text-ui-2xs tabular-nums text-zinc-400">
+                            <div className="text-zinc-200">
+                                gross {proposal.math.grossRatio}:1 · net {proposal.math.netRewardR ?? '—'}R · break-even {proposal.math.breakEvenWinRatePct ?? '—'}%
+                            </div>
+                            <div>
+                                risk ${proposal.math.riskUsd ?? '—'} → qty {proposal.math.qty ?? '—'} @ {proposal.math.leverageNeeded ?? '—'}x · notional ${proposal.math.notionalUsd ?? '—'} · liq ~{proposal.math.liquidationPrice ?? '—'}
+                            </div>
+                            <div className="text-zinc-500">
+                                fees {proposal.math.costR ?? '—'}R{proposal.math.fundingDragR !== null
+                                    ? ` · funding ${proposal.math.fundingDragR >= 0 ? '+' : ''}${proposal.math.fundingDragR}R (${proposal.math.fundingRate ?? '—'} at ${proposal.math.fundingIntervalHours ?? '—'}h)`
+                                    : ' · funding unavailable'}
+                            </div>
                         </div>
                     </div>
-                )}
+                </div>
             </div>
         )}
         {(stated.riskUsd !== undefined || stated.notionalUsd !== undefined) && (
@@ -607,48 +625,57 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({
             </div>
         ) : (
             <div className="mt-2.5">
-                {rejecting && (
-                    <div className="mb-2 flex items-center gap-1.5">
-                        <input
-                            type="text"
-                            autoFocus
-                            value={declineReason}
-                            onChange={e => setDeclineReason(e.target.value)}
-                            onKeyDown={e => {
-                                if (e.key === 'Enter') {
-                                    e.preventDefault();
+                <div
+                    className={`motion-collapse-grid ${rejecting ? 'pointer-events-auto' : 'pointer-events-none'}`}
+                    data-open={rejecting ? 'true' : 'false'}
+                    aria-hidden={!rejecting}
+                >
+                    <div>
+                        <div className="mb-2 flex items-center gap-1.5">
+                            <input
+                                ref={rejectInputRef}
+                                type="text"
+                                tabIndex={rejecting ? 0 : -1}
+                                value={declineReason}
+                                onChange={e => setDeclineReason(e.target.value)}
+                                onKeyDown={e => {
+                                    if (e.key === 'Enter') {
+                                        e.preventDefault();
+                                        onReject(declineReason.trim() || undefined);
+                                        setRejecting(false);
+                                    } else if (e.key === 'Escape') {
+                                        e.preventDefault();
+                                        setRejecting(false);
+                                    }
+                                }}
+                                placeholder="Optional: why decline? (recorded in hold ledger)"
+                                maxLength={300}
+                                className="h-7 min-w-0 flex-1 rounded-control border border-hairline bg-zinc-950 px-2 text-ui-dense text-zinc-200 placeholder:text-zinc-600 focus:border-zinc-500 focus:outline-none"
+                                data-testid="proposal-decline-reason"
+                            />
+                            <button
+                                type="button"
+                                tabIndex={rejecting ? 0 : -1}
+                                onClick={() => {
                                     onReject(declineReason.trim() || undefined);
                                     setRejecting(false);
-                                } else if (e.key === 'Escape') {
-                                    e.preventDefault();
-                                    setRejecting(false);
-                                }
-                            }}
-                            placeholder="Optional: why decline? (recorded in hold ledger)"
-                            maxLength={300}
-                            className="h-7 min-w-0 flex-1 rounded-control border border-hairline bg-zinc-950 px-2 text-ui-dense text-zinc-200 placeholder:text-zinc-600 focus:border-zinc-500 focus:outline-none"
-                            data-testid="proposal-decline-reason"
-                        />
-                        <button
-                            type="button"
-                            onClick={() => {
-                                onReject(declineReason.trim() || undefined);
-                                setRejecting(false);
-                            }}
-                            data-testid="proposal-confirm-reject"
-                            className="h-7 shrink-0 rounded-control border border-rose-500/40 bg-rose-500/15 px-2.5 text-ui-dense font-medium text-rose-300 transition-colors hover:bg-rose-500/25"
-                        >
-                            Confirm reject
-                        </button>
-                        <button
-                            type="button"
-                            onClick={() => setRejecting(false)}
-                            className="h-7 shrink-0 rounded-control border border-hairline bg-zinc-900 px-2 text-ui-dense text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-200"
-                        >
-                            Cancel
-                        </button>
+                                }}
+                                data-testid="proposal-confirm-reject"
+                                className="h-7 shrink-0 rounded-control border border-rose-500/40 bg-rose-500/15 px-2.5 text-ui-dense font-medium text-rose-300 transition-colors hover:bg-rose-500/25"
+                            >
+                                Confirm reject
+                            </button>
+                            <button
+                                type="button"
+                                tabIndex={rejecting ? 0 : -1}
+                                onClick={() => setRejecting(false)}
+                                className="h-7 shrink-0 rounded-control border border-hairline bg-zinc-900 px-2 text-ui-dense text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-200"
+                            >
+                                Cancel
+                            </button>
+                        </div>
                     </div>
-                )}
+                </div>
                 <div className="flex flex-wrap items-center gap-1.5">
                     {canLog && (
                         <button type="button"

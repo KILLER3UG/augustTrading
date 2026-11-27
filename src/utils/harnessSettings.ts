@@ -196,10 +196,8 @@ export const getHarnessSettings = (): HarnessSettings => {
             ? stored.riskConstitution.slice(0, 1200)
             : undefined,
     };
-    if (typeof localStorage !== 'undefined') {
-        cachedRawSnapshot = raw;
-        cachedSettingsSnapshot = snapshot;
-    }
+    cachedRawSnapshot = raw;
+    cachedSettingsSnapshot = snapshot;
     return snapshot;
 };
 

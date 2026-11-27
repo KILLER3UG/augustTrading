@@ -156,6 +156,7 @@ const AnalyzedRow: React.FC<AnalyzedRowProps> = ({
         <details
             className={`reasoning-row analyzed-row ${open ? 'is-open' : ''} ${className}`.trim()}
             data-state={running ? 'running' : 'ok'}
+            data-open={open ? 'true' : 'false'}
             data-testid="analyzed-row"
             open={open}
             onToggle={e => {
@@ -168,29 +169,30 @@ const AnalyzedRow: React.FC<AnalyzedRowProps> = ({
             <summary
                 className="reasoning-row-summary"
                 data-testid={foldSummaryTestId}
+                aria-expanded={open}
                 aria-label={`${label}${detail} — ${open ? 'collapse' : 'expand'}`}
             >
                 {running && (
-                    /* Three dots, in the reference's WARM colour: the work is
-                       running, and the app's running hue is the amber one.
-                       Grey said "something is happening"; amber says "the desk
-                       is working right now", which is the one thing the row
-                       exists to say. */
                     <span className="flex shrink-0 items-center gap-0.5" aria-hidden="true">
                         {[0, 1, 2].map(i => (
-                            <span key={i} className="h-1 w-1 animate-pulse rounded-full bg-zinc-500/80 motion-reduce:animate-none" style={{ animationDelay: `${i * 150}ms` }} />
+                            <span key={i} className="h-1 w-1 animate-pulse rounded-full bg-zinc-400/90 motion-reduce:animate-none" style={{ animationDelay: `${i * 150}ms` }} />
                         ))}
                     </span>
                 )}
-                <span className="reasoning-row-label">
+                <span className={`reasoning-row-label ${running ? 'motion-tool-shimmer' : ''}`}>
                     {label}{detail}
                 </span>
-                {/* The chevron the reference puts on every expandable line. A
-                    collapsed summary otherwise only hints that it opens. */}
-                <ChevronRight className="reasoning-row-chevron" aria-hidden="true" />
+                <ChevronRight
+                    className={`reasoning-row-chevron transition-transform duration-200 ease-[var(--ease-out-quart)] ${open ? 'rotate-90 text-zinc-300' : ''}`}
+                    aria-hidden="true"
+                />
             </summary>
             <div className="reasoning-row-body analyzed-row-body">
-                {children}
+                <div className="motion-collapse-grid" data-open={open ? 'true' : 'false'}>
+                    <div className="ml-1 space-y-1.5 border-l border-hairline pl-3">
+                        {children}
+                    </div>
+                </div>
             </div>
         </details>
     );

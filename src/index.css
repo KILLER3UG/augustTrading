@@ -316,6 +316,7 @@
   --radius-composer: 16px;
   --ease-snappy: cubic-bezier(0.2, 0.8, 0.2, 1);
   --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-out-quart: cubic-bezier(0.22, 1, 0.36, 1);
   /* ELEVATION (v4): one shadow, for one kind of thing. The reference casts a
      shadow on a FLOATING layer — a menu, a modal, a palette, a notice — and
      nowhere else; its resting cards and controls are cut planes separated by
@@ -2239,6 +2240,25 @@ body {
   from { opacity: 0; transform: translateY(6px) scale(0.985); }
   to { opacity: 1; transform: translateY(0) scale(1); }
 }
+/* Claude-Desktop streaming & choreography keyframes — GPU-only (opacity +
+   transform / background-position). Never animate transform on inline text so
+   line wrapping never jitters (CLS === 0). */
+@keyframes motion-stream-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes motion-tool-in {
+  from { opacity: 0; transform: translate3d(0, 4px, 0); }
+  to { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+@keyframes motion-card-in {
+  from { opacity: 0; transform: translate3d(0, 6px, 0); }
+  to { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+@keyframes motion-shimmer-sweep {
+  from { background-position: 160% 0; }
+  to { background-position: -160% 0; }
+}
 
 /* Page / tab / panel / list / chart entrances. */
 .motion-page { animation: motion-rise var(--motion-base) var(--motion-ease) both; }
@@ -2266,19 +2286,57 @@ body {
 .motion-toast-out { animation: motion-panel-out var(--motion-fast) var(--motion-ease) both; }
 .motion-highlight { animation: motion-rise var(--motion-slow) var(--motion-ease) both; }
 
-/* Smooth accordion & native <details> disclosure transitions. */
-.motion-accordion {
+/* Streaming text trailing-edge dissolve, settled action bar, tool steps, cards,
+   monochrome active shimmer, and 3-line rolling live thinking peek. */
+.motion-stream-chunk {
+  animation: motion-stream-fade 180ms var(--ease-out-quart) both;
+}
+.motion-action-bar {
+  animation: motion-stream-fade 180ms var(--ease-out-quart) both;
+}
+.motion-tool-enter {
+  animation: motion-tool-in 190ms var(--ease-out-quart) both;
+}
+.motion-card-enter {
+  animation: motion-card-in 220ms var(--ease-out-quart) both;
+}
+.motion-tool-shimmer {
+  background-image: linear-gradient(
+    95deg,
+    var(--color-zinc-400) 0%,
+    var(--color-zinc-100) 45%,
+    var(--color-zinc-400) 100%
+  );
+  background-size: 220% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  animation: motion-shimmer-sweep 1.8s linear infinite;
+}
+.motion-thinking-peek {
+  max-height: 4.25rem;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0%, #000 18%, #000 84%, transparent 100%);
+  mask-image: linear-gradient(to bottom, transparent 0%, #000 18%, #000 84%, transparent 100%);
+}
+
+/* Smooth accordion, collapse-grid & native <details> disclosure transitions. */
+.motion-accordion,
+.motion-collapse-grid {
   display: grid;
   grid-template-rows: 0fr;
   opacity: 0;
-  transition: grid-template-rows 180ms var(--ease-out-expo),
-              opacity 160ms var(--ease-out-expo);
+  transition: grid-template-rows 200ms var(--ease-out-quart),
+              opacity 160ms ease-out;
 }
-.motion-accordion[data-open='true'] {
+.motion-accordion[data-open='true'],
+.motion-collapse-grid[data-open='true'] {
   grid-template-rows: 1fr;
   opacity: 1;
 }
-.motion-accordion > * {
+.motion-accordion > *,
+.motion-collapse-grid > * {
   overflow: hidden;
   min-height: 0;
 }
@@ -2295,9 +2353,9 @@ body {
     opacity: 0;
     block-size: 0;
     overflow: hidden;
-    transition: block-size 180ms var(--ease-out-expo),
-                opacity 160ms var(--ease-out-expo),
-                content-visibility 180ms allow-discrete;
+    transition: block-size 200ms var(--ease-out-quart),
+                opacity 160ms ease-out,
+                content-visibility 200ms allow-discrete;
   }
   details.thinking-row[open]::details-content,
   details.tool-row[open]::details-content,
@@ -2351,11 +2409,22 @@ body[data-settings-open='true'] .toast-stack {
   .motion-page, .motion-tab, .motion-panel-in, .motion-panel-out, .motion-pop,
   .motion-popover-in, .motion-popover-down, .motion-backdrop-in,
   .motion-dialog-in, .motion-modal-in, .motion-drawer-left, .motion-drawer-right,
-  .motion-accordion, .motion-fade, .motion-enter-right, .motion-enter-left,
+  .motion-accordion, .motion-collapse-grid, .motion-stream-chunk, .motion-action-bar,
+  .motion-tool-enter, .motion-card-enter, .motion-thinking-peek,
+  .motion-fade, .motion-enter-right, .motion-enter-left,
   .motion-toast-in, .motion-toast-out, .motion-highlight, .motion-list > *,
   .motion-press, .motion-lift, .motion-icon {
     animation: none !important;
     transition: none !important;
+  }
+  .motion-tool-shimmer {
+    animation: none !important;
+    transition: none !important;
+    background-image: none !important;
+    -webkit-background-clip: border-box !important;
+    background-clip: border-box !important;
+    color: var(--color-zinc-300) !important;
+    -webkit-text-fill-color: currentColor !important;
   }
 }
 body.motion-reduced *,
@@ -2364,6 +2433,14 @@ body.motion-reduced *::after {
   animation-duration: 0.01ms !important;
   animation-iteration-count: 1 !important;
   transition-duration: 0.01ms !important;
+}
+body.motion-reduced .motion-tool-shimmer {
+  animation: none !important;
+  background-image: none !important;
+  -webkit-background-clip: border-box !important;
+  background-clip: border-box !important;
+  color: var(--color-zinc-300) !important;
+  -webkit-text-fill-color: currentColor !important;
 }
 
 /* Unified Electron desktop titlebar (titleBarStyle: 'hidden' + titleBarOverlay).
