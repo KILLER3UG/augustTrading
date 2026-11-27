@@ -875,7 +875,8 @@ export const runChatSurfaceTurn = async (req: ChatSurfaceTurnRequest): Promise<T
                 return result;
             }
             if (call.name !== 'present_trade') return null;
-            return await runPresentTrade(
+            const mintedRef: { proposal: import('./proposedTrade').TradeProposal | null } = { proposal: null };
+            const result = await runPresentTrade(
                 {
                     call,
                     symbol: req.symbol || call.arguments?.symbol?.toString() || 'BTCUSDT',
@@ -891,7 +892,10 @@ export const runChatSurfaceTurn = async (req: ChatSurfaceTurnRequest): Promise<T
                     planMode,
                 },
                 {
-                    setProposal: proposal => req.patch(m => ({ ...m, proposal })),
+                    setProposal: proposal => {
+                        mintedRef.proposal = proposal;
+                        req.patch(m => ({ ...m, proposal }));
+                    },
                     setGate: gate => req.patch(m => (m.proposal ? { ...m, proposal: { ...m.proposal, gate } } : m)),
                     // A Stop on this turn cancels its own gate scan: a verdict
                     // that arrives for a run the trader cut must not resurrect
@@ -907,6 +911,47 @@ export const runChatSurfaceTurn = async (req: ChatSurfaceTurnRequest): Promise<T
                     onCaptureSnapshot: snap => { planCapture.snapshot = snap; },
                 },
             );
+            // Conditional verification loop (D2) on Chat surface too: fire 1-pass
+            // LLM adversary critique strictly when >= 2 conflict flags fire.
+            if (mintedRef.proposal?.planId) {
+                const reviewed = mintedRef.proposal;
+                const conflictFlags = reviewed.conflictFlags ?? [];
+                const reviewedPlan = {
+                    planId: reviewed.planId!,
+                    symbol: reviewed.symbol,
+                    direction: reviewed.direction,
+                    entry: reviewed.entry,
+                    stopLoss: reviewed.stopLoss,
+                    takeProfits: reviewed.takeProfits,
+                };
+                if (conflictFlags.length < 2) {
+                    const clearAdversary = {
+                        verdict: 'APPROVE' as const,
+                        objections: [] as string[],
+                        invalidationCheck: 'Deterministic 5-check conflict sensor clear (<2 flags); LLM critique skipped.',
+                        at: Date.now(),
+                        plan: reviewedPlan,
+                    };
+                    req.patch(m => (m.proposal && m.proposal.planId === reviewed.planId
+                        ? { ...m, proposal: { ...m.proposal, adversary: clearAdversary } }
+                        : m));
+                } else {
+                    void import('./adversaryReview').then(ar => ar.runAdversaryReview({
+                        plan: reviewedPlan,
+                        markPrice: liveCtx?.markPrice ?? null,
+                        atr: null,
+                        candles: [],
+                        calibration: null,
+                        conflictFlags,
+                    })).then(review => {
+                        const adversary = { ...review, plan: reviewedPlan };
+                        req.patch(m => (m.proposal && m.proposal.planId === reviewed.planId
+                            ? { ...m, proposal: { ...m.proposal, adversary } }
+                            : m));
+                    }).catch(() => { /* absent review is honest */ });
+                }
+            }
+            return result;
         },
     };
 

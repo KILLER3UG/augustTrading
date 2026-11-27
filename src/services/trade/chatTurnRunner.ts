@@ -746,60 +746,59 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
                     } : {}),
                 },
             );
-            // The adversary reviewer fires AFTER the mint, detached exactly
-            // like the gate scan: it patches the card late and — on VETO —
-            // withdraws the just-armed watch until the trader overrides on
-            // the card. UNAVAILABLE patches nothing: the plan proceeds as it
-            // would have without the reviewer.
+            // Conditional verification loop (D2): run the bounded 1-pass LLM
+            // adversary critique ONLY when >= 2 deterministic conflict flags
+            // fire. When < 2 flags fire, skip the LLM call completely (zero
+            // extra latency/tokens), stamp a deterministic clear verdict, and
+            // arm the watch immediately (unless Plan Mode is active).
             if (mintedRef.proposal?.planId) {
                 const reviewedProposal = mintedRef.proposal;
-                const snap = getChartSnapshot?.() ?? null;
-                void import('./adversaryReview').then(ar => ar.runAdversaryReview({
-                    plan: {
-                        planId: reviewedProposal.planId!,
-                        symbol: reviewedProposal.symbol,
-                        direction: reviewedProposal.direction,
-                        entry: reviewedProposal.entry,
-                        stopLoss: reviewedProposal.stopLoss,
-                        takeProfits: reviewedProposal.takeProfits,
-                    },
-                    markPrice: snap?.markPrice ?? null,
-                    atr: snap?.atr14 ?? null,
-                    candles: snap?.evalCandles ?? [],
-                    calibration: null,
-                })).then(review => {
-                    // THE GRAPH EDGE: pending_review → (adversary node) → armed.
-                    // APPROVE / CAUTION / UNAVAILABLE arm the watch here — the
-                    // plan was NEVER armed before this point, so there is no
-                    // arm→VETO→disarm race. A VETO leaves it pending for the
-                    // trader's explicit override on the card.
-                    const adversary = {
-                        ...review,
-                        plan: {
-                            planId: reviewedProposal.planId!,
-                            symbol: reviewedProposal.symbol,
-                            direction: reviewedProposal.direction,
-                            entry: reviewedProposal.entry,
-                            stopLoss: reviewedProposal.stopLoss,
-                            takeProfits: reviewedProposal.takeProfits,
-                        },
+                const conflictFlags = reviewedProposal.conflictFlags ?? [];
+                const reviewedPlan = {
+                    planId: reviewedProposal.planId!,
+                    symbol: reviewedProposal.symbol,
+                    direction: reviewedProposal.direction,
+                    entry: reviewedProposal.entry,
+                    stopLoss: reviewedProposal.stopLoss,
+                    takeProfits: reviewedProposal.takeProfits,
+                };
+                if (conflictFlags.length < 2) {
+                    const clearAdversary = {
+                        verdict: 'APPROVE' as const,
+                        objections: [] as string[],
+                        invalidationCheck: 'Deterministic 5-check conflict sensor clear (<2 flags); LLM critique skipped.',
+                        at: Date.now(),
+                        plan: reviewedPlan,
                     };
-                    if (review.verdict !== 'VETO' && onPlanPresented && !chatStore.getPlanMode(turn.sid)) {
-                        onPlanPresented({
-                            planId: reviewedProposal.planId!,
-                            symbol: reviewedProposal.symbol,
-                            direction: reviewedProposal.direction,
-                            entry: reviewedProposal.entry,
-                            stopLoss: reviewedProposal.stopLoss,
-                            takeProfits: reviewedProposal.takeProfits,
-                        }, turn);
+                    if (onPlanPresented && !chatStore.getPlanMode(turn.sid)) {
+                        onPlanPresented(reviewedPlan, turn);
                     }
                     chatStore.mutate(turn.sid, st => ({
                         ...st,
                         entries: st.entries.map(en => (en.id === turn.entryId && en.proposal?.planId === mintedPlanId
-                            ? { ...en, proposal: { ...en.proposal!, adversary } } : en)),
+                            ? { ...en, proposal: { ...en.proposal!, adversary: clearAdversary } } : en)),
                     }));
-                }).catch(() => { /* an absent review is the honest state */ });
+                } else {
+                    const snap = getChartSnapshot?.() ?? null;
+                    void import('./adversaryReview').then(ar => ar.runAdversaryReview({
+                        plan: reviewedPlan,
+                        markPrice: snap?.markPrice ?? null,
+                        atr: snap?.atr14 ?? null,
+                        candles: snap?.evalCandles ?? [],
+                        calibration: null,
+                        conflictFlags,
+                    })).then(review => {
+                        const adversary = { ...review, plan: reviewedPlan };
+                        if (review.verdict !== 'VETO' && onPlanPresented && !chatStore.getPlanMode(turn.sid)) {
+                            onPlanPresented(reviewedPlan, turn);
+                        }
+                        chatStore.mutate(turn.sid, st => ({
+                            ...st,
+                            entries: st.entries.map(en => (en.id === turn.entryId && en.proposal?.planId === mintedPlanId
+                                ? { ...en, proposal: { ...en.proposal!, adversary } } : en)),
+                        }));
+                    }).catch(() => { /* an absent review is the honest state */ });
+                }
             }
             return result;
         }
@@ -1462,7 +1461,12 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
                 ? d.points[0].p
                 : null;
             if (anchorPrice !== null) {
-                liveTapeDrawings.push({ shortId: `#D${idx + 1}`, ...(d.label ? { label: d.label } : {}), price: anchorPrice });
+                const isAgentShape = d.origin === 'agent';
+                const shortId = isAgentShape
+                    ? (d.label?.trim() || 'AI level')
+                    : (d.shortId?.trim() || `#D${idx + 1}`);
+                const label = isAgentShape ? undefined : d.label;
+                liveTapeDrawings.push({ shortId, ...(label ? { label } : {}), price: anchorPrice });
             }
         }
         const liveTapeTail = formatLiveTapeHeader({

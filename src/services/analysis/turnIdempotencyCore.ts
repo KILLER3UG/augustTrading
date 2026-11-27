@@ -9,7 +9,7 @@
  * Zero React, DOM, `window`, storage, or network imports (`check:boundaries`).
  */
 
-import { canonicalizeArgsForHash } from './toolArgCoercionCore';
+import { canonicalizeArgsForHash, coerceToolArguments } from './toolArgCoercionCore';
 
 export const IDEMPOTENT_MUTATING_TOOLS: ReadonlySet<string> = new Set([
     'paper_order',
@@ -35,7 +35,12 @@ export const buildTurnIdempotencyKey = (
     turnIntentKey: string,
     toolName: string,
     args: unknown,
-): string => `${turnIntentKey.trim()}::${toolName}::${canonicalizeArgsForHash(args ?? {})}`;
+): string => {
+    const normalizedArgs = args && typeof args === 'object' && !Array.isArray(args)
+        ? coerceToolArguments(toolName, args as Record<string, unknown>).args
+        : (args ?? {});
+    return `${turnIntentKey.trim()}::${toolName}::${canonicalizeArgsForHash(normalizedArgs)}`;
+};
 
 /**
  * Look up a previously succeeded mutating call for the same `(turnIntentKey,

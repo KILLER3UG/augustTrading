@@ -20,6 +20,8 @@ import { TradeAnalysis, TradeOutcome, Message, MessageRole, type ProposalGate, t
 import { asPlaybookId, type PlaybookId } from '../../types/playbook';
 import { baseOf, quoteOf } from '../../utils/symbol';
 import { coerceToolArguments, recordCoercionAudit } from '../analysis/toolArgCoercionCore';
+import type { ProposalConflictFlag } from './proposalConflictSensorCore';
+export type { ProposalConflictFlag };
 import { plannedRiskReward } from '../../utils/riskReward';
 import { clampProbabilityToGate, downgradeConfidenceForProbability } from '../../utils/analysisUtils';
 import { computeContractSize, type ContractSize } from '../../utils/ticketSize';
@@ -59,6 +61,9 @@ export interface TradeProposal {
      *  ids (`${planId}:ENTRY|:SL|:TP1..N`), and it rides onto the logged
      *  message so plan, warning and journal row stay the same object. */
     planId?: string;
+    /** Deterministic 5-check pre-proposal conflict flags attached synchronously
+     *  inside `present_trade` before the card renders. */
+    conflictFlags?: ProposalConflictFlag[];
     /** The isolated adversary reviewer's verdict (services/trade/adversaryReview).
      *  Advisory to the card: APPROVE/CAUTION arm as usual; a VETO withdraws the
      *  auto-armed watch until the trader overrides. `plan` carries the bracket

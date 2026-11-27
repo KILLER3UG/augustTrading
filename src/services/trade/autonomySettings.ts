@@ -232,7 +232,11 @@ export const backgroundCallRefusal = async (
 
 export interface BackgroundSeat {
     config: import('../../types/provider').ProviderConfig;
-    complete: (prompt: string, system?: string, options?: { maxTokens?: number; temperature?: number }) => Promise<string>;
+    complete: (
+        prompt: string,
+        system?: string,
+        options?: { maxTokens?: number; temperature?: number; reasoningEffort?: import('../../types/provider').ReasoningEffort },
+    ) => Promise<string>;
 }
 
 /**
@@ -274,6 +278,7 @@ export const resolveBackgroundSeat = async (username: string = getActiveUsername
             complete: (prompt, system, options) => getQuickResponse(config, prompt, system, {
                 maxTokens: options?.maxTokens ?? 700,
                 temperature: options?.temperature ?? 0.2,
+                ...(options?.reasoningEffort ? { reasoningEffort: options.reasoningEffort } : {}),
             }),
         };
     } catch {

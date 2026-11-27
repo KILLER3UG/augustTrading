@@ -21,6 +21,9 @@
 import { getActiveUsername } from '../../utils/activeUser';
 import { plannedRiskRewardSigned, targetsByDistance } from '../../utils/riskReward';
 import { roundTripCostR } from '../../utils/netRiskReward';
+import { resolveComposerEffort } from '../providers/reasoningControls';
+import type { ReasoningEffort } from '../../types/provider';
+import type { ProposalConflictFlag } from './proposalConflictSensorCore';
 
 export type AdversaryVerdict = 'APPROVE' | 'CAUTION' | 'VETO' | 'UNAVAILABLE';
 
@@ -47,6 +50,10 @@ export interface AdversaryInput {
     candles: ReadonlyArray<{ close: number }>;
     /** The coin's own calibration verdict, when the ledger has one. */
     calibration?: { verdict: string; thin: boolean } | null;
+    /** Deterministic 5-check conflict flags that triggered this adversary pass. */
+    conflictFlags?: readonly ProposalConflictFlag[];
+    /** Optional composer effort; defaults to boosted `EFFORT_BY_TASK.adversary` ('high'). */
+    effort?: ReasoningEffort;
 }
 
 export const ADVERSARY_TIMEOUT_MS = 13_000;
@@ -180,9 +187,13 @@ export const runAdversaryReview = async (input: AdversaryInput): Promise<Adversa
             stop_distance_vs_atr: input.atr && input.atr > 0 ? Number((risk / input.atr).toFixed(2)) : null,
             measured_trend_bias: bias,
             calibration: input.calibration ?? null,
+            ...(input.conflictFlags && input.conflictFlags.length > 0
+                ? { conflict_flags: input.conflictFlags.map(f => ({ id: f.id, severity: f.severity, label: f.label, detail: f.detail })) }
+                : {}),
         });
+        const adversaryEffort = resolveComposerEffort(input.effort, 'adversary');
         const raw = await Promise.race([
-            seat.complete(packet, ADVERSARY_SYSTEM, { maxTokens: 320, temperature: 0.1 }),
+            seat.complete(packet, ADVERSARY_SYSTEM, { maxTokens: 320, temperature: 0.1, reasoningEffort: adversaryEffort }),
             new Promise<never>((_, reject) => { setTimeout(() => reject(new Error('adversary timeout')), ADVERSARY_TIMEOUT_MS); }),
         ]);
         return parseAdversaryJson(raw, fallback);

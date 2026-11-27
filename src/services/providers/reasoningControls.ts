@@ -84,6 +84,8 @@ export const EFFORT_BY_TASK = {
      *  tier in the schedule (E-39). A trader's explicit composer pick still
      *  wins over this default. */
     tradingDecision: 'high',
+    /** Isolated adversarial verifier pass triggered when >= 2 conflict flags fire. */
+    adversary: 'high',
     /** A scheduled run that can present a plan. Nobody is watching it decide,
      *  so it gets the top tier in the schedule. */
     automatedTradingDecision: 'max',

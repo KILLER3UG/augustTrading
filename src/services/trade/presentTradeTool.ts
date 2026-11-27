@@ -27,6 +27,10 @@ import { beginGateScan, cancelGateScan, evaluatePlanLocalSync, gateReceiptLine }
 import { drawingsFromLevelTool, type ChartDrawing } from './chartDrawings';
 import { computeTradeMath, computeFundingDrag, type TradeMathRead } from '../market/tradeMathCore';
 import { coerceToolArguments, formatTypedRepairRejection, recordCoercionAudit } from '../analysis/toolArgCoercionCore';
+import { evaluateProposalConflicts, type ProposalConflictSensorInput } from './proposalConflictSensorCore';
+import { collectLiveMarketContextForSymbol } from './scopedRulesRuntime';
+import { getCachedPaperAccountView } from '../paper/PaperBrokerService';
+import { getHarnessSettings } from '../../utils/harnessSettings';
 import type { Kline } from '../../types/message';
 import type { WatchPlan } from './tradePlanLevels';
 
@@ -42,6 +46,8 @@ export interface PresentTradeMathDeps {
     getAccount?: () => Promise<{ equityUsd: number; riskPercent: number; leverage: number } | null>;
     getFunding?: (symbol: string) => Promise<{ rate: number; intervalHours: number | null } | null>;
     getCandles?: (symbol: string) => Promise<Kline[]>;
+    /** Optional override for deterministic offline conflict-sensor tests. */
+    getConflictInputs?: (symbol: string) => Partial<ProposalConflictSensorInput> | null;
 }
 
 /** Never let a slow/offline market fetch stall a presented plan. */
@@ -321,6 +327,42 @@ export const runPresentTrade = async (
     }
     proposal.math = math.snapshot;
 
+    // DETERMINISTIC 5-CHECK CONFLICT SENSOR — synchronous/in-memory (zero slow
+    // network calls) so conflict badges land on `TradeProposalCard` immediately
+    // and gate whether the bounded 1-pass LLM adversary critique should fire.
+    try {
+        const liveCtx = collectLiveMarketContextForSymbol(proposal.symbol);
+        const paperView = getCachedPaperAccountView();
+        const overrideInputs = mathDeps.getConflictInputs?.(proposal.symbol) ?? null;
+        const maxHeatPct = getHarnessSettings().preTradeHooks.maxCorrelatedHeatPct;
+        const riskPct = paperView && paperView.equity > 0 && math.snapshot.riskUsd !== null
+            ? (math.snapshot.riskUsd / paperView.equity) * 100
+            : (paperView?.riskLimits?.maxRiskPerTradePct ?? 1.0);
+        const sensor = evaluateProposalConflicts({
+            symbol: proposal.symbol,
+            direction: proposal.direction,
+            entry: proposal.entry,
+            stopLoss: proposal.stopLoss,
+            takeProfits: proposal.takeProfits,
+            rationale: proposal.rationale,
+            regimesByTf: liveCtx.regimesByTf,
+            regime: liveCtx.regime,
+            fundingRate: math.snapshot.fundingRate ?? liveCtx.fundingRate,
+            openPositions: paperView?.openPositions.map(p => ({
+                symbol: p.symbol,
+                side: p.side,
+                riskUsd: p.riskUsd,
+            })),
+            equityUsd: paperView?.equity,
+            candidateRiskPct: riskPct,
+            maxCorrelatedHeatPct: maxHeatPct,
+            ...(overrideInputs ?? {}),
+        });
+        proposal.conflictFlags = sensor.flags;
+    } catch {
+        proposal.conflictFlags = [];
+    }
+
     // The DOCK generates the stable plan id first: it keys the level-watch,
     // the receipt's level ids, "Log this trade" onto the journal row, AND the
     // one in-flight gate scan for this plan.
@@ -425,11 +467,14 @@ export const runPresentTrade = async (
     // any R:R/size it said in prose is subordinate to them (the card shows
     // both side by side).
     const m = math.snapshot;
+    const conflictLine = (proposal.conflictFlags?.length ?? 0) > 0
+        ? ` Conflict sensor (${proposal.conflictFlags!.length} flag${proposal.conflictFlags!.length === 1 ? '' : 's'}): ${proposal.conflictFlags!.map(f => f.label).join('; ')}.`
+        : '';
     const mathLine = ` Harness math: gross ${m.grossRatio}:1, net ${m.netRewardR ?? '—'}R (fees ${m.costR ?? '—'}R${m.fundingDragR !== null ? `, funding ${m.fundingDragR >= 0 ? '+' : ''}${m.fundingDragR}R${m.fundingIntervalHours !== null ? ` at the measured ${m.fundingIntervalHours}h interval` : ''}` : ''}), break-even ${m.breakEvenWinRatePct ?? '—'}%, risk $${m.riskUsd ?? '—'} → qty ${m.qty ?? '—'} @ ${m.leverageNeeded ?? '—'}x (notional $${m.notionalUsd ?? '—'}), liq ~${m.liquidationPrice ?? '—'}${m.liquidationDistanceAtr !== null ? ` (${m.liquidationDistanceAtr} ATR)` : ''}.`;
     return receipt(
         call,
         name,
         true,
-        `Presented ${proposal.direction} ${proposal.symbol} @ ${proposal.entry}, SL ${proposal.stopLoss}, TP ${proposal.takeProfits.join('/')}, R:R ~${rr}:1.${mathLine} ${gateLine} The user sees a "Log this trade" card.${playbookLine}${skillLine}${paperLine} ${watchLine}${ctx.canvasNote}`,
+        `Presented ${proposal.direction} ${proposal.symbol} @ ${proposal.entry}, SL ${proposal.stopLoss}, TP ${proposal.takeProfits.join('/')}, R:R ~${rr}:1.${mathLine}${conflictLine} ${gateLine} The user sees a "Log this trade" card.${playbookLine}${skillLine}${paperLine} ${watchLine}${ctx.canvasNote}`,
     );
 };

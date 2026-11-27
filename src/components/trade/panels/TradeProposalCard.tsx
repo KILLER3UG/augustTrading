@@ -308,6 +308,39 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({
                             : `Adversary: ${proposal.adversary.verdict} · watch armed`}
                 </span>
             )}
+            {proposal.conflictFlags !== undefined && (
+                <div
+                    data-testid="proposal-conflict-sensor"
+                    className="w-full"
+                >
+                    {proposal.conflictFlags.length === 0 ? (
+                        <span className="inline-flex items-center rounded-control border border-hairline bg-white/[0.03] px-1.5 py-0.5 font-mono text-ui-2xs uppercase tracking-wider text-zinc-400">
+                            Sensor clear
+                        </span>
+                    ) : (
+                        <details open={proposal.conflictFlags.length >= 2} className="mt-1 rounded-control border border-hairline bg-white/[0.025] px-2 py-1">
+                            <summary className="flex min-h-[24px] cursor-pointer list-none items-center justify-between gap-2 font-mono text-ui-2xs uppercase tracking-wider text-zinc-300">
+                                <span className={proposal.conflictFlags.length >= 2 ? 'text-rose-400' : 'text-zinc-300'}>
+                                    {proposal.conflictFlags.length === 1
+                                        ? '1 caution flag'
+                                        : `${proposal.conflictFlags.length} conflict flags · adversary engaged`}
+                                </span>
+                                <span className="text-zinc-500">5-check sensor</span>
+                            </summary>
+                            <ul className="mt-1 space-y-0.5 border-t border-hairline pt-1">
+                                {proposal.conflictFlags.map((f, idx) => (
+                                    <li key={`${f.id}-${idx}`} className="text-ui-2xs leading-4 text-zinc-400">
+                                        <span className={f.severity === 'high' ? 'font-medium text-rose-400' : 'font-medium text-zinc-200'}>
+                                            {f.label}:
+                                        </span>{' '}
+                                        {f.detail}
+                                    </li>
+                                ))}
+                            </ul>
+                        </details>
+                    )}
+                </div>
+            )}
             {plan ? (
                 <span className="ml-auto font-mono text-ui-xs uppercase tracking-wider text-zinc-500" data-testid="proposal-confidence">
                     {plan.probability}% · {plan.confidence} confidence
