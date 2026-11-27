@@ -2429,11 +2429,17 @@ const App: React.FC = () => {
         chatLayout: getWorkspaceLayout() === 'chat',
         symbols: FALLBACK_SYMBOLS.map(s => s.symbol),
         timeframes: DEFAULT_COMMAND_BAR_TIMEFRAMES,
+        // Two kinds of rows sit behind a desk session: sessions bound to a
+        // persisted conversation (switch those through the conversation id)
+        // and desk-only sessions (switch through the session id). Dedupe AFTER
+        // the id resolution — one conversation can back several sessions — and
+        // keep the most recent row per id (the list is already recency-sorted).
         conversations: chatStore.getSnapshot().sessions
             .slice()
             .sort((a, b) => b.updatedAt - a.updatedAt)
-            .slice(0, 6)
-            .map(s => ({ id: s.id, title: s.title })),
+            .map(s => ({ id: s.conversationId ?? s.id, title: s.title }))
+            .filter((c, i, all) => all.findIndex(x => x.id === c.id) === i)
+            .slice(0, 6),
         // Rebuilt when the bar opens (and while it stays open on store ticks),
         // so the ON/OFF and Desk/Chat details read the live snapshot.
     }), [isCommandBarOpen]);
@@ -2450,7 +2456,15 @@ const App: React.FC = () => {
             return;
         }
         if (item.id.startsWith('conversation:')) {
-            void handleLoadConversation(item.id.slice('conversation:'.length));
+            const id = item.id.slice('conversation:'.length);
+            // Two homes, one command: a persisted conversation loads through
+            // App's loader; a desk-only session has no conversation row, so it
+            // switches through the store the dock follows.
+            if (conversationHistory.some(c => c.id === id)) {
+                void handleLoadConversation(id);
+            } else {
+                chatStore.setActiveId(id);
+            }
             return;
         }
         switch (item.id) {
@@ -2490,7 +2504,7 @@ const App: React.FC = () => {
             default:
                 return;
         }
-    }, [handleLoadConversation, setSettingsSection, setIsSettingsMenuVisible]);
+    }, [handleLoadConversation, conversationHistory, setSettingsSection, setIsSettingsMenuVisible]);
 
     useWatchSideEffects({
         messagesRef,

@@ -50,6 +50,13 @@ describe('retryPolicyCore — classifyTransientProviderError', () => {
         assert.equal(cls.kind, 'rate_limit');
     });
 
+    it('a 429 that names the API key is still a retryable rate_limit, never auth', () => {
+        // The bare `api key` substring used to file this as a permanent auth
+        // wall; gateways phrase their own rate limits through the key.
+        const cls = classifyTransientProviderError({ status: 429, message: 'Rate limit exceeded for your API key' });
+        assert.deepEqual(cls, { retryable: true, kind: 'rate_limit', retryAfterMs: undefined });
+    });
+
     it('classifies 5xx / 408 / 529 / overloaded as retryable server_5xx', () => {
         for (const status of [408, 500, 502, 503, 504, 529]) {
             const cls = classifyTransientProviderError({ status, message: `HTTP ${status}` });

@@ -257,6 +257,66 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({
     // — a chip that overstated the plan's reward 2× against the gate's own
     // "R:R ratio (0.05)" line. One number, one precision per magnitude.
     const rr = computeRrRatio(proposal);
+    // ROW 2's PRESENT items, in order. The dividers are joined BETWEEN them at
+    // render, so a non-simulated proposal without a playbook never opens with
+    // a leading `·` — per-fragment dividers fired on every rendered item
+    // regardless of the position it landed in.
+    const statusLineItems: Array<{ key: string; node: React.ReactNode }> = [];
+    if (proposal.simulated !== false) {
+        statusLineItems.push({
+            key: 'simulated',
+            node: (
+                <span data-testid="simulated-badge" className="uppercase tracking-wider">
+                    Simulated
+                </span>
+            ),
+        });
+    }
+    if (proposal.skillSlug) {
+        statusLineItems.push({
+            key: 'playbook',
+            node: (
+                <span data-testid="proposal-playbook-chip">
+                    Playbook: {humanizeSkillTitle('', proposal.skillSlug)}
+                </span>
+            ),
+        });
+    }
+    // The adversary reviewer's verdict — an isolated read-only seat read of
+    // the plan against the tape. The objections live in the detail line below.
+    if (proposal.adversary) {
+        statusLineItems.push({
+            key: 'adversary',
+            node: (
+                <span
+                    data-testid="adversary-verdict"
+                    className={`uppercase tracking-wider ${
+                        proposal.adversary.verdict === 'VETO' && !proposal.adversary.overridden
+                            ? 'font-medium text-rose-400'
+                            : proposal.adversary.verdict === 'CAUTION'
+                                ? 'text-zinc-300'
+                                : ''
+                    }`}
+                >
+                    {proposal.adversary.verdict === 'VETO' && !proposal.adversary.overridden
+                        ? 'Adversary VETO · watch held'
+                        : proposal.adversary.verdict === 'UNAVAILABLE'
+                            ? 'Adversary unavailable'
+                            : `Adversary: ${proposal.adversary.verdict} · watch armed`}
+                </span>
+            ),
+        });
+    }
+    if (proposal.conflictFlags !== undefined && proposal.conflictFlags.length === 0) {
+        statusLineItems.push({
+            key: 'sensor',
+            node: (
+                <span data-testid="proposal-conflict-sensor" className="uppercase tracking-wider">
+                    Sensor clear
+                </span>
+            ),
+        });
+    }
     return (
     <div className="motion-card-enter mt-1 rounded-lg border border-hairline bg-zinc-900/60 p-2.5" data-testid="trade-proposal-card">
         {/* ROW 1 — the decision line: direction, symbol, the planned R:R, the
@@ -300,54 +360,12 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({
             The 5-CHECK SENSOR drawer stays a full-width block below when at
             least one conflict flag fires; a clear sensor reads inline. */}
         <div className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 font-mono text-ui-2xs text-zinc-500">
-            {proposal.simulated !== false && (
-                <span
-                    data-testid="simulated-badge"
-                    className="uppercase tracking-wider"
-                >
-                    Simulated
-                </span>
-            )}
-            {proposal.skillSlug && (
-                <>
-                    <span aria-hidden="true" className="text-zinc-700">·</span>
-                    <span data-testid="proposal-playbook-chip">
-                        Playbook: {humanizeSkillTitle('', proposal.skillSlug)}
-                    </span>
-                </>
-            )}
-            {/* The adversary reviewer's verdict — an isolated read-only seat
-                read of the plan against the tape. The objections live in the
-                detail line below. */}
-            {proposal.adversary && (
-                <>
-                    <span aria-hidden="true" className="text-zinc-700">·</span>
-                    <span
-                        data-testid="adversary-verdict"
-                        className={`uppercase tracking-wider ${
-                            proposal.adversary.verdict === 'VETO' && !proposal.adversary.overridden
-                                ? 'font-medium text-rose-400'
-                                : proposal.adversary.verdict === 'CAUTION'
-                                    ? 'text-zinc-300'
-                                    : ''
-                        }`}
-                    >
-                        {proposal.adversary.verdict === 'VETO' && !proposal.adversary.overridden
-                            ? 'Adversary VETO · watch held'
-                            : proposal.adversary.verdict === 'UNAVAILABLE'
-                                ? 'Adversary unavailable'
-                                : `Adversary: ${proposal.adversary.verdict} · watch armed`}
-                    </span>
-                </>
-            )}
-            {proposal.conflictFlags !== undefined && proposal.conflictFlags.length === 0 && (
-                <>
-                    <span aria-hidden="true" className="text-zinc-700">·</span>
-                    <span data-testid="proposal-conflict-sensor" className="uppercase tracking-wider">
-                        Sensor clear
-                    </span>
-                </>
-            )}
+            {statusLineItems.map((item, i) => (
+                <React.Fragment key={item.key}>
+                    {i > 0 && <span aria-hidden="true" className="text-zinc-700">·</span>}
+                    {item.node}
+                </React.Fragment>
+            ))}
         </div>
         {proposal.conflictFlags !== undefined && proposal.conflictFlags.length > 0 && (
             <div

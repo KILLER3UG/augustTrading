@@ -140,8 +140,18 @@ export const classifyTransientProviderError = (error: unknown): TransientErrorCl
         return { retryable: false, kind: 'billing_exhausted' };
     }
 
-    // 3. Auth — a bad key fails identically on every retry.
-    if (status === 401 || status === 403 || /unauthorized|invalid api key|api key/.test(lower)) {
+    // 3. Auth — a bad key fails identically on every retry. The wording is
+    //    matched SPECIFICALLY, never a bare "api key": gateways phrase their
+    //    own 429s as "Rate limit exceeded for your API key", and a bare
+    //    substring filed a genuine rate limit as a permanent auth wall.
+    //    A 429 status is the wire's word for rate limit and wins over any
+    //    auth-looking prose.
+    if (
+        status !== 429
+        && (status === 401
+            || status === 403
+            || /unauthorized|invalid api key|missing api key|incorrect api key|expired api key|authentication failed/.test(lower))
+    ) {
         return { retryable: false, kind: 'auth' };
     }
 
