@@ -90,6 +90,24 @@ export type PromptProfile = 'auto' | 'reasoning' | 'standard' | 'compact_local';
 /** Concrete prompt profile after resolving 'auto'. */
 export type EffectivePromptProfile = Exclude<PromptProfile, 'auto'>;
 
+export type ModelReadinessGrade = 'desk_ready' | 'caution' | 'unreliable';
+
+export interface ModelReadinessCheckResult {
+  id: string;
+  ok: boolean;
+  detail: string;
+}
+
+export interface ModelReadinessBenchmark {
+  scorePct: number;
+  passed: number;
+  total: number;
+  avgLatencyMs: number;
+  grade: ModelReadinessGrade;
+  checks: ModelReadinessCheckResult[];
+  testedAt: string;
+}
+
 /**
  * Per-model metadata & capability override stored on a ProviderConfig.
  * Every field is optional and backwards-compatible with legacy providers.
@@ -104,6 +122,7 @@ export interface ModelOverride {
   supportsTools?: boolean;
   isFree?: boolean;
   promptProfile?: PromptProfile;
+  readinessBenchmark?: ModelReadinessBenchmark;
 }
 
 /** One model row in a provider's fetched or customized catalog. */

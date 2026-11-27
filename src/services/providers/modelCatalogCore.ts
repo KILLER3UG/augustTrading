@@ -12,6 +12,9 @@ import type {
     ModelCatalogEntry,
     ModelInputTypes,
     ModelOverride,
+    ModelReadinessBenchmark,
+    ModelReadinessCheckResult,
+    ModelReadinessGrade,
     ModelReasoningLevel,
     PromptProfile,
     ProviderConfig,
@@ -504,6 +507,15 @@ export const mergeChosenModels = (
                 ? existing.supportsTools
                 : fetched.supportsTools,
             isFree: existing.isFree !== undefined ? existing.isFree : fetched.isFree,
+            ...(existing.promptProfile !== undefined ? { promptProfile: existing.promptProfile } : {}),
+            ...(existing.readinessBenchmark !== undefined
+                ? {
+                    readinessBenchmark: {
+                        ...existing.readinessBenchmark,
+                        checks: existing.readinessBenchmark.checks.map(c => ({ ...c })),
+                    },
+                }
+                : {}),
         });
     }
 
@@ -621,11 +633,40 @@ const hasOverrideFields = (ov: ModelOverride): boolean =>
         || (ov.reasoningLevels && ov.reasoningLevels.length > 0)
         || ov.supportsTools !== undefined
         || ov.isFree !== undefined
-        || ov.promptProfile !== undefined,
+        || ov.promptProfile !== undefined
+        || ov.readinessBenchmark !== undefined,
     );
 
 export const parsePromptProfile = (raw: unknown): PromptProfile | undefined =>
     raw === 'auto' || raw === 'reasoning' || raw === 'standard' || raw === 'compact_local' ? raw : undefined;
+
+const isReadinessGrade = (raw: unknown): raw is ModelReadinessGrade =>
+    raw === 'desk_ready' || raw === 'caution' || raw === 'unreliable';
+
+export const parseReadinessBenchmark = (raw: unknown): ModelReadinessBenchmark | undefined => {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+    const r = raw as Record<string, unknown>;
+    const scorePct = typeof r.scorePct === 'number' && Number.isFinite(r.scorePct) ? Math.max(0, Math.min(100, Math.round(r.scorePct))) : null;
+    const passed = typeof r.passed === 'number' && Number.isFinite(r.passed) ? Math.max(0, Math.floor(r.passed)) : null;
+    const total = typeof r.total === 'number' && Number.isFinite(r.total) && r.total > 0 ? Math.floor(r.total) : null;
+    const avgLatencyMs = typeof r.avgLatencyMs === 'number' && Number.isFinite(r.avgLatencyMs) ? Math.max(0, Math.round(r.avgLatencyMs)) : 0;
+    const testedAt = typeof r.testedAt === 'string' && r.testedAt.trim() ? r.testedAt.trim().slice(0, 64) : '';
+    if (scorePct === null || passed === null || total === null || !isReadinessGrade(r.grade) || !testedAt) {
+        return undefined;
+    }
+    const checks: ModelReadinessCheckResult[] = Array.isArray(r.checks)
+        ? r.checks
+            .filter((c): c is Record<string, unknown> => Boolean(c && typeof c === 'object' && !Array.isArray(c)))
+            .map(c => ({
+                id: String(c.id ?? '').trim().slice(0, 48),
+                ok: c.ok === true,
+                detail: String(c.detail ?? '').trim().slice(0, 200),
+            }))
+            .filter(c => c.id.length > 0)
+            .slice(0, 12)
+        : [];
+    return { scorePct, passed, total, avgLatencyMs, grade: r.grade, checks, testedAt };
+};
 
 /** Convert ordered `ModelCatalogEntry[]` back to `{ models, modelOverrides }`. */
 export const catalogEntriesToConfigFields = (
@@ -665,6 +706,8 @@ export const catalogEntriesToConfigFields = (
         if (typeof entry.isFree === 'boolean') ov.isFree = entry.isFree;
         const pp = parsePromptProfile(entry.promptProfile);
         if (pp && pp !== 'auto') ov.promptProfile = pp;
+        const rb = parseReadinessBenchmark(entry.readinessBenchmark);
+        if (rb) ov.readinessBenchmark = rb;
         if (hasOverrideFields(ov)) overrides[id] = ov;
     }
 
@@ -738,6 +781,8 @@ export const parseModelOverrides = (raw: unknown): Record<string, ModelOverride>
         if (typeof v.isFree === 'boolean') ov.isFree = v.isFree;
         const pp = parsePromptProfile(v.promptProfile);
         if (pp) ov.promptProfile = pp;
+        const rb = parseReadinessBenchmark(v.readinessBenchmark);
+        if (rb) ov.readinessBenchmark = rb;
         if (hasOverrideFields(ov)) out[id] = ov;
     }
     return Object.keys(out).length > 0 ? out : undefined;

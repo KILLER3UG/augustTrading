@@ -43,6 +43,7 @@ import {
     toggleInputModality,
     type ProviderPresetDef,
 } from '../../services/providers/modelCatalogCore';
+import { formatReadinessBadgeLabel } from '../../services/providers/modelReadinessBenchmarkCore';
 import { validateProviderUrl } from '../../utils/providerUrlValidation';
 import {
     formatModelDisplayName,
@@ -230,6 +231,8 @@ const ProviderManager: React.FC<ProviderManagerProps> = ({
     const [saveError, setSaveError] = useState('');
     const [isTesting, setIsTesting] = useState(false);
     const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
+    const [benchmarkState, setBenchmarkState] = useState<{ modelId: string; completed: number; total: number } | null>(null);
+    const benchmarkAbortRef = useRef<AbortController | null>(null);
     const [isFetchingModels, setIsFetchingModels] = useState(false);
     const [chooseModalCatalog, setChooseModalCatalog] = useState<ModelCatalogEntry[] | null>(null);
     const [newModelId, setNewModelId] = useState('');
@@ -514,6 +517,56 @@ const ProviderManager: React.FC<ProviderManagerProps> = ({
             setIsTesting(false);
         }
     }, [draft, urlValidation]);
+
+    const handleBenchmarkModel = useCallback(async (idx: number): Promise<void> => {
+        if (!draft) return;
+        const entry = draft.entries[idx];
+        if (!entry) return;
+        if (!urlValidation.valid) {
+            setSaveError(urlValidation.message || 'Enter a valid HTTP/HTTPS Base URL before benchmarking.');
+            return;
+        }
+        benchmarkAbortRef.current?.abort();
+        const ctrl = new AbortController();
+        benchmarkAbortRef.current = ctrl;
+        setBenchmarkState({ modelId: entry.id, completed: 0, total: 6 });
+        setSaveError('');
+        try {
+            const { models, modelOverrides } = catalogEntriesToConfigFields(draft.entries);
+            const probeConfig: ProviderConfig = {
+                id: draft.sourceId ?? sanitizeProviderId(draft.providerId || draft.name),
+                name: draft.name.trim() || 'Provider',
+                apiKey: draft.apiKey.trim(),
+                baseUrl: urlValidation.normalizedUrl,
+                apiFormat: draft.apiFormat,
+                isEnabled: true,
+                isBuiltIn: false,
+                models,
+                selectedModel: entry.id,
+                modelOverrides,
+                retryPolicy: draft.retryPolicy,
+            };
+            const { runModelReadinessBenchmark } = await import('../../services/providers/modelReadinessBenchmark');
+            const result = await runModelReadinessBenchmark(
+                probeConfig,
+                entry.id,
+                progress => setBenchmarkState({ modelId: entry.id, completed: progress.completed, total: progress.total }),
+                ctrl.signal,
+            );
+            if (!ctrl.signal.aborted) {
+                updateEntryAt(idx, { readinessBenchmark: result });
+            }
+        } catch (err) {
+            if (!ctrl.signal.aborted) {
+                setSaveError(err instanceof Error ? err.message : 'Model benchmark failed.');
+            }
+        } finally {
+            if (benchmarkAbortRef.current === ctrl) {
+                benchmarkAbortRef.current = null;
+                setBenchmarkState(null);
+            }
+        }
+    }, [draft, urlValidation, updateEntryAt]);
 
     const handleSave = useCallback(async (): Promise<void> => {
         if (!draft) return;
@@ -1153,6 +1206,68 @@ const ProviderManager: React.FC<ProviderManagerProps> = ({
                                                             triggerClassName={selectTriggerCls}
                                                         />
                                                     </div>
+                                                </div>
+
+                                                {/* Readiness Benchmark (lazy-loaded 6-case trading-desk check) */}
+                                                <div className="space-y-2 border-t border-hairline pt-2.5">
+                                                    <div className="flex flex-wrap items-center justify-between gap-2">
+                                                        <div className="min-w-0">
+                                                            <p className="text-ui-dense font-medium text-zinc-200">Desk readiness benchmark</p>
+                                                            <p className="text-ui-2xs text-zinc-500">
+                                                                Runs 6 deterministic checks (JSON, inverted bracket, chop refusal, live tape precedence, injection, Plan Mode).
+                                                            </p>
+                                                        </div>
+                                                        <div className="flex items-center gap-2">
+                                                            {entry.readinessBenchmark && (
+                                                                <span
+                                                                    data-testid="model-readiness-badge"
+                                                                    className={`inline-flex min-h-[24px] items-center rounded-control border px-2 py-0.5 font-mono text-ui-2xs ${
+                                                                        entry.readinessBenchmark.grade === 'desk_ready'
+                                                                            ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
+                                                                            : entry.readinessBenchmark.grade === 'unreliable'
+                                                                                ? 'border-rose-500/40 bg-rose-500/10 text-rose-300'
+                                                                                : 'border-hairline bg-zinc-900 text-zinc-300'
+                                                                    }`}
+                                                                >
+                                                                    {formatReadinessBadgeLabel(entry.readinessBenchmark)}
+                                                                </span>
+                                                            )}
+                                                            <button
+                                                                type="button"
+                                                                data-testid="override-benchmark-btn"
+                                                                disabled={benchmarkState !== null}
+                                                                onClick={() => { void handleBenchmarkModel(idx); }}
+                                                                className="flex h-7 min-w-[24px] items-center gap-1.5 rounded-control border border-hairline bg-zinc-900 px-2.5 text-ui-2xs font-medium text-zinc-200 transition-colors hover:border-line hover:bg-zinc-800 hover:text-zinc-100 disabled:cursor-not-allowed disabled:opacity-50"
+                                                            >
+                                                                {benchmarkState?.modelId === entry.id
+                                                                    ? `Testing ${Math.min(benchmarkState.completed + 1, benchmarkState.total)}/${benchmarkState.total}…`
+                                                                    : 'Benchmark model'}
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                    {entry.readinessBenchmark && entry.readinessBenchmark.checks.length > 0 && (
+                                                        <details className="rounded-control border border-hairline bg-zinc-900/60 px-2.5 py-1.5">
+                                                            <summary className="flex min-h-[24px] cursor-pointer list-none items-center justify-between text-ui-2xs font-medium text-zinc-400 hover:text-zinc-200">
+                                                                <span>
+                                                                    {entry.readinessBenchmark.passed}/{entry.readinessBenchmark.total} checks passed
+                                                                </span>
+                                                                <span className="font-mono text-zinc-500">
+                                                                    {entry.readinessBenchmark.testedAt.slice(0, 10)}
+                                                                </span>
+                                                            </summary>
+                                                            <ul className="mt-1.5 space-y-1 border-t border-hairline pt-1.5">
+                                                                {entry.readinessBenchmark.checks.map(chk => (
+                                                                    <li key={chk.id} className="flex items-start gap-2 text-ui-2xs leading-4 text-zinc-400">
+                                                                        <span className={`font-mono font-semibold ${chk.ok ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                                                            {chk.ok ? 'PASS' : 'FAIL'}
+                                                                        </span>
+                                                                        <span className="font-mono text-zinc-300">{chk.id}</span>
+                                                                        <span className="text-zinc-500">— {chk.detail}</span>
+                                                                    </li>
+                                                                ))}
+                                                            </ul>
+                                                        </details>
+                                                    )}
                                                 </div>
 
                                                 {/* Reasoning Levels Toggle + Editable Mapping Rows */}
