@@ -172,6 +172,8 @@ export const runToolTurn = async (req: ToolTurnRequest): Promise<ToolTurnOutcome
     // below, and the recorder itself never throws.
     const capturedToolLines: string[] = [];
     const capturedActions: ToolAction[] = [];
+    const capturedToolTrajectory: Array<{ name: string; args: Record<string, unknown>; ok: boolean }> = [];
+    const pendingToolCalls = new Map<string, { name: string; args: Record<string, unknown> }>();
     const teedEvents: ToolTurnEvents = {
         ...req.events,
         addToolLine: line => { capturedToolLines.push(line); req.events.addToolLine(line); },
@@ -181,6 +183,8 @@ export const runToolTurn = async (req: ToolTurnRequest): Promise<ToolTurnOutcome
     let usage = emptyTokenUsage();
     let usageCalls = 0;
     const callerOnUsage = req.transport.onUsage;
+    const callerOnToolStart = req.transport.onToolStart;
+    const callerOnToolEnd = req.transport.onToolEnd;
     // The wire audit, collected per CALL — the same discipline as the usage
     // above: one turn makes several requests, and a turn's record has to say
     // what EACH of them asked for.
@@ -194,6 +198,23 @@ export const runToolTurn = async (req: ToolTurnRequest): Promise<ToolTurnOutcome
         transport: {
             ...req.transport,
             turnIntentKey,
+            onToolStart: call => {
+                pendingToolCalls.set(call.id, {
+                    name: call.name,
+                    args: call.arguments && typeof call.arguments === 'object' ? { ...call.arguments } : {},
+                });
+                callerOnToolStart?.(call);
+            },
+            onToolEnd: result => {
+                const started = pendingToolCalls.get(result.toolCallId);
+                pendingToolCalls.delete(result.toolCallId);
+                capturedToolTrajectory.push({
+                    name: started?.name ?? result.name,
+                    args: started?.args ?? {},
+                    ok: result.ok === true,
+                });
+                callerOnToolEnd?.(result);
+            },
             onUsage: (frame: TokenUsage) => {
                 usage = mergeTokenUsage(usage, frame);
                 usageCalls += 1;
@@ -221,6 +242,7 @@ export const runToolTurn = async (req: ToolTurnRequest): Promise<ToolTurnOutcome
         finalText: outcome.text ?? '',
         reasoning: outcome.reasoning ?? '',
         toolEvents: capturedToolLines,
+        toolTrajectory: capturedToolTrajectory,
         actions: capturedActions.flat(),
         // The STRUCTURED plan, not a regex over the receipt prose. The
         // playbook travels beside the plan id so a corpus row can be scored

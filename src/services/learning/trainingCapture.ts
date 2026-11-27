@@ -44,8 +44,14 @@
  */
 
 import type { ToolAction } from '../../types/message';
+import type { LoggedTrade } from '../../types/trade';
+import type { SignalRow } from '../../types/signal';
+import type { PaperSettledTrade } from '../paper/paperCore';
+import type { DeclineRecord } from '../trade/declineLog';
+import { TradeOutcome } from '../../types/enums';
 
 export const TRAINING_CAPTURE_SCHEMA_VERSION = 1;
+export const VERIFIED_TRAJECTORY_SCHEMA = 'august.verified_trajectory.v1';
 export const TRAINING_CAPTURE_KEY = 'training_capture_v1';
 export const TRAINING_CAPTURE_ENABLED_KEY = 'training_capture_v1_enabled';
 /** Record cap — refusals surface, nothing evicts. */
@@ -53,6 +59,52 @@ export const TRAINING_CAPTURE_MAX_RECORDS = 400;
 /** One record's own ceiling: the reasoning trace is the payload, but a
  *  single pathological turn must not eat the store. Truncation is FLAGGED. */
 export const TRAINING_CAPTURE_MAX_RECORD_CHARS = 80_000;
+
+export interface CapturedToolStep {
+    name: string;
+    args: Record<string, unknown>;
+    ok: boolean;
+}
+
+const SECRET_KEY_RE = /(?:api[_-]?key|secret|token|password|passwd|authorization|bearer|private[_-]?key|cookie)/i;
+const SECRET_VALUE_RE = /\b(?:sk-[a-zA-Z0-9_-]{12,}|Bearer\s+[a-zA-Z0-9._-]{10,}|ghp_[a-zA-Z0-9]{20,}|AIza[0-9A-Za-z_-]{20,})\b/g;
+
+export const redactSensitiveText = (text: string): string =>
+    String(text ?? '').replace(SECRET_VALUE_RE, '[REDACTED]');
+
+const sanitizeValue = (value: unknown, depth = 0): unknown => {
+    if (value === null || value === undefined) return value;
+    if (typeof value === 'string') {
+        const clean = redactSensitiveText(value);
+        return clean.length > 300 ? `${clean.slice(0, 300)}…` : clean;
+    }
+    if (typeof value === 'number' || typeof value === 'boolean') return value;
+    if (depth >= 3) return '[clipped]';
+    if (Array.isArray(value)) return value.slice(0, 12).map(item => sanitizeValue(item, depth + 1));
+    if (typeof value === 'object') {
+        const out: Record<string, unknown> = {};
+        let count = 0;
+        for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+            if (count >= 16) break;
+            out[k] = SECRET_KEY_RE.test(k) ? '[REDACTED]' : sanitizeValue(v, depth + 1);
+            count += 1;
+        }
+        return out;
+    }
+    return String(value).slice(0, 120);
+};
+
+export const sanitizeToolTrajectory = (
+    steps: readonly CapturedToolStep[] | undefined,
+): CapturedToolStep[] =>
+    (steps ?? [])
+        .filter(s => s && typeof s.name === 'string' && s.name.trim().length > 0)
+        .slice(-24)
+        .map(s => ({
+            name: s.name.trim().slice(0, 64),
+            args: (sanitizeValue(s.args ?? {}, 0) as Record<string, unknown>) ?? {},
+            ok: s.ok === true,
+        }));
 
 export interface DecisionSnapshot {
     regimeId: string | null;
@@ -81,6 +133,8 @@ export interface TrainingCaptureRecord {
     reasoning: string;
     /** The tool trail, one line per call/result pair. */
     toolEvents: string[];
+    /** Structured redacted tool-call trajectory (name, sanitized args, ok). */
+    toolTrajectory?: CapturedToolStep[];
     /** The structured actions (present_trade, decline_trade, emit_signal…). */
     actions: ToolAction[];
     /** The plan id, when the turn minted one — the outcome-join key. */
@@ -215,6 +269,7 @@ export interface TurnCaptureInput {
     finalText: string;
     reasoning: string;
     toolEvents: string[];
+    toolTrajectory?: CapturedToolStep[];
     actions: ToolAction[];
     planId: string | null;
     /** Optional on the input so an older caller cannot fail to compile; the
@@ -265,6 +320,9 @@ export const captureTurn = async (input: TurnCaptureInput): Promise<CaptureResul
                 finalText: parts[1].text,
                 reasoning: parts[2].text,
                 toolEvents: input.toolEvents.slice(-40),
+                ...(input.toolTrajectory && input.toolTrajectory.length > 0
+                    ? { toolTrajectory: sanitizeToolTrajectory(input.toolTrajectory) }
+                    : {}),
                 actions: input.actions,
                 planId: input.planId,
                 playbookId: input.playbookId ?? null,
@@ -329,4 +387,187 @@ export const exportCorpusJsonl = async (
         }));
     }
     return { ok: true, jsonl: lines.join('\n') };
+};
+
+export interface VerifiedTrajectoryOutcome {
+    kind: 'settled' | 'rejected';
+    realized_r: number | null;
+    reason?: string;
+}
+
+export interface VerifiedTrajectoryRecord {
+    schema: typeof VERIFIED_TRAJECTORY_SCHEMA;
+    id: string;
+    timestamp: string;
+    symbol: string | null;
+    context: {
+        surface: 'dock' | 'chat';
+        userText: string;
+        effort: string | null;
+        model: { provider: string; model: string } | null;
+        decisionSnapshot: DecisionSnapshot | null;
+    };
+    tool_trajectory: CapturedToolStep[];
+    decision: {
+        planId: string | null;
+        playbookId: string | null;
+        finalText: string;
+        reasoning: string;
+        actions: ToolAction[];
+    };
+    outcome: VerifiedTrajectoryOutcome;
+}
+
+export interface VerifiedTrajectorySources {
+    journalTrades?: readonly LoggedTrade[];
+    signalRows?: readonly SignalRow[];
+    paperTrades?: readonly PaperSettledTrade[];
+    declines?: readonly DeclineRecord[];
+}
+
+const DECLINE_MATCH_WINDOW_MS = 15 * 60_000;
+
+const realizedRFromLoggedTrade = (t: LoggedTrade): number | null => {
+    if (t.outcome !== TradeOutcome.WIN && t.outcome !== TradeOutcome.LOSS) return null;
+    if (typeof t.netR === 'number' && Number.isFinite(t.netR)) return t.netR;
+    if (typeof t.realizedR === 'number' && Number.isFinite(t.realizedR)) return t.realizedR;
+    if (typeof t.rMultiple === 'number' && Number.isFinite(t.rMultiple)) return t.rMultiple;
+    return null;
+};
+
+/**
+ * Pure filter for verified fine-tuning trajectories:
+ * keeps ONLY grounded turns (`toolTrajectory.length > 0 || toolEvents.length > 0`)
+ * that resolve to EITHER a settled finite `realized_r` (journal / signal ledger /
+ * closed paper trade) OR an explicit `decline_trade` / recorded trader rejection.
+ * Redacts sensitive tokens/keys cleanly.
+ */
+export const filterVerifiedTrajectories = (
+    turns: readonly TrainingCaptureRecord[],
+    sources: VerifiedTrajectorySources,
+): VerifiedTrajectoryRecord[] => {
+    const journalByPlan = new Map<string, number>();
+    for (const t of sources.journalTrades ?? []) {
+        const r = realizedRFromLoggedTrade(t);
+        if (r === null) continue;
+        if (t.planId) journalByPlan.set(t.planId, r);
+        if (t.paper?.positionId) journalByPlan.set(t.paper.positionId, r);
+    }
+
+    const signalById = new Map<string, number>();
+    for (const s of sources.signalRows ?? []) {
+        const res = s.resolution;
+        if (!res || res.status === 'never_triggered' || !Number.isFinite(res.outcomeR)) continue;
+        signalById.set(s.signal.id, res.outcomeR);
+    }
+
+    const paperById = new Map<string, number>();
+    for (const p of sources.paperTrades ?? []) {
+        if (!Number.isFinite(p.rMultiple)) continue;
+        paperById.set(p.positionId, p.rMultiple);
+    }
+
+    const declines = sources.declines ?? [];
+    const verified: VerifiedTrajectoryRecord[] = [];
+
+    for (let i = 0; i < turns.length; i += 1) {
+        const r = turns[i];
+        const trajectory = sanitizeToolTrajectory(r.toolTrajectory);
+        const isGrounded = trajectory.length > 0 || (Array.isArray(r.toolEvents) && r.toolEvents.length > 0);
+        if (!isGrounded) continue;
+
+        let outcome: VerifiedTrajectoryOutcome | null = null;
+
+        // 1. Settled finite realized_r join (planId -> journal / signal / paper)
+        if (r.planId) {
+            const settledR =
+                journalByPlan.get(r.planId)
+                ?? signalById.get(r.planId)
+                ?? paperById.get(r.planId);
+            if (typeof settledR === 'number' && Number.isFinite(settledR)) {
+                outcome = { kind: 'settled', realized_r: Math.round(settledR * 1000) / 1000 };
+            }
+        }
+
+        // 2. Explicit decline_trade tool step or recorded trader decline
+        if (!outcome) {
+            const declineStep = trajectory.find(s => s.name === 'decline_trade' && s.ok);
+            const hasDeclineEvent = (r.toolEvents ?? []).some(e => /\bdecline_trade\b/i.test(e));
+            const turnMs = Date.parse(r.at);
+            const matchedDecline = declines.find(d => {
+                if (r.planId && d.reason.includes(r.planId)) return true;
+                if (r.symbol && d.symbol.toUpperCase() === r.symbol.toUpperCase() && Number.isFinite(turnMs)) {
+                    const decMs = Date.parse(d.createdAt);
+                    return Number.isFinite(decMs) && Math.abs(decMs - turnMs) <= DECLINE_MATCH_WINDOW_MS;
+                }
+                return false;
+            });
+            if (declineStep || hasDeclineEvent || matchedDecline) {
+                const rawReason =
+                    (typeof declineStep?.args?.reason === 'string' ? declineStep.args.reason : '')
+                    || matchedDecline?.reason
+                    || 'Declined setup';
+                outcome = {
+                    kind: 'rejected',
+                    realized_r: null,
+                    reason: redactSensitiveText(rawReason).slice(0, 300),
+                };
+            }
+        }
+
+        if (!outcome) continue;
+
+        verified.push({
+            schema: VERIFIED_TRAJECTORY_SCHEMA,
+            id: r.planId || `traj-${i + 1}-${r.at}`,
+            timestamp: r.at,
+            symbol: r.symbol,
+            context: {
+                surface: r.surface,
+                userText: redactSensitiveText(r.userText),
+                effort: r.effort,
+                model: r.model,
+                decisionSnapshot: r.snapshot,
+            },
+            tool_trajectory: trajectory,
+            decision: {
+                planId: r.planId,
+                playbookId: r.playbookId,
+                finalText: redactSensitiveText(r.finalText),
+                reasoning: redactSensitiveText(r.reasoning),
+                actions: r.actions,
+            },
+            outcome,
+        });
+    }
+
+    return verified;
+};
+
+export type VerifiedTrajectoryExportResult =
+    | { ok: true; jsonl: string; verifiedCount: number; totalCount: number }
+    | { ok: false; reason: string };
+
+/** Export ONLY verified (grounded + settled or rejected) trajectories as JSONL. */
+export const exportVerifiedTrajectoriesJsonl = async (
+    sources: VerifiedTrajectorySources,
+    overrideTurns?: readonly TrainingCaptureRecord[],
+): Promise<VerifiedTrajectoryExportResult> => {
+    let records: readonly TrainingCaptureRecord[];
+    if (overrideTurns) {
+        records = overrideTurns;
+    } else if (isDesktop()) {
+        const read = await readCorpus();
+        if (!read.ok) return { ok: false, reason: read.reason };
+        records = read.corpus.records;
+    } else {
+        records = [];
+    }
+    const verified = filterVerifiedTrajectories(records, sources);
+    return {
+        ok: true,
+        jsonl: verified.map(v => JSON.stringify(v)).join('\n'),
+        verifiedCount: verified.length,
+        totalCount: records.length,
+    };
 };

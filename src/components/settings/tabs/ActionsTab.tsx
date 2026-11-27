@@ -8,7 +8,18 @@ import { StorageLocationCard } from '../StorageLocationCard';
 import { ToggleSwitch } from '../../shared/ToggleSwitch';
 import { SettingsPageHeader } from './shared';
 import { exportTrainingDataJSONL, trainingRecordFor } from '../../../utils/reportExport';
-import { captureStatus, exportCorpusJsonl, setCaptureEnabled, isCaptureEnabled, lastCaptureFailureInfo, TRAINING_CAPTURE_MAX_RECORDS } from '../../../services/learning/trainingCapture';
+import {
+    captureStatus,
+    exportCorpusJsonl,
+    exportVerifiedTrajectoriesJsonl,
+    setCaptureEnabled,
+    isCaptureEnabled,
+    lastCaptureFailureInfo,
+    TRAINING_CAPTURE_MAX_RECORDS,
+} from '../../../services/learning/trainingCapture';
+import { readSignals } from '../../../services/signals/signalLedger';
+import { listDeclines } from '../../../services/trade/declineLog';
+import { getPaperAccount } from '../../../services/paper/PaperBrokerService';
 import { collectRedactedDiagnosticBundle } from '../../../services/trade/diagnosticsRuntime';
 import type { SettingsTabProps } from './types';
 
@@ -27,6 +38,8 @@ const ActionsTab: React.FC<{ tab: ActionsTabProps }> = ({ tab: props }) => {
     // act. State refreshes on mount and after each flip.
     const [capture, setCapture] = React.useState<{ enabled: boolean; desktop: boolean; recordCount: number; refusedOnce: boolean; lastAt: string | null } | null>(null);
     const [corpusBusy, setCorpusBusy] = React.useState(false);
+    const [verifiedBusy, setVerifiedBusy] = React.useState(false);
+    const [verifiedCount, setVerifiedCount] = React.useState<number | null>(null);
     const [corpusError, setCorpusError] = React.useState<string | null>(null);
     const [diagBusy, setDiagBusy] = React.useState(false);
     const [diagNote, setDiagNote] = React.useState<string | null>(null);
@@ -50,11 +63,55 @@ const ActionsTab: React.FC<{ tab: ActionsTabProps }> = ({ tab: props }) => {
             setDiagBusy(false);
         }
     };
-    const refreshCapture = React.useCallback(() => { void captureStatus().then(setCapture); }, []);
+    const collectVerifiedSources = React.useCallback(async () => {
+        const paper = await getPaperAccount().catch(() => null);
+        return {
+            journalTrades: props.loggedTrades ?? [],
+            signalRows: readSignals(),
+            paperTrades: paper?.closedTrades ?? [],
+            declines: listDeclines(),
+        };
+    }, [props.loggedTrades]);
+
+    const refreshCapture = React.useCallback(() => {
+        void captureStatus().then(async status => {
+            setCapture(status);
+            if (status.desktop && status.recordCount > 0) {
+                const sources = await collectVerifiedSources();
+                const preview = await exportVerifiedTrajectoriesJsonl(sources);
+                setVerifiedCount(preview.ok ? preview.verifiedCount : null);
+            } else {
+                setVerifiedCount(0);
+            }
+        });
+    }, [collectVerifiedSources]);
     React.useEffect(() => { refreshCapture(); }, [refreshCapture]);
     const flipCapture = () => {
         setCaptureEnabled(!isCaptureEnabled());
         refreshCapture();
+    };
+    const exportVerified = async () => {
+        setVerifiedBusy(true);
+        setCorpusError(null);
+        try {
+            const sources = await collectVerifiedSources();
+            const result = await exportVerifiedTrajectoriesJsonl(sources);
+            if (!result.ok) {
+                setCorpusError(result.reason);
+                return;
+            }
+            setVerifiedCount(result.verifiedCount);
+            const stamp = new Date().toISOString().slice(0, 10);
+            const blob = new Blob([result.jsonl], { type: 'application/jsonl' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `august-verified-trajectories-${stamp}.jsonl`;
+            link.click();
+            setTimeout(() => URL.revokeObjectURL(url), 60_000);
+        } finally {
+            setVerifiedBusy(false);
+        }
     };
     const exportCorpus = async () => {
         setCorpusBusy(true);
@@ -153,15 +210,30 @@ const ActionsTab: React.FC<{ tab: ActionsTabProps }> = ({ tab: props }) => {
                         {`Export FAILED — the corpus could not be read: ${corpusError}. The stored turns were not replaced; check the desktop store.`}
                     </p>
                 )}
-                <button
-                    type="button"
-                    data-testid="export-training-corpus"
-                    disabled={corpusBusy || !capture?.desktop || capture.recordCount === 0}
-                    onClick={() => { void exportCorpus(); }}
-                    className="mt-2.5 rounded-control border border-hairline bg-zinc-900 px-3 py-1.5 text-ui-xs font-semibold text-zinc-200 transition-colors hover:border-line hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                    {corpusBusy ? 'Preparing…' : 'Export training corpus (JSONL)'}
-                </button>
+                <div className="mt-2.5 flex flex-wrap items-center gap-2">
+                    <button
+                        type="button"
+                        data-testid="export-training-corpus"
+                        disabled={corpusBusy || !capture?.desktop || capture.recordCount === 0}
+                        onClick={() => { void exportCorpus(); }}
+                        className="min-h-[28px] rounded-control border border-hairline bg-zinc-900 px-3 py-1.5 text-ui-xs font-semibold text-zinc-200 transition-colors hover:border-line hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                        {corpusBusy ? 'Preparing…' : 'Export training corpus (JSONL)'}
+                    </button>
+                    <button
+                        type="button"
+                        data-testid="export-verified-trajectories"
+                        disabled={verifiedBusy || !capture?.desktop || (verifiedCount ?? 0) === 0}
+                        onClick={() => { void exportVerified(); }}
+                        className="min-h-[28px] rounded-control border border-hairline bg-zinc-900 px-3 py-1.5 text-ui-xs font-semibold text-zinc-200 transition-colors hover:border-line hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                        {verifiedBusy
+                            ? 'Preparing…'
+                            : verifiedCount !== null && capture?.desktop
+                                ? `Export verified trajectories (${verifiedCount}/${capture.recordCount} · JSONL)`
+                                : 'Export verified trajectories (JSONL)'}
+                    </button>
+                </div>
             </section>
 
             {/* Diagnostics — 1-click redacted troubleshooting bundle export. */}
