@@ -91,6 +91,26 @@ export const clearCachedRegimesForTests = (): void => {
 
 export type ScopedRuleCandle = Omit<Kline, 'volume'> & { volume?: number };
 
+/** Refine `regimeRead`'s structural state (`trend` | `range` | `neutral`) with
+ *  directional slope (`bull` | `bear`) when trending so counter-trend conflict
+ *  checks distinguish uptrends from downtrends. */
+export const resolveDirectionalRegimeLabel = (
+    candles: ReadonlyArray<{ close: number }>,
+    direction: 'trend' | 'range' | 'neutral',
+): string => {
+    if (direction !== 'trend' || candles.length < 20) return direction;
+    const recent = candles.slice(-20);
+    const earlier = candles.slice(-Math.min(50, candles.length), -20);
+    const avgRecent = recent.reduce((s, c) => s + c.close, 0) / recent.length;
+    const avgEarlier = earlier.length > 0
+        ? earlier.reduce((s, c) => s + c.close, 0) / earlier.length
+        : recent[0].close;
+    const lastClose = recent[recent.length - 1].close;
+    if (lastClose < avgEarlier && avgRecent < avgEarlier) return 'bear';
+    if (lastClose > avgEarlier && avgRecent > avgEarlier) return 'bull';
+    return direction;
+};
+
 export const collectLiveMarketContextForSymbol = (
     symbol: string,
     opts?: { evalCandles?: readonly ScopedRuleCandle[] | null; interval?: string | null; markPrice?: number | null; nowMs?: number },
@@ -104,8 +124,8 @@ export const collectLiveMarketContextForSymbol = (
         const klines: Kline[] = opts.evalCandles.map(c => ({ ...c, volume: c.volume ?? 0 }));
         const read = regimeRead(klines);
         if (read) {
-            regime = read.direction;
-            recordCachedRegime(cleanSymbol, read.direction, tf ?? undefined, nowMs);
+            regime = resolveDirectionalRegimeLabel(klines, read.direction);
+            recordCachedRegime(cleanSymbol, regime, tf ?? undefined, nowMs);
         }
     }
     const regimesByTf = getCachedRegimesByTf(cleanSymbol, nowMs);

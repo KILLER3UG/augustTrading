@@ -39,6 +39,7 @@ const desktopStore = new Map<string, unknown>();
 import { buildTurnIdempotencyKey, checkTurnIdempotency, clearTurnIdempotency, recordTurnIdempotency } from '../src/services/analysis/turnIdempotencyCore';
 import { formatLiveTapeHeader } from '../src/services/trade/scopedRules';
 import { evaluateProposalConflicts } from '../src/services/trade/proposalConflictSensorCore';
+import { resolveDirectionalRegimeLabel } from '../src/services/trade/scopedRulesRuntime';
 import { runPresentTrade } from '../src/services/trade/presentTradeTool';
 import { EFFORT_BY_TASK, resolveComposerEffort } from '../src/services/providers/reasoningControls';
 import { selectFailureEpisodes } from '../src/services/learning/memoryRecallCore';
@@ -220,6 +221,13 @@ test('Sensor: all 5 conflict checks fire individually and adversary invokes stri
     assert.equal(multi.flagCount, 2);
     assert.equal(multi.severity, 'high');
     assert.equal(multi.shouldInvokeAdversary, true);
+
+    // Directional polarity refinement on cached regime reads
+    const falling = Array.from({ length: 60 }, (_, i) => ({ close: 1000 - i * 5 }));
+    const rising = Array.from({ length: 60 }, (_, i) => ({ close: 700 + i * 5 }));
+    assert.equal(resolveDirectionalRegimeLabel(falling, 'trend'), 'bear');
+    assert.equal(resolveDirectionalRegimeLabel(rising, 'trend'), 'bull');
+    assert.equal(resolveDirectionalRegimeLabel(falling, 'range'), 'range');
 });
 
 test('Sensor + Verifier: runPresentTrade stamps conflictFlags & EFFORT_BY_TASK.adversary is high', async () => {

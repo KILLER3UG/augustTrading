@@ -53,7 +53,7 @@ import { anchoredSlice, computeVwap, vwapPosition } from '../market/vwapCore';
 import { isSupportedReplaySetup, REPLAY_SUPPORTED_SETUPS, runSetupReplay, type SetupReplayInput } from '../market/setupReplayCore';
 import { detectDivergences, type DivergenceIndicator } from '../market/divergenceCore';
 import { analyzeSpotVsPerp, type SpotVsPerpResult } from '../market/spotVsPerpCore';
-import { recordCachedRegime } from '../trade/scopedRulesRuntime';
+import { recordCachedRegime, resolveDirectionalRegimeLabel } from '../trade/scopedRulesRuntime';
 
 export type EvidenceLevel = 'structural' | 'documented' | 'folklore';
 
@@ -767,7 +767,7 @@ export const runRegimeTool = async (
                 summary: '', reason: `need ≥80 closed candles on ${tf} (got ${candles.length})`,
             }));
         }
-        recordCachedRegime(symbol, read.direction, tf, asofMs);
+        recordCachedRegime(symbol, resolveDirectionalRegimeLabel(candles, read.direction), tf, asofMs);
         // Wave B quant pack: Yang-Zhang vol + percentiles (90-bar floor),
         // compression flags, expected move, Hurst/VR/trend-scan (100-bar
         // floor) and the Al Brooks bar-geometry flags. Every floor refusal
@@ -2023,7 +2023,7 @@ export const buildDecisionSnapshot = async (symbolInput: string, asofMs: number 
         const atr = atr14(candles);
         if (candles.length < 30 || !(atr > 0)) return null;
         const reg = regimeRead(candles);
-        if (reg) recordCachedRegime(symbol, reg.direction, asofMs);
+        if (reg) recordCachedRegime(symbol, resolveDirectionalRegimeLabel(candles, reg.direction), asofMs);
         const day = utcDayStart(asofMs);
         const prevDay = candles.filter(c => c.time >= day - UTC_DAY_MS && c.time < day);
         const prevHigh = prevDay.length >= 4 ? Math.max(...prevDay.map(c => c.high)) : null;
