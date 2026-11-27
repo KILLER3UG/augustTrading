@@ -5813,15 +5813,16 @@ ${body}`);
                 const dirRaw = asString(tmArgs.direction).toLowerCase();
                 const dirWord = dirRaw === 'long' ? 'Long' : dirRaw === 'short' ? 'Short' : '';
                 if (!dirWord) {
-                    return rejectedResult(call, formatTypedRepairRejection({
+                    const legacyLine = `trade_math rejected: direction must be "Long" or "Short" (case-insensitive); got "${asString(tmArgs.direction) || '—'}".`;
+                    return rejectedResult(call, `${legacyLine}\n${formatTypedRepairRejection({
                         tool: 'trade_math',
                         errorCode: 'invalid_direction',
                         field: 'direction',
                         expectedConstraint: 'direction must be "Long" or "Short" (case-insensitive)',
                         repairHint: 'Pass direction: "Long" or "Short" and retry once.',
                         autoRepairRemaining: 1,
-                        message: `trade_math rejected: direction must be "Long" or "Short" (case-insensitive); got "${asString(tmArgs.direction) || '—'}".`,
-                    }));
+                        message: legacyLine,
+                    })}`);
                 }
                 const entryNum = Number(tmArgs.entry);
                 const stopNum = Number(tmArgs.stop_loss);

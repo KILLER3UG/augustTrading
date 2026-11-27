@@ -353,15 +353,14 @@ export const stampAutoRepairBudgetOnRejection = (
     content: string,
     autoRepairRemaining: number,
 ): { content: string; isTypedRepair: boolean } => {
-    try {
-        const parsed = JSON.parse(content) as Partial<TypedRepairRejectionPayload> | null;
-        if (!parsed || parsed.kind !== 'typed_repair_rejection' || typeof parsed.tool !== 'string') {
-            return { content, isTypedRepair: false };
-        }
-        const remaining = Math.max(0, Math.floor(autoRepairRemaining));
-        return {
-            isTypedRepair: true,
-            content: formatTypedRepairRejection({
+    const rewrite = (jsonText: string): string | null => {
+        try {
+            const parsed = JSON.parse(jsonText) as Partial<TypedRepairRejectionPayload> | null;
+            if (!parsed || parsed.kind !== 'typed_repair_rejection' || typeof parsed.tool !== 'string') {
+                return null;
+            }
+            const remaining = Math.max(0, Math.floor(autoRepairRemaining));
+            return formatTypedRepairRejection({
                 tool: parsed.tool,
                 errorCode: parsed.errorCode ?? 'validation_failed',
                 field: parsed.field,
@@ -369,9 +368,18 @@ export const stampAutoRepairBudgetOnRejection = (
                 repairHint: parsed.repairHint ?? 'Fix the invalid field and retry once.',
                 autoRepairRemaining: remaining,
                 message: parsed.message,
-            }),
-        };
-    } catch {
-        return { content, isTypedRepair: false };
+            });
+        } catch {
+            return null;
+        }
+    };
+    const direct = rewrite(content);
+    if (direct !== null) return { content: direct, isTypedRepair: true };
+    const idx = content.indexOf('\n{');
+    if (idx > 0) {
+        const prefix = content.slice(0, idx);
+        const tail = rewrite(content.slice(idx + 1));
+        if (tail !== null) return { content: `${prefix}\n${tail}`, isTypedRepair: true };
     }
+    return { content, isTypedRepair: false };
 };

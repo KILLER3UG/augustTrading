@@ -188,6 +188,7 @@ describe('Wave 1 — Pre-Flight <live_tape> Hydration & KV-Cache Purity', () => 
     });
 
     it('hydrates mark, 15m/1h/4h cached regimes, funding, UTC session, paper BTC-beta heat, and #D distances without mutating static prefix', async () => {
+        (g.localStorage as Storage).setItem('last_active_user', 'wave1-test-trader');
         const nowMs = Date.UTC(2026, 10, 27, 15, 0, 0); // NewYork UTC session
         recordCachedRegime('BTCUSDT', 'trend', '15m', nowMs);
         recordCachedRegime('BTCUSDT', 'range', '1h', nowMs);
