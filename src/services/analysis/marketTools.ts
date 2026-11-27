@@ -53,7 +53,12 @@ import { anchoredSlice, computeVwap, vwapPosition } from '../market/vwapCore';
 import { isSupportedReplaySetup, REPLAY_SUPPORTED_SETUPS, runSetupReplay, type SetupReplayInput } from '../market/setupReplayCore';
 import { detectDivergences, type DivergenceIndicator } from '../market/divergenceCore';
 import { analyzeSpotVsPerp, type SpotVsPerpResult } from '../market/spotVsPerpCore';
-import { recordCachedRegime, resolveDirectionalRegimeLabel } from '../trade/scopedRulesRuntime';
+import {
+    recordCachedRegime,
+    recordCachedReplayStats,
+    recordCachedSpotVsPerp,
+    resolveDirectionalRegimeLabel,
+} from '../trade/scopedRulesRuntime';
 
 export type EvidenceLevel = 'structural' | 'documented' | 'folklore';
 
@@ -1286,6 +1291,11 @@ export const runSetupReplayTool = async (
                 })),
             };
         }
+        recordCachedReplayStats(symbol, {
+            sampleCount: result.sampleCount,
+            winRate: result.winRate,
+            expectancyR: result.netExpectancyR,
+        }, asofMs);
         const wrPct = result.winRate !== null ? `${Math.round(result.winRate * 100)}%` : 'n/a';
         const netExp = result.netExpectancyR !== null ? `${result.netExpectancyR >= 0 ? '+' : ''}${result.netExpectancyR}R` : 'n/a';
         return {
@@ -2093,6 +2103,9 @@ export const runSpotVsPerpTool = async (
             perpKlines,
             fundingRate,
         });
+        if (result.spotAvailable && result.regime) {
+            recordCachedSpotVsPerp(symbol, result.regime, asofMs);
+        }
         if (!result.spotAvailable && result.reason) {
             notes.push(`spot unavailable: ${result.reason}`);
         }

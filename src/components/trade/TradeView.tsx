@@ -23,7 +23,12 @@ import { ProviderConfig } from '../../types/provider';
 import { TradeAnalysis, LoggedTrade, Message, Kline } from '../../types';
 import { fetchMarkIndex, fetchFuturesTicker24h, fetchDerivativesData } from '../../services/analysis/MarketDataService';
 import { latestChartVerdict, verdictLevels } from '../../services/trade/chartData';
-import { loadSessionModelDrawings, flushDrawings, type ChartDrawing } from '../../services/trade/chartDrawings';
+import {
+    loadSessionModelDrawings,
+    flushDrawings,
+    filterDrawingsForSymbol,
+    type ChartDrawing,
+} from '../../services/trade/chartDrawings';
 import { drawingsControl, capDrawings } from '../../services/trade/drawingsControl';
 import type { TradeProposal } from '../../services/trade/proposedTrade';
 import type { SettlementCorrectionProposal } from '../../services/trade/settlementCorrection';
@@ -953,16 +958,30 @@ const TradeView: React.FC<TradeViewProps> = ({
         !turn || (turn.sid === chatStore.getActiveId() && turn.symbol === symbolRef.current
             && loadedBucketRef.current === `${turn.sid}:${turn.symbol}`);
     const addModelDrawings = useCallback((drawings: ChartDrawing[], turn?: PanelTurnContext): void => {
-        if (isViewTurn(turn)) {
-            // The SAME cap the store applies, via capDrawings — it used to be
-            // a hardcoded 60 against the store's 40, so the view accepted
-            // twenty more shapes than storage could keep and the user watched
-            // them vanish on reload. One number, applied in both places.
-            setModelDrawings(prev => capDrawings([...prev, ...drawings]));
-            return;
+        const sid = turn?.sid ?? chatStore.getActiveId();
+        const fallbackSym = (turn?.symbol ?? symbolRef.current).trim().toUpperCase();
+        const viewSym = symbolRef.current.trim().toUpperCase();
+        const forView: ChartDrawing[] = [];
+        const offViewBySym = new Map<string, ChartDrawing[]>();
+        for (const d of drawings) {
+            const targetSym = d.symbol?.trim().toUpperCase() || fallbackSym;
+            const onCurrentView = sid === chatStore.getActiveId()
+                && targetSym === viewSym
+                && loadedBucketRef.current === `${sid}:${symbolRef.current}`;
+            if (onCurrentView) {
+                forView.push(d);
+            } else {
+                const list = offViewBySym.get(targetSym) ?? [];
+                list.push(d);
+                offViewBySym.set(targetSym, list);
+            }
         }
-        const t = turn as PanelTurnContext;
-        drawingsControl('model', t.sid, t.symbol).add(drawings);
+        if (forView.length > 0) {
+            setModelDrawings(prev => capDrawings([...prev, ...forView]));
+        }
+        for (const [targetSym, list] of offViewBySym.entries()) {
+            drawingsControl('model', sid, targetSym).add(list);
+        }
     }, []);
     const clearModelDrawings = useCallback((turn?: PanelTurnContext): void => {
         if (isViewTurn(turn)) {
@@ -1000,6 +1019,11 @@ const TradeView: React.FC<TradeViewProps> = ({
     const expandDock = useCallback(() => setDockCollapsed(false), []);
     const toggleDockExpanded = useCallback(() => setDockExpanded(v => !v), []);
 
+    const visibleModelDrawings = useMemo(
+        () => filterDrawingsForSymbol(modelDrawings, symbol),
+        [modelDrawings, symbol],
+    );
+
     const dockProps = {
         symbol,
         symbols,
@@ -1012,7 +1036,7 @@ const TradeView: React.FC<TradeViewProps> = ({
         live,
         chartLevels,
         chartDrawings,
-        modelDrawings,
+        modelDrawings: visibleModelDrawings,
         onCaptureChart: captureChart,
         getChartSnapshot,
         addModelDrawings,
@@ -1236,7 +1260,7 @@ const TradeView: React.FC<TradeViewProps> = ({
                         chartHandle={chartHandleRef}
                         ohlcvRow={ohlcvRow}
                         onDrawingsChange={setChartDrawings}
-                        modelDrawings={modelDrawings}
+                        modelDrawings={visibleModelDrawings}
                         onRemoveModelShape={removeModelShape}
                         onReplaceModelDrawings={setModelDrawings}
                         chartFocus={chartFocus}
@@ -1248,7 +1272,7 @@ const TradeView: React.FC<TradeViewProps> = ({
                         onResetViewRef={resetChartViewRef} />
                     </ErrorBoundary>
                     <LevelAccuracyBadge
-                        drawings={modelDrawings}
+                        drawings={visibleModelDrawings}
                         candles={levelCandles}
                         className="absolute bottom-8 right-20 z-10 rounded-control border border-hairline bg-zinc-900/90 px-2 py-1" />
                     {chartFocus && !isBelowLg && !chatLayout && (

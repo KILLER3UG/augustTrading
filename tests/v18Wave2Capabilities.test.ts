@@ -39,7 +39,13 @@ const desktopStore = new Map<string, unknown>();
 import { buildTurnIdempotencyKey, checkTurnIdempotency, clearTurnIdempotency, recordTurnIdempotency } from '../src/services/analysis/turnIdempotencyCore';
 import { formatLiveTapeHeader } from '../src/services/trade/scopedRules';
 import { evaluateProposalConflicts } from '../src/services/trade/proposalConflictSensorCore';
-import { resolveDirectionalRegimeLabel } from '../src/services/trade/scopedRulesRuntime';
+import {
+    clearCachedRegimesForTests,
+    recordCachedReplayStats,
+    recordCachedSpotVsPerp,
+    resolveDirectionalRegimeLabel,
+} from '../src/services/trade/scopedRulesRuntime';
+import { drawingsFromLevelTool, filterDrawingsForSymbol } from '../src/services/trade/chartDrawings';
 import { runPresentTrade } from '../src/services/trade/presentTradeTool';
 import { EFFORT_BY_TASK, resolveComposerEffort } from '../src/services/providers/reasoningControls';
 import { selectFailureEpisodes } from '../src/services/learning/memoryRecallCore';
@@ -274,6 +280,68 @@ test('Sensor + Verifier: runPresentTrade stamps conflictFlags & EFFORT_BY_TASK.a
     assert.equal(out.ok, true);
     assert.equal(capturedProposalFlags, 3);
     assert.match(out.content, /Conflict sensor \(3 flags\):/i);
+
+    // Auto-cached spot_vs_perp & setup_replay hydrate live inside runPresentTrade (no overrides)
+    clearCachedRegimesForTests();
+    recordCachedSpotVsPerp('ETHUSDT', 'perp_chasing');
+    recordCachedReplayStats('ETHUSDT', { sampleCount: 9, winRate: 0.33, expectancyR: -0.25 });
+    let cachedFlags: string[] = [];
+    let drawnSymbols: Array<string | undefined> = [];
+    const cachedOut = await runPresentTrade(
+        {
+            call: {
+                id: 'tc-present-2',
+                name: 'present_trade',
+                arguments: {
+                    symbol: 'ETHUSDT',
+                    direction: 'Long',
+                    entry: 3200,
+                    stopLoss: 3100,
+                    takeProfits: [3500],
+                    rationale: 'Breakout attempt',
+                },
+            },
+            symbol: 'ETHUSDT',
+            trades: [],
+            drawnPrice: 3200,
+            crossCanvas: false,
+            watchable: false,
+            canvasNote: '',
+        },
+        {
+            setProposal: p => { cachedFlags = (p.conflictFlags ?? []).map(f => f.id); },
+            addDrawings: ds => { drawnSymbols = ds.map(d => d.symbol); },
+        },
+        {
+            getAccount: async () => null,
+            getFunding: async () => null,
+            getCandles: async () => [],
+        },
+    );
+    assert.equal(cachedOut.ok, true);
+    assert.deepEqual(cachedFlags.sort(), ['replay_base_rate_conflict', 'spot_perp_conflict']);
+    assert.ok(drawnSymbols.length >= 3 && drawnSymbols.every(s => s === 'ETHUSDT'), 'present_trade drawings must carry normalized symbol tag');
+    clearCachedRegimesForTests();
+});
+
+test('Polish: filterDrawingsForSymbol scopes AI plan lines by active symbol and keeps untagged legacy shapes', () => {
+    const eth = drawingsFromLevelTool(
+        { entry: 3200, stopLoss: 3120, takeProfits: [3400] },
+        { symbol: 'ethusdt', drawnPrice: 3200 },
+    ).drawings;
+    const btc = drawingsFromLevelTool(
+        { entry: 98500, stopLoss: 97000, takeProfits: [101500] },
+        { symbol: 'BTCUSDT', drawnPrice: 98500 },
+    ).drawings;
+    const legacy = [{ id: 'legacy-1', symbol: undefined }];
+
+    const onBtc = filterDrawingsForSymbol([...eth, ...btc, ...legacy], 'BTCUSDT');
+    assert.equal(onBtc.length, btc.length + 1, 'BTC chart must hide ETH AI plan lines while keeping BTC + legacy untagged shapes');
+    assert.ok(onBtc.every(d => !d.symbol || d.symbol === 'BTCUSDT'));
+
+    const onEth = filterDrawingsForSymbol([...eth, ...btc], 'ETHUSDT');
+    assert.equal(onEth.length, eth.length);
+    assert.ok(onEth.every(d => d.symbol === 'ETHUSDT'));
 });
 
 // ── 3. Episodic <failure_warnings> Recall ───────────────────────────────────

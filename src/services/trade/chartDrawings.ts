@@ -52,6 +52,9 @@ export interface ChartDrawing {
     shortId?: string;
     /** Who created the shape: `'user'` (manual canvas) or `'agent'` (tool). */
     origin?: 'user' | 'agent';
+    /** Optional normalized symbol tag (`BTCUSDT`) so cross-symbol AI plan lines
+     *  never leak onto another coin's chart inside the same chat thread. */
+    symbol?: string;
     /** Timeframe the shape was originally anchored on (e.g. `'4h'`, `'15m'`). */
     createdOnTf?: string;
     /** Optional explicit list of timeframes on which the shape is visible. */
@@ -729,6 +732,7 @@ export const drawingsFromLevelTool = (
     }
 
     const drawnPrice = finiteNum(ctx?.drawnPrice ?? undefined) ?? undefined;
+    const normSym = ctx?.symbol?.trim().toUpperCase() || undefined;
     const seen: Array<Pick<ChartDrawing, 'shortId'>> = [...(ctx?.existing ?? [])];
     const mk = (price: number, label: string, color: string): ChartDrawing => {
         const shortId = allocateDrawingShortId(ctx?.symbol, seen);
@@ -737,6 +741,7 @@ export const drawingsFromLevelTool = (
             id: createDrawingId(),
             shortId,
             origin: 'agent',
+            ...(normSym ? { symbol: normSym } : {}),
             createdOnTf: ctx?.interval,
             // An Entry/SL/TP plan is an EXECUTION annotation, not micro-
             // structure: the stop drawn on 15m is still the stop on 1h/4h, so
@@ -755,6 +760,24 @@ export const drawingsFromLevelTool = (
     if (stop !== null) drawings.push(mk(stop, 'SL', MODEL_COLOR_NAMES.rose));
     tps.forEach((tp, i) => drawings.push(mk(tp, `TP${i + 1}`, MODEL_COLOR_NAMES.amber)));
     return { drawings };
+};
+
+/**
+ * Pure symbol filter for AI plan / model drawings: keeps shapes tagged for
+ * `activeSymbol` (case-insensitive) plus legacy/untagged shapes, while hiding
+ * shapes explicitly tagged for a different coin so switching or presenting a
+ * cross-symbol plan never pins e.g. ETH Entry/SL/TP lines on a BTC chart.
+ */
+export const filterDrawingsForSymbol = <T extends Pick<ChartDrawing, 'symbol'>>(
+    drawings: readonly T[],
+    activeSymbol: string,
+): T[] => {
+    const active = activeSymbol.trim().toUpperCase();
+    if (!active) return [...drawings];
+    return drawings.filter(d => {
+        const tag = d.symbol?.trim().toUpperCase();
+        return !tag || tag === active;
+    });
 };
 
 /**

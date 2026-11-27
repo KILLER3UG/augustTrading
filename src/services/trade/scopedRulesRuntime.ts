@@ -9,6 +9,8 @@
 import type { Kline } from '../../types/message';
 import { getPaperLiveFrame } from './futuresStreams';
 import { regimeRead } from '../market/regimeCore';
+import type { SpotVsPerpRegime } from '../market/spotVsPerpCore';
+import type { ProposalReplayBaseRateInput } from './proposalConflictSensorCore';
 import { getCachedPaperAccountView } from '../paper/PaperBrokerService';
 import { computeCorrelatedPortfolioHeat } from '../paper/preTradeHooksCore';
 import { getHarnessSettings } from '../../utils/harnessSettings';
@@ -33,6 +35,8 @@ export interface LiveMarketContextSnapshot {
 
 const cachedRegimeBySymbol = new Map<string, { regime: string; atMs: number }>();
 const cachedRegimeBySymbolTf = new Map<string, Partial<Record<CachedRegimeTf, { regime: string; atMs: number }>>>();
+const cachedSpotVsPerpBySymbol = new Map<string, { regime: SpotVsPerpRegime; atMs: number }>();
+const cachedReplayStatsBySymbol = new Map<string, { stats: ProposalReplayBaseRateInput; atMs: number }>();
 const REGIME_CACHE_TTL_MS = 5 * 60_000;
 
 const normalizeCachedTf = (raw?: string | null): CachedRegimeTf | null => {
@@ -84,9 +88,55 @@ export const getCachedRegimesByTf = (
     return out;
 };
 
+/** Record an already-computed `spot_vs_perp` flow regime (5m TTL, zero network). */
+export const recordCachedSpotVsPerp = (
+    symbol: string,
+    regime: SpotVsPerpRegime | 'unavailable',
+    atMs = Date.now(),
+): void => {
+    const key = symbol.trim().toUpperCase();
+    if (!key || !regime || regime === 'unavailable') return;
+    cachedSpotVsPerpBySymbol.set(key, { regime, atMs });
+};
+
+export const getCachedSpotVsPerp = (
+    symbol: string,
+    nowMs = Date.now(),
+): SpotVsPerpRegime | null => {
+    const key = symbol.trim().toUpperCase();
+    const hit = key ? cachedSpotVsPerpBySymbol.get(key) : undefined;
+    if (!hit) return null;
+    if (nowMs - hit.atMs > REGIME_CACHE_TTL_MS) return null;
+    return hit.regime;
+};
+
+/** Record an already-computed `setup_replay` base-rate summary (5m TTL, zero network). */
+export const recordCachedReplayStats = (
+    symbol: string,
+    stats: ProposalReplayBaseRateInput,
+    atMs = Date.now(),
+): void => {
+    const key = symbol.trim().toUpperCase();
+    if (!key || !Number.isFinite(stats.sampleCount) || stats.sampleCount <= 0) return;
+    cachedReplayStatsBySymbol.set(key, { stats, atMs });
+};
+
+export const getCachedReplayStats = (
+    symbol: string,
+    nowMs = Date.now(),
+): ProposalReplayBaseRateInput | null => {
+    const key = symbol.trim().toUpperCase();
+    const hit = key ? cachedReplayStatsBySymbol.get(key) : undefined;
+    if (!hit) return null;
+    if (nowMs - hit.atMs > REGIME_CACHE_TTL_MS) return null;
+    return hit.stats;
+};
+
 export const clearCachedRegimesForTests = (): void => {
     cachedRegimeBySymbol.clear();
     cachedRegimeBySymbolTf.clear();
+    cachedSpotVsPerpBySymbol.clear();
+    cachedReplayStatsBySymbol.clear();
 };
 
 export type ScopedRuleCandle = Omit<Kline, 'volume'> & { volume?: number };

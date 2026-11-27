@@ -248,6 +248,11 @@ const ProviderManager: React.FC<ProviderManagerProps> = ({
         onDirtyChange?.(isDirty);
     }, [isDirty, onDirtyChange]);
 
+    // Abort any in-flight readiness benchmark when Settings closes or unmounts.
+    useEffect(() => () => {
+        benchmarkAbortRef.current?.abort();
+    }, []);
+
     // Always clear the parent's dirty flag when switching away from AI setup
     // or unmounting the provider manager so Settings never gets stuck dirty.
     useEffect(() => () => {

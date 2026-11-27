@@ -28,7 +28,11 @@ import { drawingsFromLevelTool, type ChartDrawing } from './chartDrawings';
 import { computeTradeMath, computeFundingDrag, type TradeMathRead } from '../market/tradeMathCore';
 import { coerceToolArguments, formatTypedRepairRejection, recordCoercionAudit } from '../analysis/toolArgCoercionCore';
 import { evaluateProposalConflicts, type ProposalConflictSensorInput } from './proposalConflictSensorCore';
-import { collectLiveMarketContextForSymbol } from './scopedRulesRuntime';
+import {
+    collectLiveMarketContextForSymbol,
+    getCachedReplayStats,
+    getCachedSpotVsPerp,
+} from './scopedRulesRuntime';
 import { getCachedPaperAccountView } from '../paper/PaperBrokerService';
 import { getHarnessSettings } from '../../utils/harnessSettings';
 import type { Kline } from '../../types/message';
@@ -347,6 +351,8 @@ export const runPresentTrade = async (
             rationale: proposal.rationale,
             regimesByTf: liveCtx.regimesByTf,
             regime: liveCtx.regime,
+            spotPerpRegime: getCachedSpotVsPerp(proposal.symbol),
+            replayStats: getCachedReplayStats(proposal.symbol),
             fundingRate: math.snapshot.fundingRate ?? liveCtx.fundingRate,
             openPositions: paperView?.openPositions.map(p => ({
                 symbol: p.symbol,
@@ -404,7 +410,7 @@ export const runPresentTrade = async (
     if (sink.addDrawings) {
         const { drawings } = drawingsFromLevelTool(
             { entry: planView.entry, stopLoss: planView.stopLoss, takeProfits: planView.takeProfits },
-            { drawnPrice: ctx.drawnPrice },
+            { drawnPrice: ctx.drawnPrice, symbol: planView.symbol },
         );
         sink.addDrawings(drawings);
     }
