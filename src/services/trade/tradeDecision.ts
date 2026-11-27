@@ -32,6 +32,7 @@
 
 import { harnessTurn } from '../../utils/harnessMarks';
 import { recordDecline, type DeclineRecord } from './declineLog';
+import { collectLiveMarketContextForSymbol } from './scopedRulesRuntime';
 
 // ── The three thresholds the card's honesty is built on ─────────────────────
 
@@ -203,6 +204,7 @@ export const recordTraderDecline = (p: {
     planId?: string;
 }, reason?: string): DeclineRecord | null => {
     const base = `The trader declined the proposal${p.planId ? ` (plan ${p.planId})` : ''}`;
+    const liveCtx = p.symbol ? collectLiveMarketContextForSymbol(p.symbol) : null;
     return recordDecline({
         symbol: p.symbol,
         direction: p.direction,
@@ -210,6 +212,8 @@ export const recordTraderDecline = (p: {
         stopLoss: p.stopLoss,
         takeProfits: p.takeProfits,
         reason: reason && reason.trim() ? `${base}: ${reason.trim()}` : `${base} without a stated reason.`,
+        ...(liveCtx?.regime ? { regime: liveCtx.regime } : {}),
+        ...(liveCtx?.session ? { session: liveCtx.session } : {}),
         source: 'desk',
     });
 };

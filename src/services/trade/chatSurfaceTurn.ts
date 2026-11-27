@@ -56,7 +56,10 @@ import { DEFAULT_CONTEXT_WINDOW_TOKENS, resolveContextWindow } from '../../utils
 import { activeStrategiesBlock } from '../learning/strategyStore';
 import { buildProfileMemoryIndex, listProfileMemories } from '../learning/profileMemory';
 import { buildCuratedMemoryPromptBlock, getCachedCuratedMemorySnapshot } from '../learning/curatedMemory';
-import { selectPreTurnMemories } from '../learning/memoryRecallCore';
+import { selectFailureEpisodes, selectPreTurnMemories } from '../learning/memoryRecallCore';
+import { listDeclines } from './declineLog';
+import { readSignals } from '../signals/signalLedger';
+import { autopsyRowsFromSignals, classifyUtcSession } from '../learning/executionAutopsyCore';
 import { buildGoalsIndex, focusedGoal, goalMatchesMessage, listGoals } from '../goals/GoalService';
 import { runToolTurn, type CaptureSnapshot, type ToolTurnEvents, type ToolTurnOutcome, type ToolTurnRequest } from './toolTurn';
 import * as chatStore from './chatStore';
@@ -1037,12 +1040,33 @@ export const runChatSurfaceTurn = async (req: ChatSurfaceTurnRequest): Promise<T
             maxItems: 3,
         }).promptTailBlock
         : '';
+    const failureRecallTail = liveCtx && req.memoryEnabled !== false
+        ? selectFailureEpisodes({
+            symbol: liveCtx.symbol,
+            session: liveCtx.session,
+            regime: liveCtx.regime,
+            declines: listDeclines(),
+            immediateStopOuts: autopsyRowsFromSignals(readSignals()).map(r => ({
+                id: r.id,
+                symbol: r.symbol,
+                direction: r.direction,
+                outcomeR: r.outcomeR,
+                mfeR: r.mfeR,
+                regime: r.regime,
+                session: classifyUtcSession(r.openedAtMs),
+                closedAtMs: r.closedAtMs,
+                playbook: r.playbook,
+            })),
+            maxItems: 2,
+        }).promptTailBlock
+        : '';
     const dynamicTailBlocks = [
         planMode ? PLAN_MODE_MANDATE : '',
         liveTapeTail,
         scopedTail,
         skillRoutingTail,
         memoryRecallTail,
+        failureRecallTail,
         invokedSkillBlock,
     ].filter(Boolean);
     const prompt = req.systemPrompt

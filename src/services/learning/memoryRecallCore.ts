@@ -272,3 +272,160 @@ export const selectPreTurnMemories = (
 
     return { items, promptTailBlock };
 };
+
+export interface FailureDeclineInput {
+    id?: string;
+    symbol?: string;
+    direction?: string;
+    reason: string;
+    regime?: string;
+    session?: string;
+    createdAt?: string;
+}
+
+export interface FailureStopOutInput {
+    id?: string;
+    symbol: string;
+    direction?: string;
+    outcomeR: number;
+    mfeR?: number;
+    regime?: string;
+    session?: string;
+    closedAtMs?: number;
+    playbook?: string;
+}
+
+export interface FailureEpisodeRecallInput {
+    symbol?: string | null;
+    session?: string | null;
+    regime?: string | null;
+    declines?: readonly FailureDeclineInput[] | null;
+    immediateStopOuts?: readonly FailureStopOutInput[] | null;
+    maxItems?: number;
+}
+
+export interface FailureEpisodeItem {
+    id: string;
+    kind: 'decline' | 'immediate_stop_out';
+    score: number;
+    matchedTerms: string[];
+    text: string;
+    at: string;
+}
+
+export interface FailureEpisodeRecallResult {
+    items: FailureEpisodeItem[];
+    promptTailBlock: string;
+}
+
+const UNSTATED_DECLINE_RE = /without a stated reason\.?$/i;
+
+/**
+ * Deterministically score recent rejected proposals (with explicit decline
+ * reasons) and immediate stop-outs (`mfeR < 0.3` and `outcomeR < 0`) against
+ * the active symbol, UTC session, and market regime. Injects at most `maxItems`
+ * (default 2) warnings wrapped in `<failure_warnings>` strictly in the dynamic
+ * prompt tail (never in the frozen static system prefix).
+ */
+export const selectFailureEpisodes = (
+    input: FailureEpisodeRecallInput,
+): FailureEpisodeRecallResult => {
+    const maxItems = Math.max(0, Math.min(4, input.maxItems ?? 2));
+    if (maxItems === 0) return { items: [], promptTailBlock: '' };
+
+    const symTokens = normalizeSymbolTokens(input.symbol);
+    const sesTokens = normalizeSessionTokens(input.session);
+    const regTokens = normalizeRegimeTokens(input.regime);
+    if (symTokens.length === 0 && sesTokens.length === 0 && regTokens.length === 0) {
+        return { items: [], promptTailBlock: '' };
+    }
+
+    const scored: FailureEpisodeItem[] = [];
+    const seenTexts = new Set<string>();
+
+    const scoreMatch = (symRaw: string | undefined, sesRaw: string | undefined, regRaw: string | undefined, textRaw: string): { score: number; matched: string[] } => {
+        const lowerSym = (symRaw ?? '').trim().toLowerCase();
+        const lowerSes = (sesRaw ?? '').trim().toLowerCase();
+        const lowerReg = (regRaw ?? '').trim().toLowerCase();
+        const lowerText = textRaw.toLowerCase();
+        let score = 0;
+        const matched: string[] = [];
+
+        if (symTokens.some(t => (lowerSym && containsWordOrToken(lowerSym, t)) || containsWordOrToken(lowerText, t))) {
+            score += 3;
+            matched.push(`symbol:${symTokens[0].toUpperCase()}`);
+        }
+        if (sesTokens.some(t => (lowerSes && containsWordOrToken(lowerSes, t)) || containsWordOrToken(lowerText, t))) {
+            score += 2;
+            matched.push(`session:${sesTokens[0]}`);
+        }
+        if (regTokens.some(t => (lowerReg && containsWordOrToken(lowerReg, t)) || containsWordOrToken(lowerText, t))) {
+            score += 2;
+            matched.push(`regime:${regTokens[0]}`);
+        }
+        return { score, matched };
+    };
+
+    for (const [idx, d] of (input.declines ?? []).entries()) {
+        const reason = (d?.reason ?? '').trim();
+        if (!reason || UNSTATED_DECLINE_RE.test(reason)) continue;
+        const { score, matched } = scoreMatch(d.symbol, d.session, d.regime, reason);
+        if (score === 0) continue;
+        const meta = [d.symbol?.toUpperCase(), d.direction && d.direction !== 'Neutral' ? d.direction : '', d.regime, d.session]
+            .filter(Boolean)
+            .join(' · ');
+        const text = `Prior decline (${meta || 'desk'}): ${clipSnippet(reason, 180)}`;
+        const dedupeKey = text.toLowerCase();
+        if (seenTexts.has(dedupeKey)) continue;
+        seenTexts.add(dedupeKey);
+        scored.push({
+            id: d.id || `decline:${idx}`,
+            kind: 'decline',
+            score,
+            matchedTerms: matched,
+            text,
+            at: d.createdAt ?? '',
+        });
+    }
+
+    for (const [idx, s] of (input.immediateStopOuts ?? []).entries()) {
+        if (!s || !Number.isFinite(s.outcomeR) || s.outcomeR >= 0) continue;
+        if (typeof s.mfeR !== 'number' || !Number.isFinite(s.mfeR) || s.mfeR >= 0.3) continue;
+        const summary = `${s.symbol} ${s.direction ?? ''} ${s.playbook ?? ''} ${s.regime ?? ''} ${s.session ?? ''}`;
+        const { score, matched } = scoreMatch(s.symbol, s.session, s.regime, summary);
+        if (score === 0) continue;
+        const meta = [s.symbol.toUpperCase(), s.direction, s.regime, s.session].filter(Boolean).join(' · ');
+        const text = `Immediate stop-out (${meta}): ${s.outcomeR.toFixed(2)}R with peak MFE ${s.mfeR.toFixed(2)}R (<0.3R)${s.playbook ? ` [${s.playbook}]` : ''} — verify location & invalidation before entering.`;
+        const dedupeKey = text.toLowerCase();
+        if (seenTexts.has(dedupeKey)) continue;
+        seenTexts.add(dedupeKey);
+        const at = typeof s.closedAtMs === 'number' && Number.isFinite(s.closedAtMs)
+            ? new Date(s.closedAtMs).toISOString()
+            : '';
+        scored.push({
+            id: s.id || `stopout:${idx}`,
+            kind: 'immediate_stop_out',
+            score,
+            matchedTerms: matched,
+            text,
+            at,
+        });
+    }
+
+    scored.sort((a, b) =>
+        b.score - a.score
+        || b.at.localeCompare(a.at)
+        || a.id.localeCompare(b.id));
+
+    const items = scored.slice(0, maxItems);
+    if (items.length === 0) return { items: [], promptTailBlock: '' };
+
+    const promptTailBlock = [
+        '<failure_warnings>',
+        '[FAILURE EPISODES — recent rejections & immediate stop-outs matching this context; verify before repeating]',
+        ...items.map(item => `- ${item.text}`),
+        '</failure_warnings>',
+    ].join('\n');
+
+    return { items, promptTailBlock };
+};

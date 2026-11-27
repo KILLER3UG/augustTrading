@@ -23,6 +23,10 @@ export interface DeclineRecord {
     stopLoss?: number;
     takeProfits?: number[];
     invalidation?: string;
+    /** Cached market regime when the setup was declined (optional, backwards-compatible). */
+    regime?: string;
+    /** UTC session bucket when the setup was declined (optional, backwards-compatible). */
+    session?: string;
     /** Who declined: a live desk turn or a scheduled run. */
     /** `automation` is historical: the scheduled run that wrote it was
      *  deleted on 2026-10-24, and stored rows still carry the value. */
@@ -109,6 +113,8 @@ export const recordDecline = (
         stopLoss?: unknown;
         takeProfits?: unknown;
         invalidation?: unknown;
+        regime?: unknown;
+        session?: unknown;
         source?: 'desk' | 'automation';
     },
     username?: string,
@@ -122,6 +128,8 @@ export const recordDecline = (
     const takeProfits = Array.isArray(input.takeProfits)
         ? input.takeProfits.map(num).filter((n): n is number => n !== undefined).slice(0, 5)
         : [];
+    const regime = typeof input.regime === 'string' && input.regime.trim() ? input.regime.trim().slice(0, 80) : undefined;
+    const session = typeof input.session === 'string' && input.session.trim() ? input.session.trim().slice(0, 40) : undefined;
     const record: DeclineRecord = {
         id: `decline-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         symbol,
@@ -133,6 +141,8 @@ export const recordDecline = (
         ...(typeof input.invalidation === 'string' && input.invalidation.trim()
             ? { invalidation: input.invalidation.trim().slice(0, 300) }
             : {}),
+        ...(regime ? { regime } : {}),
+        ...(session ? { session } : {}),
         source: input.source ?? 'desk',
         createdAt: new Date().toISOString(),
     };

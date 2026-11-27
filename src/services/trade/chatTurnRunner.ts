@@ -54,7 +54,10 @@ import { scoreDrawnShape, levelAccuracy, describeLevelAccuracyForModel } from '.
 import { contentVersion, getSkill, listSkillFiles } from '../learning/SkillFileService';
 import { cachedSkillStatusRows, touchSkillUsage } from '../learning/skillManage';
 import { routeSkillsForContext } from '../learning/skillRoutingCore';
-import { selectPreTurnMemories } from '../learning/memoryRecallCore';
+import { selectFailureEpisodes, selectPreTurnMemories } from '../learning/memoryRecallCore';
+import { listDeclines } from './declineLog';
+import { readSignals } from '../signals/signalLedger';
+import { autopsyRowsFromSignals, classifyUtcSession } from '../learning/executionAutopsyCore';
 import { getCachedCuratedMemorySnapshot } from '../learning/curatedMemory';
 import { listProfileMemories } from '../learning/profileMemory';
 import { skillFormatIssues } from '../../utils/skillFrontmatter';
@@ -1518,6 +1521,26 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
                 maxItems: 3,
             }).promptTailBlock
             : '';
+        const failureRecallTail = deps.memoryEnabled !== false
+            ? selectFailureEpisodes({
+                symbol: liveCtx.symbol,
+                session: liveCtx.session,
+                regime: liveCtx.regime,
+                declines: listDeclines(),
+                immediateStopOuts: autopsyRowsFromSignals(readSignals()).map(r => ({
+                    id: r.id,
+                    symbol: r.symbol,
+                    direction: r.direction,
+                    outcomeR: r.outcomeR,
+                    mfeR: r.mfeR,
+                    regime: r.regime,
+                    session: classifyUtcSession(r.openedAtMs),
+                    closedAtMs: r.closedAtMs,
+                    playbook: r.playbook,
+                })),
+                maxItems: 2,
+            }).promptTailBlock
+            : '';
         const focusLine = [
             liveTapeTail,
             refFocusLine,
@@ -1526,6 +1549,7 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
             scopedTail,
             skillRoutingTail,
             memoryRecallTail,
+            failureRecallTail,
             invokedSkillBlock,
         ].filter(Boolean).join('\n\n');
         const sentAttachments: Attachment[] = retryEntry
