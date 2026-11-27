@@ -767,7 +767,7 @@ export const runRegimeTool = async (
                 summary: '', reason: `need ≥80 closed candles on ${tf} (got ${candles.length})`,
             }));
         }
-        recordCachedRegime(symbol, read.direction, asofMs);
+        recordCachedRegime(symbol, read.direction, tf, asofMs);
         // Wave B quant pack: Yang-Zhang vol + percentiles (90-bar floor),
         // compression flags, expected move, Hurst/VR/trend-scan (100-bar
         // floor) and the Al Brooks bar-geometry flags. Every floor refusal

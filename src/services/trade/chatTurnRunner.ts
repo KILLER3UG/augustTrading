@@ -35,7 +35,7 @@ import type { HybridDataPacket } from '../analysis/HybridIntelligenceService';
 const hybridService = (): Promise<typeof import('../analysis/HybridIntelligenceService')> => import('../analysis/HybridIntelligenceService');
 import { DESK_TOOL_NAMES, isBlockedInPlanMode, PLAN_MODE_MANDATE } from '../../utils/toolKinds';
 import { collectLiveMarketContextForSymbol, collectScopedRulesForSymbol } from './scopedRulesRuntime';
-import { evaluateScopedRules } from './scopedRules';
+import { evaluateScopedRules, formatLiveTapeHeader, type LiveTapeDrawingDistance } from './scopedRules';
 import { settleDockEntry } from '../../utils/rowSettlement';
 import { maybeRunAgentLearningPass, maybeRunMemoryDreamIfDue } from '../learning/learningPassWiring';
 import { CHART_ACTION_TOOL_DEFS, isMarketReadTool } from '../analysis/deskToolShared';
@@ -1452,6 +1452,29 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
         const snapForRules = getChartSnapshot?.() ?? null;
         const liveCtx = collectLiveMarketContextForSymbol(symbol, {
             evalCandles: snapForRules?.evalCandles ?? snapForRules?.candles ?? null,
+            interval,
+            markPrice: snapForRules?.markPrice ?? null,
+        });
+        const liveTapeDrawings: LiveTapeDrawingDistance[] = [];
+        for (let idx = 0; idx < (allDrawings ?? []).length; idx += 1) {
+            const d = allDrawings[idx];
+            const anchorPrice = typeof d?.points?.[0]?.p === 'number' && Number.isFinite(d.points[0].p)
+                ? d.points[0].p
+                : null;
+            if (anchorPrice !== null) {
+                liveTapeDrawings.push({ shortId: `#D${idx + 1}`, ...(d.label ? { label: d.label } : {}), price: anchorPrice });
+            }
+        }
+        const liveTapeTail = formatLiveTapeHeader({
+            symbol: liveCtx.symbol,
+            interval,
+            markPrice: liveCtx.markPrice ?? snapForRules?.markPrice ?? null,
+            session: liveCtx.session,
+            regime: liveCtx.regime,
+            regimesByTf: liveCtx.regimesByTf,
+            fundingRate: liveCtx.fundingRate,
+            paperHeat: liveCtx.paperHeat,
+            drawings: liveTapeDrawings,
         });
         const scopedTail = evaluateScopedRules({
             regime: liveCtx.regime,
@@ -1492,6 +1515,7 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
             }).promptTailBlock
             : '';
         const focusLine = [
+            liveTapeTail,
             refFocusLine,
             requireTools ? FULL_ANALYSIS_MANDATE.trim() : '',
             planModeTail,

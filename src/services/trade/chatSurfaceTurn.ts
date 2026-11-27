@@ -63,7 +63,7 @@ import * as chatStore from './chatStore';
 import { isMarketReadTool, PAPER_TRADING_PROMPT } from '../analysis/deskToolShared';
 import { isBlockedInPlanMode, PLAN_MODE_MANDATE } from '../../utils/toolKinds';
 import { collectLiveMarketContextForSymbol } from './scopedRulesRuntime';
-import { evaluateScopedRules } from './scopedRules';
+import { evaluateScopedRules, formatLiveTapeHeader } from './scopedRules';
 import { listSkillFiles, getSkill } from '../learning/SkillFileService';
 import { cachedSkillStatusRows, touchSkillUsage } from '../learning/skillManage';
 import { routeSkillsForContext } from '../learning/skillRoutingCore';
@@ -937,7 +937,19 @@ export const runChatSurfaceTurn = async (req: ChatSurfaceTurnRequest): Promise<T
         ? (slashSkillInv?.rest || `Apply /${invokedSkill.slug}${req.symbol ? ` to ${req.symbol}` : ''}.`)
         : req.prompt;
 
-    const liveCtx = req.symbol ? collectLiveMarketContextForSymbol(req.symbol) : null;
+    const liveCtx = req.symbol ? collectLiveMarketContextForSymbol(req.symbol, { interval: req.interval }) : null;
+    const liveTapeTail = liveCtx
+        ? formatLiveTapeHeader({
+            symbol: liveCtx.symbol,
+            interval: req.interval ?? null,
+            markPrice: liveCtx.markPrice,
+            session: liveCtx.session,
+            regime: liveCtx.regime,
+            regimesByTf: liveCtx.regimesByTf,
+            fundingRate: liveCtx.fundingRate,
+            paperHeat: liveCtx.paperHeat,
+        })
+        : '';
     const scopedTail = liveCtx
         ? evaluateScopedRules({
             regime: liveCtx.regime,
@@ -982,6 +994,7 @@ export const runChatSurfaceTurn = async (req: ChatSurfaceTurnRequest): Promise<T
         : '';
     const dynamicTailBlocks = [
         planMode ? PLAN_MODE_MANDATE : '',
+        liveTapeTail,
         scopedTail,
         skillRoutingTail,
         memoryRecallTail,
