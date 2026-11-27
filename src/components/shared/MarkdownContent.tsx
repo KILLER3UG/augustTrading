@@ -3,6 +3,8 @@ import React, { lazy, memo, Suspense } from 'react';
 interface MarkdownContentProps {
   /** Markdown text to render. */
   content: string;
+  /** True while the message is actively streaming (enables block-split memoization + chunk fade). */
+  streaming?: boolean;
   /** Extra classes for the prose wrapper (e.g. text color overrides). */
   className?: string;
 }
@@ -26,9 +28,9 @@ const MarkdownFallback: React.FC<MarkdownContentProps> = ({ content, className }
   </div>
 );
 
-const MarkdownContent: React.FC<MarkdownContentProps> = ({ content, className }) => (
+const MarkdownContent: React.FC<MarkdownContentProps> = ({ content, streaming, className }) => (
   <Suspense fallback={<MarkdownFallback content={content} className={className} />}>
-    <MarkdownRenderer content={content} className={className} />
+    <MarkdownRenderer content={content} streaming={streaming} className={className} />
   </Suspense>
 );
 

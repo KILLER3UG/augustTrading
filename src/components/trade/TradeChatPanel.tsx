@@ -1743,14 +1743,27 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
         };
     }, [send, addAttachment, symbol, interval, paneVisible]);
 
+    // Throttle context-ring token counting during active streaming: recompute
+    // on stream start/settle, when entry count changes, or at most every 1500ms
+    // while streaming — eliminating O(N) estimateTokens spikes on every token.
+    const entriesForRingRef = useRef(entries);
+    entriesForRingRef.current = entries;
+    const [contextRingTick, setContextRingTick] = useState(0);
+    useEffect(() => {
+        if (!busy) return;
+        const id = window.setInterval(() => setContextRingTick(t => t + 1), 1500);
+        return () => window.clearInterval(id);
+    }, [busy]);
+    const contextRingEntriesKey = busy ? entries.length : entries;
     const contextRing = useMemo(() => {
+        void contextRingTick;
         const diag = collectContextDiagnostic({
             systemPromptText: systemPromptFor(boundBot),
-            entries,
+            entries: entriesForRingRef.current,
             provider,
         });
         return computeContextRingUsage({ totalTokens: diag.totalTokens, windowTokens: diag.windowTokens });
-    }, [entries, provider, boundBot, systemPromptFor]);
+    }, [contextRingEntriesKey, busy, contextRingTick, provider, boundBot, systemPromptFor]);
 
     const composerNode = (
         <ChatComposer

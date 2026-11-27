@@ -274,17 +274,20 @@ export const ConversationGroups: React.FC<ConversationGroupsProps> = ({
             .sort((a, b) => b.timestamp - a.timestamp),
         [conversations, activeConversationId],
     );
-    const snap = useSyncExternalStore(chatStore.subscribe, chatStore.getSnapshot, chatStore.getSnapshot);
+    const sidebarMeta = useSyncExternalStore(
+        chatStore.subscribeSidebarMeta,
+        chatStore.getSidebarMetaSnapshot,
+        chatStore.getSidebarMetaSnapshot,
+    );
     const activePlanConvIds = useMemo(() => {
         const s = new Set<string>();
-        for (const sess of snap.sessions) {
-            if (!sess.conversationId) continue;
-            if (sess.entries.some(e => Boolean(e.proposal) || Boolean(e.sessionPlan))) {
+        for (const sess of sidebarMeta.sessions) {
+            if (sess.conversationId && sess.hasActivePlan) {
                 s.add(sess.conversationId);
             }
         }
         return s;
-    }, [snap.sessions]);
+    }, [sidebarMeta]);
 
     const filteredRows = useMemo(() => {
         if (sessionFilter === 'pinned') {
@@ -304,13 +307,13 @@ export const ConversationGroups: React.FC<ConversationGroupsProps> = ({
     );
     const badgeByConvId = useMemo(() => {
         const m = new Map<string, string>();
-        for (const s of snap.sessions) {
+        for (const s of sidebarMeta.sessions) {
             if (!s.conversationId) continue;
             const b = formatThreadBadge(s.symbol, s.interval);
             if (b) m.set(s.conversationId, b);
         }
         return m;
-    }, [snap.sessions]);
+    }, [sidebarMeta]);
     const recent = useMemo(
         () => filteredRows.filter(c => !pinnedIds?.has(c.id) && !(c as Conversation & { pinned?: boolean }).pinned),
         [filteredRows, pinnedIds],

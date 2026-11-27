@@ -97,6 +97,7 @@ import { TASK_BUDGETS } from '../providers/taskBudgets';
 import { resolveComposerEffort, type ReasoningEffort } from '../providers/reasoningControls';
 import type { Attachment } from '../../hooks/useChatAttachments';
 import { recordToolTurnUsage } from '../../utils/sessionUsage';
+import { createDeltaCoalescer } from '../../utils/streamCoalescerCore';
 
 /** Identity of a RUNNING model turn, captured the moment it starts. Every
  *  side-effect of a panel tool (proposal card attach, drawing persistence,
@@ -1144,12 +1145,26 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
             ...(initialViewedSkills?.length ? { initialViewedSkills } : {}),
         };
         // Each method here is a WRITE TO THIS ROW SHAPE, not generic turn logic.
+        // High-frequency text/reasoning deltas coalesce to at most one publish
+        // per frame via `createDeltaCoalescer`, flushing synchronously on every
+        // tool boundary, payload, action, steer, abort, or settle so zero
+        // characters are ever dropped or reordered.
         let sawMarketTool = false;
         let sawDrawTool = false;
+        const deltaCoalescer = createDeltaCoalescer({
+            onFlush: batch => {
+                patch(e => ({
+                    ...e,
+                    ...(batch.text !== undefined ? { text: batch.text } : {}),
+                    ...(batch.reasoningDelta ? { reasoning: (e.reasoning ?? '') + batch.reasoningDelta } : {}),
+                }));
+            },
+        });
         const events: ToolTurnEvents = {
-            setText: text => patch(e => ({ ...e, text })),
-            addReasoning: chunk => patch(e => ({ ...e, reasoning: (e.reasoning ?? '') + chunk })),
+            setText: text => deltaCoalescer.setText(text),
+            addReasoning: chunk => deltaCoalescer.appendReasoning(chunk),
             addToolCall: name => {
+                deltaCoalescer.flush();
                 if (isMarketReadTool(name)) sawMarketTool = true;
                 if (name === 'draw_on_chart' || name === 'mark_trade_levels' || name === 'draw_tool_levels' || name === 'draw_detected') {
                     sawDrawTool = true;
@@ -1160,9 +1175,16 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
             // loop is assembled `[...replays, ...extra, ...forged, ...core]`, so
             // its order does not match the `calling…` lines rendered here.
             // Pairing by index would silently attach the wrong payload to a row.
-            addToolLine: line => patch(e => ({ ...e, tools: [...e.tools, line], toolIds: [...(e.toolIds ?? []), ''], liveProgress: undefined })),
-            addLiveToolLine: line => patch(e => ({ ...e, liveProgress: line })),
+            addToolLine: line => {
+                deltaCoalescer.flush();
+                patch(e => ({ ...e, tools: [...e.tools, line], toolIds: [...(e.toolIds ?? []), ''], liveProgress: undefined }));
+            },
+            addLiveToolLine: line => {
+                deltaCoalescer.flush();
+                patch(e => ({ ...e, liveProgress: line }));
+            },
             attachPayload: payload => {
+                deltaCoalescer.flush();
                 // The desk loop emits the digest line before this, so the row
                 // exists and `tools`/`toolIds` are already the same length.
                 try {
@@ -1184,6 +1206,7 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
                 });
             },
             addAction: action => {
+                deltaCoalescer.flush();
                 patch(e => ({ ...e, actions: [...(e.actions ?? []), action] }));
                 // Mirror the side-effect into the caller's collector so a
                 // PANEL seat's next turn (and the synthesis) can SEE that a
@@ -1192,6 +1215,8 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
                 onAction?.(`${action.ok ? action.verb : 'rejected'} ${action.tool === 'skill_write' ? `skill ${action.label}` : action.tool === 'write_memory_note' ? `memory note ${action.label}` : action.tool === 'amend_memory' ? `memory amendment ${action.label}` : action.tool === 'forge_tool' ? `tool ${action.label}` : action.label}`);
             },
         };
+        const onAbortFlush = (): void => { deltaCoalescer.flush(); };
+        controller.signal.addEventListener('abort', onAbortFlush, { once: true });
         // The truncation tally is per-RUN, and this is the run. Without a window
         // open, `recordFinishReason` counts nothing and a provider that stopped
         // at the token ceiling is indistinguishable from one that finished — a
@@ -1208,38 +1233,49 @@ export const createChatTurnRunner = (deps: ChatTurnRunnerDeps): ChatTurnRunner =
             ? rawTraderQuestion.trim()
             : (lastUserContent ? extractTraderQuestion(lastUserContent) : undefined);
         // Per-run recorder: see chatSurfaceTurn's note and the 2026-10-27 audit L-7.
-        const { value: outcome, summary } = await withTruncationWindow(async (recordFinishReason) => await runToolTurn({
-            config,
-            messages,
-            signal: controller.signal,
-            startedAt: turnStartedAt,
-            effort: turnEffort,
-            keepTextHidden: hidePass ? panelCouldStillBePass : undefined,
-            transport: {
-                ...transport,
-                onFinishReason: recordFinishReason,
-                // Mid-turn steering: the loop polls the session queue at each
-                // round boundary; the moment it consumes one, the trader's
-                // row is painted so the transcript reads in true order.
-                takeSteering: () => chatStore.takeSteering(sid),
-                onSteered: text => {
-                    events.addToolLine?.('trader steered mid-turn — remaining lookups skipped');
-                    chatStore.mutate(sid, st => ({
-                        ...st,
-                        updatedAt: Date.now(),
-                        entries: [...st.entries, {
-                            id: newId('u'), role: 'user' as const, text, tools: [], at: Date.now(),
-                        }],
-                    }));
+        let outcome: Awaited<ReturnType<typeof runToolTurn>>;
+        let summary: Awaited<ReturnType<typeof withTruncationWindow>>['summary'];
+        try {
+            const wrapped = await withTruncationWindow(async (recordFinishReason) => await runToolTurn({
+                config,
+                messages,
+                signal: controller.signal,
+                startedAt: turnStartedAt,
+                effort: turnEffort,
+                keepTextHidden: hidePass ? panelCouldStillBePass : undefined,
+                transport: {
+                    ...transport,
+                    onFinishReason: recordFinishReason,
+                    // Mid-turn steering: the loop polls the session queue at each
+                    // round boundary; the moment it consumes one, the trader's
+                    // row is painted so the transcript reads in true order.
+                    takeSteering: () => chatStore.takeSteering(sid),
+                    onSteered: text => {
+                        deltaCoalescer.flush();
+                        events.addToolLine?.('trader steered mid-turn — remaining lookups skipped');
+                        chatStore.mutate(sid, st => ({
+                            ...st,
+                            updatedAt: Date.now(),
+                            entries: [...st.entries, {
+                                id: newId('u'), role: 'user' as const, text, tools: [], at: Date.now(),
+                            }],
+                        }));
+                    },
                 },
-            },
-            events,
-            memoryEnabled: deps.memoryEnabled !== false,
-            lastUserMessage,
-            capturePlan: () => (planCapture.planId
-                ? { planId: planCapture.planId, symbol: planCapture.symbol ?? '', playbookId: planCapture.playbookId, snapshot: planCapture.snapshot }
-                : null),
-        }));
+                events,
+                memoryEnabled: deps.memoryEnabled !== false,
+                lastUserMessage,
+                capturePlan: () => (planCapture.planId
+                    ? { planId: planCapture.planId, symbol: planCapture.symbol ?? '', playbookId: planCapture.playbookId, snapshot: planCapture.snapshot }
+                    : null),
+            }));
+            outcome = wrapped.value;
+            summary = wrapped.summary;
+        } finally {
+            controller.signal.removeEventListener('abort', onAbortFlush);
+            deltaCoalescer.flush();
+            chatStore.flushEphemeral(sid);
+        }
         recordToolTurnUsage({
             startedAt: turnStartedAt,
             workedMs: outcome.workedMs,

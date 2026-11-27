@@ -190,11 +190,60 @@ const controllers = new Map<string, AbortController>();
 const conversationControllers = new Map<string, AbortController>();
 /** Session-scoped read-only Plan Mode state (shared across Desk & Chat). */
 const planModeBySid = new Map<string, boolean>();
+export interface SidebarSessionMeta {
+    id: string;
+    conversationId?: string;
+    symbol?: string;
+    interval?: string;
+    hasActivePlan: boolean;
+}
+
+export interface SidebarMetaSnapshot {
+    sessions: SidebarSessionMeta[];
+    signature: string;
+}
+
 const listeners = new Set<() => void>();
+const sidebarMetaListeners = new Set<() => void>();
 let saveTimer = 0;
 let storageWatched = false;
 
 let snapshot: ChatSnapshot = { sessions, activeId, running: {}, conversationRunning: {}, signals: [], planMode: {} };
+let sidebarMetaSnapshot: SidebarMetaSnapshot = { sessions: [], signature: '' };
+
+const rebuildSidebarMeta = (): boolean => {
+    const nextSessions: SidebarSessionMeta[] = [];
+    const parts: string[] = [];
+    for (const s of sessions) {
+        const hasActivePlan = s.entries.some(e => Boolean(e.proposal) || Boolean(e.sessionPlan));
+        nextSessions.push({
+            id: s.id,
+            conversationId: s.conversationId,
+            symbol: s.symbol,
+            interval: s.interval,
+            hasActivePlan,
+        });
+        parts.push(`${s.id}:${s.conversationId ?? ''}:${s.symbol ?? ''}:${s.interval ?? ''}:${hasActivePlan ? '1' : '0'}`);
+    }
+    const signature = parts.join('|');
+    if (signature === sidebarMetaSnapshot.signature) return false;
+    sidebarMetaSnapshot = { sessions: nextSessions, signature };
+    return true;
+};
+
+/** Subscribe ONLY to sidebar-relevant session metadata (ids, linked conversation,
+ *  symbol/interval badges, active-plan presence). Never fires on streaming text
+ *  or reasoning deltas, keeping the left sidebar completely idle during turns. */
+export const subscribeSidebarMeta = (listener: () => void): (() => void) => {
+    sidebarMetaListeners.add(listener);
+    return () => { sidebarMetaListeners.delete(listener); };
+};
+
+export const getSidebarMetaSnapshot = (): SidebarMetaSnapshot => {
+    ensureLoaded();
+    rebuildSidebarMeta();
+    return sidebarMetaSnapshot;
+};
 
 /** Last-open session id, per user — so a reload returns to the same chat. */
 const activeKey = (user: string): string => `trade_chat_active_v1_${user}`;
@@ -238,7 +287,11 @@ const capSessions = (list: LiveSession[]): LiveSession[] => {
 const emit = (): void => {
     flushEphemeralFor(undefined, false);
     rebuild();
+    const sidebarChanged = rebuildSidebarMeta();
     for (const l of listeners) l();
+    if (sidebarChanged) {
+        for (const l of sidebarMetaListeners) l();
+    }
     schedulePersist();
 };
 
@@ -307,7 +360,11 @@ export const mutateEphemeral = (id: string, fn: (s: LiveSession) => LiveSession)
  *  they must not drag the debounced save along on every state change. */
 const publish = (): void => {
     rebuild();
+    const sidebarChanged = rebuildSidebarMeta();
     for (const l of listeners) l();
+    if (sidebarChanged) {
+        for (const l of sidebarMetaListeners) l();
+    }
 };
 
 /** Persist the settled transcript. An entry that is still streaming is

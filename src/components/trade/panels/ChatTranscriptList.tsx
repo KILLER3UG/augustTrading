@@ -218,6 +218,564 @@ const UserPromptBubble: React.FC<{
     );
 };
 
+/** Memoized tool-visuals row: reads stored tool payloads strictly when `toolIds`
+ *  changes, never on streamed text or reasoning tokens. */
+const ToolVisualsRow = React.memo<{
+    toolIds?: string[];
+    onChangeSymbol?: (symbol: string) => void;
+}>(({ toolIds, onChangeSymbol }) => {
+    const visuals = useMemo(() => {
+        if (!toolIds || toolIds.length === 0) return [];
+        const payloads = toolIds
+            .map(id => (id ? readToolPayload(id) : null))
+            .filter((p): p is NonNullable<typeof p> => p !== null);
+        if (payloads.length === 0) return [];
+        return parseToolVisualsFromPayloads(payloads);
+    }, [toolIds]);
+
+    if (visuals.length === 0) return null;
+    return (
+        <>
+            {visuals.map(visual => (
+                <ToolVisualCard
+                    key={visual.toolCallId}
+                    visual={visual}
+                    onJumpToSymbol={onChangeSymbol}
+                />
+            ))}
+        </>
+    );
+});
+
+interface TranscriptRowActions {
+    send: (raw: string, retryOf?: string) => Promise<void>;
+    setDraftText?: (text: string) => void;
+    onChangeSymbol?: (symbol: string) => void;
+    getMark: () => number | null;
+    onChatLevels: (payload: MessageLevelLines | null, ownerId?: string) => void;
+    onToggleWatch?: (messageId: string) => void;
+    onLogProposedTrade?: (proposal: TradeProposal, sessionId?: string) => Promise<string | false> | string | false | void;
+    onRejectProposedTrade?: (proposal: TradeProposal, reason?: string) => boolean;
+    onUndoApproval?: (decision: { rowId: string; planId?: string; entryId: string; sessionId?: string }) => void;
+    onConfirmRiskChange?: (proposal: RiskChangeProposal, sessionId?: string) => void;
+    onDismissRiskChange?: (proposal: RiskChangeProposal) => void;
+    onRevertRiskChange?: (proposal: RiskChangeProposal, sessionId?: string) => void;
+    onConfirmAiSettingChange?: (proposal: AiSettingProposal, sessionId?: string) => void;
+    onDismissAiSettingChange?: (proposal: AiSettingProposal) => void;
+    onRevertAiSettingChange?: (proposal: AiSettingProposal, sessionId?: string) => void;
+    onConfirmSettlementCorrection?: (proposal: SettlementCorrectionProposal) => void;
+    onDismissSettlementCorrection?: (proposal: SettlementCorrectionProposal) => void;
+    onVoidSettlementCorrection?: (proposal: SettlementCorrectionProposal) => void;
+    onConfirmTradeAction?: (proposal: TradeActionProposal) => void;
+    onDismissTradeAction?: (proposal: TradeActionProposal) => void;
+    onConfirmStrategyActivation?: (proposal: StrategyActivationProposal, sessionId?: string) => void;
+    onDismissStrategyActivation?: (proposal: StrategyActivationProposal) => void;
+    onRevertStrategyActivation?: (proposal: StrategyActivationProposal, sessionId?: string) => void;
+    onConfirmSessionPlan?: (proposal: SessionPlanProposal, sessionId?: string) => void;
+    onDismissSessionPlan?: (proposal: SessionPlanProposal) => void;
+    onRevertSessionPlan?: (proposal: SessionPlanProposal, sessionId?: string) => void;
+    onConfirmRuleProposal?: (proposal: RuleProposal, sessionId?: string) => void;
+    onDismissRuleProposal?: (proposal: RuleProposal) => void;
+    onRevertRuleProposal?: (proposal: RuleProposal, sessionId?: string) => void;
+    onUnlockPlanMode?: () => void;
+    onUndoCompact?: (undoId: string) => void;
+    bumpProposalTick: () => void;
+    bumpDecisionTick: () => void;
+    setAwaitingLogEntryId: (id: string | null) => void;
+}
+
+interface TranscriptRowProps {
+    index: number;
+    isLast: boolean;
+    layoutMode: 'desk' | 'chat';
+    entry: LiveEntry;
+    prevUserEntry: { id: string; text: string } | null;
+    answerStreaming: boolean;
+    analysisId?: string;
+    verdict?: Message;
+    projected: boolean;
+    symbol: string;
+    interval?: string;
+    sessionId?: string;
+    pinned: boolean;
+    hasPinnedSet: boolean;
+    awaitingLog: boolean;
+    planMode: boolean;
+    proposalState?: 'logged' | 'dismissed';
+    proposalTick: number;
+    decisionTick: number;
+    trades?: LoggedTrade[];
+    sessionGuard?: GuardEnforcement;
+    actionsRef: React.MutableRefObject<TranscriptRowActions>;
+}
+
+const hasRowDecisionCard = (e: LiveEntry): boolean => Boolean(
+    e.settlementCorrection
+    || e.tradeAction
+    || e.riskChange
+    || e.aiSettingChange
+    || e.strategyActivation
+    || e.sessionPlan
+    || e.ruleProposal,
+);
+
+/** Memoized transcript row: settled prior messages skip re-rendering completely
+ *  while the trailing assistant bubble streams tokens. */
+const TranscriptRow = React.memo<TranscriptRowProps>(({
+    index, isLast, layoutMode, entry: e, prevUserEntry, answerStreaming,
+    analysisId, verdict, projected, symbol, interval, sessionId,
+    pinned, hasPinnedSet, awaitingLog, planMode, proposalState,
+    proposalTick, decisionTick, trades, sessionGuard, actionsRef,
+}) => {
+    const act = actionsRef.current;
+    const aiLevels = useMemo(
+        () => (e.role === 'ai' && !e.notice ? parseKeyLevels(e.text) : null),
+        [e.role, e.notice, e.text],
+    );
+    const shownText = aiLevels?.hadBlock
+        ? stripInternalContextMarks(aiLevels.clean)
+        : stripInternalContextMarks(e.text);
+    const seatLabel = e.speaker
+        ? formatSeatLabel(e.speaker.split(':')[1] ?? e.speaker)
+        : 'desk';
+    const deskSpeaker = !e.speaker || e.speaker.trim().toLowerCase() === 'desk';
+
+    return (
+        <div
+            className={`chat-fade-in${!isLast ? (layoutMode === 'chat' ? ' pb-8' : ' pb-6') : ''}`}
+            data-entry-id={e.id}
+            data-message-id={analysisId ?? e.id}
+            data-entry-index={index}
+            data-testid={`chat-entry-${e.role}`}
+        >
+            {e.role === 'user' ? (
+                <div className="group/user flex flex-col items-end gap-1.5">
+                    {e.image && (
+                        <div className="flex flex-col items-end gap-1">
+                            <AttachmentImage src={e.image} />
+                            {!answerStreaming && (
+                                <div className="flex items-center justify-end gap-0.5 opacity-60 transition-opacity group-hover/user:opacity-100 focus-within:opacity-100">
+                                    <RetryChip onRetry={() => void act.send('', e.id)} />
+                                </div>
+                            )}
+                        </div>
+                    )}
+                    {!e.image && e.imageOmitted && (
+                        <div
+                            data-testid="chat-image-omitted"
+                            className="rounded-control border border-hairline bg-zinc-900/60 px-2.5 py-1.5 text-ui-dense text-zinc-500"
+                        >
+                            image not backed up ({e.imageOmitted.mime}, {Math.max(1, Math.round(e.imageOmitted.bytes / 1024))} KB)
+                        </div>
+                    )}
+                    {e.text && e.text !== '(chart screenshot)' && (
+                        <UserPromptBubble
+                            text={e.text}
+                            answerStreaming={answerStreaming}
+                            entryId={e.id}
+                            onRetry={(id) => void act.send('', id)}
+                        />
+                    )}
+                </div>
+            ) : e.notice ? (
+                <p className="flex items-center gap-1.5 text-ui-xs text-zinc-500" data-testid="chat-notice">
+                    <Zap className="h-3 w-3 shrink-0 text-zinc-600" aria-hidden="true" />
+                    <span>{harnessNoticeDisplay(e.tools[0] ?? 'Harness event') || 'Harness event'}</span>
+                </p>
+            ) : e.error && !e.text ? (
+                <ChatFailureRow error={e.error} />
+            ) : (
+                <div className="group/ai min-w-0 space-y-2.5">
+                    {(!deskSpeaker || e.streaming) && (
+                        <div className="flex items-center gap-2">
+                            <span
+                                className="shrink-0"
+                                title={seatLabel}
+                                aria-label={seatLabel}
+                                data-testid="row-avatar"
+                            >
+                                <BotFace
+                                    face={deskSpeaker ? { shape: 'circle', hue: '#71717a' } : 'auto'}
+                                    name={e.speaker ?? 'desk'}
+                                    size={18}
+                                    working={!!e.streaming}
+                                />
+                            </span>
+                            {!deskSpeaker && (
+                                <span className="truncate text-ui-xs font-medium text-zinc-400">
+                                    {seatLabel}
+                                </span>
+                            )}
+                        </div>
+                    )}
+                    <div className="min-w-0 space-y-2.5">
+                    {(() => {
+                        const sid = signalIdFromActions(e.actions);
+                        if (!sid) return null;
+                        const row = signalRowById(sid);
+                        if (!row) return null;
+                        return (
+                            <SignalCard
+                                signal={row.signal}
+                                row={row}
+                            />
+                        );
+                    })()}
+                    <ChatWorkTimeline entry={e} symbol={symbol} interval={interval} />
+                    <ToolVisualsRow toolIds={e.toolIds} onChangeSymbol={act.onChangeSymbol} />
+                    {e.interrupted && !e.streaming && (
+                        <InterruptedRunNotice
+                            cause={e.error}
+                            onEditPrompt={prevUserEntry?.text ? () => act.setDraftText?.(prevUserEntry.text) : undefined}
+                            onTryAgain={prevUserEntry && prevUserEntry.text.trim()
+                                ? () => { void act.send('', prevUserEntry.id); }
+                                : undefined}
+                        />
+                    )}
+                    <div className="text-ui-base leading-relaxed text-zinc-200">
+                        {shownText
+                            ? <AnswerBody text={shownText} streaming={!!e.streaming} />
+                            : null}
+                    </div>
+                    {!e.streaming && <DeskScorecard />}
+                    {shownText && !e.streaming && (
+                        <div className="motion-action-bar mt-2 flex flex-wrap items-center gap-1.5 pt-0.5" data-testid="message-action-bar">
+                            {deskSpeaker && (
+                                <span
+                                    className="mr-0.5 inline-flex shrink-0 items-center opacity-70"
+                                    title={seatLabel}
+                                    aria-label={seatLabel}
+                                    data-testid="row-avatar"
+                                >
+                                    <BotFace
+                                        face={{ shape: 'circle', hue: '#71717a' }}
+                                        name={e.speaker ?? 'desk'}
+                                        size={16}
+                                        working={false}
+                                    />
+                                </span>
+                            )}
+                            <CopyChip text={shownText} />
+                            {act.onToggleWatch && analysisId && hasPinnedSet && (
+                                <PinChip pinned={pinned} onToggle={() => act.onToggleWatch?.(analysisId)} />
+                            )}
+                            {(() => {
+                                const prov = provLine(e);
+                                return prov ? (
+                                    <span className="ml-1 font-mono text-ui-2xs tabular-nums text-zinc-600" data-testid="prov-line">{prov}</span>
+                                ) : null;
+                            })()}
+                        </div>
+                    )}
+                    {!shownText && !e.streaming && deskSpeaker && (
+                        <span
+                            className="inline-flex shrink-0 items-center opacity-70"
+                            title={seatLabel}
+                            aria-label={seatLabel}
+                            data-testid="row-avatar"
+                        >
+                            <BotFace
+                                face={{ shape: 'circle', hue: '#71717a' }}
+                                name={e.speaker ?? 'desk'}
+                                size={16}
+                                working={false}
+                            />
+                        </span>
+                    )}
+                    {verdict?.analysis && (projected ? (
+                        <InlineVerdict analysis={verdict.analysis} />
+                    ) : verdictNeedsAudit(verdict.analysis) ? (
+                        <Disclosure
+                            summary="Inspect evidence & gate"
+                            label="Inspect evidence and gate"
+                            testId="inspect-evidence-gate"
+                            className="mt-1.5"
+                            summaryClassName="flex cursor-pointer items-center gap-1.5 py-1 text-ui-sm font-semibold text-zinc-500 transition-colors hover:text-zinc-300"
+                            bodyClassName="mt-1.5 border-t border-zinc-800/60 pt-1.5"
+                        >
+                            <VerdictAudit
+                                analysis={verdict.analysis}
+                                className="mt-1"
+                            />
+                        </Disclosure>
+                    ) : null)}
+                    {aiLevels && aiLevels.levels.length > 0 && !e.streaming && (
+                        <KeyLevelsCard
+                            messageId={e.id}
+                            levels={aiLevels.levels}
+                            symbol={symbol}
+                            getMark={act.getMark}
+                            onChatLevels={act.onChatLevels}
+                        />
+                    )}
+                    {(() => {
+                        void decisionTick;
+                        const p = e.settlementCorrection;
+                        if (!p || settlementCorrectionStateOf(p.tradeId) !== undefined) return null;
+                        const row = trades?.find(t => t.id === p.tradeId);
+                        return (
+                            <SettlementCorrectionCard
+                                proposal={p}
+                                current={row ? { outcome: row.outcome, pnlAmount: row.pnlAmount, pnlPercent: row.pnlPercent, entry: row.analysis?.entryPoints?.[0]?.price ? Number(row.analysis.entryPoints[0].price) : undefined } : undefined}
+                                onConfirm={() => { act.onConfirmSettlementCorrection?.(p); act.bumpDecisionTick(); }}
+                                onDismiss={() => { act.onDismissSettlementCorrection?.(p); act.bumpDecisionTick(); }}
+                                onVoid={() => { act.onVoidSettlementCorrection?.(p); act.bumpDecisionTick(); }}
+                            />
+                        );
+                    })()}
+                    {(() => {
+                        void decisionTick;
+                        const p = e.tradeAction;
+                        if (!p || tradeActionStateOf(p.planId) !== undefined) return null;
+                        const plan = getArmedPlans().find(x => x.planId === p.planId);
+                        return (
+                            <TradeActionCard
+                                proposal={p}
+                                current={plan ? { entry: plan.entry, stopLoss: plan.stopLoss, takeProfits: plan.takeProfits } : undefined}
+                                onConfirm={() => { act.onConfirmTradeAction?.(p); act.bumpDecisionTick(); }}
+                                onDismiss={() => { act.onDismissTradeAction?.(p); act.bumpDecisionTick(); }}
+                            />
+                        );
+                    })()}
+                    {(() => {
+                        void decisionTick;
+                        const p = e.riskChange;
+                        if (!p) return null;
+                        const state = riskChangeStateOf(p.id);
+                        const revert = riskRevertOf(p.id);
+                        if (!state && !revert) {
+                            return (
+                                <RiskChangeCard
+                                    proposal={p}
+                                    onConfirm={() => { act.onConfirmRiskChange?.(p, sessionId); act.bumpDecisionTick(); }}
+                                    onDismiss={() => { act.onDismissRiskChange?.(p); act.bumpDecisionTick(); }}
+                                />
+                            );
+                        }
+                        if (state === 'confirmed') {
+                            return (
+                                <RiskChangeCard
+                                    proposal={p}
+                                    applied
+                                    revert={revert}
+                                    onRevert={revert ? () => { act.onRevertRiskChange?.(p, sessionId); act.bumpDecisionTick(); } : undefined}
+                                />
+                            );
+                        }
+                        return null;
+                    })()}
+                    {(() => {
+                        void decisionTick;
+                        const ap = e.aiSettingChange;
+                        if (!ap) return null;
+                        const state = aiSettingChangeStateOf(ap.id);
+                        const revert = aiSettingRevertOf(ap.id);
+                        if (!state && !revert) {
+                            return (
+                                <AiSettingCard
+                                    proposal={ap}
+                                    onConfirm={() => { act.onConfirmAiSettingChange?.(ap, sessionId); act.bumpDecisionTick(); }}
+                                    onDismiss={() => { act.onDismissAiSettingChange?.(ap); act.bumpDecisionTick(); }}
+                                />
+                            );
+                        }
+                        if (state === 'confirmed') {
+                            return (
+                                <AiSettingCard
+                                    proposal={ap}
+                                    applied
+                                    revert={revert}
+                                    onRevert={revert ? () => { act.onRevertAiSettingChange?.(ap, sessionId); act.bumpDecisionTick(); } : undefined}
+                                />
+                            );
+                        }
+                        return null;
+                    })()}
+                    {(() => {
+                        void decisionTick;
+                        const sp = e.strategyActivation;
+                        if (!sp) return null;
+                        const state = strategyActivationStateOf(sp.id);
+                        const revert = strategyRevertOf(sp.id);
+                        if (!state && !revert) {
+                            return (
+                                <StrategyActivationCard
+                                    proposal={sp}
+                                    onConfirm={() => { act.onConfirmStrategyActivation?.(sp, sessionId); act.bumpDecisionTick(); }}
+                                    onDismiss={() => { act.onDismissStrategyActivation?.(sp); act.bumpDecisionTick(); }}
+                                />
+                            );
+                        }
+                        if (state === 'confirmed') {
+                            return (
+                                <StrategyActivationCard
+                                    proposal={sp}
+                                    applied
+                                    revert={revert}
+                                    onRevert={revert ? () => { act.onRevertStrategyActivation?.(sp, sessionId); act.bumpDecisionTick(); } : undefined}
+                                />
+                            );
+                        }
+                        return null;
+                    })()}
+                    {(() => {
+                        void decisionTick;
+                        const p = e.sessionPlan;
+                        if (!p) return null;
+                        const state = sessionPlanStateOf(p.id);
+                        const revert = sessionPlanRevertOf(p.id);
+                        if (!state && !revert) {
+                            return (
+                                <SessionPlanCard
+                                    proposal={p}
+                                    onConfirm={() => { act.onConfirmSessionPlan?.(p, sessionId); act.bumpDecisionTick(); }}
+                                    onDismiss={() => { act.onDismissSessionPlan?.(p); act.bumpDecisionTick(); }}
+                                />
+                            );
+                        }
+                        if (state === 'confirmed') {
+                            return (
+                                <SessionPlanCard
+                                    proposal={p}
+                                    applied
+                                    revert={revert}
+                                    onRevert={revert ? () => { act.onRevertSessionPlan?.(p, sessionId); act.bumpDecisionTick(); } : undefined}
+                                />
+                            );
+                        }
+                        return null;
+                    })()}
+                    {(() => {
+                        void decisionTick;
+                        const p = e.ruleProposal;
+                        if (!p) return null;
+                        const state = ruleProposalStateOf(p.id);
+                        const revert = ruleProposalRevertOf(p.id);
+                        if (!state && !revert) {
+                            return (
+                                <RuleProposalCard
+                                    proposal={p}
+                                    onConfirm={() => { act.onConfirmRuleProposal?.(p, sessionId); act.bumpDecisionTick(); }}
+                                    onDismiss={() => { act.onDismissRuleProposal?.(p); act.bumpDecisionTick(); }}
+                                />
+                            );
+                        }
+                        if (state === 'confirmed') {
+                            return (
+                                <RuleProposalCard
+                                    proposal={p}
+                                    applied
+                                    revert={revert}
+                                    onRevert={revert ? () => { act.onRevertRuleProposal?.(p, sessionId); act.bumpDecisionTick(); } : undefined}
+                                />
+                            );
+                        }
+                        return null;
+                    })()}
+                    {e.statsCard && (
+                        <StatsCard snapshot={e.statsCard} />
+                    )}
+                    {e.contextDiagnostic && (
+                        <ContextDiagnosticCard snapshot={e.contextDiagnostic} />
+                    )}
+                    {e.doctorDiagnostic && (
+                        <DoctorDiagnosticCard snapshot={e.doctorDiagnostic} />
+                    )}
+                    {e.compactReceipt && (
+                        <CompactReceiptCard
+                            snapshot={e.compactReceipt}
+                            canUndo={!!(e.compactReceipt.undoId && hasCompactUndo(e.compactReceipt.undoId))}
+                            onUndo={e.compactReceipt.undoId && act.onUndoCompact
+                                ? () => act.onUndoCompact?.(e.compactReceipt!.undoId!)
+                                : undefined}
+                        />
+                    )}
+                    {e.proposal && (!proposalState || (proposalState === 'logged' && !!undoWindowOf(e.id))) && (
+                        <TradeProposalCard
+                            proposal={e.proposal}
+                            entryId={e.id}
+                            canLog={!!act.onLogProposedTrade}
+                            guardBlock={sessionGuard?.block ?? null}
+                            guardWarnings={sessionGuard?.warnings ?? []}
+                            planMode={planMode}
+                            onUnlockPlanMode={act.onUnlockPlanMode}
+                            logNote={e.error
+                                ? 'This plan arrived on a run that stopped before it finished — the rest of the answer never came.'
+                                : undefined}
+                            awaitingLog={awaitingLog}
+                            getMark={act.getMark}
+                            presentedAt={e.at}
+                            undoTick={proposalTick}
+                            onUndoWindowClose={act.bumpProposalTick}
+                            onApprove={async () => {
+                                if (sharedProposalStateOf(e.id) || awaitingLog) return;
+                                const stamped = e.proposal!;
+                                act.setAwaitingLogEntryId(e.id);
+                                let approved: string | null;
+                                try {
+                                    const res = await act.onLogProposedTrade?.(stamped, sessionId);
+                                    approved = typeof res === 'string' ? res : null;
+                                } catch {
+                                    approved = null;
+                                } finally {
+                                    act.setAwaitingLogEntryId(null);
+                                }
+                                if (!approved) return;
+                                markUndoWindow(e.id, approved, stamped.planId);
+                                rememberProposalState(e.id, 'logged');
+                                act.bumpProposalTick();
+                            }}
+                            onReject={(reason) => {
+                                if (sharedProposalStateOf(e.id)) return;
+                                const recorded = act.onRejectProposedTrade
+                                    ? act.onRejectProposedTrade(e.proposal!, reason)
+                                    : true;
+                                if (!recorded) return;
+                                rememberProposalState(e.id, 'dismissed');
+                                act.bumpProposalTick();
+                            }}
+                            onAskWhy={() => {
+                                act.setDraftText?.(askWhyPrompt(e.proposal!));
+                            }}
+                            onUndo={() => {
+                                const w = undoWindowOf(e.id);
+                                if (!w) return;
+                                clearUndoWindow(e.id);
+                                act.onUndoApproval?.({ rowId: w.rowId, planId: w.planId, entryId: e.id, sessionId });
+                                forgetProposalState(e.id);
+                                act.bumpProposalTick();
+                            }}
+                        />
+                    )}
+                    {e.proposal && proposalState === 'logged' && !undoWindowOf(e.id) && <TradeProposalLoggedRow />}
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+}, (prev, next) => (
+    prev.entry === next.entry
+    && prev.index === next.index
+    && prev.isLast === next.isLast
+    && prev.layoutMode === next.layoutMode
+    && prev.answerStreaming === next.answerStreaming
+    && prev.analysisId === next.analysisId
+    && prev.verdict === next.verdict
+    && prev.projected === next.projected
+    && prev.symbol === next.symbol
+    && prev.interval === next.interval
+    && prev.sessionId === next.sessionId
+    && prev.pinned === next.pinned
+    && prev.hasPinnedSet === next.hasPinnedSet
+    && prev.awaitingLog === next.awaitingLog
+    && prev.planMode === next.planMode
+    && prev.proposalState === next.proposalState
+    && prev.prevUserEntry?.id === next.prevUserEntry?.id
+    && prev.prevUserEntry?.text === next.prevUserEntry?.text
+    && (!next.entry.proposal || (prev.proposalTick === next.proposalTick && prev.sessionGuard === next.sessionGuard))
+    && (!hasRowDecisionCard(next.entry) || (prev.decisionTick === next.decisionTick && prev.trades === next.trades))
+));
+
 interface ChatTranscriptListProps {
     /** Desk dock vs centered Chat focus view. */
     layoutMode?: 'desk' | 'chat';
@@ -422,571 +980,66 @@ const ChatTranscriptList: React.FC<ChatTranscriptListProps> = ({
     const [initialTopMostItemIndex] = useState<number | { index: 'LAST'; align: 'end' }>(
         () => (scrollParent.clientHeight > 0 ? { index: 'LAST', align: 'end' } : 0),
     );
-    /** One row. `i` is the index in the WHOLE conversation, not in the mounted
-     *  window — the neighbour reads (`entries[i - 1]` for a retry, `entries[i + 1]`
-     *  for the memory window) and the streaming flags are keyed by it. */
+    const bumpProposalTick = useCallback(() => setProposalTick(t => t + 1), []);
+    const bumpDecisionTick = useCallback(() => setDecisionTick(t => t + 1), []);
+    const actionsRef = useRef<TranscriptRowActions>({
+        send, setDraftText, onChangeSymbol, getMark, onChatLevels, onToggleWatch,
+        onLogProposedTrade, onRejectProposedTrade, onUndoApproval,
+        onConfirmRiskChange, onDismissRiskChange, onRevertRiskChange,
+        onConfirmAiSettingChange, onDismissAiSettingChange, onRevertAiSettingChange,
+        onConfirmSettlementCorrection, onDismissSettlementCorrection, onVoidSettlementCorrection,
+        onConfirmTradeAction, onDismissTradeAction,
+        onConfirmStrategyActivation, onDismissStrategyActivation, onRevertStrategyActivation,
+        onConfirmSessionPlan, onDismissSessionPlan, onRevertSessionPlan,
+        onConfirmRuleProposal, onDismissRuleProposal, onRevertRuleProposal,
+        onUnlockPlanMode, onUndoCompact,
+        bumpProposalTick, bumpDecisionTick, setAwaitingLogEntryId,
+    });
+    actionsRef.current = {
+        send, setDraftText, onChangeSymbol, getMark, onChatLevels, onToggleWatch,
+        onLogProposedTrade, onRejectProposedTrade, onUndoApproval,
+        onConfirmRiskChange, onDismissRiskChange, onRevertRiskChange,
+        onConfirmAiSettingChange, onDismissAiSettingChange, onRevertAiSettingChange,
+        onConfirmSettlementCorrection, onDismissSettlementCorrection, onVoidSettlementCorrection,
+        onConfirmTradeAction, onDismissTradeAction,
+        onConfirmStrategyActivation, onDismissStrategyActivation, onRevertStrategyActivation,
+        onConfirmSessionPlan, onDismissSessionPlan, onRevertSessionPlan,
+        onConfirmRuleProposal, onDismissRuleProposal, onRevertRuleProposal,
+        onUnlockPlanMode, onUndoCompact,
+        bumpProposalTick, bumpDecisionTick, setAwaitingLogEntryId,
+    };
+
     const renderEntry = (i: number, e: LiveEntry): React.ReactNode => {
-        const answerStreaming = answerStreamingFlags[i];
-        // Key-levels protocol: the fenced block the model closes an
-        // analysis with renders as the chart-linked card, never as
-        // raw text — and an OPEN (still-streaming) fence is hidden
-        // from the bubble too, so the protocol never flashes.
-        const aiLevels = e.role === 'ai' && !e.notice ? parseKeyLevels(e.text) : null;
-        // The displayed text NEVER carries the app's internal context marks —
-        // on BOTH branches: the key-levels fence's clean text used to skip the
-        // strip, so a transport that echoes its input (the probe mock) painted
-        // `[LIVE CHART CONTEXT …]` into a bubble that also carried a fence.
-        const shownText = aiLevels?.hadBlock
-            ? stripInternalContextMarks(aiLevels.clean)
-            : stripInternalContextMarks(e.text);
-        // A row projected from the conversation keeps the Message's own id
-        // (`liveEntryFromMessage` sets `id: m.id`, which is what lets the
-        // merge treat one turn as one row), so the entry id IS the analysis
-        // id. Gated on the host saying its rows are conversation rows: a
-        // dock-native entry id must never be looked up as a message id,
-        // because a collision would hang another run's verdict on the
-        // wrong bubble.
         const analysisId = resolveVerdictByIdentity && e.role === 'ai' ? e.id : undefined;
-        // Only a settled answer has a verdict to explain, and only
-        // an entry this dock ran has an id to resolve it from.
         const verdict = e.streaming || e.notice ? undefined
             : (analysisId ? getAnalysisMessage?.(analysisId) : undefined);
-        const seatLabel = e.speaker
-            ? formatSeatLabel(e.speaker.split(':')[1] ?? e.speaker)
-            : 'desk';
-        const deskSpeaker = !e.speaker || e.speaker.trim().toLowerCase() === 'desk';
-        // The row was projected out of the Chat conversation, which draws
-        // a verdict as a decision table rather than a bare audit — and
-        // since both homes now read that one conversation, this IS every
-        // analysis row. `InlineVerdict` is the one renderer for both.
-        const projected = !!resolveVerdictByIdentity;
+        const prev = i > 0 ? entries[i - 1] : undefined;
+        const prevUserEntry = prev?.role === 'user' ? { id: prev.id, text: prev.text } : null;
         return (
-            // The 24px between rows used to come from the scroller's
-            // `space-y-6`. Virtuoso measures each item's own box, so the gap
-            // rides the row's padding now — on every row but the last, which
-            // is exactly the spacing space-y-6 produced. `data-entry-index` is
-            // the row's place in the WHOLE conversation: with only a window
-            // mounted, it is what lets a reader (and render-probe) tell "the
-            // newest row is on screen" from "some rows are on screen".
-            <div
-                className={`chat-fade-in${i < entries.length - 1 ? (layoutMode === 'chat' ? ' pb-8' : ' pb-6') : ''}`}
-                data-entry-id={e.id}
-                data-message-id={analysisId ?? e.id}
-                data-entry-index={i}
-                data-testid={`chat-entry-${e.role}`}
-            >
-                {e.role === 'user' ? (
-                    <div className="group/user flex flex-col items-end gap-1.5">
-                        {e.image && (
-                            <div className="flex flex-col items-end gap-1">
-                                <AttachmentImage src={e.image} />
-                                {!answerStreaming && (
-                                    <div className="flex items-center justify-end gap-0.5 opacity-60 transition-opacity group-hover/user:opacity-100 focus-within:opacity-100">
-                                        <RetryChip onRetry={() => void send('', e.id)} />
-                                    </div>
-                                )}
-                            </div>
-                        )}
-                        {!e.image && e.imageOmitted && (
-                            <div
-                                data-testid="chat-image-omitted"
-                                className="rounded-control border border-hairline bg-zinc-900/60 px-2.5 py-1.5 text-ui-dense text-zinc-500"
-                            >
-                                image not backed up ({e.imageOmitted.mime}, {Math.max(1, Math.round(e.imageOmitted.bytes / 1024))} KB)
-                            </div>
-                        )}
-                        {e.text && e.text !== '(chart screenshot)' && (
-                            <UserPromptBubble
-                                text={e.text}
-                                answerStreaming={answerStreaming}
-                                entryId={e.id}
-                                onRetry={(id) => void send('', id)}
-                            />
-                        )}
-                    </div>
-                ) : e.notice ? (
-                    <p className="flex items-center gap-1.5 text-ui-xs text-zinc-500" data-testid="chat-notice">
-                        <Zap className="h-3 w-3 shrink-0 text-zinc-600" aria-hidden="true" />
-                        <span>{harnessNoticeDisplay(e.tools[0] ?? 'Harness event') || 'Harness event'}</span>
-                    </p>
-                ) : e.error && !e.text ? (
-                    <ChatFailureRow error={e.error} />
-                ) : (
-                    <div className="group/ai min-w-0 space-y-2.5">
-                        {(!deskSpeaker || e.streaming) && (
-                            <div className="flex items-center gap-2">
-                                <span
-                                    className="shrink-0"
-                                    title={seatLabel}
-                                    aria-label={seatLabel}
-                                    data-testid="row-avatar"
-                                >
-                                    <BotFace
-                                        face={deskSpeaker ? { shape: 'circle', hue: '#71717a' } : 'auto'}
-                                        name={e.speaker ?? 'desk'}
-                                        size={18}
-                                        working={!!e.streaming}
-                                    />
-                                </span>
-                                {!deskSpeaker && (
-                                    <span className="truncate text-ui-xs font-medium text-zinc-400">
-                                        {seatLabel}
-                                    </span>
-                                )}
-                            </div>
-                        )}
-                        <div className="min-w-0 space-y-2.5">
-                        {/* Signal row: the ledger call, when this turn
-                            emitted one (signalIdFromActions reads the id
-                            from the emit_signal action). Never fabricated. */}
-                        {(() => {
-                            const sid = signalIdFromActions(e.actions);
-                            if (!sid) return null;
-                            const row = signalRowById(sid);
-                            if (!row) return null;
-                            return (
-                                <SignalCard
-                                    signal={row.signal}
-                                    row={row}
-                                />
-                            );
-                        })()}
-                        <ChatWorkTimeline entry={e} symbol={symbol} interval={interval} />
-                        {(() => {
-                            const ids = e.toolIds;
-                            if (!ids || ids.length === 0) return null;
-                            const payloads = ids
-                                .map(id => (id ? readToolPayload(id) : null))
-                                .filter((p): p is NonNullable<typeof p> => p !== null);
-                            if (payloads.length === 0) return null;
-                            const visuals = parseToolVisualsFromPayloads(payloads);
-                            if (visuals.length === 0) return null;
-                            return visuals.map(visual => (
-                                <ToolVisualCard
-                                    key={visual.toolCallId}
-                                    visual={visual}
-                                    onJumpToSymbol={onChangeSymbol}
-                                />
-                            ));
-                        })()}
-                        {/* An interrupted run is a half-written answer with no
-                            way forward — say so IN FLOW, and offer the two
-                            recoveries (re-ask, or edit what was asked). The
-                            `retryOf` re-dispatch is the same one the post-mortem
-                            retry uses. */}
-                        {e.interrupted && !e.streaming && (
-                            <InterruptedRunNotice
-                                cause={e.error}
-                                /* A recovery is only offered against the USER turn
-                                   this answer was answering: `send('', retryOf)`
-                                   replays a USER entry and returns early for any
-                                   other id, so a card on a row whose predecessor is
-                                   a harness notice or another seat would carry a
-                                   dead button — and this notice's own contract says
-                                   it renders only with a handler that works. */
-                                onEditPrompt={(() => {
-                                    const asked = entries[i - 1]?.role === 'user' ? entries[i - 1].text : '';
-                                    return asked ? () => setDraftText?.(asked) : undefined;
-                                })()}
-                                onTryAgain={(() => {
-                                    const prev = entries[i - 1];
-                                    return prev?.role === 'user' && prev.text.trim()
-                                        ? () => { void send('', prev.id); }
-                                        : undefined;
-                                })()}
-                            />
-                        )}
-                        <div className="text-ui-base leading-relaxed text-zinc-200">
-                            {shownText
-                                ? <AnswerBody text={shownText} streaming={!!e.streaming} />
-                                : null}
-                        </div>
-                        {/* Desk scorecard: the ledger's hit-rate vs base-rate. */}
-                        {!e.streaming && <DeskScorecard />}
-                        {shownText && !e.streaming && (
-                            <div className="mt-2 flex flex-wrap items-center gap-1.5 pt-0.5">
-                                {deskSpeaker && (
-                                    <span
-                                        className="mr-0.5 inline-flex shrink-0 items-center opacity-70"
-                                        title={seatLabel}
-                                        aria-label={seatLabel}
-                                        data-testid="row-avatar"
-                                    >
-                                        <BotFace
-                                            face={{ shape: 'circle', hue: '#71717a' }}
-                                            name={e.speaker ?? 'desk'}
-                                            size={16}
-                                            working={false}
-                                        />
-                                    </span>
-                                )}
-                                <CopyChip text={shownText} />
-                                {onToggleWatch && analysisId && pinnedMessageIds && (
-                                    <PinChip pinned={pinnedMessageIds.has(analysisId)}
-                                        onToggle={() => onToggleWatch(analysisId)} />
-                                )}
-                                {(() => {
-                                    const prov = provLine(e);
-                                    return prov ? (
-                                        <span className="ml-1 font-mono text-ui-2xs tabular-nums text-zinc-600" data-testid="prov-line">{prov}</span>
-                                    ) : null;
-                                })()}
-                            </div>
-                        )}
-                        {!shownText && !e.streaming && deskSpeaker && (
-                            <span
-                                className="inline-flex shrink-0 items-center opacity-70"
-                                title={seatLabel}
-                                aria-label={seatLabel}
-                                data-testid="row-avatar"
-                            >
-                                <BotFace
-                                    face={{ shape: 'circle', hue: '#71717a' }}
-                                    name={e.speaker ?? 'desk'}
-                                    size={16}
-                                    working={false}
-                                />
-                            </span>
-                        )}
-                        {verdict?.analysis && (projected ? (
-                            <InlineVerdict analysis={verdict.analysis} />
-                        ) : verdictNeedsAudit(verdict.analysis) ? (
-                            <Disclosure
-                                summary="Inspect evidence & gate"
-                                label="Inspect evidence and gate"
-                                testId="inspect-evidence-gate"
-                                className="mt-1.5"
-                                summaryClassName="flex cursor-pointer items-center gap-1.5 py-1 text-ui-sm font-semibold text-zinc-500 transition-colors hover:text-zinc-300"
-                                bodyClassName="mt-1.5 border-t border-zinc-800/60 pt-1.5"
-                            >
-                                <VerdictAudit
-                                    analysis={verdict.analysis}
-                                    className="mt-1"
-                                />
-                            </Disclosure>
-                        ) : null)}
-                        {aiLevels && aiLevels.levels.length > 0 && !e.streaming && (
-                            <KeyLevelsCard
-                                messageId={e.id}
-                                levels={aiLevels.levels}
-                                symbol={symbol}
-                                getMark={getMark}
-                                onChatLevels={onChatLevels}
-                            />
-                        )}
-                        {/* A PROPOSED settlement fix (correct_trade_outcome).
-                            The card holds no authority: Confirm routes to the
-                            SAME journal hooks a human edit calls, and nothing
-                            changes until that tap. The disposition lives in
-                            the correction store at module scope, so a decided
-                            card stays decided across a dock unmount — the same
-                            contract as the proposal map below. */}
-                        {(() => {
-                            void decisionTick;
-                            const p = e.settlementCorrection;
-                            if (!p || settlementCorrectionStateOf(p.tradeId) !== undefined) return null;
-                            const row = trades?.find(t => t.id === p.tradeId);
-                            return (
-                                <SettlementCorrectionCard
-                                    proposal={p}
-                                    current={row ? { outcome: row.outcome, pnlAmount: row.pnlAmount, pnlPercent: row.pnlPercent, entry: row.analysis?.entryPoints?.[0]?.price ? Number(row.analysis.entryPoints[0].price) : undefined } : undefined}
-                                    onConfirm={() => { onConfirmSettlementCorrection?.(p); setDecisionTick(t => t + 1); }}
-                                    onDismiss={() => { onDismissSettlementCorrection?.(p); setDecisionTick(t => t + 1); }}
-                                    onVoid={() => { onVoidSettlementCorrection?.(p); setDecisionTick(t => t + 1); }}
-                                />
-                            );
-                        })()}
-                        {/* A PROPOSED action on an ARMED plan (update_trade /
-                            close_trade). Confirm applies it through App's
-                            watch/journal writers; the card itself writes
-                            nothing. The plan's CURRENT levels come from the
-                            watch service — the dock is the surface that arms
-                            it, so the before/after is real here. */}
-                        {(() => {
-                            void decisionTick;
-                            const p = e.tradeAction;
-                            if (!p || tradeActionStateOf(p.planId) !== undefined) return null;
-                            const plan = getArmedPlans().find(x => x.planId === p.planId);
-                            return (
-                                <TradeActionCard
-                                    proposal={p}
-                                    current={plan ? { entry: plan.entry, stopLoss: plan.stopLoss, takeProfits: plan.takeProfits } : undefined}
-                                    onConfirm={() => { onConfirmTradeAction?.(p); setDecisionTick(t => t + 1); }}
-                                    onDismiss={() => { onDismissTradeAction?.(p); setDecisionTick(t => t + 1); }}
-                                />
-                            );
-                        })()}
-                        {/* A PROPOSED risk-limit / guard-preset change
-                            (propose_risk_change). The card's asymmetry is the
-                            owner's rule: one tap to TIGHTEN, an explicit
-                            second tap to LOOSEN. Confirm writes through the
-                            settings writer the trader owns; a confirmed change
-                            stays for a short revert window. */}
-                        {(() => {
-                            void decisionTick;
-                            const p = e.riskChange;
-                            if (!p) return null;
-                            const state = riskChangeStateOf(p.id);
-                            const revert = riskRevertOf(p.id);
-                            if (!state && !revert) {
-                                return (
-                                    <RiskChangeCard
-                                        proposal={p}
-                                        onConfirm={() => { onConfirmRiskChange?.(p, sessionId); setDecisionTick(t => t + 1); }}
-                                        onDismiss={() => { onDismissRiskChange?.(p); setDecisionTick(t => t + 1); }}
-                                    />
-                                );
-                            }
-                            if (state === 'confirmed') {
-                                return (
-                                    <RiskChangeCard
-                                        proposal={p}
-                                        applied
-                                        revert={revert}
-                                        onRevert={revert ? () => { onRevertRiskChange?.(p, sessionId); setDecisionTick(t => t + 1); } : undefined}
-                                    />
-                                );
-                            }
-                            return null;
-                        })()}
-                        {/* A PROPOSED AI-behavior setting toggle (Commit 4.7):
-                            Hybrid Intelligence / Desk Tools left Settings for
-                            this card. Turning a capability OFF tightens and
-                            confirms in one tap; turning it ON asks again. The
-                            confirm writes through the trader's settings path
-                            and the applied card offers a 60s revert. */}
-                        {(() => {
-                            void decisionTick;
-                            const ap = e.aiSettingChange;
-                            if (!ap) return null;
-                            const state = aiSettingChangeStateOf(ap.id);
-                            const revert = aiSettingRevertOf(ap.id);
-                            if (!state && !revert) {
-                                return (
-                                    <AiSettingCard
-                                        proposal={ap}
-                                        onConfirm={() => { onConfirmAiSettingChange?.(ap, sessionId); setDecisionTick(t => t + 1); }}
-                                        onDismiss={() => { onDismissAiSettingChange?.(ap); setDecisionTick(t => t + 1); }}
-                                    />
-                                );
-                            }
-                            if (state === 'confirmed') {
-                                return (
-                                    <AiSettingCard
-                                        proposal={ap}
-                                        applied
-                                        revert={revert}
-                                        onRevert={revert ? () => { onRevertAiSettingChange?.(ap, sessionId); setDecisionTick(t => t + 1); } : undefined}
-                                    />
-                                );
-                            }
-                            return null;
-                        })()}
-                        {/* A PROPOSED strategy activation/retirement
-                            (propose_strategy_activation). Same decision-card
-                            shape: Confirm applies through the writer the
-                            trader owns; a confirmed change stays for the same
-                            revert window as the risk card. */}
-                        {(() => {
-                            void decisionTick;
-                            const sp = e.strategyActivation;
-                            if (!sp) return null;
-                            const state = strategyActivationStateOf(sp.id);
-                            const revert = strategyRevertOf(sp.id);
-                            if (!state && !revert) {
-                                return (
-                                    <StrategyActivationCard
-                                        proposal={sp}
-                                        onConfirm={() => { onConfirmStrategyActivation?.(sp, sessionId); setDecisionTick(t => t + 1); }}
-                                        onDismiss={() => { onDismissStrategyActivation?.(sp); setDecisionTick(t => t + 1); }}
-                                    />
-                                );
-                            }
-                            if (state === 'confirmed') {
-                                return (
-                                    <StrategyActivationCard
-                                        proposal={sp}
-                                        applied
-                                        revert={revert}
-                                        onRevert={revert ? () => { onRevertStrategyActivation?.(sp, sessionId); setDecisionTick(t => t + 1); } : undefined}
-                                    />
-                                );
-                            }
-                            return null;
-                        })()}
-                        {/* A PROPOSED session plan (propose_session_plan).
-                            Confirm persists the plan; Dismiss resolves the card
-                            without touching the live session. A confirmed plan
-                            stays for the 60s revert window, then reads as a
-                            verified once-per-session record. */}
-                        {(() => {
-                            void decisionTick;
-                            const p = e.sessionPlan;
-                            if (!p) return null;
-                            const state = sessionPlanStateOf(p.id);
-                            const revert = sessionPlanRevertOf(p.id);
-                            if (!state && !revert) {
-                                return (
-                                    <SessionPlanCard
-                                        proposal={p}
-                                        onConfirm={() => { onConfirmSessionPlan?.(p, sessionId); setDecisionTick(t => t + 1); }}
-                                        onDismiss={() => { onDismissSessionPlan?.(p); setDecisionTick(t => t + 1); }}
-                                    />
-                                );
-                            }
-                            if (state === 'confirmed') {
-                                return (
-                                    <SessionPlanCard
-                                        proposal={p}
-                                        applied
-                                        revert={revert}
-                                        onRevert={revert ? () => { onRevertSessionPlan?.(p, sessionId); setDecisionTick(t => t + 1); } : undefined}
-                                    />
-                                );
-                            }
-                            return null;
-                        })()}
-                        {/* A PROPOSED trading rule (propose_rule_change). The
-                            anti-hindsight split is printed on the card; Confirm
-                            is the only writer and starts the TTL. */}
-                        {(() => {
-                            void decisionTick;
-                            const p = e.ruleProposal;
-                            if (!p) return null;
-                            const state = ruleProposalStateOf(p.id);
-                            const revert = ruleProposalRevertOf(p.id);
-                            if (!state && !revert) {
-                                return (
-                                    <RuleProposalCard
-                                        proposal={p}
-                                        onConfirm={() => { onConfirmRuleProposal?.(p, sessionId); setDecisionTick(t => t + 1); }}
-                                        onDismiss={() => { onDismissRuleProposal?.(p); setDecisionTick(t => t + 1); }}
-                                    />
-                                );
-                            }
-                            if (state === 'confirmed') {
-                                return (
-                                    <RuleProposalCard
-                                        proposal={p}
-                                        applied
-                                        revert={revert}
-                                        onRevert={revert ? () => { onRevertRuleProposal?.(p, sessionId); setDecisionTick(t => t + 1); } : undefined}
-                                    />
-                                );
-                            }
-                            return null;
-                        })()}
-                        {/* P-5's rendering half: a stats-tool receipt rendered
-                            as a card — the numbers ARE the tool output, the
-                            sample size is always visible, and the model
-                            never restates them in prose. */}
-                        {e.statsCard && (
-                            <StatsCard snapshot={e.statsCard} />
-                        )}
-                        {e.contextDiagnostic && (
-                            <ContextDiagnosticCard snapshot={e.contextDiagnostic} />
-                        )}
-                        {e.doctorDiagnostic && (
-                            <DoctorDiagnosticCard snapshot={e.doctorDiagnostic} />
-                        )}
-                        {e.compactReceipt && (
-                            <CompactReceiptCard
-                                snapshot={e.compactReceipt}
-                                canUndo={!!(e.compactReceipt.undoId && hasCompactUndo(e.compactReceipt.undoId))}
-                                onUndo={e.compactReceipt.undoId && onUndoCompact
-                                    ? () => onUndoCompact(e.compactReceipt!.undoId!)
-                                    : undefined}
-                            />
-                        )}
-                        {e.proposal && (!proposalStateOf(e.id) || (proposalStateOf(e.id) === 'logged' && !!undoWindowOf(e.id))) && (
-                            <TradeProposalCard
-                                proposal={e.proposal}
-                                entryId={e.id}
-                                canLog={!!onLogProposedTrade}
-                                guardBlock={sessionGuard?.block ?? null}
-                                guardWarnings={sessionGuard?.warnings ?? []}
-                                planMode={planMode}
-                                onUnlockPlanMode={onUnlockPlanMode}
-                                logNote={e.error
-                                    ? 'This plan arrived on a run that stopped before it finished — the rest of the answer never came.'
-                                    : undefined}
-                                awaitingLog={awaitingLogEntryId === e.id}
-                                getMark={getMark}
-                                presentedAt={e.at}
-                                undoTick={proposalTick}
-                                onUndoWindowClose={() => setProposalTick(t => t + 1)}
-                                onApprove={async () => {
-                                    // Double-approve guard: the disposition lives at module
-                                    // scope, so it survived even before this fix's second
-                                    // half — the map lookup makes a re-click after a dock
-                                    // unmount/remount (fresh component, same store entry)
-                                    // a NO-OP instead of a second journal row.
-                                    if (sharedProposalStateOf(e.id) || awaitingLogEntryId) return;
-                                    const stamped = e.proposal!;
-                                    setAwaitingLogEntryId(e.id);
-                                    // The row is written only once the gate stamp has
-                                    // been awaited (and, if it could not be measured,
-                                    // once the trader has confirmed) — so the card must
-                                    // stay live and clickable-to-cancel through that
-                                    // await instead of being marked approved up front.
-                                    // The handler returns the ROW id on success (the
-                                    // handle the undo window reverses); anything else is
-                                    // a refusal or a cancelled confirm.
-                                    let approved: string | null;
-                                    try {
-                                        const res = await onLogProposedTrade?.(stamped, sessionId);
-                                        approved = typeof res === 'string' ? res : null;
-                                    }
-                                    // An approve that threw is NOT an approval: the card
-                                    // stays live so the trader can retry instead of
-                                    // seeing ✓ Approved over a missing row.
-                                    catch { approved = null; }
-                                    finally { setAwaitingLogEntryId(null); }
-                                    if (!approved) return;
-                                    // The undo window opens on the ENTRY (the card's
-                                    // identity, stable across a virtualized remount) with
-                                    // the row id and plan it reverses.
-                                    markUndoWindow(e.id, approved, stamped.planId);
-                                    rememberProposalState(e.id, 'logged');
-                                    setProposalTick(t => t + 1);
-                                }}
-                                onReject={(reason) => {
-                                    if (sharedProposalStateOf(e.id)) return;
-                                    // The decline is RECORDED by App (the HOLD ledger,
-                                    // source 'desk', optional reason). A record that
-                                    // failed to land keeps the card live — a decline
-                                    // that was never written is not a decline.
-                                    const recorded = onRejectProposedTrade
-                                        ? onRejectProposedTrade(e.proposal!, reason)
-                                        : true;
-                                    if (!recorded) return;
-                                    rememberProposalState(e.id, 'dismissed');
-                                    setProposalTick(t => t + 1);
-                                }}
-                                onAskWhy={() => {
-                                    // Pre-fill the composer with the pushback prompt —
-                                    // the trader edits and sends it themselves; nothing
-                                    // is sent by tapping the card.
-                                    setDraftText?.(askWhyPrompt(e.proposal!));
-                                }}
-                                onUndo={() => {
-                                    const w = undoWindowOf(e.id);
-                                    if (!w) return;
-                                    clearUndoWindow(e.id);
-                                    onUndoApproval?.({ rowId: w.rowId, planId: w.planId, entryId: e.id, sessionId });
-                                    // The card returns to undecided: the row was deleted
-                                    // and the receipt message removed, so the trader can
-                                    // approve again (a fresh decision, a fresh receipt).
-                                    forgetProposalState(e.id);
-                                    setProposalTick(t => t + 1);
-                                }}
-                            />
-                        )}
-                        {e.proposal && proposalStateOf(e.id) === 'logged' && !undoWindowOf(e.id) && <TradeProposalLoggedRow />}
-                        </div>
-                    </div>
-                )}
-            </div>
+            <TranscriptRow
+                index={i}
+                isLast={i === entries.length - 1}
+                layoutMode={layoutMode}
+                entry={e}
+                prevUserEntry={prevUserEntry}
+                answerStreaming={answerStreamingFlags[i]}
+                analysisId={analysisId}
+                verdict={verdict}
+                projected={!!resolveVerdictByIdentity}
+                symbol={symbol}
+                interval={interval}
+                sessionId={sessionId}
+                pinned={!!(analysisId && pinnedMessageIds?.has(analysisId))}
+                hasPinnedSet={!!pinnedMessageIds}
+                awaitingLog={awaitingLogEntryId === e.id}
+                planMode={planMode}
+                proposalState={proposalStateOf(e.id)}
+                proposalTick={proposalTick}
+                decisionTick={decisionTick}
+                trades={trades}
+                sessionGuard={sessionGuard}
+                actionsRef={actionsRef}
+            />
         );
     };
 

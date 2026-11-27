@@ -1,5 +1,5 @@
-import React, { memo, useState } from 'react';
-import ReactMarkdown from 'react-markdown';
+import React, { memo, useMemo, useRef, useState } from 'react';
+import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
@@ -7,6 +7,12 @@ import 'katex/dist/katex.min.css';
 import { Check, Copy } from './Icons';
 import { copyText } from '../../utils/clipboard';
 import { parseCodeFenceLanguage } from '../../utils/toolPayloadFormat';
+import {
+  appendStreamChunk,
+  canRenderPlainStreamingProse,
+  splitStableMarkdownBlocks,
+  type StreamFadeChunk,
+} from '../../utils/markdownBlocksCore';
 
 // ─── Math preparation ───────────────────────────────────────────────────────
 // Two things must be true at once here, and remark-math only knows about one
@@ -77,6 +83,9 @@ const KATEX_OPTIONS = { throwOnError: false, errorColor: '#f6465d' };
 interface MarkdownRendererProps {
   /** Markdown text to render. */
   content: string;
+  /** True while actively streaming — splits completed top-level blocks into
+   *  frozen memoized units and fades only the newly arrived trailing slice. */
+  streaming?: boolean;
   /** Extra classes for the prose wrapper (e.g. text color overrides). */
   className?: string;
 }
@@ -184,81 +193,123 @@ const decorateDrawingRefs = (nodes: React.ReactNode): React.ReactNode =>
     );
   });
 
-const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, className }) => {
+const REMARK_PLUGINS = [remarkGfm, remarkMath];
+const REHYPE_PLUGINS = [[rehypeKatex, KATEX_OPTIONS]] as unknown as React.ComponentProps<typeof ReactMarkdown>['rehypePlugins'];
+
+const MARKDOWN_COMPONENTS: Components = {
+  pre: ({ children }) => <CodeFenceBlock>{children}</CodeFenceBlock>,
+  code: ({ className: codeClassName, children, ...props }) => {
+    const isBlock = /language-/.test(String(codeClassName || ''));
+    if (isBlock) {
+      return (
+        <code className="font-mono text-zinc-200" {...props}>{children}</code>
+      );
+    }
+    const rawText = extractNodeText(children).trim();
+    if (/^#D\d+$/.test(rawText)) {
+      return <DrawingRefChip shortId={rawText} />;
+    }
+    return (
+      <code
+        {...props}
+        className="rounded-[6px] break-inside-avoid border border-hairline bg-zinc-900 px-1.5 py-0.5 font-mono text-[12.5px] text-zinc-200 whitespace-nowrap before:content-none after:content-none"
+      >
+        {children}
+      </code>
+    );
+  },
+  table: ({ children }) => (
+    <div className="my-3 overflow-x-auto overscroll-x-contain custom-scrollbar">
+      <table className="w-max min-w-full text-left text-ui-sm border-collapse tabular-nums">{children}</table>
+    </div>
+  ),
+  th: ({ children }) => (
+    <th className="whitespace-nowrap border-b border-zinc-700 bg-zinc-800 px-3 py-1.5 text-ui-caption font-medium text-zinc-200 text-left">{children}</th>
+  ),
+  td: ({ children }) => (
+    <td className="border-b border-zinc-700/60 px-3 py-1.5 text-ui-caption text-zinc-300 align-middle leading-snug">{decorateDrawingRefs(children)}</td>
+  ),
+  blockquote: ({ children }) => (
+    <blockquote className="border-l-2 border-line pl-3.5 text-zinc-400 italic">{children}</blockquote>
+  ),
+  h1: ({ children }) => <h1 className="mt-5 mb-2.5 text-lg font-semibold text-zinc-100">{children}</h1>,
+  h2: ({ children }) => <h2 className="mt-5 mb-2.5 text-ui-lg font-semibold text-zinc-100">{children}</h2>,
+  h3: ({ children }) => <h3 className="mt-4 mb-2 text-ui-base font-semibold text-zinc-100">{children}</h3>,
+  hr: () => <hr className="my-4 border-hairline" />,
+  p: ({ children }) => <p className="my-3 leading-[1.65] text-zinc-300">{decorateDrawingRefs(children)}</p>,
+  ul: ({ children }) => <ul className="my-3 list-disc space-y-1.5 pl-5 text-zinc-300 marker:text-zinc-600">{children}</ul>,
+  ol: ({ children }) => <ol className="my-3 list-decimal space-y-1.5 pl-5 text-zinc-300 marker:text-zinc-600">{children}</ol>,
+  li: ({ children }) => <li className="leading-[1.65]">{decorateDrawingRefs(children)}</li>,
+  em: ({ children }) => <em className="italic text-zinc-200">{children}</em>,
+  strong: ({ children }) => <strong className="font-bold text-zinc-50">{children}</strong>,
+  a: ({ children, href }) => (
+    <a href={href} target="_blank" rel="noopener noreferrer" className="text-zinc-400 hover:text-zinc-300 underline">{children}</a>
+  ),
+};
+
+const MemoMarkdownBlock = memo<{ content: string }>(({ content }) => (
+  <ReactMarkdown
+    remarkPlugins={REMARK_PLUGINS}
+    rehypePlugins={REHYPE_PLUGINS}
+    components={MARKDOWN_COMPONENTS}
+  >
+    {prepareMath(content)}
+  </ReactMarkdown>
+));
+
+const StreamingMarkdownTail: React.FC<{ blockIndex: number; text: string }> = ({ blockIndex, text }) => {
+  const chunkRef = useRef<{ blockIndex: number; chunks: StreamFadeChunk[] }>({
+    blockIndex: -1,
+    chunks: [],
+  });
+
+  if (!text) return null;
+
+  if (canRenderPlainStreamingProse(text)) {
+    const prev = chunkRef.current.blockIndex === blockIndex ? chunkRef.current.chunks : [];
+    const nextChunks = appendStreamChunk(prev, text, Date.now());
+    chunkRef.current = { blockIndex, chunks: nextChunks };
+    return (
+      <p className="my-3 whitespace-pre-wrap leading-[1.65] text-zinc-300">
+        {nextChunks.map(chunk => (
+          chunk.id === 0
+            ? <React.Fragment key="prefix">{chunk.text}</React.Fragment>
+            : <span key={chunk.id} className="motion-stream-chunk">{chunk.text}</span>
+        ))}
+      </p>
+    );
+  }
+
+  chunkRef.current = { blockIndex: -1, chunks: [] };
+  return (
+    <div key={`tail-md-${blockIndex}`} className="motion-stream-chunk">
+      <MemoMarkdownBlock content={text} />
+    </div>
+  );
+};
+
+const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, streaming = false, className }) => {
+  const split = useMemo(
+    () => (streaming ? splitStableMarkdownBlocks(content || '') : null),
+    [content, streaming],
+  );
+
+  if (streaming && split) {
+    return (
+      <div className={`text-ui-base leading-[1.7] text-zinc-200 prose prose-invert prose-sm prose-code:before:content-none prose-code:after:content-none max-w-none ${className ?? ''}`}>
+        {split.stableBlocks.map((block, idx) => (
+          <MemoMarkdownBlock key={`sb-${idx}`} content={block} />
+        ))}
+        {split.activeTail && (
+          <StreamingMarkdownTail blockIndex={split.stableBlocks.length} text={split.activeTail} />
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className={`text-ui-base leading-[1.7] text-zinc-200 prose prose-invert prose-sm prose-code:before:content-none prose-code:after:content-none max-w-none ${className ?? ''}`}>
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkMath]}
-        rehypePlugins={[[rehypeKatex, KATEX_OPTIONS]]}
-        components={{
-          pre: ({ children }) => <CodeFenceBlock>{children}</CodeFenceBlock>,
-          code: ({ className: codeClassName, children, ...props }) => {
-            const isBlock = /language-/.test(String(codeClassName || ''));
-            if (isBlock) {
-              return (
-                <code className="font-mono text-zinc-200" {...props}>{children}</code>
-              );
-            }
-            const rawText = extractNodeText(children).trim();
-            if (/^#D\d+$/.test(rawText)) {
-              return <DrawingRefChip shortId={rawText} />;
-            }
-            return (
-              <code
-                {...props}
-                className="rounded-[6px] break-inside-avoid border border-hairline bg-zinc-900 px-1.5 py-0.5 font-mono text-[12.5px] text-zinc-200 whitespace-nowrap before:content-none after:content-none"
-              >
-                {children}
-              </code>
-            );
-          },
-          table: ({ children }) => (
-            <div className="my-3 overflow-x-auto overscroll-x-contain custom-scrollbar">
-              {/* w-max, not w-full: a wide table keeps its natural columns and
-                  OVERFLOWS the wrapper (scrollable, with the always-visible
-                  custom-scrollbar thumb) instead of shrinking cells until the
-                  extra columns vanish — the "many columns don't display" bug.
-
-                  Scroll container, NOT a box: the reference table is a header
-                  row plus hairline separators with no outer border, and a
-                  rounded border around it reads as a widget rather than as
-                  tabular prose. The overflow wrapper stays; its frame goes. */}
-              <table className="w-max min-w-full text-left text-ui-sm border-collapse tabular-nums">{children}</table>
-            </div>
-          ),
-          th: ({ children }) => (
-            // NORMAL CASE, body size, weight 500 — the reference table header is
-            // NOT an uppercase micro-label. The plan specified
-            // `text-ui-2xs uppercase tracking-wider` on the strength of
-            // index.css:250 ("reserved for table headers"), but that token's one
-            // real use is a `kbd` micro-label (index.css:1139) and the reference
-            // header reads as body-weight emphasis, not a shrunken label. Sizing
-            // it down made a 5-row table's header the smallest thing on screen.
-            <th className="whitespace-nowrap border-b border-zinc-700 bg-zinc-800 px-3 py-1.5 text-ui-caption font-medium text-zinc-200 text-left">{children}</th>
-          ),
-          td: ({ children }) => (
-            <td className="border-b border-zinc-700/60 px-3 py-1.5 text-ui-caption text-zinc-300 align-middle leading-snug">{decorateDrawingRefs(children)}</td>
-          ),
-          blockquote: ({ children }) => (
-            <blockquote className="border-l-2 border-line pl-3.5 text-zinc-400 italic">{children}</blockquote>
-          ),
-          h1: ({ children }) => <h1 className="mt-5 mb-2.5 text-lg font-semibold text-zinc-100">{children}</h1>,
-          h2: ({ children }) => <h2 className="mt-5 mb-2.5 text-ui-lg font-semibold text-zinc-100">{children}</h2>,
-          h3: ({ children }) => <h3 className="mt-4 mb-2 text-ui-base font-semibold text-zinc-100">{children}</h3>,
-          hr: () => <hr className="my-4 border-hairline" />,
-          p: ({ children }) => <p className="my-3 leading-[1.65] text-zinc-300">{decorateDrawingRefs(children)}</p>,
-          ul: ({ children }) => <ul className="my-3 list-disc space-y-1.5 pl-5 text-zinc-300 marker:text-zinc-600">{children}</ul>,
-          ol: ({ children }) => <ol className="my-3 list-decimal space-y-1.5 pl-5 text-zinc-300 marker:text-zinc-600">{children}</ol>,
-          li: ({ children }) => <li className="leading-[1.65]">{decorateDrawingRefs(children)}</li>,
-          em: ({ children }) => <em className="italic text-zinc-200">{children}</em>,
-          strong: ({ children }) => <strong className="font-bold text-zinc-50">{children}</strong>,
-          a: ({ children, href }) => (
-            <a href={href} target="_blank" rel="noopener noreferrer" className="text-zinc-400 hover:text-zinc-300 underline">{children}</a>
-          ),
-        }}
-      >
-        {prepareMath(content || '')}
-      </ReactMarkdown>
+      <MemoMarkdownBlock content={content || ''} />
     </div>
   );
 };

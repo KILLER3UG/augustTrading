@@ -27,6 +27,7 @@ import { chatModelIdOf, resolveChatModelSelection } from '../utils/providerUtils
 import { buildDecisionReflectionContext } from '../services/learning/DecisionReflectionService';
 import { getEnabledStrategiesText } from '../services/infrastructure/StrategyService';
 import { useStreamThrottlers } from './analysisPipeline/streamThrottlers';
+import { createDeltaCoalescer } from '../utils/streamCoalescerCore';
 import { isNotebookQuickSaveRequest, runNotebookQuickSave } from './analysisPipeline/notebookQuickSave';
 import { classifyRunFailure, mapRunFailureMessages, resolveQuotaFlaggedModel, sanitizeFallbackErrorMessage } from './analysisPipeline/runOutcome';
 import {
@@ -1405,102 +1406,124 @@ export function useAnalysisPipeline(params: UseAnalysisPipelineParams) {
             }]);
             let reasoningContent = '';
             let visibleContent = '';
-            // ONE live writer for both shapes of this branch: the
-            // RAF-coalesced casual updater, so a tool turn's per-token paint
-            // costs one Message write per frame exactly like the plain one.
+            // Frame-coalesced Chat stream writer (symmetric with Desk's
+            // chatTurnRunner): accumulates high-frequency text & reasoning
+            // deltas to at most one publish per frame, flushing synchronously
+            // on tool events, card patches, abort, and turn settle.
+            const chatDeltaCoalescer = createDeltaCoalescer({
+                onFlush: batch => {
+                    const nextText = batch.text ?? visibleContent;
+                    const nextThinking = batch.reasoningFull ?? reasoningContent;
+                    throttledCasualStream(requestConversationId, streamingMessageId, nextText, nextThinking, provider.config.id, true);
+                    throttledCasualStream.flush();
+                },
+            });
             const paint = (text: string, thinking: string): void => {
-                throttledCasualStream(requestConversationId, streamingMessageId, text, thinking, provider.config.id, true);
+                visibleContent = text;
+                reasoningContent = thinking;
+                chatDeltaCoalescer.setText(text);
+                chatDeltaCoalescer.setReasoning(thinking);
             };
+            const onChatAbortFlush = (): void => { chatDeltaCoalescer.flush(); };
+            currentAbortController.signal.addEventListener('abort', onChatAbortFlush, { once: true });
             // The bubble's own stamp: a Stop, a failure and a clean finish
             // must all report the same "worked for Ns", not each measure from
             // their own `Date.now()`.
             const turnStartedAt = Date.now();
             let toolTurn: ToolTurnOutcome | null = null;
             let responseText = '';
-            if (useBotThread && activeBot) {
-                // BOTS STAY CHAT-ONLY (stage 20 ruling). The roster
-                // answers with its persona over the plain transport;
-                // `useBotMailbox` and `groupRounds` are
-                // deliberately NOT moved onto the tool turn. `extraContext`
-                // is built for the desk branch only — this transport takes no
-                // context argument, so the notebook blocks do not reach bot
-                // threads.
-                // Lazy: same deferred engine chunk as the full-analysis path.
-                (globalThis as { __sq?: unknown }).__sq = undefined;
-                const quick = await import('../services/providers/GenericAnalysisService');
-                responseText = await quick.streamQuickResponse(
-                    provider.config,
-                    promptToSend,
-                    // Bot threads see ONLY their own thread (derived view).
-                    threadForProvider(currentMessages, activeBot.providerId, activeBot.modelId, activeBot.id),
-                    activeBot.systemPrompt,
-                    currentAbortController.signal,
-                    reasoning => {
-                        reasoningContent += reasoning;
-                        paint(visibleContent, reasoningContent);
-                    },
-                    delta => {
-                        visibleContent += delta;
-                        paint(visibleContent, reasoningContent);
-                    },
-                    // The dial the surface is showing, not the task default: a
-                    // chip that displayed a tier while the request sent `'low'`
-                    // is the dead affordance this argument exists to remove.
-                    options?.reasoningEffort,
-                    () => {
-                        visibleContent = '';
-                        paint(visibleContent, reasoningContent);
-                    },
-                );
-            } else {
-                // THE DESK ANSWERS WITH ITS TOOLS — the one executor the
-                // Chart AI dock runs, writing this canonical row instead of
-                // a dock entry. Ordinary conversation on this surface used
-                // to be answered from the model's training data while the
-                // dock looked the same question up.
-                const { runChatSurfaceTurn, shouldRequireTools } = await import('../services/trade/chatSurfaceTurn');
-                toolTurn = await runChatSurfaceTurn({
-                    config: provider.config,
-                    history: currentMessages,
-                    prompt: promptToSend,
-                    // The silent 80% digest for turns this request has outgrown.
-                    // Stored by the background summarizer; absent until then, and
-                    // a stale digest is bounded by the summarizer's size cap.
-                    threadSummary: activeConversation?.threadSummary,
-                    memoryEnabled: isGlobalMemoryEnabled !== false,
-                    strategiesEnabled: isStrategiesEnabled !== false,
-                    extraContext,
-                    // Attribution stamp (Enhancement 5): rides the transport
-                    // so an emit_signal on THIS turn records which LOAD recipe
-                    // accompanied the call.
-                    memoryRecipe: memoryRecipeFootprint,
-                    // An attached screenshot is SENT, not mentioned: before
-                    // this the camera on this surface painted a bubble the
-                    // model never received.
-                    image: dataURLs[0],
-                    symbol: finalSymbol ?? options?.symbol ?? null,
-                    interval: options?.interval,
-                    trades: loggedTrades,
-                    effort: options?.reasoningEffort,
-                    requireTools: shouldRequireTools(promptToSend, options?.fullAnalysis === true),
-                    // Pass 5: the button is recorded SEPARATELY from the resolved
-                    // mandate so the post-turn notice keeps its honest wording
-                    // on an explicit Full analysis turn and flags only a
-                    // fabricated claim on a detected ordinary Chat turn.
-                    fullAnalysis: options?.fullAnalysis === true,
-                    // The Chat surface's conversation id is the learning
-                    // pass's provenance — the review receipt records WHERE
-                    // the lesson came from, as it does for dock turns.
-                    sessionId: requestConversationId ?? undefined,
-                    signal: currentAbortController.signal,
-                    startedAt: turnStartedAt,
-                    patch: fn => updateMessages(
-                        prev => prev.map(m => (m.id === streamingMessageId ? fn(m) : m)),
-                        requestConversationId,
-                    ),
-                    paint,
-                });
-                responseText = toolTurn.text;
+            try {
+                if (useBotThread && activeBot) {
+                    // BOTS STAY CHAT-ONLY (stage 20 ruling). The roster
+                    // answers with its persona over the plain transport;
+                    // `useBotMailbox` and `groupRounds` are
+                    // deliberately NOT moved onto the tool turn. `extraContext`
+                    // is built for the desk branch only — this transport takes no
+                    // context argument, so the notebook blocks do not reach bot
+                    // threads.
+                    // Lazy: same deferred engine chunk as the full-analysis path.
+                    (globalThis as { __sq?: unknown }).__sq = undefined;
+                    const quick = await import('../services/providers/GenericAnalysisService');
+                    responseText = await quick.streamQuickResponse(
+                        provider.config,
+                        promptToSend,
+                        // Bot threads see ONLY their own thread (derived view).
+                        threadForProvider(currentMessages, activeBot.providerId, activeBot.modelId, activeBot.id),
+                        activeBot.systemPrompt,
+                        currentAbortController.signal,
+                        reasoning => {
+                            reasoningContent += reasoning;
+                            paint(visibleContent, reasoningContent);
+                        },
+                        delta => {
+                            visibleContent += delta;
+                            paint(visibleContent, reasoningContent);
+                        },
+                        // The dial the surface is showing, not the task default: a
+                        // chip that displayed a tier while the request sent `'low'`
+                        // is the dead affordance this argument exists to remove.
+                        options?.reasoningEffort,
+                        () => {
+                            visibleContent = '';
+                            paint(visibleContent, reasoningContent);
+                        },
+                    );
+                } else {
+                    // THE DESK ANSWERS WITH ITS TOOLS — the one executor the
+                    // Chart AI dock runs, writing this canonical row instead of
+                    // a dock entry. Ordinary conversation on this surface used
+                    // to be answered from the model's training data while the
+                    // dock looked the same question up.
+                    const { runChatSurfaceTurn, shouldRequireTools } = await import('../services/trade/chatSurfaceTurn');
+                    toolTurn = await runChatSurfaceTurn({
+                        config: provider.config,
+                        history: currentMessages,
+                        prompt: promptToSend,
+                        // The silent 80% digest for turns this request has outgrown.
+                        // Stored by the background summarizer; absent until then, and
+                        // a stale digest is bounded by the summarizer's size cap.
+                        threadSummary: activeConversation?.threadSummary,
+                        memoryEnabled: isGlobalMemoryEnabled !== false,
+                        strategiesEnabled: isStrategiesEnabled !== false,
+                        extraContext,
+                        // Attribution stamp (Enhancement 5): rides the transport
+                        // so an emit_signal on THIS turn records which LOAD recipe
+                        // accompanied the call.
+                        memoryRecipe: memoryRecipeFootprint,
+                        // An attached screenshot is SENT, not mentioned: before
+                        // this the camera on this surface painted a bubble the
+                        // model never received.
+                        image: dataURLs[0],
+                        symbol: finalSymbol ?? options?.symbol ?? null,
+                        interval: options?.interval,
+                        trades: loggedTrades,
+                        effort: options?.reasoningEffort,
+                        requireTools: shouldRequireTools(promptToSend, options?.fullAnalysis === true),
+                        // Pass 5: the button is recorded SEPARATELY from the resolved
+                        // mandate so the post-turn notice keeps its honest wording
+                        // on an explicit Full analysis turn and flags only a
+                        // fabricated claim on a detected ordinary Chat turn.
+                        fullAnalysis: options?.fullAnalysis === true,
+                        // The Chat surface's conversation id is the learning
+                        // pass's provenance — the review receipt records WHERE
+                        // the lesson came from, as it does for dock turns.
+                        sessionId: requestConversationId ?? undefined,
+                        signal: currentAbortController.signal,
+                        startedAt: turnStartedAt,
+                        patch: fn => {
+                            chatDeltaCoalescer.flush();
+                            updateMessages(
+                                prev => prev.map(m => (m.id === streamingMessageId ? fn(m) : m)),
+                                requestConversationId,
+                            );
+                        },
+                        paint,
+                    });
+                    responseText = toolTurn.text;
+                }
+            } finally {
+                currentAbortController.signal.removeEventListener('abort', onChatAbortFlush);
+                chatDeltaCoalescer.flush();
             }
             if (!isCurrentRequest()) assertCurrentRequest();
             // Split before display: native CoT and any leaked scratchpad

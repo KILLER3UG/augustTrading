@@ -16,7 +16,12 @@ import MarkdownContent from './MarkdownContent';
 import { effortChoiceOf } from './effortScale';
 import { useLetterReveal } from '../../hooks/useLetterReveal';
 import { getIdleMotionEnabled, subscribeIdleMotion } from '../../services/desk/idleMotion';
-import { canRenderPlainStreamingProse, splitStableMarkdownBlocks } from '../../utils/streamBlocks';
+import {
+    appendStreamChunk,
+    canRenderPlainStreamingProse,
+    splitStableMarkdownBlocks,
+    type StreamFadeChunk,
+} from '../../utils/markdownBlocksCore';
 import type { ReasoningEffort } from '../../types/provider';
 
 /** Hover chip on USER bubbles: re-run the turn from this message — the
@@ -117,15 +122,12 @@ export const FadingText: React.FC<{ text: string; streaming: boolean; className?
     // Bucketed markdown node for formatted growing active block; written during
     // render per the repo's derived-cache idiom (conventions.md).
     const parsedRef = useRef<{ blockIdx: number; len: number; at: number; node: React.ReactNode }>({ blockIdx: -1, len: -1, at: 0, node: null });
-    // Incremental token slices for plain growing prose so only newly arrived
-    // characters wear `.stream-token-fade` without re-fading settled prefix.
+    // Incremental fade-chunk slices for plain growing prose so only newly arrived
+    // characters wear `.motion-stream-chunk` without re-fading settled prefix.
     const proseTrackRef = useRef<{
         blockIdx: number;
-        totalLen: number;
-        settledPrefix: string;
-        segs: Array<{ id: number; text: string }>;
-        seq: number;
-    }>({ blockIdx: -1, totalLen: 0, settledPrefix: '', segs: [], seq: 0 });
+        chunks: StreamFadeChunk[];
+    }>({ blockIdx: -1, chunks: [] });
     const mountedBlocksRef = useRef<Set<number>>(new Set());
     const prevVisibleLenRef = useRef(0);
 
@@ -136,6 +138,7 @@ export const FadingText: React.FC<{ text: string; streaming: boolean; className?
             scrollerRef.current = null;
             mountedBlocksRef.current.clear();
             prevVisibleLenRef.current = 0;
+            proseTrackRef.current = { blockIdx: -1, chunks: [] };
             return;
         }
         if (!scrollerRef.current) {
@@ -159,40 +162,26 @@ export const FadingText: React.FC<{ text: string; streaming: boolean; className?
     if (streaming && motionEnabled) {
         if (visible.length < prevVisibleLenRef.current) {
             mountedBlocksRef.current.clear();
+            proseTrackRef.current = { blockIdx: -1, chunks: [] };
         }
         prevVisibleLenRef.current = visible.length;
-        const { committed, active } = splitStableMarkdownBlocks(visible);
-        const activeIdx = committed.length;
+        const { stableBlocks, activeTail } = splitStableMarkdownBlocks(visible);
+        const activeIdx = stableBlocks.length;
         const mdClass = `!text-ui-base [&_p]:my-1 [&_li]:text-ui-base ${className ?? ''}`;
 
         let activeNode: React.ReactNode = null;
-        if (active) {
-            if (canRenderPlainStreamingProse(active)) {
+        if (activeTail) {
+            if (canRenderPlainStreamingProse(activeTail)) {
                 mountedBlocksRef.current.add(activeIdx);
-                const track = proseTrackRef.current;
-                const priorJoined = track.settledPrefix + track.segs.map(s => s.text).join('');
-                if (track.blockIdx !== activeIdx || !active.startsWith(priorJoined)) {
-                    track.blockIdx = activeIdx;
-                    track.settledPrefix = '';
-                    track.seq += 1;
-                    track.segs = [{ id: track.seq, text: active }];
-                    track.totalLen = active.length;
-                } else if (active.length > track.totalLen) {
-                    const added = active.slice(track.totalLen);
-                    track.seq += 1;
-                    track.segs = [...track.segs, { id: track.seq, text: added }];
-                    if (track.segs.length > MAX_ACTIVE_FADE_SPANS) {
-                        const overflow = track.segs.length - MAX_ACTIVE_FADE_SPANS;
-                        track.settledPrefix += track.segs.slice(0, overflow).map(s => s.text).join('');
-                        track.segs = track.segs.slice(overflow);
-                    }
-                    track.totalLen = active.length;
-                }
+                const prevChunks = proseTrackRef.current.blockIdx === activeIdx ? proseTrackRef.current.chunks : [];
+                const nextChunks = appendStreamChunk(prevChunks, activeTail, Date.now(), 60, MAX_ACTIVE_FADE_SPANS);
+                proseTrackRef.current = { blockIdx: activeIdx, chunks: nextChunks };
                 activeNode = (
                     <div key={`block-${activeIdx}`} className="my-1 whitespace-pre-wrap text-ui-base leading-relaxed text-zinc-200">
-                        {track.settledPrefix}
-                        {track.segs.map(seg => (
-                            <span key={seg.id} className="stream-token-fade">{seg.text}</span>
+                        {nextChunks.map(seg => (
+                            seg.id === 0
+                                ? <React.Fragment key="prefix">{seg.text}</React.Fragment>
+                                : <span key={seg.id} className="motion-stream-chunk">{seg.text}</span>
                         ))}
                     </div>
                 );
@@ -204,29 +193,29 @@ export const FadingText: React.FC<{ text: string; streaming: boolean; className?
                 if (
                     last.blockIdx !== activeIdx
                     || last.len < 0
-                    || active.length < last.len
-                    || (active.length !== last.len && (active.length - last.len >= PARSE_STEP || now - last.at >= PARSE_MAX_STALE_MS))
+                    || activeTail.length < last.len
+                    || (activeTail.length !== last.len && (activeTail.length - last.len >= PARSE_STEP || now - last.at >= PARSE_MAX_STALE_MS))
                 ) {
                     parsedRef.current = {
                         blockIdx: activeIdx,
-                        len: active.length,
+                        len: activeTail.length,
                         at: now,
-                        node: <MarkdownContent content={active} className={mdClass} />,
+                        node: <MarkdownContent content={activeTail} streaming className={mdClass} />,
                     };
                 }
                 activeNode = (
-                    <div key={`block-${activeIdx}`} className={isFirstMount ? 'stream-block-fade' : undefined}>
+                    <div key={`block-${activeIdx}`} className={isFirstMount ? 'motion-stream-chunk' : undefined}>
                         {parsedRef.current.node}
                     </div>
                 );
             }
         }
 
-        const nodes: React.ReactNode[] = committed.map((block, i) => {
+        const nodes: React.ReactNode[] = stableBlocks.map((block, i) => {
             const isFirstMount = !mountedBlocksRef.current.has(i);
             mountedBlocksRef.current.add(i);
             return (
-                <div key={`block-${i}`} className={isFirstMount ? 'stream-block-fade' : undefined}>
+                <div key={`block-${i}`} className={isFirstMount ? 'motion-stream-chunk' : undefined}>
                     <MarkdownContent content={block} className={mdClass} />
                 </div>
             );
@@ -241,6 +230,6 @@ export const FadingText: React.FC<{ text: string; streaming: boolean; className?
     }
 
     return (
-        <MarkdownContent content={text} className={`!text-ui-base [&_p]:my-1 [&_li]:text-ui-base ${className ?? ''}`} />
+        <MarkdownContent content={text} streaming={false} className={`!text-ui-base [&_p]:my-1 [&_li]:text-ui-base ${className ?? ''}`} />
     );
 };
