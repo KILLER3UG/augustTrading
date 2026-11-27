@@ -119,7 +119,10 @@ export const AccountRow: React.FC<{
                                     <Plus className="h-3.5 w-3.5 text-zinc-400" aria-hidden="true" />
                                     New chat
                                 </span>
-                                <kbd className="font-mono text-ui-2xs text-zinc-500">Ctrl K</kbd>
+                                {/* No printed chord: Ctrl+K opens the unified
+                                    command bar now (New Chat is a command inside
+                                    it), and a hint that did something else
+                                    would be a lie. */}
                             </button>
                         )}
                         {onRunDoctor && (

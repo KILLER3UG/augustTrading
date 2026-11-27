@@ -55,9 +55,12 @@ import {
 } from './services/learning/candidateRuleLoop';
 import { getActiveUsername } from './utils/activeUser';
 import { harnessTurn } from './utils/harnessMarks';
-import { setWorkspaceLayout, toggleWorkspaceLayoutPersisted } from './utils/workspaceLayout';
+import { getWorkspaceLayout, setWorkspaceLayout, toggleWorkspaceLayoutPersisted } from './utils/workspaceLayout';
 import { setStrategyStatus, type StrategyStatus } from './services/learning/strategyStore';
-import { getHarnessSettings, getSessionGuardConfig, saveHarnessSettings, type HarnessSettings } from './utils/harnessSettings';
+import { cycleTranscriptViewMode, getHarnessSettings, getSessionGuardConfig, saveHarnessSettings, type HarnessSettings } from './utils/harnessSettings';
+import { buildCommandBarItems, DEFAULT_COMMAND_BAR_TIMEFRAMES, type CommandBarItem } from './utils/commandBarCore';
+import { FALLBACK_SYMBOLS } from './hooks/useSymbolUniverse';
+import CommandBarModal from './components/shell/CommandBarModal';
 import { assessSession, applyDailyStanddownLatch, guardEnforcement } from './services/validation/SessionGuardService';
 import * as chatStore from './services/trade/chatStore';
 import * as watchService from './services/trade/watchService';
@@ -248,6 +251,9 @@ const App: React.FC = () => {
     const [searchQuery, setSearchQuery] = useState('');
     const [searchHits, setSearchHits] = useState<UnifiedSessionSearchHit[]>([]);
     const [searchMessage, setSearchMessage] = useState('');
+    /** The unified Ctrl+K command bar (v1.8.1). One chord, one palette —
+     *  New Chat is a command INSIDE it, not a competing listener. */
+    const [isCommandBarOpen, setIsCommandBarOpen] = useState(false);
 
 
     // Provider configuration (API keys, base URLs, custom providers), plus the
@@ -2339,19 +2345,21 @@ const App: React.FC = () => {
     const startDockNewChat = useCallback((opts?: chatStore.BindConversationOpts) => {
         startDeskChat(opts);
     }, [startDeskChat]);
-    // The rail's New chat row prints "Ctrl K" (mock v3), so the chord must DO
-    // that. It lives in its own listener because `startDeskChat` is declared
-    // after the surface handler above (a const used earlier is a TDZ crash).
+    // Ctrl+K is THE command bar chord (v1.8.1): one chord opens one unified
+    // palette — the old "Ctrl K = New chat" behavior lives on as the New Chat
+    // command INSIDE the bar. It lives in its own listener because
+    // `startDeskChat` is declared after the surface handler above (a const
+    // used earlier is a TDZ crash), and the executor below consumes it.
     useEffect(() => {
         const onKey = (e: KeyboardEvent): void => {
             if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
             if (e.key !== 'k' && e.key !== 'K') return;
             e.preventDefault();
-            startDeskChat();
+            setIsCommandBarOpen(true);
         };
         document.addEventListener('keydown', onKey);
         return () => document.removeEventListener('keydown', onKey);
-    }, [startDeskChat]);
+    }, []);
     // Skill-citation chip tap: open the skill library so it mounts and
     // consumes the pending slug (the library listens for the same event when
     // it is already open).
@@ -2407,6 +2415,82 @@ const App: React.FC = () => {
         }, 120);
         return () => { alive = false; window.clearTimeout(timer); };
     }, [isSearchOpen, searchQuery, activeUsername]);
+
+    // ─── The unified Ctrl+K command bar (v1.8.1) ─────────────────────────────
+    // Data lives in `utils/commandBarCore` (list + ranking); execution stays
+    // HERE, where every command's target already lives. Session-scoped state
+    // (symbol, interval, plan mode) routes through chatStore — the ONE writer
+    // TradeView follows — and TradeView-local chart focus rides its own
+    // `august:toggle-chart-focus` event, the same pattern as the rail's
+    // `august:open-search`.
+    const commandBarItems = useMemo(() => buildCommandBarItems({
+        planModeOn: chatStore.getPlanMode(),
+        transcriptMode: getHarnessSettings().transcriptViewMode,
+        chatLayout: getWorkspaceLayout() === 'chat',
+        symbols: FALLBACK_SYMBOLS.map(s => s.symbol),
+        timeframes: DEFAULT_COMMAND_BAR_TIMEFRAMES,
+        conversations: chatStore.getSnapshot().sessions
+            .slice()
+            .sort((a, b) => b.updatedAt - a.updatedAt)
+            .slice(0, 6)
+            .map(s => ({ id: s.id, title: s.title })),
+        // Rebuilt when the bar opens (and while it stays open on store ticks),
+        // so the ON/OFF and Desk/Chat details read the live snapshot.
+    }), [isCommandBarOpen]);
+
+    const executeCommandBarItem = useCallback((item: CommandBarItem): void => {
+        if (item.id.startsWith('symbol:')) {
+            chatStore.setActiveSymbol(item.id.slice('symbol:'.length));
+            return;
+        }
+        if (item.id.startsWith('timeframe:')) {
+            const tf = item.id.slice('timeframe:'.length);
+            const sid = chatStore.getActiveId();
+            if (sid) chatStore.mutate(sid, s => ({ ...s, interval: tf }));
+            return;
+        }
+        if (item.id.startsWith('conversation:')) {
+            void handleLoadConversation(item.id.slice('conversation:'.length));
+            return;
+        }
+        switch (item.id) {
+            case 'new-chat':
+                startDeskChatRef.current();
+                return;
+            case 'toggle-plan-mode':
+                chatStore.togglePlanMode();
+                return;
+            case 'cycle-transcript-mode':
+                saveHarnessSettings({
+                    transcriptViewMode: cycleTranscriptViewMode(getHarnessSettings().transcriptViewMode),
+                });
+                return;
+            case 'toggle-chart-focus':
+                window.dispatchEvent(new CustomEvent('august:toggle-chart-focus'));
+                return;
+            case 'switch-layout':
+                toggleWorkspaceLayoutPersisted();
+                return;
+            case 'run-compact':
+            case 'run-dream':
+            case 'run-context':
+            case 'run-doctor':
+                window.dispatchEvent(new CustomEvent('august:run-slash', {
+                    detail: { command: `/${item.id.slice('run-'.length)}` },
+                }));
+                return;
+            case 'settings-models':
+                setSettingsSection('models');
+                setIsSettingsMenuVisible(true);
+                return;
+            case 'settings-data':
+                setSettingsSection('actions');
+                setIsSettingsMenuVisible(true);
+                return;
+            default:
+                return;
+        }
+    }, [handleLoadConversation, setSettingsSection, setIsSettingsMenuVisible]);
 
     useWatchSideEffects({
         messagesRef,
@@ -2696,6 +2780,13 @@ const App: React.FC = () => {
                 surface. The query goes straight to the app's unified session
                 search; a hit opens the conversation through the same route the
                 rail's Recent rows use. */}
+            {/* The unified Ctrl+K command bar — overlays mount OUTSIDE <main>. */}
+            <CommandBarModal
+                open={isCommandBarOpen}
+                onClose={() => setIsCommandBarOpen(false)}
+                items={commandBarItems}
+                onExecute={executeCommandBarItem}
+            />
             {isSearchOpen && (
                 <div
                     data-testid="search-drawer"

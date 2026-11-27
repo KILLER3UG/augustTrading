@@ -806,6 +806,14 @@ const TradeView: React.FC<TradeViewProps> = ({
     useEffect(() => {
         if (chatLayout && chartFocus) setChartFocus(false);
     }, [chatLayout, chartFocus]);
+    // Full-Chart Focus from the command bar (Ctrl+K palette): the state lives
+    // HERE, so the bar's command rides the same `august:*` event pattern the
+    // rail's Search row uses — App dispatches, this one listener flips.
+    useEffect(() => {
+        const onToggle = (): void => setChartFocus(v => !v);
+        window.addEventListener('august:toggle-chart-focus', onToggle);
+        return () => window.removeEventListener('august:toggle-chart-focus', onToggle);
+    }, []);
     useEffect(() => {
         if (!chartFocus) return;
         const onKey = (ev: KeyboardEvent): void => {

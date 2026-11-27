@@ -5,7 +5,7 @@
  * shell column mounts only on the record surfaces — Analyze has NO
  * conversation column (the icon rail alone), and the ownership test is
  * pinned in render-probe (`newChats === 1 && !shellColumn && agentsColumn`).
- * Sparse: New chat + Ctrl K, Pinned (only when there are pinned rows),
+ * Sparse: New chat, Pinned (only when there are pinned rows),
  * Recent (always). Rows: hollow
  * dot (filled active, ink pulsing running), truncated title, mono age
  * from `workspaceAgeLabel` (single source).
@@ -339,7 +339,7 @@ export const ConversationGroups: React.FC<ConversationGroupsProps> = ({
                     type="button"
                     data-testid="rail-new-chat"
                     aria-label="New chat"
-                    title="New chat · Ctrl+K"
+                    title="New chat · Ctrl+K opens the command bar"
                     onClick={onNewChat}
                     className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-ui-caption text-zinc-300 transition-colors duration-150 ease-[var(--ease-out-expo)] hover:bg-white/[0.06] hover:text-zinc-100"
                 >
