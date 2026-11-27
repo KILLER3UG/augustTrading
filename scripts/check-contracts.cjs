@@ -230,10 +230,14 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
 })();
 
 // ─── 2. provider error classification — what deserves a retry ──────────────
+// Since v1.8.1 the retry DECISION lives in `src/utils/retryPolicyCore.ts` (the
+// single source behind `withRetry`/`withStreamOpenRetry`); `parseAPIError`
+// stays in apiErrorUtils as the user-facing MESSAGE mapper only.
 (() => {
-    const { parseAPIError, shouldRetry, getRetryDelay } = loadModule('src/utils/apiErrorUtils.ts');
+    const { parseAPIError } = loadModule('src/utils/apiErrorUtils.ts');
+    const { classifyTransientProviderError, computeRetryDelayMs } = loadModule('src/utils/retryPolicyCore.ts');
     const rate = parseAPIError({ status: 429 }, 'prov');
-    ok('err: 429 is rate_limit and retryable', rate.type === 'rate_limit' && shouldRetry(rate));
+    ok('err: 429 maps to the rate_limit message', rate.type === 'rate_limit');
     ok('err: missing Retry-After falls back to 1s, not 30s', rate.retryAfterSeconds === 1,
         `got ${rate.retryAfterSeconds}s`);
     const rateHeader = parseAPIError({
@@ -242,17 +246,25 @@ const fmt = (n, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
     }, 'prov');
     ok('err: Retry-After header is honoured via .get()', rateHeader.retryAfterSeconds === 7,
         `got ${rateHeader.retryAfterSeconds}s`);
+    const cls429 = classifyTransientProviderError({ status: 429 });
+    ok('err: 429 is retryable rate_limit', cls429.retryable === true && cls429.kind === 'rate_limit');
+    // The relay that motivated the 10-retry recovery: prose alone, no status.
+    const relay = classifyTransientProviderError(new Error('KiloCode (HTTP 429): Provider returned error'));
+    ok('err: the KiloCode 429 relay is retryable', relay.retryable === true);
     const timeout = parseAPIError(new Error('The operation was aborted due to timeout'), 'prov');
     ok('err: timeout is classified timeout', timeout.type === 'timeout');
-    ok('err: timeout is NEVER retried', shouldRetry(timeout) === false);
+    ok('err: timeout is NEVER retried', classifyTransientProviderError(new Error('request timed out')).retryable === false);
+    const billing = classifyTransientProviderError(new Error('insufficient credits'));
+    ok('err: billing exhaustion is refused on attempt 1', billing.retryable === false && billing.kind === 'billing_exhausted');
     const quota = parseAPIError({ status: 403, message: 'billing' }, 'prov');
-    ok('err: 403/billing is quota_exceeded, not retried', quota.type === 'quota_exceeded' && !shouldRetry(quota));
-    const server = parseAPIError({ status: 503 }, 'prov');
-    ok('err: 5xx is server and retryable', server.type === 'server' && shouldRetry(server));
-    for (const attempt of [0, 1, 2, 5, 9]) {
-        const d = getRetryDelay(rate, attempt);
-        ok(`err: retry delay within jitter bounds at attempt ${attempt}`, d >= 0 && d <= 45_000, `got ${d}ms`);
+    ok('err: 403/billing maps to quota_exceeded', quota.type === 'quota_exceeded');
+    const server = classifyTransientProviderError({ status: 503 });
+    ok('err: 5xx is server_5xx and retryable', server.retryable === true && server.kind === 'server_5xx');
+    for (const attempt of [1, 2, 5, 9]) {
+        const d = computeRetryDelayMs({ attempt });
+        ok(`err: retry delay within jitter bounds at attempt ${attempt}`, d >= 0 && d <= 30_000, `got ${d}ms`);
     }
+    ok('err: Retry-After 0 means retry now', computeRetryDelayMs({ attempt: 1, retryAfterMs: 0 }) === 0);
 })();
 
 // ─── 3. harness marks — the dialect the model reads ────────────────────────
