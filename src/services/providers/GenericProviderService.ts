@@ -19,6 +19,7 @@ import OpenAI from 'openai';
 import { ProviderConfig } from '../../types/provider';
 import { withRetry, ProviderName } from '../../utils/apiErrorUtils';
 import { assertValidProviderUrl } from '../../utils/providerUrlValidation';
+import { parseTolerantJsonObject } from '../analysis/toolArgCoercionCore';
 import {
     anthropicCachedSystem,
     anthropicShouldSendThinking,
@@ -2254,16 +2255,13 @@ class StreamToolCallBuffer {
     }
 }
 
-/** Tool-call arguments accumulate as a JSON string; a truncated stream must
- *  still reach the executor as an object (marked) rather than throwing. */
+/** Tool-call arguments accumulate as a JSON string; strip markdown fences and
+ *  trailing commas tolerantly while keeping truncated streams marked. */
 const parseStreamedToolArguments = (raw: string): Record<string, unknown> => {
     if (!raw.trim()) return {};
-    try {
-        const parsed: unknown = JSON.parse(raw);
-        return typeof parsed === 'object' && parsed !== null ? parsed as Record<string, unknown> : { value: parsed };
-    } catch {
-        return { _unparsed: raw };
-    }
+    const parsed = parseTolerantJsonObject(raw);
+    if (parsed !== null) return parsed;
+    return { _unparsed: raw };
 };
 
 /** Client-side reasoning translation for the proxy routes: the capability

@@ -186,11 +186,14 @@ export const runToolTurn = async (req: ToolTurnRequest): Promise<ToolTurnOutcome
     // what EACH of them asked for.
     const wireAudit: WireAuditEntry[] = [];
     const callerOnWireAudit = req.transport.onWireAudit;
+    const turnIntentKey = req.transport.turnIntentKey
+        ?? `turn-${req.startedAt}-${Math.random().toString(36).slice(2, 8)}`;
     const outcome = await runToolTurnInner({
         ...req,
         events: teedEvents,
         transport: {
             ...req.transport,
+            turnIntentKey,
             onUsage: (frame: TokenUsage) => {
                 usage = mergeTokenUsage(usage, frame);
                 usageCalls += 1;

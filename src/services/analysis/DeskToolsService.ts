@@ -67,6 +67,14 @@ import { filterTradesBySimulationMode, countSimulatedTrades, isSimulatedTrade, t
 import { paperAccountSnapshot, submitPaperOrder } from '../paper/PaperBrokerService';
 import type { PaperOrderAction, PaperSide } from '../paper/paperCore';
 import { MARKET_TOOLS, CHART_ACTION_TOOL_DEFS, deskToolsMandateFor, TEXT_TOOL_FALLBACK_PROMPT, shouldOfferChartImageTool } from './deskToolShared';
+import {
+    canonicalizeArgsForHash,
+    coerceToolArguments,
+    formatTypedRepairRejection,
+    recordCoercionAudit,
+    stampAutoRepairBudgetOnRejection,
+} from './toolArgCoercionCore';
+import { checkTurnIdempotency, recordTurnIdempotency } from './turnIdempotencyCore';
 import { PLAYBOOK_IDS, REPLAY_SUPPORTED_SETUPS } from '../../types/playbook';
 // The moved vocabulary is re-exported for the lazy consumers and the
 // contract suite: one definition, two addresses.
@@ -5798,40 +5806,88 @@ ${body}`);
                 );
                 break;
             case 'trade_math': {
+                const { args: tmArgs, coercions: tmCoercions } = coerceToolArguments('trade_math', call.arguments ?? {});
+                recordCoercionAudit('trade_math', tmCoercions);
                 // Direction is VALIDATED, never coerced: a typo'd direction
                 // used to silently become a Long plan.
-                const dirRaw = asString(call.arguments.direction).toLowerCase();
+                const dirRaw = asString(tmArgs.direction).toLowerCase();
                 const dirWord = dirRaw === 'long' ? 'Long' : dirRaw === 'short' ? 'Short' : '';
                 if (!dirWord) {
-                    return rejectedResult(call, `trade_math rejected: direction must be "Long" or "Short" (case-insensitive); got "${asString(call.arguments.direction) || '—'}".`);
+                    return rejectedResult(call, formatTypedRepairRejection({
+                        tool: 'trade_math',
+                        errorCode: 'invalid_direction',
+                        field: 'direction',
+                        expectedConstraint: 'direction must be "Long" or "Short" (case-insensitive)',
+                        repairHint: 'Pass direction: "Long" or "Short" and retry once.',
+                        autoRepairRemaining: 1,
+                        message: `trade_math rejected: direction must be "Long" or "Short" (case-insensitive); got "${asString(tmArgs.direction) || '—'}".`,
+                    }));
                 }
-                const rawTps = Array.isArray(call.arguments.take_profits) ? call.arguments.take_profits.map((t: unknown) => Number(t)) : [];
+                const entryNum = Number(tmArgs.entry);
+                const stopNum = Number(tmArgs.stop_loss);
+                if (!Number.isFinite(entryNum) || entryNum <= 0 || !Number.isFinite(stopNum) || stopNum <= 0) {
+                    return rejectedResult(call, formatTypedRepairRejection({
+                        tool: 'trade_math',
+                        errorCode: 'invalid_price',
+                        field: !Number.isFinite(entryNum) || entryNum <= 0 ? 'entry' : 'stop_loss',
+                        expectedConstraint: 'entry and stop_loss must be positive finite numbers',
+                        repairHint: 'Pass positive finite numeric prices for entry and stop_loss and retry once.',
+                        autoRepairRemaining: 1,
+                        message: 'trade_math rejected: entry and stop_loss must be positive finite prices.',
+                    }));
+                }
+                const rawTps = Array.isArray(tmArgs.take_profits) ? tmArgs.take_profits.map((t: unknown) => Number(t)) : [];
                 // A non-positive or non-finite target REFUSES the call — it
                 // used to be silently filtered, hiding a malformed plan from
                 // the trader while the rest of the read looked clean.
-                if (rawTps.some((t: number) => !Number.isFinite(t) || t <= 0)) {
-                    return rejectedResult(call, 'trade_math rejected: every take_profit must be a positive finite price.');
+                if (rawTps.length === 0 || rawTps.some((t: number) => !Number.isFinite(t) || t <= 0)) {
+                    return rejectedResult(call, formatTypedRepairRejection({
+                        tool: 'trade_math',
+                        errorCode: 'invalid_take_profits',
+                        field: 'take_profits',
+                        expectedConstraint: 'take_profits must be a non-empty array of positive finite prices',
+                        repairHint: 'Pass at least one positive finite price in take_profits and retry once.',
+                        autoRepairRemaining: 1,
+                        message: 'trade_math rejected: every take_profit must be a positive finite price.',
+                    }));
                 }
                 const tps = rawTps;
-                const tpWeights = Array.isArray(call.arguments.tp_weights)
-                    ? call.arguments.tp_weights.map((w: unknown) => Number(w)).filter((w: number) => Number.isFinite(w) && w > 0)
+                const invertedLong = dirWord === 'Long' && (stopNum >= entryNum || tps.some(tp => tp <= entryNum));
+                const invertedShort = dirWord === 'Short' && (stopNum <= entryNum || tps.some(tp => tp >= entryNum));
+                if (invertedLong || invertedShort) {
+                    return rejectedResult(call, formatTypedRepairRejection({
+                        tool: 'trade_math',
+                        errorCode: 'inverted_bracket',
+                        field: 'stop_loss/take_profits',
+                        expectedConstraint: dirWord === 'Long'
+                            ? 'For Long, stop_loss < entry < every take_profit'
+                            : 'For Short, every take_profit < entry < stop_loss',
+                        repairHint: dirWord === 'Long'
+                            ? `Fix bracket so stop_loss (${stopNum}) < entry (${entryNum}) < take_profits (${tps.join(',')}) and retry once.`
+                            : `Fix bracket so take_profits (${tps.join(',')}) < entry (${entryNum}) < stop_loss (${stopNum}) and retry once.`,
+                        autoRepairRemaining: 1,
+                        message: `trade_math rejected: inverted ${dirWord} bracket (entry=${entryNum}, stop_loss=${stopNum}, take_profits=[${tps.join(',')}]).`,
+                    }));
+                }
+                const tpWeights = Array.isArray(tmArgs.tp_weights)
+                    ? tmArgs.tp_weights.map((w: unknown) => Number(w)).filter((w: number) => Number.isFinite(w) && w > 0)
                     : undefined;
-                const explicitTf = asString(call.arguments.interval);
+                const explicitTf = asString(tmArgs.interval);
                 const resolvedTf = explicitTf || context.chartInterval || '15m';
-                const holdRaw = Number(call.arguments.expected_hold_hours);
+                const holdRaw = Number(tmArgs.expected_hold_hours);
                 const expectedHoldHours = Number.isFinite(holdRaw) && holdRaw > 0 ? holdRaw : undefined;
                 content = await (await importMarketTools()).runTradeMathTool(
-                    asSymbol(call.arguments.symbol, fallback),
+                    asSymbol(tmArgs.symbol, fallback),
                     dirWord,
-                    Number(call.arguments.entry),
-                    Number(call.arguments.stop_loss),
+                    entryNum,
+                    stopNum,
                     tps,
                     {
                         tf: resolvedTf,
                         tpWeights: tpWeights && tpWeights.length > 0 ? tpWeights : undefined,
-                        equityUsd: Number.isFinite(Number(call.arguments.equity_usd)) ? Number(call.arguments.equity_usd) : undefined,
-                        riskPercent: Number.isFinite(Number(call.arguments.risk_percent)) ? Number(call.arguments.risk_percent) : undefined,
-                        leverage: Number.isFinite(Number(call.arguments.leverage)) ? Number(call.arguments.leverage) : undefined,
+                        equityUsd: Number.isFinite(Number(tmArgs.equity_usd)) ? Number(tmArgs.equity_usd) : undefined,
+                        riskPercent: Number.isFinite(Number(tmArgs.risk_percent)) ? Number(tmArgs.risk_percent) : undefined,
+                        leverage: Number.isFinite(Number(tmArgs.leverage)) ? Number(tmArgs.leverage) : undefined,
                         expectedHoldHours,
                     },
                 );
@@ -7029,7 +7085,8 @@ ${body}`);
                 break;
             }
             case 'paper_order': {
-                const a = call.arguments ?? {};
+                const { args: a, coercions: poCoercions } = coerceToolArguments('paper_order', call.arguments ?? {});
+                recordCoercionAudit('paper_order', poCoercions);
                 const side: PaperSide | undefined = a.side === 'long' || a.side === 'short' ? a.side : undefined;
                 const explicitSkillSlug = typeof a.skill_slug === 'string'
                     ? a.skill_slug.trim()
@@ -7061,6 +7118,22 @@ ${body}`);
                 // seat receives only the receipt + a view, never the ledger.
                 const toolReceipt = { ...receipt };
                 delete toolReceipt.account;
+                if (!receipt.ok && receipt.error !== 'paper_mode_disabled' && receipt.error !== 'quote_unavailable') {
+                    const typed = JSON.parse(formatTypedRepairRejection({
+                        tool: 'paper_order',
+                        errorCode: receipt.error ?? 'order_rejected',
+                        field: receipt.error === 'unknown_action' ? 'action'
+                            : receipt.error === 'unknown_symbol' ? 'symbol'
+                            : /stop|target|invert|plan_refused/i.test(`${receipt.error ?? ''} ${receipt.reason ?? ''}`) ? 'stop_loss/take_profits'
+                            : /risk|leverage|heat|drawdown/i.test(`${receipt.error ?? ''} ${receipt.reason ?? ''}`) ? 'risk_pct/leverage'
+                            : undefined,
+                        expectedConstraint: receipt.reason ?? 'order must satisfy paper broker bracket and risk limits',
+                        repairHint: 'Adjust the offending parameter to respect bracket geometry and configured risk/leverage caps, or report the refusal plainly.',
+                        autoRepairRemaining: 1,
+                        message: `paper_order rejected: ${receipt.reason ?? receipt.error ?? 'order refused'}`,
+                    })) as Record<string, unknown>;
+                    return rejectedResult(call, JSON.stringify({ ...toolReceipt, ...typed }, null, 2));
+                }
                 content = JSON.stringify(toolReceipt, null, 2);
                 break;
             }
@@ -7602,6 +7675,8 @@ export async function runDeskToolLoop(params: {
     planMode?: boolean;
     /** Skills deterministically pre-opened for this turn (e.g. via `/<skill-slug>`). */
     initialViewedSkills?: Array<{ slug: string; body: string; version?: string }>;
+    /** Stable per-turn idempotency key shared across echo/transport retries. */
+    turnIntentKey?: string;
 }): Promise<DeskToolLoopResult> {
     const {
         config,
@@ -7644,7 +7719,29 @@ export async function runDeskToolLoop(params: {
         requireFirstToolRound = false,
         planMode = false,
         initialViewedSkills = [],
+        turnIntentKey: turnIntentKeyParam,
     } = params;
+    const turnIntentKey = turnIntentKeyParam || `desk-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    const MAX_SEMANTIC_AUTO_REPAIRS = 1;
+    let semanticAutoRepairsUsed = 0;
+    let consecutiveReadOnlyRounds = 0;
+    let readOnlyConvergeSent = false;
+    const DECISION_OR_WRITE_TOOLS = new Set([
+        'present_trade', 'decline_trade', 'paper_order', 'draw_on_chart',
+        'mark_trade_levels', 'draw_tool_levels', 'watch_price', 'wake_me',
+        'memory', 'memory_add', 'memory_update', 'skill_manage', 'skill_write', 'emit_signal',
+    ]);
+    const repairBudgetApplied = new WeakSet<DeskToolResult>();
+    const applyRepairBudget = (r: DeskToolResult): DeskToolResult => {
+        if (r.ok || repairBudgetApplied.has(r)) return r;
+        repairBudgetApplied.add(r);
+        const remaining = Math.max(0, MAX_SEMANTIC_AUTO_REPAIRS - semanticAutoRepairsUsed);
+        const stamped = stampAutoRepairBudgetOnRejection(r.content, remaining);
+        if (!stamped.isTypedRepair) return r;
+        semanticAutoRepairsUsed += 1;
+        r.content = stamped.content;
+        return r;
+    };
     let steeredThisTurn = false;
     let microCompactCharsTotal = 0;
     const messages = [...params.messages];
@@ -8201,6 +8298,18 @@ export async function runDeskToolLoop(params: {
                 reportToolCompletion(locked);
                 continue;
             }
+            const idempotentHit = checkTurnIdempotency(turnIntentKey, call.name, call.arguments);
+            if (idempotentHit) {
+                const cachedReceipt: DeskToolResult = {
+                    toolCallId: call.id,
+                    name: call.name,
+                    ok: idempotentHit.ok,
+                    content: `${idempotentHit.content}\n[idempotent replay — skipped duplicate ${call.name} for this turn]`,
+                };
+                extraResults.push(cachedReceipt);
+                reportToolCompletion(cachedReceipt);
+                continue;
+            }
             if (executeExtraTool) {
                 // A Stop must abort the extra lane too: a chart write or a
                 // mailbox send queued behind the signal must not run after the
@@ -8230,8 +8339,10 @@ export async function runDeskToolLoop(params: {
                     : call;
                 const handled = await executeExtraTool(callForExtra);
                 if (handled) {
-                    extraResults.push(handled);
-                    reportToolCompletion(handled);
+                    const finalized = applyRepairBudget(handled);
+                    if (finalized.ok) recordTurnIdempotency(turnIntentKey, call.name, call.arguments, finalized);
+                    extraResults.push(finalized);
+                    reportToolCompletion(finalized);
                     continue;
                 }
             }
@@ -8321,7 +8432,7 @@ export async function runDeskToolLoop(params: {
                 reportToolCompletion(forged);
             }
         }
-        const coreResults = overBudget
+        const rawCoreResults = overBudget
             ? builtInCalls.map(c => {
                 const r = budgetReceipt(c);
                 reportToolCompletion(r);
@@ -8365,6 +8476,7 @@ export async function runDeskToolLoop(params: {
                 // had a bug.
                 onResult: r => {
                     try {
+                        applyRepairBudget(r);
                         reportToolCompletion(r);
                     } catch (e) {
                         console.warn('[DeskTools] onResult listener threw; tool round continues:', e);
@@ -8372,6 +8484,16 @@ export async function runDeskToolLoop(params: {
                 },
             })
             : [];
+        const coreResults = rawCoreResults.map(r => {
+            const finalized = applyRepairBudget(r);
+            if (finalized.ok) {
+                const matchedCall = builtInCalls.find(c => c.id === finalized.toolCallId);
+                if (matchedCall) {
+                    recordTurnIdempotency(turnIntentKey, matchedCall.name, matchedCall.arguments, finalized);
+                }
+            }
+            return finalized;
+        });
         const results = [...replays, ...extraResults, ...forgedResults, ...loadResults, ...coreResults];
         // What the seat actually read this turn. A bundled-file read is not the
         // procedure, so it never overwrites the body for that slug.
@@ -8477,11 +8599,10 @@ export async function runDeskToolLoop(params: {
             break;
         }
 
-        // Signature must carry the ARGUMENTS as text: String({...}) is
-        // '[object Object]' for every call, which made three different lookups
-        // look like one repeated three times.
+        // Signature must carry canonicalized ARGUMENTS (recursively sorted keys)
+        // so `{a:1,b:2}` and `{b:2,a:1}` produce identical stall/failure hashes.
         for (const c of calls) {
-            const args = typeof c.arguments === 'string' ? c.arguments : JSON.stringify(c.arguments ?? {});
+            const args = typeof c.arguments === 'string' ? c.arguments : canonicalizeArgsForHash(c.arguments ?? {});
             callHistory.push(`${c.name}:${args}`);
             // Outcomes are joined by the call id, never by array position:
             // results are assembled as [replays, extra, forged, load, core].
@@ -8492,12 +8613,29 @@ export async function runDeskToolLoop(params: {
                 round,
                 dataUnavailable: isDataUnavailable(outcome?.content ?? ''),
                 ok: outcome?.ok === true,
-                // STRUCTURAL refusal only: ok:false AND a leading marker.
-                // A successful lookup whose queried text merely CONTAINS the
-                // word "rejected" must not be counted as a failed call.
+                // STRUCTURAL refusal only: ok:false AND a leading marker or
+                // typed repair rejection. A successful lookup whose queried text
+                // merely CONTAINS the word "rejected" must not count as failed.
                 refused: outcome?.ok === false
-                    && /^\s*(?:[a-z0-9_ -]+\s+)?(?:rejected|refused):/i.test(outcome?.content ?? ''),
+                    && (/^\s*(?:[a-z0-9_ -]+\s+)?(?:rejected|refused):/i.test(outcome?.content ?? '')
+                        || /"kind"\s*:\s*"typed_repair_rejection"/.test(outcome?.content ?? '')),
             });
+        }
+        if (calls.length > 0 || replays.length > 0) {
+            const roundNames = [...calls.map(c => c.name), ...replays.map(r => r.name)];
+            if (roundNames.some(n => DECISION_OR_WRITE_TOOLS.has(n))) {
+                consecutiveReadOnlyRounds = 0;
+            } else {
+                consecutiveReadOnlyRounds += 1;
+                if (consecutiveReadOnlyRounds >= 4 && !readOnlyConvergeSent) {
+                    readOnlyConvergeSent = true;
+                    appendTurnNotice(
+                        messages,
+                        'CONVERGE — you have completed 4 consecutive read-only tool rounds without a decision. Synthesize your verdict now from the evidence above, or call present_trade / decline_trade / Wait.',
+                    );
+                    onToolEvent?.('desk guard · 4 read-only rounds — asking for verdict now');
+                }
+            }
         }
         const stalled = detectStalledLoop(callHistory);
         const failedTwice = detectConsecutiveToolFailures(callOutcomeHistory);
@@ -8649,6 +8787,8 @@ export interface StreamWithDeskToolsOptions extends ChatRequestOptions {
     planMode?: boolean;
     /** Skills deterministically pre-opened for this turn (e.g. via `/<skill-slug>`). */
     initialViewedSkills?: Array<{ slug: string; body: string; version?: string }>;
+    /** Stable per-turn idempotency key shared across echo/transport retries. */
+    turnIntentKey?: string;
 }
 
 /**
@@ -9005,6 +9145,7 @@ export async function* streamChatWithDeskTools(
         requireFirstToolRound,
         planMode,
         initialViewedSkills: options?.initialViewedSkills,
+        turnIntentKey: options?.turnIntentKey,
         extraToolDefs: extraDefs,
         executeExtraTool: async call => {
             // Panel-owned chart actions first (draw/levels/clear) — they

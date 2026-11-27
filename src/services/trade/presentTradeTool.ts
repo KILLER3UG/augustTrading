@@ -26,6 +26,7 @@ import { formatPaperFillAssumptions, PAPER_EXECUTION_RECEIPT } from '../tracking
 import { beginGateScan, cancelGateScan, evaluatePlanLocalSync, gateReceiptLine } from './proposalGate';
 import { drawingsFromLevelTool, type ChartDrawing } from './chartDrawings';
 import { computeTradeMath, computeFundingDrag, type TradeMathRead } from '../market/tradeMathCore';
+import { coerceToolArguments, formatTypedRepairRejection, recordCoercionAudit } from '../analysis/toolArgCoercionCore';
 import type { Kline } from '../../types/message';
 import type { WatchPlan } from './tradePlanLevels';
 
@@ -180,6 +181,8 @@ export interface PresentTradeContext {
     planMode?: boolean;
     /** The note appended to the receipt when `crossCanvas` is true. */
     canvasNote: string;
+    /** Bounded semantic auto-repair allowance remaining for this turn (default 1). */
+    autoRepairRemaining?: number;
 }
 
 /** The writes a presenting turn needs. Only `setProposal` is required — a
@@ -241,9 +244,34 @@ export const runPresentTrade = async (
 ): Promise<DeskToolResult> => {
     const { call } = ctx;
     const name = call.name;
-    const args = call.arguments ?? {};
+    const { args, coercions } = coerceToolArguments('present_trade', call.arguments ?? {});
+    recordCoercionAudit('present_trade', coercions);
+    const autoRepairRemaining = ctx.autoRepairRemaining ?? 1;
     const { proposal, error } = parseTradeProposal({ ...args, symbol: args.symbol || ctx.symbol });
-    if (error || !proposal) return receipt(call, name, false, `present_trade rejected: ${error ?? 'invalid proposal'}`);
+    if (error || !proposal) {
+        const reason = error ?? 'invalid proposal';
+        const isInverted = /below entry|above entry|above it|below it|inverted/i.test(reason);
+        return receipt(
+            call,
+            name,
+            false,
+            formatTypedRepairRejection({
+                tool: 'present_trade',
+                errorCode: isInverted ? 'inverted_bracket' : 'invalid_proposal_args',
+                field: /direction/i.test(reason) ? 'direction'
+                    : /stopLoss/i.test(reason) ? 'stopLoss'
+                    : /takeProfits/i.test(reason) ? 'takeProfits'
+                    : /entry/i.test(reason) ? 'entry'
+                    : 'bracket',
+                expectedConstraint: reason,
+                repairHint: isInverted
+                    ? 'Ensure Long has stopLoss < entry < takeProfits[0] (or Short has takeProfits[0] < entry < stopLoss) and retry once.'
+                    : 'Pass valid direction ("Long"|"Short"), positive entry, stopLoss, and takeProfits array, then retry once.',
+                autoRepairRemaining,
+                message: `present_trade rejected: ${reason}`,
+            }),
+        );
+    }
 
     // Synchronous plan-local shape + min-edge check BEFORE drawing or arming:
     // an inverted plan is refused immediately (never hits the chart or card),
@@ -254,7 +282,17 @@ export const runPresentTrade = async (
             call,
             name,
             false,
-            `present_trade rejected: ${localCheck.refusal ?? 'levels are inverted for the stated direction.'}`,
+            formatTypedRepairRejection({
+                tool: 'present_trade',
+                errorCode: 'inverted_bracket',
+                field: 'stopLoss/takeProfits',
+                expectedConstraint: localCheck.refusal ?? 'levels are inverted for the stated direction.',
+                repairHint: proposal.direction === 'Long'
+                    ? 'For Long, place stopLoss < entry < takeProfits[0] and retry once.'
+                    : 'For Short, place takeProfits[0] < entry < stopLoss and retry once.',
+                autoRepairRemaining,
+                message: `present_trade rejected: ${localCheck.refusal ?? 'levels are inverted for the stated direction.'}`,
+            }),
         );
     }
 
@@ -270,7 +308,15 @@ export const runPresentTrade = async (
             call,
             name,
             false,
-            'present_trade rejected: inverted bracket (harness math) — the stop and/or targets sit on the wrong side of the entry for the stated direction.',
+            formatTypedRepairRejection({
+                tool: 'present_trade',
+                errorCode: 'inverted_bracket',
+                field: 'stopLoss/takeProfits',
+                expectedConstraint: 'inverted bracket (harness math) — stop and targets must sit on opposite sides of entry.',
+                repairHint: 'Fix stopLoss and takeProfits ordering relative to entry for the stated direction and retry once.',
+                autoRepairRemaining,
+                message: 'present_trade rejected: inverted bracket (harness math) — the stop and/or targets sit on the wrong side of the entry for the stated direction.',
+            }),
         );
     }
     proposal.math = math.snapshot;

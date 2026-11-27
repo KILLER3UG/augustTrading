@@ -19,6 +19,7 @@
 import { TradeAnalysis, TradeOutcome, Message, MessageRole, type ProposalGate, type PaperFillAssumptions } from '../../types';
 import { asPlaybookId, type PlaybookId } from '../../types/playbook';
 import { baseOf, quoteOf } from '../../utils/symbol';
+import { coerceToolArguments, recordCoercionAudit } from '../analysis/toolArgCoercionCore';
 import { plannedRiskReward } from '../../utils/riskReward';
 import { clampProbabilityToGate, downgradeConfidenceForProbability } from '../../utils/analysisUtils';
 import { computeContractSize, type ContractSize } from '../../utils/ticketSize';
@@ -314,7 +315,9 @@ export const mintPlanId = (symbol: string): string =>
 
 /** Validate + normalize the model's raw tool arguments into a proposal, or
  *  return the reason it is unusable (the tool surfaces this to the model). */
-export const parseTradeProposal = (args: Record<string, unknown>): { proposal?: TradeProposal; error?: string } => {
+export const parseTradeProposal = (rawArgs: Record<string, unknown>): { proposal?: TradeProposal; error?: string } => {
+    const { args, coercions } = coerceToolArguments('present_trade', rawArgs);
+    recordCoercionAudit('present_trade', coercions);
     const num = (v: unknown): number | null => {
         const n = typeof v === 'number' ? v : Number(v);
         return Number.isFinite(n) ? n : null;
