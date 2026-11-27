@@ -271,6 +271,30 @@ describe('streamCoalescerCore — createDeltaCoalescer', () => {
         coalescer.flush();
         assert.equal(batches.length, 0);
     });
+
+    it('cancel() resets the pending snapshots so the next append never concatenates stale aborted text', () => {
+        // The abort-path regression: cancel() used to clear the DIRTY flags but
+        // leave pendingText/pendingReasoningFull holding the aborted turn, so
+        // the first append of the NEXT turn painted `aborted text + new delta`.
+        const batches: CoalescedDeltaBatch[] = [];
+        const coalescer = createDeltaCoalescer({
+            onFlush: b => batches.push(b),
+            schedule: () => 42,
+            cancel: () => {},
+        });
+
+        coalescer.setText('aborted turn text');
+        coalescer.appendReasoning('aborted thought');
+        coalescer.cancel();
+
+        coalescer.appendText('next turn');
+        coalescer.appendReasoning('fresh thought');
+        coalescer.flush();
+
+        assert.equal(batches.length, 1);
+        assert.equal(batches[0].text, 'next turn');
+        assert.equal(batches[0].reasoningDelta, 'fresh thought');
+    });
 });
 
 describe('chatStore — subscribeSidebarMeta streaming isolation', () => {

@@ -151,10 +151,18 @@ export const createDeltaCoalescer = (options: DeltaCoalescerOptions): DeltaCoale
                 cancelFn(frameHandle);
                 frameHandle = null;
             }
+            // Drop the SNAPSHOTS too, not only the dirty flags: cancel() is the
+            // abort path, and an appendText() after it must start from nothing.
+            // Leaving pendingText/pendingReasoningFull holding the aborted turn
+            // made the first append of the NEXT turn concatenate onto the stale
+            // aborted text and paint a ghost prefix of a sentence that was
+            // never answered.
             hasText = false;
             hasReasoningDelta = false;
+            pendingText = '';
             pendingReasoningDelta = '';
             hasReasoningFull = false;
+            pendingReasoningFull = '';
         },
         hasPending(): boolean {
             return isDirty();

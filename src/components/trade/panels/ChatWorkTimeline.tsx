@@ -46,6 +46,54 @@ interface ReasoningSplitCache {
     reasoning: string;
     segs: string[];
 }
+
+/**
+ * Close retention for `.motion-collapse-grid` content: keeps the LAST value
+ * painted while `open` available for 210ms (one beat past the grid's 200ms
+ * close glide) after the open flag falls, so the glide CLOSES over its real
+ * children instead of snapping empty on frame 1. Once the window expires the
+ * live value renders again — an empty one for a closed drawer, so nothing
+ * stale lingers past the animation.
+ *
+ * Deliberately a module-cache read/write during render, not a hook: the
+ * WriteReceiptRows drawers render inside `rows.map(...)`, where a per-row
+ * hook is illegal. This is the same sanctioned idiom as `reasoningSplits`
+ * above — keyed, capped, and idempotent per (key, open, value) inputs.
+ */
+const CLOSE_RETAIN_MS = 210;
+interface CloseRetentionEntry {
+    value: unknown;
+    hasValue: boolean;
+    closedAt: number | null;
+}
+const closeRetentions = new Map<string, CloseRetentionEntry>();
+const CLOSE_RETENTION_CAP = 64;
+const retainOnClose = <T,>(key: string, open: boolean, value: T): T => {
+    let entry = closeRetentions.get(key);
+    if (!entry) {
+        if (closeRetentions.size >= CLOSE_RETENTION_CAP) {
+            const oldest = closeRetentions.keys().next().value;
+            if (oldest !== undefined) closeRetentions.delete(oldest);
+        }
+        entry = { value: undefined, hasValue: false, closedAt: null };
+        closeRetentions.set(key, entry);
+    }
+    if (open) {
+        entry.value = value;
+        entry.hasValue = true;
+        entry.closedAt = null;
+        return value;
+    }
+    // First closed render after an open: start the window holding the last
+    // painted value. (Never held when the drawer mounted closed — hasValue
+    // is false and the live value, already empty, passes through.)
+    if (entry.closedAt === null) {
+        entry.closedAt = Date.now();
+        return entry.hasValue ? (entry.value as T) : value;
+    }
+    if (Date.now() - entry.closedAt > CLOSE_RETAIN_MS) return value;
+    return entry.hasValue ? (entry.value as T) : value;
+};
 const reasoningSplits = new Map<string, ReasoningSplitCache>();
 const REASONING_SPLIT_CACHE_CAP = 64;
 
@@ -315,14 +363,14 @@ const WriteReceiptRows: React.FC<{ toolIds: string[] }> = ({ toolIds }) => {
                             </div>
                             <div className="motion-collapse-grid" data-open={viewOpen ? 'true' : 'false'} aria-hidden={!viewOpen}>
                                 <div>
-                                    {viewOpen && (
+                                    {retainOnClose(`paper-${row.key}`, viewOpen, viewOpen && (
                                         <pre
                                             data-testid="write-receipt-detail-paper"
                                             className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-control bg-zinc-900/60 px-2 py-1 font-mono text-ui-2xs leading-4 text-zinc-500"
                                         >
                                             {JSON.stringify(receipt ?? { note: why }, null, 2)}
                                         </pre>
-                                    )}
+                                    ))}
                                 </div>
                             </div>
                         </div>
@@ -387,7 +435,7 @@ const WriteReceiptRows: React.FC<{ toolIds: string[] }> = ({ toolIds }) => {
                         </div>
                         <div className="motion-collapse-grid" data-open={viewOpen ? 'true' : 'false'} aria-hidden={!viewOpen}>
                             <div>
-                                {viewOpen && (
+                                {retainOnClose(`receipt-${row.key}`, viewOpen, viewOpen && (
                                     <div
                                         data-testid={`write-receipt-detail-${row.kind}`}
                                         className="mt-1 overflow-hidden rounded-control border border-hairline bg-zinc-950/90"
@@ -442,7 +490,7 @@ const WriteReceiptRows: React.FC<{ toolIds: string[] }> = ({ toolIds }) => {
                                             </pre>
                                         )}
                                     </div>
-                                )}
+                                ))}
                             </div>
                         </div>
                     </div>
@@ -738,7 +786,10 @@ const ChatWorkTimeline: React.FC<ChatWorkTimelineProps> = ({ entry, symbol, inte
                             data-testid="live-thinking-peek"
                             className="motion-thinking-peek ml-1 border-l border-hairline pl-3 text-ui-dense leading-[1.4] text-zinc-500"
                         >
-                            {peekLines.map((line, idx) => (
+                            {/* The last painted lines ride through the close
+                                glide (retainOnClose), so the peek eases shut
+                                instead of snapping empty on frame 1. */}
+                            {retainOnClose(`peek-${entry.id}`, showThinkingPeek && peekLines.length > 0, peekLines).map((line, idx) => (
                                 <p key={idx} className="truncate">{line}</p>
                             ))}
                         </div>

@@ -7,6 +7,7 @@
 | [docs/product/focus.md](docs/product/focus.md) | **the current focus**: analysis, accuracy and signals; P&L is not the product line |
 | [docs/product/goal.md](docs/product/goal.md) | what this is, who it's for, the loop, the non-goals |
 | [docs/product/ux/](docs/product/ux/) | what the trader sees: [charter](docs/product/ux/charter.md), [surfaces](docs/product/ux/surfaces.md), [voice](docs/product/ux/voice.md) |
+| [DESIGN.md](DESIGN.md) | the visual law: matte-monochrome surface ladder, hairlines, concentric radii, hit targets, GPU-only motion, anti-patterns |
 | [docs/engineering/gates.md](docs/engineering/gates.md) | what proves a change, and what each gate cannot see |
 | [docs/engineering/conventions.md](docs/engineering/conventions.md) | code style and the canonical single-source modules |
 | [docs/plan/open-items.md](docs/plan/open-items.md) | what is open to build, with the evidence for each row |

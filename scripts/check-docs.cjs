@@ -34,6 +34,7 @@ const path = require('path');
 const ROOT = path.resolve(__dirname, '..');
 const LIVE = [
     'AGENTS.md',
+    'DESIGN.md',
     'README.md',
     'CONTRIBUTING.md',
     'docs/README.md',
