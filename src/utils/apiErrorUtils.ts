@@ -1,7 +1,18 @@
 /**
  * API Error Utilities
  * Provides consistent error handling and user-friendly messages across all AI providers
+ *
+ * Retry DECISIONS and delays live in `utils/retryPolicyCore.ts` (the single
+ * source); this file owns the retry LOOPS (`withRetry` for whole calls,
+ * `withStreamOpenRetry` for the open of a streaming generator) on top of it.
  */
+
+import {
+    RetryAttemptInfo,
+    classifyTransientProviderError,
+    computeRetryDelayMs,
+    transientErrorLabel,
+} from './retryPolicyCore';
 
 // Provider display names are runtime-configured (user-entered ProviderConfig
 // names) — a fixed union would go stale (legacy 'Groq Alt' / 'Binance' entries)
@@ -16,7 +27,9 @@ export interface ParsedAPIError {
 }
 
 /**
- * Parse API error into user-friendly message
+ * Parse API error into user-friendly message.
+ * Message mapping ONLY — retry decisions and delays live in
+ * `utils/retryPolicyCore.ts`; do not branch retry logic off this shape.
  */
 export const parseAPIError = (error: any, provider: ProviderName): ParsedAPIError => {
     const errorMessage = error?.message?.toLowerCase() || '';
@@ -111,51 +124,6 @@ export const parseAPIError = (error: any, provider: ProviderName): ParsedAPIErro
 };
 
 /**
- * Decide whether an error is worth auto-retrying
- */
-export const shouldRetry = (parsedError: ParsedAPIError): boolean => {
-    // 'timeout' is deliberately non-retryable — a request that burned its full
-    // budget is wedged, and immediate retries only extend the stall.
-    return parsedError.type === 'rate_limit' || parsedError.type === 'network' || parsedError.type === 'server';
-};
-
-/**
- * Get retry delay in milliseconds.
- *
- * Every delay carries JITTER. Ensemble seats fire in parallel and share
- * gateway quota; a deterministic backoff makes every seat that got a 429
- * on the same beat wake up and hammer the rate-limited gateway in lockstep,
- * instantly tripping the limiter again. Randomized wake-ups spread the
- * recovery window instead.
- *
- * Worst-case waits per attempt: the Retry-After branch is capped at a 30s
- * BASE but lands up to 45s after the +50% jitter (30s + 15s); the
- * exponential branch (no Retry-After) tops out at 30s. There is no single
- * 30s ceiling across both branches.
- */
-export const getRetryDelay = (parsedError: ParsedAPIError, attempt: number): number => {
-    if (parsedError.retryAfterSeconds !== undefined) {
-        // A real Retry-After header can be huge (e.g. 600s for quota resets) —
-        // honor it but never let it stall the pipeline for minutes per attempt.
-        // The check is `!== undefined`, NOT truthiness: a numeric 0 ("retry
-        // now") is a valid server instruction and must yield an immediate
-        // retry instead of falling through to exponential backoff.
-        // Jitter only EXTENDS the wait the server asked for (never below it):
-        // base + up to +50%, so synchronized 429s wake up staggered. 0s
-        // stays exactly 0s.
-        const base = Math.min(parsedError.retryAfterSeconds, 30) * 1000;
-        return Math.round(base + Math.random() * base * 0.5);
-    }
-    // Exponential backoff (no Retry-After header) — 2s, 4s, 8s, base capped
-    // at 30s — with "equal jitter": sleep a uniform sample in [base/2, base].
-    // Guarantees progress while decorrelating concurrent retrying seats. (The
-    // Retry-After branch above is a separate path: its 30s BASE can reach 45s
-    // after the +50% extension jitter.)
-    const base = Math.min(2000 * Math.pow(2, attempt), 30000);
-    return Math.round(base / 2 + Math.random() * (base / 2));
-};
-
-/**
  * Sleep that rejects early if the AbortSignal fires.
  */
 const abortableSleep = (ms: number, signal?: AbortSignal): Promise<void> => {
@@ -182,21 +150,28 @@ const abortableSleep = (ms: number, signal?: AbortSignal): Promise<void> => {
 /**
  * Retry wrapper for AI provider API calls.
  *
- * - Classifies failures with `parseAPIError`.
- * - Retries only transient errors (rate_limit, network, server) up to `maxAttempts`.
- * - Fails fast on non-retryable errors (invalid_key, quota_exceeded, unknown).
+ * - Classifies failures with `classifyTransientProviderError` (retryPolicyCore —
+ *   the single source for what is retryable).
+ * - Waits through `computeRetryDelayMs`: server `Retry-After` honored, else
+ *   capped exponential backoff with ±20% jitter.
+ * - Fails fast on non-retryable errors (billing, auth, bad request, abort).
  * - Aborts immediately (no retry, no backoff wait) when `signal` is aborted.
+ * - Reports each automatic retry through `onRetryAttempt` BEFORE the wait so
+ *   a caller can paint live progress; clicking Stop aborts the wait.
  *
- * @param fn          The async API call to execute.
- * @param provider    Provider label used for error classification and logging.
- * @param maxAttempts Total number of attempts (default 4).
- * @param signal      Optional AbortSignal to cancel in-flight retries/waits.
+ * @param fn            The async API call to execute.
+ * @param provider      Provider label used for classification and logging.
+ * @param maxAttempts   Total number of attempts — 11 under the default policy
+ *                      (10 automatic retries), from `retryAttemptsForPolicy`.
+ * @param signal        Optional AbortSignal to cancel in-flight retries/waits.
+ * @param onRetryAttempt Optional live-progress callback, fired per retry.
  */
 export const withRetry = async <T>(
     fn: () => Promise<T>,
     provider: ProviderName,
     maxAttempts: number = 4,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    onRetryAttempt?: (info: RetryAttemptInfo) => void
 ): Promise<T> => {
     let lastError: unknown = null;
 
@@ -215,17 +190,27 @@ export const withRetry = async <T>(
                 throw new DOMException('The operation was aborted.', 'AbortError');
             }
 
-            const parsedError = parseAPIError(error, provider);
-
+            const classified = classifyTransientProviderError(error);
             // Fail fast on non-retryable errors or when out of attempts.
-            if (!shouldRetry(parsedError) || attempt === maxAttempts - 1) {
+            // (attempt is 0-based here; the retry the trader is told about is
+            // attempt+1 of maxRetries = maxAttempts-1.)
+            if (!classified.retryable || attempt === maxAttempts - 1) {
                 throw error;
             }
 
-            const delay = getRetryDelay(parsedError, attempt);
+            const delay = computeRetryDelayMs({
+                attempt: attempt + 1,
+                retryAfterMs: classified.retryAfterMs,
+            });
+            onRetryAttempt?.({
+                attempt: attempt + 1,
+                maxRetries: maxAttempts - 1,
+                delayMs: delay,
+                reason: transientErrorLabel(error, classified.kind),
+            });
             console.warn(
-                `[${provider}] Attempt ${attempt + 1}/${maxAttempts} failed (${parsedError.type}): ` +
-                `${parsedError.message} Retrying in ${Math.round(delay / 1000)}s...`
+                `[${provider}] Attempt ${attempt + 1}/${maxAttempts} failed (${classified.kind}): ` +
+                `retrying in ${Math.round(delay / 100) / 10}s...`
             );
 
             await abortableSleep(delay, signal);
@@ -234,3 +219,63 @@ export const withRetry = async <T>(
 
     throw lastError;
 };
+
+/**
+ * Retry the OPEN of a streaming generator.
+ *
+ * Streaming transports (SDK, dev proxy, Electron bridge) yield text deltas;
+ * a retryable failure (429, `Provider returned error`, 5xx, network drop)
+ * that lands BEFORE the first visible output token may be retried by simply
+ * re-opening the stream — the trader has seen nothing yet. Once a delta has
+ * been painted, `painted` is set and any later failure surfaces as-is:
+ * re-answering would append a SECOND reply on top of the first.
+ *
+ * One `maxAttempts` budget owns the whole open sequence, mirroring
+ * `withRetry`'s semantics (11 attempts = 10 automatic retries under the
+ * default policy), with the same classification, delay curve and
+ * `onRetryAttempt` contract.
+ */
+export async function* withStreamOpenRetry<T>(
+    makeStream: () => AsyncGenerator<T, void, unknown>,
+    provider: ProviderName,
+    maxAttempts: number,
+    signal: AbortSignal | undefined,
+    onRetryAttempt?: (info: RetryAttemptInfo) => void
+): AsyncGenerator<T, void, unknown> {
+    let retries = 0;
+    for (;;) {
+        let painted = false;
+        try {
+            for await (const delta of makeStream()) {
+                painted = true;
+                yield delta;
+            }
+            return;
+        } catch (error) {
+            // Painted output must never be re-answered on top of.
+            if (painted) throw error;
+            if (signal?.aborted) {
+                throw new DOMException('The operation was aborted.', 'AbortError');
+            }
+            const classified = classifyTransientProviderError(error);
+            retries += 1;
+            if (!classified.retryable || retries > maxAttempts - 1) throw error;
+
+            const delay = computeRetryDelayMs({
+                attempt: retries,
+                retryAfterMs: classified.retryAfterMs,
+            });
+            onRetryAttempt?.({
+                attempt: retries,
+                maxRetries: maxAttempts - 1,
+                delayMs: delay,
+                reason: transientErrorLabel(error, classified.kind),
+            });
+            console.warn(
+                `[${provider}] Stream open failed (${classified.kind}), retry ` +
+                `${retries}/${maxAttempts - 1} in ${Math.round(delay / 100) / 10}s...`
+            );
+            await abortableSleep(delay, signal);
+        }
+    }
+}

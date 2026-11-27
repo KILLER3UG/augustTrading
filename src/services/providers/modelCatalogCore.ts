@@ -739,11 +739,15 @@ export const resolveModelDisplayName = (
     return fallbackFormatter ? fallbackFormatter(modelId) : modelId;
 };
 
-/** Resolve effective retry attempts for a provider's retryPolicy. */
+/**
+ * Resolve effective retry ATTEMPTS for a provider's retryPolicy — the budget
+ * handed to `withRetry`/`withStreamOpenRetry` (total attempts, not retries:
+ * 11 attempts = 10 automatic retries under the default policy).
+ */
 export const retryAttemptsForPolicy = (policy?: ProviderRetryPolicy): number => {
     if (policy === 'off') return 1;
-    if (policy === 'aggressive') return 5;
-    return 3;
+    if (policy === 'aggressive') return 16;
+    return 11;
 };
 
 /** Sanitize a raw `modelOverrides` record loaded from storage. */

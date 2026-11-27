@@ -7,9 +7,12 @@
  *
  * Cooldown (opengrok F11): a provider that keeps failing PERSISTED requests
  * is benched for a window instead of burning a seat on every run. Only
- * PERSISTED errors count — the transports already retry transient blips
- * (429 backoff, network retry), so an error that reaches here survived
- * retries. 3+ persisted errors within 15 minutes → 10-minute cooldown,
+ * PERSISTED errors count — the transports retry transient blips FIRST (the
+ * 10-retry automatic 429/upstream/5xx recovery in `retryPolicyCore` +
+ * `withRetry`/`withStreamOpenRetry`), and an error is recorded here only
+ * after that budget is exhausted, never while retries are still in
+ * progress — a rate-limited gateway under backoff is NOT a benched
+ * provider. 3+ persisted errors within 15 minutes → 10-minute cooldown,
  * cleared by the next success.
  *
  * Scope ruling: the bench is IN-MEMORY by design — it is a

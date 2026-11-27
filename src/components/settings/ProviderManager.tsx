@@ -107,9 +107,9 @@ const selectTriggerCls =
     'transition-colors hover:border-zinc-700 focus:border-zinc-500 focus:outline-none';
 
 const RETRY_POLICY_OPTIONS: ReadonlyArray<{ value: ProviderRetryPolicy; label: string }> = [
-    { value: 'default', label: 'Default (3 attempts)' },
-    { value: 'aggressive', label: 'Aggressive (5 attempts)' },
-    { value: 'off', label: 'Off (1 attempt, no retry)' },
+    { value: 'default', label: 'Default (10 retries)' },
+    { value: 'aggressive', label: 'Aggressive (15 retries)' },
+    { value: 'off', label: 'Off (no retry)' },
 ];
 
 const API_FORMAT_OPTIONS: ReadonlyArray<{ value: ApiFormat; label: string }> = (

@@ -267,8 +267,8 @@ describe('Runtime per-model override wiring (context, vision, reasoning, max_tok
         assert.equal(resolveEffectiveMaxTokens(provider, 20_000), 12_288);
         assert.equal(resolveEffectiveMaxTokens(provider, 2048), 2048);
         assert.equal(retryAttemptsForPolicy('off'), 1);
-        assert.equal(retryAttemptsForPolicy('default'), 3);
-        assert.equal(retryAttemptsForPolicy('aggressive'), 5);
+        assert.equal(retryAttemptsForPolicy('default'), 11);
+        assert.equal(retryAttemptsForPolicy('aggressive'), 16);
         assert.equal(resolveProviderModelLabel(provider, 'mystery-slug-x1'), 'Desk Reasoner X1');
     });
 });

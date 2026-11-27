@@ -38,6 +38,7 @@ import type { TokenUsage } from '../../utils/tokenUsage';
 import { splitThinkingFromOutput } from '../../utils/thinkingSplit';
 import { detectHarnessEcho, HARNESS_ECHO_RETRY_INSTRUCTION } from '../../utils/harnessEchoGuard';
 import { getHarnessSettings } from '../../utils/harnessSettings';
+import { formatRetryProgressLine } from '../../utils/retryPolicyCore';
 import type { ReasoningEffort } from '../providers/reasoningControls';
 export { detectHarnessEcho } from '../../utils/harnessEchoGuard';
 
@@ -290,6 +291,11 @@ const runToolTurnInner = async (req: ToolTurnRequest, attempt = 0): Promise<Inne
         // `onToolEvent`, which the caller already paints as a tool line — this
         // is the only compaction channel that would otherwise be silent.
         onContextCompact: line => events.addToolLine(line),
+        // Automatic 429/transient recovery (retryPolicyCore): the line rides
+        // the LIVE channel — it replaces the dock's `liveProgress` and updates
+        // the Chat surface's capped feed — so a 10-retry wait reads as one
+        // quiet updating line, never a settled trail of ten.
+        onRetryAttempt: info => events.addLiveToolLine?.(formatRetryProgressLine(req.config.name || 'Provider', info)),
         onStreamReset: () => {
             // The attempt, not the answer: clear the accumulator and repaint,
             // so the corrected turn paints alone instead of concatenating.

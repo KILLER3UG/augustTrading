@@ -17,7 +17,8 @@
 
 import OpenAI from 'openai';
 import { ProviderConfig } from '../../types/provider';
-import { withRetry, ProviderName } from '../../utils/apiErrorUtils';
+import { withRetry, withStreamOpenRetry, ProviderName } from '../../utils/apiErrorUtils';
+import type { RetryAttemptInfo } from '../../utils/retryPolicyCore';
 import { assertValidProviderUrl } from '../../utils/providerUrlValidation';
 import { parseTolerantJsonObject } from '../analysis/toolArgCoercionCore';
 import {
@@ -195,6 +196,12 @@ export interface ChatRequestOptions {
      *  show the line: the seat's request lost bytes, and a silent rewrite of
      *  the trader's own history is the kind of thing this app names. */
     onContextCompact?: (line: string) => void;
+    /** Fired before each AUTOMATIC retry wait starts (rate limit / upstream /
+     *  5xx / network, per `retryPolicyCore`), on every transport — buffered
+     *  `withRetry` calls and streaming open-retries alike. A caller paints
+     *  the line (`Rate-limited (HTTP 429) — retrying KiloCode (2/10) in
+     *  2.0s…`); clicking Stop aborts the wait itself. */
+    onRetryAttempt?: (info: RetryAttemptInfo) => void;
 }
 
 export interface ChatTurnResult {
@@ -619,10 +626,11 @@ export function warmProviderConnection(config: ProviderConfig): void {
 
 /**
  * Create an OpenAI SDK client for chat_completions providers.
- * maxRetries: 0 — the SDK's own retry loop (default 2) multiplied with
- * withRetry(fn, 3) here, sending up to 9 requests to a rate-limited gateway
- * per logical call. Retry/backoff is this module's job; the SDK must make
- * exactly one attempt per call.
+ * maxRetries: 0 — the SDK's own retry loop (default 2) multiplied with the
+ * policy budget `withRetry`/`withStreamOpenRetry` run here would send up to
+ * 11×N requests to a rate-limited gateway per logical call. Retry/backoff is
+ * this module's job (`retryAttemptsForPolicy`); the SDK must make exactly
+ * one attempt per call.
  */
 function createOpenAIClient(config: ProviderConfig): OpenAI {
     return new OpenAI({
@@ -1699,7 +1707,8 @@ async function sendChatRequestOnce(
             },
             (effectiveConfig.name as ProviderName) || 'Provider',
             retryAttemptsForPolicy(effectiveConfig.retryPolicy),
-            options?.signal
+            options?.signal,
+            options?.onRetryAttempt
         );
         recordProviderSuccess(config.id, Date.now() - startedAt);
         return result;
@@ -1928,7 +1937,8 @@ async function sendChatTurnOnce(
             },
             (effectiveConfig.name as ProviderName) || 'Provider',
             retryAttemptsForPolicy(effectiveConfig.retryPolicy),
-            options?.signal
+            options?.signal,
+            options?.onRetryAttempt
         );
         recordProviderSuccess(config.id, Date.now() - startedAt);
         return result;
@@ -2117,6 +2127,28 @@ export async function* streamChatRequest(
     }
 }
 
+/**
+ * The open-retry budget for the three streaming transports (Electron chunk
+ * bridge, dev proxy, direct SDK). One wrapper — `withStreamOpenRetry` — owns
+ * retrying a retryable failure (429 / `Provider returned error` / 5xx /
+ * network drop) that lands BEFORE the first visible output token, with the
+ * same classification, delay curve and `onRetryAttempt` contract the
+ * buffered `withRetry` paths use, under `retryAttemptsForPolicy(config)`.
+ */
+function streamWithOpenRetry(
+    makeStream: () => AsyncGenerator<string, void, unknown>,
+    config: ProviderConfig,
+    options?: ChatRequestOptions,
+): AsyncGenerator<string, void, unknown> {
+    return withStreamOpenRetry(
+        makeStream,
+        (config.name as ProviderName) || 'Provider',
+        retryAttemptsForPolicy(config.retryPolicy),
+        options?.signal,
+        options?.onRetryAttempt,
+    );
+}
+
 async function* streamChatRequestOnce(
     config: ProviderConfig,
     messages: ChatMessage[],
@@ -2140,7 +2172,11 @@ async function* streamChatRequestOnce(
             // jsonMode call would silently lose constrained decoding on
             // desktop while web/proxy streams honored it.
             if (electronAPI.onProviderChunk && !options?.jsonMode) {
-                yield* streamViaElectronBridge(effectiveConfig, messages, options, electronAPI);
+                yield* streamWithOpenRetry(
+                    () => streamViaElectronBridge(effectiveConfig, messages, options, electronAPI),
+                    effectiveConfig,
+                    options,
+                );
                 return;
             }
             // Shell without the chunk channel (old preload), or a jsonMode
@@ -2161,7 +2197,11 @@ async function* streamChatRequestOnce(
             if (canStreamFormat) {
                 const startedAt = Date.now();
                 try {
-                    yield* streamViaProxy(effectiveConfig, messages, options);
+                    yield* streamWithOpenRetry(
+                        () => streamViaProxy(effectiveConfig, messages, options),
+                        effectiveConfig,
+                        options,
+                    );
                     recordProviderSuccess(config.id, Date.now() - startedAt);
                 } catch (streamError) {
                     const err = streamError as { name?: string; code?: string };
@@ -2179,7 +2219,14 @@ async function* streamChatRequestOnce(
         if (effectiveConfig.apiFormat === 'chat_completions') {
             const startedAt = Date.now();
             try {
-                yield* chatCompletionsStream(effectiveConfig, messages, { ...options, signal: withStreamTimeoutSignal(options?.signal) });
+                yield* streamWithOpenRetry(
+                    // A fresh timeout budget per attempt: the factory re-runs on
+                    // every retry, so a 429-then-success sequence never spends
+                    // one 300s budget across both attempts.
+                    () => chatCompletionsStream(effectiveConfig, messages, { ...options, signal: withStreamTimeoutSignal(options?.signal) }),
+                    effectiveConfig,
+                    options,
+                );
                 recordProviderSuccess(config.id, Date.now() - startedAt);
             } catch (streamError) {
                 const err = streamError as { name?: string; code?: string };
@@ -2587,14 +2634,15 @@ async function* streamViaProxy(
     options?: ChatRequestOptions
 ): AsyncGenerator<string, void, unknown> {
     const wireMessages = reasoningPreambleMessages(config, messages, options);
-    // Retry the OPEN of the stream on transient failures (429 / network /
-    // 5xx) with the same backoff the non-streaming path uses — without it,
-    // one rate-limit blip killed a bot room turn instantly while casual
-    // chat (sendChatRequest → withRetry) recovered silently. Only the
-    // request open is retried: once SSE bytes start flowing, a mid-stream
-    // failure surfaces as an error instead of replaying the answer.
-    const response = await withRetry(async () => {
-        const patch = reasoningPatchFor(config, options);
+    // The OPEN of this stream is retried by the dispatch site's
+    // `withStreamOpenRetry` wrapper — the single retry authority for all
+    // three streaming transports. This body makes exactly ONE attempt; a
+    // 429, a 5xx or a JSON error frame rides out as a thrown error and the
+    // wrapper re-opens. Only the open is ever retried: once SSE bytes start
+    // flowing, a mid-stream failure surfaces as an error instead of
+    // replaying the answer on top of painted output.
+    const patch = reasoningPatchFor(config, options);
+    const response = await (async () => {
         const attempt = await fetch(DEV_PROVIDER_PROXY_PATH, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -2639,12 +2687,21 @@ async function* streamViaProxy(
             throw error;
         }
         return attempt;
-    }, (config.name as ProviderName) || 'Provider', retryAttemptsForPolicy(config.retryPolicy), options?.signal);
+    })();
     const contentType = (response.headers?.get?.('content-type') || '').toLowerCase();
     if (contentType.includes('application/json') && !contentType.includes('text/event-stream')) {
         const data = await response.json().catch(() => ({}));
         if (data?.error) {
-            throw new Error(data.error.message || 'Provider request failed.');
+            // The gateway answered the open with a JSON error frame (HTTP 200
+            // or 429): `{error:{code:429,message:"Provider returned error"}}`.
+            // Carry the frame's own `code`/`status` on the Error so the retry
+            // classifier reads the wire's word for it — a bare prose-only
+            // Error used to fall out of every retryable bucket.
+            const frameError = new Error(data.error.message || 'Provider request failed.');
+            const frame = data.error as { code?: unknown; status?: unknown };
+            if (frame?.code !== undefined) (frameError as { code?: unknown }).code = frame.code;
+            if (typeof frame?.status === 'number') (frameError as { status?: number }).status = frame.status;
+            throw frameError;
         }
         const { text, reasoning } = readWireBody(config.apiFormat, data);
         if (reasoning.trim()) options?.onReasoning?.(reasoning.trim());
