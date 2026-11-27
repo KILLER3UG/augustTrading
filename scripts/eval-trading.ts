@@ -82,6 +82,12 @@ const mkBar = (
 async function main(): Promise<void> {
     const started = performance.now();
 
+    const profileArg = process.argv.find(a => a.startsWith('--profile='))?.slice('--profile='.length).trim();
+    const activeProfile: 'reasoning' | 'standard' | 'compact_local' =
+        profileArg === 'reasoning' || profileArg === 'compact_local' || profileArg === 'standard'
+            ? profileArg
+            : 'standard';
+
     const [
         { runPresentTrade },
         { evaluatePlanLocalSync },
@@ -95,6 +101,7 @@ async function main(): Promise<void> {
         { CHART_ACTION_TOOL_DEFS, deskToolsMandateFor, PAPER_TRADING_PROMPT },
         { TRADE_CHAT_SYSTEM_PROMPT },
         { CHAT_SURFACE_SYSTEM_PROMPT },
+        { buildTradeChatSystemPrompt, buildChatSurfaceSystemPrompt },
         { estimateTokens },
         { buildContextDiagnostic },
         { collectDoctorDiagnostic },
@@ -128,6 +135,7 @@ async function main(): Promise<void> {
         import('../src/services/analysis/deskToolShared'),
         import('../src/services/trade/tradeChatContext'),
         import('../src/constants/prompts/chatPrompts'),
+        import('../src/constants/prompts/tradingKernel'),
         import('../src/utils/tokenEstimate'),
         import('../src/services/trade/diagnosticsCore'),
         import('../src/services/trade/diagnosticsRuntime'),
@@ -471,22 +479,32 @@ async function main(): Promise<void> {
         return `divs=${div.divergences.length}, t0_sec=${d0.pivotA.time}`;
     });
 
-    // 11. Pure progressive disclosure on Turn 1 + lean Turn-1 schema ceiling
-    await runCase(11, 'Turn-1 progressive disclosure: 0 preloaded skill bodies & lean schema count <= 28', () => {
+    // 11. Pure progressive disclosure on Turn 1 + lean Turn-1 schema & static prompt ceilings
+    await runCase(11, `Turn-1 progressive disclosure + static prompt ceiling <= 1750 (${activeProfile})`, () => {
         const idx = buildSkillsIndexForPrompt([
             { slug: 'test-skill', name: 'Test Skill', description: 'Breakout check.', version: 'v1', formatIssues: [], files: [] },
         ], 10, 'chart');
         assert.equal(idx.includes('## Procedure'), false);
-        assert.equal(TRADE_CHAT_SYSTEM_PROMPT.includes('MEMORY ·'), false);
+        const deskPrompt = activeProfile === 'standard' ? TRADE_CHAT_SYSTEM_PROMPT : buildTradeChatSystemPrompt(activeProfile);
+        const chatPrompt = activeProfile === 'standard' ? CHAT_SURFACE_SYSTEM_PROMPT : buildChatSurfaceSystemPrompt(activeProfile);
+        assert.equal(deskPrompt.includes('MEMORY ·'), false);
+        assert.equal(deskPrompt.includes('[CHART MANIFEST'), false);
+        assert.equal(deskPrompt.includes('RISK CONSTITUTION'), false);
         const nonVisionChart = CHART_ACTION_TOOL_DEFS.filter(d => INITIAL_CHART_ACTION_NAMES.has(d.function.name) && d.function.name !== 'inspect_chart_image');
         const deskTurn1 = INITIAL_DESK_TOOL_NAMES.length + nonVisionChart.length;
         assert.ok(deskTurn1 <= 28, `Expected Desk Turn-1 <= 28, got ${deskTurn1}`);
-        assert.ok(estimateTokens(TRADE_CHAT_SYSTEM_PROMPT) < 700);
-        assert.ok(estimateTokens(CHAT_SURFACE_SYSTEM_PROMPT) < 600);
-        assert.ok(estimateTokens(deskToolsMandateFor()) < 450);
-        assert.ok(estimateTokens(PAPER_TRADING_PROMPT) < 160);
+        const deskTok = estimateTokens(deskPrompt);
+        const chatTok = estimateTokens(chatPrompt);
+        const mandateTok = estimateTokens(deskToolsMandateFor());
+        const paperTok = estimateTokens(PAPER_TRADING_PROMPT);
+        const totalStatic = deskTok + chatTok + mandateTok + paperTok;
+        assert.ok(deskTok < 700, `Expected deskPrompt < 700, got ${deskTok}`);
+        assert.ok(chatTok < 600, `Expected chatPrompt < 600, got ${chatTok}`);
+        assert.ok(mandateTok < 450, `Expected deskToolsMandateFor < 450, got ${mandateTok}`);
+        assert.ok(paperTok < 160, `Expected PAPER_TRADING_PROMPT < 160, got ${paperTok}`);
+        assert.ok(totalStatic <= 1750, `Expected aggregate static prompt <= 1750 tokens, got ${totalStatic}`);
         assert.ok(CHAT_SURFACE_TOOLS.length > 20);
-        return `deskTurn1=${deskTurn1}`;
+        return `profile=${activeProfile}, deskTurn1=${deskTurn1}, staticTokens=${totalStatic}`;
     });
 
     // 12. Legacy tool alias compatibility without advertising duplicates
@@ -623,9 +641,11 @@ async function main(): Promise<void> {
 
     const nonVisionChartCount = CHART_ACTION_TOOL_DEFS.filter(d => INITIAL_CHART_ACTION_NAMES.has(d.function.name) && d.function.name !== 'inspect_chart_image').length;
     const turn1Count = INITIAL_DESK_TOOL_NAMES.length + nonVisionChartCount;
-    const staticTokens = estimateTokens(TRADE_CHAT_SYSTEM_PROMPT) + estimateTokens(CHAT_SURFACE_SYSTEM_PROMPT) + estimateTokens(deskToolsMandateFor()) + estimateTokens(PAPER_TRADING_PROMPT);
+    const activeDeskPrompt = activeProfile === 'standard' ? TRADE_CHAT_SYSTEM_PROMPT : buildTradeChatSystemPrompt(activeProfile);
+    const activeChatPrompt = activeProfile === 'standard' ? CHAT_SURFACE_SYSTEM_PROMPT : buildChatSurfaceSystemPrompt(activeProfile);
+    const staticTokens = estimateTokens(activeDeskPrompt) + estimateTokens(activeChatPrompt) + estimateTokens(deskToolsMandateFor()) + estimateTokens(PAPER_TRADING_PROMPT);
 
-    console.log(`\nSCORECARD: ${passed}/${results.length} PASS | ${totalMs}ms | Turn-1 tools=${turn1Count} | Static prompt tokens=${staticTokens}`);
+    console.log(`\nSCORECARD [${activeProfile}]: ${passed}/${results.length} PASS | ${totalMs}ms | Turn-1 tools=${turn1Count} | Static prompt tokens=${staticTokens}`);
     process.exit(failed > 0 ? 1 : 0);
 }
 

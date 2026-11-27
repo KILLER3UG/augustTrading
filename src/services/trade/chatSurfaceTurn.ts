@@ -33,6 +33,12 @@ import type { ProviderConfig } from '../../types/provider';
 import type { ChatMessage } from '../providers/GenericProviderService';
 import { MessageRole } from '../../types';
 import { CASUAL_CHAT_SYSTEM_PROMPT, CHAT_SURFACE_SYSTEM_PROMPT } from '../../constants/prompts/chatPrompts';
+import {
+    buildChatSurfaceSystemPrompt,
+    formatRiskConstitutionBlock,
+    resolveEffectivePromptProfile,
+} from '../../constants/prompts/tradingKernel';
+import type { EffectivePromptProfile } from '../../types/provider';
 import { RISK_MANAGEMENT_RULES } from '../../constants/prompts/analysisPrompts';
 import { getPrompt } from '../infrastructure/PromptOverrideService';
 import { TASK_BUDGETS } from '../providers/taskBudgets';
@@ -427,10 +433,7 @@ export const surfacePromptWith = (mandate: string, where: string, opts: { sessio
     let constitutionRaw = '';
     try {
         constitutionRaw = (getHarnessSettings().riskConstitution ?? '').slice(0, RISK_CONSTITUTION_MAX_CHARS);
-        constitutionBlock = constitutionRaw
-            ? `[TRADER RISK CONSTITUTION — written by the trader; immutable to you and to every autonomous writer. These rules override any plan you would otherwise endorse; a plan that violates them is refused, not negotiated.]
-${constitutionRaw}`
-            : '';
+        constitutionBlock = formatRiskConstitutionBlock(constitutionRaw);
     } catch { /* absent settings = no block */ }
     const windowTokens = opts.windowTokens ?? DEFAULT_CONTEXT_WINDOW_TOKENS;
     let goalTriggerHint = '';
@@ -533,8 +536,12 @@ ${constitutionRaw}`
  * skills heading says "what the trader asks about", because there is no chart
  * here to match against, and the mandate forbids the tool calls the canvas owns.
  */
-export const chatSurfaceSystemPrompt = (opts: { sessionKey?: string; memoryEnabled?: boolean; strategiesEnabled?: boolean; windowTokens?: number; matchText?: string; dynamicTailBlocks?: string[]; record?: { runId?: string; coin?: string } } = {}): ChatSurfacePrompt =>
-    surfacePromptWith(CHAT_SURFACE_SYSTEM_PROMPT, 'what the trader asks about', opts);
+export const chatSurfaceSystemPrompt = (opts: { sessionKey?: string; memoryEnabled?: boolean; strategiesEnabled?: boolean; windowTokens?: number; matchText?: string; dynamicTailBlocks?: string[]; promptProfile?: EffectivePromptProfile; record?: { runId?: string; coin?: string } } = {}): ChatSurfacePrompt =>
+    surfacePromptWith(
+        opts.promptProfile ? buildChatSurfaceSystemPrompt(opts.promptProfile) : CHAT_SURFACE_SYSTEM_PROMPT,
+        'what the trader asks about',
+        opts,
+    );
 
 /** The speaker key for this surface's live tool feed — `chatRowFrom` flattens
  *  `liveToolEvents` for the Chat row and `liveEntryFromMessage` does the same
@@ -990,6 +997,7 @@ export const runChatSurfaceTurn = async (req: ChatSurfaceTurnRequest): Promise<T
             memoryEnabled: req.memoryEnabled !== false,
             strategiesEnabled: req.strategiesEnabled !== false,
             windowTokens: req.config ? resolveContextWindow(req.config).tokens : undefined,
+            promptProfile: resolveEffectivePromptProfile(req.config),
             // Only the trader's own line is matched — see the note in
             // `surfacePromptWith`. A caller that brought its own mandate gets
             // that mandate verbatim and no hint.

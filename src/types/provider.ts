@@ -84,6 +84,12 @@ export interface ModelInputTypes {
   image: boolean;
 }
 
+/** Adaptive prompt profile for a model ('auto' resolves from model metadata/context). */
+export type PromptProfile = 'auto' | 'reasoning' | 'standard' | 'compact_local';
+
+/** Concrete prompt profile after resolving 'auto'. */
+export type EffectivePromptProfile = Exclude<PromptProfile, 'auto'>;
+
 /**
  * Per-model metadata & capability override stored on a ProviderConfig.
  * Every field is optional and backwards-compatible with legacy providers.
@@ -97,6 +103,7 @@ export interface ModelOverride {
   reasoningLevels?: ModelReasoningLevel[];
   supportsTools?: boolean;
   isFree?: boolean;
+  promptProfile?: PromptProfile;
 }
 
 /** One model row in a provider's fetched or customized catalog. */

@@ -264,8 +264,10 @@ export const selectPreTurnMemories = (
     }
 
     const promptTailBlock = [
+        '<recalled_memory>',
         '[RECALLED MEMORY — context-matched prior notes; hints only, live tape wins]',
         ...items.map(item => `- ${item.text}`),
+        '</recalled_memory>',
     ].join('\n');
 
     return { items, promptTailBlock };

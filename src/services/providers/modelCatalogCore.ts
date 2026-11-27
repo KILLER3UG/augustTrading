@@ -13,6 +13,7 @@ import type {
     ModelInputTypes,
     ModelOverride,
     ModelReasoningLevel,
+    PromptProfile,
     ProviderConfig,
     ProviderRetryPolicy,
 } from '../../types/provider';
@@ -619,8 +620,12 @@ const hasOverrideFields = (ov: ModelOverride): boolean =>
         || ov.reasoningEnabled !== undefined
         || (ov.reasoningLevels && ov.reasoningLevels.length > 0)
         || ov.supportsTools !== undefined
-        || ov.isFree !== undefined,
+        || ov.isFree !== undefined
+        || ov.promptProfile !== undefined,
     );
+
+export const parsePromptProfile = (raw: unknown): PromptProfile | undefined =>
+    raw === 'auto' || raw === 'reasoning' || raw === 'standard' || raw === 'compact_local' ? raw : undefined;
 
 /** Convert ordered `ModelCatalogEntry[]` back to `{ models, modelOverrides }`. */
 export const catalogEntriesToConfigFields = (
@@ -658,6 +663,8 @@ export const catalogEntriesToConfigFields = (
         }
         if (typeof entry.supportsTools === 'boolean') ov.supportsTools = entry.supportsTools;
         if (typeof entry.isFree === 'boolean') ov.isFree = entry.isFree;
+        const pp = parsePromptProfile(entry.promptProfile);
+        if (pp && pp !== 'auto') ov.promptProfile = pp;
         if (hasOverrideFields(ov)) overrides[id] = ov;
     }
 
@@ -729,6 +736,8 @@ export const parseModelOverrides = (raw: unknown): Record<string, ModelOverride>
         }
         if (typeof v.supportsTools === 'boolean') ov.supportsTools = v.supportsTools;
         if (typeof v.isFree === 'boolean') ov.isFree = v.isFree;
+        const pp = parsePromptProfile(v.promptProfile);
+        if (pp) ov.promptProfile = pp;
         if (hasOverrideFields(ov)) out[id] = ov;
     }
     return Object.keys(out).length > 0 ? out : undefined;

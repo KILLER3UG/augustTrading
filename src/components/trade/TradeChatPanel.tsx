@@ -45,8 +45,13 @@ import { ProviderConfig } from '../../types/provider';
 import { MessageRole, type LoggedTrade } from '../../types';
 import type { Message } from '../../types/message';
 import {
-    buildSkillsIndexForPrompt, TRADE_CHAT_SYSTEM_PROMPT,
+    buildSkillsIndexForPrompt,
 } from '../../services/trade/tradeChatContext';
+import {
+    buildTradeChatSystemPrompt,
+    formatRiskConstitutionBlock,
+    resolveEffectivePromptProfile,
+} from '../../constants/prompts/tradingKernel';
 import { PAPER_TRADING_PROMPT } from '../../services/analysis/deskToolShared';
 import { activeStrategiesBlock } from '../../services/learning/strategyStore';
 import { WorkspaceGreeting } from './WorkspaceHome';
@@ -643,23 +648,22 @@ const TradeChatPanel: React.FC<TradeChatPanelProps> = ({
     // mutation by the harness), and no autonomous writer can touch harness
     // settings, so the block is immutable to the model and every loop.
     const riskConstitution = (getHarnessSettings().riskConstitution ?? '').slice(0, RISK_CONSTITUTION_MAX_CHARS);
-    const constitutionBlock = riskConstitution
-        ? `[TRADER RISK CONSTITUTION — written by the trader; immutable to you and to every autonomous writer. These rules override any plan you would otherwise endorse; a plan that violates them is refused, not negotiated.]
-${riskConstitution}`
-        : '';
+    const constitutionBlock = formatRiskConstitutionBlock(riskConstitution);
     const constitutionHash = riskConstitution ? contentVersion(riskConstitution) : '';
 
     /** The system prompt every seat of this session answers under. Frozen per
-     *  (session, seat, provider/model, memory/strategy toggle) so the system
-     *  prefix never invalidates KV cache mid-session; mid-session skill/memory
-     *  edits are surfaced via `getIndexDeltaNote` in the latest user turn. */
+     *  (session, seat, provider/model, promptProfile, memory/strategy toggle)
+     *  so the system prefix never invalidates KV cache mid-session; mid-session
+     *  skill/memory edits are surfaced via `getIndexDeltaNote` in the latest user turn. */
     const systemPromptFor = useCallback((bot?: AgentBot, roleNote?: string): string => {
+        const promptProfile = resolveEffectivePromptProfile(provider);
         const cacheKey = [
             activeId,
             bot?.id ?? 'solo',
             bot ? symbol : '',
             provider?.id ?? '',
             provider?.selectedModel ?? '',
+            promptProfile,
             memoryEnabled !== false ? 'mem1' : 'mem0',
             strategiesEnabled !== false ? 'strat1' : 'strat0',
             constitutionHash,
@@ -694,9 +698,10 @@ ${riskConstitution}`
             }
         }
         const persona = [agent?.persona, roleNote].filter(Boolean).join('\n\n');
+        const kernelPrompt = buildTradeChatSystemPrompt(promptProfile);
         const base = `${constitutionBlock ? `${constitutionBlock}
 
-` : ''}${TRADE_CHAT_SYSTEM_PROMPT}${skillsBlock ? `\n\n${skillsBlock}` : ''}${strategiesBlock ? `\n\n${strategiesBlock}` : ''}${memoryBlock ? `\n\n${memoryBlock}` : ''}${curatedMemoryBlock ? `\n\n${curatedMemoryBlock}` : ''}${agent?.notes ? `\n\n## Your private notes\n${agent.notes}` : ''}${PAPER_TRADING_PROMPT ? `\n\n${PAPER_TRADING_PROMPT}` : ''}`;
+` : ''}${kernelPrompt}${skillsBlock ? `\n\n${skillsBlock}` : ''}${strategiesBlock ? `\n\n${strategiesBlock}` : ''}${memoryBlock ? `\n\n${memoryBlock}` : ''}${curatedMemoryBlock ? `\n\n${curatedMemoryBlock}` : ''}${agent?.notes ? `\n\n## Your private notes\n${agent.notes}` : ''}${PAPER_TRADING_PROMPT ? `\n\n${PAPER_TRADING_PROMPT}` : ''}`;
         const skillRows = usableSkillRows(skillIndexRows());
         const skillSlugs = skillsBlock ? skillRows.map(r => r.slug) : [];
         const skillIndexSnapshot = Object.fromEntries(skillRows.map(r => [r.slug, r.description]));

@@ -23,6 +23,7 @@ import {
     type ApiFormat,
     type ModelCatalogEntry,
     type ModelReasoningLevel,
+    type PromptProfile,
     type ProviderConfig,
     type ProviderRetryPolicy,
 } from '../../types/provider';
@@ -1098,35 +1099,60 @@ const ProviderManager: React.FC<ProviderManagerProps> = ({
                                                     </div>
                                                 </div>
 
-                                                {/* Input Modalities (at least 1 enforced) */}
-                                                <div className="flex flex-wrap items-center gap-4">
-                                                    <span className="text-ui-2xs font-medium uppercase tracking-wider text-zinc-500">
-                                                        Input types
-                                                    </span>
-                                                    <label className="flex min-h-[24px] cursor-pointer items-center gap-2 text-ui-dense text-zinc-200">
-                                                        <input
-                                                            type="checkbox"
-                                                            data-testid="override-input-text"
-                                                            checked={inputTypes.text}
-                                                            onChange={e => updateEntryAt(idx, {
-                                                                inputTypes: toggleInputModality(inputTypes, 'text', e.target.checked),
-                                                            })}
-                                                            className="h-3.5 w-3.5 accent-zinc-100"
+                                                {/* Input Modalities (at least 1 enforced) + Prompt Profile */}
+                                                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                                                    <div className="flex flex-wrap items-center gap-4">
+                                                        <span className="text-ui-2xs font-medium uppercase tracking-wider text-zinc-500">
+                                                            Input types
+                                                        </span>
+                                                        <label className="flex min-h-[24px] cursor-pointer items-center gap-2 text-ui-dense text-zinc-200">
+                                                            <input
+                                                                type="checkbox"
+                                                                data-testid="override-input-text"
+                                                                checked={inputTypes.text}
+                                                                onChange={e => updateEntryAt(idx, {
+                                                                    inputTypes: toggleInputModality(inputTypes, 'text', e.target.checked),
+                                                                })}
+                                                                className="h-3.5 w-3.5 accent-zinc-100"
+                                                            />
+                                                            Text
+                                                        </label>
+                                                        <label className="flex min-h-[24px] cursor-pointer items-center gap-2 text-ui-dense text-zinc-200">
+                                                            <input
+                                                                type="checkbox"
+                                                                data-testid="override-input-image"
+                                                                checked={inputTypes.image}
+                                                                onChange={e => updateEntryAt(idx, {
+                                                                    inputTypes: toggleInputModality(inputTypes, 'image', e.target.checked),
+                                                                })}
+                                                                className="h-3.5 w-3.5 accent-zinc-100"
+                                                            />
+                                                            Image (Vision)
+                                                        </label>
+                                                    </div>
+                                                    <div>
+                                                        <label className="mb-1 block text-ui-2xs font-medium uppercase tracking-wider text-zinc-500">
+                                                            Prompt profile
+                                                        </label>
+                                                        <SelectMenu
+                                                            value={entry.promptProfile ?? 'auto'}
+                                                            onChange={val => {
+                                                                const next = val as PromptProfile;
+                                                                updateEntryAt(idx, {
+                                                                    promptProfile: next === 'auto' ? undefined : next,
+                                                                });
+                                                            }}
+                                                            options={[
+                                                                { value: 'auto', label: 'Auto' },
+                                                                { value: 'reasoning', label: 'Reasoning' },
+                                                                { value: 'standard', label: 'Standard' },
+                                                                { value: 'compact_local', label: 'Compact local' },
+                                                            ]}
+                                                            aria-label={`Prompt profile for ${entry.id}`}
+                                                            data-testid="override-prompt-profile"
+                                                            triggerClassName={selectTriggerCls}
                                                         />
-                                                        Text
-                                                    </label>
-                                                    <label className="flex min-h-[24px] cursor-pointer items-center gap-2 text-ui-dense text-zinc-200">
-                                                        <input
-                                                            type="checkbox"
-                                                            data-testid="override-input-image"
-                                                            checked={inputTypes.image}
-                                                            onChange={e => updateEntryAt(idx, {
-                                                                inputTypes: toggleInputModality(inputTypes, 'image', e.target.checked),
-                                                            })}
-                                                            className="h-3.5 w-3.5 accent-zinc-100"
-                                                        />
-                                                        Image (Vision)
-                                                    </label>
+                                                    </div>
                                                 </div>
 
                                                 {/* Reasoning Levels Toggle + Editable Mapping Rows */}

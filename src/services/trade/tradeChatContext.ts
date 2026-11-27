@@ -15,7 +15,7 @@ import { getActiveUsername } from '../../utils/activeUser';
 import { formatSessionPlanContextSummary } from './sessionPlan';
 import { formatActiveRulesContextSummary } from '../learning/candidateRuleLoop';
 import { formatTier0ChartManifest, type Tier0ManifestInput } from './chartGeometry';
-import { REASONING_CHANNEL_PROMPT } from '../../constants/prompts/chatPrompts';
+import { buildTradeChatSystemPrompt } from '../../constants/prompts/tradingKernel';
 
 export interface TradeChatContextInput {
     symbol: string;
@@ -281,16 +281,8 @@ export const buildTier0UserTurnContext = (
  * The Risk Constitution rides the frozen prefix SEPARATELY (user-authored,
  * length-capped — see systemPromptFor), never inside this constant.
  */
-export const TRADE_CHAT_SYSTEM_PROMPT = [
-    'IDENTITY: live chart copilot beside a perpetuals chart (Claude Code for trading). Read each turn\'s Tier 0 manifest (revision, mark, candles, ATR14, studies, #D1..#Dn, armed plans); analysis, never financial advice.',
-    REASONING_CHANNEL_PROMPT,
-    'DISCIPLINE & VOICE:',
-    '- Grounded numbers only: cite the tool, price, and timeframe; live mark overrides REST packet gaps.',
-    '- Edge first: default Wait/NO_TRADE on thin confluence, chop, net R:R below minEdgeR, or stale feeds. For user drawings (#D1..#Dn), give the strongest counter-thesis before endorsing. Never alter user drawings unasked.',
-    '- Response order (Beginner-Clear, Pro-Rigorous): 1) Plain-English Verdict first (Wait / Long / Short + 1-2 clear sentences anyone can follow); 2) What breaks the idea (exact Invalidation price/structure plotted on the chart); 3) Harness-verified numbers (Entry · Invalidation · Targets · Net R:R · Risk $ · Size · Liq buffer). Skip raw indicator dumps unless asked. If the trader is brainstorming or asks for simple explanations, stay advisory and jargon-light.',
-    '- [HARNESS SIGNAL]/[HARNESS TRIGGER] rows are machine events: name the fired level id/price and whether the plan still holds.',
-    '- Canonical tools & growth: verify brackets with `trade_math`; call `present_trade` for concrete setups or `decline_trade` for intentional skips; plot levels with `mark_trade_levels`, `draw_on_chart`, or `draw_tool_levels`; arm alerts with `watch_price`; copy `get_key_levels` fenced blocks verbatim when asked for levels; scan watchlists with `scan_confluence`; open matching skills with `skill_view` before acting; `USER.md`/`MEMORY.md` = standing desk rules & autopsy (`memory`), profile memory = durable personal facts (`memory_add` / `memory_update`), history via `session_search`, and playbooks via `skill_manage` (or `skill_index`). Never save API keys/secrets, transient market prices, or your own advice. Code enforces risk caps, duplicate scans, and Plan Mode.',
-].join(' ');
+/** Lean Desk system prompt composed from the shared canonical `tradingKernel`. */
+export const TRADE_CHAT_SYSTEM_PROMPT = buildTradeChatSystemPrompt('standard');
 
 /** The rows a prompt may carry. ONE definition, in `SkillFileService`, next to
  *  `skillIndexRows` — the prompt block, the turn's `injectedSkills` record,
