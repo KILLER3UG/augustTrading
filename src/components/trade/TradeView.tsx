@@ -1274,7 +1274,15 @@ const TradeView: React.FC<TradeViewProps> = ({
                     <LevelAccuracyBadge
                         drawings={visibleModelDrawings}
                         candles={levelCandles}
-                        className="absolute bottom-8 right-20 z-10 rounded-control border border-hairline bg-zinc-900/90 px-2 py-1" />
+                        /* bottom-[calc(19%+2rem)]: the verdict chip anchors at
+                           bottom-[19%] of the canvas wrapper (the volume pane's
+                           top edge); 2rem stacks this badge a guaranteed >=10px
+                           above the chip's top for any wrapper height, so the
+                           two never share a pixel and both leave the
+                           bottom-right volume bars clear. The pane's height
+                           equals wrapper height + TimeframeBar, and a percentage
+                           base only ADDS to the gap — the stack can't invert. */
+                        className="absolute bottom-[calc(19%+2rem)] right-20 z-10 rounded-control border border-hairline bg-zinc-900/90 px-2 py-1" />
                     {chartFocus && !isBelowLg && !chatLayout && (
                         <FloatingChartComposer
                             symbol={symbol}

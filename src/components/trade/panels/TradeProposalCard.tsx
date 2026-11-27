@@ -32,6 +32,13 @@ import { computeRrRatio, buildTradePlan, modelStatedSize, proposedTicketSize } f
 import { formatPaperFillAssumptions, PAPER_EXECUTION_RECEIPT } from '../../../services/tracking/paperExecution';
 import { assessProposalStaleness, undoWindowOf } from '../../../services/trade/tradeDecision';
 import { fmtRiskReward } from '../../../utils/riskReward';
+import {
+    formatProposalLeverage,
+    formatProposalPct,
+    formatProposalQty,
+    formatProposalR,
+    formatProposalUsd,
+} from '../../../utils/proposalFormatCore';
 import { humanizeSkillTitle } from '../../../utils/uiFormatting';
 import { computeProposalLiveDrift } from '../../../services/trade/toolVisualCore';
 import { getHarnessSettings } from '../../../utils/harnessSettings';
@@ -251,26 +258,13 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({
     // "R:R ratio (0.05)" line. One number, one precision per magnitude.
     const rr = computeRrRatio(proposal);
     return (
-    <div className="motion-card-enter mt-1 rounded-control border border-hairline bg-zinc-900/60 p-2.5" data-testid="trade-proposal-card">
+    <div className="motion-card-enter mt-1 rounded-lg border border-hairline bg-zinc-900/60 p-2.5" data-testid="trade-proposal-card">
+        {/* ROW 1 — the decision line: direction, symbol, the planned R:R, the
+            live drift, and the gate's confidence right-aligned. Everything
+            else moved to the quiet status line below. */}
         <div className="flex flex-wrap items-center gap-2">
             <span className={`rounded-control px-1.5 py-0.5 text-ui-xs font-bold ${proposal.direction === 'Long' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-rose-500/15 text-rose-400'}`}>{proposal.direction}</span>
             <span className="font-mono text-ui-sm font-bold text-zinc-100">{proposal.symbol}</span>
-            {proposal.simulated !== false && (
-                <span
-                    data-testid="simulated-badge"
-                    className="rounded-control border border-hairline bg-white/[0.04] px-1.5 py-0.5 font-mono text-ui-2xs uppercase tracking-wider text-zinc-300"
-                >
-                    Simulated
-                </span>
-            )}
-            {proposal.skillSlug && (
-                <span
-                    data-testid="proposal-playbook-chip"
-                    className="rounded-control border border-hairline bg-white/[0.04] px-1.5 py-0.5 font-mono text-ui-2xs text-zinc-300"
-                >
-                    Playbook: {humanizeSkillTitle('', proposal.skillSlug)}
-                </span>
-            )}
             {/* The number that gates "Log this trade" — from the canonical
                 planned-R:R util, the same chip the Agents surface header shows. */}
             {rr > 0 && (
@@ -292,71 +286,6 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({
                     {liveDrift.driftLabel}
                 </span>
             )}
-            {/* The adversary reviewer's verdict — an isolated read-only seat
-                read of the plan against the tape. Monochrome badge; the
-                objections live in the detail line below. */}
-            {proposal.adversary && (
-                <span
-                    data-testid="adversary-verdict"
-                    className={`rounded-control border px-1.5 py-0.5 font-mono text-ui-2xs uppercase tracking-wider ${
-                        proposal.adversary.verdict === 'VETO'
-                            ? 'border-rose-500/40 bg-rose-500/10 text-rose-400'
-                            : proposal.adversary.verdict === 'CAUTION'
-                                ? 'border-hairline bg-white/[0.06] text-zinc-200'
-                                : 'border-hairline bg-white/[0.04] text-zinc-400'
-                    }`}
-                >
-                    {proposal.adversary.verdict === 'VETO' && !proposal.adversary.overridden
-                        ? 'Adversary VETO · watch held'
-                        : proposal.adversary.verdict === 'UNAVAILABLE'
-                            ? 'Adversary unavailable'
-                            : `Adversary: ${proposal.adversary.verdict} · watch armed`}
-                </span>
-            )}
-            {proposal.conflictFlags !== undefined && (
-                <div
-                    data-testid="proposal-conflict-sensor"
-                    className="w-full"
-                >
-                    {proposal.conflictFlags.length === 0 ? (
-                        <span className="inline-flex items-center rounded-control border border-hairline bg-white/[0.03] px-1.5 py-0.5 font-mono text-ui-2xs uppercase tracking-wider text-zinc-400">
-                            Sensor clear
-                        </span>
-                    ) : (
-                        <div className="mt-1 rounded-control border border-hairline bg-white/[0.025] px-2 py-1">
-                            <button
-                                type="button"
-                                aria-expanded={sensorExpanded}
-                                onClick={() => setSensorExpanded(v => !v)}
-                                className="flex min-h-[24px] w-full cursor-pointer items-center justify-between gap-2 text-left font-mono text-ui-2xs uppercase tracking-wider text-zinc-300"
-                            >
-                                <span className={proposal.conflictFlags.length >= 2 ? 'text-rose-400' : 'text-zinc-300'}>
-                                    {proposal.conflictFlags.length === 1
-                                        ? '1 caution flag'
-                                        : `${proposal.conflictFlags.length} conflict flags · adversary engaged`}
-                                </span>
-                                <span className="shrink-0 text-zinc-500">
-                                    5-check sensor {sensorExpanded ? '▾' : '▸'}
-                                </span>
-                            </button>
-                            <div className="motion-collapse-grid" data-open={sensorExpanded ? 'true' : 'false'} aria-hidden={!sensorExpanded}>
-                                <div>
-                                    <ul className="mt-1 space-y-0.5 border-t border-hairline pt-1">
-                                        {proposal.conflictFlags.map((f, idx) => (
-                                            <li key={`${f.id}-${idx}`} className="text-ui-2xs leading-4 text-zinc-400">
-                                                <span className={f.severity === 'high' ? 'font-medium text-rose-400' : 'font-medium text-zinc-200'}>
-                                                    {f.label}:
-                                                </span>{' '}
-                                                {f.detail}
-                                            </li>
-                                        ))}
-                                    </ul>
-                                </div>
-                            </div>
-                        </div>
-                    )}
-                </div>
-            )}
             {plan ? (
                 <span className="ml-auto font-mono text-ui-xs uppercase tracking-wider text-zinc-500" data-testid="proposal-confidence">
                     {plan.probability}% · {plan.confidence} confidence
@@ -367,6 +296,95 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({
                 </span>
             )}
         </div>
+        {/* ROW 2 — the quiet inline status line: dot-separated facts, no chips.
+            The 5-CHECK SENSOR drawer stays a full-width block below when at
+            least one conflict flag fires; a clear sensor reads inline. */}
+        <div className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 font-mono text-ui-2xs text-zinc-500">
+            {proposal.simulated !== false && (
+                <span
+                    data-testid="simulated-badge"
+                    className="uppercase tracking-wider"
+                >
+                    Simulated
+                </span>
+            )}
+            {proposal.skillSlug && (
+                <>
+                    <span aria-hidden="true" className="text-zinc-700">·</span>
+                    <span data-testid="proposal-playbook-chip">
+                        Playbook: {humanizeSkillTitle('', proposal.skillSlug)}
+                    </span>
+                </>
+            )}
+            {/* The adversary reviewer's verdict — an isolated read-only seat
+                read of the plan against the tape. The objections live in the
+                detail line below. */}
+            {proposal.adversary && (
+                <>
+                    <span aria-hidden="true" className="text-zinc-700">·</span>
+                    <span
+                        data-testid="adversary-verdict"
+                        className={`uppercase tracking-wider ${
+                            proposal.adversary.verdict === 'VETO' && !proposal.adversary.overridden
+                                ? 'font-medium text-rose-400'
+                                : proposal.adversary.verdict === 'CAUTION'
+                                    ? 'text-zinc-300'
+                                    : ''
+                        }`}
+                    >
+                        {proposal.adversary.verdict === 'VETO' && !proposal.adversary.overridden
+                            ? 'Adversary VETO · watch held'
+                            : proposal.adversary.verdict === 'UNAVAILABLE'
+                                ? 'Adversary unavailable'
+                                : `Adversary: ${proposal.adversary.verdict} · watch armed`}
+                    </span>
+                </>
+            )}
+            {proposal.conflictFlags !== undefined && proposal.conflictFlags.length === 0 && (
+                <>
+                    <span aria-hidden="true" className="text-zinc-700">·</span>
+                    <span data-testid="proposal-conflict-sensor" className="uppercase tracking-wider">
+                        Sensor clear
+                    </span>
+                </>
+            )}
+        </div>
+        {proposal.conflictFlags !== undefined && proposal.conflictFlags.length > 0 && (
+            <div
+                data-testid="proposal-conflict-sensor"
+                className="mt-1.5 rounded-control border border-hairline bg-white/[0.025] px-2 py-1"
+            >
+                <button
+                    type="button"
+                    aria-expanded={sensorExpanded}
+                    onClick={() => setSensorExpanded(v => !v)}
+                    className="flex min-h-[24px] w-full cursor-pointer items-center justify-between gap-2 text-left font-mono text-ui-2xs uppercase tracking-wider text-zinc-300"
+                >
+                    <span className={proposal.conflictFlags.length >= 2 ? 'text-rose-400' : 'text-zinc-300'}>
+                        {proposal.conflictFlags.length === 1
+                            ? '1 caution flag'
+                            : `${proposal.conflictFlags.length} conflict flags · adversary engaged`}
+                    </span>
+                    <span className="shrink-0 text-zinc-500">
+                        5-check sensor {sensorExpanded ? '▾' : '▸'}
+                    </span>
+                </button>
+                <div className="motion-collapse-grid" data-open={sensorExpanded ? 'true' : 'false'} aria-hidden={!sensorExpanded}>
+                    <div>
+                        <ul className="mt-1 space-y-0.5 border-t border-hairline pt-1">
+                            {proposal.conflictFlags.map((f, idx) => (
+                                <li key={`${f.id}-${idx}`} className="text-ui-2xs leading-4 text-zinc-400">
+                                    <span className={f.severity === 'high' ? 'font-medium text-rose-400' : 'font-medium text-zinc-200'}>
+                                        {f.label}:
+                                    </span>{' '}
+                                    {f.detail}
+                                </li>
+                            ))}
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        )}
         {/* Compact 2-row tabular grid: Row 1 (Entry / SL / TP1-TP2), Row 2 (Net R:R / Risk $ / Size / Liq Buffer). */}
         <div className="mt-2 divide-y divide-white/[0.05] rounded-control border border-hairline bg-white/[0.02] font-mono text-ui-dense tabular-nums">
             <div className="grid grid-cols-3 gap-2 px-2.5 py-2">
@@ -388,7 +406,7 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({
                     <div className="uppercase text-zinc-500">Net R:R</div>
                     <div className="font-medium text-zinc-200">
                         {proposal.math?.netRewardR != null
-                            ? `${proposal.math.netRewardR}R`
+                            ? formatProposalR(proposal.math.netRewardR)
                             : rr > 0
                                 ? `${fmtRiskReward(rr, rr >= 1 ? 1 : 2)}`
                                 : '—'}
@@ -398,9 +416,9 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({
                     <div className="uppercase text-zinc-500">Risk $</div>
                     <div className="font-medium text-zinc-200">
                         {proposal.math?.riskUsd != null
-                            ? `$${proposal.math.riskUsd}`
+                            ? formatProposalUsd(proposal.math.riskUsd)
                             : size && size.equityUsd > 0
-                                ? `$${Math.round(size.equityUsd * (size.riskPercent / 100))}`
+                                ? formatProposalUsd(size.equityUsd * (size.riskPercent / 100))
                                 : '—'}
                     </div>
                 </div>
@@ -408,7 +426,7 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({
                     <div className="uppercase text-zinc-500">Size</div>
                     <div className="truncate font-medium text-zinc-200" title={size?.line ?? undefined}>
                         {proposal.math?.qty != null
-                            ? `${proposal.math.qty} @ ${proposal.math.leverageNeeded ?? lev}x`
+                            ? `${formatProposalQty(proposal.math.qty)} · ${formatProposalLeverage(proposal.math.leverageNeeded ?? lev)}`
                             : size && size.equityUsd > 0
                                 ? size.line
                                 : 'Unset'}
@@ -417,7 +435,7 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({
                 <div data-testid="proposal-liq-buffer">
                     <div className="uppercase text-zinc-500">Liq Buffer</div>
                     <div className="truncate font-medium text-zinc-300" title={liquidated?.line ?? undefined}>
-                        {liquidated ? `${liquidated.bufferPct.toFixed(1)}%` : (proposal.math?.liquidationPrice != null ? `~${proposal.math.liquidationPrice}` : '—')}
+                        {liquidated ? formatProposalPct(liquidated.bufferPct) : (proposal.math?.liquidationPrice != null ? `~${proposal.math.liquidationPrice}` : '—')}
                     </div>
                 </div>
             </div>
@@ -502,7 +520,7 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({
                     className="flex h-7 w-full items-center justify-between gap-2 px-2.5 text-left font-mono text-ui-2xs tabular-nums text-zinc-400 transition-colors hover:text-zinc-200"
                 >
                     <span className="truncate">
-                        HARNESS MATH · Net {proposal.math.netRewardR ?? '—'}R · BE {proposal.math.breakEvenWinRatePct ?? '—'}% · Liq {liquidated ? `${liquidated.bufferPct.toFixed(1)}%` : (proposal.math.liquidationPrice != null ? `~${proposal.math.liquidationPrice}` : '—')}
+                        HARNESS MATH · Net {proposal.math.netRewardR != null ? formatProposalR(proposal.math.netRewardR) : '—'} · BE {proposal.math.breakEvenWinRatePct != null ? formatProposalPct(proposal.math.breakEvenWinRatePct) : '—'} · Liq {liquidated ? formatProposalPct(liquidated.bufferPct) : (proposal.math.liquidationPrice != null ? `~${proposal.math.liquidationPrice}` : '—')}
                     </span>
                     <span aria-hidden="true" className="shrink-0 text-zinc-500">{mathExpanded ? '▾' : '▸'}</span>
                 </button>
@@ -661,7 +679,7 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({
                                     setRejecting(false);
                                 }}
                                 data-testid="proposal-confirm-reject"
-                                className="h-7 shrink-0 rounded-control border border-rose-500/40 bg-rose-500/15 px-2.5 text-ui-dense font-medium text-rose-300 transition-colors hover:bg-rose-500/25"
+                                className="h-7 shrink-0 rounded-control border border-rose-500/40 bg-rose-500/15 px-2.5 text-ui-dense font-medium text-rose-300 transition-colors hover:bg-rose-500/25 active:scale-[0.98]"
                             >
                                 Confirm reject
                             </button>
@@ -693,7 +711,7 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({
                                         ? 'The session guard stands down; the reason is printed above.'
                                         : undefined}
                             data-testid="proposal-approve"
-                            className="h-7 rounded-control bg-zinc-100 px-2.5 text-ui-dense font-medium text-zinc-950 transition-colors hover:bg-white disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-300">
+                            className="h-7 rounded-control bg-zinc-100 px-2.5 text-ui-dense font-medium text-zinc-950 transition-colors hover:bg-white active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-300">
                             {planMode
                                 ? 'Locked (Plan Mode)'
                                 : refused
@@ -721,7 +739,7 @@ const TradeProposalCard: React.FC<TradeProposalCardProps> = ({
                                         ? 'The session guard stands down.'
                                         : 'Execute simulated fill via local Paper Broker'}
                         data-testid="proposal-paper-execute"
-                        className="h-7 rounded-control border border-line bg-zinc-900 px-2.5 text-ui-dense font-medium text-zinc-200 transition-colors hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
+                        className="h-7 rounded-control border border-line bg-zinc-900 px-2.5 text-ui-dense font-medium text-zinc-200 transition-colors hover:bg-zinc-800 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40"
                     >
                         {paperBusy ? 'Filling…' : paperReceipt?.ok ? 'Paper filled' : 'Paper execute'}
                     </button>

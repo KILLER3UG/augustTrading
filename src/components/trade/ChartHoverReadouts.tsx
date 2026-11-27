@@ -161,12 +161,10 @@ export const HoverLegend: React.FC<{
     store: HoverReadout;
     expanded: boolean;
     onToggleExpanded: () => void;
-    /** The verdict chip reserves the right edge when it is up. */
-    narrow: boolean;
     renderRows: (bar: HoverBar) => React.ReactNode;
     /** Bar volume (contracts) — read from the chart's own mirror, not a prop. */
     volumeFor: (time: number) => number | null;
-}> = ({ store, expanded, onToggleExpanded, narrow, renderRows, volumeFor }) => {
+}> = ({ store, expanded, onToggleExpanded, renderRows, volumeFor }) => {
     const bar = useSyncExternalStore(store.subscribe, store.getBar);
     if (!bar) return null;
     const vol = volumeFor(bar.time);
@@ -175,9 +173,12 @@ export const HoverLegend: React.FC<{
             data-testid="chart-legend"
             /* The drawing rail now occupies its own dedicated 38px flex column
                to the left of the canvas wrapper, so the legend starts cleanly
-               at left-2 inside the plot with zero rail overlap. When the
-               verdict chip is up, its ~190px on the right stay reserved. */
-            className={`pointer-events-none absolute left-2 top-1.5 z-10 overflow-hidden rounded-control bg-zinc-950/80 px-2 py-1 font-mono text-ui-dense tabular-nums text-zinc-500 [contain:layout] ${narrow ? 'max-w-[calc(100%-204px)]' : 'max-w-[calc(100%-16px)]'}`}
+               at left-2 inside the plot with zero rail overlap. No right-edge
+               reservation: the verdict chip and the LEVELS badge now sit ABOVE
+               the bottom 18% volume pane (bottom-[19%]…), never in this top
+               row, so a reserved max-width only ever clipped the VOL token
+               off the collapsed line at desk widths. */
+            className="pointer-events-none absolute left-2 top-1.5 z-10 max-w-[calc(100%-16px)] overflow-hidden rounded-control bg-zinc-950/80 px-2 py-1 font-mono text-ui-dense tabular-nums text-zinc-500 [contain:layout]"
         >
             {/* ONE compact OHLCV line: time, the four prices and the volume.
                 whitespace-nowrap keeps the tokens whole: a narrowed legend

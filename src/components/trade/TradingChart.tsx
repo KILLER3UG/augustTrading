@@ -4430,7 +4430,6 @@ const TradingChart: React.FC<TradingChartProps> = ({
                     store={hoverReadout}
                     expanded={legendExpanded}
                     onToggleExpanded={() => setLegendExpanded(v => !v)}
-                    narrow={levels.length > 0}
                     renderRows={legendSettingsRows}
                     volumeFor={volumeFor}
                 />
@@ -4490,7 +4489,12 @@ const TradingChart: React.FC<TradingChartProps> = ({
                     </div>
                 )}
                 {levels.length > 0 && (
-                    <span className="pointer-events-none absolute bottom-2 right-20 z-10 rounded-full border border-hairline bg-zinc-900/90 px-2 py-0.5 text-ui-2xs text-zinc-400" title="Current verdict levels drawn on the chart" data-testid="verdict-overlay-chip">
+                    /* bottom-[19%]: the volume series occupies the plot's
+                       bottom 18% (scaleMargins top 0.82) — a bottom-anchored
+                       chip sat ON the bottom-right volume bars. This anchor
+                       keeps the pill fully above that pane, and the LEVELS
+                       badge (TradeView) stacks above it by the same rule. */
+                    <span className="pointer-events-none absolute bottom-[19%] right-20 z-10 rounded-full border border-hairline bg-zinc-900/90 px-2 py-0.5 text-ui-2xs text-zinc-400" title="Current verdict levels drawn on the chart" data-testid="verdict-overlay-chip">
                         Verdict overlay · {levels.map(l => l.label).join(' ')}
                     </span>
                 )}

@@ -362,7 +362,7 @@ export const ToolVisualCard: React.FC<ToolVisualCardProps> = ({ visual, onJumpTo
         <div
             data-testid="tool-visual-card"
             data-visual-kind={visual.kind}
-            className="motion-card-enter mt-1.5 rounded-control border border-hairline bg-zinc-900/70 p-3"
+            className="motion-card-enter mt-1.5 rounded-lg border border-hairline bg-zinc-900/70 p-3"
         >
             <div className="mb-2 flex items-center justify-between gap-2">
                 <span className="truncate font-mono text-ui-2xs font-semibold uppercase tracking-wider text-zinc-300">
