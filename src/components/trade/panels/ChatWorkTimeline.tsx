@@ -621,11 +621,25 @@ const ChatWorkTimeline: React.FC<ChatWorkTimelineProps> = ({ entry, symbol, inte
         // Nothing yet: the waiting tip covers
         // the silent first moments of a turn. It is the tip's ONLY home now —
         // once there is work, the status line names the activity instead.
+        // The one exception is the LIVE progress line: a 429 retry wait lands
+        // here, before any reasoning or tool has produced work, and a turn
+        // that sits silently on "Tip:" while the transport counts retries
+        // would hide the recovery the trader is waiting through.
+        const liveProgressLine = entry.liveProgress && entry.liveProgress.trim().length > 0
+            ? entry.liveProgress.trim()
+            : null;
         return running ? (
-            <p className="flex items-start gap-1.5 text-ui-dense leading-5 text-zinc-500" data-testid="thinking-placeholder">
-                <Lightbulb className="mt-0.5 h-3 w-3 shrink-0 text-zinc-600" aria-hidden="true" />
-                <span className="min-w-0 break-words">Tip: {tipForSeed(entry.id)}</span>
-            </p>
+            <div className="space-y-1">
+                <p className="flex items-start gap-1.5 text-ui-dense leading-5 text-zinc-500" data-testid="thinking-placeholder">
+                    <Lightbulb className="mt-0.5 h-3 w-3 shrink-0 text-zinc-600" aria-hidden="true" />
+                    <span className="min-w-0 break-words">Tip: {tipForSeed(entry.id)}</span>
+                </p>
+                {liveProgressLine && (
+                    <p className="text-ui-dense leading-5 text-zinc-500" data-testid="slow-call-progress">
+                        {liveProgressLine}
+                    </p>
+                )}
+            </div>
         ) : null;
     }
     // A reasoning-only turn IS the reference's thinking block: one quiet line
